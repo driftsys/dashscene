@@ -32,9 +32,8 @@ _fidelity_ measurement — the painter against Figma's own render of the same
 scene. The showcase scenes carry none, so the only thing measurable there is
 _parity_ between the two painters. Layer 4's band half therefore runs on the
 seven oracle frames, and the frame-cost half runs on the showcase scenes, which
-is also where `docs/technotes/frame-budget.md` took its own
-numbers and what story #586's first comment asks it to extend rather than
-restart.
+is also where `docs/technotes/frame-budget.md` took its own numbers and what
+story #586's first comment asks it to extend rather than restart.
 
 **D2 — the existing three bands serve both painters unchanged. No per-painter
 bands, and no second band set.**
@@ -84,22 +83,22 @@ exactly** — the residual cannot see it and the gate can. The gate transfers to
 the second painter, which is the part of this that was least obvious.
 
 **Antialiasing removal is caught by nothing, and the reason is the corpus rather
-than the band.** Every geometry value in `lowering-wrap` is an integer — checked,
-64 of 64 — so its rect edges land on pixel boundaries and there is no partial
-coverage to lose. The mutation does move the worst channel delta, on `v08-wrap`
-from 8 to 35 and on `v08-drop-shadow` from 16 to 96, so it is not that nothing
-changed; it is that almost no pixel crossed a threshold. **A band named
-`aa-edge` is currently stated over frames that barely exercise antialiasing.**
-Recorded on issue #753 with the other corpus gaps.
+than the band.** Every geometry value in `lowering-wrap` is an integer —
+checked, 64 of 64 — so its rect edges land on pixel boundaries and there is no
+partial coverage to lose. The mutation does move the worst channel delta, on
+`v08-wrap` from 8 to 35 and on `v08-drop-shadow` from 16 to 96, so it is not
+that nothing changed; it is that almost no pixel crossed a threshold. **A band
+named `aa-edge` is currently stated over frames that barely exercise
+antialiasing.** Recorded on issue #753 with the other corpus gaps.
 
-**D3 — the reference painter is measured in the same run, and that is what
-makes the numbers trustworthy.** `goldens/tooling/src/render.rs` records a
-deliberate decision _not_ to share the oracle's font and atlas loaders — "the E7
-oracle and its helpers are left byte-identical" — and its own cascade is eight
-atlases where the oracle's is three. Any harness outside that test file is
-therefore building a scene the oracle did not build. Painting both painters from
-one scene removes the dependency: the question is whether they land together,
-and that is answerable without either number reproducing the oracle test's.
+**D3 — the reference painter is measured in the same run, and that is what makes
+the numbers trustworthy.** `goldens/tooling/src/render.rs` records a deliberate
+decision _not_ to share the oracle's font and atlas loaders — "the E7 oracle and
+its helpers are left byte-identical" — and its own cascade is eight atlases
+where the oracle's is three. Any harness outside that test file is therefore
+building a scene the oracle did not build. Painting both painters from one scene
+removes the dependency: the question is whether they land together, and that is
+answerable without either number reproducing the oracle test's.
 
 It also self-checks. `v06-text-arabic` measures **1.405 %** for the reference
 painter here, which is exactly the figure the render oracle publishes for Skia

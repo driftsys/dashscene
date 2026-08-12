@@ -96,8 +96,8 @@ frame genuinely mixes texel formats, which a document does when a host binds
 derivations for some assets and not others.
 
 That is a claim about the _segmenting_ pass and not about the frame as a whole:
-D3a below walks the instance rows once in any frame that has an image fill, so
-a frame with images costs one pass whatever its formats are, and a frame without
+D3a below walks the instance rows once in any frame that has an image fill, so a
+frame with images costs one pass whatever its formats are, and a frame without
 them costs none.
 
 The runs partition the buffer in order, so slice order is still draw order.
@@ -107,8 +107,8 @@ row of the fill table, which reads as a harmless over-approximation and is not
 one. A document's asset table is every image it _could_ show; what has to fit in
 VRAM is what it shows now. Resolving the table makes the whole table the working
 set by construction, so a document holding more assets than one atlas can carry
-fails `FrameExceedsAtlas` while drawing two of them — and the eviction policy can
-never help, because every row is asked for every frame. That is issue #460's
+fails `FrameExceedsAtlas` while drawing two of them — and the eviction policy
+can never help, because every row is asked for every frame. That is issue #460's
 measurement one level up, arriving as a crash rather than as memory pressure.
 
 Resolving the drawn set costs one pass over the instance rows, in a frame that
@@ -172,8 +172,8 @@ this paragraph names is still not needed, and
 texel inside the sub-rect, which was already there for the nearest case, is
 exactly the condition a bilinear footprint needs.
 
-Nearest matches `dashscene-skia`'s `SamplingOptions::default()`, which
-that painter chose deliberately — "deterministic and exact for the v0.3 corpus;
+Nearest matches `dashscene-skia`'s `SamplingOptions::default()`, which that
+painter chose deliberately — "deterministic and exact for the v0.3 corpus;
 filtering quality is a later, deliberate decision". With nearest sampling and a
 clamp to texel centres inside the sub-rect, no sample can reach a neighbouring
 allocation, so a gutter would be padding against a hazard this painter does not
@@ -183,10 +183,10 @@ residency module says so where the sampler is built.
 **D6, and why the adapter is part of the answer.** ASTC is a device capability.
 A painter that claimed the block formats unconditionally would have a host bind
 a derivation the device then refuses, which is the failure `samples` exists to
-make impossible — so the declaration is built from an adapter and `GpuPainter::new`
-is the conservative answer for a painter that has not met one. The feature is
-also _requested_ when the adapter has it: a feature the adapter advertises and
-the device did not ask for is not a feature the device has.
+make impossible — so the declaration is built from an adapter and
+`GpuPainter::new` is the conservative answer for a painter that has not met one.
+The feature is also _requested_ when the adapter has it: a feature the adapter
+advertises and the device did not ask for is not a feature the device has.
 
 Refusing JPEG and GIF is the narrowing that pays for the rest. Every container
 this painter claims is a decoder it links, and the trim profile whose existence

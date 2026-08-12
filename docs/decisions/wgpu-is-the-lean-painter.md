@@ -146,10 +146,10 @@ What it reverses: the choice of Skia-GPU as the entry-tier bridge.
 **Adopt Vello.** Ruled out. Its README on `main` lists blur and filter effects
 among its open gaps — the things a painter would want it for. It renders glyphs
 as outlines where this design uses an MSDF atlas, and exposes no custom-shader
-extension point to add MSDF through. `vello_hybrid` does have a real WebGL2 path,
-correcting an earlier claim, but is at 0.0.9 and self-described as "roughly beta
-quality". Adopting it would mean pushing rounded rectangles through a Bézier
-flattener to reach a problem a quad already solves.
+extension point to add MSDF through. `vello_hybrid` does have a real WebGL2
+path, correcting an earlier claim, but is at 0.0.9 and self-described as
+"roughly beta quality". Adopting it would mean pushing rounded rectangles
+through a Bézier flattener to reach a problem a quad already solves.
 
 **Adopt an existing quad+SDF painter.** None is adoptable. `iced_wgpu` and GPUI
 both use analytic rounded-box SDF, but both are welded into their frameworks;

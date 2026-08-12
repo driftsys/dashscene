@@ -12,14 +12,14 @@
              docs/decisions/image-assets-cross-boundary-b.md,
              docs/decisions/unsupported-figma-constructs-refuse-the-compile.md
 
-The prior epic (`docs/technotes/real-file-import.md`) took two real
-public Figma files end to end under partial-emit — they _emitted_ and
-_rendered_, with a long tail of named skip-with-warning holes. v0.10 closed the
-measured gaps in that tail, in measured-value order, until the Landify hero
-solves to Figma's own canvas and pixel-diffs inside a declared band. This note
-records what v0.10 delivered and the hero's fidelity state at the close. It is
-explanatory; the normative decisions live in the linked records. The two real
-files stay live-only, never committed
+The prior epic (`docs/technotes/real-file-import.md`) took two real public Figma
+files end to end under partial-emit — they _emitted_ and _rendered_, with a long
+tail of named skip-with-warning holes. v0.10 closed the measured gaps in that
+tail, in measured-value order, until the Landify hero solves to Figma's own
+canvas and pixel-diffs inside a declared band. This note records what v0.10
+delivered and the hero's fidelity state at the close. It is explanatory; the
+normative decisions live in the linked records. The two real files stay
+live-only, never committed
 (`docs/decisions/figma-corpus-self-authored-only.md`).
 
 ## Vocabulary added
@@ -27,13 +27,14 @@ files stay live-only, never committed
 Each vocabulary story landed additively (wire-compatible schema, the S1
 precedent) and with a self-authored committed frame in the import oracle.
 
-- **Standard-ligatures-off** (story #341). Figma's `style.opentypeFlags
-  {"LIGA":0}` lowers to a `ligatures_off` text axis; shaping forces `liga`/`clig`
-  off while leaving `rlig` and mandatory Arabic shaping untouched. Only an exact
-  lone `{LIGA:0}` lowers — any other flag stays a named refusal ("widen by
-  exactly what is measured"). All 58 hero TEXT nodes carry exactly this flag, so
-  the OpenType-features warning is gone from the hero.
-  (`docs/decisions/figma-text-lowering.md`.)
+- **Standard-ligatures-off** (story #341). Figma's
+  `style.opentypeFlags
+  {"LIGA":0}` lowers to a `ligatures_off` text axis;
+  shaping forces `liga`/`clig` off while leaving `rlig` and mandatory Arabic
+  shaping untouched. Only an exact lone `{LIGA:0}` lowers — any other flag stays
+  a named refusal ("widen by exactly what is measured"). All 58 hero TEXT nodes
+  carry exactly this flag, so the OpenType-features warning is gone from the
+  hero. (`docs/decisions/figma-text-lowering.md`.)
 - **JPEG and static-GIF image fills** (story #342). An additive
   `ImageFormat::Jpeg` / `::Gif`; the importer accepts and tags image bytes by
   magic number, refusing truncated or animated GIF by name; the Skia reference
@@ -59,10 +60,12 @@ precedent) and with a self-authored committed frame in the import oracle.
 - **The component-instance trim fix** (story #359). The single biggest hero
   fidelity gain, and an importer bug rather than a vocabulary gap: the `_`
   name-prefix trim sugar was deleting every component instance Landify names
-  with Figma's private-component convention (`_Feature Item`, `_Testimonial
-  item`, `_Client logo`, `_Button base`, …), emptying six of the hero's nine
-  sections. The trim now exempts `INSTANCE`/`COMPONENT`/`COMPONENT_SET` nodes,
-  and `just reprobe` surfaces the `trimmed:` lines that had hidden the drop.
+  with Figma's private-component convention (`_Feature Item`,
+  `_Testimonial
+  item`, `_Client logo`, `_Button base`, …), emptying six of the
+  hero's nine sections. The trim now exempts
+  `INSTANCE`/`COMPONENT`/`COMPONENT_SET` nodes, and `just reprobe` surfaces the
+  `trimmed:` lines that had hidden the drop.
   (`docs/decisions/importer-trim-layers.md`.)
 
 ## The empirical loop — the committed import oracle
@@ -99,15 +102,15 @@ The `node-fx` frame excludes two disclosed holes (the rotated rectangle —
 rotation stays refused; and a mask pair whose fixture predates a plugin fix,
 debt #361), each named in the manifest with its `expectedWarnings` rather than
 hidden inside the band. The oracle earned its keep across the epic: several
-fixtures caught real engine bugs on first measurement (the text-axes frame
-found a half-leading baseline bug and a mis-lowered `textAutoResize`; the
-prior epic's baseline and line-height frames caught #272 and #314).
+fixtures caught real engine bugs on first measurement (the text-axes frame found
+a half-leading baseline bug and a mis-lowered `textAutoResize`; the prior epic's
+baseline and line-height frames caught #272 and #314).
 
 ## The hero outcome (the v0.10 exit)
 
-The Landify hero (`S30AJmYfnDKGeSQmzuXEUk`, root `1973:6580`) imports to a
-~1.14 MB `.dsb` and **solves to 1440×4263 — Figma's exact canvas size**. All
-nine sections render: nav, hero and CTA buttons, the brand-logo row, six feature
+The Landify hero (`S30AJmYfnDKGeSQmzuXEUk`, root `1973:6580`) imports to a ~1.14
+MB `.dsb` and **solves to 1440×4263 — Figma's exact canvas size**. All nine
+sections render: nav, hero and CTA buttons, the brand-logo row, six feature
 cards, three testimonials, the stats band, the tool-icon row, the CTA band, and
 the footer. A live pixel-diff of the Skia render against Figma's own
 `GET /images` render (both at 1×, aligned pixel-for-pixel) measures **6.25 % at
@@ -125,17 +128,17 @@ missing-content or correctness defect:
   Regular face — bold headings render at regular stroke width. This is a
   coverage gap (never implemented), not a regression; the fix is weighted Noto
   atlases plus a `(script, weight) → face` seam.
-- **The deliberately-omitted backdrop-blur overlays.** A frosted-glass panel
-  (a `VECTOR` "BG" with a SOLID fill at 0.7 opacity plus `BACKGROUND_BLUR`
-  r100) composites over the hero's decorative circles in Figma, fading them from
-  their true 60 % node opacity down to ~22 %. Backdrop blur is profile:full
-  only, so the whole panel is a named skip-with-warning
+- **The deliberately-omitted backdrop-blur overlays.** A frosted-glass panel (a
+  `VECTOR` "BG" with a SOLID fill at 0.7 opacity plus `BACKGROUND_BLUR` r100)
+  composites over the hero's decorative circles in Figma, fading them from their
+  true 60 % node opacity down to ~22 %. Backdrop blur is profile:full only, so
+  the whole panel is a named skip-with-warning
   (`docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`). Our
   circles therefore show at their correct 60 % — there is **no opacity bug**
   (pixel-verified: an ELLIPSE takes the same kind-agnostic painter path as the
   passing RECTANGLE); the visible difference is the missing overlay.
-- **Text horizontal offset (debt #336).** ~1 px of horizontal placement from
-  the trailing letter-spacing step Figma excludes from the measured width.
+- **Text horizontal offset (debt #336).** ~1 px of horizontal placement from the
+  trailing letter-spacing step Figma excludes from the measured width.
 - **Anti-aliasing** along glyph and rect edges (compounded by the Noto-vs-Inter
   family substitution the corpus discloses).
 

@@ -1,20 +1,20 @@
 # Usage guide
 
-There is no published library or binary yet — this guide covers building
-the project from source.
+There is no published library or binary yet — this guide covers building the
+project from source.
 
 ## Prerequisites
 
 - Rust (stable), plus the `wasm32-unknown-unknown` target:
   `rustup target add wasm32-unknown-unknown`
-- [`flatc`](https://github.com/google/flatbuffers) — required at build
-  time by the `dashbuf` crate. Install a version matching the
-  `flatbuffers` crate pinned in the workspace `Cargo.toml` (e.g.
-  `brew install flatbuffers` or
+- [`flatc`](https://github.com/google/flatbuffers) — required at build time by
+  the `dashbuf` crate. Install a version matching the `flatbuffers` crate pinned
+  in the workspace `Cargo.toml` (e.g. `brew install flatbuffers` or
   `apt-get install flatbuffers-compiler`).
-- [`just`](https://github.com/casey/just), [`dprint`](https://dprint.dev),
-  and [`markdownlint-cli`](https://github.com/igorshubovych/markdownlint-cli)
-  for linting.
+- [`just`](https://github.com/casey/just) for the recipes, and
+  [`prim`](https://github.com/driftsys/prim) for the Markdown, JSON, YAML and
+  TOML gate. prim is installed automatically by `./bootstrap`, at the version
+  the CI `prim` job pins.
 - [`cargo-nextest`](https://nexte.st) — runs the test tiers (`just test`,
   `just test-regression`, `just calibrate`, `just test-all`); installed
   automatically by `./bootstrap`.
@@ -25,7 +25,7 @@ the project from source.
 ```sh
 git clone https://github.com/driftsys/dashscene.git
 cd dashscene
-./bootstrap   # installs git-std, cargo-nextest, and repo git hooks
+./bootstrap   # installs git-std, cargo-nextest, jq, prim, and repo git hooks
 ```
 
 ## Common commands
@@ -37,7 +37,8 @@ cd dashscene
 | `just test-regression` | regression tier — every test but the two calibration re-derivations. What `build` and the CI `test` job run; the pre-push hook does not. |
 | `just calibrate`       | calibration tier — 10 tests, ~54 s. Re-derives the committed asset tables.                                                               |
 | `just test-all`        | every tier in one run.                                                                                                                   |
-| `just lint`            | clippy -D warnings, `cargo fmt --check`, `dprint check`, markdownlint                                                                    |
+| `just lint`            | clippy -D warnings, `cargo fmt --check`, `just prim`, `deno fmt --check`                                                                 |
+| `just prim`            | `prim fmt --check .` then `prim lint .` — the Markdown, JSON, YAML and TOML gate, in the two verbs it takes                              |
 | `just fmt`             | reformat everything in place                                                                                                             |
 | `just check`           | regression tier + lint + audit                                                                                                           |
 | `just verify`          | the pre-push hook: commit-message lint, then lint + audit + a scoped secret scan. Seconds, and runs no test tier                         |

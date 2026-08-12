@@ -33,9 +33,9 @@ mapping and one, so they fall outside epic #594's definition of done; D8 names
 the one worth removing.
 
 **Why the pool exists, and why that makes this change small.** `ImageTable`
-stores every asset's bytes concatenated in one `Vec<u8>`, with each
-`ImageEntry` a `{ format, offset, len, width, height }` range into it. That is
-not an optimisation, it is story #600's rule: a row crossing boundary B must be
+stores every asset's bytes concatenated in one `Vec<u8>`, with each `ImageEntry`
+a `{ format, offset, len, width, height }` range into it. That is not an
+optimisation, it is story #600's rule: a row crossing boundary B must be
 `#[repr(C)]`, fixed-width and free of owning members, so a C or C# painter can
 read the table as a plain struct array. A `Vec<u8>` inside a row is a Rust-only
 type. So the bytes had to leave the row for one shared region, exactly as clip
@@ -49,12 +49,12 @@ change is which region, not what a row is.
 **Story #596's premise that `Cow<'a, [u8]>` is ruled out by the compiler is
 wrong, and correcting it does not change the answer.** The FFI gate is stated
 over `ImageEntry`, the stored row. `crates/dashscene-unity/src/lib.rs` says so
-directly: `ImageAsset` "stays as the owning producer type, which no
-`extern "C"` signature names". Neither `ImageAsset` nor `ImageTable` appears
-in any `extern "C"` signature, so a lifetime on either compiles. What rules the
-borrow out is its blast radius, below, not a build failure — which means the
-loud failure story #600 was built to provide does **not** cover this choice,
-and this record is what holds it instead.
+directly: `ImageAsset` "stays as the owning producer type, which no `extern "C"`
+signature names". Neither `ImageAsset` nor `ImageTable` appears in any
+`extern "C"` signature, so a lifetime on either compiles. What rules the borrow
+out is its blast radius, below, not a build failure — which means the loud
+failure story #600 was built to provide does **not** cover this choice, and this
+record is what holds it instead.
 
 ## Decision
 
@@ -70,8 +70,8 @@ silent one (P4).
 **D2 — `ImageEntry` does not change shape.** It stays `#[repr(C)]`, twenty
 bytes, `{ format, offset, len, width, height }`. `offset` is relative to the
 pool in both arms; for a mapped pool the pool is the file, so the offset is a
-file offset. The FFI gate is satisfied unchanged, and no painter reads the
-table differently.
+file offset. The FFI gate is satisfied unchanged, and no painter reads the table
+differently.
 
 **D3 — the `Painter` trait does not change, and no boundary-B type gains a
 lifetime.** `paint(&mut self, …, images: &ImageTable, …)` is what it is today.
@@ -81,15 +81,15 @@ header has no way to express one — which would quietly close the non-Rust
 backend path G2 requires, the same failure story #600 exists to make loud.
 
 **D4 — the handle is `Send + Sync`.** Not decorative: the arena holds
-`Arc<ImageTable>`, so the table crosses threads by construction. (Story #597
-did not add the loader thread this sentence anticipated — see its own record's
-D6 — but `dashbuf::residency::BlobResidency` is `Send + Sync` for the same reason,
+`Arc<ImageTable>`, so the table crosses threads by construction. (Story #597 did
+not add the loader thread this sentence anticipated — see its own record's D6 —
+but `dashbuf::residency::BlobResidency` is `Send + Sync` for the same reason,
 and a thread is the next step rather than a different design.)
 
-**D5 — `ImageAsset` stays the owning producer type, unchanged.** A producer
-that has bytes in hand and wants a table writes what it means. The mapped arm
-is reached through a separate constructor that takes the handle and appends
-rows by range, never through `push`.
+**D5 — `ImageAsset` stays the owning producer type, unchanged.** A producer that
+has bytes in hand and wants a table writes what it means. The mapped arm is
+reached through a separate constructor that takes the handle and appends rows by
+range, never through `push`.
 
 **D6 — the loader builds a mapped table from ranges, not from slices.**
 `dashbuf::prefix::Envelope::blob_by_hash` already returns a `Range<u64>`, which
@@ -106,10 +106,10 @@ arm could compare handle identity plus ranges and skip the byte walk that
 `dashscene-skia`'s frame cache pays every frame — 200 873 B for the `surfaces`
 scene, and linear in the table's encoded size. That is a real improvement and a
 different change: the owned arm must keep comparing bytes, because two
-independently built tables holding equal bytes have to stay equal for that
-cache to work at all, so `PartialEq` becomes two behaviours behind one trait
-and needs its own test for the mixed comparison. Filed as debt #752 rather than
-widened into the story.
+independently built tables holding equal bytes have to stay equal for that cache
+to work at all, so `PartialEq` becomes two behaviours behind one trait and needs
+its own test for the mixed comparison. Filed as debt #752 rather than widened
+into the story.
 
 ## Consequences
 
@@ -121,18 +121,18 @@ widened into the story.
   `wgpu::Queue::write_texture` takes a `&[u8]` — with no copy and no
   intermediate allocation. `ImageFormat` has carried the baked variants that
   make this reachable since story #640, so nothing at the seam blocks it.
-- `dashscene-skia` still copies twice internally. Those are painter-internal
-  and outside this record's scope; D8 names the one worth removing.
+- `dashscene-skia` still copies twice internally. Those are painter-internal and
+  outside this record's scope; D8 names the one worth removing.
 - The web path is unaffected in shape. wasm has no mapping, so `demo-web`
-  continues to hold fetched bytes and takes the owned arm — the same table
-  type, the same rows, a different pool.
+  continues to hold fetched bytes and takes the owned arm — the same table type,
+  the same rows, a different pool.
 
 ## Alternatives considered
 
-**`ImageTable<'a>` borrowing the region directly.** The least machinery and
-zero indirection, and it compiles — the FFI gate does not stop it. Refused for
-reach: the lifetime lands on `Painter::paint`, which every painter implements,
-on the arena's `Arc<ImageTable>`, on `LiveScene` and on both hosts, and it is
+**`ImageTable<'a>` borrowing the region directly.** The least machinery and zero
+indirection, and it compiles — the FFI gate does not stop it. Refused for reach:
+the lifetime lands on `Painter::paint`, which every painter implements, on the
+arena's `Arc<ImageTable>`, on `LiveScene` and on both hosts, and it is
 inexpressible in a C header. It buys nothing over the handle, which costs one
 pointer chase per resolve and no signature anywhere.
 
@@ -148,8 +148,8 @@ painter swap is a re-golden rather than a redesign — and the second painter no
 exists to make that claim testable.
 
 **Widen `ImageEntry` with a per-row base so a table can mix arms.** Refused
-under D1: it widens the one row the FFI gate pins, to serve a case nothing in
-v0 has.
+under D1: it widens the one row the FFI gate pins, to serve a case nothing in v0
+has.
 
 ## As built (story #596, 2026-08-06, PR #762)
 
@@ -171,9 +171,9 @@ held by something other than this note. Debt #752 carries the frame cache that
 still runs that comparison every frame.
 
 **The mapped path turns loud failures silent, and needed two replacements.** It
-reads no payload header by design, so the owning path's header parse — the
-guard from issue (#640), which catches a KTX2 arriving where the entry says
-`Png` — is simply gone. Two guards replace it: `demo` refuses a file that binds through a
+reads no payload header by design, so the owning path's header parse — the guard
+from issue (#640), which catches a KTX2 arriving where the entry says `Png` — is
+simply gone. Two guards replace it: `demo` refuses a file that binds through a
 derivation manifest, because a host with no quality profile cannot name the rung
 it would be binding; and `ImageTable::push_mapped` asserts a baked row's length
 equals `payload_len(w, h)`. The review found the second. The author's own test

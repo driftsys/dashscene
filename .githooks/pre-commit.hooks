@@ -1,2 +1,2 @@
 ~ cargo fmt --all
-~ dprint fmt
+~ prim fmt .

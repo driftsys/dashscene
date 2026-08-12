@@ -17,6 +17,34 @@ indent_size = 2
 [*.md]
 indent_size = 2
 trim_trailing_whitespace = false
+prim_mdlint_strict = false
+
+# The shipped mdBook is the only Markdown a reader outside this repository
+# sees, so it is held to prim's strict lint tier: the floor tier's warnings
+# become errors, and the structural rules the floor tier leaves off — a missing
+# first-line H1, a fenced block with no language, a heading level skipped —
+# become warnings. The three sections must stay in this order, because
+# EditorConfig resolves them last-match-wins.
+#
+# One rule tightens rather than relaxes here, and it is the only place this
+# migration is stricter than `.markdownlint.json` was: MD024 becomes an error,
+# where the old config allowed a repeated heading under a different parent
+# (`siblings_only`). Measured — a file with `## Why` under two parents exits 1
+# under docs/book and 0 elsewhere. Deliberate for a published document, where a
+# repeated heading is an ambiguous anchor; if it ever gets in the way, drop this
+# section rather than reaching for a per-rule override prim does not have.
+[docs/book/**.md]
+prim_mdlint_strict = true
+
+# mdBook's table of contents, put back on the floor tier. This is what
+# `prim init` scaffolds and it is kept for that reason — re-running `prim init`
+# restores it — but note it is doing nothing today: this repository's
+# SUMMARY.md carries exactly one H1 and passes the strict tier without the
+# exemption, measured. It earns its place only if the contents page grows a
+# second top-level heading, and even then MD025 is a warning at the strict tier
+# rather than an error, so it would not have failed the gate.
+[**/SUMMARY.md]
+prim_mdlint_strict = false
 
 [*.{yml,yaml,toml}]
 indent_size = 2

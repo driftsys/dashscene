@@ -7,8 +7,9 @@ dashscene is built on.
 It is not the only page that mentions one, and it is not the only page carrying
 a dated citation — `glossary.md`, `producers-and-ir.md` and
 `docs/design/architecture.md` each carry at least one. What this page is for is
-having them in one place, kept current together: [`glossary.md`](glossary.md) defines eleven of them in one line
-each, [`producers-and-ir.md`](producers-and-ir.md) §4–§5 carries the Penpot and
+having them in one place, kept current together: [`glossary.md`](glossary.md)
+defines eleven of them in one line each,
+[`producers-and-ir.md`](producers-and-ir.md) §4–§5 carries the Penpot and
 build-vs-adopt analyses, and
 [`rendering-and-painters.md`](rendering-and-painters.md) §8 carries a
 performance comparison written before this page existed and not yet reconciled
@@ -17,14 +18,14 @@ disagrees with this page, **check this page first** — it makes the strongest
 claim, so it carries the burden of being right.
 
 **Every factual claim below is either checked against the project's own
-repository on the date given, or it is not made.** Where a question would need
-a judgement about another team's engineering to answer, this page does not
-answer it. Nothing here scores projects against each other, and there is no
-feature matrix: a matrix drawn by one project about its neighbours measures
-the author's requirements, not the neighbours.
+repository on the date given, or it is not made.** Where a question would need a
+judgement about another team's engineering to answer, this page does not answer
+it. Nothing here scores projects against each other, and there is no feature
+matrix: a matrix drawn by one project about its neighbours measures the author's
+requirements, not the neighbours.
 
-If you maintain something described here and the description is wrong or out
-of date, please open an issue. That is a defect in this file.
+If you maintain something described here and the description is wrong or out of
+date, please open an issue. That is a defect in this file.
 
 Retrieved 2026-08-10 unless stated otherwise.
 
@@ -38,25 +39,24 @@ changes to your Figma design in your app, immediately!"
 
 This is the closest adjacent project: it also takes Figma as the design source
 and keeps the design file authoritative rather than generating code once.
-dashscene differs in what it renders into — the same document is drawn by a
-game engine, by a lean native painter and by a reference rasterizer, which must
-agree to the pixel — and in carrying its own schema-first intermediate
-representation with a validator, rather than targeting one UI toolkit.
-Those are different goals, not a ranking.
+dashscene differs in what it renders into — the same document is drawn by a game
+engine, by a lean native painter and by a reference rasterizer, which must agree
+to the pixel — and in carrying its own schema-first intermediate representation
+with a validator, rather than targeting one UI toolkit. Those are different
+goals, not a ranking.
 
-**[Slint](https://github.com/slint-ui/slint)** — "an open-source declarative
-GUI toolkit to build native user interfaces for Rust, C++, JavaScript, or
-Python apps". Its framework is triple-licensed and a user may choose any one:
-a royalty-free licence covering proprietary desktop, mobile and web use, which
+**[Slint](https://github.com/slint-ui/slint)** — "an open-source declarative GUI
+toolkit to build native user interfaces for Rust, C++, JavaScript, or Python
+apps". Its framework is triple-licensed and a user may choose any one: a
+royalty-free licence covering proprietary desktop, mobile and web use, which
 excludes embedded systems; GPL-3.0-only, covering open-source software on any
 platform including embedded; or a commercial licence covering proprietary use
 including embedded
 ([LICENSE.md](https://github.com/slint-ui/slint/blob/54774e5234e26be2c046024aad22521bc00121a2/LICENSE.md),
-pinned to the commit that was current on the retrieval date).
-The royalty-free tier carries a condition worth stating precisely: it is free
-"as long as you disclose that you use Slint (for example with the `AboutSlint`
-widget or the Slint badge); without that disclosure, use the Commercial
-license."
+pinned to the commit that was current on the retrieval date). The royalty-free
+tier carries a condition worth stating precisely: it is free "as long as you
+disclose that you use Slint (for example with the `AboutSlint` widget or the
+Slint badge); without that disclosure, use the Commercial license."
 
 Slint draws its own output; dashscene hands a document to renderers it does not
 own. The full reasoning, including why Slint is not a code source for this
@@ -95,8 +95,8 @@ wholesale, and that triage is in [`runtime-content.md`](runtime-content.md)
 
 **[ThorVG](https://github.com/thorvg/thorvg)** — MIT, "a production-ready C++
 vector graphics engine supporting SVG and Lottie formats". **Not used today** —
-nothing in this repository links or invokes it. It is the chosen candidate for
-a future render-to-texture escape hatch for runtime vector and an offline frame
+nothing in this repository links or invokes it. It is the chosen candidate for a
+future render-to-texture escape hatch for runtime vector and an offline frame
 renderer, recorded in
 [`runtime-vector-via-thorvg-to-texture.md`](../decisions/runtime-vector-via-thorvg-to-texture.md).
 Named here because a reader comparing vector stacks will ask, and the honest
@@ -104,8 +104,8 @@ answer is "decided, not built".
 
 ## What dashscene is built on
 
-None of the following is a competitor; all of it is work this project depends
-on and would not exist without.
+None of the following is a competitor; all of it is work this project depends on
+and would not exist without.
 
 - **[Taffy](https://github.com/DioxusLabs/taffy)** — the flexbox and grid
   solver. dashscene has one layout engine and this is it.
@@ -123,9 +123,9 @@ on and would not exist without.
   **[msdfgen](https://github.com/Chlumsky/msdfgen)** — the multi-channel signed
   distance field generator behind the glyph atlas.
 - **[astcenc](https://github.com/ARM-software/astc-encoder)** — Arm's ASTC
-  encoder, vendored and Apache-2.0. Attribution is in
-  [`NOTICE`](../../NOTICE), with provenance and the steps to re-derive the copy
-  in [`vendor/VENDOR.md`](../../crates/dashpack-astcenc-sys/vendor/VENDOR.md).
+  encoder, vendored and Apache-2.0. Attribution is in [`NOTICE`](../../NOTICE),
+  with provenance and the steps to re-derive the copy in
+  [`vendor/VENDOR.md`](../../crates/dashpack-astcenc-sys/vendor/VENDOR.md).
 
 Content, not code, and equally depended on:
 

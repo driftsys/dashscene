@@ -12,13 +12,13 @@
 
 Story #5 needed the minimal Rust DSL skin over `dashscene-core`'s
 staged-mutation API (`docs/design/dashlang.md`). The shape of the v0.1 surface
-fixes how components, repetition, and commit boundaries look for every
-later DSL slice.
+fixes how components, repetition, and commit boundaries look for every later DSL
+slice.
 
 ## Options
 
-1. An inert value tree (`Node` descriptions composed by plain
-   functions) published by one `Scene::build(&mut Arena)` call.
+1. An inert value tree (`Node` descriptions composed by plain functions)
+   published by one `Scene::build(&mut Arena)` call.
 2. A closure/callback builder mutating a live `Txn`
    (`scene(&mut arena, |s| { s.node("bg") ... })`).
 3. A `scene! {}` macro.
@@ -27,99 +27,97 @@ later DSL slice.
 
 Option 1:
 
-- `node(name)` / `anon()` return `Node` values; consuming chainable
-  setters (`at`, `size`, `fill`, `child`, `children`); declaration
-  order is document (DFS) order.
-- `scene(roots)` collects a `Scene`; `Scene::build(&mut Arena) -> Built`
-  appends the roots to the arena (the DSL is a producer, not an
-  owner) and publishes them in exactly one commit. `Built` wraps the
-  commit generation (`Built::generation() -> u64`) — see "Extension"
-  below for why it is a named type rather than the bare `u64` this
-  record originally chose.
-- Unset values keep core's defaults (zero offset/size, no fill). The
-  DSL adds vocabulary, never semantics: anything it expresses is
-  expressible by hand against core with identical committed output —
-  the acceptance tests assert exactly that.
+- `node(name)` / `anon()` return `Node` values; consuming chainable setters
+  (`at`, `size`, `fill`, `child`, `children`); declaration order is document
+  (DFS) order.
+- `scene(roots)` collects a `Scene`; `Scene::build(&mut Arena) -> Built` appends
+  the roots to the arena (the DSL is a producer, not an owner) and publishes
+  them in exactly one commit. `Built` wraps the commit generation
+  (`Built::generation() -> u64`) — see "Extension" below for why it is a named
+  type rather than the bare `u64` this record originally chose.
+- Unset values keep core's defaults (zero offset/size, no fill). The DSL adds
+  vocabulary, never semantics: anything it expresses is expressible by hand
+  against core with identical committed output — the acceptance tests assert
+  exactly that.
 
 ## Why
 
-- `docs/design/dashlang.md` describes the DSL family this way: "components are fns"
-  (plain functions returning `Node` values compose without lifetimes),
-  "loops are repeaters" (iterators feeding `children`), and the C#
-  skin later builds a describe buffer with one commit across the FFI
-  seam — one `build` = one commit gives the Rust skin the same
-  commit-boundary model now.
-- A live-`Txn` closure builder (option 2) couples user code to
-  transaction lifetimes, and a panic mid-closure leaves half-staged
-  intent that core's no-rollback staging publishes with the next
-  commit; the inert tree stages nothing until `build`.
-- A macro (option 3) adds surface syntax but requires implementation
-  and diagnostics work; nothing in v0.1 needs it, and a macro can wrap
-  the value tree later without breaking any caller.
+- `docs/design/dashlang.md` describes the DSL family this way: "components are
+  fns" (plain functions returning `Node` values compose without lifetimes),
+  "loops are repeaters" (iterators feeding `children`), and the C# skin later
+  builds a describe buffer with one commit across the FFI seam — one `build` =
+  one commit gives the Rust skin the same commit-boundary model now.
+- A live-`Txn` closure builder (option 2) couples user code to transaction
+  lifetimes, and a panic mid-closure leaves half-staged intent that core's
+  no-rollback staging publishes with the next commit; the inert tree stages
+  nothing until `build`.
+- A macro (option 3) adds surface syntax but requires implementation and
+  diagnostics work; nothing in v0.1 needs it, and a macro can wrap the value
+  tree later without breaking any caller.
 
 ## Extension (issue #118, 2026-07-15) — `build`/`build_with` return `Built`
 
-Issue #118's own scope, as handed off, was only the v0.2 flex
-vocabulary on `Node` plus `Scene::build_with(arena, solver)`. A
-2026-07-13 issue comment ("SCOPE §23") re-scoped it: `build` must also
-settle how `NodeId` survives the build, because issue #166's
-reactive-bindings design (`docs/wip/2026-07-13-reactive-bindings-spec.md`
-at the time; not yet gardened as its own record) resolves a bound
-node's identity by declaring the binding on the node and resolving it
-to a `PropKey` inside `build`, so a producer never handles a `NodeId`
-at all — but only if `build`'s return type is something #166 can
-extend without reshaping `build`'s signature a second time.
+Issue #118's own scope, as handed off, was only the v0.2 flex vocabulary on
+`Node` plus `Scene::build_with(arena, solver)`. A 2026-07-13 issue comment
+("SCOPE §23") re-scoped it: `build` must also settle how `NodeId` survives the
+build, because issue #166's reactive-bindings design
+(`docs/wip/2026-07-13-reactive-bindings-spec.md` at the time; not yet gardened
+as its own record) resolves a bound node's identity by declaring the binding on
+the node and resolving it to a `PropKey` inside `build`, so a producer never
+handles a `NodeId` at all — but only if `build`'s return type is something #166
+can extend without reshaping `build`'s signature a second time.
 
 `dashscene_core::NodeId` was already private outside `dashlang::add()`'s
-internal use before #118, and stays that way: `add()` already holds the
-concrete `NodeId` at exactly the moment a future binding declaration
-would need to resolve it, entirely inside `add()`. What actually needed
-deciding was only the _return type_ of `build`/`build_with` — a bare
-`u64` cannot grow `.set()`/`.tick()` methods later without breaking
-every call site.
+internal use before #118, and stays that way: `add()` already holds the concrete
+`NodeId` at exactly the moment a future binding declaration would need to
+resolve it, entirely inside `add()`. What actually needed deciding was only the
+_return type_ of `build`/`build_with` — a bare `u64` cannot grow
+`.set()`/`.tick()` methods later without breaking every call site.
 
-**Choice.** Both `Scene::build` and the new `Scene::build_with(&self,
-arena: &mut Arena, solver: &mut dyn LayoutSolver)` return:
+**Choice.** Both `Scene::build` and the new
+`Scene::build_with(&self,
+arena: &mut Arena, solver: &mut dyn LayoutSolver)`
+return:
 
     pub struct Built { generation: u64 }
     impl Built { pub fn generation(self) -> u64 { self.generation } }
 
-`Built` is deliberately minimal — no `PropKey`, no signal table, no
-`LiveScene` name — because #118 does not implement bindings; #166
-extends `Built` (new fields or methods, or a wrapper) when it lands
-that machinery. `docs/design/dashlang.md`'s "Build/commit mapping"
-section carries the as-built description of both methods.
+`Built` is deliberately minimal — no `PropKey`, no signal table, no `LiveScene`
+name — because #118 does not implement bindings; #166 extends `Built` (new
+fields or methods, or a wrapper) when it lands that machinery.
+`docs/design/dashlang.md`'s "Build/commit mapping" section carries the as-built
+description of both methods.
 
 **Alternatives considered.**
 
-- **Keep `build` returning `u64`, let #166 reshape it later.** Rejected
-  per the re-scope: this is exactly the "reshape twice" cost SCOPE §23
-  identifies, and wrapping one integer in a struct now is cheap enough
-  that deferring it has no advantage.
-- **Resolve `PropKey`/bindings now, in #118.** Rejected: `PropKey`
-  lives in `dashcue`, and #166's own design is what decides whether
-  `dashlang` takes a `dashcue` dependency at all — pulling that forward
-  into #118 would implement half of #166 against a design that had not
-  been planned yet.
-- **Name the return type `LiveScene` now.** Rejected: nothing is "live"
-  without a signal table or a `tick`; naming it that now would promise
-  behavior #118 does not deliver. `Built` is honest about what exists
-  today and is #166's to rename or wrap.
+- **Keep `build` returning `u64`, let #166 reshape it later.** Rejected per the
+  re-scope: this is exactly the "reshape twice" cost SCOPE §23 identifies, and
+  wrapping one integer in a struct now is cheap enough that deferring it has no
+  advantage.
+- **Resolve `PropKey`/bindings now, in #118.** Rejected: `PropKey` lives in
+  `dashcue`, and #166's own design is what decides whether `dashlang` takes a
+  `dashcue` dependency at all — pulling that forward into #118 would implement
+  half of #166 against a design that had not been planned yet.
+- **Name the return type `LiveScene` now.** Rejected: nothing is "live" without
+  a signal table or a `tick`; naming it that now would promise behavior #118
+  does not deliver. `Built` is honest about what exists today and is #166's to
+  rename or wrap.
 
-Blast radius at the time: `crates/dashlang/tests/builder.rs` has five
-`.build()` call sites, but only one of them pattern-matches on the
-return value; that one and the crate-doc example in `lib.rs` were the
-only places changing `generation == N` to `generation.generation() ==
-N`. The other four discard the return value and needed no change.
+Blast radius at the time: `crates/dashlang/tests/builder.rs` has five `.build()`
+call sites, but only one of them pattern-matches on the return value; that one
+and the crate-doc example in `lib.rs` were the only places changing
+`generation == N` to `generation.generation() ==
+N`. The other four discard the
+return value and needed no change.
 
 ## What the charter permits (2026-08-01) — sugar yes, invented values no
 
-"The DSL adds vocabulary, never semantics: anything it expresses is
-expressible by hand against core with identical committed output" had never
-been tested against a convenience method, because until the v0 paint
-vocabulary the builder had none. Every setter mirrored one `Prop` variant
-exactly. Reading the rule as "one method per variant and nothing else" is
-what a literal reading gives, and it is wrong.
+"The DSL adds vocabulary, never semantics: anything it expresses is expressible
+by hand against core with identical committed output" had never been tested
+against a convenience method, because until the v0 paint vocabulary the builder
+had none. Every setter mirrored one `Prop` variant exactly. Reading the rule as
+"one method per variant and nothing else" is what a literal reading gives, and
+it is wrong.
 
 **The rule forbids two things: inventing a value the author never wrote, and
 adding validation core does not have.** It does not forbid a convenience
@@ -128,30 +126,30 @@ constructor.
 `corners(8.0)` writes a value the author did set, once instead of four times,
 and its committed output is identical to the hand-written form — which is the
 charter's own test, and the one `crates/dashlang/tests/builder.rs` applies.
-Every such method is therefore held to the same acceptance test as the mirror
-it expands to.
+Every such method is therefore held to the same acceptance test as the mirror it
+expands to.
 
 `gradient(kind, from, to)` fails the same test and is refused.
 `dashpaint::Gradient` carries three handle points and a stop list, so a
-two-colour constructor has to invent the handles and the stop offsets. Those
-are choices made on the author's behalf, and the committed output is not the
-one the author wrote — it is the one the sugar decided. A gradient goes
-through `fill_with(PaintKind::Gradient(..))` only.
+two-colour constructor has to invent the handles and the stop offsets. Those are
+choices made on the author's behalf, and the committed output is not the one the
+author wrote — it is the one the sugar decided. A gradient goes through
+`fill_with(PaintKind::Gradient(..))` only.
 
-The line is therefore not "is it a mirror" but **"does the author's own
-writing determine every committed value"**. Sugar that only rearranges what
-was written passes; sugar that fills a blank does not.
+The line is therefore not "is it a mirror" but **"does the author's own writing
+determine every committed value"**. Sugar that only rearranges what was written
+passes; sugar that fills a blank does not.
 
 Consequences beyond `dashlang`: this is what keeps `corpus/showcase`'s own
 `gradient`/`diagonal_gradient` helpers in the scene rather than promoting them
-into the builder. Two stops at 0.0 and 1.0 is a legitimate opinion for one
-scene to hold and an illegitimate one for the vocabulary to hold, and the
-distinction is which of the two a later reader would be surprised by.
+into the builder. Two stops at 0.0 and 1.0 is a legitimate opinion for one scene
+to hold and an illegitimate one for the vocabulary to hold, and the distinction
+is which of the two a later reader would be surprised by.
 
 The four sugar methods this reading admitted, and the vocabulary they sit in,
 are recorded in `docs/decisions/dashlang-paint-vocabulary.md`.
 
-Related: `docs/decisions/dashlang-flex-vocabulary.md` (the flex
-vocabulary #118 also added, decided separately from this return-type
-change); `docs/decisions/dashlang-paint-vocabulary.md` (the v0 paint
-vocabulary, which applies the charter reading above).
+Related: `docs/decisions/dashlang-flex-vocabulary.md` (the flex vocabulary #118
+also added, decided separately from this return-type change);
+`docs/decisions/dashlang-paint-vocabulary.md` (the v0 paint vocabulary, which
+applies the charter reading above).

@@ -52,9 +52,8 @@ check; `open` was left holding the embedded golden, a `&'static [u8]` with no
 pages to fault. D1 is what reversed that: `open` returns ranges now, which was
 the only reason the host had moved off it, so the native host reads through
 `open` again and `prefix` is the browser's reader. The as-built section records
-it. So the function this record was
-written about is, on the only path where a mapping exists, no longer the
-function doing the damage.
+it. So the function this record was written about is, on the only path where a
+mapping exists, no longer the function doing the damage.
 
 Both have to move, and they move to the same place.
 
@@ -88,16 +87,16 @@ payload occupies. No blob payload is read.
 
 The return type is the guarantee. A caller cannot hand a range to a painter, so
 "unverified bytes reached a painter" stops being a rule someone has to remember
-and becomes a thing that does not compile. That is why this was preferred over
-a second entry point differing by a flag: the prefix record already refused
-"one function answering both questions", and a flag would have left the unsafe
-answer the same type as the safe one.
+and becomes a thing that does not compile. That is why this was preferred over a
+second entry point differing by a flag: the prefix record already refused "one
+function answering both questions", and a flag would have left the unsafe answer
+the same type as the safe one.
 
-**D2 — the eager reader stays, renamed for what it does.**
-`open_verified(file)` is today's `open`, unchanged: every payload hashed, slices
-returned. It is the right call for a tool that is checking a file rather than
-drawing it — `dashc`'s CLI is exactly that — and for a test that wants the whole
-file proven before it asserts anything.
+**D2 — the eager reader stays, renamed for what it does.** `open_verified(file)`
+is today's `open`, unchanged: every payload hashed, slices returned. It is the
+right call for a tool that is checking a file rather than drawing it — `dashc`'s
+CLI is exactly that — and for a test that wants the whole file proven before it
+asserts anything.
 
 It is not a hole. It verifies before it returns, so its slices are as
 trustworthy as they are today; what it is not is proportional, and its name now
@@ -108,9 +107,9 @@ it. A twenty-seventh file, `crates/dashscene-core/src/load.rs`, names
 example has to change too — it states the read contract, and after this there
 are two of them.
 
-**D3 — a `BlobResidency` owns touch + hash + mark ready, one blob at a time.** It
-holds the region and the hashes the section table declares, and its only way to
-produce a readable payload is `touch(range)`, which hashes the bytes, records
+**D3 — a `BlobResidency` owns touch + hash + mark ready, one blob at a time.**
+It holds the region and the hashes the section table declares, and its only way
+to produce a readable payload is `touch(range)`, which hashes the bytes, records
 the range as ready, and returns them. A second touch of a ready range returns
 immediately and does not hash again — readiness is per blob, which is what the
 format's own packing rule is stated over: "two small blobs sharing a page is
@@ -127,13 +126,13 @@ asset indices reachable from the root's subtree through its nodes' paint
 entries. Everything else in the document stays cold, and the criterion's
 equality is the measurement of that.
 
-The set is computed from the document, which is hot and already read. No
-payload is touched to decide which payloads to touch.
+The set is computed from the document, which is hot and already read. No payload
+is touched to decide which payloads to touch.
 
-**D5 — `madvise` is dropped from this slice, and the reason is that nothing
-here can see it.** The owner ruled on it (2026-08-07) after the shape was
-questioned. Story #597's body lists it and epic #594's scope lists it; this is
-where that is given up, so it is a recorded change rather than a silent one.
+**D5 — `madvise` is dropped from this slice, and the reason is that nothing here
+can see it.** The owner ruled on it (2026-08-07) after the shape was questioned.
+Story #597's body lists it and epic #594's scope lists it; this is where that is
+given up, so it is a recorded change rather than a silent one.
 
 Three things were wrong with building it now, and the third settles it.
 
@@ -160,8 +159,8 @@ Nothing is lost by waiting. The format's investment stands and is untouched:
 with a single `madvise` range", and that padding is paid whether or not anyone
 calls it. What is missing is a cold-cache measurement, which is a hardware and
 harness question rather than a loading-path one — the same reason two v1 epics
-already wait on target hardware for absolute numbers (#476, #462). Filed
-against v1.
+already wait on target hardware for absolute numbers (#476, #462). Filed against
+v1.
 
 When it is built, two properties this record already fixed still apply: the
 hints go in as a batch before the touches, not one before each, and a failing
@@ -172,23 +171,23 @@ that hashes successfully is resident whether or not the hint was taken.
 placeholder activation stays in v1, that "prefetching the shown root's assets
 before first paint makes cold-start track the shown root, which is the whole
 criterion" — a statement about what R5 needs rather than one of the four scope
-bullets, and the load-bearing one here. The demo builds its scene
-before the frame loop starts, so the faults are already off the frame thread by
+bullets, and the load-bearing one here. The demo builds its scene before the
+frame loop starts, so the faults are already off the frame thread by
 construction.
 
 `BlobResidency` is `Send + Sync` regardless, because the arena holds
-`Arc<ImageTable>` across threads already
-(`assets-borrow-from-the-mapping.md` D4) and because a thread is the next step
-rather than a different design. **What is deliberately not built here is
-streaming**: drawing a frame in which a payload is not yet ready needs the
-placeholder field that has no producer, and that stays in v1 for the reason
-`asset-model-content-addressed-blobs.md` records.
+`Arc<ImageTable>` across threads already (`assets-borrow-from-the-mapping.md`
+D4) and because a thread is the next step rather than a different design. **What
+is deliberately not built here is streaming**: drawing a frame in which a
+payload is not yet ready needs the placeholder field that has no producer, and
+that stays in v1 for the reason `asset-model-content-addressed-blobs.md`
+records.
 
-**D7 — `Plan::bind` gives up its hashing to the same `BlobResidency`.** It is the
-prefix route's eager verification and, since story #596, the one on the mapped
-path. `bind`'s job becomes what its name says — binding fetched ranges to entry
-order — and the hash moves to the touch, so there is one place a payload is
-proven rather than two that could disagree.
+**D7 — `Plan::bind` gives up its hashing to the same `BlobResidency`.** It is
+the prefix route's eager verification and, since story #596, the one on the
+mapped path. `bind`'s job becomes what its name says — binding fetched ranges to
+entry order — and the hash moves to the touch, so there is one place a payload
+is proven rather than two that could disagree.
 
 The browser host feels this as a shape change rather than a loss. `demo-web`
 fetches a range and calls `bind`; afterwards it fetches a range and touches it,
@@ -197,10 +196,10 @@ which is the same check at the same moment, minus the rule
 every host to remember.
 
 **D8 — the counter records at the touch.** `LoadCost::record_hashed` moves out
-of `open_with_cost` and out of `bind`, into `BlobResidency::touch`, so the number
-story #598 asserts on is what was actually made resident rather than what was
-resolved. A payload resolved and never touched costs nothing and is counted as
-nothing, which is the claim R5 makes.
+of `open_with_cost` and out of `bind`, into `BlobResidency::touch`, so the
+number story #598 asserts on is what was actually made resident rather than what
+was resolved. A payload resolved and never touched costs nothing and is counted
+as nothing, which is the claim R5 makes.
 
 **D9 — story #598's benchmark has to move onto the mapped path.** It measures
 `open_with_cost` plus `load_document_bound_with_cost` today, which is the
@@ -228,9 +227,10 @@ than of a path only the benchmark takes.
 - **The web path gains the same shape for free.** `demo-web` already fetches a
   payload's range and already has to check it against the table
   (`container-parse-reads-a-prefix-through-a-host-reader.md`: "checking a
-  fetched payload against the table is the host's own step"). A `BlobResidency` over
-  fetched bytes is the same touch + hash + mark ready with a different source,
-  and it removes the one rule that record leaves to every host to remember.
+  fetched payload against the table is the host's own step"). A `BlobResidency`
+  over fetched bytes is the same touch + hash + mark ready with a different
+  source, and it removes the one rule that record leaves to every host to
+  remember.
 - **54 call sites move to `open_verified`.** Mechanical, and each one is a
   question worth asking once: a test that wants the whole file proven keeps the
   eager reader, and a test about _loading_ should be moved to the lazy one.
@@ -271,9 +271,9 @@ ended before the assets were resident would measure zero and prove nothing.
 
 The shape shipped: `open` reads no payload, a `BlobResidency` proves one, the
 prefetch is the shown root's assets, `Plan::bind` keeps only its count check,
-and the counter records at the touch. The criterion reached **1.00x** once
-story #598's re-run measured the mapped path — 197 387 B out of a one-frame
-document and out of a sixty-five-frame one, on macos aarch64.
+and the counter records at the touch. The criterion reached **1.00x** once story
+#598's re-run measured the mapped path — 197 387 B out of a one-frame document
+and out of a sixty-five-frame one, on macos aarch64.
 
 Three clauses did not survive contact with the code, and each is recorded here
 rather than quietly diverged from.
@@ -284,17 +284,17 @@ D1 specified `Result<(Document<'_>, Vec<Range<u64>>), OpenError>`. It returns
 `Vec<Wanted>` — the `{section, range, hash}` triple `prefix::Plan::wanted`
 already produced, promoted to the crate root and now returned by both readers.
 
-A bare range cannot carry the two things its consumers need. `BlobResidency` has to
-know what a range must **hash to**, and a bare range does not say; deriving it
-would mean re-parsing the container the reader just parsed. And the guard in `demo` from issue
-(#640) — which refuses a file binding a derived payload, because this host has
-no profile to name a rung with — compares the resident hash against the entry's,
-and had nothing to compare.
+A bare range cannot carry the two things its consumers need. `BlobResidency` has
+to know what a range must **hash to**, and a bare range does not say; deriving
+it would mean re-parsing the container the reader just parsed. And the guard in
+`demo` from issue (#640) — which refuses a file binding a derived payload,
+because this host has no profile to name a rung with — compares the resident
+hash against the entry's, and had nothing to compare.
 
-D1's guarantee is unchanged and slightly stronger: a `Wanted` is not bytes, so
-a caller still cannot hand one to a painter. What changed is that the two
-readers now answer in **one type**, which is what D7 wanted for the proving
-step and did not ask for in the reading step.
+D1's guarantee is unchanged and slightly stronger: a `Wanted` is not bytes, so a
+caller still cannot hand one to a painter. What changed is that the two readers
+now answer in **one type**, which is what D7 wanted for the proving step and did
+not ask for in the reading step.
 
 ### D3 takes the bytes rather than holding the region
 
@@ -305,10 +305,10 @@ neither: `touch(want, bytes)` is handed the bytes the caller read.
 D7 is why. The browser host has no region to hold — a payload there is its own
 HTTP range response, in its own buffer — and D7 says that host "fetches a range
 and touches it". A region-holding residency would have needed a second entry
-point for the host that has no region, and two entry points for one check is
-the shape D7 exists to remove. The proof is the hash either way: bytes that do
-not hash to what the section table records are refused whatever slice they came
-out of.
+point for the host that has no region, and two entry points for one check is the
+shape D7 exists to remove. The proof is the hash either way: bytes that do not
+hash to what the section table records are refused whatever slice they came out
+of.
 
 ### D3's second touch hashes again, and the fast path was a hole
 
@@ -321,9 +321,9 @@ payload really do touch one blob twice. In the browser host those are two
 separate range responses, which need not carry the same bytes.
 
 Found by the review, not by a test. Every touch hashes now. It costs a second
-BLAKE3 pass over a payload some document names twice, and no second page fault
-— the caller has already read the bytes by the time it calls. Readiness stays
-per blob, which is the part of D3 the format's packing rule actually rests on.
+BLAKE3 pass over a payload some document names twice, and no second page fault —
+the caller has already read the bytes by the time it calls. Readiness stays per
+blob, which is the part of D3 the format's packing rule actually rests on.
 
 ### The type is `BlobResidency`, not `Residency`
 
@@ -337,18 +337,18 @@ code.
 
 ### What the counter still cannot see
 
-`load_document_mapped` takes no `LoadCost`, because it reads no payload byte.
-So a regression that made the **replay** copy a payload would not move the
-number the criterion asserts on. That property is held by an address rather
-than a count, in `crates/dashscene-core/tests/mapped_load.rs`: the bytes a
-painter resolves out of the arena must be pointers into the mapping, at the
-offset the file declares. A copy has equal bytes, so only the address can tell.
-Two instruments, two claims, and neither covers the other.
+`load_document_mapped` takes no `LoadCost`, because it reads no payload byte. So
+a regression that made the **replay** copy a payload would not move the number
+the criterion asserts on. That property is held by an address rather than a
+count, in `crates/dashscene-core/tests/mapped_load.rs`: the bytes a painter
+resolves out of the arena must be pointers into the mapping, at the offset the
+file declares. A copy has equal bytes, so only the address can tell. Two
+instruments, two claims, and neither covers the other.
 
 ### One thing the record got right that was worth the argument
 
 D2 kept the eager reader as `open_verified` rather than putting a flag on
-`open`. Fifty-four call sites moved, nearly all of them tests, and the rename
-is most of the story's diff — but the type system now separates the verified
-answer from the unverified one, and `dashc`'s CLI, which checks files rather
-than drawing them, reads as what it is.
+`open`. Fifty-four call sites moved, nearly all of them tests, and the rename is
+most of the story's diff — but the type system now separates the verified answer
+from the unverified one, and `dashc`'s CLI, which checks files rather than
+drawing them, reads as what it is.

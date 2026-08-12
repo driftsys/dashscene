@@ -17,11 +17,12 @@ expectation, on a runner with no GPU.
 
 ## Decision
 
-**D1 — one file, included textually.** `crates/dashscene-gpu/src/shaders/sdf.wgsl`
-holds the math and no entry point. `dashscene_gpu::SDF_WGSL` exposes it as a
-`&str`; the render pipelines (story #580) and the conformance suite concatenate
-it with their own entry points. No `naga_oil`, no build script — WGSL's
-inclusion mechanism is textual and the seam has one consumer today.
+**D1 — one file, included textually.**
+`crates/dashscene-gpu/src/shaders/sdf.wgsl` holds the math and no entry point.
+`dashscene_gpu::SDF_WGSL` exposes it as a `&str`; the render pipelines (story
+#580) and the conformance suite concatenate it with their own entry points. No
+`naga_oil`, no build script — WGSL's inclusion mechanism is textual and the seam
+has one consumer today.
 
 **D2 — the library samples nothing and reads no derivative.** Every function
 takes its arguments and returns a number. In particular the MSDF resolve takes
@@ -40,15 +41,15 @@ double precision, the blurred box against a 512-step quadrature.
 integral is exact; only the y integral is approximated. Twelve is the first
 count that holds the budget below.
 
-This is Wallace's construction with three times his samples, not Levien's
-closed form. Story #579 asked for the closed form — "with no sampling loop" —
-and named Wallace's four-sample integral as the fallback. What is here keeps
-Levien's fitted error function and loops twelve times, so it is the fallback,
-widened until it holds a stated budget. The story's "validate against a real
-multi-pass blur" was also read as "validate against a fine quadrature of the
-same integral", which is a stronger reference than a multi-pass blur and not
-the same thing. Both substitutions are deliberate and neither was what the
-story specified.
+This is Wallace's construction with three times his samples, not Levien's closed
+form. Story #579 asked for the closed form — "with no sampling loop" — and named
+Wallace's four-sample integral as the fallback. What is here keeps Levien's
+fitted error function and loops twelve times, so it is the fallback, widened
+until it holds a stated budget. The story's "validate against a real multi-pass
+blur" was also read as "validate against a fine quadrature of the same
+integral", which is a stronger reference than a multi-pass blur and not the same
+thing. Both substitutions are deliberate and neither was what the story
+specified.
 
 **D5 — the budget is one code point of 255.** A shadow within one code point of
 the truth cannot be told from it in an eight-bit output, which is what the
@@ -75,8 +76,8 @@ on an axis. The shader was right.
 
 **D4, and what was measured.** Story #579 says to validate the closed form
 before trusting it, because its constants are empirically fitted. Measured
-against the reference quadrature, over 884 probes — four cases sharing one
-60x40 half-extent and differing in their radii and sigma:
+against the reference quadrature, over 884 probes — four cases sharing one 60x40
+half-extent and differing in their radii and sigma:
 
     samples   4      6      8      12     16
     worst     5.09   2.50   1.57   0.83   0.53   code points of 255
@@ -88,10 +89,9 @@ visible. The error roughly halves as the count doubles. Twelve is the first that
 fits inside D5's budget. The worst probe throughout is a corner whose radius is
 most of the box's half-height, where the cross-section varies fastest.
 
-The fitted error function was measured separately: worst absolute error
-2.35e-4 over x in [-4, 4], against its own definition integrated by Simpson's
-rule. That is well inside the 1e-3 it is trusted within, and two orders below a
-code point.
+The fitted error function was measured separately: worst absolute error 2.35e-4
+over x in [-4, 4], against its own definition integrated by Simpson's rule. That
+is well inside the 1e-3 it is trusted within, and two orders below a code point.
 
 The reference's own step counts are set by what the comparison needs. At 4000
 y-steps and 2000 Simpson intervals the suite took 159 seconds, which no tier
@@ -154,9 +154,9 @@ Two things the original note got wrong, recorded because both cost time:
   Mesa installs its driver manifests into `/usr/share/vulkan/icd.d/`, which the
   loader already searches by default, so the variable could never have helped;
   and it _replaces_ that search rather than adding to it. When Mesa dropped the
-  architecture suffix from the filename and the runner image moved to the 25.2 in
-  noble-updates, the pinned path left the loader with no driver at all. The job
-  now sets no driver path and asserts a device with `vulkaninfo` instead.
+  architecture suffix from the filename and the runner image moved to the 25.2
+  in noble-updates, the pinned path left the loader with no driver at all. The
+  job now sets no driver path and asserts a device with `vulkaninfo` instead.
 
 The prediction that a missing device would make the suite "fail by name" was
 half right, and the half it missed is the useful part: the failure surfaces in
@@ -173,7 +173,7 @@ fault; the step that builds the environment has to fail for it.
 - Story #582's MSDF path uses `msdf_coverage` with the uniform range D2
   requires, and supplies that range from the atlas scaling.
 - Story #584 owns the shadow's cost and may revisit D4's sample count against a
-  frame budget. The table above is what that decision needs; the budget in D5
-  is what it must not cross.
+  frame budget. The table above is what that decision needs; the budget in D5 is
+  what it must not cross.
 - A second painter porting `sdf.wgsl` ports this suite with it, which is what
   makes R-T5's "single-sourced" claim checkable rather than asserted.

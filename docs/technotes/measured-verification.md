@@ -73,13 +73,14 @@ Four rules the corpus carries, each with its own reason:
   so a test can load one without `msdf-atlas-gen` at test time; the render
   oracle runs in the ordinary `test` job because fixture, export and compile are
   all local.
-- **Provenance recorded.** [`corpus/photo/README.md`](../../corpus/photo/README.md)
-  carries a licence audit table, and
+- **Provenance recorded.**
+  [`corpus/photo/README.md`](../../corpus/photo/README.md) carries a licence
+  audit table, and
   [`figma-corpus-self-authored-only.md`](../decisions/figma-corpus-self-authored-only.md)
   keeps third-party captures out.
 
-The corpus is also where a coverage gap lives: it is one of the four artifacts
-a surviving mutant can indict, and the one the worked example under "what a
+The corpus is also where a coverage gap lives: it is one of the four artifacts a
+surviving mutant can indict, and the one the worked example under "what a
 surviving mutant tells you" turned out to implicate.
 
 ### 2. The oracle triad
@@ -94,12 +95,12 @@ three classes over the same painter, and each covers a blind spot of the others.
 | metamorphic  | another run of this system with exactly one variable changed | the profile-preview oracle: RAW against HiFi and LoFi                     | absolute correctness — it proves a relation, not a truth                           |
 
 The metamorphic case needs no external reference at all, which is what makes it
-the cheapest of the three to add — and it is the one this project built last,
-at story #435. [`goldens.md`](../design/goldens.md) notes
-that both arms are "the same painter, the same solver, the same typesetter and
-the same canvas, so the only variable is which bytes the asset entries resolve
-to". That isolation makes it a purer measurement than any comparison against an
-export, which must absorb rasteriser, resampling and gamma disagreement as well.
+the cheapest of the three to add — and it is the one this project built last, at
+story #435. [`goldens.md`](../design/goldens.md) notes that both arms are "the
+same painter, the same solver, the same typesetter and the same canvas, so the
+only variable is which bytes the asset entries resolve to". That isolation makes
+it a purer measurement than any comparison against an export, which must absorb
+rasteriser, resampling and gamma disagreement as well.
 
 Two rules govern the differential class:
 
@@ -120,8 +121,8 @@ bit-exactly, and the v0.13 negative-margin frame does the same.
 The same instinct now governs measurements that have nothing to do with pixels.
 [`startup-scaling-is-measured-by-a-counter.md`](../decisions/startup-scaling-is-measured-by-a-counter.md)
 chooses a byte count over a stopwatch because it is "exact, identical on every
-machine, and either right or wrong with no tolerance to argue about", and its
-D4 makes the assertion an **equality** rather than a ratio under a threshold.
+machine, and either right or wrong with no tolerance to argue about", and its D4
+makes the assertion an **equality** rather than a ratio under a threshold.
 
 Reach for a tolerance only when the output is genuinely approximate, and then
 calibrate it.
@@ -141,12 +142,12 @@ replaced seven budgets with one constant, `goldens::CROSS_ARCH_BUDGET_PX` = 32:
 
 - The floor came from six CI runners and showed **zero variance** — every golden
   returned an identical count on all six, between 0 and 4 pixels.
-- The floor **does not scale with the scene**: the densest scene measured 0 and a
-  sparse Arabic one measured 4. What a budget absorbs is machine jitter, not the
-  picture, which is why a per-scene budget models something that is not
+- The floor **does not scale with the scene**: the densest scene measured 0 and
+  a sparse Arabic one measured 4. What a budget absorbs is machine jitter, not
+  the picture, which is why a per-scene budget models something that is not
   per-scene.
-- The ceiling came from each golden's own sensitivity guard, between 484 and
-  3 193 pixels.
+- The ceiling came from each golden's own sensitivity guard, between 484 and 3
+  193 pixels.
 
 The seven numbers replaced were not seven calibrations; they were seven
 multipliers of the same anchor. The full table is in
@@ -163,11 +164,11 @@ measurement of the previous section, kept rather than discarded.
 
 It takes three forms here:
 
-- **A twin scene beside a golden.** The shadow goldens render the same scene with
-  the shadow removed and assert the difference far exceeds the budget — 1 159
-  pixels for the drop shadow and 748 for the inner. `v013-mask-effect-bleed`
-  builds the rejected reading of the G-7 mask-bounds ruling and measures it at
-  1 280 pixels of 18 432.
+- **A twin scene beside a golden.** The shadow goldens render the same scene
+  with the shadow removed and assert the difference far exceeds the budget — 1
+  159 pixels for the drop shadow and 748 for the inner. `v013-mask-effect-bleed`
+  builds the rejected reading of the G-7 mask-bounds ruling and measures it at 1
+  280 pixels of 18 432.
 - **A row in a manifest.** Each row of
   [`goldens/oracle/profile-manifest.json`](../../goldens/oracle/profile-manifest.json)
   carries the measured defect that breaches its band, and
@@ -180,8 +181,8 @@ It takes three forms here:
   and fails the dimension check before any budget applies.
 
 Three properties make it a guard rather than an anecdote: it is **committed**,
-it is **re-executed** rather than measured once, and it asserts a **failure**.
-A measurement taken during review and written into a commit message is none of
+it is **re-executed** rather than measured once, and it asserts a **failure**. A
+measurement taken during review and written into a commit message is none of
 these, and decays into a claim.
 
 The discipline is now self-applying. When story #586 asked whether the lean
@@ -200,10 +201,10 @@ edge, a blurred shadow's falloff and an MSDF glyph edge disagree with a
 design-source export for different reasons, so one global budget would either
 reject a correct blur or accept a broken edge. Three bands are pinned and
 asserted distinct by `the_three_rule_bands_are_pinned_and_distinct`, and
-[`tolerance-band-coverage.md`](tolerance-band-coverage.md)
-states the assignment rule: "a frame is assigned the band whose _kind_ of
-residual it carries, not the one its magnitude happens to fit", because
-`v08-baseline` was predicted into one band and measured into another.
+[`tolerance-band-coverage.md`](tolerance-band-coverage.md) states the assignment
+rule: "a frame is assigned the band whose _kind_ of residual it carries, not the
+one its magnitude happens to fit", because `v08-baseline` was predicted into one
+band and measured into another.
 
 Two band families exist — the design-source bands and the profile bands — and
 `the_two_band_families_do_not_share_a_name_space` keeps them apart, because one
@@ -269,9 +270,9 @@ discipline already governs measurements that produce no image:
   "met, and measured", and still carries the numbers from when it did not. A
   guardrail that flipped silently to satisfied would leave no trace that it had
   ever been false.
-- **Test tiers** — [`test-tiers.md`](../decisions/test-tiers.md) requires the tier
-  actually run to be named in the PR body, and records that a green aggregate
-  `ci` job no longer means the suite ran.
+- **Test tiers** — [`test-tiers.md`](../decisions/test-tiers.md) requires the
+  tier actually run to be named in the PR body, and records that a green
+  aggregate `ci` job no longer means the suite ran.
 
 ## Prior art
 
@@ -310,8 +311,8 @@ It settles nothing. The decision records that bind are:
   — one band set across both painters, and the three defects injected to
   establish it.
 - [`startup-scaling-is-measured-by-a-counter.md`](../decisions/startup-scaling-is-measured-by-a-counter.md)
-  — a counter rather than a stopwatch, and equality rather than a threshold.
-  Two further records carry most of the detail, and neither of them binds either.
+  — a counter rather than a stopwatch, and equality rather than a threshold. Two
+  further records carry most of the detail, and neither of them binds either.
   [`engineering-guardrails.md`](engineering-guardrails.md) states `G-11` and
   `G-23`, which the whole oracle triad exists to satisfy — but it is a technote,
   and its own opening says it introduces no new binding rule; what binds is the

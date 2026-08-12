@@ -15,9 +15,9 @@
 
 ## Context
 
-`docs/decisions/font-resolution-order.md` makes the family name load-bearing
-and resolves it against the renderer's pinned cascade. That cascade currently
-holds one family, Noto Sans, in three weights, plus Noto Sans Arabic.
+`docs/decisions/font-resolution-order.md` makes the family name load-bearing and
+resolves it against the renderer's pinned cascade. That cascade currently holds
+one family, Noto Sans, in three weights, plus Noto Sans Arabic.
 
 Inter is the family real Figma files actually use. It is Figma's default UI
 font, and the Landify hero — the epic's live fidelity target — is authored
@@ -30,8 +30,8 @@ typeface, with different letterforms, widths and metrics. This was expected to
 be the single largest remaining contributor to the hero's live pixel difference,
 and it is why #368 raised the hero's heading ink coverage from 66.3 % to 99.9 %
 of Figma's while moving the whole-page difference only from 6.2514 % to 6.1721 %
-at 5 % fuzz (5.1583 % to 5.0759 % at 10 %). Those are live measurements against a
-third-party file, so they are not reproducible from this repository — see #368
+at 5 % fuzz (5.1583 % to 5.0759 % at 10 %). Those are live measurements against
+a third-party file, so they are not reproducible from this repository — see #368
 for the method.
 
 **The expectation held, and by a wide margin** (measured 2026-07-26 on `main`
@@ -57,8 +57,8 @@ children.
 The figure has since moved again, for a reason unrelated to fonts: debt #395
 found that the arena's paint key omitted `extra_fills`, so the hero lost a
 stacked fill layer on load. Fixing it took the hero to **3.5691 %** at 5 % fuzz
-(2.6015 % at 10 %) on 2026-07-26. Recorded here so a reader does not take
-4.1618 % as current, nor credit the difference to Inter.
+(2.6015 % at 10 %) on 2026-07-26. Recorded here so a reader does not take 4.1618
+% as current, nor credit the difference to Inter.
 
 It has since moved again, and again for reasons unrelated to fonts: the blur
 schema (#394) let the hero's frosted panel lower at all, worth 1.6222 points,
@@ -66,9 +66,9 @@ and the painter that blurs it (#393) a further 0.0640, taking the hero to
 **1.8829 %** at 5 % fuzz on the same day. An earlier version of this sentence
 credited the whole step to #393; the decomposition was measured at the v0.11
 close and is in the technote below.
-`docs/technotes/document-sections-and-assets.md` carries the whole series
-and is the current figure's home; this record's own numbers are the ones Inter
-earned, and stop there.
+`docs/technotes/document-sections-and-assets.md` carries the whole series and is
+the current figure's home; this record's own numbers are the ones Inter earned,
+and stop there.
 
 Same limits as the figures above: a live measurement against a third-party
 Community file, recorded in prose because neither the file nor its render may be
@@ -128,9 +128,9 @@ lifted before this landed.** `goldens/tooling/tests/render_oracle.rs` carries
 its own private font paths and typesetter, deliberately, so adding Inter to the
 production walk does not reach it. That separation is what would have kept
 `v08-grid-spans` byte-identical. It also meant the frozen exit gate contained a
-disclosed Inter-to-Noto substitution, recorded in `goldens/oracle/manifest.json`,
-which would change the moment Inter reached its cascade — a consequence this
-record deferred to whoever closed #49.
+disclosed Inter-to-Noto substitution, recorded in
+`goldens/oracle/manifest.json`, which would change the moment Inter reached its
+cascade — a consequence this record deferred to whoever closed #49.
 
 Issue #49 closed on 2026-07-25, so story #385 took that consequence rather than
 deferring it again. The E7 cascade gained Inter, and `v08-grid-spans` went from
@@ -153,11 +153,11 @@ family-name matching, and `WeightedFont` carries no family name
 family comes first, regardless of what the document asked for — which would move
 `v05-text-latin`, `import-text-axes`, `text-bold` and `v08-baseline`, all
 authored in Noto Sans. Step 2 of `docs/decisions/font-resolution-order.md`,
-family-name matching, must therefore land in the same change as the faces. Adding
-the atlases alone would silently repoint existing frames.
+family-name matching, must therefore land in the same change as the faces.
+Adding the atlases alone would silently repoint existing frames.
 
-**`liga-text` no longer moves — but only because #382 landed first, and that
-was the reason to require it.** Its Inter node is `1:5 _manual-checklist`, the
+**`liga-text` no longer moves — but only because #382 landed first, and that was
+the reason to require it.** Its Inter node is `1:5 _manual-checklist`, the
 fixture-author plugin's authoring instruction, and it sits on the canvas
 **beside** the measured frame at y=224 — outside the 0..200 region Figma
 exports. So the committed design source contains no Inter at all, and the
@@ -165,12 +165,12 @@ frame's own two text nodes are Noto Sans 400.
 
 The frame nevertheless moved, because `dashc` lowers every top-level canvas node
 as an independent root re-based to the origin, and the render walk stages text
-for every root, so the annotation was painted over the measured frame. #382 fixed
-that by narrowing the import oracle to the single node each design source
-exports, which cut the frame from 2.270 % (1907/84000) to **0.007 %**
-(6/84000) — 1901 of those differing pixels were annotation ink, far more than
-the roughly 376 first estimated from the top twenty rows alone. The ligature
-residual itself is six glyph-edge pixels.
+for every root, so the annotation was painted over the measured frame. #382
+fixed that by narrowing the import oracle to the single node each design source
+exports, which cut the frame from 2.270 % (1907/84000) to **0.007 %** (6/84000)
+— 1901 of those differing pixels were annotation ink, far more than the roughly
+376 first estimated from the top twenty rows alone. The ligature residual itself
+is six glyph-edge pixels.
 
 With the annotation out of the render, the frame carries no Inter, so adding
 Inter to the cascade leaves it unchanged. That is the outcome the sequencing

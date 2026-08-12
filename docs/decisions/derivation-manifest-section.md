@@ -45,8 +45,8 @@ alone — the bank holds canonical hashes and payloads, and hashing the payloads
 answers which bindings are derived. So the manifest is an _output_ of assembly,
 not a second input to it, and `assemble(ui_section, bank)` keeps its signature.
 There is also no separate "is this RAW" flag to get wrong: a bank built through
-`ColdBank::derived` over canonical payloads is the same bank as
-`ColdBank::raw`, and assembles to the same bytes.
+`ColdBank::derived` over canonical payloads is the same bank as `ColdBank::raw`,
+and assembles to the same bytes.
 
 **An `AssetEntry` still names a hash and never a section index.** Both sides of
 every manifest row are hashes too. Nothing in the document, and nothing in the
@@ -91,8 +91,8 @@ is deliberately profile-blind.
 
 **Use the 12 reserved bytes in `SectionEntry`.** A 64-bit truncation of a
 256-bit content address weakens the identity for no gain, and writing meaning
-into a reserved field is exactly what `ContainerError::ReservedNotZero` exists to
-refuse. A canonical hash is a property of a _binding_, not of a section: the
+into a reserved field is exactly what `ContainerError::ReservedNotZero` exists
+to refuse. A canonical hash is a property of a _binding_, not of a section: the
 same section could be the resident payload for two canonical identities.
 
 **Redefine `SectionEntry.hash` as the canonical hash.** It is what

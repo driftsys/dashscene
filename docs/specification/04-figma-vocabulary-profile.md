@@ -3,8 +3,8 @@
     status  as-built, gardened from the seed document 2026-07-14
     source  docs/archive/2026-07-14-design-1-seed.md §10.1
 
-This is a profile specification: it defines what the validator must accept,
-warn on, and reject. It is what makes P4 ("vocabulary is validated, never
+This is a profile specification: it defines what the validator must accept, warn
+on, and reject. It is what makes P4 ("vocabulary is validated, never
 discovered") checkable. The validator that implements this triage is
 `crates/dashscene-validator`; its three-gate architecture is recorded in
 [validator-three-gates.md](../decisions/validator-three-gates.md).
@@ -32,16 +32,16 @@ discovered") checkable. The validator that implements this triage is
                    variable-width strokes — each with a documented
                    workaround (bake it, slot it, design without it).
 
-Deferred items are a negotiation surface with design, not a
-compatibility debt: every LATER item has a designer-visible
-workaround today, and the validator says so at import time.
+Deferred items are a negotiation surface with design, not a compatibility debt:
+every LATER item has a designer-visible workaround today, and the validator says
+so at import time.
 
 ## Paint and text edge cases
 
-The entries below close gaps found while enumerating the Figma paint and
-text property space against R6: every property maps to supported, lowered,
-or diagnosed — there is no fourth bucket. Each names its tier and the
-disposition a designer sees at import time.
+The entries below close gaps found while enumerating the Figma paint and text
+property space against R6: every property maps to supported, lowered, or
+diagnosed — there is no fourth bucket. Each names its tier and the disposition a
+designer sees at import time.
 
 | Construct                            | Tier                  | Disposition and designer-visible workaround                                                                                                                                                                                                                                                                                     |
 | ------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

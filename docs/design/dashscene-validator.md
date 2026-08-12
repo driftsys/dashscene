@@ -1,18 +1,16 @@
 # dashscene-validator — the three gates, diagnostics, waivers, and the rule set
 
-As-built after stories #15 and #139 (v0.3) and #41 (v0.7 — full
-diagnostics and waivers). The rationale is in
-`docs/decisions/validator-three-gates.md` and
+As-built after stories #15 and #139 (v0.3) and #41 (v0.7 — full diagnostics and
+waivers). The rationale is in `docs/decisions/validator-three-gates.md` and
 `docs/decisions/waivers-and-diagnostic-completion.md`; this record is the
 component's shape and its rule table.
 
 ## Position
 
 The validator sits _beside_ the semantic model, not inside it. It reads the
-document (`dashbuf`) and boundary B (`dashpaint`), and **producers call
-it** — the arena does not. It has no `dashscene-core` dependency: core is
-published earlier, and `CommittedScene`'s accessors already hand out
-`dashpaint` types.
+document (`dashbuf`) and boundary B (`dashpaint`), and **producers call it** —
+the arena does not. It has no `dashscene-core` dependency: core is published
+earlier, and `CommittedScene`'s accessors already hand out `dashpaint` types.
 
     producer source vocabulary ──► triage ────────────┐
                                                       │
@@ -28,8 +26,8 @@ published earlier, and `CommittedScene`'s accessors already hand out
 | load   | `validate_document(&Document) -> Report`                                       | a `.dsb`                      | referential integrity, unknown enum values, geometry-free paint rules           |
 | paint  | `validate_scene(&[RectEntry], &PaintTable, &ImageTable, &ClipTable) -> Report` | boundary B                    | geometry budgets, runtime index resolution                                      |
 
-They are not interchangeable — each of the three failure classes is
-invisible to the other two gates. See the decision record.
+They are not interchangeable — each of the three failure classes is invisible to
+the other two gates. See the decision record.
 
 The load gate has a second entry point:
 
@@ -49,8 +47,8 @@ thing `dashbuf::open` deliberately does not read
 (`docs/decisions/verification-moves-from-open-to-touch.md`).
 
 The check needs an image header parser, which is why it did not exist before
-v0.12: this crate publishes before `dashc`, where the only parser lived.
-Story #437 moved the parser to `dashpaint`, which every writer and this crate reach
+v0.12: this crate publishes before `dashc`, where the only parser lived. Story
+#437 moved the parser to `dashpaint`, which every writer and this crate reach
 (`docs/decisions/image-header-parser-lives-in-dashpaint.md`). It header-parses
 and never decodes, so a payload truncated after its header passes this gate and
 fails in the painter — the only component that can find it, and the one the
@@ -68,20 +66,19 @@ target-hardware rules keep out of the trusted path.
     }
 
 The tuple's fourth element — the **workaround hint** — is
-`Diagnostic::workaround(&self) -> Option<&'static str>`, a rule-keyed
-derivation rather than a stored field, and `Display` appends it. The hint
-is a pure function of the rule id, and keeping it out of the struct leaves
-the `Diagnostic` shape — and the wasm-ABI mirror `dashc` owns of it
+`Diagnostic::workaround(&self) -> Option<&'static str>`, a rule-keyed derivation
+rather than a stored field, and `Display` appends it. The hint is a pure
+function of the rule id, and keeping it out of the struct leaves the
+`Diagnostic` shape — and the wasm-ABI mirror `dashc` owns of it
 (`docs/decisions/dashc-wasm-abi.md`) — unchanged. A hint exists where the
-designer can act on the finding: the import gate's out-of-profile
-constructs (§04's "bake it, slot it, design without it") and the MSDF size
-floor. The referential-integrity and geometry rules stand in front of
-producer bugs, so they answer `None`. See
-`docs/decisions/waivers-and-diagnostic-completion.md`.
+designer can act on the finding: the import gate's out-of-profile constructs
+(§04's "bake it, slot it, design without it") and the MSDF size floor. The
+referential-integrity and geometry rules stand in front of producer bugs, so
+they answer `None`. See `docs/decisions/waivers-and-diagnostic-completion.md`.
 
 `Report` collects them in document order: `has_errors()` answers "is the
-document blocked", `is_empty()` answers "does a normal build carry no
-findings", `has(rule)` / `find(rule)` are what tests and callers pin, and
+document blocked", `is_empty()` answers "does a normal build carry no findings",
+`has(rule)` / `find(rule)` are what tests and callers pin, and
 `strict(&[Waiver])` is the release-mode gate (see "Waivers" below).
 
 ### A producer assembles its own `Report`
@@ -108,72 +105,71 @@ it — a silent drop by construction. See
     Location::Signal(u32)        a signal declaration, by pool index (#167)
     Location::Binding(u32)       a binding row, by row index (#167)
 
-Every pooled surface — paint entry, image asset, variant set, text style —
-is shared by every node that references it, so each is reported **once, at
-its own index** — repeating one authoring mistake per referencing node would
-bury the rest of the report. Their indices are _pool_ indices, and `Location`
-is what stops them being mistaken for node indices: both are small integers,
-so a consumer that resolves a diagnostic to a layer (an editor jumping to it,
-or the waiver machinery keying on it) would otherwise land silently on an
-unrelated node. Each pooled surface therefore has its own variant — a pool
-index is never wrapped in a `Node`. `dashc`'s wasm-ABI mirror
-(`crates/dashc/src/abi/json.rs`) has a matching arm per variant, so a new
-pooled surface is an additive mirror change, not a wire break.
+Every pooled surface — paint entry, image asset, variant set, text style — is
+shared by every node that references it, so each is reported **once, at its own
+index** — repeating one authoring mistake per referencing node would bury the
+rest of the report. Their indices are _pool_ indices, and `Location` is what
+stops them being mistaken for node indices: both are small integers, so a
+consumer that resolves a diagnostic to a layer (an editor jumping to it, or the
+waiver machinery keying on it) would otherwise land silently on an unrelated
+node. Each pooled surface therefore has its own variant — a pool index is never
+wrapped in a `Node`. `dashc`'s wasm-ABI mirror (`crates/dashc/src/abi/json.rs`)
+has a matching arm per variant, so a new pooled surface is an additive mirror
+change, not a wire break.
 
-`NodePath` carries the document DFS index — which is the rect-table index
-too — and the name chain (`/screen/card/badge`) when the surface has names.
-Boundary B has none, so a scene node diagnostic renders as `#3`.
+`NodePath` carries the document DFS index — which is the rect-table index too —
+and the name chain (`/screen/card/badge`) when the surface has names. Boundary B
+has none, so a scene node diagnostic renders as `#3`.
 
 ## Profiles
 
-`Profile::Core` (lean/native painters) and `Profile::Full` (Unity-class).
-They diverge only at the import gate, on the constructs
-`docs/specification/04-figma-vocabulary-profile.md` annotates
-`(profile:full)`, which a `Core` target can never honor and so cannot degrade
-to anything. Backdrop blur was one until story #393 made it core vocabulary
-every painter honours
-(`docs/decisions/backdrop-blur-is-core-vocabulary.md`); the advanced blend
-mode is now the only one.
+`Profile::Core` (lean/native painters) and `Profile::Full` (Unity-class). They
+diverge only at the import gate, on the constructs
+`docs/specification/04-figma-vocabulary-profile.md` annotates `(profile:full)`,
+which a `Core` target can never honor and so cannot degrade to anything.
+Backdrop blur was one until story #393 made it core vocabulary every painter
+honours (`docs/decisions/backdrop-blur-is-core-vocabulary.md`); the advanced
+blend mode is now the only one.
 
-`validate_document` takes no profile: every construct the schema can
-express is in the NOW band, so there is nothing to select — including the
-v0.8 shadow vocabulary (story #45), which is NOW-band and profile-neutral (a
-drop or inner shadow is not `(profile:full)`). It would regain a profile
-only if a `(profile:full)` effect such as layer blur ever entered the schema.
-Backdrop blur entered it at story #393 without doing so, because it entered as
-NOW-band vocabulary rather than as a profile-gated one.
+`validate_document` takes no profile: every construct the schema can express is
+in the NOW band, so there is nothing to select — including the v0.8 shadow
+vocabulary (story #45), which is NOW-band and profile-neutral (a drop or inner
+shadow is not `(profile:full)`). It would regain a profile only if a
+`(profile:full)` effect such as layer blur ever entered the schema. Backdrop
+blur entered it at story #393 without doing so, because it entered as NOW-band
+vocabulary rather than as a profile-gated one.
 
 ## Waivers (strict mode)
 
-`docs/design/architecture.md`: an `Error` blocks the document; a `Warning`
-is a declared degrade a normal build lets through. A **release build runs
-strict** and refuses even a warning, unless a declared waiver records that
-the degrade is acceptable for one specific target.
+`docs/design/architecture.md`: an `Error` blocks the document; a `Warning` is a
+declared degrade a normal build lets through. A **release build runs strict**
+and refuses even a warning, unless a declared waiver records that the degrade is
+acceptable for one specific target.
 
     pub struct Waiver { pub rule: String, pub at: Location, pub reason: String }
 
     Report::strict(&[Waiver]) -> StrictReport
 
 `StrictReport::passes()` is the release gate: it passes only when no error
-remains and every warning is covered by a valid waiver. Three properties,
-each recorded in `docs/decisions/waivers-and-diagnostic-completion.md`:
+remains and every warning is covered by a valid waiver. Three properties, each
+recorded in `docs/decisions/waivers-and-diagnostic-completion.md`:
 
 - **Never a global mute, but target-complete.** A waiver matches by rule id
   **and** `Location`, so it suppresses that rule at one target — not a rule
-  everywhere. When a target carries several _identical_ findings (the same
-  rule at the same location, e.g. two advanced-blend-mode paints on one
-  node), one waiver covers them all — they carry no discriminating
-  information, so one-waiver-each would be empty ceremony.
-- **An error is never waivable.** A waiver matching an error leaves it
-  blocking and is itself diagnosed (`waiver.covers-an-error`); only a
-  warning is a degrade a waiver can accept.
-- **The waiver vocabulary is validated (P4).** A waiver naming a rule id
-  not in `rule::ALL` is `waiver.unknown-rule` (error); a waiver matching
-  nothing is `waiver.unused`, and a waiver duplicating another (covering
-  nothing an earlier one did not) is `waiver.redundant` — both warnings,
-  surfaced for hygiene, non-blocking. `StrictReport::applied()` lists the
-  waivers that actually suppressed a warning — the audit trail of exceptions
-  granted, one entry per waiver even when it covers several findings.
+  everywhere. When a target carries several _identical_ findings (the same rule
+  at the same location, e.g. two advanced-blend-mode paints on one node), one
+  waiver covers them all — they carry no discriminating information, so
+  one-waiver-each would be empty ceremony.
+- **An error is never waivable.** A waiver matching an error leaves it blocking
+  and is itself diagnosed (`waiver.covers-an-error`); only a warning is a
+  degrade a waiver can accept.
+- **The waiver vocabulary is validated (P4).** A waiver naming a rule id not in
+  `rule::ALL` is `waiver.unknown-rule` (error); a waiver matching nothing is
+  `waiver.unused`, and a waiver duplicating another (covering nothing an earlier
+  one did not) is `waiver.redundant` — both warnings, surfaced for hygiene,
+  non-blocking. `StrictReport::applied()` lists the waivers that actually
+  suppressed a warning — the audit trail of exceptions granted, one entry per
+  waiver even when it covers several findings.
 
 The strict gate exists here; wiring it into `dashc`/the importer with a
 waiver-file format is a later importer step, on this contract.
@@ -208,8 +204,8 @@ Load gate — document referential integrity and schema evolution:
 | `grid.anchor-out-of-range`               | an anchor past its parent's declared track list on that axis — or, with no declared list, past 32766, the largest 0-based anchor whose 1-based line index fits the solver's `i16` lines (the engine saturates the conversion; story #43)                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `grid.fraction-track-under-hug`          | a `Fraction` track on an axis the grid container hugs: a fraction divides free space, a hug axis has none, and the track — and everything anchored to it — would silently collapse to zero (story #43)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
-Paint vocabulary — run by **both** the load gate and the paint gate, since
-a scene can be built without ever passing through a document:
+Paint vocabulary — run by **both** the load gate and the paint gate, since a
+scene can be built without ever passing through a document:
 
 | rule                                 | stands in front of                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -238,9 +234,8 @@ authoring mistake N times and bury the rest of the report.
 
 ## Import-gate vocabulary
 
-`Construct` names `docs/specification/04-figma-vocabulary-profile.md`'s
-LATER and REJECT bands, and nothing else —
-the NOW band is simply the schema.
+`Construct` names `docs/specification/04-figma-vocabulary-profile.md`'s LATER
+and REJECT bands, and nothing else — the NOW band is simply the schema.
 
     LATER (warn)    LayerBlur, AdvancedBlendMode*, CornerSmoothing,
                     LuminanceMask, ClipOnRotated, KashidaJustification
@@ -255,11 +250,10 @@ parses Figma JSON). `dashc` owns that mapping from #16.
 
 ## What the painter may now assume
 
-Every `expect`/`assert` in `dashscene-skia` documented as "validated
-upstream (P4)" has a named rule standing in front of it. `MAX_GRADIENT_STOPS`
-moved from a private constant in the painter to `dashpaint` (boundary B) so
-the painter's assertion, its test, and the validator's rule read one number
-and cannot drift.
+Every `expect`/`assert` in `dashscene-skia` documented as "validated upstream
+(P4)" has a named rule standing in front of it. `MAX_GRADIENT_STOPS` moved from
+a private constant in the painter to `dashpaint` (boundary B) so the painter's
+assertion, its test, and the validator's rule read one number and cannot drift.
 
 Story #97 closed the last of them: `PaintEntry::clip` no longer exists, the
 painter's `unimplemented!` on it is gone, and the `ClipTable::resolve` panic

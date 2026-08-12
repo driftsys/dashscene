@@ -62,12 +62,12 @@ crate named `-web` is a semver-bound mistake whose only repair is a rename.
 **D3 — each crate publishes its own error type, and neither models the
 embedder's failures.** `WebError` has 18 variants and `DesktopError` has 9; five
 names are common to both — `Open`, `Gate`, `Payload`, `Derived`, `NoSuchRoot`
-(`NoRoot` until story #837 gave it the ordinal and the count) — and
-the rest are what each target can be wrong about. An embedder's own failures, a
-scene name it does not know or a query string it cannot parse, stay with the
-embedder. The split is deliberate rather than incidental — a published enum is a
-semver commitment, and a variant naming a scene registry the crate does not have
-would be one it could never remove.
+(`NoRoot` until story #837 gave it the ordinal and the count) — and the rest are
+what each target can be wrong about. An embedder's own failures, a scene name it
+does not know or a query string it cannot parse, stay with the embedder. The
+split is deliberate rather than incidental — a published enum is a semver
+commitment, and a variant naming a scene registry the crate does not have would
+be one it could never remove.
 
 **The two demonstrations take that split differently, and only one of them takes
 it by wrapping.** `demo-web` declares a `DemoError` that adds its own variants
@@ -77,10 +77,9 @@ directly from `shell::run`, and its own failures — an unknown scene name, a
 the loop starts, so they never need a variant. Both satisfy the rule; neither is
 the model for the other.
 
-**D4 — the desktop crate publishes the `Present` seam; the web crate has no
-such trait, and that asymmetry is intended.** `dashscene_desktop::present`
-carries the trait — four required methods, `name`, `resize`,
-`document_replaced` and
+**D4 — the desktop crate publishes the `Present` seam; the web crate has no such
+trait, and that asymmetry is intended.** `dashscene_desktop::present` carries
+the trait — four required methods, `name`, `resize`, `document_replaced` and
 `present(&mut self, scene: &CommittedScene) -> Result<Drawn, PresentError>` —
 its error type, and the lean painter's implementation. `dashscene-skia` is
 deliberately absent from the crate's dependencies: it is the painter the goldens
@@ -89,26 +88,26 @@ the published trait for its own Skia presenter instead. `dashscene_web::Host`
 owns a `dashscene_gpu::GpuPainter` directly, because the browser has one painter
 to choose from.
 
-**D5 — the shared policy lives in `dashlang`, not in either integration
-crate.** Story #810, ruled with issue #803 and landed before either crate was
-extracted. `dashlang::MAX_FRAME_DELTA` is the frame-delta clamp and
+**D5 — the shared policy lives in `dashlang`, not in either integration crate.**
+Story #810, ruled with issue #803 and landed before either crate was extracted.
+`dashlang::MAX_FRAME_DELTA` is the frame-delta clamp and
 `LiveScene::advanced`/`mark_shown` are the generation gate. Before the move the
-clamp was written twice in two different units — `Duration::from_millis(100)`
-in the native host and `f64 = 0.1` in the browser one — so holding the two in
-step already needed a unit conversion that nothing performed. Between two
+clamp was written twice in two different units — `Duration::from_millis(100)` in
+the native host and `f64 = 0.1` in the browser one — so holding the two in step
+already needed a unit conversion that nothing performed. Between two
 `publish = false` demonstrations that is a minor flaw; between two published
 integration crates it is a semver-bound agreement that nothing checks.
 `demo/tests/host_policy_invariant.rs` is what keeps it there.
 
 **D6 — what an embedder still writes is named, not left over.** Each crate's
-module document carries a "What an embedder still writes" list, which
-epic #793's definition of done asks for in those words. **The two lists are not
-one list plus extras**, because the two hosts do not leave the same things over:
+module document carries a "What an embedder still writes" list, which epic
+#793's definition of done asks for in those words. **The two lists are not one
+list plus extras**, because the two hosts do not leave the same things over:
 
 - **Web, five items** — the scene and where it comes from, what happens each
-  frame (`FrameHook`), the page itself, when the loop ends, and error
-  reporting. The fourth arrived with story #834, which is what made a started
-  loop stoppable.
+  frame (`FrameHook`), the page itself, when the loop ends, and error reporting.
+  The fourth arrived with story #834, which is what made a started loop
+  stoppable.
 - **Desktop, six** — what to draw (`App::build`), input, anything driven from
   off the loop's thread, where the diagnostics go (`App::note`), which painter,
   and error reporting.
@@ -240,12 +239,13 @@ argument, including the rebuttal that had to be answered first, is in
 
 **A third crate for the shared half.** Not taken, and the reason is a
 measurement rather than a preference: the shared half turned out to be one
-constant and two methods. They went onto `LiveScene` because `tick(dt, arena)
--> u64` already takes the delta that must be clamped and already returns the
-generation the gate reads, and because both hosts already depended on
-`dashlang`. A crate holding three items, that every embedder would have to
-depend on in addition to the one it wanted, would be a registry entry rather
-than a component.
+constant and two methods. They went onto `LiveScene` because
+`tick(dt, arena)
+-> u64` already takes the delta that must be clamped and
+already returns the generation the gate reads, and because both hosts already
+depended on `dashlang`. A crate holding three items, that every embedder would
+have to depend on in addition to the one it wanted, would be a registry entry
+rather than a component.
 
 **Publishing the Skia presenter from `dashscene-desktop`.** Rejected under D4 —
 it would make every `winit` embedder that only wants a window resolve a vendored

@@ -93,8 +93,8 @@ test-all:
     cargo nextest run --workspace -P all
     cargo test --workspace --doc
 
-# Rust + markdown + Deno lint gate: clippy, cargo fmt check, dprint check,
-# markdownlint, deno fmt check.
+# Rust + markdown + Deno lint gate: clippy, cargo fmt check, prim, deno fmt
+# check.
 lint: deno-fmt-check
     cargo clippy --workspace --all-targets -- -D warnings
     # The wasm32 half, which the line above never sees. Its own recipe rather
@@ -114,8 +114,28 @@ lint: deno-fmt-check
     #
     # `--no-deps` so it documents this workspace and not its dependency tree.
     RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --quiet
-    dprint check
-    markdownlint '**/*.md' --ignore target --ignore node_modules
+    # Markdown, JSON, YAML and TOML. Its own recipe for the same reason
+    # `wasm-lint` is one: CI's `prim` job runs exactly it, and a second copy in
+    # YAML is the drift this repository keeps hitting.
+    just prim
+
+# The Markdown/JSON/YAML/TOML gate, in the two verbs it takes.
+#
+# `fmt --check` and `lint` are not redundant. `prim lint` reports format drift
+# for JSON, YAML and TOML but NOT for Markdown: it exits 0 on a Markdown file
+# that `prim fmt --check` rejects, so dropping the first verb would leave every
+# Markdown file in the tree ungated for format. `prim lint` adds the content
+# rules — a reference-style link with no definition, an empty link, a bare URL,
+# a heading anchor collision — which no formatter can see. It does NOT check
+# that a relative link resolves:
+# prim passes rumdl no source path, so the rules that would need one are inert.
+# markdownlint checked no such thing either, so nothing is lost.
+#
+# Both read only this repository, so prim is PINNED, in `bootstrap` and in the
+# `prim` CI job. See the `audit` job for the opposite case.
+prim:
+    prim fmt --check .
+    prim lint .
 
 # Assert every Figma fixture is explicitly link-viewable.
 #
@@ -542,18 +562,20 @@ verify:
     # about to be published, including one added and then removed within the
     # branch, where the HEAD scan sees nothing.
     #
-    # `audit` and `markdownlint` are kept even though nothing here can move
+    # `audit` and the markdown gate are kept even though nothing here can move
     # them, because until the CI jobs added alongside this recipe they ran in no
     # other place — and `cargo audit` in particular fails on a newly published
     # advisory against a dependency that did not change, so no diff predicts it.
+    # The markdown half is no longer the expensive one: markdownlint was 7.3 s
+    # of this recipe and `just prim` is 0.9 s, both measured on this tree.
     just lint
     just audit
     just secrets "--all --not --remotes"
 
-# Reformat everything in place (Rust + markdown).
+# Reformat everything in place (Rust, then markdown/JSON/YAML/TOML).
 fmt:
     cargo fmt --all
-    dprint fmt
+    prim fmt .
 
 # Open the rustdoc build in a browser.
 doc:
@@ -652,7 +674,7 @@ publish:
     cargo publish -p dashscene-android
     cargo publish -p dashscene
 
-# Install local toolchain bits (git hooks, git-std, dprint, markdownlint-cli).
+# Install local toolchain bits (git hooks, git-std, cargo-nextest, jq, prim).
 install:
     ./bootstrap
 

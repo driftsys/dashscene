@@ -238,41 +238,71 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
-  dprint:
-    name: dprint
+  # The Markdown/JSON/YAML/TOML gate. One job where there were two, because one
+  # binary replaced dprint and markdownlint-cli both.
+  #
+  # It runs `just prim` rather than repeating the two verbs, so the gate cannot
+  # drift from the one developers run. That recipe explains why both verbs are
+  # needed; the short version is that `prim lint` does not see Markdown format
+  # drift.
+  #
+  # Ungated by `changes`, like `fmt`, `audit` and `secrets`.
+  #
+  # PINNED, following the gitleaks install in this file and the flatc one in
+  # `.github/actions/install-flatc`, which takes its version from the workspace
+  # manifest. Pinned for the
+  # same reason the old `markdownlint` job was pinned: prim reads only this
+  # repository, so a release that changes a wrap decision would turn this job
+  # red on a diff that changed nothing while the developer's own copy still
+  # passes. See the `audit` job for the case that must NOT be pinned.
+  #
+  # Installed from the release tarball rather than `cargo install prim-cli`,
+  # which compiles from source and would add minutes to every run.
+  #
+  # The checksum is written here rather than fetched from the release beside the
+  # tarball, following the `secrets` job's gitleaks install. A checksum fetched
+  # from the same server as the artifact proves the transfer was not corrupted
+  # and nothing more; one committed here also has to match a byte the repository
+  # already agreed to. `bootstrap` fetches the `.sha256` instead, because there
+  # it sits beside two installs that already do and a per-platform table would be
+  # four checksums to carry.
+  prim:
+    name: prim
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dprint/check@v2.3
+      - name: install prim
+        run: |
+          v=0.3.0
+          sha=d7054cf41ff14affc3d51520daa0a744911d224a8c0db9c34d8e07a133970d28
+          curl -sSL --fail -o prim.tgz \
+            "https://github.com/driftsys/prim/releases/download/v${v}/prim-x86_64-unknown-linux-musl.tar.gz"
+          echo "${sha}  prim.tgz" | sha256sum -c -
+          # Extracted whole into a scratch directory, then installed — rather
+          # than naming the member the way the gitleaks step above does. prim's
+          # tarball stores its entries as `./prim` and `./prim.1`, and whether
+          # a bare `prim` matches `./prim` is the tar implementation's business.
+          # This form does not ask. It also drops the man page, which the
+          # selective form would have installed into the same directory.
+          mkdir -p prim-unpack
+          tar -xzf prim.tgz -C prim-unpack
+          install -m 0755 prim-unpack/prim /usr/local/bin/prim
+          rm -rf prim.tgz prim-unpack
+          prim --version
+      - uses: extractions/setup-just@v4
+      - run: just prim
 
-  # markdownlint and cargo audit, which `just lint` and `just check` run
-  # locally and which had no CI job at all until the pre-push hook stopped
-  # being the place the whole gate ran. Local-only enforcement was already the
-  # wrong shape once the repository went public: a pull request from a fork
-  # runs whatever CI runs and nothing else, and neither of these was in it.
+  # cargo audit, which `just lint` and `just check` run locally and which had no
+  # CI job at all until the pre-push hook stopped being the place the whole gate
+  # ran. Local-only enforcement was already the wrong shape once the repository
+  # went public: a pull request from a fork runs whatever CI runs and nothing
+  # else, and this was not in it.
   #
-  # Not folded into `dprint`: that job is the `dprint/check` action and nothing
-  # else, and neither of these is a formatting check.
+  # Ungated by `changes`, like `fmt`, `prim` and `secrets`. `cargo audit` fails
+  # on a newly published advisory against a dependency that did not change, so
+  # gating it on a path filter would mean the one job no diff can predict runs
+  # only when some diff predicts it.
   #
-  # Ungated by `changes`, like `fmt`, `dprint` and `secrets`. `cargo audit`
-  # fails on a newly published advisory against a dependency that did not
-  # change, so gating it on a path filter would mean the one job no diff can
-  # predict runs only when some diff predicts it.
-  # Both tools are PINNED, following the gitleaks install in this file and the
-  # flatc one in `.github/actions/install-flatc`, which takes its version from
-  # the workspace manifest. An unpinned `npm install -g markdownlint-cli` or `cargo install
-  # cargo-audit` resolves to whatever is latest at run time, so a release that
-  # adds a default rule turns a job red on a diff that changed nothing while the
-  # developer's own copy still passes — a CI-only failure with no diff to
-  # explain it, which this repository has already had once.
-  markdownlint:
-    name: markdownlint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: npm install -g markdownlint-cli@0.45.0
-      - run: markdownlint '**/*.md' --ignore target --ignore node_modules
-
   # `cargo audit` from a prebuilt binary, not `cargo install`. Compiling it from
   # source is minutes on a runner, and `Swatinem/rust-cache` cannot help:
   # `cargo install` builds in its own temp target directory, and the cache key
@@ -291,7 +321,7 @@ jobs:
   #
   # Reproducibility was never available for this job in any case — the same
   # commit audits differently tomorrow, which is the point of auditing. The
-  # `markdownlint` job above is pinned because its input is this repository.
+  # `prim` job above is pinned because its input is this repository.
   audit:
     name: audit
     runs-on: ubuntu-latest
@@ -340,7 +370,6 @@ jobs:
       # gate — nothing unpublishable should sit on any branch — but the fix is
       # to triage or remove the value at its source, not on the failing PR.
       - run: just secrets
-
 
   clippy:
     # Compile-heavy: skipped when the diff is documentation only
@@ -1120,8 +1149,7 @@ jobs:
       [
         changes,
         fmt,
-        dprint,
-        markdownlint,
+        prim,
         audit,
         clippy,
         test,

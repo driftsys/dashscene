@@ -7,5 +7,15 @@
 #   ?  advisory   warn on failure, never abort
 #
 # Examples:
-#   ? npx markdownlint CHANGELOG.md
+#   ? some-linter CHANGELOG.md
+#
+# NOT prim. `/CHANGELOG.md` is in `.primignore` so that prim and `git std bump`
+# do not fight over it once per release, and since 0.3.0 prim honours that
+# ignore however it is invoked: `prim lint CHANGELOG.md` and
+# `prim fmt CHANGELOG.md` both skip the file and say so. A prim line here would
+# read as a gate and check nothing.
+#
+# `prim fmt --no-primignore CHANGELOG.md` would reach it, and is the wrong thing
+# to reach for: it reformats the file the ignore exists to protect, which is the
+# fight the entry prevents.
 #

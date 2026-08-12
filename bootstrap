@@ -17,6 +17,11 @@ INSTALL_DIR="${GIT_STD_INSTALL_DIR:-$HOME/.local/bin}"
 # at all. A pin also means the bytes a fresh clone installs do not change under
 # it without a commit that says so.
 JQ_VERSION="${JQ_VERSION:-1.8.2}"
+# Pinned for a second reason on top of jq's: prim decides how every Markdown
+# file in the tree is wrapped, so a version that changes a wrap decision would
+# put the whole tree out of format under a developer who ran no command. The
+# `prim` CI job pins the same version, and the two must move together.
+PRIM_VERSION="${PRIM_VERSION:-v0.3.0}"
 
 log() { printf '[bootstrap] %s\n' "$*" >&2; }
 die() {
@@ -223,6 +228,77 @@ install_jq() {
   esac
 }
 
+# prim formats and lints the Markdown, JSON, YAML and TOML, and backs
+# `just prim`, which `just lint` runs and which the pre-commit hook calls on
+# every commit. It replaced dprint and markdownlint-cli, neither of which this
+# script ever installed — `just lint` simply failed on a fresh clone until
+# someone found them by hand. prim is installed here because, unlike gitleaks,
+# it publishes a per-platform tarball with a checksum beside it, which is the
+# same shape git-std and cargo-nextest are fetched from above.
+#
+# **Checks the version, where the installers above only check presence.** They
+# can: git-std and cargo-nextest do not decide the contents of tracked files.
+# prim decides how every Markdown file in the tree is wrapped, so a developer
+# carrying a different prim reformats the tree on their next commit and fails
+# `just prim` against a CI job pinned elsewhere. A presence check would have left
+# every machine that already had a prim — including the one this was written on,
+# which had 0.2.3 — permanently off the pin the comment above claims to hold.
+install_prim() {
+  local have
+  if have="$(command -v prim 2>/dev/null)" && [ -n "${have}" ]; then
+    # `prim --version` prints `prim 0.3.0`; PRIM_VERSION carries the tag's `v`.
+    if [ "prim ${PRIM_VERSION#v}" = "$(prim --version 2>/dev/null)" ]; then
+      log "prim ${PRIM_VERSION} already installed: ${have}"
+      return
+    fi
+    log "prim at ${have} is $(prim --version 2>/dev/null || echo unknown), not ${PRIM_VERSION} — reinstalling"
+  fi
+
+  local target archive url tmp sha_expected sha_actual
+  target="$(detect_platform)"
+  archive="prim-${target}.tar.gz"
+  url="https://github.com/driftsys/prim/releases/download/${PRIM_VERSION}/${archive}"
+
+  log "downloading prim (${PRIM_VERSION}, ${target})"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "${tmp}"' RETURN
+
+  curl --fail --silent --show-error --location "${url}" --output "${tmp}/${archive}"
+  curl --fail --silent --show-error --location "${url}.sha256" \
+    --output "${tmp}/${archive}.sha256"
+
+  sha_expected="$(cut -d' ' -f1 "${tmp}/${archive}.sha256")"
+  # macOS ships shasum, not sha256sum — the same fallback install_nextest uses.
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha_actual="$(sha256sum "${tmp}/${archive}" | cut -d' ' -f1)"
+  else
+    sha_actual="$(shasum -a 256 "${tmp}/${archive}" | cut -d' ' -f1)"
+  fi
+  [ "${sha_expected}" = "${sha_actual}" ] || die "sha256 mismatch for ${archive}"
+
+  # Extract in the temporary directory and move the finished binary into place,
+  # so a transfer that fails partway cannot leave a truncated prim that the
+  # guard above would then treat as installed.
+  mkdir -p "${INSTALL_DIR}"
+  tar -xzf "${tmp}/${archive}" -C "${tmp}"
+  install -m 0755 "${tmp}/prim" "${INSTALL_DIR}/prim"
+
+  log "installed prim to ${INSTALL_DIR}/prim"
+  case ":${PATH}:" in
+    *":${INSTALL_DIR}:"*) ;;
+    *) log "note: ${INSTALL_DIR} is not on PATH — add it to your shell profile" ;;
+  esac
+
+  # Installing the pinned version is not the same as RESOLVING to it. Another
+  # prim earlier on PATH — a `cargo install prim-cli`, a brew formula — still
+  # wins every `just prim`, and the tree would then be formatted by a version
+  # this repository did not pin. Say so rather than report a clean install.
+  if [ "prim ${PRIM_VERSION#v}" != "$(prim --version 2>/dev/null)" ]; then
+    log "note: 'prim' still resolves to $(command -v prim) at $(prim --version 2>/dev/null || echo unknown)"
+    log "      ${INSTALL_DIR} must come first on PATH for the pin to hold"
+  fi
+}
+
 # gitleaks backs `just secrets`, which `just check` runs. It is not installed
 # here: it publishes no single-file binary this script can verify by checksum
 # the way git-std, nextest and jq are, and a secret scanner fetched over an
@@ -244,5 +320,6 @@ check_gitleaks() {
 install_git_std
 install_nextest
 install_jq
+install_prim
 check_gitleaks
 exec git std bootstrap

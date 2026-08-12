@@ -15,12 +15,11 @@ they hold up different halves:
 - **Byte-identity** — `crates/dashc/tests/figma_lowering.rs`'s
   `the_fixture_emits_the_golden_dsb` and its siblings in `flex_lowering.rs`,
   `text_lowering.rs`, and `component_lowering.rs` recompile a fixture and
-  compare the bytes against a committed golden.
-  `crates/dashc/tests/abi.rs`'s `the_fixture_compiles_to_the_golden_dsb` asserts
-  the same golden through the ABI in-process, and
-  `importers/figma/src/wasm_test.ts` asserts it through the wasm ABI from Deno —
-  which is what makes "byte-identical to dashc-native output" transitive across
-  a boundary neither side can see over.
+  compare the bytes against a committed golden. `crates/dashc/tests/abi.rs`'s
+  `the_fixture_compiles_to_the_golden_dsb` asserts the same golden through the
+  ABI in-process, and `importers/figma/src/wasm_test.ts` asserts it through the
+  wasm ABI from Deno — which is what makes "byte-identical to dashc-native
+  output" transitive across a boundary neither side can see over.
 - **Decode-compatibility** — `crates/dashbuf/tests/schema_evolution.rs` decodes
   a frozen buffer written by an older schema generation
   (`docs/decisions/dsb-frozen-fixture-r7-guard.md`).
@@ -48,17 +47,17 @@ Option 2. The seven `goldens/dsb/*.dsb` are regenerated in story #401, and
 
 **R7 is a property of the compiler, not of a particular byte string.** It says
 one input compiles to one output, so that a diff between two builds is a real
-change rather than noise. It does not say the output can never be
-re-specified. What has to survive a re-specification is the guarantee itself,
-and it does: the container writer is a pure function of its input, with a fixed
-field order, zero-filled alignment gaps, and content hashes that depend on
-content alone.
+change rather than noise. It does not say the output can never be re-specified.
+What has to survive a re-specification is the guarantee itself, and it does: the
+container writer is a pure function of its input, with a fixed field order,
+zero-filled alignment gaps, and content hashes that depend on content alone.
 
 A re-baseline is legitimate when three things are true, and all three are here.
 It is announced — the epic and this record say it before the diff exists. It is
 argued — that is this record. And the new baseline is as pinned as the old one:
 the same four suites assert the same goldens, and the envelope additionally
-gains its own frozen fixture, `crates/dashbuf/tests/fixtures/v0_11_container.dsb`.
+gains its own frozen fixture,
+`crates/dashbuf/tests/fixtures/v0_11_container.dsb`.
 
 ### The change is attributed, not just asserted
 
@@ -108,10 +107,10 @@ constant rather than a shifted field id.
 - **Option 3** is the dangerous one, because it looks accommodating. A reader
   that accepts a bare flatbuffer and an envelope makes every committed golden
   pass under either shape, so the suites stop distinguishing the two and the
-  next format change has nothing to fail against. It also leaves a
-  pre-envelope file loading silently in production, which is the class of
-  silent acceptance P4 exists to prevent. There is no transitional reader: a
-  bare flatbuffer is refused by name, as `ContainerError::BadMagic`.
+  next format change has nothing to fail against. It also leaves a pre-envelope
+  file loading silently in production, which is the class of silent acceptance
+  P4 exists to prevent. There is no transitional reader: a bare flatbuffer is
+  refused by name, as `ContainerError::BadMagic`.
 
 ## Consequences
 

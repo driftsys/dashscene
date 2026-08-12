@@ -118,11 +118,11 @@ dashscene-gpu = { path = "crates/dashscene-gpu", version = "0.0.0" }
 # Stack per docs/design/architecture.md — reserved here for crates to opt into as
 # implementation lands; not every crate depends on every entry.
 taffy = { version = "0.12", default-features = false, features = [
-    "std",
-    "taffy_tree",
-    "flexbox",
-    "block_layout",
-    "grid",
+  "std",
+  "taffy_tree",
+  "flexbox",
+  "block_layout",
+  "grid",
 ] }
 rustybuzz = "0.20"
 # Retained paint/clip interners and the solver's per-node caches key on
@@ -136,7 +136,7 @@ unicode-bidi = "0.3"
 # base they attach to, not on their own coverage. Already in the tree via
 # rustybuzz, so no new transitive weight.
 unicode-properties = { version = "0.1", default-features = false, features = [
-    "general-category",
+  "general-category",
 ] }
 ttf-parser = "0.25"
 # Pinned to the exact flatc release (installed via `brew install

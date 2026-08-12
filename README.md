@@ -6,17 +6,18 @@ written to disk as a `.dsb` file), one shared layout and text runtime, and
 interchangeable paint backends behind a single trait.
 
 It is aimed at embedded display hardware — industrial and medical panels, kiosks
-and point-of-sale, avionics, set-top boxes, handhelds and in-vehicle screens among
-them — where the same screen has to be drawn by a game engine on the product, by a
-lean native renderer on a smaller device, and by a reference rasterizer in a test,
-and where all three have to agree, to the pixel, about where every rectangle and
-every glyph sits.
+and point-of-sale, avionics, set-top boxes, handhelds and in-vehicle screens
+among them — where the same screen has to be drawn by a game engine on the
+product, by a lean native renderer on a smaller device, and by a reference
+rasterizer in a test, and where all three have to agree, to the pixel, about
+where every rectangle and every glyph sits.
 
 What makes a target one of those is a set of constraints rather than a market: a
 tiling GPU that rewards one render pass per frame, a fixed frame budget with no
-room for a shader compiled mid-frame, and a display whose layout must resolve the
-same way everywhere. Those constraints were derived from automotive hardware, which
-is where this runtime is measured, and they hold wherever else they hold.
+room for a shader compiled mid-frame, and a display whose layout must resolve
+the same way everywhere. Those constraints were derived from automotive
+hardware, which is where this runtime is measured, and they hold wherever else
+they hold.
 
 ![Sixteen tiles on a dark background: solid, linear, radial, angular and diamond fills; strokes inside, centred and outside their edges; a photograph under four fill modes; a star baked to a distance field; drop and inner shadows; a clipped disc; a masked gradient; two overlapping squares at group opacity; and a frosted panel blurring the tiles behind it.](docs/images/showcase-surfaces.png)
 
@@ -27,7 +28,8 @@ panel slides across the gallery, and what it blurs changes as it travels.
 ## Run it
 
 You need [Rust](https://rustup.rs) 1.88 or newer, and `flatc`, the FlatBuffers
-compiler, on `PATH` — the `dashbuf` crate's build script runs it (`brew install
+compiler, on `PATH` — the `dashbuf` crate's build script runs it
+(`brew install
 flatbuffers`, or `apt-get install flatbuffers-compiler`).
 
 ```sh
@@ -120,8 +122,8 @@ the shape of the codebase:
   limitations define the format.
 
 The full text is in
-[`docs/specification/02-principles.md`](docs/specification/02-principles.md), and
-the pipeline above is drawn out in
+[`docs/specification/02-principles.md`](docs/specification/02-principles.md),
+and the pipeline above is drawn out in
 [`docs/design/architecture.md`](docs/design/architecture.md).
 
 ## What is built, and what is not
@@ -167,9 +169,8 @@ Nineteen crates in one Cargo workspace, plus six members that are never
 published — `demo/` (the windowed showcase), `demo-web/` (the same showcase in a
 browser, on a canvas), `demo-android/` (and on a device), `corpus/showcase/`
 (the scenes they draw), `goldens/tooling/` (the golden-image harness), and
-`measure/web-minimal/` (the
-smallest browser embedder that draws a `.dsb`, built to be weighed rather than
-run).
+`measure/web-minimal/` (the smallest browser embedder that draws a `.dsb`, built
+to be weighed rather than run).
 
 | Crate                  | What it is                                                                |
 | ---------------------- | ------------------------------------------------------------------------- |
@@ -203,11 +204,10 @@ tooling).
 This is `driftsys/dashscene`, a **public working repository — nothing in it is
 released**. All 21 crate names on crates.io are placeholder reservations at
 `0.1.0`, and no code from this repository has been released under any of them.
-The repository being readable is not the same as the crates being published,
-and only the first has happened.
-Twelve were reserved on 2026-03-18, before this repository's first commit; the
-other nine as the crates that need them arrived, the most recent two on
-2026-08-09
+The repository being readable is not the same as the crates being published, and
+only the first has happened. Twelve were reserved on 2026-03-18, before this
+repository's first commit; the other nine as the crates that need them arrived,
+the most recent two on 2026-08-09
 ([`docs/decisions/crate-name-map.md`](docs/decisions/crate-name-map.md) is the
 list — re-derive from it rather than trusting a count in prose, which has
 drifted before).
@@ -215,15 +215,14 @@ drifted before).
 The reservations were made from a second repository, now archived as
 [`driftsys/dashscene-name-reservations`](https://github.com/driftsys/dashscene-name-reservations).
 It is kept rather than deleted because every published stub carries a
-`repository` field pointing at it, and a published version's metadata cannot
-be changed
+`repository` field pointing at it, and a published version's metadata cannot be
+changed
 ([`docs/decisions/repo-staging-and-public-facade.md`](docs/decisions/repo-staging-and-public-facade.md)).
 
 v0 is built one slice at a time. Slices v0.1 to v0.18 have closed, the last of
 them being the animation vocabulary. v0.19 — the Android bring-up and the C ABI
-— is open and planned.
-[`docs/roadmap.md`](docs/roadmap.md) carries the slice map and what each one
-delivered; GitHub issues carry the live state.
+— is open and planned. [`docs/roadmap.md`](docs/roadmap.md) carries the slice
+map and what each one delivered; GitHub issues carry the live state.
 
 Two things about qualification, stated plainly because they are easy to read the
 wrong way:

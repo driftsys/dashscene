@@ -5,83 +5,79 @@ affect. Gardened from `docs/wip/` sessions into durable, as-built records.
 
 The project's scope-level decision log lived in
 `docs/archive/2026-07-14-scope-decisions.md`, a living addendum to
-`docs/archive/2026-07-14-design-1-seed.md`; its sections are gardened
-into the records below. Per-story decisions land here directly:
+`docs/archive/2026-07-14-design-1-seed.md`; its sections are gardened into the
+records below. Per-story decisions land here directly:
 
-- [repo-staging-and-public-facade.md](repo-staging-and-public-facade.md) —
-  one repository, not two: the working repo was renamed to
-  `driftsys/dashscene` and the reservation repo archived beside it
+- [repo-staging-and-public-facade.md](repo-staging-and-public-facade.md) — one
+  repository, not two: the working repo was renamed to `driftsys/dashscene` and
+  the reservation repo archived beside it
   (`docs/archive/2026-07-14-scope-decisions.md` §1).
 - [crate-name-map.md](crate-name-map.md) — the workspace reuses the 12
-  already-reserved crates.io names, mapped onto
-  `docs/design/architecture.md`'s architecture
-  (`docs/archive/2026-07-14-scope-decisions.md` §2); it has grown to 17
-  crates, and each name added since is recorded there in its own section.
+  already-reserved crates.io names, mapped onto `docs/design/architecture.md`'s
+  architecture (`docs/archive/2026-07-14-scope-decisions.md` §2); it has grown
+  to 17 crates, and each name added since is recorded there in its own section.
 - [the-integration-surface-is-two-published-crates.md](the-integration-surface-is-two-published-crates.md)
   — what an embedder consumes on the web and on the desktop, why it is two
-  crates rather than one, and the finding that the shared half is policy
-  rather than mechanism (issues #741 and #803, slice v0.17).
-- [dsb-format-and-one-schema.md](dsb-format-and-one-schema.md) — `.dsb`
-  is the file extension; one flatbuffer schema serves both the file and
-  wire roles (`docs/archive/2026-07-14-scope-decisions.md` §3).
+  crates rather than one, and the finding that the shared half is policy rather
+  than mechanism (issues #741 and #803, slice v0.17).
+- [dsb-format-and-one-schema.md](dsb-format-and-one-schema.md) — `.dsb` is the
+  file extension; one flatbuffer schema serves both the file and wire roles
+  (`docs/archive/2026-07-14-scope-decisions.md` §3).
 - [figma-importer-deno-plus-dashc-wasm.md](figma-importer-deno-plus-dashc-wasm.md)
-  — the Figma importer is Deno/TypeScript calling `dashc.wasm`, in the
-  same repo as the Rust core
-  (`docs/archive/2026-07-14-scope-decisions.md` §4).
-- [unity-separate-repo-deferred.md](unity-separate-repo-deferred.md) —
-  Unity gets its own repo, C#, deferred until v0 exits
+  — the Figma importer is Deno/TypeScript calling `dashc.wasm`, in the same repo
+  as the Rust core (`docs/archive/2026-07-14-scope-decisions.md` §4).
+- [unity-separate-repo-deferred.md](unity-separate-repo-deferred.md) — Unity
+  gets its own repo, C#, deferred until v0 exits
   (`docs/archive/2026-07-14-scope-decisions.md` §5).
-- [house-style.md](house-style.md) — repo tooling follows
-  driftsys/git-std, driftsys/upskill, driftsys/markspec conventions
+- [house-style.md](house-style.md) — repo tooling follows driftsys/git-std,
+  driftsys/upskill, driftsys/markspec conventions
   (`docs/archive/2026-07-14-scope-decisions.md` §7).
-- [apache-2-0-for-the-patent-grant.md](apache-2-0-for-the-patent-grant.md) —
-  the workspace is Apache-2.0, not MIT and not a dual licence, because a dual
+- [apache-2-0-for-the-patent-grant.md](apache-2-0-for-the-patent-grant.md) — the
+  workspace is Apache-2.0, not MIT and not a dual licence, because a dual
   licence lets a licensee opt out of the patent terms. This is the one
   documented divergence from the git-std house style, which is MIT
   (`house-style.md`).
-- [publishable-and-the-first-version.md](publishable-and-the-first-version.md)
-  — the workspace versions together, the first real version is 0.2.0, and the
+- [publishable-and-the-first-version.md](publishable-and-the-first-version.md) —
+  the workspace versions together, the first real version is 0.2.0, and the
   registry checks that say so (story #795).
-- [figma-file-keys-are-published.md](figma-file-keys-are-published.md) — the
-  the corpus publishes a Figma file key for every fixture, and every fixture
-  is explicitly link-viewable so a reader can check the importer against the
-  source design. `just figma-sharing` verifies it.
-- [figma-corpus-self-authored-only.md](figma-corpus-self-authored-only.md)
-  — nothing enters `corpus/` that the project did not author
+- [figma-file-keys-are-published.md](figma-file-keys-are-published.md) — the the
+  corpus publishes a Figma file key for every fixture, and every fixture is
+  explicitly link-viewable so a reader can check the importer against the source
+  design. `just figma-sharing` verifies it.
+- [figma-corpus-self-authored-only.md](figma-corpus-self-authored-only.md) —
+  nothing enters `corpus/` that the project did not author
   (`docs/archive/2026-07-14-scope-decisions.md` §8's licensing ruling).
-- [figma-access-plan-and-pat-policy.md](figma-access-plan-and-pat-policy.md)
-  — Figma Professional with a Full seat, PAT rotation policy, granular
-  scopes, rate-limit handling
-  (`docs/archive/2026-07-14-scope-decisions.md` §11).
-- [annotator-plugin-contract-frozen.md](annotator-plugin-contract-frozen.md)
-  — the sharedPluginData annotator plugin is deferred to v1; its data
-  contract is frozen now (`docs/archive/2026-07-14-scope-decisions.md`
-  §12).
-- [token-resolution-phase-split.md](token-resolution-phase-split.md) —
-  token resolution is phase 1 (resolved literals + sidecar) then phase 2
-  (id → name join sourced from the Plugin API, not REST)
+- [figma-access-plan-and-pat-policy.md](figma-access-plan-and-pat-policy.md) —
+  Figma Professional with a Full seat, PAT rotation policy, granular scopes,
+  rate-limit handling (`docs/archive/2026-07-14-scope-decisions.md` §11).
+- [annotator-plugin-contract-frozen.md](annotator-plugin-contract-frozen.md) —
+  the sharedPluginData annotator plugin is deferred to v1; its data contract is
+  frozen now (`docs/archive/2026-07-14-scope-decisions.md` §12).
+- [token-resolution-phase-split.md](token-resolution-phase-split.md) — token
+  resolution is phase 1 (resolved literals + sidecar) then phase 2 (id → name
+  join sourced from the Plugin API, not REST)
   (`docs/archive/2026-07-14-scope-decisions.md` §13).
-- [no-authored-fill-weights.md](no-authored-fill-weights.md) — authored
-  fill weights are declined outright; Figma has no counterpart and no
-  producer emits one (#117, v0.2-close revision;
-  `docs/archive/2026-07-14-scope-decisions.md` §19).
+- [no-authored-fill-weights.md](no-authored-fill-weights.md) — authored fill
+  weights are declined outright; Figma has no counterpart and no producer emits
+  one (#117, v0.2-close revision; `docs/archive/2026-07-14-scope-decisions.md`
+  §19).
 
 - [text-track-early-start.md](text-track-early-start.md) — start the v0.5
   text/atlas track before v0.1 completes (plan sequencing, session C).
-- [q1-msdf-below-14px.md](q1-msdf-below-14px.md) — MSDF-only text rendering
-  in v0; resolves `docs/technotes/open-questions.md`'s Q-1; binds
-  #27/#28/#30 and the validator's future text checks.
-- [ci-green-before-story-merge.md](ci-green-before-story-merge.md) — story
-  PRs merge only on green CI, which a ruleset has enforced since
-  2026-08-12. Its actual decision is the part no ruleset can see: repair
-  CI in its own minimal PR rather than folding the fix into a story PR.
+- [q1-msdf-below-14px.md](q1-msdf-below-14px.md) — MSDF-only text rendering in
+  v0; resolves `docs/technotes/open-questions.md`'s Q-1; binds #27/#28/#30 and
+  the validator's future text checks.
+- [ci-green-before-story-merge.md](ci-green-before-story-merge.md) — story PRs
+  merge only on green CI, which a ruleset has enforced since 2026-08-12. Its
+  actual decision is the part no ruleset can see: repair CI in its own minimal
+  PR rather than folding the fix into a story PR.
 - [review-before-ready-not-before-open.md](review-before-ready-not-before-open.md)
-  — the whole story-PR sequence, and the gate is merge rather than "PR
-  opened": garden what the branch added to `docs/wip/` before opening,
-  never a draft, run the review and CI in parallel, review the fix when a
-  critical finding changes the implementation, file debt against a
-  milestone. The findings checklist says whether it is ready, and the
-  `main` ruleset enforces the half of the gate that can be enforced.
+  — the whole story-PR sequence, and the gate is merge rather than "PR opened":
+  garden what the branch added to `docs/wip/` before opening, never a draft, run
+  the review and CI in parallel, review the fix when a critical finding changes
+  the implementation, file debt against a milestone. The findings checklist says
+  whether it is ready, and the `main` ruleset enforces the half of the gate that
+  can be enforced.
 - [dashpaint-owns-boundary-b-types.md](dashpaint-owns-boundary-b-types.md) —
   `dashpaint` owns the painter-side boundary-B types (story #3).
 - [painter-trait-infallible-slice-input.md](painter-trait-infallible-slice-input.md)
@@ -89,137 +85,129 @@ into the records below. Per-story decisions land here directly:
 - [fixed-position-authoring.md](fixed-position-authoring.md) — authored
   parent-relative x/y on `FixedSizeLayout` (story #2); binds the `dashbuf`
   schema and the arena's resolution semantics.
-- [staged-mutation-v01-scope.md](staged-mutation-v01-scope.md) — v0.1
-  producer API is `open`/`set_prop`/`commit` with batched-publish staging,
-  and the API lives in `dashscene-core`, not `dashcue` (story #2;
-  `docs/archive/2026-07-14-scope-decisions.md` §9); binds `dashlang` (#5)
-  and the v0.4 variants work.
+- [staged-mutation-v01-scope.md](staged-mutation-v01-scope.md) — v0.1 producer
+  API is `open`/`set_prop`/`commit` with batched-publish staging, and the API
+  lives in `dashscene-core`, not `dashcue` (story #2;
+  `docs/archive/2026-07-14-scope-decisions.md` §9); binds `dashlang` (#5) and
+  the v0.4 variants work.
 - [core-committed-output-shape.md](core-committed-output-shape.md) —
   `dashscene-core` owns its boundary-B output types; `NO_PAINT` sentinel and
   dirty-set semantics (story #2). Reconciled at story #4 (types now
   `dashpaint`'s, sentinel gone) — see boundary-b-unification.md.
 - [document-paint-pool-and-legacy-paint-field.md](document-paint-pool-and-legacy-paint-field.md)
   — v0.3 paint lives in `Document.paints`, a dedup pool indexed by
-  `Node.paint_entry`; the legacy `paint` field stays until a coordinated
-  cleanup (story #13).
-- [paint-entry-composition.md](paint-entry-composition.md) — `dashpaint`'s
-  table entry is a fill/stroke/corners/clip composition (story #13); relates
-  to debt #55 and the story #4 wiring.
-- [dashlang-value-tree-builder.md](dashlang-value-tree-builder.md) — the DSL
-  is an inert value tree published by one `build` commit (story #5); binds
-  the golden harness (#6) and later DSL slices.
+  `Node.paint_entry`; the legacy `paint` field stays until a coordinated cleanup
+  (story #13).
+- [paint-entry-composition.md](paint-entry-composition.md) — `dashpaint`'s table
+  entry is a fill/stroke/corners/clip composition (story #13); relates to debt
+  #55 and the story #4 wiring.
+- [dashlang-value-tree-builder.md](dashlang-value-tree-builder.md) — the DSL is
+  an inert value tree published by one `build` commit (story #5); binds the
+  golden harness (#6) and later DSL slices.
 - [dashcue-keyframe-values-are-progress-fractions.md](dashcue-keyframe-values-are-progress-fractions.md)
-  — dashcue keyframe values are progress fractions, not absolute values
-  (story #21).
+  — dashcue keyframe values are progress fractions, not absolute values (story
+  #21).
 - [dashcue-spring-uses-semi-implicit-euler.md](dashcue-spring-uses-semi-implicit-euler.md)
-  — dashcue springs integrate with semi-implicit Euler, not a closed form
-  (story #21).
-- [variant-set-flat-index.md](variant-set-flat-index.md) — the variant
-  table is a flat member index with a narrow overridable-prop vocabulary
-  (story #20).
-- [atlas-gen-external-pinned-binary.md](atlas-gen-external-pinned-binary.md)
-  — atlas generation shells out to an external, version-pinned
-  `msdf-atlas-gen` binary rather than a pure-Rust crate or a vendored
-  build (#27).
-- [atlas-metrics-postcard-blob.md](atlas-metrics-postcard-blob.md) — the
-  atlas metrics blob is a versioned struct, postcard-serialized, with
-  pre-sorted vectors for canonical bytes (#27).
-- [atlas-closure-cmap-plus-extras.md](atlas-closure-cmap-plus-extras.md)
-  — charset→glyph-id closure is cmap-only for v0.5, with an
-  `extra_glyph_ids` escape hatch; full GSUB closure deferred to #34
-  (#27).
-- [liga-clig-off-until-gsub-closure.md](liga-clig-off-until-gsub-closure.md)
-  — Latin shaping disables `liga`/`clig` since atlas closure is
-  cmap-only; resolves the #27 seam note; re-enabled together with
-  GSUB closure at #34 (#28).
-- [shaped-run-cache-font-units.md](shaped-run-cache-font-units.md) —
-  the shaped-run cache stores font-unit, unpositioned runs keyed by
-  paragraph text alone, serving every render size from one entry
+  — dashcue springs integrate with semi-implicit Euler, not a closed form (story
+  #21).
+- [variant-set-flat-index.md](variant-set-flat-index.md) — the variant table is
+  a flat member index with a narrow overridable-prop vocabulary (story #20).
+- [atlas-gen-external-pinned-binary.md](atlas-gen-external-pinned-binary.md) —
+  atlas generation shells out to an external, version-pinned `msdf-atlas-gen`
+  binary rather than a pure-Rust crate or a vendored build (#27).
+- [atlas-metrics-postcard-blob.md](atlas-metrics-postcard-blob.md) — the atlas
+  metrics blob is a versioned struct, postcard-serialized, with pre-sorted
+  vectors for canonical bytes (#27).
+- [atlas-closure-cmap-plus-extras.md](atlas-closure-cmap-plus-extras.md) —
+  charset→glyph-id closure is cmap-only for v0.5, with an `extra_glyph_ids`
+  escape hatch; full GSUB closure deferred to #34 (#27).
+- [liga-clig-off-until-gsub-closure.md](liga-clig-off-until-gsub-closure.md) —
+  Latin shaping disables `liga`/`clig` since atlas closure is cmap-only;
+  resolves the #27 seam note; re-enabled together with GSUB closure at #34
   (#28).
-- [measure-callback-typesetter-seam.md](measure-callback-typesetter-seam.md)
-  — the Taffy measure callback borrows one `Typesetter`
-  (`TaffySolver::with_typesetter`) so layout and paint read one
-  shaped-run cache; text drives hug sizing (#29); binds #30 and #164.
-- [glyph-runs-cross-boundary-b.md](glyph-runs-cross-boundary-b.md) — glyph
-  runs cross boundary B as a run table plus a plain-data atlas; painters
-  blit positioned quads and never shape (story #30).
-- [font-fallback-deferred-past-v06.md](font-fallback-deferred-past-v06.md)
-  — multi-font fallback (per-style font lists, per-font charset unions) is
-  deferred past v0.6; one font per declared charset until then. Resolved
-  in v0.7 (story #219): fallback landed runtime-side, no `.dsb` schema
-  change — see the record's Resolution and `docs/design/typeset-latin.md`
-  (Font fallback).
-- [boundary-b-unification.md](boundary-b-unification.md) — story #4:
-  `dashpaint` owns the boundary-B types (`dashscene-core` depends on it,
-  publish order updated), every committed rect resolves (no `NO_PAINT`
-  sentinel), and paint indices are the `PaintIndex` newtype.
+- [shaped-run-cache-font-units.md](shaped-run-cache-font-units.md) — the
+  shaped-run cache stores font-unit, unpositioned runs keyed by paragraph text
+  alone, serving every render size from one entry (#28).
+- [measure-callback-typesetter-seam.md](measure-callback-typesetter-seam.md) —
+  the Taffy measure callback borrows one `Typesetter`
+  (`TaffySolver::with_typesetter`) so layout and paint read one shaped-run
+  cache; text drives hug sizing (#29); binds #30 and #164.
+- [glyph-runs-cross-boundary-b.md](glyph-runs-cross-boundary-b.md) — glyph runs
+  cross boundary B as a run table plus a plain-data atlas; painters blit
+  positioned quads and never shape (story #30).
+- [font-fallback-deferred-past-v06.md](font-fallback-deferred-past-v06.md) —
+  multi-font fallback (per-style font lists, per-font charset unions) is
+  deferred past v0.6; one font per declared charset until then. Resolved in v0.7
+  (story #219): fallback landed runtime-side, no `.dsb` schema change — see the
+  record's Resolution and `docs/design/typeset-latin.md` (Font fallback).
+- [boundary-b-unification.md](boundary-b-unification.md) — story #4: `dashpaint`
+  owns the boundary-B types (`dashscene-core` depends on it, publish order
+  updated), every committed rect resolves (no `NO_PAINT` sentinel), and paint
+  indices are the `PaintIndex` newtype.
 - [flex-vocabulary-shape.md](flex-vocabulary-shape.md) — the v0.2 flex
-  vocabulary is two optional `Node` tables, mirrored in core as stored
-  intent (story #8); binds the story #9 Taffy solve and v0.8 wrap/grid.
+  vocabulary is two optional `Node` tables, mirrored in core as stored intent
+  (story #8); binds the story #9 Taffy solve and v0.8 wrap/grid.
 - [dashlang-flex-vocabulary.md](dashlang-flex-vocabulary.md) — `dashlang`
   mirrors the v0.2 flex vocabulary by embedding core's own `Layout` on the
   `Node` builder (#118).
-- [dashlang-stress-corpus.md](dashlang-stress-corpus.md) — the E3 stress
-  corpus is build-time DSL authoring, verified by exact rects; extends the
-  builder with the v0.8 grid/wrap vocabulary (#46; E3 met, the variant
-  child-count case closed by the `Visible` widening in #283).
+- [dashlang-stress-corpus.md](dashlang-stress-corpus.md) — the E3 stress corpus
+  is build-time DSL authoring, verified by exact rects; extends the builder with
+  the v0.8 grid/wrap vocabulary (#46; E3 met, the variant child-count case
+  closed by the `Visible` widening in #283).
 - [layout-solver-seam.md](layout-solver-seam.md) — commit takes its geometry
   from a `LayoutSolver` trait defined in core; the engine implements it with
   Taffy (story #9); binds #22 (FLIP) and #29 (measure callback).
 - [negative-gap-lowering.md](negative-gap-lowering.md) — negative flex gap
   lowers to child margins in a shared core `Txn` pass; adds the margin
   vocabulary (story #10); binds #46 (stress corpus) and the `dashc` importer.
-- [v02-flex-goldens-per-construct.md](v02-flex-goldens-per-construct.md) —
-  the v0.2 flex vocabulary is goldened one construct per scene, exact-match,
-  closing epic #7 (story #11); fill weights (#117) and dashlang's flex
-  vocabulary (#118) stay out of scope.
+- [v02-flex-goldens-per-construct.md](v02-flex-goldens-per-construct.md) — the
+  v0.2 flex vocabulary is goldened one construct per scene, exact-match, closing
+  epic #7 (story #11); fill weights (#117) and dashlang's flex vocabulary (#118)
+  stay out of scope.
 
 - [golden-comparison-space.md](golden-comparison-space.md) — goldens compare
   decoded pixels in unpremultiplied RGBA8888, never encoded bytes (story #6;
   resolves debt #86).
 
-- [dsb-sectioned-container.md](dsb-sectioned-container.md) — spike #56:
-  `.dsb` is a thin sectioned container (fixed envelope + section table,
-  one flatbuffer per section); binds the schema stories to integer-index
-  cross-references. Deferred at acceptance to "the v1 loading-performance
-  work"; the v0.10 close moved that work into v0.11, and it is **as built**
-  there (stories #399 and #401). Byte layout:
-  `../design/dsb-container-format.md`.
+- [dsb-sectioned-container.md](dsb-sectioned-container.md) — spike #56: `.dsb`
+  is a thin sectioned container (fixed envelope + section table, one flatbuffer
+  per section); binds the schema stories to integer-index cross-references.
+  Deferred at acceptance to "the v1 loading-performance work"; the v0.10 close
+  moved that work into v0.11, and it is **as built** there (stories #399 and
+  #401). Byte layout: `../design/dsb-container-format.md`.
 - [host-integration-in-three-layers.md](host-integration-in-three-layers.md) —
   **accepted** (v0.17's opening, 2026-08-07): a platform host is three layers —
   surface interop, app state bound to signals, a DSL projecting `dashlang` —
   each usable without the layer above it, over one shared C ABI, written
-  platform-general so the v1 iOS story inherits it. Android only;
-  `SurfaceView` semantics only, with `TextureView` deferred to v1 alongside the
-  case that motivates it. **v0.19 builds layer 0 and the C ABI under it**
-  (narrowed 2026-08-09, epic #833); layers 1 and 2 move to a follow-on slice,
-  which the layering permits because each layer is usable without the one
-  above it. **D3a is a risk to check rather than a
-  measured fact**: a device without Vulkan may meet the same
-  four-fragment-storage-buffer wall that makes WebGL2 unbuildable, and the
-  first Android story confirms the target device class before anything is built
-  on it.
+  platform-general so the v1 iOS story inherits it. Android only; `SurfaceView`
+  semantics only, with `TextureView` deferred to v1 alongside the case that
+  motivates it. **v0.19 builds layer 0 and the C ABI under it** (narrowed
+  2026-08-09, epic #833); layers 1 and 2 move to a follow-on slice, which the
+  layering permits because each layer is usable without the one above it. **D3a
+  is a risk to check rather than a measured fact**: a device without Vulkan may
+  meet the same four-fragment-storage-buffer wall that makes WebGL2 unbuildable,
+  and the first Android story confirms the target device class before anything
+  is built on it.
 - [container-parse-reads-a-prefix-through-a-host-reader.md](container-parse-reads-a-prefix-through-a-host-reader.md)
   — **accepted**, built by story #587 as `dashbuf::prefix`: `Container::parse`
   stays strict, and a prefix is read by a separate host-side envelope reader
-  rather than by a tolerant parse mode.
-  One bounds check costs nothing under `mmap` and forces a whole file into
-  linear memory in wasm, so stories #587 and #595 had each planned to change
-  it without knowing about the other.
-- [assets-borrow-from-the-mapping.md](assets-borrow-from-the-mapping.md) —
-  an image table's pool is either bytes it owns or a reference-counted handle
-  to a region it does not, never both, so a payload reaches a painter without
-  being copied out of the mapping (story #596). The handle rather than a
-  borrow, because a lifetime reaches every painter and a C header cannot
-  express one; `ImageEntry` and the `Painter` trait are unchanged. **As built**
-  at v0.16 (story #596): shipped as written, and `PartialEq` had to change with
-  it, which the record did not anticipate.
+  rather than by a tolerant parse mode. One bounds check costs nothing under
+  `mmap` and forces a whole file into linear memory in wasm, so stories #587 and
+  #595 had each planned to change it without knowing about the other.
+- [assets-borrow-from-the-mapping.md](assets-borrow-from-the-mapping.md) — an
+  image table's pool is either bytes it owns or a reference-counted handle to a
+  region it does not, never both, so a payload reaches a painter without being
+  copied out of the mapping (story #596). The handle rather than a borrow,
+  because a lifetime reaches every painter and a C header cannot express one;
+  `ImageEntry` and the `Painter` trait are unchanged. **As built** at v0.16
+  (story #596): shipped as written, and `PartialEq` had to change with it, which
+  the record did not anticipate.
 - [startup-scaling-is-measured-by-a-counter.md](startup-scaling-is-measured-by-a-counter.md)
   — R5's exit criterion is a count of asset payload bytes the load path reads,
   not an elapsed time, so no benchmark framework is added and the assertion is
-  an equality between two documents showing the same root (story #598,
-  guardrail G-20). **Measured** at v0.16: 9.81x against the pre-slice load path
-  and **1.00x** against the one the slice left.
+  an equality between two documents showing the same root (story #598, guardrail
+  G-20). **Measured** at v0.16: 9.81x against the pre-slice load path and
+  **1.00x** against the one the slice left.
 - [verification-moves-from-open-to-touch.md](verification-moves-from-open-to-touch.md)
   — both readers give up their eager hashing to one `BlobResidency` that does
   touch + hash + mark ready per blob: `dashbuf::open` verifies the hot half and
@@ -236,57 +224,56 @@ into the records below. Per-story decisions land here directly:
   had checked.
 - [the-shown-root-bounds-the-load-not-the-paint.md](the-shown-root-bounds-the-load-not-the-paint.md)
   — the runtime paints every root, so "the shown root" is a bound on the load
-  and a value nothing below the loader reads. Painting every root is recorded
-  as designed rather than as a defect; confining the solve, the committed table
-  and the paint to the shown root is adopted as the target and held against
-  v0.19, with the selection concept and the index-space renumbering it also
-  needs. Until then a host widens its load and reports that it did, and R5's
-  status is stated per target **and** per document shape (issue #822, ruled at
-  the close of slice v0.17).
+  and a value nothing below the loader reads. Painting every root is recorded as
+  designed rather than as a defect; confining the solve, the committed table and
+  the paint to the shown root is adopted as the target and held against v0.19,
+  with the selection concept and the index-space renumbering it also needs.
+  Until then a host widens its load and reports that it did, and R5's status is
+  stated per target **and** per document shape (issue #822, ruled at the close
+  of slice v0.17).
 - [the-shown-root-is-named-by-ordinal.md](the-shown-root-is-named-by-ordinal.md)
   — a host names the shown root by its ordinal over the document's roots, one
   root at a time, as a parameter on each integration crate's load call rather
   than as state. A name is rejected because `Node.name` is optional and cannot
   address every root; a node index because an embedder should not have to know
   which nodes are roots. `first_root` is deleted, and the C ABI still carries no
-  selection — for a different reason than before, which the record states
-  (story #837, the first half of the record above's D3).
-- [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a
-  frozen, checked-in `.dsb` byte fixture guards R7's append-only schema
-  evolution (debt #64); binds every edit to `dashbuf.fbs`.
+  selection — for a different reason than before, which the record states (story
+  #837, the first half of the record above's D3).
+- [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a frozen,
+  checked-in `.dsb` byte fixture guards R7's append-only schema evolution (debt
+  #64); binds every edit to `dashbuf.fbs`.
 - [r7-survives-the-envelope-rebaseline.md](r7-survives-the-envelope-rebaseline.md)
-  — R7 is a property of the compiler, not of a particular byte string, so
-  the sectioned envelope may re-baseline the seven committed byte goldens
-  once: announced, argued, and attributed by checking that each new file's
-  section 0 equals the whole of the old file (story #401). The frozen
-  schema fixture is not regenerated — it is a section payload, and its
-  subject is field ids, which the envelope does not touch.
+  — R7 is a property of the compiler, not of a particular byte string, so the
+  sectioned envelope may re-baseline the seven committed byte goldens once:
+  announced, argued, and attributed by checking that each new file's section 0
+  equals the whole of the old file (story #401). The frozen schema fixture is
+  not regenerated — it is a section payload, and its subject is field ids, which
+  the envelope does not touch.
 - [image-assets-cross-boundary-b.md](image-assets-cross-boundary-b.md) —
   encoded, format-tagged image assets are part of the painter input
   (`Painter::paint` gains an `ImageTable`; story #14).
-- [reference-painter-antialiasing.md](reference-painter-antialiasing.md) —
-  the reference painter anti-aliases every draw (story #14; resolves
-  debt #85).
-- [subtree-clip-resolution-deferred.md](subtree-clip-resolution-deferred.md)
-  — subtree clipsContent resolves in `dashscene-core`, not the painter
-  (story #14); files issue #97, resolved by story #97.
-- [resolved-clip-regions-at-commit.md](resolved-clip-regions-at-commit.md)
-  — commit resolves subtree clips into a per-rect clip-region table;
-  `RectEntry.clip` indexes it and `PaintEntry.clip` is gone (story #97);
-  binds every painter and the dirty set.
-- [masks-and-group-opacity.md](masks-and-group-opacity.md) — masks resolve
-  at commit into the clip-region table (a mask stencils its following
-  siblings, drawing nothing itself); group opacity splits free (per-rect
-  `RectEntry.opacity`) vs render-target (`GroupComposite`) by the overlap
-  rule; the Q-6 budget is a validator placeholder (story #44); folds the
-  #143 dashc un-pin (rotation stays refused) and the #253 Opacity channel.
+- [reference-painter-antialiasing.md](reference-painter-antialiasing.md) — the
+  reference painter anti-aliases every draw (story #14; resolves debt #85).
+- [subtree-clip-resolution-deferred.md](subtree-clip-resolution-deferred.md) —
+  subtree clipsContent resolves in `dashscene-core`, not the painter (story
+  #14); files issue #97, resolved by story #97.
+- [resolved-clip-regions-at-commit.md](resolved-clip-regions-at-commit.md) —
+  commit resolves subtree clips into a per-rect clip-region table;
+  `RectEntry.clip` indexes it and `PaintEntry.clip` is gone (story #97); binds
+  every painter and the dirty set.
+- [masks-and-group-opacity.md](masks-and-group-opacity.md) — masks resolve at
+  commit into the clip-region table (a mask stencils its following siblings,
+  drawing nothing itself); group opacity splits free (per-rect
+  `RectEntry.opacity`) vs render-target (`GroupComposite`) by the overlap rule;
+  the Q-6 budget is a validator placeholder (story #44); folds the #143 dashc
+  un-pin (rotation stays refused) and the #253 Opacity channel.
 
 - [effects-vocabulary-shadows.md](effects-vocabulary-shadows.md) — drop and
-  inner shadows are a `shadows: [Shadow]` list on the paint-pool entry
-  (a list, not fixed slots, so `Paint.fill`/`.stroke` arity is untouched and
-  #146 stays open), carried through core like corners and rendered live in
-  the Skia painter (spread math, clip + inverse-fill inner shadow, Figma
-  back-to-front stacking); folds the #144 dashc un-pin (story #45).
+  inner shadows are a `shadows: [Shadow]` list on the paint-pool entry (a list,
+  not fixed slots, so `Paint.fill`/`.stroke` arity is untouched and #146 stays
+  open), carried through core like corners and rendered live in the Skia painter
+  (spread math, clip + inverse-fill inner shadow, Figma back-to-front stacking);
+  folds the #144 dashc un-pin (story #45).
 - [baked-vector-msdf-field.md](baked-vector-msdf-field.md) — a Figma `VECTOR`
   lowers into a baked multi-channel signed-distance field carried on the paint
   entry as a coverage mask; the generator is pure-Rust `fdsm` inside
@@ -294,83 +281,83 @@ into the records below. Per-story decisions land here directly:
   `shape_field` sentinel; baking is fixed at 48 px/em with escalation deferred
   to #357; unfieldable shapes are named refusals (story B1/#340, v0.10).
 
-- [v03-paint-goldens-per-family.md](v03-paint-goldens-per-family.md) —
-  the v0.3 paint goldens are per-family isolation scenes complementing
-  story #14's combined golden; subtree clips deferred to #97 (story #18).
+- [v03-paint-goldens-per-family.md](v03-paint-goldens-per-family.md) — the v0.3
+  paint goldens are per-family isolation scenes complementing story #14's
+  combined golden; subtree clips deferred to #97 (story #18).
 - [render-oracle-tolerance-and-gating.md](render-oracle-tolerance-and-gating.md)
   — the design-source render oracle uses per-rule tolerance bands (not one
   global budget), diffs only against a real Figma REST export (never a
   fabricated stand-in), and takes as its render side a fresh import-and-render
   of the committed Figma fixture (not a pre-committed reference golden). The
-  assertion runs un-gated in the ordinary `test` job once a frame is captured;
-  2 of 7 frames are captured, and #265 tracks capturing the remaining frames,
-  not the mechanism (story #284, productionized at E7; exit criterion E7,
-  guardrail G-11; binds #49 and #265).
+  assertion runs un-gated in the ordinary `test` job once a frame is captured; 2
+  of 7 frames are captured, and #265 tracks capturing the remaining frames, not
+  the mechanism (story #284, productionized at E7; exit criterion E7, guardrail
+  G-11; binds #49 and #265).
 
 - [asset-model-content-addressed-blobs.md](asset-model-content-addressed-blobs.md)
-  — assets are content-addressed raw blobs referenced from a hot
-  `AssetTable`; the ui document carries identity and metadata, never
-  bytes; supersedes v0.3's inline `Document.images` (design session,
-  2026-07-12). **As built** at v0.11 (story #107): BLAKE3-256 resolves
-  through a binding whose v0.11 form is the identity map, `Document.images`
-  is deprecated rather than deleted so no field id shifts, and three of the
-  five named entry fields are deferred until each has a producer and a
-  consumer. **Corrected** at v0.16 (story #599): the record described the trust
-  chain as a signature chain, and **nothing in a version-1 `.dsb` is signed** —
-  what the hashes catch is corruption and bad transport, not tampering.
+  — assets are content-addressed raw blobs referenced from a hot `AssetTable`;
+  the ui document carries identity and metadata, never bytes; supersedes v0.3's
+  inline `Document.images` (design session, 2026-07-12). **As built** at v0.11
+  (story #107): BLAKE3-256 resolves through a binding whose v0.11 form is the
+  identity map, `Document.images` is deprecated rather than deleted so no field
+  id shifts, and three of the five named entry fields are deferred until each
+  has a producer and a consumer. **Corrected** at v0.16 (story #599): the record
+  described the trust chain as a signature chain, and **nothing in a version-1
+  `.dsb` is signed** — what the hashes catch is corruption and bad transport,
+  not tampering.
 - [id-model-strings-compile-to-indices.md](id-model-strings-compile-to-indices.md)
-  — source strings compile to dense indices; content hashes for
-  assets, session handles for mutation; opt-in exports table (design
-  session, 2026-07-12); binds #8/#20.
-- [remoting-two-transports.md](remoting-two-transports.md) — remoting
-  rides UI snapshots + commit deltas plus content-addressed asset
-  fetch; snapshots speak indices, deltas speak handles (design
-  session, 2026-07-12); binds the producer-API shape now.
-- [validator-three-gates.md](validator-three-gates.md) — the validator is
-  three gates (import / load / paint), not one `validate()`; out-of-profile
-  constructs never reach the document, so the triage runs on the producer's
-  source vocabulary (story #15); binds #16 and #41.
-- [waivers-and-diagnostic-completion.md](waivers-and-diagnostic-completion.md)
-  — a waiver keys on (rule, target) and only converts a warning; the
-  workaround hint is derived from the rule id rather than stored, so the
-  `Diagnostic` shape and its wasm-ABI mirror are untouched; folds the
-  geometry-extent, corner-radius, text-weight, and variable-width-stroke
-  rules into the contract (story #41); closes E4.
+  — source strings compile to dense indices; content hashes for assets, session
+  handles for mutation; opt-in exports table (design session, 2026-07-12); binds
+  #8/#20.
+- [remoting-two-transports.md](remoting-two-transports.md) — remoting rides UI
+  snapshots + commit deltas plus content-addressed asset fetch; snapshots speak
+  indices, deltas speak handles (design session, 2026-07-12); binds the
+  producer-API shape now.
+- [validator-three-gates.md](validator-three-gates.md) — the validator is three
+  gates (import / load / paint), not one `validate()`; out-of-profile constructs
+  never reach the document, so the triage runs on the producer's source
+  vocabulary (story #15); binds #16 and #41.
+- [waivers-and-diagnostic-completion.md](waivers-and-diagnostic-completion.md) —
+  a waiver keys on (rule, target) and only converts a warning; the workaround
+  hint is derived from the rule id rather than stored, so the `Diagnostic` shape
+  and its wasm-ABI mirror are untouched; folds the geometry-extent,
+  corner-radius, text-weight, and variable-width-stroke rules into the contract
+  (story #41); closes E4.
 - [dashc-document-model-and-load-path.md](dashc-document-model-and-load-path.md)
   — dashc emits from an in-memory document whose paint types are boundary B's;
   the `.dsb`→arena loader lives in `dashscene-core` and adds no semantics; the
-  Figma lowering is deferred until a fixture is captured (story #16); binds
-  #17. The deferral was discharged by story #139.
+  Figma lowering is deferred until a fixture is captured (story #16); binds #17.
+  The deferral was discharged by story #139.
 
 - [unsupported-figma-constructs-refuse-the-compile.md](unsupported-figma-constructs-refuse-the-compile.md)
   — a construct the `Document` cannot express is refused loudly, never lowered
   approximately and never dropped silently (story #139); since story #140 the
   refusal is a named `figma.unsupported` error diagnostic and the walk
-  continues, so one pass reports every finding. Each gap is a filed debt
-  rather than a papered-over branch.
+  continues, so one pass reports every finding. Each gap is a filed debt rather
+  than a papered-over branch.
 - [figma-auto-layout-refused-on-two-grounds.md](figma-auto-layout-refused-on-two-grounds.md)
   — auto-layout is refused both because `Document` has no flex vocabulary (#140)
   and because `absoluteBoundingBox` inside an auto-layout frame is Figma's
-  solver output, which P1 forbids lowering as intent (story #139); story
-  #140 discharged the first ground for `HORIZONTAL`/`VERTICAL`, the second
-  binds the lowering's shape.
+  solver output, which P1 forbids lowering as intent (story #139); story #140
+  discharged the first ground for `HORIZONTAL`/`VERTICAL`, the second binds the
+  lowering's shape.
 - [figma-flex-lowering.md](figma-flex-lowering.md) — the #140 auto-layout
   lowering: `layoutSizingHorizontal`/`Vertical` are the sizing source,
-  non-intent lowers as zeros per axis (P1), and the negative-gap rewrite runs
-  in the walk. Grid, wrap, and baseline lower since #264 (D5 un-pinned);
+  non-intent lowers as zeros per axis (P1), and the negative-gap rewrite runs in
+  the walk. Grid, wrap, and baseline lower since #264 (D5 un-pinned);
   fill-on-hug stays refused by name.
-- [figma-text-lowering.md](figma-text-lowering.md) — the #160 `TEXT`
-  lowering: the document `TextStyle` carries family/size/weight/color only,
-  every other authored text feature is a named diagnostic (P4, not a schema
-  widening), sizing reads `layoutSizing*` with a `textAutoResize` fallback for
+- [figma-text-lowering.md](figma-text-lowering.md) — the #160 `TEXT` lowering:
+  the document `TextStyle` carries family/size/weight/color only, every other
+  authored text feature is a named diagnostic (P4, not a schema widening),
+  sizing reads `layoutSizing*` with a `textAutoResize` fallback for
   free-standing text, and a text node's fill lowers into the style's color.
 - [figma-ellipse-as-circle.md](figma-ellipse-as-circle.md) — the #239 shape
-  lowering: a full-sweep `ELLIPSE` with equal, fixed extents lowers to a
-  rounded rect with corner radius = half the extent (a circle is exact; the
-  painter's per-corner radius is one scalar, so a non-circular ellipse cannot
-  be expressed and is refused by name, along with arcs, rings, non-fixed
-  ellipses, and the other shape kinds). No schema change — a dedicated shape
-  construct is the deferred v1 path.
+  lowering: a full-sweep `ELLIPSE` with equal, fixed extents lowers to a rounded
+  rect with corner radius = half the extent (a circle is exact; the painter's
+  per-corner radius is one scalar, so a non-circular ellipse cannot be expressed
+  and is refused by name, along with arcs, rings, non-fixed ellipses, and the
+  other shape kinds). No schema change — a dedicated shape construct is the
+  deferred v1 path.
 - [figma-component-lowering.md](figma-component-lowering.md) — the #242
   component lowering: a local `INSTANCE` lowers like a frame (Figma bakes the
   referenced component's content, overrides applied, into the instance's own
@@ -396,146 +383,145 @@ into the records below. Per-story decisions land here directly:
   enters the compiler, because pixel reconstruction is the part that carries the
   CVEs (story #400). Closes the asymmetry where only the Deno path checked the
   tag.
-- [importer-trim-layers.md](importer-trim-layers.md) — the trim pass runs
-  before the export closure and names every removed subtree (sharedPluginData
-  roles, `_`-prefix sugar, slot-child auto-replacement; hidden is not trimmed);
-  P4 records, R7-deterministic (story #39).
+- [importer-trim-layers.md](importer-trim-layers.md) — the trim pass runs before
+  the export closure and names every removed subtree (sharedPluginData roles,
+  `_`-prefix sugar, slot-child auto-replacement; hidden is not trimmed); P4
+  records, R7-deterministic (story #39).
 - [figma-cross-file-library-resolution.md](figma-cross-file-library-resolution.md)
   — the #38 cross-file resolution: an instance of a library component resolves
-  by the global key against the libraries the export manifest declares (declared,
-  not auto-discovered), and the library definition is spliced into the consumer
-  document — every id reference remapped into a per-library namespace and nested
-  references spliced transitively — as a resolve-but-do-not-paint node, so a
-  consumer + library pair compiles to the same bytes as the single-file golden.
-  Spliced definitions are excluded from sidecar derivation (their bindings live
-  in the library's variable space, #167); unresolvable keys, cross-file images,
-  transitive-remote references, and shadowed keys are all named (P4).
+  by the global key against the libraries the export manifest declares
+  (declared, not auto-discovered), and the library definition is spliced into
+  the consumer document — every id reference remapped into a per-library
+  namespace and nested references spliced transitively — as a
+  resolve-but-do-not-paint node, so a consumer + library pair compiles to the
+  same bytes as the single-file golden. Spliced definitions are excluded from
+  sidecar derivation (their bindings live in the library's variable space,
+  #167); unresolvable keys, cross-file images, transitive-remote references, and
+  shadowed keys are all named (P4).
 - [producer-assembles-its-own-diagnostics.md](producer-assembles-its-own-diagnostics.md)
   — `Report` gains `FromIterator` + `Extend` so a producer can report what the
-  import gate hands it (story #139); closes a gap
-  `validator-three-gates.md` opened.
+  import gate hands it (story #139); closes a gap `validator-three-gates.md`
+  opened.
 
 - [dashc-wasm-abi.md](dashc-wasm-abi.md) — `dashc`'s wasm boundary is five
   hand-written `extern "C"` exports over a length-prefixed wire format, not
-  wasm-bindgen or a flatbuffers envelope (story #17); binds story #37 and
-  the whole v0.7 importer.
+  wasm-bindgen or a flatbuffers envelope (story #17); binds story #37 and the
+  whole v0.7 importer.
 
 - [dashscene-document-is-the-ir.md](dashscene-document-is-the-ir.md) — the IR is
   the dashscene document; `.dsb` is its file extension. Supersedes
-  `docs/archive/2026-07-14-scope-decisions.md` §20; binds
-  `crates/dashc`'s type names.
+  `docs/archive/2026-07-14-scope-decisions.md` §20; binds `crates/dashc`'s type
+  names.
 
 - [dirty-set-advisory-across-boundary-b.md](dirty-set-advisory-across-boundary-b.md)
   — the dirty set crosses boundary B as an advisory `Option<&[u32]>` on
   `Painter::paint`; `SkiaPainter`'s `Full`/`Retained` modes make it a
   differential oracle (story #163); binds the incremental-commit work (#164).
 
-- [reactive-layer-home-and-staging.md](reactive-layer-home-and-staging.md)
-  — the reactive layer (signals, bindings, transforms, flush loop) lives in
-  `dashlang` with core unchanged; the binding table moves into `dashbuf` +
-  core at v0.7, so the transform vocabulary is declarative-with-`Custom` now
-  (story #166; `docs/archive/2026-07-14-scope-decisions.md` §23 D1, D8).
+- [reactive-layer-home-and-staging.md](reactive-layer-home-and-staging.md) — the
+  reactive layer (signals, bindings, transforms, flush loop) lives in `dashlang`
+  with core unchanged; the binding table moves into `dashbuf` + core at v0.7, so
+  the transform vocabulary is declarative-with-`Custom` now (story #166;
+  `docs/archive/2026-07-14-scope-decisions.md` §23 D1, D8).
 
-- [bindings-are-explicit-and-flat.md](bindings-are-explicit-and-flat.md)
-  — bindings are explicitly declared in a flat table, not implicitly tracked;
-  a binding connects data to one prop on one node, never two nodes — node
+- [bindings-are-explicit-and-flat.md](bindings-are-explicit-and-flat.md) —
+  bindings are explicitly declared in a flat table, not implicitly tracked; a
+  binding connects data to one prop on one node, never two nodes — node
   consequences propagate through the solver (story #166; §23 D2).
 
 - [scene-tree-is-static-lists-are-bounded-pools.md](scene-tree-is-static-lists-are-bounded-pools.md)
   — the scene tree is static after build; a variable-length list is a bounded
-  pool toggled with `Visible`, because a mid-tree insert shifts every DFS
-  index and defeats the dirty diff (story #166; §23 D3).
+  pool toggled with `Visible`, because a mid-tree insert shifts every DFS index
+  and defeats the dirty diff (story #166; §23 D3).
 
 - [visible-is-layout-opacity-is-paint.md](visible-is-layout-opacity-is-paint.md)
   — `Visible` is a layout prop (Taffy `Display::None`), `Opacity` is a paint
   prop, and there is no third `visibility: hidden` state; `Visible` built at
   v0.4, `Opacity` scope for v0.8 (story #165; §23 D7).
 - [rotation-is-paint-only-and-anchored-explicitly.md](rotation-is-paint-only-and-anchored-explicitly.md)
-  — rotation joins `Opacity` on the paint side, carrying an angle in radians
-  and an **explicit** anchor in the node's own space, canonically `(0, 0)`:
-  neither Figma nor SVG rotates about a centre, and the fixture arithmetic that
-  shows it is in the record. All three scalars bind, scale and skew wait, and a
-  painter that cannot rotate refuses by name rather than drawing unrotated
-  (story #770, slice v0.18).
-- [flip-engine-binds-resolved-values.md](flip-engine-binds-resolved-values.md)
-  — `dashcue` carries only the transition spec (P1); the engine captures the
+  — rotation joins `Opacity` on the paint side, carrying an angle in radians and
+  an **explicit** anchor in the node's own space, canonically `(0, 0)`: neither
+  Figma nor SVG rotates about a centre, and the fixture arithmetic that shows it
+  is in the record. All three scalars bind, scale and skew wait, and a painter
+  that cannot rotate refuses by name rather than drawing unrotated (story #770,
+  slice v0.18).
+- [flip-engine-binds-resolved-values.md](flip-engine-binds-resolved-values.md) —
+  `dashcue` carries only the transition spec (P1); the engine captures the
   before/after solve and binds the resolved `(from, to)` and `(node, channel)`
   keys at commit, delegating timing and retarget to the scheduler (story #22).
 
-- [binding-table-in-the-document.md](binding-table-in-the-document.md)
-  — the serialized binding table: named scalar signals plus flat rows beside
-  the resolved literals (no token refs); a COLOR variable is four `.r/.g/.b/.a`
+- [binding-table-in-the-document.md](binding-table-in-the-document.md) — the
+  serialized binding table: named scalar signals plus flat rows beside the
+  resolved literals (no token refs); a COLOR variable is four `.r/.g/.b/.a`
   signals; a non-default mode qualifies the name (`size/gap@dark`); the join
   splits at the ABI — Deno owns variables and modes, `dashc` owns channels
   (story #167; §23 D8/D9).
-- [v08-layout-vocabulary-shape.md](v08-layout-vocabulary-shape.md) — the
-  v0.8 layout vocabulary: Wrap/Grid as `LayoutMode` members, grid tracks as
-  `GridTrack` table vectors (Fixed/Fraction), placement on
-  `LayoutConstraints`, one appended `cross_gap` that follows `gap` when
-  absent; resolves Q-4 (story #43).
-- [negative-margin-hug-rebate.md](negative-margin-hug-rebate.md) — the
-  engine rebates a fixed child's negative main-axis margin into its flex
-  basis (with a min-size floor) to route around taffy 0.12's intrinsic
-  mis-sum; closes debt #236 (story #43).
-- [atlas-directory-per-script-weight.md](atlas-directory-per-script-weight.md)
-  — a second font weight is a sibling committed atlas directory, not a face
-  axis inside the metrics blob, so the Regular fixtures are never rewritten
-  and `AtlasMetrics::FORMAT_VERSION` stays 1; Bold and SemiBold added,
-  Medium and Arabic Bold not (story F1/#368).
-- [weight-selection-in-the-cascade.md](weight-selection-in-the-cascade.md) —
-  the cascade is a list of families of weighted faces: coverage picks the
-  family, the requested CSS weight picks the face, and the result flattens
-  family-major into the one positional slot list boundary B already
-  indexes; the seam is additive so the frozen E7 oracle is untouched
-  (story F1/#368).
+- [v08-layout-vocabulary-shape.md](v08-layout-vocabulary-shape.md) — the v0.8
+  layout vocabulary: Wrap/Grid as `LayoutMode` members, grid tracks as
+  `GridTrack` table vectors (Fixed/Fraction), placement on `LayoutConstraints`,
+  one appended `cross_gap` that follows `gap` when absent; resolves Q-4 (story
+  #43).
+- [negative-margin-hug-rebate.md](negative-margin-hug-rebate.md) — the engine
+  rebates a fixed child's negative main-axis margin into its flex basis (with a
+  min-size floor) to route around taffy 0.12's intrinsic mis-sum; closes debt
+  #236 (story #43).
+- [atlas-directory-per-script-weight.md](atlas-directory-per-script-weight.md) —
+  a second font weight is a sibling committed atlas directory, not a face axis
+  inside the metrics blob, so the Regular fixtures are never rewritten and
+  `AtlasMetrics::FORMAT_VERSION` stays 1; Bold and SemiBold added, Medium and
+  Arabic Bold not (story F1/#368).
+- [weight-selection-in-the-cascade.md](weight-selection-in-the-cascade.md) — the
+  cascade is a list of families of weighted faces: coverage picks the family,
+  the requested CSS weight picks the face, and the result flattens family-major
+  into the one positional slot list boundary B already indexes; the seam is
+  additive so the frozen E7 oracle is untouched (story F1/#368).
 - [css-fonts-4-weight-matching-non-fatal.md](css-fonts-4-weight-matching-non-fatal.md)
-  — the CSS Fonts Level 4 §5.2 weight step, adopted verbatim and non-fatal,
-  so weight 500 resolves to Regular by specification and a single-face
-  family absorbs every request (story F1/#368).
+  — the CSS Fonts Level 4 §5.2 weight step, adopted verbatim and non-fatal, so
+  weight 500 resolves to Regular by specification and a single-face family
+  absorbs every request (story F1/#368).
 - [weight-substitution-is-a-render-time-diagnostic.md](weight-substitution-is-a-render-time-diagnostic.md)
   — `text.weight-substituted` is reported by the typesetter that made the
   substitution, never recorded in the `.dsb`: which weights exist is the
-  renderer's asset set, and a substitution is a result (P1), so a
-  compile-time record is refused (story F1/#368).
-- [font-resolution-order.md](font-resolution-order.md) — the family name
-  becomes load-bearing, and a font resolves in one order: an embedded font,
-  then the pinned cascade, then substitution named as
-  `text.family-substituted`, and the host's installed fonts only in an
-  opt-in preview mode that never reaches a golden. Refusing the compile and
-  host fallback as a default are both rejected, the second because golden
-  stability rests on a pinned asset set (#379).
+  renderer's asset set, and a substitution is a result (P1), so a compile-time
+  record is refused (story F1/#368).
+- [font-resolution-order.md](font-resolution-order.md) — the family name becomes
+  load-bearing, and a font resolves in one order: an embedded font, then the
+  pinned cascade, then substitution named as `text.family-substituted`, and the
+  host's installed fonts only in an opt-in preview mode that never reaches a
+  golden. Refusing the compile and host fallback as a default are both rejected,
+  the second because golden stability rests on a pinned asset set (#379).
 - [corpus-ships-inter.md](corpus-ships-inter.md) — the pinned cascade gains
-  Inter at weights 400/500/600/700 beside Noto Sans, since Inter is what
-  real Figma files use and family substitution is the largest remaining
-  fidelity gap. Executed by story #385: the faces landed with the
-  family-name matching, because a second Latin family without it would have
-  silently repointed the Noto-authored frames, and — #49 having closed — the
-  E7 cascade took Inter too, tightening `v08-grid-spans` from 0.116 % to
-  0.037 % (#379).
+  Inter at weights 400/500/600/700 beside Noto Sans, since Inter is what real
+  Figma files use and family substitution is the largest remaining fidelity gap.
+  Executed by story #385: the faces landed with the family-name matching,
+  because a second Latin family without it would have silently repointed the
+  Noto-authored frames, and — #49 having closed — the E7 cascade took Inter too,
+  tightening `v08-grid-spans` from 0.116 % to 0.037 % (#379).
 
-Gardened out of `docs/technotes/`'s `DECISION` / `DECISION direction` tags,
-so each technote stops being the authority for the conclusion it reached —
-together with the later story decisions that build directly on one of them,
-filed beside their parent rather than apart from it:
+Gardened out of `docs/technotes/`'s `DECISION` / `DECISION direction` tags, so
+each technote stops being the authority for the conclusion it reached — together
+with the later story decisions that build directly on one of them, filed beside
+their parent rather than apart from it:
 
 - [dashc-lowers-figma-it-does-not-export.md](dashc-lowers-figma-it-does-not-export.md)
   — cross-references `figma-importer-deno-plus-dashc-wasm.md`; re-affirms it
   rather than deciding anything new (`docs/technotes/producers-and-ir.md` §1).
 - [no-neutral-ir-above-dashscene.md](no-neutral-ir-above-dashscene.md) —
   `dashbuf` and the core arena are the two producer-neutral formats; no third,
-  neutral interchange layer above dashscene (`docs/technotes/producers-and-ir.md`
-  §2).
+  neutral interchange layer above dashscene
+  (`docs/technotes/producers-and-ir.md` §2).
 - [two-producer-entry-paths.md](two-producer-entry-paths.md) — every producer
-  enters via the offline compile path or the in-memory arena path, never a
-  third format (`docs/technotes/producers-and-ir.md` §3).
+  enters via the offline compile path or the in-memory arena path, never a third
+  format (`docs/technotes/producers-and-ir.md` §3).
 - [no-gui-toolkit-dependency.md](no-gui-toolkit-dependency.md) — dashscene
-  builds a pipeline rather than sitting on a GUI toolkit, and takes no code
-  from one; Slint is the candidate evaluated
-  (`docs/technotes/producers-and-ir.md` §5).
+  builds a pipeline rather than sitting on a GUI toolkit, and takes no code from
+  one; Slint is the candidate evaluated (`docs/technotes/producers-and-ir.md`
+  §5).
 - [radial-is-not-a-layout-mode.md](radial-is-not-a-layout-mode.md) — radial /
-  anchored placement stays an absolute box plus a transform, never a layout mode;
-  the gauge vocabulary is bound-prop animation data and safety-regulated regions
-  are a `fixed-region` validator check (`docs/technotes/producers-and-ir.md` §6).
+  anchored placement stays an absolute box plus a transform, never a layout
+  mode; the gauge vocabulary is bound-prop animation data and safety-regulated
+  regions are a `fixed-region` validator check
+  (`docs/technotes/producers-and-ir.md` §6).
 - [backend-tiering-unity-skia-lean.md](backend-tiering-unity-skia-lean.md) —
   Unity for high-end, trimmed Skia for entry, the lean painter gated on
   measurement (`docs/technotes/rendering-and-painters.md` §5). **Amended** by
@@ -545,26 +531,26 @@ filed beside their parent rather than apart from it:
   Skia-GPU is **not planned**, and Skia stays permanently as the bit-exact CPU
   oracle (story #577, amends the record above).
 - [instance-buffer-contract.md](instance-buffer-contract.md) — the lean
-  painter's frame is one ordered instance buffer of 80-byte `#[repr(C)]` rows,
-  a rect's instances contiguous and named by a per-rect span, in
+  painter's frame is one ordered instance buffer of 80-byte `#[repr(C)]` rows, a
+  rect's instances contiguous and named by a per-rect span, in
   `dashscene-skia`'s own per-node order; layer 1 of epic #569 is stated over it
   as committed text goldens (story #578).
 - [sub-word-members-widen-rather-than-pad.md](sub-word-members-widen-rather-than-pad.md)
   — a boundary-B member narrower than the ones around it widens to the word
   rather than declaring a `_pad` beside it: a public padding member would
-  participate in the derived equality, the widening costs no bytes and moves
-  no offsets, and the type-level domain guarantee it gives up is asserted in
+  participate in the derived equality, the widening costs no bytes and moves no
+  offsets, and the type-level domain guarantee it gives up is asserted in
   `Atlas::new` instead (story #578).
 - [shader-library-and-layer-2.md](shader-library-and-layer-2.md) — the lean
-  painter's SDF math is one WGSL file included textually by every consumer,
-  and layer 2 evaluates it by compute shader against independently derived
+  painter's SDF math is one WGSL file included textually by every consumer, and
+  layer 2 evaluates it by compute shader against independently derived
   references; the shadow integrates twelve rows because four costs 5.1 code
   points of 255 and twelve costs 0.83, measured (story #579).
-- [pipelines-and-layer-3.md](pipelines-and-layer-3.md) — the lean painter
-  draws one instanced quad per instance row with no vertex buffer, offscreen
-  into an `Rgba8Unorm` target so blending stays in sRGB-encoded space, and
-  layer 3 gates the pipeline rather than the picture; `wgsl_to_wgpu` and
-  `naga_oil` are **not adopted**, with reasons (story #580).
+- [pipelines-and-layer-3.md](pipelines-and-layer-3.md) — the lean painter draws
+  one instanced quad per instance row with no vertex buffer, offscreen into an
+  `Rgba8Unorm` target so blending stays in sRGB-encoded space, and layer 3 gates
+  the pipeline rather than the picture; `wgsl_to_wgpu` and `naga_oil` are **not
+  adopted**, with reasons (story #580).
 - [baked-texel-payloads-cross-boundary-b.md](baked-texel-payloads-cross-boundary-b.md)
   — `ImageFormat` grows the rungs `dashpack` can produce as one flat
   `#[repr(u32)]` enum rather than a nested `Baked(TexelFormat)`, `ImageTable`
@@ -574,21 +560,22 @@ filed beside their parent rather than apart from it:
   cannot (story #640, unblocking #581).
 - [the-host-selects-the-painter-and-the-frame-path-holds-its-buffers.md](the-host-selects-the-painter-and-the-frame-path-holds-its-buffers.md)
   — the swapchain lives in `dashscene-gpu` beside the pipeline format it has to
-  agree with, must not be an sRGB-converting format, and the showcase host
-  picks its painter with `--painter` and swaps it with a key; the frame path
-  holds its buffers across frames and applies a dirty range only when the
-  commit generation says this frame follows the one on the device (story #585).
+  agree with, must not be an sRGB-converting format, and the showcase host picks
+  its painter with `--painter` and swaps it with a key; the frame path holds its
+  buffers across frames and applies a dirty range only when the commit
+  generation says this frame follows the one on the device (story #585).
 - [unity-painter-uses-brg.md](unity-painter-uses-brg.md) — **proposed**:
   BatchRendererGroup over GameObject-per-node for the Unity painter, pending a
   lit-BRG shader spike and a GLES 3.2 platform check
   (`docs/technotes/rendering-and-painters.md` §10).
 - [downloaded-raster-needs-no-vector-engine.md](downloaded-raster-needs-no-vector-engine.md)
-  — downloaded PNG/WebP is decode → upload → bind through the existing image-fill
-  vocabulary, no vector engine involved (`docs/technotes/runtime-content.md` §2).
+  — downloaded PNG/WebP is decode → upload → bind through the existing
+  image-fill vocabulary, no vector engine involved
+  (`docs/technotes/runtime-content.md` §2).
 - [streamed-content-is-a-cross-process-producer.md](streamed-content-is-a-cross-process-producer.md)
-  — **proposed**: streamed Glance-like content is an ordinary producer (in-process
-  or cross-process), pending the remote/untrusted admission policy (Q-5)
-  (`docs/technotes/runtime-content.md` §3).
+  — **proposed**: streamed Glance-like content is an ordinary producer
+  (in-process or cross-process), pending the remote/untrusted admission policy
+  (Q-5) (`docs/technotes/runtime-content.md` §3).
 - [lottie-bake-when-possible.md](lottie-bake-when-possible.md) — **proposed**:
   `dashc` triages each Lottie and bakes it when faithful, falling back to ThorVG
   only when it cannot, pending the triage/VRAM-budget mechanism
@@ -600,85 +587,83 @@ filed beside their parent rather than apart from it:
 - [pre-v1-hardening-slice.md](pre-v1-hardening-slice.md) — the 2026-07-19 debt
   triage splits the independent code-debt into a pre-v1 hardening slice (v0.13,
   milestone #14, epic #362); feature scope gated on a v1 consumer stays on v1.
-  Revised at the v0.12 close (2026-07-27), where the dividing line grew from
-  two terms to four: **resolvable and measurable now** is the burn-down;
-  **needs a ruling or an owner-supplied input** is v0.13 but not burn-down work
-  (epic #474); **real but not yet measurable** goes to v1's performance pass
-  (epic #476), because resolvable is not the same as measurable and an
-  optimisation with no frame budget behind it cannot be shown to have worked;
-  and **unlocks with a v1 consumer** stays on v1 as before. The third term was
-  written for two specification gaps that had been mistaken for code debt —
-  #462, where the packer's memory budget has no number so a profile cannot
-  fail, and #373, where the MSDF legibility floor is checked at import time
-  while animation can cross it at runtime. It named seven items and four were
-  settled the day it was written, which is its own best argument: they were not
-  hard, they were unasked. #462 is deferred to v1 with the resulting gap stated
-  rather than implied.
+  Revised at the v0.12 close (2026-07-27), where the dividing line grew from two
+  terms to four: **resolvable and measurable now** is the burn-down; **needs a
+  ruling or an owner-supplied input** is v0.13 but not burn-down work (epic
+  #474); **real but not yet measurable** goes to v1's performance pass (epic
+  #476), because resolvable is not the same as measurable and an optimisation
+  with no frame budget behind it cannot be shown to have worked; and **unlocks
+  with a v1 consumer** stays on v1 as before. The third term was written for two
+  specification gaps that had been mistaken for code debt — #462, where the
+  packer's memory budget has no number so a profile cannot fail, and #373, where
+  the MSDF legibility floor is checked at import time while animation can cross
+  it at runtime. It named seven items and four were settled the day it was
+  written, which is its own best argument: they were not hard, they were
+  unasked. #462 is deferred to v1 with the resulting gap stated rather than
+  implied.
 - [backdrop-blur-is-core-vocabulary.md](backdrop-blur-is-core-vocabulary.md) —
-  backdrop blur stops being `profile:full` and every painter honours
-  it; the static bake is rejected because it would pass the render oracle while
-  freezing a dynamic effect; boundary B gains a `samples_backdrop` declaration
-  and one ordering guarantee, and a painter that cannot sample the backdrop
-  reports it at render time rather than at compile time (P1). The profile
-  reversal is the owner's 2026-07-19 position; the contract and the diagnostic
-  were proposed in the record and accepted with it. `LAYER_BLUR` does not ride
-  along — the only one in the corpus is a rejected progressive blur, so pairing
-  it would add vocabulary nothing measures (#344).
+  backdrop blur stops being `profile:full` and every painter honours it; the
+  static bake is rejected because it would pass the render oracle while freezing
+  a dynamic effect; boundary B gains a `samples_backdrop` declaration and one
+  ordering guarantee, and a painter that cannot sample the backdrop reports it
+  at render time rather than at compile time (P1). The profile reversal is the
+  owner's 2026-07-19 position; the contract and the diagnostic were proposed in
+  the record and accepted with it. `LAYER_BLUR` does not ride along — the only
+  one in the corpus is a rejected progressive blur, so pairing it would add
+  vocabulary nothing measures (#344).
 - [cargo-lock-is-committed.md](cargo-lock-is-committed.md) — `Cargo.lock` is
-  committed, reversing the "library workspace, no lock file" convention the
-  repo shipped with. Only three direct dependencies were pinned exactly and
-  every transitive dependency floated, so a patch release anywhere in the graph
-  could move a byte-exact `.dsb` or a bit-exact PNG golden with an unchanged
-  working tree — a diff indistinguishable from a real regression. The library
-  argument is untouched: a consumer still resolves its own graph. `--locked` is
+  committed, reversing the "library workspace, no lock file" convention the repo
+  shipped with. Only three direct dependencies were pinned exactly and every
+  transitive dependency floated, so a patch release anywhere in the graph could
+  move a byte-exact `.dsb` or a bit-exact PNG golden with an unchanged working
+  tree — a diff indistinguishable from a real regression. The library argument
+  is untouched: a consumer still resolves its own graph. `--locked` is
   deliberately not adopted while CI cannot run (#263) (#411).
 
-- [native-astc-codec-table.md](native-astc-codec-table.md) — the launch
-  fleet (SA8255/SA7255 Adreno, Renesas R-Car PowerVR/IMG) ships native ASTC
-  directly, one byte-identical bank, no Basis and no transcoder at all
-  (Wave 1-2, committed); a future NVIDIA-BC7 row (Wave 3) stays proposed
-  only until a pack-time native-format probe confirms real GPU residency,
-  because capability bits are not evidence; adds a fixed-target refinement
-  to `docs/specification/03-target-hardware-rules.md` that keeps the
-  Basis/KTX2 path for the unknown-GPU and mixed-fleet case (story #436).
+- [native-astc-codec-table.md](native-astc-codec-table.md) — the launch fleet
+  (SA8255/SA7255 Adreno, Renesas R-Car PowerVR/IMG) ships native ASTC directly,
+  one byte-identical bank, no Basis and no transcoder at all (Wave 1-2,
+  committed); a future NVIDIA-BC7 row (Wave 3) stays proposed only until a
+  pack-time native-format probe confirms real GPU residency, because capability
+  bits are not evidence; adds a fixed-target refinement to
+  `docs/specification/03-target-hardware-rules.md` that keeps the Basis/KTX2
+  path for the unknown-GPU and mixed-fleet case (story #436).
 - [asset-quality-profile-naming.md](asset-quality-profile-naming.md) — RAW
-  capitalized always names the quality profile, lowercase raw always names
-  an encoding concept (prefer "uncompressed"), and the retired profile
-  names (Lossless, Access, Master, Eco) stay out of the vocabulary (story
-  #436).
-- [compress-raster-only.md](compress-raster-only.md) — only raster images
-  are block-compressed. Three asset classes rather than the packer's two,
-  split by resident cost against error tolerance: compress where
-  consumption is high **and** error tolerance is high. The objective is
-  memory bandwidth, residency and load-time CPU — **not file size**, which
-  is a constraint. The two exclusions are rejected for opposite reasons:
-  text because **the risk is too high** (MSDF has already spent half the
-  quality margin, and illegibility is not an aesthetic failure), icons
-  because **the value is too low** (tens of kilobytes against a new lossy
-  stage in the field path). EAC-R11 is rejected on two independent grounds,
-  structural and lossy. Provisional on both sides — the field exclusion
-  pending a rendered-output measurement (#460), the raster inclusion
-  pending a memory budget the profiles can be checked against, and raster
-  band values set on the content class that will dominate — full-screen
-  backgrounds and welcome sequences, not the 380x380 photograph they were
-  pinned on (#462) (#345).
+  capitalized always names the quality profile, lowercase raw always names an
+  encoding concept (prefer "uncompressed"), and the retired profile names
+  (Lossless, Access, Master, Eco) stay out of the vocabulary (story #436).
+- [compress-raster-only.md](compress-raster-only.md) — only raster images are
+  block-compressed. Three asset classes rather than the packer's two, split by
+  resident cost against error tolerance: compress where consumption is high
+  **and** error tolerance is high. The objective is memory bandwidth, residency
+  and load-time CPU — **not file size**, which is a constraint. The two
+  exclusions are rejected for opposite reasons: text because **the risk is too
+  high** (MSDF has already spent half the quality margin, and illegibility is
+  not an aesthetic failure), icons because **the value is too low** (tens of
+  kilobytes against a new lossy stage in the field path). EAC-R11 is rejected on
+  two independent grounds, structural and lossy. Provisional on both sides — the
+  field exclusion pending a rendered-output measurement (#460), the raster
+  inclusion pending a memory budget the profiles can be checked against, and
+  raster band values set on the content class that will dominate — full-screen
+  backgrounds and welcome sequences, not the 380x380 photograph they were pinned
+  on (#462) (#345).
 
 - [glyph-coverage-is-declared-at-build-time.md](glyph-coverage-is-declared-at-build-time.md)
-  — an atlas learns its glyphs at build time, by closing the document's own
-  text over the font's substitution rules, the way web font subsetting does.
-  Dynamic runtime generation is deferred, and when it lands it is a
-  **painter capability** rather than a profile property: coverage stays a
-  document fact identical everywhere, because coverage feeds shaping and
-  shaping decides advance widths, so a profile that generated glyphs would
-  lay out the same document differently. Follows backdrop blur's posture —
-  incapacity is a render-time report, not a compile-time refusal. Carries a
-  stated reopening condition and three constraints, including that a dynamic
-  generator must be this project's own or the divergence measured (#463).
+  — an atlas learns its glyphs at build time, by closing the document's own text
+  over the font's substitution rules, the way web font subsetting does. Dynamic
+  runtime generation is deferred, and when it lands it is a **painter
+  capability** rather than a profile property: coverage stays a document fact
+  identical everywhere, because coverage feeds shaping and shaping decides
+  advance widths, so a profile that generated glyphs would lay out the same
+  document differently. Follows backdrop blur's posture — incapacity is a
+  render-time report, not a compile-time refusal. Carries a stated reopening
+  condition and three constraints, including that a dynamic generator must be
+  this project's own or the divergence measured (#463).
 
-- [debt-streams-own-artifact-classes.md](debt-streams-own-artifact-classes.md)
-  — a debt slice's parallel streams are drawn around **artifact classes**, not
-  crates: one stream owns the painter and every committed artifact, one owns
-  the runtime and with it the layout assertions, one owns producers and moves
+- [debt-streams-own-artifact-classes.md](debt-streams-own-artifact-classes.md) —
+  a debt slice's parallel streams are drawn around **artifact classes**, not
+  crates: one stream owns the painter and every committed artifact, one owns the
+  runtime and with it the layout assertions, one owns producers and moves
   nothing committed. An item's stream follows the artifact it can move, so
   `dashc` splits across two. v0.12's slice-wide "zero goldens moved" assertion
   becomes a per-story one, because v0.13 contains fixes whose whole purpose is
@@ -690,12 +675,12 @@ filed beside their parent rather than apart from it:
   (#362, #475, #438, #439).
 
 - [dashcue-scheduler-storage-stays-vec.md](dashcue-scheduler-storage-stays-vec.md)
-  — `Scheduler`'s track storage keeps its linearly scanned `Vec` rather
-  than a four-slice-stale "revisit at v0.8" pointer: no measurement has
-  ever shown the scan to cost anything (unmeasured perf debt belongs on
-  #476, not here), and the realistic order-preserving replacements do not
-  clear the #77 start-order guarantee for free — `Vec`'s own push/remove
-  is what gives `samples()` that guarantee today (debt #488).
+  — `Scheduler`'s track storage keeps its linearly scanned `Vec` rather than a
+  four-slice-stale "revisit at v0.8" pointer: no measurement has ever shown the
+  scan to cost anything (unmeasured perf debt belongs on #476, not here), and
+  the realistic order-preserving replacements do not clear the #77 start-order
+  guarantee for free — `Vec`'s own push/remove is what gives `samples()` that
+  guarantee today (debt #488).
 
 - [frame-delta-is-clamped-and-the-host-owns-the-clock.md](frame-delta-is-clamped-and-the-host-owns-the-clock.md)
   — the frame delta is clamped at `dt = min(elapsed, 100 ms)` with **no
@@ -703,29 +688,30 @@ filed beside their parent rather than apart from it:
   bound and `tick` takes `dt` as a parameter, so R4's reproducibility clause
   already holds. **Story #810 moved the clamp itself into `LiveScene::tick`**,
   so one value serves every host rather than one per host; the host still owns
-  the clock, which is what "elapsed" means and when it is stopped. The clamp guards frame **cost**, not correctness: substep
-  count scales with `dt`. **100 ms is a convention, not a derived bound** —
-  the lower bound is real (it must sit above ordinary hitches) but nothing
-  distinguishes it from Unity's 333 ms, and deriving it needs a frame budget
-  #476 says does not exist. The binding clause is therefore not the value but
-  **cross-painter agreement**: both product painters clamp at the same value,
-  configured rather than inherited from either engine's default. Also lands the
-  clock invariant — no crate at or below `LiveScene` reads a clock — as a
-  committed source scan rather than a convention (story #572).
+  the clock, which is what "elapsed" means and when it is stopped. The clamp
+  guards frame **cost**, not correctness: substep count scales with `dt`. **100
+  ms is a convention, not a derived bound** — the lower bound is real (it must
+  sit above ordinary hitches) but nothing distinguishes it from Unity's 333 ms,
+  and deriving it needs a frame budget #476 says does not exist. The binding
+  clause is therefore not the value but **cross-painter agreement**: both
+  product painters clamp at the same value, configured rather than inherited
+  from either engine's default. Also lands the clock invariant — no crate at or
+  below `LiveScene` reads a clock — as a committed source scan rather than a
+  convention (story #572).
 
-- [test-tiers.md](test-tiers.md) — the workspace suite runs as three
-  nextest tiers: `sanity` before every commit, `regression` as the gate,
-  `calibration` on a path filter and at slice close.
+- [test-tiers.md](test-tiers.md) — the workspace suite runs as three nextest
+  tiers: `sanity` before every commit, `regression` as the gate, `calibration`
+  on a path filter and at slice close.
 
 - [dashlang-paint-vocabulary.md](dashlang-paint-vocabulary.md) — `dashlang`
   mirrors the v0 paint vocabulary: twelve `Prop` mirrors plus `visible`, four
   sugar methods and no `gradient(..)`, the types widened through core's
   re-export list rather than a new dependency edge, and the image index as the
-  bound — an image fill and a variant-set declaration still need the arena
-  pass, so most scenes author in one pass and not all. `corpus/showcase`'s
-  three scenes migrated, proved by per-scene equivalence tests kept as a
-  one-way ratchet — which reached its end on 2026-08-04, when the painter
-  badge changed all three scenes at once and the tests were deleted with them.
+  bound — an image fill and a variant-set declaration still need the arena pass,
+  so most scenes author in one pass and not all. `corpus/showcase`'s three
+  scenes migrated, proved by per-scene equivalence tests kept as a one-way
+  ratchet — which reached its end on 2026-08-04, when the painter badge changed
+  all three scenes at once and the tests were deleted with them.
 - [fill-with-refuses-a-fill-channel-binding.md](fill-with-refuses-a-fill-channel-binding.md)
   — a `fill_with(..)` paint beside a `Fill*` channel binding is a named
   build-time panic, not a silent loss: the binding stages the whole colour as
@@ -733,63 +719,62 @@ filed beside their parent rather than apart from it:
   (P4). The loader-side `attach_live` has the same shape and wants a validator
   diagnostic instead (debt #667).
 - [cross-arena-comparison-resolves-indices.md](cross-arena-comparison-resolves-indices.md)
-  — a test comparing two independent arenas resolves every index and offset
-  into a per-arena table before comparing, because such a position is a
-  function of that arena's commit history and not of the picture. It has
-  bitten the same helper three times, most recently through a flattening an
-  unrelated story made.
+  — a test comparing two independent arenas resolves every index and offset into
+  a per-arena table before comparing, because such a position is a function of
+  that arena's commit history and not of the picture. It has bitten the same
+  helper three times, most recently through a flattening an unrelated story
+  made.
 - [signal-driven-text-needs-a-solving-write.md](signal-driven-text-needs-a-solving-write.md)
   — a signal bound through `bind_text` must also drive a write that forces the
   solve, because `dashlang`'s A1 rect replay stages no glyph runs and a
-  paint-only tick therefore erases every run in the scene, not only the one
-  that changed. The record names what qualifies as a forcing write (it depends
-  on the target node, not only the channel), obliges that write to be real
-  content rather than a lever, and obliges the test to assert on the committed
-  run count rather than the text prop. Retired by the replay fix, which is
-  deferred because it gives every paint-only frame back a per-text-node cost.
+  paint-only tick therefore erases every run in the scene, not only the one that
+  changed. The record names what qualifies as a forcing write (it depends on the
+  target node, not only the channel), obliges that write to be real content
+  rather than a lever, and obliges the test to assert on the committed run count
+  rather than the text prop. Retired by the replay fix, which is deferred
+  because it gives every paint-only frame back a per-text-node cost.
 
 See the `sdd-working-memory-lifecycle` rule.
 
-- [a-step-is-a-pair-of-keyframes.md](a-step-is-a-pair-of-keyframes.md)
-  — a timed discrete change is two keyframes sharing a `t`, rather than a
-  fourth `TransitionSpec` variant. The sampler already produced an exact step
-  for a duplicate, so the sampler is unchanged and the whole cost falls in the
-  validator, with no schema cost at story #771; a third frame at one `t` is refused, because
-  sampling walks to the last and the middle value could never be returned. It
-  also records what the decision does **not** close: every animatable channel
-  is scalar, so a discrete change of `Prop::Visible` — SVG's `display` — needs
-  a channel rather than a curve shape.
+- [a-step-is-a-pair-of-keyframes.md](a-step-is-a-pair-of-keyframes.md) — a timed
+  discrete change is two keyframes sharing a `t`, rather than a fourth
+  `TransitionSpec` variant. The sampler already produced an exact step for a
+  duplicate, so the sampler is unchanged and the whole cost falls in the
+  validator, with no schema cost at story #771; a third frame at one `t` is
+  refused, because sampling walks to the last and the middle value could never
+  be returned. It also records what the decision does **not** close: every
+  animatable channel is scalar, so a discrete change of `Prop::Visible` — SVG's
+  `display` — needs a channel rather than a curve shape.
 - [motion-is-document-data-keyed-on-the-destination.md](motion-is-document-data-keyed-on-the-destination.md)
-  — a transition is carried in the document and keyed on the destination
-  variant rather than on the interaction that reaches it, which is where
-  Figma keys its own `reactions` payload. Story #771, slice v0.18.
+  — a transition is carried in the document and keyed on the destination variant
+  rather than on the interaction that reaches it, which is where Figma keys its
+  own `reactions` payload. Story #771, slice v0.18.
 - [a-loop-is-ambient-paint-anchored-at-load.md](a-loop-is-ambient-paint-anchored-at-load.md)
-  — a `LoopTrack` is one channel of one node repeating a curve indefinitely;
-  its phase comes from document load plus a per-track offset, nothing ends
-  it, and it is restricted to paint channels because a layout channel would
-  re-solve every frame forever. Story #772, slice v0.18.
+  — a `LoopTrack` is one channel of one node repeating a curve indefinitely; its
+  phase comes from document load plus a per-track offset, nothing ends it, and
+  it is restricted to paint channels because a layout channel would re-solve
+  every frame forever. Story #772, slice v0.18.
 - [binding-expressions-are-not-embedded-wasm.md](binding-expressions-are-not-embedded-wasm.md)
-  — carrying compiled expressions in the document and embedding a wasm
-  runtime in the player is rejected, on P1, P3, P4, payload size,
-  determinism and the fact that a `.dsb` would become executable content.
-  The motivating example is layout, which the solver already does. Recorded
-  so it is not re-proposed without new evidence; the counter-proposal it
-  does not rule on — widen the declarative transform union — stays in
-  `docs/wip/2026-08-07-motion-in-the-document.md`. Gardened at the v0.18
-  close.
+  — carrying compiled expressions in the document and embedding a wasm runtime
+  in the player is rejected, on P1, P3, P4, payload size, determinism and the
+  fact that a `.dsb` would become executable content. The motivating example is
+  layout, which the solver already does. Recorded so it is not re-proposed
+  without new evidence; the counter-proposal it does not rule on — widen the
+  declarative transform union — stays in
+  `docs/wip/2026-08-07-motion-in-the-document.md`. Gardened at the v0.18 close.
 - [the-animation-reference-set-is-the-union-of-two-producers.md](the-animation-reference-set-is-the-union-of-two-producers.md)
   — SMIL does not define what `dashcue` must express. It is a timeline model
   against a state-transition one, its `from`/`to` value model is what P1
-  forbids, and most of what it adds is interval timing rather than motion.
-  The reference set is the union of SMIL and Figma expressed in `dashcue`'s
-  own terms, which is P5 restated. Carries the animated-attribute census
-  over the 525 official SVG tests as the ambient half's work-list. Gardened
-  at the v0.18 close.
+  forbids, and most of what it adds is interval timing rather than motion. The
+  reference set is the union of SMIL and Figma expressed in `dashcue`'s own
+  terms, which is P5 restated. Carries the animated-attribute census over the
+  525 official SVG tests as the ambient half's work-list. Gardened at the v0.18
+  close.
 
 Two of those four — `motion-is-document-data-keyed-on-the-destination.md` and
-`a-loop-is-ambient-paint-anchored-at-load.md` — were written at stories #771
-and #772 and were absent from this index until the v0.18 close added them.
-**That does not close issue #800**: fourteen records in `docs/decisions/` are
-still unlinked from this file, and #800 asks for a check that fails when one
-is, rather than for another hand-added batch. Adding four by hand is what the
-issue predicts will keep happening until the check exists.
+`a-loop-is-ambient-paint-anchored-at-load.md` — were written at stories #771 and
+#772 and were absent from this index until the v0.18 close added them. **That
+does not close issue #800**: fourteen records in `docs/decisions/` are still
+unlinked from this file, and #800 asks for a check that fails when one is,
+rather than for another hand-added batch. Adding four by hand is what the issue
+predicts will keep happening until the check exists.

@@ -38,17 +38,17 @@ It also matters now rather than later. With family substitution removed
 2026-07-26 names an unsupported backdrop blur as the largest remaining
 identified contributor to its 4.1618 % difference from Figma's own render.
 
-**Measured afterwards, that prediction was wrong about the size and right
-about the cause.** Lowering the blur at all (#394) was worth 1.6222 points of
-the hero difference, because before it the frosted panel was omitted entirely
-rather than rendered flat. Painting the blur (#393) was worth a further 0.0640.
-So the construct did carry the largest remaining step, but almost all of it
-came from the node becoming present, not from the effect being rendered — and
-the effect's own contribution is small in this metric because a blur moves many
-pixels a little, which `AE -fuzz 5%` mostly does not count
-(`docs/technotes/document-sections-and-assets.md`). Nothing in this
-record's reasoning depends on the size of that number; it is corrected here so
-the prediction is not read as confirmed.
+**Measured afterwards, that prediction was wrong about the size and right about
+the cause.** Lowering the blur at all (#394) was worth 1.6222 points of the hero
+difference, because before it the frosted panel was omitted entirely rather than
+rendered flat. Painting the blur (#393) was worth a further 0.0640. So the
+construct did carry the largest remaining step, but almost all of it came from
+the node becoming present, not from the effect being rendered — and the effect's
+own contribution is small in this metric because a blur moves many pixels a
+little, which `AE -fuzz 5%` mostly does not count
+(`docs/technotes/document-sections-and-assets.md`). Nothing in this record's
+reasoning depends on the size of that number; it is corrected here so the
+prediction is not read as confirmed.
 
 ## The reversal
 
@@ -76,9 +76,9 @@ whatever ends up behind this", which is dynamic by intent.
 The reason to record the rejection rather than simply not doing it: baking would
 match Figma's static `GET /images` export and therefore **pass the render
 oracle**, while producing a frozen and wrong result the moment the document
-animates. An option that satisfies the measurement while defeating the
-feature's purpose will look attractive precisely when the oracle is the thing
-under pressure. It is refused in advance, on the record.
+animates. An option that satisfies the measurement while defeating the feature's
+purpose will look attractive precisely when the oracle is the thing under
+pressure. It is refused in advance, on the record.
 
 ## What backdrop blur breaks, and the contract proposed for it
 
@@ -119,58 +119,56 @@ therefore the first effect that needs one.
 
 ## What the sample reads inside a group
 
-The ordering guarantee above fixes order alone. It does not say which
-surface the sample reads when a backdrop-sampling rect falls inside a
-`GroupComposite` range, and stage B-2 left that open on purpose — in the
-`Painter` trait's contract and in `docs/design/dashpaint.md` — for the first
-painter that implements the sampling. Stage B-3 settles it.
+The ordering guarantee above fixes order alone. It does not say which surface
+the sample reads when a backdrop-sampling rect falls inside a `GroupComposite`
+range, and stage B-2 left that open on purpose — in the `Painter` trait's
+contract and in `docs/design/dashpaint.md` — for the first painter that
+implements the sampling. Stage B-3 settles it.
 
-**A render-target group is a backdrop root.** A backdrop-sampling rect
-inside a `GroupComposite` range reads that group's offscreen layer — the
-group's own rects that are already composited into it — and not the canvas
-beneath the group. Outside such a range it reads the canvas, unchanged.
+**A render-target group is a backdrop root.** A backdrop-sampling rect inside a
+`GroupComposite` range reads that group's offscreen layer — the group's own
+rects that are already composited into it — and not the canvas beneath the
+group. Outside such a range it reads the canvas, unchanged.
 
 Three reasons, in the order they carry weight.
 
-- **Sampling through the group would composite the backdrop twice.** The
-  group's layer blends over the canvas at the group's alpha. If a sample
-  inside the layer read the canvas, the canvas would reach the final pixel
-  by two routes: directly through `1 - alpha`, and again inside the blurred
-  copy the layer carries. That is the same defect one level up from the one
-  that produced `GroupComposite` — `docs/decisions/masks-and-group-opacity.md`
-  splits the render-target path off precisely because an overlapping subtree
-  at partial opacity would otherwise blend twice. CSS Filter Effects Level 2
-  makes an element with `opacity` below 1 a backdrop root for exactly this
-  reason, and Skia, which implements that model, gives the isolated reading
-  natively.
+- **Sampling through the group would composite the backdrop twice.** The group's
+  layer blends over the canvas at the group's alpha. If a sample inside the
+  layer read the canvas, the canvas would reach the final pixel by two routes:
+  directly through `1 - alpha`, and again inside the blurred copy the layer
+  carries. That is the same defect one level up from the one that produced
+  `GroupComposite` — `docs/decisions/masks-and-group-opacity.md` splits the
+  render-target path off precisely because an overlapping subtree at partial
+  opacity would otherwise blend twice. CSS Filter Effects Level 2 makes an
+  element with `opacity` below 1 a backdrop root for exactly this reason, and
+  Skia, which implements that model, gives the isolated reading natively.
 - **It is what isolation already means here.** `docs/design/dashpaint.md`
-  describes a `GroupComposite` as writing an isolated layer and never
-  sampling one. A sample that read through the group would make that layer
-  not isolated, so a group would mean one thing or another depending on what
-  was placed inside it.
-- **The alternative is unmeasured.** No fixture in the corpus pairs a
-  backdrop blur with a render-target group, so "Figma samples through the
-  group" cannot be checked against anything here. Adopting it would record a
-  guess as though it were a measurement — the failure this project already
-  refuses for tolerance bands, and refuses for the same reason.
+  describes a `GroupComposite` as writing an isolated layer and never sampling
+  one. A sample that read through the group would make that layer not isolated,
+  so a group would mean one thing or another depending on what was placed inside
+  it.
+- **The alternative is unmeasured.** No fixture in the corpus pairs a backdrop
+  blur with a render-target group, so "Figma samples through the group" cannot
+  be checked against anything here. Adopting it would record a guess as though
+  it were a measurement — the failure this project already refuses for tolerance
+  bands, and refuses for the same reason.
 
-The cost is disclosed rather than hidden. A group opacity crossing 1.0
-changes what a backdrop blur inside it samples, because that crossing is
-what creates the isolating layer. The discontinuity belongs to isolation
-rather than to this decision — it is present in CSS and in every compositor
-that isolates — and it is narrower here than in CSS, because
-`dashscene-core` produces the layer only when the group's painted subtree
-overlaps; a non-overlapping group takes the free path, emits no
-`GroupComposite`, and its backdrop samples reach the canvas.
+The cost is disclosed rather than hidden. A group opacity crossing 1.0 changes
+what a backdrop blur inside it samples, because that crossing is what creates
+the isolating layer. The discontinuity belongs to isolation rather than to this
+decision — it is present in CSS and in every compositor that isolates — and it
+is narrower here than in CSS, because `dashscene-core` produces the layer only
+when the group's painted subtree overlaps; a non-overlapping group takes the
+free path, emits no `GroupComposite`, and its backdrop samples reach the canvas.
 
 If a real file is ever measured against Figma and a difference is traced to
 this, the finding reopens this section rather than being absorbed into a
 tolerance band. `goldens/tooling/tests/v011_backdrop_blur.rs`
 (`a_render_target_group_is_a_backdrop_root`) pins the behaviour in both
 directions: a band painted outside the group cannot reach a pixel inside a
-frosted panel while the group isolates it, and the same band does reach the
-same pixel once the group is gone — so the test fails if the sampling
-silently stops happening, not only if it starts reading through.
+frosted panel while the group isolates it, and the same band does reach the same
+pixel once the group is gone — so the test fails if the sampling silently stops
+happening, not only if it starts reading through.
 
 ## What a painter that cannot do it reports
 
@@ -210,11 +208,11 @@ falls back without saying so.
 ## Consequences
 
 - **This is a boundary-B contract story, not an effect variant.** An earlier
-  estimate in discussion put it at "comparable to the shadow work". That estimate
-  was wrong, and it depended on the static-bake escape hatch being available.
-  With the bake path rejected and no profile gating, it is closer in weight to
-  introducing a new paint primitive, and it should carry that label when it is
-  scheduled.
+  estimate in discussion put it at "comparable to the shadow work". That
+  estimate was wrong, and it depended on the static-bake escape hatch being
+  available. With the bake path rejected and no profile gating, it is closer in
+  weight to introducing a new paint primitive, and it should carry that label
+  when it is scheduled.
 - **Skia goes first, and that does not avoid the contract change.** The render
   oracle diffs our output against Figma through the Skia painter, so Skia is
   where fidelity is established and a band is pinned; a later painter then has a
@@ -228,10 +226,10 @@ falls back without saying so.
   sRGB-encoded space differs visibly from averaging in linear light — **settled
   2026-07-30 and no longer a lever that could reopen this decision**:
   sRGB-encoded, measured against Figma,
-  `docs/decisions/blur-blends-in-srgb-encoded-space.md`), and
-  the re-blur cadence (the painter already receives a dirty set, so a frosted
-  node re-blurs only when its backdrop region is dirty, which is what makes a
-  per-frame effect affordable).
+  `docs/decisions/blur-blends-in-srgb-encoded-space.md`), and the re-blur
+  cadence (the painter already receives a dirty set, so a frosted node re-blurs
+  only when its backdrop region is dirty, which is what makes a per-frame effect
+  affordable).
 - **The schema change collides with the sectioned container.** Both this and
   epic #344's own scope evolve `dashbuf.fbs`, and the committed `.dsb` byte
   fixtures are R7 evidence that both would regenerate. They cannot land
@@ -257,11 +255,11 @@ the corpus is checked.
 - **Nothing is asking for it.** Backdrop blur is being pulled forward because
   the live hero measurement names it as the largest remaining identified
   contributor. That same import run raises no layer-blur diagnostic at all.
-- **It is budgeted elsewhere.** `docs/specification/04-figma-vocabulary-profile.md`
-  classifies layer blur as LATER (warn), budgeted, with a designer-visible
-  workaround, and the validator records it as budgeted at v1. Pairing it here
-  would pull v1 scope into v0.11 on a convenience argument rather than on
-  evidence.
+- **It is budgeted elsewhere.**
+  `docs/specification/04-figma-vocabulary-profile.md` classifies layer blur as
+  LATER (warn), budgeted, with a designer-visible workaround, and the validator
+  records it as budgeted at v1. Pairing it here would pull v1 scope into v0.11
+  on a convenience argument rather than on evidence.
 
 What the cheapness argument does justify is narrower and is adopted: the effect
 representation this story adds must be shaped so that layer blur can join it
@@ -270,13 +268,13 @@ features at once; it is in not designing the effect slot twice.
 
 ## Open, and deliberately not settled here
 
-- **Which tolerance band the oracle frame lands in.** There is no
-  backdrop-blur fixture in the corpus — zero occurrences of `BACKGROUND_BLUR`
-  — so there is no design source and no residual to classify by. The band is
-  chosen from the **measured** residual, never from expectation: that rule
-  exists because `v08-baseline` was predicted into one band and measured into
-  another. Settling it now would be guessing, and the guess would be recorded
-  as though it were a measurement.
+- **Which tolerance band the oracle frame lands in.** There is no backdrop-blur
+  fixture in the corpus — zero occurrences of `BACKGROUND_BLUR` — so there is no
+  design source and no residual to classify by. The band is chosen from the
+  **measured** residual, never from expectation: that rule exists because
+  `v08-baseline` was predicted into one band and measured into another. Settling
+  it now would be guessing, and the guess would be recorded as though it were a
+  measurement.
 
   This is the story's real blocker, and it is not a code blocker: it needs a
   self-authored Figma fixture carrying a backdrop blur, and a capture. That is

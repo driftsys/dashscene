@@ -20,29 +20,29 @@
 
 A Figma `VECTOR` node lowers into the dashscene document as a baked
 multi-channel signed-distance field (MSDF), carried on the paint entry as a
-coverage mask. Before B1 a `VECTOR` node was a named skip-with-warning; after
-B1 first-light's bolt and stroke arrows and the Landify hero's 148 vectors
-render. The field is a resolution-independent shape source — the same kind of
-intent the glyph atlas already carries — so P1 holds: the document carries the
-baked field, not a rasterized pixel result. The painter only samples and
-composes (P2), and a shape that cannot be fielded is a named diagnostic (P4).
+coverage mask. Before B1 a `VECTOR` node was a named skip-with-warning; after B1
+first-light's bolt and stroke arrows and the Landify hero's 148 vectors render.
+The field is a resolution-independent shape source — the same kind of intent the
+glyph atlas already carries — so P1 holds: the document carries the baked field,
+not a rasterized pixel result. The painter only samples and composes (P2), and a
+shape that cannot be fielded is a named diagnostic (P4).
 
 ## The carrier — shape-as-mask on the paint entry
 
-The paint entry's shape channel is `Parametric | Field(shape_index)`. Before
-B1 every node's shape was implicitly a (rounded) rectangle — `Paint { fill,
-stroke, corners, clip, shadows }`, where `corners` rounds the box. That
-implicit rounded-rect is the parametric case. B1 makes the channel explicit and
-adds the `Field` alternative alongside it, additively.
+The paint entry's shape channel is `Parametric | Field(shape_index)`. Before B1
+every node's shape was implicitly a (rounded) rectangle —
+`Paint { fill,
+stroke, corners, clip, shadows }`, where `corners` rounds the
+box. That implicit rounded-rect is the parametric case. B1 makes the channel
+explicit and adds the `Field` alternative alongside it, additively.
 
 For a `Field` paint entry the painter samples the baked field to a coverage
 value in `[0,1]` and uses it as the alpha mask over the entry's existing fill
-(solid, gradient, or image). The painter never reads a path — it samples a
-field and colors it, exactly as it already samples an MSDF glyph. This is why
-the hero's 12 gradient-filled vectors render on the first day: the gradient is
-the ordinary `Gradient` paint; the field only masks it. The normative choice
-and the rejected alternatives are in
-`docs/decisions/baked-vector-msdf-field.md`.
+(solid, gradient, or image). The painter never reads a path — it samples a field
+and colors it, exactly as it already samples an MSDF glyph. This is why the
+hero's 12 gradient-filled vectors render on the first day: the gradient is the
+ordinary `Gradient` paint; the field only masks it. The normative choice and the
+rejected alternatives are in `docs/decisions/baked-vector-msdf-field.md`.
 
 ## Schema additions (dashbuf, additive / R7-safe)
 
@@ -65,21 +65,21 @@ still round-trips (`docs/decisions/dsb-frozen-fixture-r7-guard.md`).
 - **Sentinel-index encoding.** `Paint.shape_field` defaults to the `NO_FIELD`
   sentinel (`uint32::MAX`); absent/sentinel means parametric (the implicit
   rounded box; `CornerRadii` is untouched). A valid index selects the `Field`
-  case. This is the exact mirror of the `Node.paint_entry` / `Node.text`
-  "index | sentinel" convention. A `Paint` with the sentinel serializes and
-  loads byte-identically to a pre-B1 `Paint`, so a document with no vectors is
+  case. This is the exact mirror of the `Node.paint_entry` / `Node.text` "index
+  | sentinel" convention. A `Paint` with the sentinel serializes and loads
+  byte-identically to a pre-B1 `Paint`, so a document with no vectors is
   unchanged end to end.
 - **`VectorAtlas`** carries the atlas resolution (`px_per_em`, atlas pixels per
   shape em) and the MSDF spread (`distance_range`, in atlas pixels). Only
   `distance_range` reaches the painter's screen-pixel-range computation
-  (`distance_range * device_px_per_texel`, the same metric the glyph atlas
-  uses, `docs/design/atlas-pipeline.md`): `device_px_per_texel` is the
-  `atlas_rect`-to-device-quad ratio, which already bakes in `px_per_em`, so
-  the painter never divides by it directly — unlike a glyph run, which can
-  render at any size and so does need `Atlas::px_per_em` to relate that size
-  to the bake resolution. `px_per_em` stays document-level provenance (the
-  input the escalation ladder in #357 would drive); the boundary-B
-  `VectorField` mirror does not carry it (debt #358).
+  (`distance_range * device_px_per_texel`, the same metric the glyph atlas uses,
+  `docs/design/atlas-pipeline.md`): `device_px_per_texel` is the
+  `atlas_rect`-to-device-quad ratio, which already bakes in `px_per_em`, so the
+  painter never divides by it directly — unlike a glyph run, which can render at
+  any size and so does need `Atlas::px_per_em` to relate that size to the bake
+  resolution. `px_per_em` stays document-level provenance (the input the
+  escalation ladder in #357 would drive); the boundary-B `VectorField` mirror
+  does not carry it (debt #358).
 - **`PlaneBounds`** is the padded quad — the field extends
   `distance_range / px_per_em` beyond the geometry edge, so these bounds are
   larger than the tight geometry box (msdfgen's `planeBounds` vs. the em box).
@@ -93,23 +93,22 @@ Three named range-check rules in `dashscene-validator` refuse an out-of-range
 
 ## The generator (dashc, `figma::vector_field`)
 
-`crates/dashc/src/figma/vector_field.rs` bakes at import time, so it runs
-inside `dashc.wasm` and keeps the `fdsm` dependency contained to the one crate
-that needs it. Generation is import-time; sampling is render-time — the same
+`crates/dashc/src/figma/vector_field.rs` bakes at import time, so it runs inside
+`dashc.wasm` and keeps the `fdsm` dependency contained to the one crate that
+needs it. Generation is import-time; sampling is render-time — the same
 offline-bake / runtime-sample split the glyph atlas uses.
 
-- **fdsm, not msdfgen.** The generator is pure-Rust `fdsm` 0.8.0, a
-  MIT-licensed MSDF implementation. It is required, not merely preferred: the
-  import path is `dashc.wasm`, so a vendored C++ `msdfgen` cannot ride. fdsm and
-  its whole transitive tree (image, nalgebra, num-traits) compile to
+- **fdsm, not msdfgen.** The generator is pure-Rust `fdsm` 0.8.0, a MIT-licensed
+  MSDF implementation. It is required, not merely preferred: the import path is
+  `dashc.wasm`, so a vendored C++ `msdfgen` cannot ride. fdsm and its whole
+  transitive tree (image, nalgebra, num-traits) compile to
   `wasm32-unknown-unknown` (verified; `just wasm` green). Public entry points:
   `VectorAtlasBaker`, `bake_single`, `plan_field`; `DEFAULT_PX_PER_EM = 48`,
   `DISTANCE_RANGE = 4` (aligned with the glyph atlas's pxrange 4).
 - **Bake steps.** Parse each contour's path string (`M`/`L`/`C`/`Z` only, the
   measured vocabulary) into fdsm Bézier segments, carrying the per-contour
-  winding (`NONZERO`/`EVENODD`) so holes fill correctly →
-  `edge_coloring_simple` → `generate_msdf` at `px_per_em` / `distance_range` →
-  an RGB field buffer.
+  winding (`NONZERO`/`EVENODD`) so holes fill correctly → `edge_coloring_simple`
+  → `generate_msdf` at `px_per_em` / `distance_range` → an RGB field buffer.
 - **Dedup by path hash.** Identical normalized geometry (the hero repeats icon
   vectors) is baked once and shares a `VectorShape` (structural hashing).
 - **Shelf packing.** Unique fields pack into one atlas sheet, the atlas PNG is
@@ -138,9 +137,8 @@ frozen-fixture discipline of `docs/decisions/dsb-frozen-fixture-r7-guard.md`.
 The importer fetches geometry (`&geometry=paths` on the live fetch in
 `importers/figma/src/fetch.ts` / `import.ts` and on `capture.ts`), and dashc's
 `figma/rest.rs` parses `fillGeometry` / `strokeGeometry` (each a list of
-`{ path, windingRule }`). The `figma/mod.rs` VECTOR arm applies a
-measured-only field-input selection rule — widen by exactly what the two live
-targets show:
+`{ path, windingRule }`). The `figma/mod.rs` VECTOR arm applies a measured-only
+field-input selection rule — widen by exactly what the two live targets show:
 
 | case                  | condition                             | field input                               | paint                                                                   |
 | --------------------- | ------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------- |
@@ -163,14 +161,14 @@ single resolution ("widen by exactly what is measured"). The per-shape
 escalation ladder (re-bake at a higher `px_per_em` on a bake-band failure) and
 the unfieldable-ceiling refusal exist **only** in the bake oracle
 (`goldens/tooling/tests/v010_bake_oracle.rs`). Debt **#357** asked whether to
-wire them into production and closed on a measurement instead: escalation
-needs a per-shape fidelity verdict, and the only signal `fdsm` exposes (its
-own reconstruction-vs-scanline disagreement) measures reconstruction noise,
-not resolution loss, so driving escalation from it would be driving it from
-noise. Fixed-48 stays the deliberate default; reopen #357 only if a shape is
-ever measured that it cannot field. The named refusal is emitted through the
-generic `figma.unsupported` rule, not a dedicated `figma.vector-unfieldable`
-code. ThorVG-to-texture (`docs/decisions/runtime-vector-via-thorvg-to-texture.md`)
+wire them into production and closed on a measurement instead: escalation needs
+a per-shape fidelity verdict, and the only signal `fdsm` exposes (its own
+reconstruction-vs-scanline disagreement) measures reconstruction noise, not
+resolution loss, so driving escalation from it would be driving it from noise.
+Fixed-48 stays the deliberate default; reopen #357 only if a shape is ever
+measured that it cannot field. The named refusal is emitted through the generic
+`figma.unsupported` rule, not a dedicated `figma.vector-unfieldable` code.
+ThorVG-to-texture (`docs/decisions/runtime-vector-via-thorvg-to-texture.md`)
 remains the v1 escape hatch for genuinely non-bakeable content; B1 does not
 build it.
 
@@ -178,12 +176,12 @@ build it.
 
 - **Boundary B (dashpaint).** The resolved paint entry mirrors the shape
   channel: a parametric box, or a resolved field reference (atlas texture
-  handle + `atlas_rect` + `plane_bounds` + `distance_range`). `px_per_em`
-  stops at the document layer — the painter derives scale from the
-  `atlas_rect`/`plane_bounds` geometry directly, so carrying the bake
-  resolution past load time would be a redundant field (debt #358). The
-  atlas PNG crosses boundary B on the existing `ImageTable` parameter of
-  `Painter::paint` (`docs/decisions/image-assets-cross-boundary-b.md`).
+  handle + `atlas_rect` + `plane_bounds` + `distance_range`). `px_per_em` stops
+  at the document layer — the painter derives scale from the
+  `atlas_rect`/`plane_bounds` geometry directly, so carrying the bake resolution
+  past load time would be a redundant field (debt #358). The atlas PNG crosses
+  boundary B on the existing `ImageTable` parameter of `Painter::paint`
+  (`docs/decisions/image-assets-cross-boundary-b.md`).
 - **Sampling reuses the glyph MSDF resolve.** dashscene-skia decodes the atlas
   PNG (the existing image path), samples median-of-3 channels → signed distance
   → coverage via a smoothstep over the screen-pixel range — the same
@@ -193,16 +191,16 @@ build it.
 
 ## The bake oracle (build-time, path-vs-field, us-vs-us)
 
-`goldens/tooling/tests/v010_bake_oracle.rs` validates bake _quality_
-independent of Figma, distinct from the import oracle and from the frozen
-E7 render-oracle bands. Per shape it renders two ways at a test size: **truth**
-= the original path filled by Skia's exact path rasterizer; **field** = the
-baked MSDF rendered as a quad through the painter's field sampling. It diffs
-coverage within its own footprint-relative tolerance (3 %, tighter than the
-Figma-vs-us bands and never reusing or retuning them), and it exercises the
-escalation ladder and the ceiling refusal so both stay executable. Census
-shapes bake within tolerance at 48 px/em (star 0.033 %, others ≤ 0.013 %). This
-oracle is what caught the packer bug noted above.
+`goldens/tooling/tests/v010_bake_oracle.rs` validates bake _quality_ independent
+of Figma, distinct from the import oracle and from the frozen E7 render-oracle
+bands. Per shape it renders two ways at a test size: **truth** = the original
+path filled by Skia's exact path rasterizer; **field** = the baked MSDF rendered
+as a quad through the painter's field sampling. It diffs coverage within its own
+footprint-relative tolerance (3 %, tighter than the Figma-vs-us bands and never
+reusing or retuning them), and it exercises the escalation ladder and the
+ceiling refusal so both stay executable. Census shapes bake within tolerance at
+48 px/em (star 0.033 %, others ≤ 0.013 %). This oracle is what caught the packer
+bug noted above.
 
 ## As-built results
 
@@ -221,28 +219,28 @@ oracle is what caught the packer bug noted above.
   used to rely on is recorded at
   `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`. Strict
   mode is unchanged.
-- **import oracle**: the `vector-shapes` fixture (`f0nG7azeYELWb9KZ2tLnu9`,
-  node `3:2`, four fill-only VECTORs) measures 1/73600 px (0.001 %, max Δ61) in
-  the `msdf-text` band — effectively exact. The `msdf-text` band is reused
-  read-only because a baked MSDF field rendered as a quad is the same
-  reconstruction as an msdf-text glyph, so its residual vs Figma's exact path
-  raster is glyph-edge-like.
+- **import oracle**: the `vector-shapes` fixture (`f0nG7azeYELWb9KZ2tLnu9`, node
+  `3:2`, four fill-only VECTORs) measures 1/73600 px (0.001 %, max Δ61) in the
+  `msdf-text` band — effectively exact. The `msdf-text` band is reused read-only
+  because a baked MSDF field rendered as a quad is the same reconstruction as an
+  msdf-text glyph, so its residual vs Figma's exact path raster is
+  glyph-edge-like.
 
 ## Consequences and seams
 
-- **MSRV.** The fdsm dependency tree needs Rust ~1.88, so the declared
-  workspace `rust-version` moved 1.85 → 1.88 (honest; the repo builds on a
-  newer toolchain).
+- **MSRV.** The fdsm dependency tree needs Rust ~1.88, so the declared workspace
+  `rust-version` moved 1.85 → 1.88 (honest; the repo builds on a newer
+  toolchain).
 - **Geometry-extent correctness.** A `plane_bounds` right/bottom must use the
   ceil'd atlas extent divided by the scale, not the un-ceil'd geometry extent,
   or the field renders ~1 texel small anisotropically; fixed with a
   non-integer-width regression test.
 - **Debts, all closed.** #356 (a skipped vector could leave an orphan atlas
-  tile) and four of #358's five B1 review minors landed in PR #547; #358's
-  fifth (the painter's unused `px_per_em`) is resolved by dropping the field
-  from `dashpaint::VectorField` rather than reading it. #357 (wire the
-  escalation ladder into production) closed on the measurement above —
-  fixed-48 stands as the recorded decision, not a deferral.
+  tile) and four of #358's five B1 review minors landed in PR #547; #358's fifth
+  (the painter's unused `px_per_em`) is resolved by dropping the field from
+  `dashpaint::VectorField` rather than reading it. #357 (wire the escalation
+  ladder into production) closed on the measurement above — fixed-48 stands as
+  the recorded decision, not a deferral.
 
 ## Trace
 

@@ -2,12 +2,12 @@
 
 ## Our pledge
 
-We as members, contributors, and maintainers pledge to make participation in
-the dashscene project a harassment-free experience for everyone, regardless of
-age, body size, visible or invisible disability, ethnicity, sex
-characteristics, gender identity and expression, level of experience,
-education, socio-economic status, nationality, personal appearance, race,
-religion, or sexual identity and orientation.
+We as members, contributors, and maintainers pledge to make participation in the
+dashscene project a harassment-free experience for everyone, regardless of age,
+body size, visible or invisible disability, ethnicity, sex characteristics,
+gender identity and expression, level of experience, education, socio-economic
+status, nationality, personal appearance, race, religion, or sexual identity and
+orientation.
 
 ## Our standards
 
@@ -27,15 +27,14 @@ Examples of unacceptable behavior:
 
 ## Enforcement responsibilities
 
-Maintainers are responsible for clarifying and enforcing standards of
-acceptable behavior and will take appropriate and fair corrective action in
-response to any behavior deemed inappropriate, threatening, offensive, or
-harmful.
+Maintainers are responsible for clarifying and enforcing standards of acceptable
+behavior and will take appropriate and fair corrective action in response to any
+behavior deemed inappropriate, threatening, offensive, or harmful.
 
 ## Scope
 
-This Code of Conduct applies within all project spaces, and also applies when
-an individual is officially representing the project in public spaces.
+This Code of Conduct applies within all project spaces, and also applies when an
+individual is officially representing the project in public spaces.
 
 ## Enforcement
 

@@ -142,12 +142,7 @@ fn every_crate_is_in_every_registry_that_enumerates_crates() {
         "[workspace.dependencies] in Cargo.toml",
         |name| format!("\n{name} = {{ path = \"crates/{name}\""),
     ));
-    missing.extend(absent_from(
-        &git_std,
-        &members,
-        ".git-std.toml scopes",
-        |name| format!("\n    \"{name}\","),
-    ));
+    missing.extend(absent_from_list(&git_std, &members, ".git-std.toml scopes"));
     // Anchored on the crate name, because that is how the entries are written
     // and why: git-std splices one span per entry, so an unanchored entry would
     // move one requirement and leave the rest.
@@ -210,12 +205,9 @@ fn every_publishable_crate_carries_registry_metadata() {
     for name in &members {
         let manifest = read(workspace.join("crates").join(name).join("Cargo.toml"));
         for field in ["keywords", "categories"] {
-            // `= ["` and not `= [`: an empty array satisfies the second, and an
-            // empty array is no metadata at all.
-            if !manifest
-                .lines()
-                .any(|line| line.starts_with(&format!("{field} = [\"")))
-            {
+            // Emptiness rather than the `= ["` spelling: an empty array is no
+            // metadata at all, and `array_values` reports it as none either way.
+            if array_values(&manifest, field).is_empty() {
                 missing.push(format!("{name} has no {field}"));
             }
         }
@@ -237,7 +229,7 @@ fn every_publishable_crate_carries_registry_metadata() {
                 ));
             }
         }
-        let count = keywords_of(&manifest).count();
+        let count = keywords_of(&manifest).len();
         if count > 5 {
             missing.push(format!(
                 "{name} carries {count} keywords, and crates.io allows five"
@@ -352,22 +344,49 @@ fn the_matchers_find_real_entries_and_not_prose() {
         "an absent crate must not be found"
     );
     // The scopes matcher takes the quoted list entry, not the bare word, because
-    // every crate name also appears in that file's own commentary.
-    assert!(git_std.contains("\n    \"dashbuf\","));
-    assert!(!git_std.contains("\n    \"dashfake\","));
+    // every crate name also appears in that file's own commentary. Trimmed, so
+    // the indentation stays the formatter's business — see `absent_from_list`.
+    assert!(git_std.lines().any(|l| l.trim() == "\"dashbuf\","));
+    assert!(!git_std.lines().any(|l| l.trim() == "\"dashfake\","));
 }
 
-/// The keywords a manifest declares, as written.
-fn keywords_of(manifest: &str) -> impl Iterator<Item = &str> {
-    manifest
-        .lines()
-        .find(|line| line.starts_with("keywords = ["))
-        .unwrap_or("")
-        .split('"')
-        // A quoted TOML array alternates separator, value, separator, value —
-        // so the values are the odd indices.
-        .skip(1)
-        .step_by(2)
+/// The keywords a manifest declares.
+fn keywords_of(manifest: &str) -> Vec<&str> {
+    array_values(manifest, "keywords")
+}
+
+/// The string values of a top-level array field, inline or expanded.
+///
+/// **Layout-independent on purpose, and this is the second matcher in this file
+/// to need it.** prim formats every manifest and expands an inline array as soon
+/// as its line passes 80 columns — measured: a five-keyword line at 87 columns
+/// becomes one value per line. Reading only the inline spelling failed twice
+/// over. The presence check above wanted `keywords = ["`, which an expanded
+/// array does not start with, so a crate with five valid keywords reported as
+/// having none. And this function matched the bare `keywords = [`, whose line
+/// carries no quotes at all, so it yielded nothing and every rule below it —
+/// length, charset, the five-keyword ceiling — stopped checking while the test
+/// stayed green. The longest `keywords` line in the tree is 69 columns, so that
+/// was eleven columns away.
+///
+/// Takes the text from the opening bracket to the first `]`, which is one span
+/// in both layouts, and reads the odd indices of its `"` split: a quoted TOML
+/// array alternates separator, value, separator, value. An empty array yields
+/// no values, which is what the presence check reads as absent metadata.
+fn array_values<'a>(manifest: &'a str, field: &str) -> Vec<&'a str> {
+    let open = format!("{field} = [");
+    let mut from = 0;
+    while let Some(rel) = manifest[from..].find(&open) {
+        let at = from + rel;
+        // Line-anchored, so a key ending in `field` cannot match.
+        if at == 0 || manifest.as_bytes()[at - 1] == b'\n' {
+            let rest = &manifest[at + open.len()..];
+            let end = rest.find(']').unwrap_or(rest.len());
+            return rest[..end].split('"').skip(1).step_by(2).collect();
+        }
+        from = at + open.len();
+    }
+    Vec::new()
 }
 
 /// One manifest line takes `dependency` from the workspace.
@@ -398,6 +417,31 @@ fn absent_from(
     members
         .iter()
         .filter(|name| !text.contains(&entry(name)))
+        .map(|name| format!("{name} is missing from {registry}"))
+        .collect()
+}
+
+/// Members whose quoted list entry appears on no line of `text`.
+///
+/// Line-oriented, where the other registries are matched by substring, because
+/// this one is the only entry whose indentation a formatter decides.
+/// `.editorconfig` asks for two spaces in a `.toml`; `.git-std.toml` was written
+/// with four and nothing enforced the difference until prim replaced dprint,
+/// which formats TOML. The matcher spelled the width out and failed on the
+/// reindent, reporting every crate as missing from a list that still held all
+/// of them. Trimming makes the width the formatter's business and leaves this
+/// test checking what it means to check.
+///
+/// Still the quoted entry rather than the bare name: every crate name also
+/// appears in that file's own commentary, which is what the width was doing
+/// half of the work of excluding.
+fn absent_from_list(text: &str, members: &BTreeSet<String>, registry: &str) -> Vec<String> {
+    members
+        .iter()
+        .filter(|name| {
+            let entry = format!("\"{name}\",");
+            !text.lines().any(|line| line.trim() == entry)
+        })
         .map(|name| format!("{name} is missing from {registry}"))
         .collect()
 }

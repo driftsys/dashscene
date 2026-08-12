@@ -6,9 +6,9 @@
 
 ## Context
 
-Story #580 puts the first pixels on screen. The instance buffer (#578) says
-what to draw and the shader library (#579) says how to shade it; what was
-missing was a device, a pipeline and a target.
+Story #580 puts the first pixels on screen. The instance buffer (#578) says what
+to draw and the shader library (#579) says how to shade it; what was missing was
+a device, a pipeline and a target.
 
 ## Decision
 
@@ -25,8 +25,8 @@ v0.14's `Present` seam.
 **D4 — the renderer returns unpremultiplied RGBA8.**
 
 **D5 — layer 3 asserts that the pipeline built, that naga validated, and that
-coverage, clipping, stacking, opacity and orientation each did _something_.**
-It is never described as a fidelity check.
+coverage, clipping, stacking, opacity and orientation each did _something_.** It
+is never described as a fidelity check.
 
 **D6 — `wgsl_to_wgpu` and `naga_oil` are not adopted.** Story #580 names both;
 this is a deliberate departure, recorded rather than quietly skipped.
@@ -48,8 +48,8 @@ story that puts this painter behind the host's frame loop (#585).
 requires a painter to average a _blur kernel_ over sRGB-encoded values, and
 measures the two spaces roughly 50 code points apart across a saturated seam.
 Strictly it scopes that rule to blur averaging, and choosing the same space for
-ordinary source-over compositing is a wider reading than the record states —
-so it is decided here rather than inherited.
+ordinary source-over compositing is a wider reading than the record states — so
+it is decided here rather than inherited.
 
 It is decided the same way for two reasons. The reference painter composites in
 `raster_n32_premul` with no colour space attached, so every golden this project
@@ -65,12 +65,11 @@ was added because a one-character change to `TARGET_FORMAT` passed every other
 test in the suite.
 
 **D5, on what layer 3 cannot say.** A coarse per-pixel check on a software
-rasteriser establishes that the painter drew something in about the right
-place. It says nothing about how the result looks on a real automotive GLES
-driver, which is the residual risk epic #569 states plainly and which layer 4
-(story #586) is the only instrument for. A green layer 3 read as evidence of
-fidelity would be the `t2-check-has-no-teeth` failure v0.13 spent a slice
-removing.
+rasteriser establishes that the painter drew something in about the right place.
+It says nothing about how the result looks on a real automotive GLES driver,
+which is the residual risk epic #569 states plainly and which layer 4 (story
+#586) is the only instrument for. A green layer 3 read as evidence of fidelity
+would be the `t2-check-has-no-teeth` failure v0.13 spent a slice removing.
 
 **D6, against `wgsl_to_wgpu`.** Its value is that a binding mismatch becomes a
 compile error rather than a runtime validation failure. What this crate has
@@ -79,9 +78,8 @@ instead is that the mismatch becomes a _test_ failure, immediately and by name:
 declarations, and `the_pipeline_builds_and_the_shaders_validate` does nothing
 but reach that call. The gap between "compile error" and "the first test that
 runs" is real but small, and it costs a build-script code generator and a
-generated-source review surface. Worth revisiting when the binding surface
-grows past one group of four — story #581's atlas residency is the likely
-trigger.
+generated-source review surface. Worth revisiting when the binding surface grows
+past one group of four — story #581's atlas residency is the likely trigger.
 
 **D6 revisited at five bindings (story #710), and still not adopted.** The
 trigger above fired earlier than expected: drawing strokes needed the stroke
@@ -121,12 +119,12 @@ argument and says what holds the heap instead.
 
 **D6, against `naga_oil`.** Its value is `#import` and module composition, so
 the SDF math is one source rather than copies. That property already holds:
-`docs/decisions/shader-library-and-layer-2.md` D1 single-sources through
-textual inclusion, and `paint.wgsl` is concatenated after `sdf.wgsl` exactly as
-the conformance suite concatenates its probes. `naga_oil` would make the
-inclusion declarative rather than positional, which is better hygiene and not a
-new capability. The cost is a preprocessor between the source and naga, which
-is a layer to debug through when a shader fails to validate.
+`docs/decisions/shader-library-and-layer-2.md` D1 single-sources through textual
+inclusion, and `paint.wgsl` is concatenated after `sdf.wgsl` exactly as the
+conformance suite concatenates its probes. `naga_oil` would make the inclusion
+declarative rather than positional, which is better hygiene and not a new
+capability. The cost is a preprocessor between the source and naga, which is a
+layer to debug through when a shader fails to validate.
 
 Both are recorded as **not adopted with reasons**, not as oversights, so that
 the next story to want either has the argument in front of it.
@@ -136,40 +134,41 @@ the next story to want either has the argument in front of it.
 Opaque rounded rects with a solid fill and their outline stroke, clipped by
 their region, composited in slice order at their free-path opacity.
 
-**The stroke arrived at story #710**, which exists because nothing in
-epic #569's breakdown drew one: the packer has emitted `InstanceKind::Stroke` since
+**The stroke arrived at story #710**, which exists because nothing in epic
+#569's breakdown drew one: the packer has emitted `InstanceKind::Stroke` since
 story #578, and no story after it named the kind. Found by running the two
-painters against one scene once story #585 made that possible — the borders
-were missing and no issue owned them.
+painters against one scene once story #585 made that possible — the borders were
+missing and no issue owned them.
 
 Two things it needed, and only one was new. `sdf.wgsl`'s `stroke_coverage` was
 already written and already conformance-tested by layer 2 (story #579), so the
 band is not this story's arithmetic. What was new is that **a stroke instance
 draws outside the bounds its quad is built from**: an instance is stated over
 the node's fill box, and an Outside stroke paints a full width beyond it, a
-Center stroke half of one. The vertex shader grows the quad by that outset,
-read from the stroke row the instance names. Without it the outer half of every
+Center stroke half of one. The vertex shader grows the quad by that outset, read
+from the stroke row the instance names. Without it the outer half of every
 non-Inside stroke is clipped by its own geometry, which looks like a thinner
-stroke and not like a defect — `an_outside_stroke_draws_past_the_box_its_quad_is_built_from`
-is the assertion that fails when it is not done.
+stroke and not like a defect —
+`an_outside_stroke_draws_past_the_box_its_quad_is_built_from` is the assertion
+that fails when it is not done.
 
 One divergence from the reference painter is **not** ruled out here. Skia
 strokes by expanding the geometry — `rrect.with_inset(w/2)` or `with_outset` —
-and then clamps the offset rounded rect's own radii; this shader shifts the
-band on the _unoffset_ box, whose radii were clamped before the shift. The two
-agree wherever the level sets of a convex rounded box are its offsets, which is
-everywhere the radii are not over-subscribed. A node whose radii exceed its
-box, stroked, is the case where they could part. Layer 4 (story #586) is the
+and then clamps the offset rounded rect's own radii; this shader shifts the band
+on the _unoffset_ box, whose radii were clamped before the shift. The two agree
+wherever the level sets of a convex rounded box are its offsets, which is
+everywhere the radii are not over-subscribed. A node whose radii exceed its box,
+stroked, is the case where they could part. Layer 4 (story #586) is the
 instrument that would measure it; layer 3 cannot, because it does not compare
 against the reference at all.
 
 An instance whose kind or fill tag this shader does not implement **draws
 nothing**, and does not fall through to a colour. `Instance::tag` means a
 different enum for each `kind` and their discriminants collide —
-`PaintTag::Solid`, `ShadowKind::Inner` and `BlurKind::Backdrop` are all 1 — so
-a shader that read the tag alone painted a shadow instance with
-`solids[shadow_row]`, over the fill it belonged to. Review found it with a
-node carrying an inner shadow; the fragment shader gates on both now.
+`PaintTag::Solid`, `ShadowKind::Inner` and `BlurKind::Backdrop` are all 1 — so a
+shader that read the tag alone painted a shadow instance with
+`solids[shadow_row]`, over the fill it belonged to. Review found it with a node
+carrying an inner shadow; the fragment shader gates on both now.
 
 Drawing nothing rather than black is deliberate. Black would be loud, but an
 inner shadow is packed _after_ the fill, so a black shadow instance covers the
@@ -192,28 +191,29 @@ This story drew the first kind, and the rest arrived since:
 - text and the baked-vector coverage mask, with story #582;
 - the gradient, with issue #715;
 - render-target group opacity, with story #583 — which draws through a second
-  pipeline rather than an `InstanceKind`, because it composites a rendered
-  layer rather than shading a quad
+  pipeline rather than an `InstanceKind`, because it composites a rendered layer
+  rather than shading a quad
   (`group-opacity-draws-into-a-layer-and-a-second-pipeline-composites-it.md`);
-- the two shadow kinds, with story #584 — whose parameters extend the paint
-  heap and whose quad growth moved onto `Instance::outset`, taking the stroke
-  table out of the vertex stage
-  (`the-paint-parameter-heap.md`, `instance-buffer-contract.md` D9);
-- the backdrop blur, with story #733 — which draws through two further
-  pipelines and is the one `InstanceKind` this shader deliberately never sees,
-  because `composite::plan` keeps it out of every instance range
+- the two shadow kinds, with story #584 — whose parameters extend the paint heap
+  and whose quad growth moved onto `Instance::outset`, taking the stroke table
+  out of the vertex stage (`the-paint-parameter-heap.md`,
+  `instance-buffer-contract.md` D9);
+- the backdrop blur, with story #733 — which draws through two further pipelines
+  and is the one `InstanceKind` this shader deliberately never sees, because
+  `composite::plan` keeps it out of every instance range
   (`a-backdrop-blur-snapshots-the-target-it-draws-into.md`).
 
 **Story #582 also changed what a masked instance draws.** Until it landed, a
 node carrying a coverage field drew as an ordinary rounded rectangle over its
 whole box: the packer set `Instance::shape` and this shader never read it, so
-the picture was _wrong_ rather than absent — the one place in this pipeline where
-an unimplemented kind did not simply draw nothing. A masked instance's quad is
-now the field's padded plane quad and its coverage is the field's, which is what
-`dashscene-skia` does by skipping the parametric branch entirely for a masked
-entry. A masked **gradient** fill drew nothing until issue #715 supplied the
-colour that mask modulates; it is the one combination that needed both halves,
-and `the-paint-parameter-heap.md` D5 is where the frame it uses is decided.
+the picture was _wrong_ rather than absent — the one place in this pipeline
+where an unimplemented kind did not simply draw nothing. A masked instance's
+quad is now the field's padded plane quad and its coverage is the field's, which
+is what `dashscene-skia` does by skipping the parametric branch entirely for a
+masked entry. A masked **gradient** fill drew nothing until issue #715 supplied
+the colour that mask modulates; it is the one combination that needed both
+halves, and `the-paint-parameter-heap.md` D5 is where the frame it uses is
+decided.
 
 **Corrected 2026-08-03.** That sentence said "gradients and image fills are
 story #582's" from the day it was written, and neither was: story #582 is glyph
@@ -224,16 +224,17 @@ paragraph is now stated against the story bodies rather than from memory.
 
 ## Verified where, and where not
 
-Developed and run on an **Apple M3 via Metal**; a test prints the adapter.
-Seven layer-3 checks, and six of seven mutations against the render shader are
-caught by name.
+Developed and run on an **Apple M3 via Metal**; a test prints the adapter. Seven
+layer-3 checks, and six of seven mutations against the render shader are caught
+by name.
 
 The seventh was not, and the fix is worth recording: **every fixture was
 vertically centred on the canvas**, so flipping the y axis mapped each shape
 onto itself and no assertion moved. That is the uniform-fixture defect in a
 third guise — after uniform data (#650, #651, #699) and uniform arguments
-(#579), uniform _symmetry_. `the_documents_y_down_origin_maps_to_the_top_of_the_image`
-uses an off-centre rect and kills it.
+(#579), uniform _symmetry_.
+`the_documents_y_down_origin_maps_to_the_top_of_the_image` uses an off-centre
+rect and kills it.
 
 **Verified on lavapipe, since 2026-08-11.** This suite ran on `ubuntu-latest`
 with lavapipe as the only available device as part of a full-workspace run of
@@ -249,9 +250,9 @@ crate are the instance-stream text files under `tests/goldens/`, read by
 differ from which, so a software rasteriser does not have to match a desktop
 adapter's blending for them to pass.
 
-The claim that "a missing device fails by name" needs one correction. It fails by
-name in whichever test asks for a device first, and that is not necessarily this
-suite: on 2026-08-11 a stale Vulkan driver path in the `test` job surfaced as a
-failure in two `dashscene-gpu` residency tests, and this suite did not run at all
-because nextest cancels at the first failure
+The claim that "a missing device fails by name" needs one correction. It fails
+by name in whichever test asks for a device first, and that is not necessarily
+this suite: on 2026-08-11 a stale Vulkan driver path in the `test` job surfaced
+as a failure in two `dashscene-gpu` residency tests, and this suite did not run
+at all because nextest cancels at the first failure
 (`docs/decisions/shader-library-and-layer-2.md`).
