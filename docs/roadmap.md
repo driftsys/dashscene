@@ -11,7 +11,7 @@ is nothing to keep in sync between the two.
 
 | This file (shape)               | GitHub (state)                                |
 | ------------------------------- | --------------------------------------------- |
-| Which slices exist (v0.1-v0.19) | Which stories exist under each epic           |
+| Which slices exist (v0.1-v0.22) | Which stories exist under each epic           |
 | What each slice delivers        | Which stories are open, closed, who owns them |
 | Inter-slice dependency edges    | Story-level dependency edges                  |
 | Which E-criteria a slice closes | Debt triage and milestone assignment          |
@@ -57,9 +57,10 @@ run in the schedule not driven by a path filter — the backstop against a table
 that drifted through a change the filter did not predict
 (`docs/decisions/test-tiers.md`).
 
-The ritual has fired off-cycle twice, ahead of its own slice's close: v0.4 was
-revised by a design session before epic #19 closed, and v0.7 was revised at the
-v0.3 close even though epic #36 had not yet closed at that point. A slice can be
+The ritual has fired off-cycle three times, ahead of its own slice's close: v0.4
+was revised by a design session before epic #19 closed, v0.7 was revised at the
+v0.3 close even though epic #36 had not yet closed at that point, and v0.20 to
+v0.23 were planned on 2026-08-12 while v0.19 was still open. A slice can be
 revised earlier than its own close if something learned elsewhere bears on it;
 the mechanism is not strictly "close, then revise the next one" — it is "revise
 whenever the ground shifts enough that carrying the old shape forward would be
@@ -1469,7 +1470,8 @@ than being fixed at the close, classified against
 [`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md).
 Issues #875 and #879 are burn-down work; #878 and #886 both need a Figma desktop
 session, which is that record's third term — an owner-supplied input rather than
-an edit.
+an edit. **The 2026-08-12 sweep split them**: #875 is a P4 silent drop and went
+to the v0.20 hardening slice, and the other three went to v0.23.
 
 **The phase-end revision ran on 2026-08-11**, separately from the close and
 after it. What it changed:
@@ -1652,17 +1654,163 @@ Depends on: v0.17 for what an embedder consumes, and on the C ABI this slice
 builds. Independent of v0.18 in dependency terms; see the sequencing note above
 for the file-level overlap.
 
+### v0.20 — hardening: the critical findings and the Android recovery path — open
+
+**No epic filed yet.** Planned 2026-08-12, before the v0.19 phase-end revision
+rather than at it.
+
+**That is not a departure from the revision ritual — it is the third time the
+ritual has fired off-cycle**, after v0.4 and v0.7 above, and it fired for the
+reason this file already gives: the ground had shifted enough that carrying the
+old shape forward would be misleading. Fifty-five open issues carried no
+milestone at all, and the v0.20 milestone held no plan, its description
+assigning its own content to the v0.19 phase-end revision.
+[`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md) had
+already met this exact failure: its 2026-07-19 correction records 23 open issues
+that "carried no milestone at all and so were in nobody's count", and it made a
+milestone sweep for un-anchored issues part of the phase-end revision rather
+than something assumed. Fifty-five is that failure again at more than twice the
+size, so the sweep ran ahead of the revision instead of waiting for it.
+
+**What it delivers: the six critical findings of that sweep, and the Android
+recovery path finished.** The sweep classified all fifty-five issues on two
+axes, size and priority, checking each against the tree rather than against its
+own text. Three were closed rather than scheduled: one had been fixed by an
+earlier story, one duplicated an open story, and one had never been real — its
+evidence was a search that could not match the call site it was looking for.
+**Not every correctness defect the sweep found is scheduled here.** Several went
+to v1 instead, because they unlock with a v1 consumer rather than being
+resolvable now, which is the dividing line that same record sets.
+
+**Why this slice runs before Unity and before SVG, reversing the 2026-08-09
+proposal.** Two reasons, and the second is the stronger. The first is the
+argument of
+[`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md),
+which is why v0.13 was split out of v1: debt scheduled behind a large
+deliverable is never reached. Ordering the critical findings behind two feature
+slices would repeat that. The second is a dependency fact rather than a
+preference: **this is the only near-term slice whose start needs nothing from
+the repository owner.** v0.21 and v0.22 each wait on decisions and artifacts
+only the owner can supply, and those can be settled while this slice is built.
+
+**The Android half is the larger half, and it is one property rather than four
+items.** The recovery path is untested; the bound that gives up after repeated
+failures cannot be reached; the C ABI cannot report which frame failures are
+recoverable, so the host guesses; and the device probe accepts an adapter
+without checking the surface format the painter needs. All four describe one
+thing: **nothing on the Android path can report or detect its own failure.** The
+unreachable bound is the third consecutive repair to that recovery to have
+broken it, and all three were invisible for the same reason — the frame loop
+sits entirely behind a platform `cfg`, so a host-target test compiles none of
+it. That property is what this slice has to change; the four items are its
+symptoms.
+
+Depends on: v0.19, for the Android code it hardens. v0.21 depends on it in turn,
+for the failure reporting the C ABI gains here.
+
+### v0.21 — Unity — open
+
+**No epic filed yet; the design findings are held on tracking issue #851.** The
+engine painter over BatchRendererGroup, and the C# host that sits on the
+`dashscene-ffi` data plane. Proposed for v0.20 on 2026-08-09 and moved here on
+2026-08-12, behind the hardening slice.
+
+**Its design is already worked out and should not be re-derived.** A long-form
+capture was drafted and closed unmerged after four review rounds found 4, 12, 15
+and 13 findings, concentrated in the sections making recommendations about
+unwritten code — and twice a fix introduced a worse defect than the one it
+repaired. What survived every round is held as a short set of checked readings
+on #851 instead, where it is short enough to verify. The painter architecture
+itself is
+[`decisions/unity-painter-uses-brg.md`](decisions/unity-painter-uses-brg.md) and
+[`technotes/rendering-and-painters.md`](technotes/rendering-and-painters.md).
+
+**Three entry conditions, all owner-supplied**, which is why this slice cannot
+simply be started: the layer question of
+[`decisions/host-integration-in-three-layers.md`](decisions/host-integration-in-three-layers.md)
+settled for a Unity host, the BRG record moved from proposed to accepted, and
+the Unity C# repository created — it does not exist, and `dashscene-unity` in
+this workspace is Rust-side bindings only.
+
+**Its first build step is the data plane.** `dashscene-ffi` is shaped around a
+surface handle: a host gives dashscene a surface and dashscene draws into it. A
+host that draws the frame itself — which is what a Unity host is — needs the
+opposite direction, and the committed tables cross no boundary today. Boundary B
+was made FFI-representable at v0.15 by story #600, and has had no consumer
+since.
+
+Depends on: v0.19 for the C ABI it extends, and on v0.20 for the failure
+reporting that ABI gains there. Its three entry conditions are independent of
+both and can be settled at any time.
+
+### v0.22 — SVG as a second producer — open
+
+**No epic filed yet.** A second producer beside Figma. Proposed on 2026-08-09 as
+v0.21 and moved here on 2026-08-12. No other slice depends on it and it depends
+on none, so its position is a priority choice rather than a dependency.
+
+**What it tests is P5** — that the dashscene document is a schema-first IR with
+its own specification, and that no producer's limitations define the format.
+That claim has never been tested, because Figma has been the only producer. A
+second one is the test.
+
+Four items in dependency order, all four the slice's own work: the SVG
+vocabulary profile, which is the P4 prerequisite because refusing by name needs
+a list to refuse against; stroke-to-fill before baking, without which 46 % of
+icon content has no fill to bake; the icon import itself; and a census harness
+that runs both corpora, publishes the counts and gates on zero silent drops,
+which is what makes the profile falsifiable. The second and third are filed as
+issues; the first and fourth are not.
+
+**One entry condition, owner-supplied**: the `usvg` dependency adopted. The
+licence question that was open when this was proposed is resolved — the front
+half is Apache-2.0 OR MIT — but the adoption decision has not been made.
+Background, and both candidate corpora measured on the day, are in the
+2026-08-09 design capture under `docs/wip/`, which moves to `docs/archive/` when
+this slice lands; issue #914 covers that class of citation.
+
+Depends on: nothing. Blocked by: its one entry condition.
+
+### v0.23 — rolling quick debt — open, and not a slice
+
+**A holding milestone rather than a slice**, and the one entry under this
+heading that delivers nothing. It has no epic, no deliverable and no close: it
+is worked between slices and at each slice close.
+
+It holds the quick items of the 2026-08-12 sweep — one focused pull request
+each, roughly half a day. **Two kinds sit in it, and the `owner-input` label
+separates them.** An unlabelled item is burn-down work a session can finish
+alone. A labelled item is the third term of
+[`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md):
+resolvable now, gated on no v1 consumer, and still not burn-down work, because
+the next step is a ruling or an input only the repository owner can supply. A
+session taking work from here reads the label first; four items carry it today.
+
+It exists so that the three slices above stay readable. A slice whose scope is
+"the critical findings" means nothing if forty cosmetic items are scheduled
+beside them, and the alternative — leaving them unmilestoned — is the state this
+sweep was called to fix. **An item here that turns out to block something moves
+to the slice it blocks**, which is the only rule the milestone needs.
+
 ## v1 — Unity, full feature set, performance, production toolchain
 
-Engine painter (SDF shader library, material classes, a C# declarative skin);
-LATER-tier features land per priority, including shadow baking switching on and
-`profile:core` being enforced on target documents; **of the loading-performance
-work, only placeholder activation remains here** — its foundations (the
-sectioned envelope, the asset table, the KTX2 texture pipeline) landed in
-v0.11–v0.12, and the mapping, the prefetch choreography and the startup-scaling
-benchmark that makes R5 falsifiable moved to v0.16 at the v0.13 close, because a
-ratio needs no target hardware to measure; what stays is blocked on a producer
-supplying the placeholder colour, not on loading (guardrail G-20,
+**The Unity painter and the C# host moved out of this section on 2026-08-12**,
+to slice v0.21 above. What stays here is the work that unlocks once a Unity host
+exists rather than the host itself. The GitHub milestone still carries the older
+title, and
+[`decisions/host-integration-in-three-layers.md`](decisions/host-integration-in-three-layers.md)
+still scopes iOS and Unity to v1; both need revising against this entry.
+
+Engine painter (SDF shader library, material classes, a C# declarative skin) —
+**now v0.21**; LATER-tier features land per priority, including shadow baking
+switching on and `profile:core` being enforced on target documents; **of the
+loading-performance work, only placeholder activation remains here** — its
+foundations (the sectioned envelope, the asset table, the KTX2 texture pipeline)
+landed in v0.11–v0.12, and the mapping, the prefetch choreography and the
+startup-scaling benchmark that makes R5 falsifiable moved to v0.16 at the v0.13
+close, because a ratio needs no target hardware to measure; what stays is
+blocked on a producer supplying the placeholder colour, not on loading
+(guardrail G-20,
 [`specification/05-qualification.md`](specification/05-qualification.md));
 rendering performance (tiler rules measured on target hardware; whether the lean
 native painter lands here or later is decided on those measurements, not in
