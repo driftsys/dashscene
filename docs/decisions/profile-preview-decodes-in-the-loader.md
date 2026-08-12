@@ -12,10 +12,10 @@ decodes with its own machinery), `docs/decisions/boundary-b-unification.md`,
 ## The problem
 
 RAW, HiFi and LoFi are band contracts, and the packer measures each asset's
-texels against its band before choosing a rung. That gate is per asset and
-blind to the asset **in context**: banding read behind a caption, a block
-boundary read against a stroke. Both are what a designer actually looks at, and
-neither is visible in a texel diff of one image.
+texels against its band before choosing a rung. That gate is per asset and blind
+to the asset **in context**: banding read behind a caption, a block boundary
+read against a stroke. Both are what a designer actually looks at, and neither
+is visible in a texel diff of one image.
 
 Validating them needed a target bench, and there is none — the launch fleet is a
 codec table on paper (`docs/decisions/native-astc-codec-table.md`). Waiting for
@@ -59,11 +59,11 @@ decoder made of it (P4).
 
 ## What the weld test welds
 
-The claim above is carried by
-`goldens/tooling/tests/profile_preview_weld.rs`, in three separately falsifiable
-legs. What it does **not** prove is stated first, because the shared codec makes
-one obvious reading of it wrong: both sides run the same astcenc, so no
-assertion there can catch a defect in the codec itself.
+The claim above is carried by `goldens/tooling/tests/profile_preview_weld.rs`,
+in three separately falsifiable legs. What it does **not** prove is stated
+first, because the shared codec makes one obvious reading of it wrong: both
+sides run the same astcenc, so no assertion there can catch a defect in the
+codec itself.
 
 What it does prove is everything between the encoder and the painter.
 

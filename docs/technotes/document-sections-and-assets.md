@@ -27,8 +27,8 @@ faulting a cold page. `docs/design/dsb-container-format.md` is the byte layout;
 `docs/decisions/dsb-sectioned-container.md` has the measured reasons a single
 flatbuffer cannot provide it.
 
-**The asset table** (#107). The document carries asset identity and metadata —
-a content hash, the container format, the intrinsic extent — and never asset
+**The asset table** (#107). The document carries asset identity and metadata — a
+content hash, the container format, the intrinsic extent — and never asset
 bytes. P1 applied to assets. The payloads leave as one blob section per entry,
 resolved by hash through a binding whose v0.11 form is the identity map. Because
 an entry names a hash and never a section index, the ui section does not depend
@@ -45,7 +45,8 @@ decoder before anything noticed.
 Every schema change since v0.8 had been additive, so the committed byte goldens
 never moved and byte-identity was observed rather than argued for. The envelope
 is structural, so it moved them, and that was announced, argued, and attributed
-rather than discovered in a diff — `docs/decisions/r7-survives-the-envelope-rebaseline.md`.
+rather than discovered in a diff —
+`docs/decisions/r7-survives-the-envelope-rebaseline.md`.
 
 Sequencing made the rewrite mechanically checkable. #401 carried no schema
 change, so each regenerated golden's section 0 could be compared against the
@@ -77,20 +78,20 @@ Method, unchanged from the v0.10 close:
 
 **115586 differing pixels of 6138720**, on a 1440x4263 canvas.
 
-Three things are worth separating, because a reader arriving at this table
-later would otherwise credit the wrong work.
+Three things are worth separating, because a reader arriving at this table later
+would otherwise credit the wrong work.
 
 **Backdrop blur is worth 0.0640 points, not 1.69.** An earlier draft of this
 note read the 3.5691 % to 1.8829 % gap as #393's, because those were the two
 adjacent rows recorded at the time. Two changes sit between them, and neither
 had been measured on its own.
 
-- **#397**, the arena paint-key fix, is the change that _produced_ the
-  3.5691 % row. It closed #395, and its own record publishes the step it
-  caused: 4.1618 % to 3.5691 %, **0.5927 points**. That row is labelled #397
-  above; labelling it #395 is what made the gap below it look like one story's.
-- **#394**, the blur schema, is what made the hero's frosted panel lower at
-  all. Before it, a core-profile node carrying `BACKGROUND_BLUR` was omitted
+- **#397**, the arena paint-key fix, is the change that _produced_ the 3.5691 %
+  row. It closed #395, and its own record publishes the step it caused: 4.1618 %
+  to 3.5691 %, **0.5927 points**. That row is labelled #397 above; labelling it
+  #395 is what made the gap below it look like one story's.
+- **#394**, the blur schema, is what made the hero's frosted panel lower at all.
+  Before it, a core-profile node carrying `BACKGROUND_BLUR` was omitted
   entirely, so the panel was absent from the document rather than present and
   unblurred. It is worth 3.5691 % to 1.9469 %, **1.6222 points** — by a wide
   margin the largest step in the slice.
@@ -102,14 +103,13 @@ The series now closes with no unattributed remainder, which the earlier draft's
 
 That decomposition rests on one assumption, stated because it is load-bearing:
 the 3.5691 % figure was measured by re-rendering a `.dsb` imported before #394
-landed, which is what #397's record describes doing. Had that import been
-fresh, 3.5691 % would already contain #394's panel and the split between the
-two would differ.
+landed, which is what #397's record describes doing. Had that import been fresh,
+3.5691 % would already contain #394's panel and the split between the two would
+differ.
 
 Two of the three steps were re-measured directly at the v0.11 close, by
 rendering one imported `.dsb` three times and reverting only the files each
-change touched, so all three diff against a single Figma export on the same
-day:
+change touched, so all three diff against a single Figma export on the same day:
 
 | render                                           | differing | of 6138720   |
 | ------------------------------------------------ | --------- | ------------ |
@@ -117,27 +117,26 @@ day:
 | today's `.dsb`, `main` at the #393 handover      | 119515    | 1.9469 %     |
 | today's `.dsb`, with backdrop blur               | 115586    | **1.8829 %** |
 
-The first row is a counterfactual — #394's document rendered by an arena
-without #397 — so it is not a row of the chronological table above. It is a
-corroboration: on a different document from the one #397 measured, #397 is
-still worth 2.5396 % to 1.9469 %, **0.5927 points**, the same step its own
-record published. #393's 0.0640 is measured directly.
+The first row is a counterfactual — #394's document rendered by an arena without
+#397 — so it is not a row of the chronological table above. It is a
+corroboration: on a different document from the one #397 measured, #397 is still
+worth 2.5396 % to 1.9469 %, **0.5927 points**, the same step its own record
+published. #393's 0.0640 is measured directly.
 
 **A small percentage here does not mean a small change.** Backdrop blur renders
 125696 pixels differently, 2.05 % of the canvas, but most of that change falls
 inside the 5 % fuzz threshold in both directions. Over exactly those changed
-pixels the mean max-channel distance to Figma falls from 5.93 to 2.32, and
-57.3 % of them move closer to Figma against 17.1 % moving further. The effect
-is right; `AE -fuzz 5%` is coarse relative to what a blur does. When the two
+pixels the mean max-channel distance to Figma falls from 5.93 to 2.32, and 57.3
+% of them move closer to Figma against 17.1 % moving further. The effect is
+right; `AE -fuzz 5%` is coarse relative to what a blur does. When the two
 disagree, report both.
 
 **The sections-and-assets work moved zero pixels, and that is the finding.**
 Stories #401 and #107 were each measured against `main` on the same reference
-render, and both
-produced a render **byte-identical to main's** — zero differing pixels, not merely
-an unchanged percentage. Moving bytes from inside the ui flatbuffer into blob
-sections of the same file changes no pixel's provenance, and this is the
-measurement that says so rather than the assumption.
+render, and both produced a render **byte-identical to main's** — zero differing
+pixels, not merely an unchanged percentage. Moving bytes from inside the ui
+flatbuffer into blob sections of the same file changes no pixel's provenance,
+and this is the measurement that says so rather than the assumption.
 
 Same limits as every figure in the series: a live measurement against a
 third-party Community file, recorded in prose because neither the file nor its
@@ -156,25 +155,25 @@ on a real corpus, and named the hero as the natural test. Importing it:
 About **1 %**. The baseline predates the envelope as well as the asset table, so
 this is the whole slice's file-size cost, not the asset table's alone — the
 envelope itself adds 64 bytes of header plus 64 per section, which is negligible
-beside the per-blob alignment on a document with many images. The committed `v03-paint.dsb` golden shows the opposite end of the same
-policy: 2196 to 4189 bytes, because a 2 KB document holding one 93-byte image
-pays a full page of padding at the hot/cold boundary. The padding is a fixed cost
-per file rather than per asset, so it dominates a tiny document and disappears
-into a real one.
+beside the per-blob alignment on a document with many images. The committed
+`v03-paint.dsb` golden shows the opposite end of the same policy: 2196 to 4189
+bytes, because a 2 KB document holding one 93-byte image pays a full page of
+padding at the hot/cold boundary. The padding is a fixed cost per file rather
+than per asset, so it dominates a tiny document and disappears into a real one.
 
 ## What the slice deliberately did not do
 
-- **Three `AssetEntry` fields the asset-model record names are absent**: `kind`, a
-  placeholder colour, and the flavor/locator bit. Each lacks either a producer or
-  a consumer today, and each is an append. The placeholder-colour question was an
-  open point the design capture asked to resolve at this slice, and it resolved to
-  "not yet": computing one needs pixel access `dashc` cannot have, and a neutral
-  grey invented at compile time is a result P1 forbids.
+- **Three `AssetEntry` fields the asset-model record names are absent**: `kind`,
+  a placeholder colour, and the flavor/locator bit. Each lacks either a producer
+  or a consumer today, and each is an append. The placeholder-colour question
+  was an open point the design capture asked to resolve at this slice, and it
+  resolved to "not yet": computing one needs pixel access `dashc` cannot have,
+  and a neutral grey invented at compile time is a result P1 forbids.
 - **Nothing cross-checks an entry's recorded format and extent against the
-  payload it names** (#416). They cannot disagree today, since one code path writes
-  both from one `identify` call. The check needs an image header parser in a crate
-  published before `dashc`, which is a crate-boundary decision; the v0.12 packer is
-  the second writer that makes it matter.
+  payload it names** (#416). They cannot disagree today, since one code path
+  writes both from one `identify` call. The check needs an image header parser
+  in a crate published before `dashc`, which is a crate-boundary decision; the
+  v0.12 packer is the second writer that makes it matter.
 - **Signing is deferred with the packer.** The envelope carries a reserved
   signature reference, writes it zero, and refuses a file that does not.
 - **The R5 loading measurements are seeded, not taken.** The container parser

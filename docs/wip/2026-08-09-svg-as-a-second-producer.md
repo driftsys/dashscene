@@ -54,10 +54,10 @@ lands in `corpus/`, and it is the same class of check #774 already opens for
 
 **The practical one.** `linebender/resvg-test-suite` — roughly 1600 SVG-to-PNG
 regression tests, **MIT**, and upstream states it is "not tied to resvg in any
-way, which should help people who plan to develop their own SVG libraries".
-Each test isolates one feature, so a failure names the feature; the W3C tests
-are compound, so a failure names little. It is also the de-facto contract of
-the front half this repository plans to adopt, since `usvg` is resvg's parser.
+way, which should help people who plan to develop their own SVG libraries". Each
+test isolates one feature, so a failure names the feature; the W3C tests are
+compound, so a failure names little. It is also the de-facto contract of the
+front half this repository plans to adopt, since `usvg` is resvg's parser.
 
 **The content one, built for this session.** The four most-used open icon sets
 from npm — `lucide-static` 1.30.0, `bootstrap-icons` 1.13.1, `heroicons` 2.2.0,
@@ -75,14 +75,13 @@ larger than that and every individual icon is smaller.
 
 **Promoted 2026-08-11 to
 `docs/decisions/the-animation-reference-set-is-the-union-of-two-producers.md`**,
-at the v0.18 close, on this file's own stated condition. The section is
-kept as written; the record carries the ruling and changes **three** of the
-eleven rows in the table below. The ambient-loop row read "no — story #772"
-and is now built. The rotation row read "closed" where the rest of the
-column says "built". And the discrete-visibility row read "`Prop::Visible`,
-but see below", which the record cannot carry because it has no "below" to
-point at — it names the step ruling instead
-(`docs/decisions/a-step-is-a-pair-of-keyframes.md`).
+at the v0.18 close, on this file's own stated condition. The section is kept as
+written; the record carries the ruling and changes **three** of the eleven rows
+in the table below. The ambient-loop row read "no — story #772" and is now
+built. The rotation row read "closed" where the rest of the column says "built".
+And the discrete-visibility row read "`Prop::Visible`, but see below", which the
+record cannot carry because it has no "below" to point at — it names the step
+ruling instead (`docs/decisions/a-step-is-a-pair-of-keyframes.md`).
 
 **Promote.** This is a ruling that binds the animated-SVG importer and the
 remaining v0.18 vocabulary stories.
@@ -141,9 +140,9 @@ wanted.
 
 So the reference feature set is the **union of the two producers expressed in
 `dashcue`'s own terms**, which is P5's position restated: no producer's
-limitations define the format. SMIL is the checklist for the ambient half —
-the only half with a measurable official corpus — and Figma's discarded
-`reactions` payload is the checklist for the reactive half.
+limitations define the format. SMIL is the checklist for the ambient half — the
+only half with a measurable official corpus — and Figma's discarded `reactions`
+payload is the checklist for the reactive half.
 
 ### The census, which is a free work-list for the ambient half
 
@@ -247,9 +246,9 @@ exclusion to be named:
    named diagnostic. Publish three counts: imported, diagnosed by name,
    crashed-or-silently-dropped. **The third must be zero.** This is a hard gate
    and it works regardless of rendering fidelity.
-2. **Perceptual comparison on the in-profile subset**, through the budgeted
-   diff tooling in `goldens/`. Not exact match — the sibling capture already
-   records why separately anti-aliased edges cannot be pixel-identical.
+2. **Perceptual comparison on the in-profile subset**, through the budgeted diff
+   tooling in `goldens/`. Not exact match — the sibling capture already records
+   why separately anti-aliased edges cannot be pixel-identical.
 
 The resvg suite is the better fidelity corpus because each test isolates one
 feature. The W3C suite is the better P4 stress because most of it is outside the
@@ -322,11 +321,12 @@ Not MPL. All permissive, no copyleft, all compatible with this workspace's
 Apache-2.0.
 
 **The stroker needs no new dependency.** `usvg` depends on `tiny-skia-path` and
-re-exports it — `pub use tiny_skia_path;` — so `usvg::tiny_skia_path::PathStroker`
-is reachable with no new entry in `[workspace.dependencies]`. This is
-`tiny-skia-path`, the geometry crate, not `tiny-skia` the rasterizer. `usvg` also
-depends on `kurbo`, whose `stroke()` expands a stroke into a fill. Two
-implementations arrive with the parser; pick on output shape, not on cost.
+re-exports it — `pub use tiny_skia_path;` — so
+`usvg::tiny_skia_path::PathStroker` is reachable with no new entry in
+`[workspace.dependencies]`. This is `tiny-skia-path`, the geometry crate, not
+`tiny-skia` the rasterizer. `usvg` also depends on `kurbo`, whose `stroke()`
+expands a stroke into a fill. Two implementations arrive with the parser; pick
+on output shape, not on cost.
 
 **Disabling text is one line, not an exercise.** `usvg` 0.48.1's defaults are
 `svgz`, `text`, `system-fonts`, `memmap-fonts` and `writer`, and eleven
@@ -356,19 +356,18 @@ SVGO 4.0.2's `preset-default` includes `convertShapeToPath`, `inlineStyles`,
 normalisation.
 
 - **It cannot do stroke-to-fill.** No such plugin, and path offsetting with
-  caps, joins and a miter limit is a geometry construction, not an
-  optimisation.
+  caps, joins and a miter limit is a geometry construction, not an optimisation.
 - **It optimises in the wrong direction.** `makeArcs` converts curves _into_
   arcs and `convertToQ` converts cubics into quadratics, because its objective
   function is bytes rather than a smaller command set.
 - **Everything useful it does is a subset of `usvg`'s**, done as a byte
   optimisation rather than a semantic normalisation, and it would put a Node
   step in front of a compile path `dashc.wasm` cannot call.
-- **P4 decides it.** SVGO is a silent rewriter by design —
-  `removeHiddenElems`, `removeUselessStrokeAndFill` and `mergePaths` all remove
-  content — so a construct that should have produced a named diagnostic can
-  vanish before the validator sees it. That is the silent-drop failure #774
-  exists to prevent, relocated one step earlier where nothing is watching.
+- **P4 decides it.** SVGO is a silent rewriter by design — `removeHiddenElems`,
+  `removeUselessStrokeAndFill` and `mergePaths` all remove content — so a
+  construct that should have produced a named diagnostic can vanish before the
+  validator sees it. That is the silent-drop failure #774 exists to prevent,
+  relocated one step earlier where nothing is watching.
 
 It remains reasonable for offline corpus preparation when authoring fixtures,
 run by hand with the output committed and reviewed. Not on the compile path.
@@ -413,11 +412,10 @@ elements is refused — which is a named refusal, so P4-clean and able to wait.
 It contributes nothing to v0.18's deliverable, and it is four items rather than
 one. The roadmap runs to v0.19 (Android, the C ABI, and layer 0) today and has
 no v0.20 or v0.21; the proposal made in session on 2026-08-09 is **v0.20 for
-Unity and v0.21 for this track**, which fits the shape of what is already
-queued — the v1 milestone holds the Unity work, and nothing in the SVG track
-blocks or is blocked by either. Slice numbering is settled at a phase-end
-revision, so this is a proposal recorded where the revision will read it, not a
-decision.
+Unity and v0.21 for this track**, which fits the shape of what is already queued
+— the v1 milestone holds the Unity work, and nothing in the SVG track blocks or
+is blocked by either. Slice numbering is settled at a phase-end revision, so
+this is a proposal recorded where the revision will read it, not a decision.
 
 In dependency order:
 
@@ -442,8 +440,8 @@ question below.
   on the document.
 - State the deliverable as an icon importer. The claim that survives contact
   with the corpus — "zero out-of-profile constructs across 5675 icons from the
-  four most-used open sets" — is stronger than "SVG support" and does not set
-  an expectation the profile will not meet.
+  four most-used open sets" — is stronger than "SVG support" and does not set an
+  expectation the profile will not meet.
 
 ## Open questions
 
@@ -452,12 +450,12 @@ question below.
   official corpus with reference images and CSS has none, while CSS is the more
   common dialect in real files. Corpus availability and content frequency point
   opposite ways.
-- **Is the W3C suite vendorable?** The W3C Document License restricts
-  derivative works. If it is not, the resvg suite (MIT) carries the fidelity
-  tier alone and the W3C suite is fetched rather than committed.
+- **Is the W3C suite vendorable?** The W3C Document License restricts derivative
+  works. If it is not, the resvg suite (MIT) carries the fidelity tier alone and
+  the W3C suite is fetched rather than committed.
 - **Where does the SVG profile's `<text>` route land?** Disabling `usvg`'s text
-  feature keeps `<text>` as text, but nothing yet maps SVG text positioning
-  onto a layout node, and absolute glyph positioning is a P1 refusal.
+  feature keeps `<text>` as text, but nothing yet maps SVG text positioning onto
+  a layout node, and absolute glyph positioning is a P1 refusal.
 - **Does the icon importer produce one node or a decomposition?** One
   field-backed leaf is the #774 answer and is right for an icon. A multi-colour
   icon — two paths with different fills — is already outside it.

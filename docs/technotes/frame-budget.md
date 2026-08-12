@@ -1,15 +1,14 @@
 # Technote — the first frame budget, measured on the showcase host
 
 Informative. **Measured 2026-07-31**, at the v0.14 close (epic #568), which
-built the first
-thing in this repository ever to draw into a window. Nothing depends on this
-note. It exists because every performance argument the project has made until
-now rested on an offscreen raster compared against a PNG, and because epic #476
-holds twenty items behind the observation that **resolvable is not the same as
-measurable**. This is the first measurement on a frame loop.
+built the first thing in this repository ever to draw into a window. Nothing
+depends on this note. It exists because every performance argument the project
+has made until now rested on an offscreen raster compared against a PNG, and
+because epic #476 holds twenty items behind the observation that **resolvable is
+not the same as measurable**. This is the first measurement on a frame loop.
 
-**It is a measurement, not a threshold.** Nothing asserts these numbers, no
-test fails if they move, and no CI job reads them.
+**It is a measurement, not a threshold.** Nothing asserts these numbers, no test
+fails if they move, and no CI job reads them.
 
 ## What was measured, and on what
 
@@ -51,19 +50,19 @@ previously had none.
 
 All figures in milliseconds.
 
-**`surfaces` does not hold 60 Hz on paint alone.** The budget at 60 Hz is
-16.67 ms. Its mean is 16.57 ms and its 95th percentile is 17.31 ms, so `tick`
-plus `paint` already sits at the edge. `typography` and `layout` have ample
-headroom _in this table_ — but see the blit section above before drawing any
-conclusion from that, because none of these three scenes reaches 60 Hz in the
-host and for two of them the reason is not here.
+**`surfaces` does not hold 60 Hz on paint alone.** The budget at 60 Hz is 16.67
+ms. Its mean is 16.57 ms and its 95th percentile is 17.31 ms, so `tick` plus
+`paint` already sits at the edge. `typography` and `layout` have ample headroom
+_in this table_ — but see the blit section above before drawing any conclusion
+from that, because none of these three scenes reaches 60 Hz in the host and for
+two of them the reason is not here.
 
 **The solver is not the cost.** `tick` is between 0.01 and 0.03 ms in every
 scene, against a paint of 0.76 to 16.54 ms. The whole of the per-frame cost is
-in the painter. That is worth stating because four of the five debt items
-v0.14 pulled forward (#191, #205, #225, #226) are on the tick side, and this
-says their per-frame contribution is small on this hardware — which is a
-finding, not a criticism of fixing them.
+in the painter. That is worth stating because four of the five debt items v0.14
+pulled forward (#191, #205, #225, #226) are on the tick side, and this says
+their per-frame contribution is small on this hardware — which is a finding, not
+a criticism of fixing them.
 
 ## The blit is the largest cost here
 
@@ -83,11 +82,11 @@ frames.
 whole 9.1 ms to the premultiply round trip. That was wrong, and measuring the
 fix is what showed it. Removing the round trip is worth about **2.2 ms**. The
 per-step split on `layout` — readback 1.847 to 0.191, shuffle 0.816 to 0.337,
-`buffer_mut` 0.423 to 0.402, `softbuffer::Buffer::present` 5.699 to 5.646 —
-puts **86 % of the remainder inside softbuffer's own post to the window
-server**, which is a compositor handoff rather than a conversion and which no
-pixel-format change reaches. Issue #641 records that `Surface::new_raster_direct`
-would reach 0.53 ms of the remaining 6.58 ms.
+`buffer_mut` 0.423 to 0.402, `softbuffer::Buffer::present` 5.699 to 5.646 — puts
+**86 % of the remainder inside softbuffer's own post to the window server**,
+which is a compositor handoff rather than a conversion and which no pixel-format
+change reaches. Issue #641 records that `Surface::new_raster_direct` would reach
+0.53 ms of the remaining 6.58 ms.
 
 So the blit is still the largest single term for `layout`, and most of it is not
 work this project performs.
@@ -106,19 +105,19 @@ So the answer to "why is this not 60 Hz" is two costs, not one:
 
 `layout` and `typography` are already at the loop's 60 Hz pacing rather than
 work-bound, so removing blit cost does not raise their frame rate — only
-`surfaces` gained, from 38.1 to 41.2 frames per second. **It does not reach
-60 Hz on this painter**, and the remaining terms are the compositor post, the
-blur and the gradients rather than anything identified as waste.
+`surfaces` gained, from 38.1 to 41.2 frames per second. **It does not reach 60
+Hz on this painter**, and the remaining terms are the compositor post, the blur
+and the gradients rather than anything identified as waste.
 
 **Amended after issue #639 was fixed:** this note predicted that removing the
-per-frame image decode would put `surfaces` near 20.4 ms and about 49 frames
-per second. Measured, it is **21.7 ms and 45.7 frames per second** — the
+per-frame image decode would put `surfaces` near 20.4 ms and about 49 frames per
+second. Measured, it is **21.7 ms and 45.7 frames per second** — the
 painter-lifetime decode cache is worth 2.22 ms of the 3.7 ms the profile
 attributed to PNG decoding, not all of it. The remainder is the MSDF glyph
 atlases, which hang off the `GlyphRunTable` rather than the `ImageTable` and so
 are decoded on every `paint` regardless (issue #644, about 2 ms for the three
-atlases every scene loads). `typography` and `layout` did not move, which is
-the expected result for scenes with no image fills.
+atlases every scene loads). `typography` and `layout` did not move, which is the
+expected result for scenes with no image fills.
 
 | scene      | present before | present after | frames per second |
 | ---------- | -------------: | ------------: | ----------------: |
@@ -126,13 +125,13 @@ the expected result for scenes with no image fills.
 | typography |          12.68 |         12.63 |      57.1 -> 57.0 |
 | layout     |           7.23 |          7.20 |      55.4 -> 55.4 |
 
-Milliseconds, means over 240 frames, two repeats per scene in alternating
-order, one-minute load average between 3.1 and 4.3.
+Milliseconds, means over 240 frames, two repeats per scene in alternating order,
+one-minute load average between 3.1 and 4.3.
 
 **Amended again after issue #644 was fixed.** The atlas decode above was
-estimated at "about 2 ms" from the issue's own microbenchmark. Holding the
-atlas decodes and the resolve-shader compile on the painter, the way
-issue #639 holds the image decodes, measures this on `paint`:
+estimated at "about 2 ms" from the issue's own microbenchmark. Holding the atlas
+decodes and the resolve-shader compile on the painter, the way issue #639 holds
+the image decodes, measures this on `paint`:
 
 | scene      | paint before | paint after | removed |
 | ---------- | -----------: | ----------: | ------: |
@@ -146,20 +145,18 @@ Offscreen at 1920x1200 — `paint` only, so the blit and the present are outside
 it and the frames-per-second table above was **not** re-measured; that needs an
 interactive window run.
 
-Three things the numbers say. The estimate was close for the two text scenes
-and the saving is real. `layout` does not move, which is the control: it
-carries no glyph runs, so the cache is never built for it. And `typography`
-loses more than `surfaces` does — 2.36 against 1.48 for the same three atlases
-— which is the noise floor of a 600-frame median rather than a difference in
-what was removed.
+Three things the numbers say. The estimate was close for the two text scenes and
+the saving is real. `layout` does not move, which is the control: it carries no
+glyph runs, so the cache is never built for it. And `typography` loses more than
+`surfaces` does — 2.36 against 1.48 for the same three atlases — which is the
+noise floor of a 600-frame median rather than a difference in what was removed.
 
 The prediction chain in this note has now been closed twice, and both times the
 measured value was smaller than the estimate. Worth remembering before quoting
 the next one.
 
-Worth weighing before anyone spends on #603: `dashscene-gpu` (v0.15) has no
-blit at all, because it presents to its own surface rather than handing pixels
-back.
+Worth weighing before anyone spends on #603: `dashscene-gpu` (v0.15) has no blit
+at all, because it presents to its own surface rather than handing pixels back.
 
 ### How paint scales with extent
 
@@ -179,10 +176,10 @@ three is proportional to area alone, so none is purely fill-rate bound.
 ## The static case: zero, not small
 
 Epic #568 required the static and animated cases be measured separately, and
-gave the reason: because no painter has a partial-redraw path, the two differ
-by **whether a frame runs at all** rather than by how much of it runs, so a
-single averaged number hides which case produced it. A settled scene must show
-that the loop stopped painting, not that it painted something cheap.
+gave the reason: because no painter has a partial-redraw path, the two differ by
+**whether a frame runs at all** rather than by how much of it runs, so a single
+averaged number hides which case produced it. A settled scene must show that the
+loop stopped painting, not that it painted something cheap.
 
 It stopped. **A settled scene costs zero ticks, zero paints and zero presents.**
 
@@ -194,12 +191,14 @@ performed by the repository owner:
     woken by pulse 8 after 1.01 s parked — 1 ticks and 1 presents ran while parked
     settled at generation 1317 after 1315 ticks and 1312 presents
 
-Seven settles across the run. Every park reported `0 ticks and 0 presents ran
-while parked` except one, and that one is the frame the owner's key press forced
-— which is the forced-redraw path working, not the skip failing. A longer
-`--all` run recorded 90 park and wake cycles with 87 reporting `0 ticks and 0
-presents`, the other three each preceded by a logged forced redraw after
-occlusion.
+Seven settles across the run. Every park reported
+`0 ticks and 0 presents ran
+while parked` except one, and that one is the frame
+the owner's key press forced — which is the forced-redraw path working, not the
+skip failing. A longer `--all` run recorded 90 park and wake cycles with 87
+reporting `0 ticks and 0
+presents`, the other three each preceded by a logged
+forced redraw after occlusion.
 
 So the static budget is not a small number to compare against the animated one.
 There is no frame.
@@ -253,9 +252,9 @@ for all six.
 Milliseconds. Each figure is the **median of that cell's 240-present sample
 means**, with the observed range beside it: n = 8 for `skia surfaces` and
 `skia typography`, 4 for `skia layout`, 41 for `gpu surfaces`, 8 for
-`gpu typography` and 5 for `gpu layout`. `tick` stayed
-between 0.05 and 0.30 ms throughout and is not the cost in either painter, which
-is the finding above unchanged.
+`gpu typography` and 5 for `gpu layout`. `tick` stayed between 0.05 and 0.30 ms
+throughout and is not the cost in either painter, which is the finding above
+unchanged.
 
 **Read the two columns with different precision.** The reference painter's
 samples agree to about 1 %, so its figures carry two significant digits
@@ -276,9 +275,9 @@ painter has no blit: it draws into a swapchain texture it acquired from the
 window. Nothing in the gpu column resembles a flat 9 ms term.
 
 **`surfaces` no longer exceeds the 60 Hz budget on the CPU.** It was the one
-scene this note recorded as genuinely work-bound — 19.94 ms here against a
-16.67 ms budget, and it is the densest scene in the corpus. Through the lean
-painter its CPU cost is about 1.4 ms. The last item under "What this does not settle"
+scene this note recorded as genuinely work-bound — 19.94 ms here against a 16.67
+ms budget, and it is the densest scene in the corpus. Through the lean painter
+its CPU cost is about 1.4 ms. The last item under "What this does not settle"
 asked whether that was a painter problem or a scene problem; it was a painter
 problem, and a second painter answered it.
 
@@ -291,13 +290,13 @@ CPU raster plus a CPU blit is all CPU — which is exactly why the ratio column 
 labelled a ratio and not a speed-up.
 
 What the gpu column does support is the claim the ratio is being used for: the
-**CPU** is no longer the frame's limiting term. It does not support "69x faster",
-and no frames-per-second figure should be taken from it. An offscreen render of
-`surfaces` at 960x600 through the same painter, which does serialise on a
-readback, measures 3.66 ms — and `layout`, with 27 instances and no backdrop,
-measures 3.4 ms through that same path, so about 3 ms of it is the readback
-rather than the drawing. Neither number is a GPU time; measuring one needs
-timestamp queries and nothing here has them.
+**CPU** is no longer the frame's limiting term. It does not support "69x
+faster", and no frames-per-second figure should be taken from it. An offscreen
+render of `surfaces` at 960x600 through the same painter, which does serialise
+on a readback, measures 3.66 ms — and `layout`, with 27 instances and no
+backdrop, measures 3.4 ms through that same path, so about 3 ms of it is the
+readback rather than the drawing. Neither number is a GPU time; measuring one
+needs timestamp queries and nothing here has them.
 
 **`surfaces` is both the most expensive and by far the most variable, and the
 backdrop blur is the likely reason — inferred, not proven.** It is the only
@@ -317,8 +316,9 @@ queries, and neither exists.
 ### How this was measured, and why that is now reproducible
 
 The v0.14 blit number came from instrumenting the host by hand, which is the
-reason this section exists at all: that instrument was not kept, and the question
-"what happened to the blit" could not be answered by re-running anything.
+reason this section exists at all: that instrument was not kept, and the
+question "what happened to the blit" could not be answered by re-running
+anything.
 
 The instrument is now in the host, behind `DASHSCENE_FRAME_TIMING`, off by
 default. It reports per 240 presents, and it excludes two things that silently

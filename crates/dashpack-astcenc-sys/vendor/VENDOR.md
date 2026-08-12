@@ -19,9 +19,9 @@ external binary, and nothing here is edited locally.
 `crates/dashpack-astcenc-sys/src/lib.rs` repeats the tag and the commit as
 `VENDORED_VERSION` and `VENDORED_COMMIT`, so a caller can print the pin without
 reading this file. The library exposes no version symbol of its own — only the
-command line tool does, and the command line tool is not vendored — so those
-two constants are a record of this vendoring step, not a value read back out of
-the compiled code. Update them in the same commit that replaces the sources.
+command line tool does, and the command line tool is not vendored — so those two
+constants are a record of this vendoring step, not a value read back out of the
+compiled code. Update them in the same commit that replaces the sources.
 
 ## What was copied
 
@@ -54,28 +54,27 @@ astcenc is Apache-2.0. Its license text is kept verbatim at
 `SPDX-License-Identifier: Apache-2.0` header and Arm copyright notice.
 
 The rest of this workspace is Apache-2.0 as well
-(`docs/decisions/apache-2-0-for-the-patent-grant.md`), so
-`dashpack-astcenc-sys` inherits `license.workspace = true` and needs no
-compound expression. Until 2026-08-10 the workspace was MIT and this crate
-declared `license = "MIT AND Apache-2.0"`; both halves are now the same
-licence. Upstream ships no `NOTICE` file, so Apache-2.0 section 4(d) adds
-nothing to carry beyond the attribution this repository's own `NOTICE`
-records.
+(`docs/decisions/apache-2-0-for-the-patent-grant.md`), so `dashpack-astcenc-sys`
+inherits `license.workspace = true` and needs no compound expression. Until
+2026-08-10 the workspace was MIT and this crate declared
+`license = "MIT AND Apache-2.0"`; both halves are now the same licence. Upstream
+ships no `NOTICE` file, so Apache-2.0 section 4(d) adds nothing to carry beyond
+the attribution this repository's own `NOTICE` records.
 
 ## Build configuration
 
-`build.rs` compiles these sources directly; it does not run CMake. Three
-choices in it are worth knowing about, and all three are explained at the point
-where they are made:
+`build.rs` compiles these sources directly; it does not run CMake. Three choices
+in it are worth knowing about, and all three are explained at the point where
+they are made:
 
 - The build stays **invariant** — upstream's default. An invariant build
   produces bit-identical output for every compiler and CPU architecture built
-  from one revision, which is what lets a bank re-derived on one machine match
-  a bank derived on another.
+  from one revision, which is what lets a bank re-derived on one machine match a
+  bank derived on another.
 - The SIMD instruction set is chosen from the target architecture, using only
   instructions that are part of that architecture's baseline.
-- `ASTCENC_BLOCK_MAX_TEXELS=144` limits the build to 2D block sizes, 12x12
-  being the largest.
+- `ASTCENC_BLOCK_MAX_TEXELS=144` limits the build to 2D block sizes, 12x12 being
+  the largest.
 
 ## Upgrading
 
@@ -89,6 +88,6 @@ where they are made:
    image by mutable pointer but passes it on as `const astcenc_image&`, and the
    `encode` safety comment cites that. The public signature does not enforce it,
    so a release that changed it would be silent.
-5. Re-run every band and golden check that depends on encoder output. An
-   encoder upgrade can change which encoding it picks for a block, so treat it
-   as a re-baseline, not a maintenance bump.
+5. Re-run every band and golden check that depends on encoder output. An encoder
+   upgrade can change which encoding it picks for a block, so treat it as a
+   re-baseline, not a maintenance bump.

@@ -14,9 +14,8 @@ first, and makes the checks that say so repeatable.
 Ruled by the owner on 2026-08-07. It confirms existing practice rather than
 changing it — every crate already sat at `0.0.0`, and `.git-std.toml` already
 carried a `[[version_files]]` entry for most of them — but making it explicit
-makes
-that mechanism load-bearing, because together-versioning **is** `git std bump`
-moving every crate in one step.
+makes that mechanism load-bearing, because together-versioning **is**
+`git std bump` moving every crate in one step.
 
 It is now structural rather than mechanical: `[workspace.package]` carries the
 one `version`, and every crate takes `version.workspace = true`. A crate cannot
@@ -39,11 +38,10 @@ first.
 ## Two defects this found, and why the second is not one line
 
 **Defect 1 — `[[version_files]]` covered 15 of the crates then in the
-workspace.** `dashpack` and
-`dashpack-astcenc-sys` were absent, so `git std bump` would not have moved
-either. Issue #445 named that exact item with that exact consequence and **was
-closed as completed with it unfixed**; its sibling item in the same file,
-`scopes`, was fixed.
+workspace.** `dashpack` and `dashpack-astcenc-sys` were absent, so
+`git std bump` would not have moved either. Issue #445 named that exact item
+with that exact consequence and **was closed as completed with it unfixed**; its
+sibling item in the same file, `scopes`, was fixed.
 
 **Defect 2 — a bump would have broken every published crate.** The root
 `Cargo.toml` was not a `[[version_files]]` entry at all, so a bump moved the
@@ -55,8 +53,8 @@ the version requirement is ignored entirely.
 **Adding one entry for the root manifest would have made it worse.** git-std's
 `write_version` calls `.captures()` and splices exactly one span
 (`crates/standard-version/src/regex_engine.rs`), so one unanchored entry moves
-**one** requirement — leaving 16 broken instead of 17, behind a registry that now
-looks covered.
+**one** requirement — leaving 16 broken instead of 17, behind a registry that
+now looks covered.
 
 So the root manifest takes **one entry per internal dependency**, each anchored
 on its own crate name. Seventeen entries where a naive reading wanted one.
@@ -122,8 +120,8 @@ document compiled elsewhere links none of that. The 789 KB `dashc_wasm` build is
 not subtractable either, being a differently-linked artifact.
 
 A library crate cannot be weighed at all: dead-code elimination happens at link
-time, so `dashscene-web` on its own has no size. Only a linked artifact does.
-So `measure/web-minimal` exists — one `cdylib`, three dashscene dependencies, and
+time, so `dashscene-web` on its own has no size. Only a linked artifact does. So
+`measure/web-minimal` exists — one `cdylib`, three dashscene dependencies, and
 the shortest code that reaches a drawn frame. `just measure-runtime` builds it
 and `demo-web` identically and reports both.
 
@@ -140,14 +138,14 @@ scenes — confirmed by diffing the two resolved package sets, which differ by
 Post-`wasm-bindgen`; no `wasm-opt`, because that is not a stage this repository
 produces.
 
-**It is a floor rather than a typical figure.** `web-minimal`'s frame hook writes
-nothing, so fat LTO drops the signal-writing paths in `dashlang` and
+**It is a floor rather than a typical figure.** `web-minimal`'s frame hook
+writes nothing, so fat LTO drops the signal-writing paths in `dashlang` and
 `dashscene-core` that any embedder driving its own state would keep. The number
 answers "what is the least this can cost", which is the question #776 asked; it
 does not predict a product host.
 
-**The recipe reproduces the measurement, not the byte count — found at the
-v0.17 close (story #796), and it bears on the gate.** Three recorded runs, same
+**The recipe reproduces the measurement, not the byte count — found at the v0.17
+close (story #796), and it bears on the gate.** Three recorded runs, same
 machine class and the same three tool versions printed above, give three
 different `web-minimal` sizes: 1 878 181, 1 878 196 and 1 878 189 raw, with the
 brotli figure moving with them (509 465, 508 226, 508 917). Over the same three
@@ -167,8 +165,8 @@ omission.** Three things argue against building one now:
 - **It is not in epic #793's definition of done**, which asks that an embedder
   can draw on either target without copying code, that R5 holds on the web, that
   nothing is published, and that no golden moves.
-- **A gate needs infrastructure this repository does not have.** `wasm-opt` is in
-  neither the `justfile` nor CI, and neither brotli nor gzip is a workspace
+- **A gate needs infrastructure this repository does not have.** `wasm-opt` is
+  in neither the `justfile` nor CI, and neither brotli nor gzip is a workspace
   dependency. Gating on a compressor properly means the treatment `dashpack`
   gives zstd — vendored sources, cross-architecture byte-identity measured,
   `Cargo.lock` pinning the version the result belongs to. That is real work to

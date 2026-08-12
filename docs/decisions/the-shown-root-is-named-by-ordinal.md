@@ -34,12 +34,11 @@ This record settles it.
 
 **D1 — one root at a time, not a set.** A host shows one root. That is what both
 integration crates do, what a full-screen panel needs, and what keeps the
-traversal change in story #838 a single index space rather than a union of
-them. The
-asymmetry decides the order: widening to a set later adds a second entry point
-and breaks nothing, where narrowing from a set to one root would break every
-caller. There is no case in the tree today that wants two, and inventing the
-general answer before the case exists is what would make #838 harder.
+traversal change in story #838 a single index space rather than a union of them.
+The asymmetry decides the order: widening to a set later adds a second entry
+point and breaks nothing, where narrowing from a set to one root would break
+every caller. There is no case in the tree today that wants two, and inventing
+the general answer before the case exists is what would make #838 harder.
 
 **D2 — the name is an ordinal over the document's roots**, zero-based, in the
 order the document declares them. `dashbuf::prefetch::ShownRoot` is that
@@ -49,17 +48,17 @@ ordinal, and `ShownRoot::FIRST` is what every host meant before this story.
 `ShownRoot` into a **node** index, and both are `u32`. Passing one where the
 other belongs would read the wrong subtree and report nothing, which is the
 failure the boundary-B work already learned to prevent by type: a row index is
-valid only in the table that assigned it. The newtype makes the two
-unmistakable at every call site in the workspace.
+valid only in the table that assigned it. The newtype makes the two unmistakable
+at every call site in the workspace.
 
 **D4 — it lives in `dashbuf`, beside the prefetch it selects.** That is the
 lowest crate that needs it: `dashbuf::prefetch::assets_of_root` is what a
-selection bounds, and `dashscene-core` already depends on `dashbuf`, so the
-next story (#838) can take the same type rather than defining a second one
-meaning the same thing. Both integration crates **re-export** it, so an embedder naming a root
-does not have to declare a dependency on the format crate and keep its version
-in step — the same rule the `dashscene-gpu` re-exports in `dashscene-web`
-follow.
+selection bounds, and `dashscene-core` already depends on `dashbuf`, so the next
+story (#838) can take the same type rather than defining a second one meaning
+the same thing. Both integration crates **re-export** it, so an embedder naming
+a root does not have to declare a dependency on the format crate and keep its
+version in step — the same rule the `dashscene-gpu` re-exports in
+`dashscene-web` follow.
 
 **D5 — it is a parameter on the load call, not state on a handle.** Both
 `dashscene_desktop::Document::load` and `dashscene_web::load_document` take a
@@ -95,9 +94,8 @@ nothing for a root selection to bound. A parameter added today would be accepted
 and would change nothing measurable, which is worse than its absence. What
 unblocks it is issue #925 (the ABI has no mapped path and no owner), or the
 traversal change tracked as issue #838 (the paint follows the shown root),
-whichever lands first; the ABI
-versioning rule says a new symbol is free and a changed signature bumps
-`DS_ABI_VERSION`, so the cost is known either way.
+whichever lands first; the ABI versioning rule says a new symbol is free and a
+changed signature bumps `DS_ABI_VERSION`, so the cost is known either way.
 
 ## Consequences
 
@@ -107,11 +105,11 @@ versioning rule says a new symbol is free and a changed signature bumps
   half by exchanging which payload may be corrupt with the ordinal.
 - **On the web it moves the reported `Bound` rather than the byte count.**
   `shown::layout` widens to the union whenever a root other than the shown one
-  draws a payload, because a payload a browser did not fetch has no bytes at
-  all — so for any multi-root document where more than one root draws, the
-  ordinal cannot narrow the fetch. `Bound::ShownRoot` against `Bound::EveryRoot`
-  is the whole of what the selector changes there, which is the honest statement
-  of what this story delivers on that target, and story #838 is what makes the
+  draws a payload, because a payload a browser did not fetch has no bytes at all
+  — so for any multi-root document where more than one root draws, the ordinal
+  cannot narrow the fetch. `Bound::ShownRoot` against `Bound::EveryRoot` is the
+  whole of what the selector changes there, which is the honest statement of
+  what this story delivers on that target, and story #838 is what makes the
   answer always `ShownRoot`.
 - **Story #838 inherits a vocabulary rather than inventing one**, which is the
   whole reason D3 sequenced this first.
@@ -160,5 +158,5 @@ site outside the two hosts has to change. Rejected under D7.
   `dashbuf::prefetch::root_count` returns how many there are, and is what both
   `NoSuchRoot` variants report; `prefetch::roots` yields their node indices, for
   a consumer that walks every root rather than choosing between them. No error
-  carries a node index — D3 is the reason. Anything richer — a
-  name, an extent, a preview — is a producer question nothing has asked yet.
+  carries a node index — D3 is the reason. Anything richer — a name, an extent,
+  a preview — is a producer question nothing has asked yet.

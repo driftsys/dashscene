@@ -16,7 +16,10 @@
     { "name": "lowering-hug-in-fill", "command": "lowering-hug-in-fill" },
     { "name": "lowering-negative-gap", "command": "lowering-negative-gap" },
     { "name": "lowering-baseline", "command": "lowering-baseline" },
-    { "name": "lowering-variant-topology", "command": "lowering-variant-topology" },
+    {
+      "name": "lowering-variant-topology",
+      "command": "lowering-variant-topology"
+    },
     { "separator": true },
     { "name": "real-file", "command": "real-file" },
     { "name": "trim-demo", "command": "trim-demo" },

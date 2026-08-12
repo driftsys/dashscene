@@ -63,7 +63,4 @@ keywords = ["figd_"]
 # sorted file gained a line, which is why they are gone.
 [[allowlists]]
 description = "the triage records, whose content is triaged values by construction"
-paths = [
-  '''\.secrets-triaged$''',
-  '''\.secrets-history-baseline$''',
-]
+paths = ['''\.secrets-triaged$''', '''\.secrets-history-baseline$''']

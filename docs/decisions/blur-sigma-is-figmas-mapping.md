@@ -28,21 +28,21 @@ measurement lands.
 
 ## Why the constant changed
 
-Issue #412 measured Figma's `BACKGROUND_BLUR` as fitting nearer `0.42-0.45 *
-radius` and was held for three reasons. Two are now discharged; the third
-turned out to point the opposite way from how it was read.
+Issue #412 measured Figma's `BACKGROUND_BLUR` as fitting nearer
+`0.42-0.45 *
+radius` and was held for three reasons. Two are now discharged; the
+third turned out to point the opposite way from how it was read.
 
 1. ~~The `backdrop-blur` frame cannot decide it.~~ True of the frame's headline
-   count, which is the ellipse's rim and identical for every sigma from 4 to
-   10. Untrue of the panel region, where the fit has a clear minimum.
+   count, which is the ellipse's rim and identical for every sigma from 4 to 10.
+   Untrue of the panel region, where the fit has a clear minimum.
 2. ~~Colour space is an unresolved confound.~~ Discharged 2026-07-30
    (`docs/decisions/blur-blends-in-srgb-encoded-space.md`). The painter blends
    in the same space Figma does, so the fit measures what it claims.
 3. **The constant is shared with shadows.** This was recorded as the reason
-   changing it was risky — `blur-falloff` was tuned against the shadow
-   fixtures, so a refit would move them. **Measured, the shadow frames do not
-   defend `radius / 2`; they argue against it as strongly as the backdrop frame
-   does.**
+   changing it was risky — `blur-falloff` was tuned against the shadow fixtures,
+   so a refit would move them. **Measured, the shadow frames do not defend
+   `radius / 2`; they argue against it as strongly as the backdrop frame does.**
 
 ## What was measured
 
@@ -88,8 +88,8 @@ change. A reader is entitled to ask why a constant was moved when three of four
 gate numbers stayed flat and the fourth regressed. The answer is that those
 counts threshold at delta 24 and 40 and so cannot see a wide, low-amplitude
 falloff difference — which is exactly what
-`docs/decisions/render-oracle-tolerance-and-gating.md` says a residual budget
-is for, and exactly why #412 had to be settled by a fit rather than by a gate.
+`docs/decisions/render-oracle-tolerance-and-gating.md` says a residual budget is
+for, and exactly why #412 had to be settled by a fit rather than by a gate.
 
 **No band or gate was retuned here.** Doing so would make the change
 self-justifying.
@@ -108,11 +108,11 @@ radii, the constants that render byte-identical pixels:
 Intersection **0.4322 … 0.4543**, about −1.2 % / +3.8 % around `0.4375`.
 
 That is **wider than the pin this test carried at `0.5`** (0.4988 … 0.5092,
-about ±1 %), because the box-blur windows these radii land on are wider
-relative to the smaller constant. The new value is therefore held less
-precisely than the old one was — a property of Skia's quantisation, not
-evidence that it is worse. The test records it as a measured upper bound on
-precision rather than letting it read as accuracy.
+about ±1 %), because the box-blur windows these radii land on are wider relative
+to the smaller constant. The new value is therefore held less precisely than the
+old one was — a property of Skia's quantisation, not evidence that it is worse.
+The test records it as a measured upper bound on precision rather than letting
+it read as accuracy.
 
 That test existed specifically so this refit could not land quietly, and it
 worked: it failed the moment the constant moved, and re-recording it is a
@@ -152,8 +152,8 @@ points cannot reveal a mapping that is non-linear in radius. If Figma's
 radii the corpus happens to author, not the mapping itself.
 
 Testing that needs a fixture authoring the same construct at several radii,
-which needs a Figma Desktop session. It is not scheduled, and this record
-should not be read as having ruled it out.
+which needs a Figma Desktop session. It is not scheduled, and this record should
+not be read as having ruled it out.
 
 ## Alternatives considered
 
@@ -163,12 +163,12 @@ should not be read as having ruled it out.
   backdrop blur. Rejected because the measurement removed the reason to: the
   shadow and backdrop frames prefer the same window. Splitting would also give
   up the drift protection `blur_sigma`'s single definition exists for.
-- **Retune `blur-falloff` so the improvement is visible at the gate.**
-  Rejected. The band was measured against Figma and is not this change's to
-  move; adjusting the ruler to show that a change helped is how a measurement
-  stops meaning anything.
-- **Wait for a multi-radius fixture before moving at all.** Rejected on
-  balance: the current value is measurably wrong at every radius in the corpus,
-  and holding a known-worse constant for a fixture nobody has scheduled is a
-  worse default than adopting the better fit and recording its limits — which
-  this section does.
+- **Retune `blur-falloff` so the improvement is visible at the gate.** Rejected.
+  The band was measured against Figma and is not this change's to move;
+  adjusting the ruler to show that a change helped is how a measurement stops
+  meaning anything.
+- **Wait for a multi-radius fixture before moving at all.** Rejected on balance:
+  the current value is measurably wrong at every radius in the corpus, and
+  holding a known-worse constant for a fixture nobody has scheduled is a worse
+  default than adopting the better fit and recording its limits — which this
+  section does.

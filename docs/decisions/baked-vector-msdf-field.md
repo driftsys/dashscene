@@ -27,18 +27,18 @@ different-color fill+stroke nodes.
 ## Decision
 
 **A `VECTOR` node lowers into a baked multi-channel signed-distance field
-(MSDF), carried on the paint entry as a coverage mask.** The paint entry's
-shape channel is `Parametric | Field(shape_index)`: absent/sentinel is the
-existing implicit rounded-rect (parametric), a valid index selects a baked
-`VectorShape`. The painter samples the field to a coverage value in `[0,1]` and
-masks the entry's existing fill (solid, gradient, or image) by it — it never
-reads a path. The field is resolution-independent shape _intent_, the same kind
-the glyph atlas already carries, so P1 holds (the document carries no rasterized
-pixel result).
+(MSDF), carried on the paint entry as a coverage mask.** The paint entry's shape
+channel is `Parametric | Field(shape_index)`: absent/sentinel is the existing
+implicit rounded-rect (parametric), a valid index selects a baked `VectorShape`.
+The painter samples the field to a coverage value in `[0,1]` and masks the
+entry's existing fill (solid, gradient, or image) by it — it never reads a path.
+The field is resolution-independent shape _intent_, the same kind the glyph
+atlas already carries, so P1 holds (the document carries no rasterized pixel
+result).
 
 **The generator is pure-Rust `fdsm`, welded to pinned `msdfgen`.** fdsm bakes
-inside `dashc.wasm` at import time; a committed reference field generated once by
-pinned msdfgen v1.13.0 welds fdsm's output (the median-of-3 reconstructed
+inside `dashc.wasm` at import time; a committed reference field generated once
+by pinned msdfgen v1.13.0 welds fdsm's output (the median-of-3 reconstructed
 distance the painter samples) within a per-texel tolerance, so CI stays
 C++-free. The schema additions are append-only and R7-safe: `VectorAtlas`,
 `VectorShape`, `AtlasRect`, `PlaneBounds`, a `Paint.shape_field: uint32`
@@ -73,8 +73,8 @@ The as-built mechanism (schema, generator, weld, painter, bake oracle) is
   Rejected for B1. It would put full path rasterization (arbitrary contours,
   winding rules, AA) behind boundary B, a direct P2 violation, and is a much
   larger cross-painter commitment than the measured need warrants. The field
-  carrier keeps every painter sampling-only and reuses the glyph MSDF resolve.
-  A path vocabulary remains the deferred v1 option.
+  carrier keeps every painter sampling-only and reuses the glyph MSDF resolve. A
+  path vocabulary remains the deferred v1 option.
 - **Vendored C++ `msdfgen` in the bake path.** Impossible — the import path is
   `dashc.wasm`; C++ cannot ride. This is what forces pure-Rust fdsm; msdfgen
   stays the offline weld reference only.
@@ -87,8 +87,8 @@ The as-built mechanism (schema, generator, weld, painter, bake oracle) is
 - **One `Image` per shape (no packing or dedup).** Rejected. The hero has 148
   vectors with repeats; one image each bloats the `.dsb`. Path-hash dedup plus
   shelf-packing into shared atlases mirrors the glyph-atlas model.
-- **Two-field composition for fill+stroke vectors.** Deferred. The only
-  measured "both" nodes are same-color, covered by a single unioned field; a
+- **Two-field composition for fill+stroke vectors.** Deferred. The only measured
+  "both" nodes are same-color, covered by a single unioned field; a
   different-color fill+stroke vector is name-refused now, a v0.11 candidate.
 
 ## Consequences

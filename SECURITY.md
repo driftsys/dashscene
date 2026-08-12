@@ -19,18 +19,18 @@ remediation timeline within 14 days of confirming the report.
 
 ## Scope notes specific to dashscene
 
-- The `.dsb` format loader (boundary A, see `docs/design/dashbuf.md`) is a
-  trust boundary: it parses untrusted input (documents produced outside this
-  repo's own compiler, or received over the wire per the v2 remote-streaming
-  plan). Parsing bugs here — out-of-bounds reads against mmap'd sections,
-  hash-check bypass, section-size confusion — are treated as security issues
-  even before v2 ships.
-- The Figma importer (`importers/figma/`) handles personal access tokens.
-  Token handling or scope-escalation issues there are in scope.
+- The `.dsb` format loader (boundary A, see `docs/design/dashbuf.md`) is a trust
+  boundary: it parses untrusted input (documents produced outside this repo's
+  own compiler, or received over the wire per the v2 remote-streaming plan).
+  Parsing bugs here — out-of-bounds reads against mmap'd sections, hash-check
+  bypass, section-size confusion — are treated as security issues even before v2
+  ships.
+- The Figma importer (`importers/figma/`) handles personal access tokens. Token
+  handling or scope-escalation issues there are in scope.
 - `dashc.wasm`'s boundary with the Deno importer (JSON in, `.dsb`/diagnostics
   out) is in scope for the same reason as boundary A above.
 
 ## Supported versions
 
-This project has not yet reached a tagged v0.1 release. Until then, only
-`main` is supported; report against the latest commit.
+This project has not yet reached a tagged v0.1 release. Until then, only `main`
+is supported; report against the latest commit.

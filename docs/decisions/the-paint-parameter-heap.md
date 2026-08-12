@@ -90,11 +90,11 @@ defaults deliberately, because that is the entry-tier class of device R3 names.
 The alternatives were to raise the limit, to move something else out of the
 fragment stage, or to share a binding.
 
-Raising the limit gives up the target class. Moving something out was
-considered and does not work: a stroke's parameters and an image fill's are both
-constant across an instance, so either could cross as varyings — but the vertex
-stage that would have to read them is itself at four of four, so the binding
-moves rather than disappears.
+Raising the limit gives up the target class. Moving something out was considered
+and does not work: a stroke's parameters and an image fill's are both constant
+across an instance, so either could cross as varyings — but the vertex stage
+that would have to read them is itself at four of four, so the binding moves
+rather than disappears.
 
 Sharing is what is left, and it costs nothing at the read: a heap word is a
 `vec4f` load exactly as a solid colour was.

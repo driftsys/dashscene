@@ -49,10 +49,10 @@
 ## Context
 
 Platform reach was one slice when this was written. Web and desktop already work
-and are a packaging problem — **that half is v0.17 (epic #793)**, and this record
-does not bear on it. **Android is at zero** — no target triple, no toolchain, no CI job, and
-no FFI beyond `dashscene-unity`'s Unity-facing bindings — so it is the slice's
-one new platform.
+and are a packaging problem — **that half is v0.17 (epic #793)**, and this
+record does not bear on it. **Android is at zero** — no target triple, no
+toolchain, no CI job, and no FFI beyond `dashscene-unity`'s Unity-facing
+bindings — so it is the slice's one new platform.
 
 **iOS and the Unity host are deliberately not in v0.19.** iOS is a second
 platform bring-up with the same zero foundation, and Unity is blocked on
@@ -89,16 +89,16 @@ planning session breaks stories against a structure rather than inventing one.
 | 1. app state as signals      | Compose `State` / SwiftUI bindings write named dashscene signals                 | yes — an app-driven scene, authored in Figma or `dashlang` |
 | 2. a DSL wrapping `dashlang` | scenes authored from the host's language                                         | needs 0; wants 1                                           |
 
-Layer 0 is the whole of "show a designed screen in my app", which is the
-primary content path — Figma to `.dsb`. Layers 1 and 2 are what make it a
-runtime rather than a picture.
+Layer 0 is the whole of "show a designed screen in my app", which is the primary
+content path — Figma to `.dsb`. Layers 1 and 2 are what make it a runtime rather
+than a picture.
 
 **D2 — one C ABI underneath, and every layer and platform sits on it.**
 
 Kotlin reaches native through JNI, and Swift would reach the same functions
-through a C header when iOS lands in v1. Boundary B is already FFI-representable — story #600 made a non-FFI
-type a compile error — and `dashc` already has an ABI, so the foundation exists
-with nothing on it.
+through a C header when iOS lands in v1. Boundary B is already FFI-representable
+— story #600 made a non-FFI type a compile error — and `dashc` already has an
+ABI, so the foundation exists with nothing on it.
 
 This is also what makes an out-of-process deployment a later option rather than
 a fork: **an AIDL service would be a client of this same ABI**, not a different
@@ -108,10 +108,11 @@ runtime. See "Alternatives considered".
 `dashscene-gpu` does not change.**
 
 `SurfaceRenderer::new` takes `impl Into<wgpu::SurfaceTarget<'static>>`, and
-`SurfaceTarget::DisplayAndWindow` accepts any `HasWindowHandle +
-HasDisplayHandle`. So each platform contributes a small handle type and nothing
-in the painter moves — the same shape the web needed, where `for_canvas` was the
-only addition.
+`SurfaceTarget::DisplayAndWindow` accepts any
+`HasWindowHandle +
+HasDisplayHandle`. So each platform contributes a small
+handle type and nothing in the painter moves — the same shape the web needed,
+where `for_canvas` was the only addition.
 
 **Android.** `SurfaceHolder.Callback` hands a `android.view.Surface` to JNI;
 `ANativeWindow_fromSurface` turns it into an `ANativeWindow*`; that becomes
@@ -151,8 +152,8 @@ is to read a limit out of the thing that enforces it. The first Android story
 should confirm the target device class exposes Vulkan before anything is built
 on the assumption.
 
-**D4 — `ANativeWindow_fromSurface` acquires a reference, and
-`surfaceDestroyed` must block until rendering has stopped.**
+**D4 — `ANativeWindow_fromSurface` acquires a reference, and `surfaceDestroyed`
+must block until rendering has stopped.**
 
 Named as a rule because it is the classic native crash on Android and because
 nothing in the current design says it. When `surfaceDestroyed` returns the
@@ -193,10 +194,9 @@ handle type.
 
 `AChoreographer` on Android — and `CADisplayLink` on iOS when that lands —
 driven from the native side rather than from the host language calling `tick()`
-each frame. P3 says
-producers mutate and the runtime owns time; a host that drives the tick from its
-UI thread inverts that, and on Android it would also put the frame loop on the
-thread that has to run D4's destroy handshake.
+each frame. P3 says producers mutate and the runtime owns time; a host that
+drives the tick from its UI thread inverts that, and on Android it would also
+put the frame loop on the thread that has to run D4's destroy handshake.
 
 **D7 — layer 1 is one-way by default: app state writes signals.**
 
@@ -244,8 +244,8 @@ unchanged by that, which is the test that it was the right decomposition.
 
 **An AIDL bound service rendering into a client-supplied `Surface`.** Genuinely
 viable, and in automotive HMI a normal shape: a `Surface` is Parcelable, and
-what crosses Binder is a handle to a BufferQueue rather than pixels — so the
-1 MB transaction ceiling does not bear on the frame path at all.
+what crosses Binder is a handle to a BufferQueue rather than pixels — so the 1
+MB transaction ceiling does not bear on the frame path at all.
 
 The cost lands on the **control** path instead. If the runtime is out of
 process, the document is too, so every signal write and every variant switch

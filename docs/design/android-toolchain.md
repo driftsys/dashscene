@@ -37,19 +37,18 @@ which is `darwin-x86_64` on Apple silicon and `linux-x86_64` on a runner.
 
 ### The API floor
 
-`ANDROID_API` in the `justfile`, currently **33**. A floor rather than a
-target — the oldest device the artifacts will load on.
+`ANDROID_API` in the `justfile`, currently **33**. A floor rather than a target
+— the oldest device the artifacts will load on.
 
 It was **26** when this record was written, and this paragraph said so for two
 stories after it stopped being true: story #862 raised it to 33 and changed only
 the `justfile`, so the number here was stale from the moment it landed. Nothing
 failed, because no test reads a sentence.
 
-**The floor is 33 because of one function.**
-`AChoreographer_getInstance` is API 24, but
-`AChoreographer_postVsyncCallback` — the one carrying a frame timeline — is
-`__INTRODUCED_IN(33)`, and D6 puts vsync on the native side. At this floor it is
-reachable **unconditionally**: no runtime API guard, and no
+**The floor is 33 because of one function.** `AChoreographer_getInstance` is API
+24, but `AChoreographer_postVsyncCallback` — the one carrying a frame timeline —
+is `__INTRODUCED_IN(33)`, and D6 puts vsync on the native side. At this floor it
+is reachable **unconditionally**: no runtime API guard, and no
 `postFrameCallback64` fallback branch. That is the whole consequence of the
 choice, and `crates/dashscene-android/src/host.rs` depends on it.
 
@@ -58,8 +57,8 @@ gates `targetSdk` and sets no minimum.
 
 ## What builds
 
-`just android` cross-compiles `dashscene-gpu` — the painter, the whole of what
-a host draws through. It compiled without a source change, pulling in `ndk-sys`,
+`just android` cross-compiles `dashscene-gpu` — the painter, the whole of what a
+host draws through. It compiled without a source change, pulling in `ndk-sys`,
 `jni-sys`, `gpu-allocator` and `wgpu-core-deps-windows-linux-android`, so wgpu's
 Android backend support needed nothing from this repository.
 
@@ -73,10 +72,9 @@ the `t2-check-has-no-teeth` failure the v0.13 tiering exists to remove.
 host to sit **on** `dashscene-ffi` rather than beside it: it drives the C ABI
 through its own entry points as a C caller would, which is what D2 says every
 platform host does. Driving it that way is also what established the ABI was
-sufficient for layer 0 — and that it was not quite.
-`ds_runtime_detach_surface` was added there, because D4 needs a call that drops
-the surface and keeps the document, and freeing the whole runtime would drop the
-document with it.
+sufficient for layer 0 — and that it was not quite. `ds_runtime_detach_surface`
+was added there, because D4 needs a call that drops the surface and keeps the
+document, and freeing the whole runtime would drop the document with it.
 
 Two threads, and the split is D4's and D6's between them. The **UI thread**
 receives the lifecycle callbacks and is the only one that may call
@@ -85,12 +83,12 @@ receives the lifecycle callbacks and is the only one that may call
 `AChoreographer_postVsyncCallback`, and owns the runtime — so the thread that
 draws is the thread that built the device.
 
-**The destroy handshake is a type on no Android API**, deliberately.
-`Handshake` uses two threads and a flag, and is compiled on every target, so
-`cargo test` can assert the ordering `surfaceDestroyed` depends on. Everything
-else in the crate is behind `cfg(target_os = "android")` and no test can reach
-it — the same reason `dashscene-web` keeps its `fetch` and `shown` modules
-outside the `wasm32` half.
+**The destroy handshake is a type on no Android API**, deliberately. `Handshake`
+uses two threads and a flag, and is compiled on every target, so `cargo test`
+can assert the ordering `surfaceDestroyed` depends on. Everything else in the
+crate is behind `cfg(target_os = "android")` and no test can reach it — the same
+reason `dashscene-web` keeps its `fetch` and `shown` modules outside the
+`wasm32` half.
 
 ### What ran, and on what
 
@@ -103,19 +101,19 @@ painter-capable adapter there is a CPU rasteriser.
 - **Backgrounding** and **rotation** each ran the destroy handshake, and the
   thread ids in logcat show the ordering: the UI thread entered, the render
   thread detached and freed, and only then did the UI thread return. The UI
-  thread was blocked for **88-115 ms** on a release build; the first teardown
-  of a debug build took 1.15 s. Neither crashed, and re-attach built a fresh
-  render thread each time. That block is a whole runtime teardown rather than
-  just a surface drop, which is issue #872.
+  thread was blocked for **88-115 ms** on a release build; the first teardown of
+  a debug build took 1.15 s. Neither crashed, and re-attach built a fresh render
+  thread each time. That block is a whole runtime teardown rather than just a
+  surface drop, which is issue #872.
 - **Split-screen was not exercised.** That image declares no multi-window,
   freeform or split-screen feature at all — `pm list features` returns none and
   `ro.build.characteristics` is `automotive` — so the third of D4's three cases
   needs different hardware. The v0.19 driver prompt asserted the emulator could
   exercise all three; for this AVD that is false.
 
-A static document draws once and then stops, which is the idle skip working:
-the generation does not advance, so no frame is worth drawing. Nothing about
-frame _rate_ can be read from this, and nothing here says Android works.
+A static document draws once and then stops, which is the idle skip working: the
+generation does not advance, so no frame is worth drawing. Nothing about frame
+_rate_ can be read from this, and nothing here says Android works.
 
 ### The harness that ran it
 
@@ -130,16 +128,16 @@ It is a **lifecycle harness and not the demonstration**. Story #842's
 `demo-android` is that, and it cannot be reached by shipping the showcase as a
 `.dsb`: the showcase animates by writing a named signal and, in one scene, by
 switching a variant, and no committed `.dsb` carries a signal, a binding row or
-a variant table (issue #617). The C ABI has no builder entry point either —
-that is layer 2, D8 — so a host that wants a scene built in code links the
-crates directly, as `demo` and `demo-web` do.
+a variant table (issue #617). The C ABI has no builder entry point either — that
+is layer 2, D8 — so a host that wants a scene built in code links the crates
+directly, as `demo` and `demo-web` do.
 
 One trap the harness hit, recorded because the failure is silent: a debug
 keystore regenerated on each build signs each build differently, and Android
 then refuses the update with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` while the
 device goes on running the **previous** build. A test then reads as a working
-build that ignores its own changes. The keystore lives outside the directory
-the script wipes.
+build that ignores its own changes. The keystore lives outside the directory the
+script wipes.
 
 ## The probe
 
@@ -157,8 +155,8 @@ pipeline creation. So the verdict the probe prints is the painter's own.
 
 It is an example rather than a new workspace member because it measures
 `dashscene-gpu`'s own requirement against a device, and because a crate would
-cost the registries a new crate has to be added to — thirteen of them when
-story #794 added `dashscene-desktop`, enumerated in
+cost the registries a new crate has to be added to — thirteen of them when story
+#794 added `dashscene-desktop`, enumerated in
 [`../decisions/crate-name-map.md`](../decisions/crate-name-map.md).
 
 ## What was measured, and what it does not say
@@ -170,10 +168,11 @@ on the development machine:
     max_storage_buffers_per_shader_stage 29
     device request OK
 
-**Automotive emulator** — `Automotive_1408p_landscape_with_Google_Play_API_34-ext9`,
-API 34, on that same machine. **This is an emulator result and is not the D3a
-measurement**; both adapters below describe the host machine's GPU and its
-translation layer, not a target device.
+**Automotive emulator** —
+`Automotive_1408p_landscape_with_Google_Play_API_34-ext9`, API 34, on that same
+machine. **This is an emulator result and is not the D3a measurement**; both
+adapters below describe the host machine's GPU and its translation layer, not a
+target device.
 
     adapter 0  Vulkan, SwiftShader Device (LLVM 10.0.0), Cpu
                max_storage_buffers_per_shader_stage 10
@@ -187,16 +186,16 @@ translation layer, not a target device.
 **The GLES adapter reporting zero is D3a's mechanism, demonstrated.** D3a says a
 device without Vulkan meets the same wall that makes WebGL2 unbuildable for this
 painter, where `downlevel_webgl2_defaults` allows zero storage buffers. That
-adapter translates OpenGL ES 3.0, and shader storage buffers arrived in GLES
-3.1 — so zero is correct rather than a reporting gap, and the painter cannot run
-on it.
+adapter translates OpenGL ES 3.0, and shader storage buffers arrived in GLES 3.1
+— so zero is correct rather than a reporting gap, and the painter cannot run on
+it.
 
 One precision about the failure line: wgpu names the first limit that fails,
 which here was `max_compute_workgroups_per_dimension`, not the storage-buffer
 one. The GLES 3.0 adapter reports zero for a whole family of limits. The request
-failed and the storage-buffer limit is zero; the request did not fail
-_because of_ the storage-buffer limit specifically, and this record does not
-claim it did.
+failed and the storage-buffer limit is zero; the request did not fail _because
+of_ the storage-buffer limit specifically, and this record does not claim it
+did.
 
 ### The emulator cannot be made to use the host GPU for Vulkan
 
@@ -245,8 +244,8 @@ measured, and emulator results stay labelled as emulator results.
 
 ### The emulator numbers depend on how the emulator was launched
 
-Recorded here so a re-run is not read as a contradiction. The two adapter
-sets above came from a **default-GPU** launch. A launch with
+Recorded here so a re-run is not read as a contradiction. The two adapter sets
+above came from a **default-GPU** launch. A launch with
 `-gpu swiftshader_indirect`, on 2026-08-09, reported adapter 1 as ANGLE over
 SwiftShader at **GLES 3.1** with `max_storage_buffers_per_shader_stage` of
 **18**, passing the device request — where this record holds a Metal-backed

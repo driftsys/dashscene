@@ -23,7 +23,16 @@
   },
 
   "fmt": {
-    "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mts", "**/*.cts", "**/*.mjs", "**/*.cjs"],
+    "include": [
+      "**/*.ts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
     "exclude": ["editors/", ".worktrees/", ".claude/worktrees/"]
   },
 

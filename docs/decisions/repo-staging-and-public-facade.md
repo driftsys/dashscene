@@ -11,12 +11,12 @@
 
 ## Context
 
-`driftsys/dashscene` already existed before development started, created
-purely to reserve a family of crate names on crates.io
+`driftsys/dashscene` already existed before development started, created purely
+to reserve a family of crate names on crates.io
 (`docs/decisions/crate-name-map.md`). It had three commits, one open dependabot
 pull request, and doc-comment stubs for twelve crates — no implementation to
-preserve. The question was whether to build the working monorepo there, or
-start a second repository.
+preserve. The question was whether to build the working monorepo there, or start
+a second repository.
 
 ## Options
 
@@ -42,8 +42,8 @@ There is one repository now. The facade role folded into it.
 
 ## Why the rename rather than a promotion
 
-- **The issue tracker is load-bearing.** The v0 plan lives as GitHub issues,
-  and the documentation references them 4,896 times across 303 of 346 Markdown
+- **The issue tracker is load-bearing.** The v0 plan lives as GitHub issues, and
+  the documentation references them 4,896 times across 303 of 346 Markdown
   files. A fresh push would have left every one of those pointing at a tracker
   nobody could see, and lost 501 issues and 21 milestones. A rename keeps the
   numbers, so `#598` still resolves.
@@ -56,28 +56,31 @@ There is one repository now. The facade role folded into it.
 
 ## Consequences
 
-- **All 21 published stubs carry `repository = https://github.com/driftsys/dashscene`,
-  and that is the working repository, not the archived one.** Renaming the
-  working repo into that name replaced GitHub's redirect rather than following
-  it, so the archived repo is not where those links lead and never will be.
+- **All 21 published stubs carry
+  `repository = https://github.com/driftsys/dashscene`, and that is the working
+  repository, not the archived one.** Renaming the working repo into that name
+  replaced GitHub's redirect rather than following it, so the archived repo is
+  not where those links lead and never will be.
 
   Those links returned 404 to anyone outside the organisation for as long as
   this repository was private. **They resolve now.** Checking authenticated
   shows 200 and proves nothing; `curl -I` with no credentials is the test, and
   run that way on 2026-08-12 it returns 200 for both
   `https://github.com/driftsys/dashscene` and the archived
-  `driftsys/dashscene-name-reservations`. The stubs land on the project
-  itself — a better destination than the reservation repo would have been.
+  `driftsys/dashscene-name-reservations`. The stubs land on the project itself —
+  a better destination than the reservation repo would have been.
 - Working memory, decisions and archive all publish from one place. There is no
   promotion step to get wrong later, and no second history to reconcile.
 - **The repository is public.** The visibility flip was the last part of this
-  not yet done, and it is done: `gh repo view driftsys/dashscene --json
-  visibility` returns `PUBLIC`. It made one thing possible that this record did
-  not anticipate — branch protection and rulesets are free on a public
-  repository, and `main` now carries a ruleset requiring a pull request and a
-  green `ci` (`docs/decisions/review-before-ready-not-before-open.md`). Every
-  earlier statement in this repository that branch protection needs a paid plan
-  was written against the private state and is superseded.
+  not yet done, and it is done:
+  `gh repo view driftsys/dashscene --json
+  visibility` returns `PUBLIC`. It
+  made one thing possible that this record did not anticipate — branch
+  protection and rulesets are free on a public repository, and `main` now
+  carries a ruleset requiring a pull request and a green `ci`
+  (`docs/decisions/review-before-ready-not-before-open.md`). Every earlier
+  statement in this repository that branch protection needs a paid plan was
+  written against the private state and is superseded.
 
 ## What the original decision got right, and what it did not
 
@@ -88,6 +91,6 @@ nothing forced development to happen under the public name.
 
 Not right: this record framed the endgame as promoting content from one
 repository into another, and left the mechanism open on the assumption that the
-choice would be about commits. It was not. It was about the issue tracker,
-which neither option would have preserved, and which turned out to be the most
+choice would be about commits. It was not. It was about the issue tracker, which
+neither option would have preserved, and which turned out to be the most
 expensive thing to lose.

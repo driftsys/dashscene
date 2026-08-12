@@ -11,16 +11,16 @@
 
 ## Context
 
-`dashlang::Node` carried geometry, the whole flex and grid vocabulary, one
-solid fill, and the reactive bindings. It carried nothing else. Counted
-against `dashscene_core::Prop`'s 37 variants at the time: geometry 4 of 4,
-layout 19 of 20 (`Visible` was the gap), paint 1 of 13. `Prop` has 38
-variants since story #770 added `Rotation`.
+`dashlang::Node` carried geometry, the whole flex and grid vocabulary, one solid
+fill, and the reactive bindings. It carried nothing else. Counted against
+`dashscene_core::Prop`'s 37 variants at the time: geometry 4 of 4, layout 19 of
+20 (`Visible` was the gap), paint 1 of 13. `Prop` has 38 variants since story
+#770 added `Rotation`.
 
 Every design-heavy scene therefore dropped to `dashscene_core::Txn::set_prop`.
 `corpus/showcase` paid for that with a **two-pass authoring model**: structure,
-layout and motion through the builder, then paint staged onto nodes addressed
-by **name** in a second pass over the built arena. That pass needed a
+layout and motion through the builder, then paint staged onto nodes addressed by
+**name** in a second pass over the built arena. That pass needed a
 `nodes_by_name` walk of the arena, a panic when two nodes shared a name, a
 written argument for why a second producer may touch a live scene's arena
 between ticks, and a text-capable solver for its own commit, because glyph runs
@@ -39,23 +39,23 @@ solid shorthand, the same split core makes between `Prop::Fill` and
 (`docs/decisions/visible-is-layout-opacity-is-paint.md`). It writes
 `layout.visible` in `lib.rs` like every other layout setter. It was the last
 layout prop with no static setter — reachable only through the reactive
-`visible_when` — and it closes the layout table at 20 of 20. Every one of
-core's `Prop` variants now has a builder setter, and that is a standing
-property rather than a one-time count: `Prop::Rotation` arrived at story #770
-with `Node::rotation` beside it, keeping it true at 38 of 38.
+`visible_when` — and it closes the layout table at 20 of 20. Every one of core's
+`Prop` variants now has a builder setter, and that is a standing property rather
+than a one-time count: `Prop::Rotation` arrived at story #770 with
+`Node::rotation` beside it, keeping it true at 38 of 38.
 
 Nothing enforces this mechanically. `stage_paint_props` is a sequence of
-`if let`s rather than an exhaustive `match`, so a variant added without a
-mirror compiles clean — which is how the count above went stale once already.
-A new `Prop` variant is the moment to add the setter, not a later sweep.
+`if let`s rather than an exhaustive `match`, so a variant added without a mirror
+compiles clean — which is how the count above went stale once already. A new
+`Prop` variant is the moment to add the setter, not a later sweep.
 
-Each new field on `Node` is an `Option` or an empty `Vec` until a setter
-writes it, and `stage_paint_props` emits a `Prop` only for the ones that were
-written. A node that authors none of them reaches the arena with exactly the
-props it staged before this vocabulary existed. This is the grid vocabulary's
-precedent, and the consequence is the same one `fill` already carries: an
-empty list stages nothing, so `shadows([])` does not clear shadows the arena
-already holds. Core has no clear operation for either.
+Each new field on `Node` is an `Option` or an empty `Vec` until a setter writes
+it, and `stage_paint_props` emits a `Prop` only for the ones that were written.
+A node that authors none of them reaches the arena with exactly the props it
+staged before this vocabulary existed. This is the grid vocabulary's precedent,
+and the consequence is the same one `fill` already carries: an empty list stages
+nothing, so `shadows([])` does not clear shadows the arena already holds. Core
+has no clear operation for either.
 
 `stage_paint_props` is called from `set_base_props`, the one staging function
 both `Scene::build` and the reactive `build_live` path use, so the two walks
@@ -64,133 +64,126 @@ drift that shape rules out.
 
 ## D2 — Four sugar methods, and no `gradient(...)`
 
-`corners(r)`, `drop_shadow(dx, dy, blur, spread, color)`,
-`inner_shadow(...)` and `backdrop_blur(radius)` each expand to a mirror and
-add nothing else. Their names and signatures are lifted from
-`corpus/showcase/src/vocabulary.rs`, where every showcase scene had already
-exercised them, so the migration kept its call sites reading as they did.
-Each replaces the whole list it writes, so a node needing two shadows, or a
-mixed drop-and-inner list, calls the mirror.
+`corners(r)`, `drop_shadow(dx, dy, blur, spread, color)`, `inner_shadow(...)`
+and `backdrop_blur(radius)` each expand to a mirror and add nothing else. Their
+names and signatures are lifted from `corpus/showcase/src/vocabulary.rs`, where
+every showcase scene had already exercised them, so the migration kept its call
+sites reading as they did. Each replaces the whole list it writes, so a node
+needing two shadows, or a mixed drop-and-inner list, calls the mirror.
 
 A `gradient(kind, from, to)` constructor is refused. `dashpaint::Gradient`
 carries three handle points and a stop list; a two-colour sugar would have to
 invent both the handles and the stop offsets, and inventing a value the author
 never wrote is the one thing the charter forbids
 (`docs/decisions/dashlang-value-tree-builder.md`, "What the charter permits").
-The showcase keeps its own `gradient`/`diagonal_gradient` helpers as
-scene-local conveniences over `FillSpec`: two stops at 0.0 and 1.0 is a
-scene's opinion, and a scene is allowed one.
+The showcase keeps its own `gradient`/`diagonal_gradient` helpers as scene-local
+conveniences over `FillSpec`: two stops at 0.0 and 1.0 is a scene's opinion, and
+a scene is allowed one.
 
 Each sugar method is held to the same acceptance test as its mirror, and is
 tested against the mirror rather than against a separate hand-built `Txn`.
 
 ## D3 — The paint types widen core's re-export list, not a new dependency edge
 
-The paint types live in `dashpaint`. `dashscene-core` re-exported a subset,
-and `dashlang` re-exported onward from core, so a DSL consumer needs one
-import path and no direct `dashscene-core` dependency. That subset was
-incomplete for authoring: a `Shadow` needs `Vec2`, a gradient needs
-`Gradient`/`GradientKind`/`GradientStop`, naming an image fill at all
-needs `ScaleMode` and `Mat23`, and a coverage mask needs `VectorField`.
+The paint types live in `dashpaint`. `dashscene-core` re-exported a subset, and
+`dashlang` re-exported onward from core, so a DSL consumer needs one import path
+and no direct `dashscene-core` dependency. That subset was incomplete for
+authoring: a `Shadow` needs `Vec2`, a gradient needs
+`Gradient`/`GradientKind`/`GradientStop`, naming an image fill at all needs
+`ScaleMode` and `Mat23`, and a coverage mask needs `VectorField`.
 
-Those names join `dashscene-core`'s existing `pub use committed::{..}` list
-and are re-exported onward from `dashlang`, rather than `dashlang` taking a
-`dashpaint` dependency. The change is additive — a wider `pub use` list, no
-type and no behaviour change — so it cannot move a loader, a painter or a
-document. Implementing a custom `LayoutSolver` still needs
-`dashscene-core` directly, deliberately: `NodeId` stays a type no `dashlang`
-producer names.
+Those names join `dashscene-core`'s existing `pub use committed::{..}` list and
+are re-exported onward from `dashlang`, rather than `dashlang` taking a
+`dashpaint` dependency. The change is additive — a wider `pub use` list, no type
+and no behaviour change — so it cannot move a loader, a painter or a document.
+Implementing a custom `LayoutSolver` still needs `dashscene-core` directly,
+deliberately: `NodeId` stays a type no `dashlang` producer names.
 
 ## D4 — Image fills and variant sets stay on the arena pass
 
-An image fill carries an index `Txn::add_image` issues against an arena, and
-an inert value tree has no arena. `Txn::add_variant_set` is an arena
-operation for the same reason. Neither can move onto the value tree, so an
-image fill is nameable but not authorable in one pass.
+An image fill carries an index `Txn::add_image` issues against an arena, and an
+inert value tree has no arena. `Txn::add_variant_set` is an arena operation for
+the same reason. Neither can move onto the value tree, so an image fill is
+nameable but not authorable in one pass.
 
 The type this decision was written against was `PaintKind::Image`. Story #578
 split the fill vocabulary into a producer-side `FillSpec` and a table-side
-`PaintKind`, so the construct named here is `FillSpec::Image(ImageFill)`
-today. The decision is unchanged: the index still comes from the arena.
+`PaintKind`, so the construct named here is `FillSpec::Image(ImageFill)` today.
+The decision is unchanged: the index still comes from the arena.
 
 This bounds the deliverable, and it is stated plainly rather than implied:
 **most scenes author in one pass, not all.** Gradients, solid fills, strokes,
 corners, shadows, blurs, text, clip, mask, opacity and vector fields all
-collapse; image fills and variant-set declarations do not. Of the three
-showcase scenes, `surfaces` still runs a second pass for its image fills and
-its vector field, `layout` runs one only to declare its variant set, and
-`typography` runs none. `corpus/showcase/src/vocabulary.rs` survives as a much
-smaller module holding that remainder — `Painting`, `nodes_by_name`,
-`image_fill`, `image_crop`, `shape_field` and the variant-set staging — beside
-the scene-local value constructors that were never builder vocabulary
-(`rgb`/`rgba`, `gradient`/`diagonal_gradient`, `text_style`).
+collapse; image fills and variant-set declarations do not. Of the three showcase
+scenes, `surfaces` still runs a second pass for its image fills and its vector
+field, `layout` runs one only to declare its variant set, and `typography` runs
+none. `corpus/showcase/src/vocabulary.rs` survives as a much smaller module
+holding that remainder — `Painting`, `nodes_by_name`, `image_fill`,
+`image_crop`, `shape_field` and the variant-set staging — beside the scene-local
+value constructors that were never builder vocabulary (`rgb`/`rgba`,
+`gradient`/`diagonal_gradient`, `text_style`).
 
 The fix, if this is later judged not good enough, is a
-`Scene::image(asset) -> ImageRef` handle mirroring `Scene::signal` — the
-builder owning image registration the way it already owns signal
-registration. It is deliberately out of scope: it is a new concept in the
-builder's ownership model, where everything above is a mirror of a prop that
-already exists.
+`Scene::image(asset) -> ImageRef` handle mirroring `Scene::signal` — the builder
+owning image registration the way it already owns signal registration. It is
+deliberately out of scope: it is a new concept in the builder's ownership model,
+where everything above is a mirror of a prop that already exists.
 
 ## D5 — The migration was proven by per-scene equivalence, kept until a deliberate change retired it
 
-The showcase has no goldens by design — `goldens/` holds the frames the
-project pins, and these are frames it shows — so a migration that dropped a
-shadow on one scene would have been caught by nothing but a person looking at
-the window. `corpus/showcase/tests/migration.rs` therefore built each scene
-both ways into separate arenas and compared the committed painter input
-exactly.
+The showcase has no goldens by design — `goldens/` holds the frames the project
+pins, and these are frames it shows — so a migration that dropped a shadow on
+one scene would have been caught by nothing but a person looking at the window.
+`corpus/showcase/tests/migration.rs` therefore built each scene both ways into
+separate arenas and compared the committed painter input exactly.
 
-The tests were **kept** after the migration, by the owner's explicit choice
-when offered their deletion. Keeping them obliged the file to hold a
-verbatim copy of each pre-migration builder, and two rules followed:
+The tests were **kept** after the migration, by the owner's explicit choice when
+offered their deletion. Keeping them obliged the file to hold a verbatim copy of
+each pre-migration builder, and two rules followed:
 
-- The frozen copies were frozen. They were never edited to track a later
-  scene change; their whole value was that they were the pre-migration
-  authoring.
-- A deliberate scene change would break its equivalence test, and that was
-  the test working. It asserted "this scene still paints what it painted at
-  the migration". Whoever made that change would delete the scene's frozen
-  builder and its test in the same commit and say so in the message. It was
-  a one-way ratchet, not a specification of what the scene should look like.
+- The frozen copies were frozen. They were never edited to track a later scene
+  change; their whole value was that they were the pre-migration authoring.
+- A deliberate scene change would break its equivalence test, and that was the
+  test working. It asserted "this scene still paints what it painted at the
+  migration". Whoever made that change would delete the scene's frozen builder
+  and its test in the same commit and say so in the message. It was a one-way
+  ratchet, not a specification of what the scene should look like.
 
 The comparison itself followed a rule that outlives this file:
 `docs/decisions/cross-arena-comparison-resolves-indices.md`.
 
-The ratchet reached its end in commit `535b547` (2026-08-04). That commit
-gave every scene a second root — a painter-naming badge — which is a
-deliberate change to all three scenes at once. Following the rule above, it
-deleted `surfaces_two_pass`/`surfaces_two_pass_paint`,
+The ratchet reached its end in commit `535b547` (2026-08-04). That commit gave
+every scene a second root — a painter-naming badge — which is a deliberate
+change to all three scenes at once. Following the rule above, it deleted
+`surfaces_two_pass`/`surfaces_two_pass_paint`,
 `layout_two_pass`/`layout_two_pass_paint`,
-`typography_two_pass`/`typography_two_pass_paint`, the three equivalence
-tests that called them, and `corpus/showcase/tests/migration.rs` itself,
-since nothing in the file had a caller left once the three tests were gone.
-The comparison rule the tests exercised outlives this file and is recorded
-independently at
+`typography_two_pass`/`typography_two_pass_paint`, the three equivalence tests
+that called them, and `corpus/showcase/tests/migration.rs` itself, since nothing
+in the file had a caller left once the three tests were gone. The comparison
+rule the tests exercised outlives this file and is recorded independently at
 `docs/decisions/cross-arena-comparison-resolves-indices.md`.
 
 ## Alternatives considered
 
 - **A `scene! {}` macro, or a text DSL shaped like `.slint`.** Rejected, and
   rejected once before as option 3 in
-  `docs/decisions/dashlang-value-tree-builder.md`, with the door left open
-  ("a macro can wrap the value tree later without breaking any caller").
-  Nothing since changed that reasoning, and surface syntax over a vocabulary
-  that still could not express a shadow would have solved nothing.
-- **Mirror `Prop` one-to-one with no sugar at all.** Rejected on ergonomics
-  once the charter was established to permit sugar. A uniform corner radius
-  written four times, and every shadow written as a full struct literal, is
-  what the showcase had already refused by writing `vocabulary.rs`.
+  `docs/decisions/dashlang-value-tree-builder.md`, with the door left open ("a
+  macro can wrap the value tree later without breaking any caller"). Nothing
+  since changed that reasoning, and surface syntax over a vocabulary that still
+  could not express a shadow would have solved nothing.
+- **Mirror `Prop` one-to-one with no sugar at all.** Rejected on ergonomics once
+  the charter was established to permit sugar. A uniform corner radius written
+  four times, and every shadow written as a full struct literal, is what the
+  showcase had already refused by writing `vocabulary.rs`.
 - **Promote the showcase helpers as the primary surface, mirrors only where a
   helper cannot reach.** Rejected: it makes the opinionated form the default
-  path, and `gradient(kind, from, to)` is exactly why that is the wrong
-  default.
+  path, and `gradient(kind, from, to)` is exactly why that is the wrong default.
 - **Add the setters and leave `corpus/showcase` on its two-pass model.**
   Rejected: the repo would carry two ways to author paint with no consumer
   proving the new one. The migration is the proof.
 - **Record golden images for the showcase scenes and migrate against them.**
-  Rejected as scope: it reverses a deliberate decision about what `goldens/`
-  is for, and it is separable work. The equivalence tests give the migration a
+  Rejected as scope: it reverses a deliberate decision about what `goldens/` is
+  for, and it is separable work. The equivalence tests give the migration a
   stronger guarantee than a tolerance-based image compare would, because they
   compare committed output exactly.
 

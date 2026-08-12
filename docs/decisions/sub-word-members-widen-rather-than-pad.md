@@ -12,9 +12,9 @@ enums, no nested collections, and **explicit padding**.
 
 Two types failed the last of those. `GlyphQuad` is `{u16, f32, f32}` and
 `AtlasGlyph` is `{u16, [f32; 4], [f32; 4]}`; at alignment 4 both put the glyph
-id at offset 0 and the next member at offset 4, so rustc inserts two bytes
-after the id. That is FFI-_safe_ — a C compiler inserts the same — but it is
-not FFI-_explicit_, and `crates/dashscene-unity` asserted the hole rather than
+id at offset 0 and the next member at offset 4, so rustc inserts two bytes after
+the id. That is FFI-_safe_ — a C compiler inserts the same — but it is not
+FFI-_explicit_, and `crates/dashscene-unity` asserted the hole rather than
 fixing it, with a comment saying story #578 would.
 
 ## Decision
@@ -33,11 +33,11 @@ nothing. That is exactly the hazard
 one story earlier, and re-introducing it to satisfy a rule about padding would
 trade a real defect for a cosmetic one.
 
-**It costs nothing.** `{u16, f32, f32}` and `{u32, f32, f32}` are both 12
-bytes; `{u16, [f32; 4], [f32; 4]}` and `{u32, [f32; 4], [f32; 4]}` are both 36.
-Every float rectangle keeps the offset it had, so no consumer's declaration
-changes and no golden moves. The bytes that were padding become bytes the
-producer writes.
+**It costs nothing.** `{u16, f32, f32}` and `{u32, f32, f32}` are both 12 bytes;
+`{u16, [f32; 4], [f32; 4]}` and `{u32, [f32; 4], [f32; 4]}` are both 36. Every
+float rectangle keeps the offset it had, so no consumer's declaration changes
+and no golden moves. The bytes that were padding become bytes the producer
+writes.
 
 **Removing a hole beats naming one.** The rule asks for padding to be explicit
 so that a struct reads the same in both languages. A struct with no padding
@@ -68,6 +68,6 @@ measured, not assumed.
 What has teeth is the id member's **own size**:
 `neither_glyph_type_carries_padding` asserts `size_of_val(&value.glyph_id) == 4`
 for each type, together with the offsets and with total = sum of member sizes.
-Narrow either id together with whatever must change for the workspace to
-compile and that assertion fails; narrow one on its own and the compiler
-refuses it first.
+Narrow either id together with whatever must change for the workspace to compile
+and that assertion fails; narrow one on its own and the compiler refuses it
+first.

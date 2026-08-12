@@ -28,8 +28,8 @@ The two compose into a hazard exactly where the reactive layer is most useful.
 `Patch`, `Solve` or `PaintOnly`; `bind_text` is always paint-only, and
 `Channel::Opacity` and the four `Fill` channels are always paint-only. A signal
 bound only to those channels produces a tick that never solves — so the frame
-that changes a string is the frame that erases every glyph run in the scene,
-the new string included.
+that changes a string is the frame that erases every glyph run in the scene, the
+new string included.
 
 This is not theoretical and it is not new. `corpus/showcase/README.md` records
 it as "the defect these scenes are written around", and
@@ -37,26 +37,26 @@ it as "the defect these scenes are written around", and
 width binding for exactly this reason. It cost this story a critical defect
 anyway: the painter badge first bound only text and opacity, and announcing a
 painter wiped the scene's own text along with its own label. The hazard was
-recorded in one scene's prose, which is not where a person designing a new
-scene looks.
+recorded in one scene's prose, which is not where a person designing a new scene
+looks.
 
 ## Options
 
 1. **Fix the replay.** `CachedSolver` delegates `atlases` and `stage_text` to
    the solver `LiveScene` already retains, so a replaying commit re-stages text
-   and no authoring rule is needed. This is the fix
-   `corpus/showcase/README.md` names.
-2. **Constrain the authoring.** Require every signal that drives a text
-   binding to also drive a write that forces the solve, so the tick that
-   changes a string is always a solving tick.
+   and no authoring rule is needed. This is the fix `corpus/showcase/README.md`
+   names.
+2. **Constrain the authoring.** Require every signal that drives a text binding
+   to also drive a write that forces the solve, so the tick that changes a
+   string is always a solving tick.
 
 ## Decision
 
 **Option 2 now; option 1 is the fix and is not made here.**
 
-A signal bound through `Node::bind_text` must also be bound, on the same
-signal, to a channel whose write classifies as `WriteClass::Solve`. What
-qualifies is decided by `classify` and `write_is_single_rect`
+A signal bound through `Node::bind_text` must also be bound, on the same signal,
+to a channel whose write classifies as `WriteClass::Solve`. What qualifies is
+decided by `classify` and `write_is_single_rect`
 (`crates/dashlang/src/reactive.rs`) and is worth stating plainly, because the
 answer depends on the target node **and on its ancestors**, not only on the
 channel:
@@ -73,11 +73,11 @@ channel:
     `child_contained` propagates down at build and `ancestor_contained`
     recomputes bottom-up for a loaded arena. One flex or grid ancestor, or one
     hugging ancestor, makes the node uncontained, and then **every** rect write
-    on it solves, whatever the channel and whatever its own children. A root
-    is contained by construction, having no ancestors at all.
-  - **The write stays inside the node's own rect** (`write_is_single_rect`):
-    `X` or `Y` on a node with **no** children; `Width` or `Height` on a node
-    with no children, or on a passthrough node.
+    on it solves, whatever the channel and whatever its own children. A root is
+    contained by construction, having no ancestors at all.
+  - **The write stays inside the node's own rect** (`write_is_single_rect`): `X`
+    or `Y` on a node with **no** children; `Width` or `Height` on a node with no
+    children, or on a passthrough node.
 
 The containment term is the one that is easy to miss, and it is the term the
 worked examples below turn on. Measured with a counting solver, one bound
@@ -96,12 +96,12 @@ label's character count (`corpus/showcase/src/badge.rs`, `pill_width`);
 `typography`'s text binding shares its signal with a bar that reflows.
 
 **The test asserts on the committed glyph-run count, never on the text prop.**
-The prop updates whether or not the tick solved, so a prop-only assertion
-passes while every run in the scene is being erased — which is precisely what
-happened here, with tests green. The assertion that has teeth is a count
-relative to what the scene staged at build: exactly one more run after
-announcing, losing none. "Greater than zero" is not enough, because a scene
-carrying no text of its own cannot fail it.
+The prop updates whether or not the tick solved, so a prop-only assertion passes
+while every run in the scene is being erased — which is precisely what happened
+here, with tests green. The assertion that has teeth is a count relative to what
+the scene staged at build: exactly one more run after announcing, losing none.
+"Greater than zero" is not enough, because a scene carrying no text of its own
+cannot fail it.
 
 ## Why option 1 is right and still deferred
 
@@ -109,13 +109,13 @@ The replay fix is correct and this record does not argue against it. It is
 deferred on two grounds.
 
 It is a change to the cost model of every paint-only frame, not a local repair.
-A replaying commit would re-run the stager, and full re-staging costs about
-1.5 µs per text node per commit with a warm shaping cache
+A replaying commit would re-run the stager, and full re-staging costs about 1.5
+µs per text node per commit with a warm shaping cache
 (`docs/decisions/glyph-runs-cross-boundary-b.md`, "Per-frame cost, measured").
 The whole point of A1 is that a contained write costs nothing proportional to
 scene size; giving it back a per-text-node cost is a decision about the frame
-budget, and it belongs to whoever owns that budget rather than to a story
-adding an on-screen label.
+budget, and it belongs to whoever owns that budget rather than to a story adding
+an on-screen label.
 
 And `crates/dashlang/src/reactive.rs` was under change on another branch when
 the showcase landed, which is why the v0.14 work filed the fix rather than
@@ -123,12 +123,11 @@ making it. That reason has not been discharged.
 
 ## Consequences
 
-- The rule is enforced by documentation and by review, not by the compiler or
-  a diagnostic. This project declines that shape elsewhere (P4 — an
-  out-of-profile construct is a named diagnostic, never a silent drop), and
-  the exception is accepted here only because the enforcement that would
-  replace it is option 1, which retires the rule outright rather than
-  mechanising it.
+- The rule is enforced by documentation and by review, not by the compiler or a
+  diagnostic. This project declines that shape elsewhere (P4 — an out-of-profile
+  construct is a named diagnostic, never a silent drop), and the exception is
+  accepted here only because the enforcement that would replace it is option 1,
+  which retires the rule outright rather than mechanising it.
 - When option 1 lands, this record is retired, not relaxed: the authoring
   constraint disappears, and the scenes that pair a text binding with a
   layout-affecting one keep doing so because those pairings are real content.
@@ -138,8 +137,8 @@ making it. That reason has not been discharged.
   `Channel::Width` on a childless leaf patches and does not solve when every
   ancestor of that leaf is a passthrough, non-hug container, and the identical
   write on the identical leaf solves as soon as one ancestor is a flex or grid
-  container or hugs. `typography`'s `gauge-fill` is exactly that childless
-  leaf, and it qualifies only through the ancestor half of the rule.
+  container or hugs. `typography`'s `gauge-fill` is exactly that childless leaf,
+  and it qualifies only through the ancestor half of the rule.
 
 ## Trace
 
@@ -151,14 +150,14 @@ making it. That reason has not been discharged.
   build-count-plus-one assertion, over every scene in `showcase::SCENES`.
 - Worked examples: `corpus/showcase/src/badge.rs` ("Why the pill's width is
   bound") and `corpus/showcase/src/typography.rs` ("Every signal here drives
-  layout, deliberately"). Those two are the whole set — they are the only
-  files under `corpus/showcase/src/` that call `Node::bind_text` at all.
+  layout, deliberately"). Those two are the whole set — they are the only files
+  under `corpus/showcase/src/` that call `Node::bind_text` at all.
   `corpus/showcase/src/surfaces.rs` is not among them: it has no text binding,
   and its signals drive `Channel::Width` and `Channel::X` only.
-- Measurement: `corpus/showcase/README.md` ("The defect these scenes are
-  written around"), which holds the run over 1,200 ticks at two extents.
+- Measurement: `corpus/showcase/README.md` ("The defect these scenes are written
+  around"), which holds the run over 1,200 ticks at two extents.
 - Related decisions: `docs/decisions/glyph-runs-cross-boundary-b.md` (commit as
   the run producer, and the per-node staging cost this defers paying);
-  `docs/decisions/visible-is-layout-opacity-is-paint.md` (the layout/paint
-  split `classify` reads); `docs/decisions/bindings-are-explicit-and-flat.md`
-  (the flat table that makes a write statically classifiable at all).
+  `docs/decisions/visible-is-layout-opacity-is-paint.md` (the layout/paint split
+  `classify` reads); `docs/decisions/bindings-are-explicit-and-flat.md` (the
+  flat table that makes a write statically classifiable at all).

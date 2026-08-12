@@ -17,26 +17,25 @@ repository owner's act, not this repo's — the text below is ready to paste.
 
 `dashscene-engine` carries a workaround for this defect in two places: the
 negative-margin flex-basis rebate for `Fixed` children (debt #236) and the
-`flex_shrink: 1` switch for `Hug` children (debt #270). Both exist only
-because of the arithmetic below. When a fixed taffy is released and adopted,
-both come out and
-`crates/dashscene-engine/tests/taffy_upstream.rs` goes with them.
+`flex_shrink: 1` switch for `Hug` children (debt #270). Both exist only because
+of the arithmetic below. When a fixed taffy is released and adopted, both come
+out and `crates/dashscene-engine/tests/taffy_upstream.rs` goes with them.
 
 ## The report
 
 ### Title
 
-Intrinsic main size amplifies a negative main-axis margin on a
-`flex_shrink: 0` item
+Intrinsic main size amplifies a negative main-axis margin on a `flex_shrink: 0`
+item
 
 ### Body
 
 A flex container whose main size is indefinite (`size: auto`, solved under
 `MinContent` or `MaxContent` available space) computes a wrong intrinsic main
-size when a `flex_shrink: 0` item carries a negative main-axis margin. The
-error scales with the item's inner flex basis, so it is not a rounding
-difference: a 56-wide item with `margin-left: -16` makes a two-item row hug
-to 0 instead of 96.
+size when a `flex_shrink: 0` item carries a negative main-axis margin. The error
+scales with the item's inner flex basis, so it is not a rounding difference: a
+56-wide item with `margin-left: -16` makes a two-item row hug to 0 instead
+of 96.
 
 Affects 0.12.0, 0.12.1 and 0.12.2 (checked against the 0.12.2 source).
 
@@ -70,8 +69,8 @@ and the item's size is then reconstructed as:
     let size = item.flex_basis + flex_contribution;
 
 The `diff < 0.0` path divides by `f32_max(1.0, flex_shrink * inner_flex_basis)`
-and multiplies back by `f32_max(1.0, flex_shrink) * inner_flex_basis`. Those
-two expressions are only equal when `flex_shrink * inner_flex_basis` and
+and multiplies back by `f32_max(1.0, flex_shrink) * inner_flex_basis`. Those two
+expressions are only equal when `flex_shrink * inner_flex_basis` and
 `f32_max(1.0, flex_shrink) * inner_flex_basis` agree — which holds at
 `flex_shrink = 1` for any inner basis of 1 or more, and fails at
 `flex_shrink = 0`, where the divisor floors at `1` while the multiplier is the
@@ -154,9 +153,9 @@ divided by, so that `flex_basis + flex_contribution` returns
 
 ## What this repo does until then
 
-`docs/decisions/negative-margin-hug-rebate.md` records both workarounds and
-the corners each leaves. Neither is removed on this note's say-so: the
-retirement is conditional on a fixed taffy being released and adopted, and
-`crates/dashscene-engine/tests/taffy_upstream.rs` is the thing that will
-say so — it asserts taffy's current wrong answers, so a taffy upgrade that
-fixes the defect turns those assertions red and names the work.
+`docs/decisions/negative-margin-hug-rebate.md` records both workarounds and the
+corners each leaves. Neither is removed on this note's say-so: the retirement is
+conditional on a fixed taffy being released and adopted, and
+`crates/dashscene-engine/tests/taffy_upstream.rs` is the thing that will say so
+— it asserts taffy's current wrong answers, so a taffy upgrade that fixes the
+defect turns those assertions red and names the work.

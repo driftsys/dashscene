@@ -54,9 +54,9 @@ array share binding 1 with the solid colours, which is the heap D4 below names �
 changed: the two tables story #582 added are still vertex-only, and D2's test is
 still what decided that they could be.
 
-**D4 is no longer true as written, and story #584 is why.** That story needed the
-quad's outset for a shadow, whose parameters live in the heap the fragment stage
-binds — a table this stage cannot read at any price. The outset moved onto
+**D4 is no longer true as written, and story #584 is why.** That story needed
+the quad's outset for a shadow, whose parameters live in the heap the fragment
+stage binds — a table this stage cannot read at any price. The outset moved onto
 `Instance` instead (`instance-buffer-contract.md` D9), and the stroke's outset
 moved with it, so the stroke table left the vertex stage:
 
@@ -69,16 +69,17 @@ costs no binding at all, and the free slot exists because story #584 preferred
 that.
 
 **D5 — the MSDF atlas is sampled through a second, filtering sampler.** Image
-fills keep the nearest sampler `docs/decisions/atlas-residency-and-image-fills.md`
-D5 chose. The texture binding is declared filterable to allow it.
+fills keep the nearest sampler
+`docs/decisions/atlas-residency-and-image-fills.md` D5 chose. The texture
+binding is declared filterable to allow it.
 
 ## Why
 
 **D1.** It is the same move story #581 made, for the same reason and with the
-evidence already in hand: the fragment stage does not need the instance
-_array_, it needs the instance's _values_, and `VertexOut` is how a value
-crosses. Extending that to a table whose row is equally constant costs one
-varying per four floats and no binding at all.
+evidence already in hand: the fragment stage does not need the instance _array_,
+it needs the instance's _values_, and `VertexOut` is how a value crosses.
+Extending that to a table whose row is equally constant costs one varying per
+four floats and no binding at all.
 
 It is also the smaller change. The heap touches every table's upload path and
 every shader read site, including the image-fill and stroke paths that the two
@@ -107,9 +108,9 @@ becomes linear", because a linear sample taken at a sub-rect's edge reads the
 allocation beside it. `msdf_sample` does not sample at the edge: it clamps half
 a source texel inside the payload's own rectangle, and a bilinear footprint
 taken from a texel's centre weights that texel alone. The clamp was already
-there for the nearest case — it is what keeps a glyph from reading its
-neighbour along the antialiasing fringe the quad is grown by — and it turns out
-to be exactly the condition filtering needs.
+there for the nearest case — it is what keeps a glyph from reading its neighbour
+along the antialiasing fringe the quad is grown by — and it turns out to be
+exactly the condition filtering needs.
 
 The reason to filter at all is that a distance field is not a colour, which is
 why `dashscene-skia` samples its MSDF atlases `Linear` and its image fills
@@ -135,8 +136,8 @@ the three shared `vec4f` parameter slots. The limit is
 
 That limit counts _variables_, one per `@location`, not summed float components.
 A `vec4f` and a `u32` cost one slot each. An earlier draft of this paragraph
-said "twelve interpolated components ... against the sixty
-`downlevel_defaults` allows", and every part of that was wrong: wgpu 30 has no
+said "twelve interpolated components ... against the sixty `downlevel_defaults`
+allows", and every part of that was wrong: wgpu 30 has no
 `max_inter_stage_shader_components` field at all, the real ceiling is a quarter
 of the number quoted, and the count omitted the `shape` varying this same story
 added. It is corrected here rather than left, because this is the paragraph

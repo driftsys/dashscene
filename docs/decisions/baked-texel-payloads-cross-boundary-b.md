@@ -11,8 +11,8 @@ banks, per-profile derivations. None of it could reach a painter. Boundary B's
 `ImageFormat` was `{ Png, Jpeg, Gif }`, so the only thing a painter could be
 handed was source-encoded bytes to decode at runtime.
 
-Issue #640 recorded three things that follow from that, and the third is the
-one that makes it urgent rather than untidy:
+Issue #640 recorded three things that follow from that, and the third is the one
+that makes it urgent rather than untidy:
 
 - PNG decoding is 20.4 % of every frame in the `surfaces` showcase scene.
 - `docs/specification/03-target-hardware-rules.md` requires product assets ship
@@ -21,8 +21,8 @@ one that makes it urgent rather than untidy:
   kind, on the tier least able to afford it.
 - The Skia trim profile removes libpng/libjpeg/libwebp entirely
   (`docs/technotes/rendering-and-painters.md` §6). On a trimmed product build a
-  document image fill has **no decoder at all** — so this is not a slow path,
-  it is a path the shipping configuration cannot execute.
+  document image fill has **no decoder at all** — so this is not a slow path, it
+  is a path the shipping configuration cannot execute.
 
 It had to land before story #581, which is where image assets reach the GPU: a
 texture path written against `{ Png, Jpeg, Gif }` is a texture path that has to
@@ -63,8 +63,8 @@ for exactly this reason and their discriminants collided — a shadow was painte
 from the solid-fill table. One flat discriminant makes that unrepresentable
 rather than forbidden.
 
-Seventeen variants is more than a nested form would show, and that is the
-honest cost of the choice.
+Seventeen variants is more than a nested form would show, and that is the honest
+cost of the choice.
 
 **D3, and what it rules out.** A format the packer cannot produce would be a
 branch in every painter that nothing can reach — vocabulary discovered rather
@@ -76,20 +76,20 @@ on the day the packer emits them, which is the additive evolution
 `image-assets-cross-boundary-b.md` reserved.
 
 **D4, and why it did not cost what it looked like it would.** Flattening the
-table sounded like it would touch every caller: 66 files mention these types
-and 42 construct an `ImageAsset`. It touched five files outside `dashpaint`,
-because the producer keeps its shape — `push` still takes an owning
-`ImageAsset` and copies into the pool, so nobody assembles an offset by hand —
-and only the read sites moved, from `&ImageAsset` to a borrowed `ImageRef` with
-the same field names. That is the same producer/table/reader split
+table sounded like it would touch every caller: 66 files mention these types and
+42 construct an `ImageAsset`. It touched five files outside `dashpaint`, because
+the producer keeps its shape — `push` still takes an owning `ImageAsset` and
+copies into the pool, so nobody assembles an offset by hand — and only the read
+sites moved, from `&ImageAsset` to a borrowed `ImageRef` with the same field
+names. That is the same producer/table/reader split
 `instance-buffer-contract.md` took, and it is why doing this _with_ #640 rather
 than after it was the cheaper order.
 
 `ImageEntry` joins `dashscene-unity`'s gate in this change, which is what makes
-"meets story #600's rule" a fact rather than a claim: the crate names each
-gated type in an `extern "C"` signature, so `improper_ctypes_definitions` fires
-on anything unrepresentable, and pins its size and alignment beside it. Story #600's
-own doc said `ImageAsset` "is what remains"; it now says what replaced
+"meets story #600's rule" a fact rather than a claim: the crate names each gated
+type in an `extern "C"` signature, so `improper_ctypes_definitions` fires on
+anything unrepresentable, and pins its size and alignment beside it. Story
+#600's own doc said `ImageAsset` "is what remains"; it now says what replaced
 it. A record that had said this without widening the gate would have been
 describing intent — the failure this repository has recorded more than once.
 
@@ -102,13 +102,12 @@ find out. That is not a hypothetical — it is what a host would have to do to u
 
 A document records the **canonical** payload's format and never carries a
 derivation, because `dashpack` writes derivations beside the document and does
-not rewrite it
-(`docs/decisions/asset-model-content-addressed-blobs.md`). So the binding is the
-only place that can state a derived format, and `BoundPayload` is where the
-bytes and their format are stated together. `dashc`'s emitter now refuses a
-baked format by name rather than mapping it to something close, because a baked
-format arriving there would mean a derivation had been written back into the
-source of truth.
+not rewrite it (`docs/decisions/asset-model-content-addressed-blobs.md`). So the
+binding is the only place that can state a derived format, and `BoundPayload` is
+where the bytes and their format are stated together. `dashc`'s emitter now
+refuses a baked format by name rather than mapping it to something close,
+because a baked format arriving there would mean a derivation had been written
+back into the source of truth.
 
 **D6, and why it is a declaration rather than a result.** `Painter::paint`
 returns nothing, by decision
@@ -154,8 +153,8 @@ Three changes, and the shape of them follows D4's own split:
   `dashscene-unity`'s gate moves with it.
 - **`ImageTable::push` derives the extent for an encoded payload** by calling
   `identify`, and `push_baked` takes it from the caller. So `ImageAsset` keeps
-  its shape and none of the 47 construction sites across 20 files changed —
-  the same reason flattening the table cost five files and not forty-two.
+  its shape and none of the 47 construction sites across 20 files changed — the
+  same reason flattening the table cost five files and not forty-two.
 - **`load_document_bound` passes the document's own extent** for a baked
   payload. The document records it on `AssetEntry` and the validator has already
   checked it against the canonical payload, and a derivation preserves it —
@@ -191,9 +190,9 @@ what it loaded before.
 The flattened table is checked over three assets of different lengths, with the
 assertions stated over the second and third — a table that ignored the stored
 offset would return the first asset's bytes for all three and pass any check
-written over asset zero alone. Every format's discriminant is round-tripped,
-and the seventeen are checked to be distinct, which the round trip alone would
-not catch.
+written over asset zero alone. Every format's discriminant is round-tripped, and
+the seventeen are checked to be distinct, which the round trip alone would not
+catch.
 
 **Not verified: any baked payload actually rendering.** No painter uploads one,
 so what is tested is that boundary B can carry it and that the loader can bind

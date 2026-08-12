@@ -1,0 +1,44 @@
+# What prim does not format, in gitignore syntax.
+#
+# Since prim 0.3.0 these entries hold however prim is invoked. Up to 0.2.4 they
+# applied to a directory walk only, and `prim fmt <path>` rewrote an ignored
+# file named explicitly (driftsys/prim#98); every gate here still points at a
+# directory, so nothing depended on the change. `--no-primignore` is the
+# deliberate override.
+#
+# prim honours .gitignore on top of this file, but only where .gitignore
+# actually covers the path — checked entry by entry below rather than assumed.
+
+# dprint.json's excludes, carried forward so the migration did not widen which
+# files a formatter may rewrite. Four of its six are here; `**/target` is the
+# fifth and `/target` in .gitignore covers it. The sixth was
+# `.claude/worktrees/**`, and `.claude/` below covers more than that.
+corpus/
+goldens/
+**/node_modules
+**/.git-std
+
+# Agent tooling, none of it tracked. .gitignore covers only `.claude/worktrees/`,
+# so `.claude/skills/` and its siblings were inside prim's walk — measured, a
+# file there is reported by `prim fmt --check .`. Without this entry the
+# pre-commit hook rewrites a developer's own untracked content and `just lint`
+# fails on files CI never sees.
+.claude/
+
+# `git std bump` writes this file, and prim would hard-wrap it. The two would
+# fight once per release: the pre-commit hook rewraps what the bump generated,
+# and the bump after that regenerates it unwrapped, so `just prim` goes red on a
+# diff nobody wrote. prim's own recipes.md prescribes this entry for a repository
+# using git-std and says prim ships it as a default — measured on 0.2.4 and again
+# on 0.3.0, it does not. No CHANGELOG.md exists here yet; the first
+# `just release` creates one.
+/CHANGELOG.md
+
+# The workspace Cargo.toml was here too, until prim 0.3.0. Its TOML formatter
+# collapsed an array nested in an inline table onto one line and ignored
+# max_line_length while doing it, which took that file to 198 columns from 91
+# (driftsys/prim#96). Fixed, and measured on the real manifest: 0.3.0 leaves it
+# at 91 columns and 335 lines, changing only the indent of two feature lists from
+# four spaces to the two `.editorconfig` already asked for. So it is in scope,
+# and no manifest in the tree is excluded.
+docs/archive/

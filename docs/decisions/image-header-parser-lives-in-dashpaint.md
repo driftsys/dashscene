@@ -46,8 +46,8 @@ first.
 
 **Where the parser lives:**
 
-1. `dashpaint`. Publishes second, so every writer and the validator reach it.
-   It already owns `ImageFormat`, the type the parser's answer is phrased in.
+1. `dashpaint`. Publishes second, so every writer and the validator reach it. It
+   already owns `ImageFormat`, the type the parser's answer is phrased in.
 2. A new crate for image identification. Maximum isolation of the decode seam.
 3. `dashbuf`. Publishes first, so it reaches even further.
 4. Leave it in `dashc` and give the validator its own copy.
@@ -75,8 +75,9 @@ That sentence is the decision, not a note attached to it. `dashc` depends on
 compiler — which is exactly the seam the decode boundary has to survive. No
 production-grade decoder is written without a dependency (`png`, `zune-jpeg`,
 `gif`, `image`), so "this crate declares no dependencies" is a cheap, mechanical
-proxy for "no decoder lives here". `manifest_carries_no_third_party_dependencies`
-in `crates/dashpaint/src/image_id.rs` fails on the manifest line that would
+proxy for "no decoder lives here".
+`manifest_carries_no_third_party_dependencies` in
+`crates/dashpaint/src/image_id.rs` fails on the manifest line that would
 introduce one, and names this record in its failure message. The packer's decode
 belongs in the packer, which publishes after everything that would be harmed by
 it.
@@ -91,13 +92,15 @@ it.
   `dashpaint`, and so does `dashc`. Moving the module changes no crate's
   dependency list at all; `dashpack` will add the one edge it needs. A move that
   adds no edges cannot introduce a cycle or change what `dashc.wasm` links.
-- **The type is already there.** `ImageHeader` answers in `dashpaint::ImageFormat`
-  and always did — the module imported it across a crate boundary. Putting the
-  parser beside the enum it speaks in removes that import rather than adding one.
+- **The type is already there.** `ImageHeader` answers in
+  `dashpaint::ImageFormat` and always did — the module imported it across a
+  crate boundary. Putting the parser beside the enum it speaks in removes that
+  import rather than adding one.
 - **The invariant that protects the seam is checkable.** "Do not put a decoder
   here" as a comment is a request. As a failing test attached to the manifest
   line, it is a decision someone has to overturn deliberately, in a diff a
-  reviewer sees. This is what makes option 1 safe enough to prefer over option 2.
+  reviewer sees. This is what makes option 1 safe enough to prefer over
+  option 2.
 - **The two-way door stays where #400 left it, and for a stronger reason now.**
   The accept-list is ours, not a library's: `image_id.rs` refuses SOF1/3/5/6/7,
   the arithmetic-coded SOF9/10/11/13/14/15, and JPEG-LS by name rather than
@@ -110,12 +113,12 @@ it.
 
 - **Option 2, a new crate,** isolates the decode seam best, and it is what to do
   if the closure ever widens past what one module holds. It buys nothing today
-  that the enforced zero-dependency invariant does not, and it costs a
-  fifteenth crate name to register, a publish-order entry, and a crate whose
-  entire content is one module that already has a natural home next to its own
-  enum. Reversal condition: if `dashpaint` ever needs a real dependency for
-  painting reasons, the invariant test stops being a proxy for "no decoder", and
-  the parser should move to its own crate rather than the test being widened.
+  that the enforced zero-dependency invariant does not, and it costs a fifteenth
+  crate name to register, a publish-order entry, and a crate whose entire
+  content is one module that already has a natural home next to its own enum.
+  Reversal condition: if `dashpaint` ever needs a real dependency for painting
+  reasons, the invariant test stops being a proxy for "no decoder", and the
+  parser should move to its own crate rather than the test being widened.
 - **Option 3, `dashbuf`,** publishes even earlier, but it is the schema crate —
   it owns the wire format. `ImageFormat` as a _semantic_ type lives in
   `dashpaint`; `dashbuf`'s is the serialized mirror of it. Putting a
@@ -161,5 +164,6 @@ it.
 - A payload whose header is intact but whose compressed data is truncated passes
   this gate. Only a decoder can find that, and the decoder is in the painter, on
   the far side of the boundary this record keeps. That is the correct division,
-  and `a_payload_truncated_after_its_header_passes_because_this_gate_never_decodes`
+  and
+  `a_payload_truncated_after_its_header_passes_because_this_gate_never_decodes`
   pins it so it is not later mistaken for a gap.

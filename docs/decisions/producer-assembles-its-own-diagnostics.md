@@ -15,9 +15,9 @@ the verdict). The import gate is therefore per-construct:
 
 It hands back one bare `Diagnostic` at a time. But `Report::push` was
 `pub(crate)`, and there was no public constructor, no `FromIterator`, and no
-`From<Vec<Diagnostic>>`. So a producer could triage a construct and then have
-no way to report the result — a silent drop by construction, which is exactly
-what P4 forbids and exactly what the import gate exists to prevent.
+`From<Vec<Diagnostic>>`. So a producer could triage a construct and then have no
+way to report the result — a silent drop by construction, which is exactly what
+P4 forbids and exactly what the import gate exists to prevent.
 
 This is a gap, not a deliberate constraint. The validator's own decision record
 gave `dashc` the job and then gave it no container to put the answer in.

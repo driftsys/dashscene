@@ -7,13 +7,12 @@
 
 ## Context
 
-12 crate names were reserved on crates.io earlier (published 2026-03-18,
-one placeholder version each, not real releases): `dashscene`,
-`dashscene-core`, `dashscene-engine`, `dashscene-compose`,
-`dashscene-unity`, `dashscene-web`, `dashscore`, `dashlang`, `dashc`,
-`dashcue`, `dashpaint`, `dashbuf`. The question was whether to build the
-workspace against these names, and how to map each onto the
-architecture in `docs/design/architecture.md`.
+12 crate names were reserved on crates.io earlier (published 2026-03-18, one
+placeholder version each, not real releases): `dashscene`, `dashscene-core`,
+`dashscene-engine`, `dashscene-compose`, `dashscene-unity`, `dashscene-web`,
+`dashscore`, `dashlang`, `dashc`, `dashcue`, `dashpaint`, `dashbuf`. The
+question was whether to build the workspace against these names, and how to map
+each onto the architecture in `docs/design/architecture.md`.
 
 ## Choice
 
@@ -60,10 +59,10 @@ Reuse all 12, mapped onto the roles in `docs/design/architecture.md`:
                           a target
 
 Three crates the architecture needs had no reserved name at the time:
-typesetting (bidi/shaping/atlas), the Skia reference painter (the entire
-v0 painter), and the shared validator (profiles/diagnostics/waivers).
-Names chosen and confirmed available on crates.io: `dashscene-typeset`,
-`dashscene-skia`, `dashscene-validator`.
+typesetting (bidi/shaping/atlas), the Skia reference painter (the entire v0
+painter), and the shared validator (profiles/diagnostics/waivers). Names chosen
+and confirmed available on crates.io: `dashscene-typeset`, `dashscene-skia`,
+`dashscene-validator`.
 
 ## `dashpack`, added at the v0.12 open (story #429, 2026-07-26)
 
@@ -72,37 +71,36 @@ Names chosen and confirmed available on crates.io: `dashscene-typeset`,
                          cold banks onto the sectioned container, and records
                          every choice in the derivation manifest
 
-A fourteenth crate, and the fourth name that was not among the 12
-reserved. It is added here rather than at the original mapping because
-the packer was not a v0 crate: the asset pipeline that needs it was
-designed in `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md`
-and scheduled to v0.12.
+A fourteenth crate, and the fourth name that was not among the 12 reserved. It
+is added here rather than at the original mapping because the packer was not a
+v0 crate: the asset pipeline that needs it was designed in
+`docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md` and scheduled to
+v0.12.
 
-**Why it is a workspace crate and not a separate repo.** The recorded bar
-for a separate repo is toolchain incompatibility — the reason the Unity
-work got its own (`docs/decisions/unity-separate-repo-deferred.md`) — and
-the packer is plain cargo. Its coupling runs the other way: it compiles
-against `dashbuf`'s asset and manifest schemas, its band oracle reuses
-`goldens`' oracle, and its weld and profile-preview tests span packer
-output and the reference painter. The workspace already absorbs a heavier
-build than a vendored astcenc `-sys` crate, in `skia-bindings`.
+**Why it is a workspace crate and not a separate repo.** The recorded bar for a
+separate repo is toolchain incompatibility — the reason the Unity work got its
+own (`docs/decisions/unity-separate-repo-deferred.md`) — and the packer is plain
+cargo. Its coupling runs the other way: it compiles against `dashbuf`'s asset
+and manifest schemas, its band oracle reuses `goldens`' oracle, and its weld and
+profile-preview tests span packer output and the reference painter. The
+workspace already absorbs a heavier build than a vendored astcenc `-sys` crate,
+in `skia-bindings`.
 
-The requirement it has to satisfy is that the packer is a **standalone
-tool** (user requirement, 2026-07-19: no external CLIs anywhere in the
-pipeline). That is met by the binary artifact, `cargo build -p dashpack`,
-not by repo ownership.
+The requirement it has to satisfy is that the packer is a **standalone tool**
+(user requirement, 2026-07-19: no external CLIs anywhere in the pipeline). That
+is met by the binary artifact, `cargo build -p dashpack`, not by repo ownership.
 
-**Extraction bar, recorded now so it is not re-argued.** Revisit a
-separate repo only if an external consumer needs the source tree, not
-merely the binary. Publishing `dashpack` as its own crate happens at the
-first real release regardless, like every other crate here.
+**Extraction bar, recorded now so it is not re-argued.** Revisit a separate repo
+only if an external consumer needs the source tree, not merely the binary.
+Publishing `dashpack` as its own crate happens at the first real release
+regardless, like every other crate here.
 
-**Availability.** Unlike the other three new names, `dashpack` was not
-reserved on crates.io when this section was written. Nothing here is published
-yet (`docs/decisions/repo-staging-and-public-facade.md`), so the reservation was
-left to the first real release rather than to this story — but the name can be squatted
-out from under the project in the meantime, which is the same exposure the
-original three had before they were reserved.
+**Availability.** Unlike the other three new names, `dashpack` was not reserved
+on crates.io when this section was written. Nothing here is published yet
+(`docs/decisions/repo-staging-and-public-facade.md`), so the reservation was
+left to the first real release rather than to this story — but the name can be
+squatted out from under the project in the meantime, which is the same exposure
+the original three had before they were reserved.
 
 **Superseded 2026-08-08 (owner's ruling, with issue #803).** That deferral
 weighed its own tradeoff wrong: it named the exposure and then accepted it, to
@@ -123,15 +121,15 @@ reserved. The strategy behind it is
 **Why not `dashscene-wgpu`.** Epic #569 and its stories were filed under that
 name. `wgpu` is the backend this crate is built on, and the strategy record's
 contingency names a direct-GLES backend written over the same instance buffer
-and the same shaders — so a crate named for the backend would have to be
-renamed on the day that contingency was taken. The role is "the GPU painter";
-the name says that.
+and the same shaders — so a crate named for the backend would have to be renamed
+on the day that contingency was taken. The role is "the GPU painter"; the name
+says that.
 
 **`dashscene-web` is retired.** Its reserved name described a wasm/tiny-skia
 painter, and `dashscene-gpu` reaches the browser from the same codebase as
-native. The crate is a placeholder, so nothing migrates. The reserved
-crates.io name is not released — it stays held, describing nothing, which is
-the cheap state for a reserved name to be in.
+native. The crate is a placeholder, so nothing migrates. The reserved crates.io
+name is not released — it stays held, describing nothing, which is the cheap
+state for a reserved name to be in.
 
 **What is retired is the painter role, not the name** (story #588, v0.15). The
 directory stays a registered, empty workspace member rather than being deleted,
@@ -167,15 +165,14 @@ that state wrote. That distinction is the design the seam actually needed.
 **There is a live candidate use, and it is deliberately not taken here.** The
 browser host landed at v0.15 as `demo-web` (`publish = false`), and about half
 of it is integration every embedder must write rather than anything a
-demonstration owns: the canvas-to-surface handoff, the
-`requestAnimationFrame` loop, the generation-and-`shown` contract, rebuilding
-on resize with `document_replaced`, and the byte-range `.dsb` loader. **Two of
-those five were wrong in its first cut** — the loop never drove the scene's
-pulse, and the host never followed the canvas — and neither was caught by a
-test; both were found by running it in a browser.
-`dashscene-unity` — "Rust-side FFI bindings for the Unity painter; the Unity/C#
-work itself lives in a separate repo", three lines above — is the precedent for
-a published per-platform integration crate.
+demonstration owns: the canvas-to-surface handoff, the `requestAnimationFrame`
+loop, the generation-and-`shown` contract, rebuilding on resize with
+`document_replaced`, and the byte-range `.dsb` loader. **Two of those five were
+wrong in its first cut** — the loop never drove the scene's pulse, and the host
+never followed the canvas — and neither was caught by a test; both were found by
+running it in a browser. `dashscene-unity` — "Rust-side FFI bindings for the
+Unity painter; the Unity/C# work itself lives in a separate repo", three lines
+above — is the precedent for a published per-platform integration crate.
 
 Against it: there is exactly one consumer, a published crate is a semver
 commitment, and the seam it needs (how a host hands the library a scene for an
@@ -192,15 +189,15 @@ publish a placeholder version now, promote it later.
 
 Reserved 2026-08-01 as `dashscene-gpu` 0.1.0: a standalone placeholder built to
 the same shape as the twelve, **not** the workspace crate. Two properties follow
-from that, and both are deliberate. Its `repository` was the public
-reservation repo rather than the private working one, so the reservation did
-not publish the working repo's name. Those are now the same repository —
-renamed 2026-08-11, with the reservation repo archived as
-`driftsys/dashscene-name-reservations` — so the distinction is historical. And the workspace crate stays at
-`0.0.0` like every other crate here, so the reservation does not drag the
-workspace out of the shared version flow — the same split the twelve are
-already in, where a reserved 0.1.0 sits above a workspace 0.0.0 and the real
-first real release is what closes the gap.
+from that, and both are deliberate. Its `repository` was the public reservation
+repo rather than the private working one, so the reservation did not publish the
+working repo's name. Those are now the same repository — renamed 2026-08-11,
+with the reservation repo archived as `driftsys/dashscene-name-reservations` —
+so the distinction is historical. And the workspace crate stays at `0.0.0` like
+every other crate here, so the reservation does not drag the workspace out of
+the shared version flow — the same split the twelve are already in, where a
+reserved 0.1.0 sits above a workspace 0.0.0 and the real first real release is
+what closes the gap.
 
 ## `dashpack-astcenc-sys`, recorded late (story #430, v0.12; recorded 2026-08-08)
 
@@ -236,8 +233,7 @@ crate that builds and links the native code, one that is safe Rust over it.
 **Availability.** Not reserved on crates.io when it landed, and not noticed as
 unreserved until 2026-08-08. Reserved that day on the same terms as the others.
 It builds and is depended on inside the workspace; like every crate here it has
-never been released, and the reservation is a placeholder rather than a
-release.
+never been released, and the reservation is a placeholder rather than a release.
 
 ## `dashscene-desktop`, added at the v0.17 open (story #794, 2026-08-08)
 
@@ -255,10 +251,11 @@ integration crate.
 takes `wasm-bindgen`, `wasm-bindgen-futures`, `js-sys` and `web-sys` — and it is
 tempting to call one crate carrying both a fault in the published dependency
 surface. **It is not one, and the record should not rest on it.** Cargo's
-target-conditional sections, `[target.'cfg(target_arch = "wasm32")'.dependencies]`
-and its desktop counterpart, already keep a `winit` consumer from resolving or
-linking any of the browser crates. A merged manifest listing both sets does not
-make either consumer take on the other's.
+target-conditional sections,
+`[target.'cfg(target_arch = "wasm32")'.dependencies]` and its desktop
+counterpart, already keep a `winit` consumer from resolving or linking any of
+the browser crates. A merged manifest listing both sets does not make either
+consumer take on the other's.
 
 **Why a second crate, then.** Three reasons that survive that rebuttal:
 
@@ -290,11 +287,11 @@ surface wrong for its consumers, which is exactly what a merged `-web` crate was
 rejected for.
 
 Publishing the trait rather than hardcoding a presenter is also what keeps the
-instrument from story #585 alive. The loop drives `Box<dyn Present>` and names neither
-painter, so the swap key still shows one document, one arena and one clock drawn
-by either — which `dashscene_web::Host` could not offer, since it owns a
-`GpuPainter` directly. That asymmetry is deliberate: the browser has one painter
-to choose from.
+instrument from story #585 alive. The loop drives `Box<dyn Present>` and names
+neither painter, so the swap key still shows one document, one arena and one
+clock drawn by either — which `dashscene_web::Host` could not offer, since it
+owns a `GpuPainter` directly. That asymmetry is deliberate: the browser has one
+painter to choose from.
 
 **Where the shared policy lives, so two crates do not merely promote a
 duplication.** Between two `publish = false` demonstrations, host policy written
@@ -315,11 +312,11 @@ published, so that neither is published owning a private copy of it.
 
 **Availability.** Unclaimed on crates.io, and reserved 2026-08-08 as a
 standalone placeholder 0.1.0 built to the same shape as the twelve, with
-`repository` pointing at `driftsys/dashscene` — then the separate
-reservation repository, now this one, renamed 2026-08-11. The name was held
-ahead of the directory; story #794 created `crates/dashscene-desktop` at
-`0.0.0`, like every other crate here, so that story carried the workspace
-registries and not the reservation.
+`repository` pointing at `driftsys/dashscene` — then the separate reservation
+repository, now this one, renamed 2026-08-11. The name was held ahead of the
+directory; story #794 created `crates/dashscene-desktop` at `0.0.0`, like every
+other crate here, so that story carried the workspace registries and not the
+reservation.
 
 **The registries story #794 updated**, which is more than the eight that story
 enumerated. `Cargo.toml`'s `members` and `[workspace.dependencies]` and its
@@ -336,15 +333,15 @@ the #445 pattern with a different set of files.
 length of story #841 and was held on 2026-08-09, the same day the directory
 landed. It is worth stating how the gap read while it was open, because the
 sentence here described the set as complete while the count moved underneath it
-— which is the failure this paragraph is otherwise about, one crate along. Checking issue #803's premise that
-`dashscene-desktop` was the unreserved name found two more — `dashpack` and
-`dashpack-astcenc-sys`. Both are real workspace crates that build and are
-depended on today, which is what separates them from a name held for work not
-yet done; neither is released, because nothing here is. Those two were also the
-pair missing from `.git-std.toml`'s `[[version_files]]`, so one pass missed both
-registries at once. Story #795 closed that half and made it checkable:
-`demo/tests/registry_consistency.rs` now fails when any crate is absent from any
-of the machine-readable registries.
+— which is the failure this paragraph is otherwise about, one crate along.
+Checking issue #803's premise that `dashscene-desktop` was the unreserved name
+found two more — `dashpack` and `dashpack-astcenc-sys`. Both are real workspace
+crates that build and are depended on today, which is what separates them from a
+name held for work not yet done; neither is released, because nothing here is.
+Those two were also the pair missing from `.git-std.toml`'s `[[version_files]]`,
+so one pass missed both registries at once. Story #795 closed that half and made
+it checkable: `demo/tests/registry_consistency.rs` now fails when any crate is
+absent from any of the machine-readable registries.
 
 When checking this against crates.io, send a `User-Agent` header: the API
 rejects requests without one, and a check that does not distinguish that
@@ -362,9 +359,10 @@ symbols.
 wrong one — it holds story #600's FFI-safety gate, the macro that makes a
 non-FFI-safe boundary-B type a compile error, and it depends only on
 `dashpaint`. The umbrella `dashscene` was considered and rejected: it is
-reserved as the Rust facade, and giving it `crate-type = ["cdylib",
-"staticlib"]` would make every consumer of that facade build a dynamic library
-for a C API it does not use.
+reserved as the Rust facade, and giving it
+`crate-type = ["cdylib",
+"staticlib"]` would make every consumer of that facade
+build a dynamic library for a C API it does not use.
 
 **`-ffi` rather than `-abi` or `dashffi`.** The `dashscene-*` family is what
 every host-facing surface already uses — `dashscene-web`, `dashscene-desktop`,
@@ -375,19 +373,19 @@ already names it.
 
 **Availability.** Unclaimed on crates.io, and reserved **2026-08-09** as a
 standalone placeholder 0.1.0 built to the same shape as the twelve, with
-`repository` pointing at `driftsys/dashscene` — then the separate
-reservation repository, now this one, renamed 2026-08-11. The name was held
-after the directory rather than before it: story #840 created
-`crates/dashscene-ffi` at `0.0.0` and shipped without the reservation, which
-this record and `docs/features.md` both carried as a stated gap until it was
-closed. The workspace crate stays at `0.0.0`, so the reservation does not drag
-it out of the shared version flow — the same split every other name here sits
-in, where a reserved 0.1.0 sits above a workspace 0.0.0.
+`repository` pointing at `driftsys/dashscene` — then the separate reservation
+repository, now this one, renamed 2026-08-11. The name was held after the
+directory rather than before it: story #840 created `crates/dashscene-ffi` at
+`0.0.0` and shipped without the reservation, which this record and
+`docs/features.md` both carried as a stated gap until it was closed. The
+workspace crate stays at `0.0.0`, so the reservation does not drag it out of the
+shared version flow — the same split every other name here sits in, where a
+reserved 0.1.0 sits above a workspace 0.0.0.
 
 ## `dashscene-android` — the Android host, added at story #841 (v0.19)
 
-The nineteenth name, and the third integration surface after `dashscene-web`
-and `dashscene-desktop`.
+The nineteenth name, and the third integration surface after `dashscene-web` and
+`dashscene-desktop`.
 
 **Why a crate and not a `cfg` arm.** The v0.17 close looked for the common part
 between the two existing hosts, found it, and it was one constant and two
@@ -410,9 +408,9 @@ ABI: driving it as C revealed the one thing missing for layer 0, and
 **Availability.** Unclaimed on crates.io, and reserved **2026-08-09** as a
 standalone placeholder 0.1.0 built to the same shape as the twelve, with
 `repository` pointing at `driftsys/dashscene` — which was the separate
-reservation repository then and is this repository now, renamed 2026-08-11. The workspace crate stays at `0.0.0`, so the reservation
-does not drag it out of the shared version flow — the same split every other
-name here sits in.
+reservation repository then and is this repository now, renamed 2026-08-11. The
+workspace crate stays at `0.0.0`, so the reservation does not drag it out of the
+shared version flow — the same split every other name here sits in.
 
 The name was held **after** the directory, as `dashscene-ffi`'s was: story #841
 created `crates/dashscene-android` at `0.0.0` and the reservation followed later
@@ -423,20 +421,19 @@ a crate name is chosen rather than when someone notices.
 
 ## Why
 
-- `dashscene-typeset` was chosen over `dashscene-text` (too generic — the
-  role is "one typesetter", not just text) and over `dashscene-type`
-  (collides with the Rust ecosystem's `*-type`/`*-types` convention for
-  shared type-definition crates).
-- `dashscore`, `dashlang`, and `dashscene-compose` carried the most
-  interpretive risk in this mapping: `dashscore`/`dashscene-compose` are
-  treated as unused/parked (no equivalent in the architecture), and
-  `dashlang` is treated as "the DSL family" rather than a literal new
-  declarative language.
+- `dashscene-typeset` was chosen over `dashscene-text` (too generic — the role
+  is "one typesetter", not just text) and over `dashscene-type` (collides with
+  the Rust ecosystem's `*-type`/`*-types` convention for shared type-definition
+  crates).
+- `dashscore`, `dashlang`, and `dashscene-compose` carried the most interpretive
+  risk in this mapping: `dashscore`/`dashscene-compose` are treated as
+  unused/parked (no equivalent in the architecture), and `dashlang` is treated
+  as "the DSL family" rather than a literal new declarative language.
 
 ## Consequences
 
 - The three new names (`dashscene-typeset`, `dashscene-skia`,
-  `dashscene-validator`) needed reserving on crates.io before they could
-  be squatted out from under the project.
-- The staged-mutation API's assignment to `dashscene-core` (not
-  `dashcue`) is elaborated in `docs/decisions/staged-mutation-v01-scope.md`.
+  `dashscene-validator`) needed reserving on crates.io before they could be
+  squatted out from under the project.
+- The staged-mutation API's assignment to `dashscene-core` (not `dashcue`) is
+  elaborated in `docs/decisions/staged-mutation-v01-scope.md`.

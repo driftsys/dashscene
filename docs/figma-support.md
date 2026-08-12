@@ -10,13 +10,13 @@
 
 Design in Figma, and this compiles it into something a device can draw. Not
 every Figma feature survives that trip. This page says which do, which are
-turned away with a message, and — the part worth reading — which do nothing
-at all and tell you nothing.
+turned away with a message, and — the part worth reading — which do nothing at
+all and tell you nothing.
 
 ## The five outcomes
 
-Figma features do not divide into "works" and "does not work". They divide
-into five, and the difference between them is what you lose.
+Figma features do not divide into "works" and "does not work". They divide into
+five, and the difference between them is what you lose.
 
 |                   | What happens                                              | Told?        |
 | ----------------- | --------------------------------------------------------- | ------------ |
@@ -29,42 +29,41 @@ into five, and the difference between them is what you lose.
 Three of these are easy to confuse:
 
 - **Warned** costs you a squircle and leaves the button.
-- **Layer dropped** takes the button. A shadow on a text layer does not
-  import the text without its shadow — the text is gone.
-- **Import fails** takes the file. One layer set to Multiply and nothing
-  comes across at all.
+- **Layer dropped** takes the button. A shadow on a text layer does not import
+  the text without its shadow — the text is gone.
+- **Import fails** takes the file. One layer set to Multiply and nothing comes
+  across at all.
 
-**And read the silent list.** A refusal is a conversation. A silent property
-is a design that looks right in Figma, imports without complaint, and comes
-out wrong on the device.
+**And read the silent list.** A refusal is a conversation. A silent property is
+a design that looks right in Figma, imports without complaint, and comes out
+wrong on the device.
 
 ## How this list is derived
 
 Unlike a hand-written feature list, this one comes out of the code:
 
-- **Layer-dropped** entries are the importer's own refusal messages. It
-  refuses a layer by name in 56 places, several of which fill in the offending
-  value, so the wording below is close to what you will actually see.
+- **Layer-dropped** entries are the importer's own refusal messages. It refuses
+  a layer by name in 56 places, several of which fill in the offending value, so
+  the wording below is close to what you will actually see.
 - **Warned** and **import fails** are a separate, short, fixed list of
-  constructs the importer recognises and hands to a checker, which decides
-  which of the two it is.
+  constructs the importer recognises and hands to a checker, which decides which
+  of the two it is.
 - **Silent** properties are the ones the importer's Figma data model does not
-  name. This is structural rather than a list of oversights: the parser does
-  not reject properties it was not taught, so anything unread is dropped
-  without a word.
+  name. This is structural rather than a list of oversights: the parser does not
+  reject properties it was not taught, so anything unread is dropped without a
+  word.
 - **Imports** is what is left, checked against the code that draws it.
 
 Checked against `crates/dashc/src/figma/mod.rs` (what lowers, and what is
-refused as a whole layer), `crates/dashc/src/figma/triage.rs` (which
-constructs are recognised and handed to the checker),
-`crates/dashc/src/figma/rest.rs` (what is read at all),
-`crates/dashc/src/figma/bindings.rs` (what a Figma Variable can drive),
-`crates/dashscene-validator/src/triage.rs` (warn, or stop the import), and
-`importers/figma/src/` (the import tool).
+refused as a whole layer), `crates/dashc/src/figma/triage.rs` (which constructs
+are recognised and handed to the checker), `crates/dashc/src/figma/rest.rs`
+(what is read at all), `crates/dashc/src/figma/bindings.rs` (what a Figma
+Variable can drive), `crates/dashscene-validator/src/triage.rs` (warn, or stop
+the import), and `importers/figma/src/` (the import tool).
 
-**This page can go stale, and nothing fails when it does.** It is re-checked
-at each phase-end. If a decision rides on a line here, read the code named
-above, or ask.
+**This page can go stale, and nothing fails when it does.** It is re-checked at
+each phase-end. If a decision rides on a line here, read the code named above,
+or ask.
 
 ---
 
@@ -73,20 +72,19 @@ above, or ask.
 Three constructs. One of these anywhere in what you are importing and nothing
 comes across.
 
-- **Blend modes other than Normal** — multiply, screen, overlay, and the
-  rest. Planned for high-end backends; today they stop the import.
+- **Blend modes other than Normal** — multiply, screen, overlay, and the rest.
+  Planned for high-end backends; today they stop the import.
 - **Noise and texture effects.**
 - **Progressive blur.**
 
-Workaround for all three: bake the result into an image, or design without
-it.
+Workaround for all three: bake the result into an image, or design without it.
 
-The checker also knows about variable-width strokes, animated boolean
-operations and animated variable-font axes, but the Figma importer never
-reports them: a variable-width stroke is caught earlier as a non-basic stroke
-and drops that layer, and nothing reads the animation data the other two
-would need. Do not read those as supported — read them as reaching you a
-different way, or not at all.
+The checker also knows about variable-width strokes, animated boolean operations
+and animated variable-font axes, but the Figma importer never reports them: a
+variable-width stroke is caught earlier as a non-basic stroke and drops that
+layer, and nothing reads the animation data the other two would need. Do not
+read those as supported — read them as reaching you a different way, or not at
+all.
 
 ## Layer types
 
@@ -104,8 +102,8 @@ Eight kinds import. Any other kind drops that layer, reporting its type.
 partial arc, an ellipse whose width and height differ, and an ellipse that is
 not fixed-size each drop the layer.
 
-**Vectors are baked at build time** into a form that stays sharp at any size.
-A vector with no path geometry drops.
+**Vectors are baked at build time** into a form that stays sharp at any size. A
+vector with no path geometry drops.
 
 **Workaround:** flatten the shape to a vector, or export it as an image.
 
@@ -138,9 +136,9 @@ showed you. Set the parent to fixed, or the child to hug.
 | Min and max sizes   |               |                                      |
 
 **Constraints are read nowhere, and this is the largest silent gap here.** A
-frame whose children are pinned to its edges imports as though they were
-placed at fixed offsets; nothing moves when the frame resizes. Use auto
-layout, which does import, for anything that must respond to size.
+frame whose children are pinned to its edges imports as though they were placed
+at fixed offsets; nothing moves when the frame resizes. Use auto layout, which
+does import, for anything that must respond to size.
 
 **Rotation drops the layer.** Nothing in the system draws a rotated element.
 Bake the rotation into a vector or an image.
@@ -155,8 +153,8 @@ Bake the rotation into a vector or an image.
 | Several stacked fills on frames, rectangles, instances, sections and groups |                                                            |
 | Per-fill opacity and visibility                                             |                                                            |
 
-**Stacked fills depend on the layer type.** On a frame or rectangle they
-work. On a circle, a text layer or a vector, a second fill drops the layer.
+**Stacked fills depend on the layer type.** On a frame or rectangle they work.
+On a circle, a text layer or a vector, a second fill drops the layer.
 Workaround: put the extra fill on a rectangle behind it.
 
 **Images:** PNG, JPEG and static GIF. An animated GIF is refused by name.
@@ -172,9 +170,9 @@ Workaround: put the extra fill on a rectangle behind it.
 |                         | Stroke on text (outline)  |                            |
 
 **Per-side stroke widths are silent, and nothing can warn about them** — the
-property is not read, so there is nothing to diagnose. A layer with a
-4-point top border and nothing elsewhere imports with one uniform width taken
-from whichever value the file reports. Draw four rectangles instead.
+property is not read, so there is nothing to diagnose. A layer with a 4-point
+top border and nothing elsewhere imports with one uniform width taken from
+whichever value the file reports. Draw four rectangles instead.
 
 **Dashes:** bake the pattern into a vector.
 
@@ -196,8 +194,8 @@ imports.
 | Inner shadow    | A shadow on a text or vector layer |            | Progressive blur |
 | Background blur | A shadow with no colour            |            |                  |
 
-**Shadows do not work on text or vector layers, and the whole layer goes** —
-not just the shadow. This surprises people. Put the text on a shadowed frame
+**Shadows do not work on text or vector layers, and the whole layer goes** — not
+just the shadow. This surprises people. Put the text on a shadowed frame
 instead.
 
 **Background blur works** and keeps working while the panel moves.
@@ -233,8 +231,8 @@ smears below that size. It still imports.
 | Shape masks — one layer stencils those after it | Alpha (soft) masks |
 |                                                 | Luminance masks    |
 
-A soft or luminance mask has no equivalent that can be drawn, so the layer
-goes rather than being approximated with a hard edge.
+A soft or luminance mask has no equivalent that can be drawn, so the layer goes
+rather than being approximated with a hard edge.
 
 ## Components, instances and variants
 
@@ -245,33 +243,32 @@ goes rather than being approximated with a hard edge.
 | Components from a shared library             | A library component whose own reference the library data lacks |
 | The layout change animating between variants |                                                                |
 
-All three failures stop the **whole import**, not just that layer. If a
-shared library is in play and the import stops, look here first.
+All three failures stop the **whole import**, not just that layer. If a shared
+library is in play and the import stops, look here first.
 
 **Import instances, not the components themselves.** A main component, and a
-component set, is treated as a definition rather than as content: it
-resolves, so instances of it work, but it draws nothing and — unlike every
-other case on this page — **says nothing either**. Point the import at a
-frame or an instance.
+component set, is treated as a definition rather than as content: it resolves,
+so instances of it work, but it draws nothing and — unlike every other case on
+this page — **says nothing either**. Point the import at a frame or an instance.
 
 The same skip has a second effect worth knowing: problems inside a main
 component never surface. A dashed stroke or an unsupported construct in the
-definition is not reported, because nothing in it is being drawn. You will
-hear about it through the instance that uses it, not through the component.
+definition is not reported, because nothing in it is being drawn. You will hear
+about it through the instance that uses it, not through the component.
 
 ## Variables and tokens
 
-Figma Variables import, both as values and by name, so an application can
-write them at runtime. A designer declares the connection; nobody guesses it.
-A number can drive position, size, spacing, opacity or one channel of a solid
-fill; a true/false value can drive visibility.
+Figma Variables import, both as values and by name, so an application can write
+them at runtime. A designer declares the connection; nobody guesses it. A number
+can drive position, size, spacing, opacity or one channel of a solid fill; a
+true/false value can drive visibility.
 
-**A variable bound to a fill only works on a solid fill.** Bind one to a
-layer carrying a gradient or an image and you get a warning, the layer
-imports with the fill exactly as you drew it, and the binding is dropped —
-so the colour is right on the first frame and never changes afterwards. Text
-is worth watching here: a text layer's fill lives in its text style, so a
-fill binding on text takes the same path.
+**A variable bound to a fill only works on a solid fill.** Bind one to a layer
+carrying a gradient or an image and you get a warning, the layer imports with
+the fill exactly as you drew it, and the binding is dropped — so the colour is
+right on the first frame and never changes afterwards. Text is worth watching
+here: a text layer's fill lives in its text style, so a fill binding on text
+takes the same path.
 
 ## Read nowhere
 
@@ -292,14 +289,13 @@ because this is the list worth scanning before you commit to an approach.
 
 The reason this list exists at all: the importer's data model does not reject
 properties it was not taught to read, so an unread Figma property is dropped
-rather than reported. That is what separates this group from everything
-above.
+rather than reported. That is what separates this group from everything above.
 
 ## Where the specification disagrees with the code
 
-`docs/specification/04-figma-vocabulary-profile.md` is the engineering
-profile for this vocabulary. It is **not** the source for this page, and in
-five places the two say different things. The code is what runs:
+`docs/specification/04-figma-vocabulary-profile.md` is the engineering profile
+for this vocabulary. It is **not** the source for this page, and in five places
+the two say different things. The code is what runs:
 
 | Construct                | The specification says                                     | The importer does                                   |
 | ------------------------ | ---------------------------------------------------------- | --------------------------------------------------- |
@@ -309,10 +305,10 @@ five places the two say different things. The code is what runs:
 | Per-side stroke widths   | later, with a warning                                      | reads them nowhere; nothing is reported             |
 | Stroke on text alignment | inside and outside "collapses to centered", with a warning | drops the layer for any stroke on text              |
 
-Every one of these five reads as more supported in the specification than it
-is in the code, which is the direction that costs a designer time. They should
-be corrected there. Until they are, this page is the one derived from what
-actually runs.
+Every one of these five reads as more supported in the specification than it is
+in the code, which is the direction that costs a designer time. They should be
+corrected there. Until they are, this page is the one derived from what actually
+runs.
 
 ---
 
@@ -322,7 +318,6 @@ It is not a promise about a date. Refused constructs have workarounds today;
 whether any becomes supported is `docs/roadmap.md`'s question.
 
 It is not exhaustive about Figma. It covers what the importer names, plus the
-properties a designer is most likely to reach for. A Figma property absent
-from every column here is most likely in the silent group — the parser
-ignores what it was not taught — and worth asking about before you rely on
-it.
+properties a designer is most likely to reach for. A Figma property absent from
+every column here is most likely in the silent group — the parser ignores what
+it was not taught — and worth asking about before you rely on it.

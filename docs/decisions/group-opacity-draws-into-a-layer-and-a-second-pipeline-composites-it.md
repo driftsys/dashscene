@@ -40,13 +40,13 @@ layer in. Not the group's bounds: a group's ink reaches past its rect range
 through shadows and blurs, so a tight bound would have to be derived from the
 effects rather than from the geometry, and getting it wrong moves pixels.
 
-**D3 — a second pipeline composites, and this is the general route for
-sampling a rendered target.** `shaders/composite.wgsl` is its own module with
-its own `@group(0)`: one full-target quad, `textureLoad` at the fragment's own
-pixel, multiplied by the group's alpha, blended premultiplied source-over. It
-declares no sampler — the composite is a 1:1 pixel copy, so there is nothing to
-filter. A pipeline owns its bind group layout, so this costs the paint pipeline
-no binding at all.
+**D3 — a second pipeline composites, and this is the general route for sampling
+a rendered target.** `shaders/composite.wgsl` is its own module with its own
+`@group(0)`: one full-target quad, `textureLoad` at the fragment's own pixel,
+multiplied by the group's alpha, blended premultiplied source-over. It declares
+no sampler — the composite is a 1:1 pixel copy, so there is nothing to filter. A
+pipeline owns its bind group layout, so this costs the paint pipeline no binding
+at all.
 
 **D4 — the passes are planned from the instance stream alone.**
 `composite::plan` reads `Instance::layer` and `Layer::parent` and nothing else,
@@ -56,13 +56,13 @@ members following a group in slice order draw over it.
 
 ## Why
 
-- **The layer table belongs with the instances (D1, over a `render` parameter).**
-  The alpha and the routing are one fact. Split across two arguments, a caller
-  could pass a group slice that disagreed with the `layer` values already packed
-  into the buffer, and nothing would catch it. Keeping both in the artifact the
-  packer produces also means layer 1 pins the whole group structure with no
-  device — which is what layer 1 is for — and it left roughly twenty existing
-  `render` call sites untouched.
+- **The layer table belongs with the instances (D1, over a `render`
+  parameter).** The alpha and the routing are one fact. Split across two
+  arguments, a caller could pass a group slice that disagreed with the `layer`
+  values already packed into the buffer, and nothing would catch it. Keeping
+  both in the artifact the packer produces also means layer 1 pins the whole
+  group structure with no device — which is what layer 1 is for — and it left
+  roughly twenty existing `render` call sites untouched.
 
 - **Full extent, over bounds-tight layers (D2).** This is the reference
   painter's own choice and `dashscene-skia`'s `offscreen_layer` states the

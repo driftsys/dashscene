@@ -19,9 +19,9 @@ and where to read next.
 
 **A worked example compiles in the tree**, at
 `goldens/tooling/tests/worked_example.rs`. Every rule below that can be asserted
-is asserted there, because prose goes stale silently and this repository's review
-history is dominated by that failure. If the guide and the example disagree, the
-example is right.
+is asserted there, because prose goes stale silently and this repository's
+review history is dominated by that failure. If the guide and the example
+disagree, the example is right.
 
 ## First: which of the two seams are you on
 
@@ -39,11 +39,12 @@ bindings only.
 what a direct-GLES backend would do — the contingency
 `docs/decisions/wgpu-is-the-lean-painter.md` names — and what the Unity painter
 is expected to do for its _shaders_ while sitting on seam 1 for its input.
-`docs/decisions/unity-painter-uses-brg.md` is still `proposed`, so that is a plan
-rather than a description.
+`docs/decisions/unity-painter-uses-brg.md` is still `proposed`, so that is a
+plan rather than a description.
 
-If you are writing a renderer for a platform, you are almost certainly on seam 1.
-Choose seam 2 only when you need the SDF shading itself and not the tables.
+If you are writing a renderer for a platform, you are almost certainly on
+seam 1. Choose seam 2 only when you need the SDF shading itself and not the
+tables.
 
 ## Seam 1 — implementing `Painter`
 
@@ -57,20 +58,21 @@ adjusted a glyph position would be producing a different picture from every
 other backend, and nothing would catch it but a golden.
 
 **Clip regions arrive ancestor-resolved.** You intersect the boxes you are given
-and never ask which node they came from — the example asserts that. A consequence
-worth stating: **you need no mask concept**, because a mask reuses the clip
-table. That second half is not asserted anywhere; take it from
+and never ask which node they came from — the example asserts that. A
+consequence worth stating: **you need no mask concept**, because a mask reuses
+the clip table. That second half is not asserted anywhere; take it from
 `docs/design/dashpaint.md`.
 
 **`RectEntry::opacity` is not optional.** It is the resolved free-path group
 alpha, and a painter must multiply it into the paint alpha. Miss it and every
-partially-transparent free-path group draws at full strength — which no golden in
-your own backend will catch until it is compared against another painter.
+partially-transparent free-path group draws at full strength — which no golden
+in your own backend will catch until it is compared against another painter.
 
-**`groups` is the other half of that.** A `GroupComposite` is a subtree that must
-be drawn into an offscreen layer and composited at the group's alpha, rather than
-having the alpha pushed onto each child. Free-path opacity and render-target
-groups are different mechanisms and `RectEntry::opacity` covers only the first.
+**`groups` is the other half of that.** A `GroupComposite` is a subtree that
+must be drawn into an offscreen layer and composited at the group's alpha,
+rather than having the alpha pushed onto each child. Free-path opacity and
+render-target groups are different mechanisms and `RectEntry::opacity` covers
+only the first.
 
 **Glyph runs are neither clipped nor composited into group layers.** Two
 limitations `Painter`'s own documentation states, and the two a text-drawing
@@ -100,8 +102,8 @@ honestly because a host will come to rely on it, not because one does today.
 Said plainly here, because a guide presenting this as as-built would be telling
 you a host protects you when none does.
 
-**The dirty set is advisory.** `None` is valid input, and ignoring it is
-correct — you may always redraw everything. What you may not do is treat it as a
+**The dirty set is advisory.** `None` is valid input, and ignoring it is correct
+— you may always redraw everything. What you may not do is treat it as a
 statement that nothing else changed.
 
 Both v0 painters _do_ use it, in different places, which is worth knowing before
@@ -123,10 +125,10 @@ payload against the hash the file names before anything binds it. If you are
 writing a host as well as a painter, this is yours to preserve.
 
 **The bytes may be a mapping's pages.** `ImageTable`'s pool is owned or mapped
-and never both (`docs/decisions/assets-borrow-from-the-mapping.md`); `resolve` is
-identical across the two and **a painter cannot tell them apart**, deliberately.
-So nothing may assume the bytes outlive the region, and nothing may write to
-them.
+and never both (`docs/decisions/assets-borrow-from-the-mapping.md`); `resolve`
+is identical across the two and **a painter cannot tell them apart**,
+deliberately. So nothing may assume the bytes outlive the region, and nothing
+may write to them.
 
 ## Seam 2 — consuming the instance buffer
 
@@ -134,12 +136,12 @@ Read `crates/dashscene-gpu/src/pack.rs` and
 `crates/dashscene-gpu/src/shaders/sdf.wgsl` alongside this.
 
 **One ordered, kind-tagged stream.** `kind` carries the sub-kind, and it must be
-mapped by an **exhaustive match, never a cast** — a cast silently accepts a value
-a later version adds.
+mapped by an **exhaustive match, never a cast** — a cast silently accepts a
+value a later version adds.
 
 **`#[repr(C)]` is pinned by nothing unless you check it.** A size assertion
-passes while a reorder moves every offset; assert `offset_of!` per member against
-what your shader declares.
+passes while a reorder moves every offset; assert `offset_of!` per member
+against what your shader declares.
 
 **Per-rect spans and dirty-range upload.** R-T4 budgets the upload as ranges of
 the instance buffer rather than whole-buffer writes.
@@ -154,19 +156,19 @@ heap exists because of that ceiling; the next fragment-side table extends the
 heap rather than adding a binding.
 
 **An instance draws outside `Instance::bounds`, and the quad is grown to cover
-it.** `Instance::outset` is how far past `bounds` the ink reaches, and the vertex
-stage adds it — plus the antialiasing margin — so the geometry does not clip the
-ink. Only the **lower** bound is a correctness property: a quad too small clips,
-a quad too large draws the same picture more slowly. So `bounds` is not a
-conservative bound and the quad is; a port that grows the quad by `outset` is
-correct, and one that uses `bounds` as the quad clips every shadow and blur.
+it.** `Instance::outset` is how far past `bounds` the ink reaches, and the
+vertex stage adds it — plus the antialiasing margin — so the geometry does not
+clip the ink. Only the **lower** bound is a correctness property: a quad too
+small clips, a quad too large draws the same picture more slowly. So `bounds` is
+not a conservative bound and the quad is; a port that grows the quad by `outset`
+is correct, and one that uses `bounds` as the quad clips every shadow and blur.
 
 ## What this guide does not settle
 
 - **A portable conformance suite.** R-T5's promise is better served by a suite a
   second painter can port than by a description of one. That is its own story;
   layer 2's suite is `dashscene-gpu`'s today.
-- **Whether this becomes the public book's chapter.** It would bind the shape
-  to `docs/decisions/repo-staging-and-public-facade.md`, which was undecided
-  and is now settled — one repository, the facade role folded in. The question
-  is live again rather than blocked.
+- **Whether this becomes the public book's chapter.** It would bind the shape to
+  `docs/decisions/repo-staging-and-public-facade.md`, which was undecided and is
+  now settled — one repository, the facade role folded in. The question is live
+  again rather than blocked.

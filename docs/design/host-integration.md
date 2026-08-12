@@ -130,8 +130,9 @@ guards external stalls only.
 `name`, `resize(width, height) -> Result<(), PresentError>`,
 `document_replaced`, and
 `present(&mut self, scene: &CommittedScene) -> Result<Drawn, PresentError>` —
-its error type, and `GpuPresenter`, the lean painter's implementation. `dashscene-skia` is deliberately not a dependency; `demo`
-implements the published trait for its own Skia presenter.
+its error type, and `GpuPresenter`, the lean painter's implementation.
+`dashscene-skia` is deliberately not a dependency; `demo` implements the
+published trait for its own Skia presenter.
 
 **Two load paths, and only one of them is bounded.** `Document::map` plus
 `Document::load` is the mapped path — it maps the file, binds a byte range for
@@ -202,9 +203,9 @@ or do without.
 `Surface::adapter_info` and `Surface::format` on the web,
 `GpuPresenter::adapter_info` and `GpuPresenter::format` on the desktop, each
 returning the `wgpu` type rather than a string. On the desktop those are
-inherent methods, and there is a second route through the trait for the
-embedder that never holds a `GpuPresenter` — see "Two routes" below, which is
-what issue #902 added and why one shape was not enough. `Surface::describe` and
+inherent methods, and there is a second route through the trait for the embedder
+that never holds a `GpuPresenter` — see "Two routes" below, which is what issue
+#902 added and why one shape was not enough. `Surface::describe` and
 `Present::name` both stay: a caller that only wants the line should not have to
 build it from the parts, and the desktop loop's own diagnostic lines read
 theirs.
@@ -307,16 +308,15 @@ were in the same position, and moved all of it into one job.
 
 ## Which root each host shows
 
-Since story #837, the embedder says.
-`dashscene_desktop::Document::load` and `dashscene_web::load_document` each take
-a `ShownRoot` — an ordinal over the document's roots, re-exported by both crates
-from `dashbuf::prefetch` so naming one needs no dependency on the format crate.
-`ShownRoot::FIRST` is what both hosts did before, and is what `demo`,
-`demo-web` and `measure/web-minimal` pass, because none of them has a second
-artboard to name. A root the document does not have is
-`DesktopError::NoSuchRoot` / `WebError::NoSuchRoot`, carrying the ordinal asked
-for and the count the document does carry; neither host clamps or falls back.
-The shape and the two rejected alternatives are in
+Since story #837, the embedder says. `dashscene_desktop::Document::load` and
+`dashscene_web::load_document` each take a `ShownRoot` — an ordinal over the
+document's roots, re-exported by both crates from `dashbuf::prefetch` so naming
+one needs no dependency on the format crate. `ShownRoot::FIRST` is what both
+hosts did before, and is what `demo`, `demo-web` and `measure/web-minimal` pass,
+because none of them has a second artboard to name. A root the document does not
+have is `DesktopError::NoSuchRoot` / `WebError::NoSuchRoot`, carrying the
+ordinal asked for and the count the document does carry; neither host clamps or
+falls back. The shape and the two rejected alternatives are in
 [the-shown-root-is-named-by-ordinal.md](../decisions/the-shown-root-is-named-by-ordinal.md).
 
 **It bounds the load and nothing below it**, so what each host gets out of it
@@ -344,8 +344,8 @@ differs by target and is worth stating separately:
   not. The startup-scaling benchmark's own many-frame document is the second
   kind. Story #837 did not change this and could not: it settled which root a
   host names, not what the runtime paints.
-- **The C ABI carries no root selection**, and since story #837 the reason is
-  no longer that no vocabulary exists. `ds_runtime_load_document` takes the whole
+- **The C ABI carries no root selection**, and since story #837 the reason is no
+  longer that no vocabulary exists. `ds_runtime_load_document` takes the whole
   file and uses the owning loader, which needs bytes for every asset entry, so
   there is nothing on that path for a selection to bound. Issue #925 or story
   #838 unblocks it; `crates/dashscene-ffi/src/lib.rs` states which shape costs

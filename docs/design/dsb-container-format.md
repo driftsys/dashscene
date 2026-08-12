@@ -44,12 +44,11 @@ would pass every test and still be wrong.
 
 ## Versioning
 
-The envelope is a frozen layout. It evolves by **version bump**, not by
-field-id rules: a reader that does not implement `format_version` refuses the
-file whole rather than guessing at it. Reserved fields are written zero, and a
-non-zero reserved field is a parse error for the same reason — a writer that
-used one without bumping the version produced something this reader must not
-interpret.
+The envelope is a frozen layout. It evolves by **version bump**, not by field-id
+rules: a reader that does not implement `format_version` refuses the file whole
+rather than guessing at it. Reserved fields are written zero, and a non-zero
+reserved field is a parse error for the same reason — a writer that used one
+without bumping the version produced something this reader must not interpret.
 
 This is the opposite of the schema's rule inside a section, where evolution is
 append-only and old readers keep working (`docs/design/dashbuf.md`, R7). The two
@@ -78,13 +77,13 @@ the high bit in byte 0 catches a transport that strips to seven bits, and the
 `\r\n` / `\n` pair catches one that translates line endings. It still reads as
 `DSB` in a dump.
 
-`header_size` and `section_stride` are recorded rather than assumed so the
-table is self-describing: the external signing tool the container decision
-names walks it and computes the signed range without hardcoding either number.
-A reader of this version does not use them to skip a grown structure — under
-the version rule above it never sees one — but a mismatch becomes a named error
-instead of a misparse. `section_stride` is an addition to the field list the
-decision's Refinements section gives; the decision records it.
+`header_size` and `section_stride` are recorded rather than assumed so the table
+is self-describing: the external signing tool the container decision names walks
+it and computes the signed range without hardcoding either number. A reader of
+this version does not use them to skip a grown structure — under the version
+rule above it never sees one — but a mismatch becomes a named error instead of a
+misparse. `section_stride` is an addition to the field list the decision's
+Refinements section gives; the decision records it.
 
 `signature_offset` / `signature_length` are the reserved signature reference.
 Signing itself — and its relation to the derivation manifest — is deferred with
@@ -93,8 +92,8 @@ the packer to v0.12; v0.11 writes zeros, and **refuses a file that does not**.
 That refusal generalizes: `reserved_0`, `flags`, `signature_offset`, and
 `signature_length` must all be zero in version 1, and a parse fails if any is
 not. These four sit outside `root_hash`'s range, so nothing else in the file
-would notice them being set. Without the check, a later writer could put
-meaning in them and a version-1 reader would silently ignore it.
+would notice them being set. Without the check, a later writer could put meaning
+in them and a version-1 reader would silently ignore it.
 
 ## Section table — `section_count` entries of 64 bytes, directly after the header
 
@@ -119,18 +118,18 @@ document's `AssetEntry` carries a BLAKE3-256 hash, and the null binding resolves
 it to the blob section whose recorded content hash equals it
 (`Container::blob_by_hash`, and either reader for the whole file at once:
 `dashbuf::open` resolves every entry to where its payload lies and reads none of
-them, `dashbuf::open_verified` resolves and hashes each one).
-That is why the section table can be reordered or re-assembled without touching
-the ui section — the document names payloads, never places. Flavor is an **enumerated role**, compared
-for equality — a section has exactly one role, and two roles would need two
-entries, not two bits. The decision's Refinements section calls the field
+them, `dashbuf::open_verified` resolves and hashes each one). That is why the
+section table can be reordered or re-assembled without touching the ui section —
+the document names payloads, never places. Flavor is an **enumerated role**,
+compared for equality — a section has exactly one role, and two roles would need
+two entries, not two bits. The decision's Refinements section calls the field
 "flavor flags"; this narrows it, and the decision records that.
 
 ### The table describes an ordered partition of the file
 
-Section byte ranges are ascending and non-overlapping, and no range reaches
-into the header or the table. That is what makes "the hot region" a single
-contiguous byte range rather than a set of scattered ones.
+Section byte ranges are ascending and non-overlapping, and no range reaches into
+the header or the table. That is what makes "the hot region" a single contiguous
+byte range rather than a set of scattered ones.
 
 Every structured section precedes every blob section, so the hot region is a
 contiguous **prefix**.
@@ -179,18 +178,18 @@ live — rejecting them now would foreclose the field the header already carries
 `crates/dashbuf/src/bank.rs` (`covers` v0.12 story #433). The container writer
 places bytes; assembly decides which bytes to place.
 
-An asset has one canonical payload and one canonical hash. A **quality
-profile** binds that hash to the bytes a file actually carries
+An asset has one canonical payload and one canonical hash. A **quality profile**
+binds that hash to the bytes a file actually carries
 (`docs/decisions/asset-quality-profile-naming.md`). A **cold bank** is one
-profile's side of that binding for one document: the payloads, each keyed by
-the canonical hash it stands for. `bank::assemble` takes a ui section and a
-cold bank and produces the file — one structured section, then one blob
-section per asset entry, in entry order.
+profile's side of that binding for one document: the payloads, each keyed by the
+canonical hash it stands for. `bank::assemble` takes a ui section and a cold
+bank and produces the file — one structured section, then one blob section per
+asset entry, in entry order.
 
 **RAW is the null binding** — `ColdBank::raw` binds each payload to its own
 hash. The resident payload is the canonical payload, so a RAW assembly has
-nothing to derive and therefore nothing to move. That is what makes it
-checkable in a form no other profile allows: `goldens/tooling/tests/cold_bank_assembly.rs`
+nothing to derive and therefore nothing to move. That is what makes it checkable
+in a form no other profile allows: `goldens/tooling/tests/cold_bank_assembly.rs`
 takes each committed golden apart and reassembles it under a RAW bank, and
 requires the result to equal the file it came from byte for byte. A failure
 there is an assembly bug, never a golden to regenerate.
@@ -201,10 +200,10 @@ there is an assembly bug, never a golden to regenerate.
 rather than accepting a payload list paired positionally by the caller. Two
 consequences follow, and both are the point:
 
-- **The ui section is an input to assembly and never an output.** Nothing in
-  the assembly path writes into a hot section, so a hot section cannot vary
-  with the bank. The alternative form makes the same guarantee only for as long
-  as a caller keeps the two lists in the same order.
+- **The ui section is an input to assembly and never an output.** Nothing in the
+  assembly path writes into a hot section, so a hot section cannot vary with the
+  bank. The alternative form makes the same guarantee only for as long as a
+  caller keeps the two lists in the same order.
 - **Resolution is by hash, not by index.** An `AssetEntry` names a content hash
   and never a section index
   (`docs/decisions/asset-model-content-addressed-blobs.md`), and assembly is the
@@ -213,8 +212,8 @@ consequences follow, and both are the point:
 
 Assembly refuses a bank that binds no payload to a hash an entry names — the
 file would otherwise fail at load with `NoBlobForHash` — and a bank holding
-payloads no entry names, which would become cold bytes nothing in the file
-could reach.
+payloads no entry names, which would become cold bytes nothing in the file could
+reach.
 
 Because `bank` parses the ui section, it is a separate module from `container`,
 which exists to validate an untrusted file before any parser is trusted and so
@@ -237,12 +236,12 @@ The header's `root_hash` is part of what differs, because it covers the table
 and the table records where the cold bytes are. "Confined to the section table
 and the cold bytes" in the design capture means the envelope as a whole.
 
-v0.11 shipped one assembly, so this could only be stated. `ColdBank::derived`
-is what makes a second one constructible, and a second one is what turns the
+v0.11 shipped one assembly, so this could only be stated. `ColdBank::derived` is
+what makes a second one constructible, and a second one is what turns the
 statement into a measurement. The derived side is only half-built until the
 packer lands: a payload bound to a hash that is not its own preimage assembles
-correctly but cannot yet be resolved by a reader, because resolving it needs
-the derivation manifest (story #434).
+correctly but cannot yet be resolved by a reader, because resolving it needs the
+derivation manifest (story #434).
 
 ## Content hashes
 
@@ -329,8 +328,8 @@ changes it.
 
 ## Testing
 
-Four suites, for four different questions. The first two are about the
-envelope, the last two about assembly.
+Four suites, for four different questions. The first two are about the envelope,
+the last two about assembly.
 
 `crates/dashbuf/tests/container.rs` is behavioural: layout asserted by offset
 rather than by round trip, determinism, zero-filled padding, and one rejection
@@ -365,8 +364,8 @@ bytes: each golden taken apart and reassembled under a RAW bank, required to be
 byte-identical. It is the narrower test — it takes the committed ui section as
 given, so it says nothing about the compiler above it — and it is the one that
 cannot be compensated for by a matching change elsewhere in the pipeline. The
-two are complements: the hand-built suite has the coverage, the golden suite
-has the real bytes.
+two are complements: the hand-built suite has the coverage, the golden suite has
+the real bytes.
 
 ## Trace
 

@@ -50,8 +50,8 @@ The `backdrop-blur` corpus fixture rendered through the production path
 (`goldens::render::render_dsb`) and diffed against Figma's own `GET /images`
 export (`goldens/oracle/import-design-source/backdrop-blur.png`). The metric is
 the max-over-RGBA absolute per-pixel delta, the same one the oracle bands grade
-with. The measured region is the frosted panel itself — 200x90 at (60,45),
-18000 px — because that is where the blur is, and the frame's headline number is
+with. The measured region is the frosted panel itself — 200x90 at (60,45), 18000
+px — because that is where the blur is, and the frame's headline number is
 dominated by an unrelated anti-aliased ellipse rim.
 
 The panel straddles two hard-edged colour seams: amber `rgb(250,199,51)` meets
@@ -95,8 +95,8 @@ Each space's own best fit is in bold. Three things follow, and none of them
 depends on which sigma is eventually chosen:
 
 - **sRGB-encoded blending fits Figma better at every sigma from 0.20 to 0.60
-  than linear-light blending does at its own best sigma.** The comparison is
-  not close and it is not sigma-dependent.
+  than linear-light blending does at its own best sigma.** The comparison is not
+  close and it is not sigma-dependent.
 - At its optimum, linear light is **8.7 times worse on mean** and 10.8 times
   worse on RMS than sRGB-encoded at its optimum (10.363 against 1.187).
 - At its optimum sRGB-encoded leaves a max delta of 14 over the panel and
@@ -108,8 +108,8 @@ depends on which sigma is eventually chosen:
 The two spaces also disagree about the blur's _width_, not only its values:
 linear light's best fit wants sigma ≈ 0.25·radius, about half of what
 sRGB-encoded chooses. Fitting a narrower kernel is how the wrong space
-compensates — it reduces how much of the wrong average is visible — and it
-still cannot reach the right answer.
+compensates — it reduces how much of the wrong average is visible — and it still
+cannot reach the right answer.
 
 ### Read directly, without a summary statistic
 
@@ -123,8 +123,8 @@ seam column x=107:
 | ours, linear light | `195, 166,  81` |
 
 Figma sits 3 code points from the sRGB-encoded blend and 46 from the
-linear-light one — and on the _far_ side of ours from linear light, so no
-change of blur width moves linear light toward it.
+linear-light one — and on the _far_ side of ours from linear light, so no change
+of blur width moves linear light toward it.
 
 ## What already gates this
 
@@ -133,10 +133,10 @@ linear-light mutation. Measured by applying it and running the workspace with
 `--no-fail-fast`:
 
 - `the_import_renders_match_their_design_source`
-  (`goldens/tooling/tests/import_oracle.rs`) — `backdrop-blur` measures
-  **5.429 %** and `vector-backdrop-blur` **4.866 %**, both against the aa-edge
-  band's 2 % budget. This is the one that compares against Figma, so it is the
-  one that makes the finding a gate rather than a note.
+  (`goldens/tooling/tests/import_oracle.rs`) — `backdrop-blur` measures **5.429
+  %** and `vector-backdrop-blur` **4.866 %**, both against the aa-edge band's 2
+  % budget. This is the one that compares against Figma, so it is the one that
+  makes the finding a gate rather than a note.
 - `the_frosted_panel_scene_matches_its_golden`,
   `the_backdrop_blur_spreads_at_the_mapped_sigma` and
   `the_backdrop_blur_reads_past_the_node_box`
@@ -144,10 +144,10 @@ linear-light mutation. Measured by applying it and running the workspace with
   invariants, which would fail for any change to the blur.
 
 No other test in the workspace failed. Separately, and with the mutation
-reverted, this change moves no committed artifact: exactly 9 of the
-repository's 750 tracked files differ from `origin/main`, all of them
-`.md`/`.rs`/`.json`, and all 106 binary artifacts hash identically under
-`git hash-object`. Asserted per file rather than inferred from a green suite.
+reverted, this change moves no committed artifact: exactly 9 of the repository's
+750 tracked files differ from `origin/main`, all of them `.md`/`.rs`/`.json`,
+and all 106 binary artifacts hash identically under `git hash-object`. Asserted
+per file rather than inferred from a green suite.
 
 ## Why the question survived two slices
 
@@ -202,15 +202,15 @@ The sigma constant is **not** changed here. That is #412's own scope.
   produce evidence that is already committed. A more separated pair would have
   raised the signal somewhat — amber against navy spans 237, 181 and 20 code
   points in red, green and blue, where a blue/yellow edge would span 255 in all
-  three — but the existing separation is already enough that linear light
-  fails by 2.4 to 2.7 times the tolerance budget and loses by 8.7 times on
-  mean. Nothing in the conclusion turns on that headroom.
+  three — but the existing separation is already enough that linear light fails
+  by 2.4 to 2.7 times the tolerance budget and loses by 8.7 times on mean.
+  Nothing in the conclusion turns on that headroom.
 - **Attach a linear working colour space and tag the MSDF atlas as
   colour-space-independent**, the path the archived capture sketched. Rejected:
   the measurement says the current space is the one that matches Figma, so this
   would trade a correct render for an incorrect one and take on the MSDF
   re-tagging risk to do it.
 - **Record the result as a technote rather than a decision.** Rejected: this
-  binds every future painter's output, which is the definition this project
-  uses for a decision record. A painter that blurs in linear light is
-  non-conforming, and that has to be findable from `docs/decisions/`.
+  binds every future painter's output, which is the definition this project uses
+  for a decision record. A painter that blurs in linear light is non-conforming,
+  and that has to be findable from `docs/decisions/`.

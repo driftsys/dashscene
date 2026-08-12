@@ -7,18 +7,18 @@
              item anchors to a principle (P1–P5), a requirement (R1–R7), a
              target-hardware rule (R-T1–R-T5), or an open question (Q-1–Q-6).
 
-These are guardrails the project imposes on itself because its own
-requirements demand proof, not promises. Each item turns a stated principle
-into something a reviewer can pass or fail. Run the list at every design
-review and every slice sign-off: an unchecked item is scheduled work or a
-recorded waiver, never silence.
+These are guardrails the project imposes on itself because its own requirements
+demand proof, not promises. Each item turns a stated principle into something a
+reviewer can pass or fail. Run the list at every design review and every slice
+sign-off: an unchecked item is scheduled work or a recorded waiver, never
+silence.
 
 The identifiers `G-1`–`G-23` name guardrails and are distinct from the goals
 `G1`–`G3` in
 [`01-goals-and-requirements.md`](../specification/01-goals-and-requirements.md).
-Where a guardrail body cites `G2` or `G3` it means the goal. The hyphen
-carries the distinction, as it does for `R` requirements versus `R-T`
-target-hardware rules.
+Where a guardrail body cites `G2` or `G3` it means the goal. The hyphen carries
+the distinction, as it does for `R` requirements versus `R-T` target-hardware
+rules.
 
 ## Fidelity
 
@@ -27,10 +27,10 @@ target-hardware rules.
   G3)
 - **G-2** — Font resolution has exactly two declared modes: (a) a bundled font
   file — a build input, content-hashed; (b) a platform-provided font, resolved
-  from the target image at build time, content-hash pinned in the document,
-  and baked through the same atlas pipeline — hash drift on the target is a
-  named diagnostic. An unresolvable font is a compile error or a waiver. The
-  platform text stack is never used at runtime. (R1, P2; the current single-
+  from the target image at build time, content-hash pinned in the document, and
+  baked through the same atlas pipeline — hash drift on the target is a named
+  diagnostic. An unresolvable font is a compile error or a waiver. The platform
+  text stack is never used at runtime. (R1, P2; the current single-
   font-per-charset rule is
   [font-fallback-deferred-past-v06.md](../decisions/font-fallback-deferred-past-v06.md))
 - **G-3** — The Figma line-height and vertical-metrics mapping is specified in
@@ -42,22 +42,22 @@ target-hardware rules.
   (boundary B, P2)
 - **G-6** — Rotated-child-inside-auto-layout semantics are defined — which box
   feeds the solver — and corpus-tested. (R2)
-- **G-7** — The paint-and-text edge-case triage covers stroke-on-text,
-  per-side strokes, dashed strokes, single-stop gradients, and mask scoping
+- **G-7** — The paint-and-text edge-case triage covers stroke-on-text, per-side
+  strokes, dashed strokes, single-stop gradients, and mask scoping
   ([04-figma-vocabulary-profile.md](../specification/04-figma-vocabulary-profile.md),
   "Paint and text edge cases"). (R6)
 - **G-8** — Letter-case transforms happen in the typesetter, pre-shaping. (P2)
-- **G-9** — Image scale-mode edge semantics (fill / fit / tile / stretch;
-  clamp versus decal) are specified in `dashpaint` and identical across
-  painters — never inherited from a backend default. (G2, P2)
-- **G-10** — The gradient interpolation color space is pinned and
-  single-sourced into all painters; the angular-gradient angle convention is
-  pinned by a golden. (R-T5)
-- **G-11** — CI includes a design-source render oracle: a perceptual diff of
-  the Skia reference painter's output against Figma's REST image export for
-  every corpus frame, with per-rule tolerances. Fidelity is a measured number,
-  not an asserted one. This guardrail is tracked as exit criterion E7, whose
-  status the qualification file states
+- **G-9** — Image scale-mode edge semantics (fill / fit / tile / stretch; clamp
+  versus decal) are specified in `dashpaint` and identical across painters —
+  never inherited from a backend default. (G2, P2)
+- **G-10** — The gradient interpolation color space is pinned and single-sourced
+  into all painters; the angular-gradient angle convention is pinned by a
+  golden. (R-T5)
+- **G-11** — CI includes a design-source render oracle: a perceptual diff of the
+  Skia reference painter's output against Figma's REST image export for every
+  corpus frame, with per-rule tolerances. Fidelity is a measured number, not an
+  asserted one. This guardrail is tracked as exit criterion E7, whose status the
+  qualification file states
   ([05-qualification.md](../specification/05-qualification.md)). (R6, G3)
 
 ## Frame loop
@@ -75,8 +75,8 @@ target-hardware rules.
 - **G-16** — The saveLayer / render-target count is a validator-enforced budget
   with a measured value. The budget is a validator placeholder until Q-6 is
   measured on target hardware
-  ([masks-and-group-opacity.md](../decisions/masks-and-group-opacity.md)).
-  (Q-6, R-T1)
+  ([masks-and-group-opacity.md](../decisions/masks-and-group-opacity.md)). (Q-6,
+  R-T1)
 
 ## Load
 
@@ -88,19 +88,17 @@ target-hardware rules.
   `.dsb`, mmap-resident; nothing is rebuilt by a load-time walk over the tree.
   The `dashbuf` schema reserves these tables. (R5)
 - **G-19** — Load-gate verification hashes hot sections only; its cost is
-  measured and off the render path. (boundary A, R5)
-  **Met, and measured.** It failed when this entry was written, and in **two**
-  places rather than the one this entry first named, one per path.
-  `dashbuf::open` resolved every asset entry through
-  `Container::blob_by_hash`, which hash-verifies the whole payload — that was
-  the **owning** path, the one a host takes when it holds bytes it cannot
-  borrow from. `prefix::Plan::bind` hashed every fetched payload against the
-  section table — that was the **mapped** path, after story #596 moved the
+  measured and off the render path. (boundary A, R5) **Met, and measured.** It
+  failed when this entry was written, and in **two** places rather than the one
+  this entry first named, one per path. `dashbuf::open` resolved every asset
+  entry through `Container::blob_by_hash`, which hash-verifies the whole payload
+  — that was the **owning** path, the one a host takes when it holds bytes it
+  cannot borrow from. `prefix::Plan::bind` hashed every fetched payload against
+  the section table — that was the **mapped** path, after story #596 moved the
   native host onto the prefix reader, and so the one that mattered to this
-  slice. So a load
-  hashed every byte of every asset — cold sections included, 1 935 927 B to show
-  a one-frame root out of a 65-frame document rather than the root's own
-  197 387 B.
+  slice. So a load hashed every byte of every asset — cold sections included, 1
+  935 927 B to show a one-frame root out of a 65-frame document rather than the
+  root's own 197 387 B.
 
   Naming only `open` is the error issue #782 was filed against, and it is the
   same one PR #764 had already corrected in
@@ -112,10 +110,10 @@ target-hardware rules.
 
   Story #597 moved both. `dashbuf::open` calls `Container::verify_hot`, hashes
   the hot region alone, and resolves each entry to where its payload lies
-  without reading it; `dashbuf::residency::BlobResidency::touch` hashes a payload
-  when a prefetch makes it resident, and the prefetch is the shown root's
-  assets and nothing else. Story #598's re-run then moved the criterion onto
-  the mapped path, which is what measures it:
+  without reading it; `dashbuf::residency::BlobResidency::touch` hashes a
+  payload when a prefetch makes it resident, and the prefetch is the shown
+  root's assets and nothing else. Story #598's re-run then moved the criterion
+  onto the mapped path, which is what measures it:
   `goldens/tooling/tests/startup_scaling.rs`, macos aarch64, **197 387 B out of
   both documents — the shown root's own payload, and no copy at all.**
 
@@ -141,10 +139,10 @@ target-hardware rules.
   document is loaded — and the per-frame cost is **not** bounded by the shown
   root today. Measured over the same sixty-five-root document by
   `goldens/tooling/tests/per_frame_scaling.rs` (story #836, macos aarch64): a
-  layout frame runs **65 Taffy layout computations against a one-root
-  document's 1**, and the committed rect table holds **65 rows against 1**, on
-  every frame. Both are 65.00x, and a paint-only frame solves nothing in either
-  document. That is the architecture as designed
+  layout frame runs **65 Taffy layout computations against a one-root document's
+  1**, and the committed rect table holds **65 rows against 1**, on every frame.
+  Both are 65.00x, and a paint-only frame solves nothing in either document.
+  That is the architecture as designed
   ([`the-shown-root-bounds-the-load-not-the-paint.md`](../decisions/the-shown-root-bounds-the-load-not-the-paint.md)
   D1), and story #838 is where the intent changes; the number is recorded here
   so that reading G-20 as "cost tracks the shown root" is not available without

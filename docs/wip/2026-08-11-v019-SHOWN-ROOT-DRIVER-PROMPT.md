@@ -11,12 +11,11 @@
 
 ## The hold on these three is discharged
 
-Epic #833 and all three issues open with **"Hold until v0.18's
-`dashscene-core` and `dashscene-engine` stories have landed."** They have:
-v0.18 closed on 2026-08-11 when epic #769 closed. Read that instruction as
-satisfied rather than as a stop — the interleaving it was protecting is why
-these three go to `main` story by story instead of onto an integration branch,
-not a reason to wait.
+Epic #833 and all three issues open with **"Hold until v0.18's `dashscene-core`
+and `dashscene-engine` stories have landed."** They have: v0.18 closed on
+2026-08-11 when epic #769 closed. Read that instruction as satisfied rather than
+as a stop — the interleaving it was protecting is why these three go to `main`
+story by story instead of onto an integration branch, not a reason to wait.
 
 ## Read first
 
@@ -27,10 +26,10 @@ not a reason to wait.
 - [`../design/host-integration.md`](../design/host-integration.md) — the two
   integration crates as built, the "Known gaps, named" section, and the
   `document_replaced` contract named below.
-- `crates/dashscene-web/src/shown.rs` — the module documentation. It states
-  what R5 does and does not do on the web today, in its own words.
-- `crates/dashscene-ffi/src/lib.rs` — the paragraph beginning "**Root
-  selection is absent on purpose.**"
+- `crates/dashscene-web/src/shown.rs` — the module documentation. It states what
+  R5 does and does not do on the web today, in its own words.
+- `crates/dashscene-ffi/src/lib.rs` — the paragraph beginning "**Root selection
+  is absent on purpose.**"
 
 ## The three stories, and why the order is not negotiable
 
@@ -40,8 +39,8 @@ not a reason to wait.
   because #836's own body says that without the band, half of #822's
   justification "would ship as an assertion, which is the shape v0.13's t2 tier
   spent a slice removing". Do not pre-empt its number — including in prose.
-- **#837 is a vocabulary.** No host can say which root it shows. It settles
-  what "the shown root" _is_ as a concept.
+- **#837 is a vocabulary.** No host can say which root it shows. It settles what
+  "the shown root" _is_ as a concept.
 - **#838 spends it.** The solve, the committed table and the paint follow the
   shown root. This is the story that edits `Arena::dfs_order`.
 
@@ -50,15 +49,15 @@ not a reason to wait.
 Not a neighbouring gap: epic #833's story table names #822 in S19.5's own row,
 and the shown-root decision record is what that issue becomes. **#822 is still
 open**, and closing it belongs with #838 rather than to a later tidy-up —
-otherwise the milestone keeps an open issue describing work that has shipped,
-or someone files a duplicate against it.
+otherwise the milestone keeps an open issue describing work that has shipped, or
+someone files a duplicate against it.
 
 ## What #837 costs beyond `main`
 
 **The C ABI is waiting on it, in writing.** `dashscene-ffi`'s module
-documentation says root selection is absent on purpose, that the ABI would
-carry it, and that "It joins when #837 lands." So #837 unblocks a parameter on
-a published, version-negotiated boundary, and that crate's versioning rule says
+documentation says root selection is absent on purpose, that the ABI would carry
+it, and that "It joins when #837 lands." So #837 unblocks a parameter on a
+published, version-negotiated boundary, and that crate's versioning rule says
 what adding one costs. Decide whether the ABI change rides with the story or
 follows it, and do not leave the sentence saying the concept is still to come
 once it is not.
@@ -85,11 +84,11 @@ crates says "both integration crates" and there are three:
 
 - **`dashscene-web` bounds the load only when no other root draws a payload.**
   `shown.rs` says it plainly: it reads the shown root's assets "only when no
-  other root draws one, and otherwise reads the union over every root", and
-  "the many-frame document R5's criterion is really about — many roots, one
-  payload each — takes the widened path, so **R5 does not hold** for that shape
-  on this target." That is the shape this chain is about, so do not write that
-  the web already bounds it.
+  other root draws one, and otherwise reads the union over every root", and "the
+  many-frame document R5's criterion is really about — many roots, one payload
+  each — takes the widened path, so **R5 does not hold** for that shape on this
+  target." That is the shape this chain is about, so do not write that the web
+  already bounds it.
 - **`dashscene-desktop`** maps the file and binds a byte range per asset entry,
   hashing only the shown root's, so an unread row still decodes.
 - **`dashscene-ffi` selects no root at all.** `ds_runtime_load_document` takes
@@ -105,10 +104,10 @@ crates says "both integration crates" and there are three:
 ## The cost this chain exists to remove
 
 The roadmap prices the shape: **sixty-five artboards of solve and committed
-table per frame while one is shown.** What that costs in milliseconds is
-exactly what #836 measures and what nothing has measured yet — on a tiling GPU
-with a fixed frame budget it is the obvious suspect, and "obvious suspect" is
-not a number.
+table per frame while one is shown.** What that costs in milliseconds is exactly
+what #836 measures and what nothing has measured yet — on a tiling GPU with a
+fixed frame budget it is the obvious suspect, and "obvious suspect" is not a
+number.
 
 Story #842 will not supply it either: it measures the showcase's frame rate on
 device, and `corpus/showcase`'s scenes are single-root. The sixty-five-root
@@ -116,15 +115,15 @@ document is `goldens/tooling/tests/startup_scaling.rs`'s.
 
 ## Environment, as of 2026-08-11
 
-Four things changed under this repository the day these stories were queued.
-All are verified, and each has already cost someone an hour:
+Four things changed under this repository the day these stories were queued. All
+are verified, and each has already cost someone an hour:
 
 - **`just verify` no longer runs a test tier.** PR #908 bounded the pre-push
   gate at seconds: commit-message lint, `lint`, `audit`, a scoped secret scan.
-  It still type-checks — `clippy --all-targets` compiles what it lints, over
-  the workspace and every package `wasm-lint` names — so a compile error still
-  fails there. What no longer runs is any test. Run `just build` by hand for
-  the regression tier and quote its `Summary` line.
+  It still type-checks — `clippy --all-targets` compiles what it lints, over the
+  workspace and every package `wasm-lint` names — so a compile error still fails
+  there. What no longer runs is any test. Run `just build` by hand for the
+  regression tier and quote its `Summary` line.
 - **CI compiles for wasm32.** The `wasm-gates` job runs `just wasm-painter`,
   `just wasm-host` and `just wasm-lint` (issue #903). Before it, four of those
   commands ran on no runner at all; the fifth, a `dashscene-web` clippy line,
@@ -133,9 +132,9 @@ All are verified, and each has already cost someone an hour:
   version from the workspace manifest and asserts what it installed. Do not put
   a copy of the version anywhere (issue #909).
 - **A closing keyword next to an issue number closes that issue** — from a
-  commit message as well as from PR prose, and a negation does not save you.
-  Two issues were shut by accident this way on 2026-08-11. AGENTS.md carries
-  the rule.
+  commit message as well as from PR prose, and a negation does not save you. Two
+  issues were shut by accident this way on 2026-08-11. AGENTS.md carries the
+  rule.
 
 Also still true: **`git push` hangs** behind `git-credential-manager`. Use
 `git -c credential.helper='!gh auth git-credential' push`, and expect even that

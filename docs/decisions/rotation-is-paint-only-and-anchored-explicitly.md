@@ -12,12 +12,11 @@
              `docs/wip/2026-08-07-motion-in-the-document.md`
 
 A node cannot rotate. There is no transform of any kind in the schema, in
-`BindingChannel`, in the variant prop union, or among `Prop`'s 37 variants, so
-a spinner — which `technotes/runtime-content.md` §4 names as a canonical
-example of the bucket it says to prefer whenever it applies — is not
-expressible. This record rules on the two questions story #770 requires
-answered before the channel is built, and on how far the vocabulary lands
-ahead of the painters.
+`BindingChannel`, in the variant prop union, or among `Prop`'s 37 variants, so a
+spinner — which `technotes/runtime-content.md` §4 names as a canonical example
+of the bucket it says to prefer whenever it applies — is not expressible. This
+record rules on the two questions story #770 requires answered before the
+channel is built, and on how far the vocabulary lands ahead of the painters.
 
 ## The anchor is a point in the node's own space, canonically (0, 0)
 
@@ -32,8 +31,8 @@ have been found only when the SVG route landed.
 **Figma rotates about the node's local origin.**
 `corpus/figma-fixtures/node-fx.json` holds a RECTANGLE named `rotated-15deg`,
 `size` 100 × 100, `rotation: -0.26179940325453416` — which is −15° in radians.
-Its `relativeTransform` is `[[cos15, +sin15, 30], [-sin15, cos15, 30]]`.
-Mapping the four local corners of its own box through that matrix gives
+Its `relativeTransform` is `[[cos15, +sin15, 30], [-sin15, cos15, 30]]`. Mapping
+the four local corners of its own box through that matrix gives
 
     (0,0)     -> (30.0000,  30.0000)
     (100,0)   -> (126.5926,  4.1181)
@@ -48,12 +47,12 @@ corner.
 **SVG rotates about the user-space origin.** MDN's `transform` reference states
 it directly: _"If optional parameters `x` and `y` are not supplied, the rotation
 is about the origin of the current user coordinate system."_ The centre default
-belongs to CSS `transform-origin`, which is a different mechanism on a
-different element model.
+belongs to CSS `transform-origin`, which is a different mechanism on a different
+element model.
 
 So the anchor is a point in the node's own coordinate space, with `(0, 0)` — the
-node's top-left — as the canonical value rather than a magic default. Every
-form resolves into that frame:
+node's top-left — as the canonical value rather than a magic default. Every form
+resolves into that frame:
 
 | source                                            | anchor           |
 | ------------------------------------------------- | ---------------- |
@@ -62,16 +61,16 @@ form resolves into that frame:
 | SVG bare `rotate(a)`                              | `(−ex, −ey)`     |
 | a designer's "about the centre"                   | `(w/2, h/2)`     |
 
-Choosing a centre default would have encoded neither producer's convention
-while resembling both, and would have silently mis-lowered every SVG
-`rotate(a)`. Choosing a bare angle with no anchor would have refused
-`rotate(a cx cy)` by name and needed a second append to admit it. The canonical
-`(0, 0)` is the same shape `optional-members-are-ranges-of-arity-one.md` argues
-for against a sentinel.
+Choosing a centre default would have encoded neither producer's convention while
+resembling both, and would have silently mis-lowered every SVG `rotate(a)`.
+Choosing a bare angle with no anchor would have refused `rotate(a cx cy)` by
+name and needed a second append to admit it. The canonical `(0, 0)` is the same
+shape `optional-members-are-ranges-of-arity-one.md` argues for against a
+sentinel.
 
 The angle is in **radians**, which is already this repository's convention for
-an angle — `crates/dashc/src/figma/rest.rs` pins radians for arc angles — and
-is Figma's wire unit.
+an angle — `crates/dashc/src/figma/rest.rs` pins radians for arc angles — and is
+Figma's wire unit.
 
 ## The angle turns clockwise in a y-down space
 
@@ -96,8 +95,8 @@ its vertex stage (story #832).
 ## All three scalars are bindable
 
 `BindingChannel` gains the angle and both anchor components rather than the
-angle alone. SVG's `<animateTransform type="rotate">` carries `"a cx cy"` in
-its `values` list and animates all three, so an angle-only channel set would be
+angle alone. SVG's `<animateTransform type="rotate">` carries `"a cx cy"` in its
+`values` list and animates all three, so an angle-only channel set would be
 incomplete against one of the two routes this vocabulary exists for.
 
 ## Rotation is paint-only
@@ -119,17 +118,16 @@ beside it.
 
 **The consequence for the lowering is not cosmetic.** The Figma path currently
 takes a node's box from `absoluteBoundingBox`, which for a rotated node is the
-bounds of the _rotated_ shape. For the square fixture above that reads
-122.4745 against a true 100 — 22.5 % high at −15°, and √2 ≈ 41.4 % at 45°. The
-factor is not bounded by 41 %: it grows with the aspect ratio, and a 10 × 1000
-node at 89° reads 100 times its true width. A rotated node's box must come from
-`size`.
+bounds of the _rotated_ shape. For the square fixture above that reads 122.4745
+against a true 100 — 22.5 % high at −15°, and √2 ≈ 41.4 % at 45°. The factor is
+not bounded by 41 %: it grows with the aspect ratio, and a 10 × 1000 node at 89°
+reads 100 times its true width. A rotated node's box must come from `size`.
 
 ## Scale and skew are not in this slice
 
 Rotation alone blocks the spinner. `BindingChannel` and the variant prop union
-are append-only at the tail, so scale joins later without an R7 break, and
-Figma cannot author skew at all — shipping it now would put a construct in the
+are append-only at the tail, so scale joins later without an R7 break, and Figma
+cannot author skew at all — shipping it now would put a construct in the
 vocabulary with no producer able to exercise it.
 
 ## The vocabulary and the lowering land complete; a painter may refuse
@@ -144,8 +142,8 @@ Figma and SVG lowering paths"; building it found that no SVG lowering exists.
 The only SVG in `dashc` is path-data parsing for a Figma VECTOR node's
 `fillGeometry` (`crates/dashc/src/figma/vector_field.rs`) — an SVG _document_
 importer is story #774, unbuilt. The SVG rows in the anchor table above are
-still the right rows; they are the contract that importer will be built
-against, not a path that exists today.
+still the right rows; they are the contract that importer will be built against,
+not a path that exists today.
 
 What may lag is a painter. **A painter that accepted a rotation and drew the
 node unrotated would be a silent drop, which P4 forbids**, and this repository
@@ -159,24 +157,24 @@ declared can be asserted against; a silent no-op cannot.
 
 Found while building the story, and a consequence of "paint-only" this record
 did not state. `Prop::Rotation` is per-node: the commit walk resolves every
-node's box absolutely and hands the painter one rect per node, and a clip
-region is an axis-aligned box, so **nothing carries a parent's turn onto a
+node's box absolutely and hands the painter one rect per node, and a clip region
+is an axis-aligned box, so **nothing carries a parent's turn onto a
 descendant**. Figma's rotation is hierarchical — rotating a frame rotates its
 contents.
 
-So the Figma lowering accepts a rotated **leaf** and refuses a rotated node
-that has children, by name:
+So the Figma lowering accepts a rotated **leaf** and refuses a rotated node that
+has children, by name:
 
     a rotated node with children (a rotation does not compose down the tree)
 
 Lowering it would draw the frame turned with its contents left straight, which
 is the silent-wrong-picture P4 forbids and the same failure the painter
-capability above exists to prevent. Whether the document should gain a
-composing transform is issue #845, and it is the third thing that would justify
-revisiting the per-node 2×3 matrix this record deferred.
+capability above exists to prevent. Whether the document should gain a composing
+transform is issue #845, and it is the third thing that would justify revisiting
+the per-node 2×3 matrix this record deferred.
 
-A rotated node with no `size` is refused for the neighbouring reason: its
-extent would have to come from `absoluteBoundingBox`.
+A rotated node with no `size` is refused for the neighbouring reason: its extent
+would have to come from `absoluteBoundingBox`.
 
 ## The composing transform is deferred to v1
 
@@ -186,17 +184,17 @@ exposed, are recorded here because both were read wrong the first time: the
 paragraphs below replace an earlier draft whose central claims did not survive
 being checked against the code.
 
-**The P1 objection is withdrawn.** #845 describes one of its two mechanisms as
-a resolution pass composing ancestor rotations into each descendant's geometry,
-"which resolves a result into the document and runs into P1". That does not
-hold for a composition performed at commit: the composed angle would land in
-`RectEntry`, and `CommittedScene` is not the document. `Txn::commit_with`
-writes no resolved geometry back into node data, and the `.dsb` writers never
-read `committed()`. The cascade such a composition would ride is the one the
-walk already runs for the clip region and for effective visibility — not the
-one for position, which the walk does not perform at all. `LayoutSolver` states
-that seam: commit "asks exactly one solver for every node's rect and computes
-no geometry of its own".
+**The P1 objection is withdrawn.** #845 describes one of its two mechanisms as a
+resolution pass composing ancestor rotations into each descendant's geometry,
+"which resolves a result into the document and runs into P1". That does not hold
+for a composition performed at commit: the composed angle would land in
+`RectEntry`, and `CommittedScene` is not the document. `Txn::commit_with` writes
+no resolved geometry back into node data, and the `.dsb` writers never read
+`committed()`. The cascade such a composition would ride is the one the walk
+already runs for the clip region and for effective visibility — not the one for
+position, which the walk does not perform at all. `LayoutSolver` states that
+seam: commit "asks exactly one solver for every node's rect and computes no
+geometry of its own".
 
 **Text is not the obstacle it resembles.** A glyph run carries no rotation of
 its own and does not need one: it is anchored to a rect through
@@ -207,8 +205,8 @@ pair. A rotated frame's label stays straight today because the child rect
 carries no rotation, not because text cannot turn.
 
 What text does instead is constrain the row. A rect and an anchored run are two
-consumers of one origin, anchor and angle, and they do not always agree: where
-a parent's angle and a child's sum to zero — an upright label inside a tilted
+consumers of one origin, anchor and angle, and they do not always agree: where a
+parent's angle and a child's sum to zero — an upright label inside a tilted
 frame — the composed motion is a pure translation, which the rect absorbs by
 moving its origin and an anchored run cannot. Composition is therefore not a
 matter of summing an angle per node.
@@ -222,10 +220,10 @@ today, and `docs/specification/04-figma-vocabulary-profile.md` already
 classifies `clip-on-rotated` as LATER.
 
 **What deferring does not cost, and what it does.** No field must be reserved.
-`dashbuf`'s node table already carries the angle and both anchor components,
-and it evolves append-only, so a composing transform arrives without a
-structural migration. No committed artifact locks in the present reading
-either: no `.dsb` in this repository holds a rotated node at all.
+`dashbuf`'s node table already carries the angle and both anchor components, and
+it evolves append-only, so a composing transform arrives without a structural
+migration. No committed artifact locks in the present reading either: no `.dsb`
+in this repository holds a rotated node at all.
 
 The exposure is semantic rather than structural. The refusal lives in the Figma
 walk alone, and by P5 that binds one producer and not the format —

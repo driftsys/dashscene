@@ -11,26 +11,25 @@
 
 ## Context
 
-The 2026-07-19 debt-backlog triage swept every open `debt` issue and
-re-anchored each to the slice where it next matters. A large cluster verified
-as independent debt — perf and allocation micro-debt, cleanup, test-gaps, and
+The 2026-07-19 debt-backlog triage swept every open `debt` issue and re-anchored
+each to the slice where it next matters. A large cluster verified as independent
+debt — perf and allocation micro-debt, cleanup, test-gaps, and
 latent-correctness guards — with no near-term consumer, and was anchored to v1.
 
 v1's scope is "Unity, full feature set, performance, production toolchain": a
-large slice whose principal work is the Unity painter, the full feature set,
-the rendering-performance pass, and the production toolchain. Debt anchored
-there does not get a focused pass — it sits under those large deliverables and
-never surfaces.
+large slice whose principal work is the Unity painter, the full feature set, the
+rendering-performance pass, and the production toolchain. Debt anchored there
+does not get a focused pass — it sits under those large deliverables and never
+surfaces.
 
 ## Decision
 
 The independent code-debt splits out of v1 into a dedicated pre-v1 hardening
 slice, **v0.13** (milestone #14, epic #362): the items across the `dashcue`,
 `dashlang`, `dashscene-core`, `dashscene-engine`, `dashscene-typeset`, paint,
-goldens, and repo/importers clusters that are resolvable on their own — perf
-and allocation, cleanup, test-gaps, and latent-correctness guards. They
-parallelize by crate (one PR per cluster), and none is gated on a v1
-deliverable.
+goldens, and repo/importers clusters that are resolvable on their own — perf and
+allocation, cleanup, test-gaps, and latent-correctness guards. They parallelize
+by crate (one PR per cluster), and none is gated on a v1 deliverable.
 
 Feature scope gated on a specific v1 consumer **stays on v1** — it is not debt
 to burn down, it is work that unlocks when its consumer lands: STRING/BOOL and
@@ -58,21 +57,21 @@ as burn-down.
 work.** Such an item goes on the milestone and into its own track (epic #474),
 beside the burn-down rather than inside it. The test is whether a session
 working alone can finish it: if the next step is a ruling only the repository
-owner can give, or an input only the owner can supply, it is not burn-down
-work no matter how small the eventual edit.
+owner can give, or an input only the owner can supply, it is not burn-down work
+no matter how small the eventual edit.
 
 Seven items met it when the term was written. **Four were settled the same
 day**, which is the term's own justification: they were not hard, they were
 merely unasked.
 
-- **#462** — `dashpack` treats a profile exceeding the target memory budget as
-  a validator error, and **no memory budget or target display resolution
-  exists anywhere in `docs/specification/`**; `03-target-hardware-rules.md`
-  carries R-T1 to R-T4 and no number. A profile that cannot fail is not a
-  contract. **Deferred to v1**, set against target hardware alongside #170.
-  This accepts a stated gap for the whole of v0: a document can pack
-  successfully and still not fit the target, and nothing detects it. The
-  per-asset bands still bind; only the aggregate contract is deferred.
+- **#462** — `dashpack` treats a profile exceeding the target memory budget as a
+  validator error, and **no memory budget or target display resolution exists
+  anywhere in `docs/specification/`**; `03-target-hardware-rules.md` carries
+  R-T1 to R-T4 and no number. A profile that cannot fail is not a contract.
+  **Deferred to v1**, set against target hardware alongside #170. This accepts a
+  stated gap for the whole of v0: a document can pack successfully and still not
+  fit the target, and nothing detects it. The per-asset bands still bind; only
+  the aggregate contract is deferred.
 - **#373** — the MSDF 14 px/em floor is enforced at import time against the
   authored size, while `docs/decisions/q1-msdf-below-14px.md` justifies
   MSDF-only text on sizes being static. dashscene animates, so a document can
@@ -81,13 +80,13 @@ merely unasked.
   reachable minimum**, walking the `dashcue` specs bound to a node instead of
   trusting the authored size. It stays a compile-time named diagnostic, because
   a reachable scale is a document property and is knowable in advance — unlike
-  painter capability, which is why backdrop blur reports at render time and
-  this does not.
+  painter capability, which is why backdrop blur reports at render time and this
+  does not.
 - **#422** — the `blur-falloff` band caught none of six measured mutations.
   **Ruled: split the number** into the residual it was written for and a
   separate gate chosen against those mutations.
-- **#446** — **Ruled: correct the record in place, no new record.** Only half
-  of it was ever a judgement; the rest is a live contradiction on `main`.
+- **#446** — **Ruled: correct the record in place, no new record.** Only half of
+  it was ever a judgement; the rest is a live contradiction on `main`.
 
 All three of the ruled items became ordinary burn-down work.
 
@@ -105,26 +104,26 @@ the burn-down's items were perf and allocation debt with no measurement behind
 them** — reuse a commit-path allocation, stop cloning a level vec per line,
 prune FLIP targets in better than O(n²). Each names a genuine inefficiency and
 each analysis is sound. None has a number saying it matters: there is no frame
-budget, no target-hardware measurement, and no profile identifying which is on
-a hot path.
+budget, no target-hardware measurement, and no profile identifying which is on a
+hot path.
 
 Fixing one produces a PR whose success criterion is "the tests still pass",
 which is not evidence the change was worth making, nor that it did not make
 something else worse. That is the #462 argument applied to optimisation:
 **resolvable is not the same as measurable.**
 
-**Perf debt with no measurement behind it goes to v1's performance pass**,
-which is where the profile that should select and order it gets produced. It
-goes with a home and an entry condition (epic #476), not as a bare milestone
-move — a bare move would recreate the "buried under v1" failure this whole
-record exists to fix, and the entry condition lets "measured, not worth it" be
-a real outcome rather than a silent drop.
+**Perf debt with no measurement behind it goes to v1's performance pass**, which
+is where the profile that should select and order it gets produced. It goes with
+a home and an entry condition (epic #476), not as a bare milestone move — a bare
+move would recreate the "buried under v1" failure this whole record exists to
+fix, and the entry condition lets "measured, not worth it" be a real outcome
+rather than a silent drop.
 
 Four perf-shaped items stayed in v0.13, each correctness wearing perf clothing:
 **#197** (interners growing without bound is a leak, not a slow path), **#276**
 (a clip-blind overlap test costs a wrong decision, not a slow one), **#200**
-(hardening carrying a fill-completeness assert), and **#322** (it changes
-layout output).
+(hardening carrying a fill-completeness assert), and **#322** (it changes layout
+output).
 
 ### The line, in full
 
@@ -139,8 +138,8 @@ layout output).
   consumer" with "resolvable debt", so the hygiene debt never gets a focused
   pass — the problem this decision exists to fix.
 - **An unnumbered "pre-v1 debt" milestone outside the version sequence.** Keeps
-  it off the v0.x numbering, but breaks the convention that every milestone
-  maps to a roadmap slice.
+  it off the v0.x numbering, but breaks the convention that every milestone maps
+  to a roadmap slice.
 - **An epic on the v1 milestone, no new slice.** Lightest, but the debt still
   reads as "v1" in milestone and board views — the drift this avoids.
 
@@ -160,11 +159,11 @@ Considered at the 2026-07-27 revision, for the third term:
 
 - v0 now runs through v0.13. The slice was provisional and **was revised at the
   v0.12 close (2026-07-27)**, like v0.11 and v0.12 before it.
-- The v0.13 epic (#362) carries the full by-crate checklist and the
-  out-of-scope rationale; the milestone (#14) holds the items.
+- The v0.13 epic (#362) carries the full by-crate checklist and the out-of-scope
+  rationale; the milestone (#14) holds the items.
 - **v0.13 runs as two tracks**: the burn-down (#362, 76 items across three
-  streams, in three tiers) and the inputs-and-rulings track (#474, 3 items).
-  Two further items are blocked on Actions billing. The milestone holds 81.
+  streams, in three tiers) and the inputs-and-rulings track (#474, 3 items). Two
+  further items are blocked on Actions billing. The milestone holds 81.
 - **The burn-down is tiered**, so it is worked in an order rather than as a
   list: 23 `t1-correctness` (wrong output, crash, silent drop), 20
   `t2-check-has-no-teeth` (test gaps and checks that cannot fail), 33
@@ -178,8 +177,8 @@ Considered at the 2026-07-27 revision, for the third term:
   criterion either; #271 is already a _disclosed_ limit under E3 rather than an
   unmet one.
 - The 2026-07-19 item count in this record's original text (54) is superseded.
-  The correction is not a re-scoping: 23 open issues carried no milestone at
-  all and so were in nobody's count, 22 more were re-anchored from closed
+  The correction is not a re-scoping: 23 open issues carried no milestone at all
+  and so were in nobody's count, 22 more were re-anchored from closed
   milestones, and five were stragglers on slices that had already closed. The
-  count in #362 is the current one, and a milestone sweep for un-anchored
-  issues is now part of the phase-end revision rather than assumed.
+  count in #362 is the current one, and a milestone sweep for un-anchored issues
+  is now part of the phase-end revision rather than assumed.

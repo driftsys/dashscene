@@ -45,8 +45,8 @@
 ## The input
 
 The repository owner stated that dashscene's target product content includes
-**photorealistic 3D scene renders and background photographs**, carried as
-image fills.
+**photorealistic 3D scene renders and background photographs**, carried as image
+fills.
 
 Both halves matter, and they are not the same content. A rendered interior is
 dense material detail throughout. A background photograph — a landscape, a
@@ -89,9 +89,9 @@ not decoration. What is unevidenced is whether those numbers sit in the right
 place for photorealistic content, which has per-texel variation everywhere
 rather than in a few regions.
 
-Issue #455 asked for one real high-frequency asset. Under this input it is no longer
-a spot check: it is the first measurement of the class the product ships, and
-its result should be read as evidence about the band rather than as one more
+Issue #455 asked for one real high-frequency asset. Under this input it is no
+longer a spot check: it is the first measurement of the class the product ships,
+and its result should be read as evidence about the band rather than as one more
 row in the table.
 
 **Denoising is a trap worth stating.** A denoised path-traced render is much
@@ -102,9 +102,9 @@ fixture's residual should be measured before it is committed, not after.
 
 ### 2. The memory budget (#462)
 
-Issue #462 records that the packer has no aggregate memory budget, and was deferred to
-v1 to be set against target hardware. This input supplies the other half of what
-that decision needs: the content class. A document carrying several
+Issue #462 records that the packer has no aggregate memory budget, and was
+deferred to v1 to be set against target hardware. This input supplies the other
+half of what that decision needs: the content class. A document carrying several
 photorealistic renders has a materially different resident footprint from one
 carrying flat UI graphics at the same pixel dimensions, because the escalation
 ladder will stop at finer rungs for detailed content.
@@ -117,8 +117,8 @@ known.
 
 The bands record notes that no committed asset lands on 4x4 or 5x5, so the
 ladder's fine end is walked but never chosen. Detailed content is exactly what
-would stop there. Whether that gap closes on its own once a representative
-asset exists is measurable as soon as one does.
+would stop there. Whether that gap closes on its own once a representative asset
+exists is measurable as soon as one does.
 
 ### 4. The painter's working colour space
 
@@ -141,8 +141,8 @@ re-examined rather than assumed to carry over.
 ## The asset cannot be self-authored, and that is a policy question
 
 The owner has stated they cannot supply a photorealistic render. So the asset
-that would settle the questions above has to come from outside the project,
-and `docs/decisions/figma-corpus-self-authored-only.md` says:
+that would settle the questions above has to come from outside the project, and
+`docs/decisions/figma-corpus-self-authored-only.md` says:
 
 > **Nothing enters `corpus/` that the project did not author.**
 
@@ -177,8 +177,8 @@ change, and a licence summarised from memory is not a licence check.
 Two assets, not one:
 
 - a **CC0 photorealistic 3D interior** — a Blender demo file (Classroom,
-  Barbershop) or a Bitterli rendering-resources scene, rendered to a still.
-  This is the target content class.
+  Barbershop) or a Bitterli rendering-resources scene, rendered to a still. This
+  is the target content class.
 - a **real landscape photograph** — beach or mountain — as the second content
   class, not merely a second sample. Background photographs are target content
   in their own right, and their statistics differ from a rendered interior as
@@ -187,9 +187,9 @@ Two assets, not one:
 
 The corpus-policy amendment is still owed as an explicit record, because
 `figma-corpus-self-authored-only.md` is a standing ruling and this direction
-departs from it. It should say what class of third-party asset is admitted
-(CC0, or CC0 plus CC-BY with a NOTICE entry) and why the reasoning behind the
-original ruling does not reach it.
+departs from it. It should say what class of third-party asset is admitted (CC0,
+or CC0 plus CC-BY with a NOTICE entry) and why the reasoning behind the original
+ruling does not reach it.
 
 ## What would settle it
 
@@ -198,8 +198,8 @@ about content nobody has run through the ladder. A single photorealistic render
 in the corpus turns items 1 and 3 into numbers, and gives item 2 something to be
 set against.
 
-That is #455's fixture. The change this note makes is to its weight: it is not
-a nice-to-have confirmation of a band that is already a gate, it is the first
+That is #455's fixture. The change this note makes is to its weight: it is not a
+nice-to-have confirmation of a band that is already a gate, it is the first
 evidence about the shipping content class — and it is now blocked on the policy
 question above rather than on anyone's time.
 

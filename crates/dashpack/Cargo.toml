@@ -53,4 +53,3 @@ ktx2 = { workspace = true }
 # dependency for now: the packer's canonical-to-RGBA ingest is a later story,
 # and `dashpack::profile` takes texels rather than encoded bytes (story #432).
 png = { workspace = true }
-

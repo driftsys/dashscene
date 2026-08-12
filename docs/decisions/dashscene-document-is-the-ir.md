@@ -18,15 +18,15 @@ and `FbNode` where both are in scope.
 ## Why §20 is overturned
 
 §20 retired the working name `SCD` — correctly — and then named the IR after the
-file format, `DSB`. Its argument was that "two names for one thing is a cost this
-removes".
+file format, `DSB`. Its argument was that "two names for one thing is a cost
+this removes".
 
 The IR and its serialization are not one thing. `.dsb` is one way to carry the
 document; the arena in `dashscene-core` is another, and a producer can populate
 the arena without a `.dsb` ever existing. Naming the IR after one of its
-encodings makes the other encoding read as secondary, and it makes P5 —
-"DSB is a schema-first IR with its own spec and validator" — assert that a file
-format has a validator. What is validated is the document.
+encodings makes the other encoding read as secondary, and it makes P5 — "DSB is
+a schema-first IR with its own spec and validator" — assert that a file format
+has a validator. What is validated is the document.
 
 The drift was already visible within a day of §20 landing. Three documents
 described the same name and no two agreed:

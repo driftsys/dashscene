@@ -8,183 +8,237 @@
 
 ## Context
 
-`dashscene` needed a set of repo-tooling conventions — workspace
-shape, task runner, formatting, versioning, CI — rather than inventing
-its own. `driftsys/git-std`, `driftsys/upskill`, and `driftsys/markspec`
-were read directly as the house-style reference.
+`dashscene` needed a set of repo-tooling conventions — workspace shape, task
+runner, formatting, versioning, CI — rather than inventing its own.
+`driftsys/git-std`, `driftsys/upskill`, and `driftsys/markspec` were read
+directly as the house-style reference.
 
 ## Decision
 
 Follow those three repos' conventions:
 
-**Cargo workspace shape** (git-std): `resolver = "3"`;
-`[workspace.package]` with `edition = "2024"` (not 2021), `license =
-"MIT"`, shared `repository`; `[workspace.dependencies]` with `path +
-version` for every internal crate; `[profile.release]` — `lto = true`,
-`strip = true`, `codegen-units = 1`.
+**Cargo workspace shape** (git-std): `resolver = "3"`; `[workspace.package]`
+with `edition = "2024"` (not 2021), `license =
+"MIT"`, shared `repository`;
+`[workspace.dependencies]` with `path +
+version` for every internal crate;
+`[profile.release]` — `lto = true`, `strip = true`, `codegen-units = 1`.
 
-**This repository diverges on the licence.** git-std's convention is MIT,
-and git-std is itself MIT-licensed. dashscene is Apache-2.0, for the
-patent grant — see
-`docs/decisions/apache-2-0-for-the-patent-grant.md`. The rest of the
+**This repository diverges on the licence.** git-std's convention is MIT, and
+git-std is itself MIT-licensed. dashscene is Apache-2.0, for the patent grant —
+see `docs/decisions/apache-2-0-for-the-patent-grant.md`. The rest of the
 workspace shape above is followed as written.
 
-`[workspace.package]` also carries **`version`**, added by story #795 when
-the workspace's together-versioning was made structural: every crate takes
+`[workspace.package]` also carries **`version`**, added by story #795 when the
+workspace's together-versioning was made structural: every crate takes
 `version.workspace = true` and holds no version of its own to drift
 ([publishable-and-the-first-version.md](publishable-and-the-first-version.md)).
 
-**`justfile`** (git-std's is the template): `assemble` (cargo build),
-`test`, `lint` (`cargo clippy -- -D warnings` + `cargo fmt -- --check` +
-`dprint check` + `markdownlint-cli`), `audit` (`cargo audit`), `check`
-(test + lint + audit), `build` (assemble + check), `verify` (the pre-push
-hook: `git std lint --range origin/main..HEAD` + `lint` + `audit` + a
-secret scan scoped to the objects being pushed — seconds, and no test
-tier; `just build` is the thorough gate),
-`fmt`, `doc` (`cargo doc --open`), `book` (`mdbook serve`), `release`
-(`git std bump`), `publish` (ordered `cargo publish` per crate,
-dependency order), `install`, `clean`. Add two dashscene-specific
-recipes: `wasm` (build `dashc` for `wasm32-unknown-unknown`, needed by
-the Deno importer) and `deno-check`/`deno-test`/`deno-fmt` scoped to
-`importers/figma/`.
+**`justfile`** (git-std's is the template): `assemble` (cargo build), `test`,
+`lint` (`cargo clippy -- -D warnings` + `cargo fmt -- --check` + `prim`),
+`audit` (`cargo audit`), `check` (test + lint + audit), `build` (assemble +
+check), `verify` (the pre-push hook: `git std lint --range origin/main..HEAD` +
+`lint` + `audit` + a secret scan scoped to the objects being pushed — seconds,
+and no test tier; `just build` is the thorough gate), `fmt`, `doc`
+(`cargo doc --open`), `book` (`mdbook serve`), `release` (`git std bump`),
+`publish` (ordered `cargo publish` per crate, dependency order), `install`,
+`clean`. Add two dashscene-specific recipes: `wasm` (build `dashc` for
+`wasm32-unknown-unknown`, needed by the Deno importer) and
+`deno-check`/`deno-test`/`deno-fmt` scoped to `importers/figma/`.
 
 The `test` and `check` recipes deviate from that template: `test` runs the
-sanity tier and `check` the regression tier, and `test-regression`,
-`calibrate` and `test-all` are additions. The reason, the measurements and
-the tier definitions are in [test-tiers.md](test-tiers.md).
+sanity tier and `check` the regression tier, and `test-regression`, `calibrate`
+and `test-all` are additions. The reason, the measurements and the tier
+definitions are in [test-tiers.md](test-tiers.md).
 
-The dashscene-specific set has grown past those two, and the `justfile`
-itself is the authority rather than this list. Two additions are worth
-naming here because they carry decisions: **`package`**, which runs the
-registry-consistency test and then `cargo package` for every publishable
-member — the step that answers "what does a consumer actually get" — and
-**`measure-runtime`**, which weighs `measure/web-minimal` beside `demo-web`
-because a library crate has no measurable size of its own. Both came from
-story #795, and both are explained in
+The dashscene-specific set has grown past those two, and the `justfile` itself
+is the authority rather than this list. Two additions are worth naming here
+because they carry decisions: **`package`**, which runs the registry-consistency
+test and then `cargo package` for every publishable member — the step that
+answers "what does a consumer actually get" — and **`measure-runtime`**, which
+weighs `measure/web-minimal` beside `demo-web` because a library crate has no
+measurable size of its own. Both came from story #795, and both are explained in
 [publishable-and-the-first-version.md](publishable-and-the-first-version.md).
 
-**`dprint.json`**: markdown only (`includes: ["**/*.md"]`, the
-`dprint/markdown` plugin) — it does not replace `cargo fmt` or `deno
-fmt`, both of which run as their own separate lint/fmt steps for their
-respective languages.
+**prim** replaced dprint and markdownlint-cli in one step, because the two were
+a pair over one file set and swapping either alone would have reformatted those
+files twice. prim covers Markdown, JSON, YAML and TOML, so the migration also
+gained the JSON, YAML and TOML that nothing formatted before it. It does not
+replace `cargo fmt` or `deno fmt`, both of which stay as their own lint and fmt
+steps for their respective languages.
 
-**`.git-std.toml`**: `scheme = "semver"`, `strict = true`, `scopes` as
-an explicit list rather than `"auto"`, which only discovers `crates/*`
-and leaves no valid scope for commits that aren't crate-specific. The
-list is every crate name — 13 when this was written, **19 today** — plus a
-scope for each non-crate component
-that has its own artifacts and tooling — `goldens` (the golden images
-and their diff tooling), `corpus` (the fixture corpus itself: captured
-Figma JSON, fonts, generated stress scenes — data only, since the
-capture tool is code and lives under `importers/`), `importers` (the
-Deno/TypeScript Figma importer and its capture tool, which have their
-own toolchain and their own CI job), `demo` (both showcase hosts) and
-`measure` (artifacts built to be weighed rather than run) — plus the
-repo-wide scopes `repo`,
-`docs`, `ci`, `hooks`, `deps`, `release`. `specs/` and `docs/` share the
-`docs` scope: `specs/` is documentation and earns no scope of its own.
-Also `[versioning] tag_prefix = "v"`.
+**No config file.** prim reads `.editorconfig` and nothing else, so
+`dprint.json` and `.markdownlint.json` are both gone rather than replaced.
+`.editorconfig` carries the one prim-specific key, `prim_mdlint_strict`, which
+selects the lint tier: the floor tier everywhere, and the strict tier for the
+shipped mdBook under `docs/book`, whose readers are outside this repository.
+`**/SUMMARY.md` is put back on the floor tier — scaffolded by `prim init`, and
+kept so re-running it changes nothing, though this repository's contents page
+carries one top-level heading and passes the strict tier without it.
+
+**One rule tightens.** The strict tier makes MD024 an error, where
+`.markdownlint.json` allowed a repeated heading under a different parent
+(`siblings_only`). It is the only place the migration is stricter than what it
+replaced, it applies to `docs/book` alone, and it is deliberate: in a published
+document a repeated heading is an ambiguous anchor. prim has no per-rule
+override, so the way back is to drop the section rather than to configure it.
+
+**`.primignore`** is the exclusion list, in gitignore syntax, and the file
+itself is the authority for what it holds. `corpus/` and `goldens/` carry
+`dprint.json`'s excludes forward — without them prim would rewrite two vendored
+OFL licence texts and the fixture captures the Deno tooling regenerates — and
+`**/node_modules` and `**/.git-std` come with them, because `.gitignore` covers
+neither. `.claude/` is new: `.gitignore` stops at `.claude/worktrees/`, so the
+rest of a developer's untracked agent content sat inside prim's walk. And
+`CHANGELOG.md` is there because `git std bump` writes it: without the entry the
+two tools fight once per release, the pre-commit hook rewrapping what the bump
+generated and the next bump regenerating it unwrapped.
+
+**No manifest is excluded.** The workspace `Cargo.toml` was, until prim 0.3.0:
+the TOML formatter collapsed an array nested in an inline table onto one line
+and ignored `max_line_length` while doing it, taking that file to 198 columns
+from 91 (driftsys/prim#96). Fixed, and measured on the real manifest — 0.3.0
+leaves it at 91 columns and 335 lines, changing only two feature lists from a
+four-space indent to the two `.editorconfig` already asked for. Long lines do
+remain in other manifests, and they are not this: they are `description`
+strings, which no formatter wraps.
+
+**Every gate invokes prim on a directory.** Since 0.3.0 `.primignore` holds
+however prim is invoked, with `--no-primignore` as the deliberate override. Up
+to 0.2.4 the two verbs disagreed: `prim fmt <path>` rewrote an ignored file, and
+`prim lint <path>` reported nothing on one, so a hook written that way was a
+gate that checked nothing (driftsys/prim#98). Nothing here depended on either
+behaviour, because every gate points at `.` — keep it that way.
+
+**prim is pinned**, in `bootstrap` and in the CI `prim` job, and the two must
+move together — asserted by `demo/tests/toolchain_pins.rs`, because two copies
+of one fact is the drift this repository keeps hitting. The rule this follows is
+the one `cargo audit` is the exception to: pin what reads only this repository,
+track what reads a live upstream feed. prim decides how every Markdown file in
+the tree is wrapped, so a version that changed a wrap decision would put the
+whole tree out of format under a developer who ran no command. `bootstrap`
+therefore checks the installed version rather than mere presence, and says so
+when another prim earlier on PATH still wins.
+
+**Two verbs, not one.** `just prim` runs `prim fmt --check .` and then
+`prim lint .`. They are not redundant: `prim lint` reports format drift for
+JSON, YAML and TOML but not for Markdown, so it exits 0 on a Markdown file that
+`prim fmt --check` rejects.
+
+**`.git-std.toml`**: `scheme = "semver"`, `strict = true`, `scopes` as an
+explicit list rather than `"auto"`, which only discovers `crates/*` and leaves
+no valid scope for commits that aren't crate-specific. The list is every crate
+name — 13 when this was written, **19 today** — plus a scope for each non-crate
+component that has its own artifacts and tooling — `goldens` (the golden images
+and their diff tooling), `corpus` (the fixture corpus itself: captured Figma
+JSON, fonts, generated stress scenes — data only, since the capture tool is code
+and lives under `importers/`), `importers` (the Deno/TypeScript Figma importer
+and its capture tool, which have their own toolchain and their own CI job),
+`demo` (both showcase hosts) and `measure` (artifacts built to be weighed rather
+than run) — plus the repo-wide scopes `repo`, `docs`, `ci`, `hooks`, `deps`,
+`release`. `specs/` and `docs/` share the `docs` scope: `specs/` is
+documentation and earns no scope of its own. Also
+`[versioning] tag_prefix = "v"`.
 
 **That count is now load-bearing rather than descriptive.**
 `demo/tests/registry_consistency.rs` derives the crate list from
 `[workspace] members` and fails when `scopes` disagrees with it, so a crate
 added without its scope no longer merges (story #795).
 
-**`[[version_files]]` changed shape entirely at story #795, and the
-description above no longer holds.** There is no longer one entry per crate
-pointing at that crate's own version string: the crates inherit
-`version.workspace = true` and hold no version to point at. The entries are
-now one per **internal dependency requirement** in the root manifest, each
-anchored on its own crate name — nineteen of them — because git-std's
-`write_version` splices exactly one span per entry, so a single unanchored
-entry would move one requirement and leave the rest at the old version
-behind a registry that looked covered. The workspace version itself needs no
-entry, since git-std's builtin Cargo handling moves `[workspace.package]
-version` section-scoped. The full reasoning, including the eighteenth entry
-that was written and removed on review, is in
+**`[[version_files]]` changed shape entirely at story #795, and the description
+above no longer holds.** There is no longer one entry per crate pointing at that
+crate's own version string: the crates inherit `version.workspace = true` and
+hold no version to point at. The entries are now one per **internal dependency
+requirement** in the root manifest, each anchored on its own crate name —
+nineteen of them — because git-std's `write_version` splices exactly one span
+per entry, so a single unanchored entry would move one requirement and leave the
+rest at the old version behind a registry that looked covered. The workspace
+version itself needs no entry, since git-std's builtin Cargo handling moves
+`[workspace.package]
+version` section-scoped. The full reasoning, including the
+eighteenth entry that was written and removed on review, is in
 [publishable-and-the-first-version.md](publishable-and-the-first-version.md).
 
-**CI** (`.github/workflows/ci.yml`, git-std's shape): separate jobs for
-`fmt` (`cargo fmt -- --check`), `dprint` (`dprint/check@v2.3` action),
-`clippy` (`cargo clippy -- -D warnings`, `Swatinem/rust-cache`), `test`
-(`cargo test`, `Swatinem/rust-cache`), `convco` (PR-only conventional-
-commit-message validation), aggregated by a final `ci` job that fails if
-any of the above failed. dashscene adds `markdownlint` and `audit` as jobs
-of their own: both run in `just lint`/`just check`, and until the pre-push
-hook stopped being where the whole gate ran they had no CI job at all —
-which meant a pull request from a fork ran neither. For dashscene, add a `deno` job (check/lint/
-test/fmt, scoped to `importers/figma/` via a `dorny/paths-filter` gate so
-Rust-only changes don't trigger it), a `wasm-build` job (`dashc` →
-`wasm32-unknown-unknown`, verifies the Deno importer's dependency
-actually builds) and a `wasm-gates` job (everything in `just check` and
-`just lint` that names that triple and is not `dashc` — `just
-wasm-painter`, `just wasm-host` and `just wasm-lint`, invoked as recipes
-so CI holds no second copy of the list). The two are separate because
-`deno` waits on the first for its artifact and need not wait on the
-second. Neither covers the **release**-profile wasm builds `just
+**CI** (`.github/workflows/ci.yml`, git-std's shape): separate jobs for `fmt`
+(`cargo fmt -- --check`), `prim` (`just prim`, on a checksum-verified release
+tarball), `clippy` (`cargo clippy -- -D warnings`, `Swatinem/rust-cache`),
+`test` (`cargo test`, `Swatinem/rust-cache`), `convco` (PR-only conventional-
+commit-message validation), aggregated by a final `ci` job that fails if any of
+the above failed. The `prim` job runs the recipe rather than repeating its two
+verbs, for the reason `wasm-gates` does: a second copy in YAML is the drift this
+repository keeps hitting. dashscene adds `audit` as a job of its own: it runs in
+`just lint`/`just check`, and until the pre-push hook stopped being where the
+whole gate ran it had no CI job at all — which meant a pull request from a fork
+ran neither it nor the markdown gate. For dashscene, add a `deno` job
+(check/lint/ test/fmt, scoped to `importers/figma/` via a `dorny/paths-filter`
+gate so Rust-only changes don't trigger it), a `wasm-build` job (`dashc` →
+`wasm32-unknown-unknown`, verifies the Deno importer's dependency actually
+builds) and a `wasm-gates` job (everything in `just check` and `just lint` that
+names that triple and is not `dashc` — `just
+wasm-painter`, `just wasm-host` and
+`just wasm-lint`, invoked as recipes so CI holds no second copy of the list).
+The two are separate because `deno` waits on the first for its artifact and need
+not wait on the second. Neither covers the **release**-profile wasm builds
+`just
 web-build` and `just measure-runtime` run, so a failure that appears only
 under `lto = true` is caught by no job.
 
 Every job that compiles something reaching `dashbuf` needs `flatc`, whose
-build.rs shells out to it — nine of them, which is more than this
-paragraph names, so derive the list with
-`grep -c install-flatc .github/workflows/ci.yml` rather than from the
-prose above. That install is a **local composite action**,
-`.github/actions/install-flatc`, referenced as a path so the reference
-needs no release and no third-party trust. It reads the version from the
-workspace manifest's exact `flatbuffers` requirement rather than
-restating it, and asserts what it installed — so the pin has one home and
-a mismatch fails there by name (issue #909). Why each job needs it
-differs per job and stays at the call site.
+build.rs shells out to it — nine of them, which is more than this paragraph
+names, so derive the list with `grep -c install-flatc .github/workflows/ci.yml`
+rather than from the prose above. That install is a **local composite action**,
+`.github/actions/install-flatc`, referenced as a path so the reference needs no
+release and no third-party trust. It reads the version from the workspace
+manifest's exact `flatbuffers` requirement rather than restating it, and asserts
+what it installed — so the pin has one home and a mismatch fails there by name
+(issue #909). Why each job needs it differs per job and stays at the call site.
 
-No cross-platform `build-release` matrix yet — that's
-git-std's own binary-distribution concern, not relevant until dashscene
-ships a distributable binary of its own.
+No cross-platform `build-release` matrix yet — that's git-std's own
+binary-distribution concern, not relevant until dashscene ships a distributable
+binary of its own.
 
-The `test` job deviates from that template: it runs `cargo nextest run
---workspace` (the regression tier) plus `cargo test --workspace --doc`
-rather than a plain `cargo test`, and a `calibration` job runs the
-calibration tier on the `packer` path filter. The reason and the tier
-definitions are in [test-tiers.md](test-tiers.md).
+The `test` job deviates from that template: it runs
+`cargo nextest run
+--workspace` (the regression tier) plus
+`cargo test --workspace --doc` rather than a plain `cargo test`, and a
+`calibration` job runs the calibration tier on the `packer` path filter. The
+reason and the tier definitions are in [test-tiers.md](test-tiers.md).
 
-**`bootstrap` script**: ensures `git-std` itself is installed (detects
-platform, downloads the matching release, verifies the sha256, installs
-to `~/.local/bin`), then `exec git-std bootstrap` — git-std's own
-subcommand handles the repo-specific setup (git hooks, etc.) from there.
-Run after cloning or creating a worktree.
+**`bootstrap` script**: ensures `git-std` itself is installed (detects platform,
+downloads the matching release, verifies the sha256, installs to
+`~/.local/bin`), then `exec git-std bootstrap` — git-std's own subcommand
+handles the repo-specific setup (git hooks, etc.) from there. Run after cloning
+or creating a worktree.
 
 **Deno side** (markspec's `deno.json` is the template, applies to
-`importers/figma/`): a `workspace` array pointing at the package
-directory (Deno's native workspace feature, same idea as the Cargo
-workspace); imports preferring JSR (`jsr:@std/...`) over npm where a JSR
-package exists, `npm:` specifier otherwise (e.g. `@figma/rest-api-spec`
-is npm-only); `tasks` for `check` (`deno check` on entry points), `test`
-(`deno test` with the narrowest `--allow-*` set that works), `lint`
-(`deno lint`), `fmt` (`deno fmt`); `fmt.include` scoped to
-`ts/tsx/js/jsx/mts/cts/mjs/cjs`; `test.exclude`/`lint.exclude` covering
-`editors/`, `.worktrees/`, `.claude/worktrees/`.
+`importers/figma/`): a `workspace` array pointing at the package directory
+(Deno's native workspace feature, same idea as the Cargo workspace); imports
+preferring JSR (`jsr:@std/...`) over npm where a JSR package exists, `npm:`
+specifier otherwise (e.g. `@figma/rest-api-spec` is npm-only); `tasks` for
+`check` (`deno check` on entry points), `test` (`deno test` with the narrowest
+`--allow-*` set that works), `lint` (`deno lint`), `fmt` (`deno fmt`);
+`fmt.include` scoped to `ts/tsx/js/jsx/mts/cts/mjs/cjs`;
+`test.exclude`/`lint.exclude` covering `editors/`, `.worktrees/`,
+`.claude/worktrees/`.
 
-**Governance/docs files**, present in all three reference repos and
-expected here too: `LICENSE` (MIT in the reference repos; Apache-2.0
-here, per the divergence above), `CODE_OF_CONDUCT.md`,
-`CONTRIBUTING.md`, `SECURITY.md`, `.editorconfig`, `.markdownlint.json`,
-`book.toml` + `docs/book/` (mdBook source — an overview and a usage
-guide, the online guide's actual content).
+**Governance/docs files**, present in all three reference repos and expected
+here too: `LICENSE` (MIT in the reference repos; Apache-2.0 here, per the
+divergence above), `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`,
+`.editorconfig`, `.primignore`, `book.toml` + `docs/book/` (mdBook source — an
+overview and a usage guide, the online guide's actual content).
 
-**`docs/` follows the `sdd-working-memory-lifecycle` rule's taxonomy**
-(separate from `docs/book/`, the online guide): `docs/wip/` (Superpowers
-spec+plan working memory, transient, tracked), `docs/archive/` (raw wip
-content once gardened), `docs/specification/` (requirements),
-`docs/design/` (architecture), `docs/decisions/` (decision records),
-`docs/technotes/` (explanatory notes).
+**`docs/` follows the `sdd-working-memory-lifecycle` rule's taxonomy** (separate
+from `docs/book/`, the online guide): `docs/wip/` (Superpowers spec+plan working
+memory, transient, tracked), `docs/archive/` (raw wip content once gardened),
+`docs/specification/` (requirements), `docs/design/` (architecture),
+`docs/decisions/` (decision records), `docs/technotes/` (explanatory notes).
 
-**Dogfooding**: `dashscene` dogfoods `git-std` from day one. The
-`justfile` (`release`/`verify` recipes), `.git-std.toml`, `bootstrap`
-script, and CI `convco` job all wire it in for real rather than as
-stubs/placeholders.
+**Dogfooding**: `dashscene` dogfoods `git-std` from day one. The `justfile`
+(`release`/`verify` recipes), `.git-std.toml`, `bootstrap` script, and CI
+`convco` job all wire it in for real rather than as stubs/placeholders.
 
 ## Why
 
-Copying conventions already proven across three sibling repos avoids
-re-deriving repo tooling from scratch and keeps `dashscene`
-consistent with the rest of the driftsys house style.
+Copying conventions already proven across three sibling repos avoids re-deriving
+repo tooling from scratch and keeps `dashscene` consistent with the rest of the
+driftsys house style.

@@ -7,13 +7,13 @@
 
 ## Context
 
-Story #140 lowers Figma auto-layout (`layoutMode: HORIZONTAL`/`VERTICAL`)
-into the flex vocabulary the `.dsb` schema has carried since v0.2
+Story #140 lowers Figma auto-layout (`layoutMode: HORIZONTAL`/`VERTICAL`) into
+the flex vocabulary the `.dsb` schema has carried since v0.2
 (`docs/decisions/flex-vocabulary-shape.md`). The schema needed no change:
 `dashc`'s document model gains mirrors of the two optional tables
-(`LayoutContainer`, `LayoutConstraints`), and `emit` writes them — absent
-stays absent, so a fixed-layout document emits byte-identically to before
-(the frozen goldens hold, R7).
+(`LayoutContainer`, `LayoutConstraints`), and `emit` writes them — absent stays
+absent, so a fixed-layout document emits byte-identically to before (the frozen
+goldens hold, R7).
 
 The constraint that shapes everything here is
 `docs/decisions/figma-auto-layout-refused-on-two-grounds.md`'s reason two:
@@ -23,92 +23,89 @@ never authored intent.
 ## D1 — `layoutSizingHorizontal`/`layoutSizingVertical` are the sizing source
 
 Figma encodes sizing twice: the modern per-node, per-axis
-`layoutSizingHorizontal`/`layoutSizingVertical` (`FIXED`/`HUG`/`FILL`) and
-the older container-side `primaryAxisSizingMode`/`counterAxisSizingMode`
-plus child-side `layoutGrow`/`layoutAlign`. Every captured fixture carries
-both, and the modern pair is exactly `AxisSizing` per axis — no
-axis-relative reshuffling. The lowering reads the modern pair only; the
-older encoding carries no information the modern one does not, so leaving
-it unread is not a drop.
+`layoutSizingHorizontal`/`layoutSizingVertical` (`FIXED`/`HUG`/`FILL`) and the
+older container-side `primaryAxisSizingMode`/`counterAxisSizingMode` plus
+child-side `layoutGrow`/`layoutAlign`. Every captured fixture carries both, and
+the modern pair is exactly `AxisSizing` per axis — no axis-relative reshuffling.
+The lowering reads the modern pair only; the older encoding carries no
+information the modern one does not, so leaving it unread is not a drop.
 
 ## D2 — What is not intent lowers as zero, per axis
 
-A `Fixed` axis's extent is authored: it lowers from the captured box. A
-`Hug` or `Fill` axis's extent, and a flex child's x/y, are solver output:
-they lower as `0.0` — the value the runtime solver ignores — never as the
-captured numbers, which would render correctly at exactly one size (P1).
-An authored offset still lowers under a mode-`None` parent, where placement
-is the offset (the v0.3 behavior, unchanged).
+A `Fixed` axis's extent is authored: it lowers from the captured box. A `Hug` or
+`Fill` axis's extent, and a flex child's x/y, are solver output: they lower as
+`0.0` — the value the runtime solver ignores — never as the captured numbers,
+which would render correctly at exactly one size (P1). An authored offset still
+lowers under a mode-`None` parent, where placement is the offset (the v0.3
+behavior, unchanged).
 
 ## D3 — The negative-gap lowering runs in the walk
 
 `docs/decisions/negative-gap-lowering.md` requires the document to carry no
-negative gap. `dashc` cannot reuse core's `Txn::lower_negative_gaps` — the
-walk builds a `Document`, not an arena — so the walk applies the same
-rewrite at the source: gap to zero, the gap onto the leading main-axis
-margin (`left` in a row, `top` in a column) of every in-flow child after
-the first. The rewrite lives in the one pass that also knows sibling order,
-so no second tree walk exists. See that record's "revisit trigger" note for
-why this is a second site rather than a shared module.
+negative gap. `dashc` cannot reuse core's `Txn::lower_negative_gaps` — the walk
+builds a `Document`, not an arena — so the walk applies the same rewrite at the
+source: gap to zero, the gap onto the leading main-axis margin (`left` in a row,
+`top` in a column) of every in-flow child after the first. The rewrite lives in
+the one pass that also knows sibling order, so no second tree walk exists. See
+that record's "revisit trigger" note for why this is a second site rather than a
+shared module.
 
 ## D4 — `SPACE_BETWEEN` zeroes the authored gap
 
-Figma ignores `itemSpacing` under `primaryAxisAlignItems: SPACE_BETWEEN` —
-the solver owns the spacing — while CSS adds `gap` to the distributed
-space. The two disagree, so the authored value lowers as zero and only the
-alignment carries. No capture pins `SPACE_BETWEEN`; the value set is
-Figma's documented enum, and the synthetic test states so.
+Figma ignores `itemSpacing` under `primaryAxisAlignItems: SPACE_BETWEEN` — the
+solver owns the spacing — while CSS adds `gap` to the distributed space. The two
+disagree, so the authored value lowers as zero and only the alignment carries.
+No capture pins `SPACE_BETWEEN`; the value set is Figma's documented enum, and
+the synthetic test states so.
 
 ## D5 — What diverges or cannot be solved is refused by name
 
 Refusals are error diagnostics
-(`docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`), and
-each names its construct:
+(`docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`), and each
+names its construct:
 
-- **`GRID`**, **`layoutWrap: WRAP`**, **`counterAxisAlignItems: BASELINE`**
-  — refused until v0.8, **lowered since story #264**. Story #43 taught the
-  runtime all three and appended their vocabulary to the schema
-  (`docs/decisions/v08-layout-vocabulary-shape.md`); story #264 lowers
-  `GRID` onto `LayoutMode::Grid` with its track lists and per-child
-  placement, `WRAP` onto `LayoutMode::Wrap` with a cross gap, and
-  `BASELINE` onto `CrossAxisAlign::Baseline`. Two refusals **appear** with
-  the un-pin, both P4: a **negative `itemSpacing` on a `WRAP` frame** (a
-  negative wrap gap has no margin encoding — wrap breaks its lines after
-  the lowering, so a leading margin would distort the breaks; the engine
-  refuses the core equivalent, `docs/decisions/v08-layout-vocabulary-shape.md`
-  D5), and **`counterAxisAlignContent: SPACE_BETWEEN`** on a wrap frame (no
-  `align_content` vocabulary yet — the field appends when a real file needs
-  it). A grid track token the `Fixed`/`Fraction` vocabulary cannot express
-  (an `auto`, a `minmax` with a non-zero minimum) is likewise a named
-  refusal.
-- **A `Fill` child on an axis its parent hugs** — Figma resolves the
-  sizing cycle from the child's stored size (solver state P1 forbids
-  reading); a CSS solve derives the hug from content. The two render
-  different pictures, so the construct is refused rather than solved
-  divergently. Pinned by `variables-bound.json`, whose `Fill` cards sit in
-  a hug-width root.
+- **`GRID`**, **`layoutWrap: WRAP`**, **`counterAxisAlignItems: BASELINE`** —
+  refused until v0.8, **lowered since story #264**. Story #43 taught the runtime
+  all three and appended their vocabulary to the schema
+  (`docs/decisions/v08-layout-vocabulary-shape.md`); story #264 lowers `GRID`
+  onto `LayoutMode::Grid` with its track lists and per-child placement, `WRAP`
+  onto `LayoutMode::Wrap` with a cross gap, and `BASELINE` onto
+  `CrossAxisAlign::Baseline`. Two refusals **appear** with the un-pin, both P4:
+  a **negative `itemSpacing` on a `WRAP` frame** (a negative wrap gap has no
+  margin encoding — wrap breaks its lines after the lowering, so a leading
+  margin would distort the breaks; the engine refuses the core equivalent,
+  `docs/decisions/v08-layout-vocabulary-shape.md` D5), and
+  **`counterAxisAlignContent: SPACE_BETWEEN`** on a wrap frame (no
+  `align_content` vocabulary yet — the field appends when a real file needs it).
+  A grid track token the `Fixed`/`Fraction` vocabulary cannot express (an
+  `auto`, a `minmax` with a non-zero minimum) is likewise a named refusal.
+- **A `Fill` child on an axis its parent hugs** — Figma resolves the sizing
+  cycle from the child's stored size (solver state P1 forbids reading); a CSS
+  solve derives the hug from content. The two render different pictures, so the
+  construct is refused rather than solved divergently. Pinned by
+  `variables-bound.json`, whose `Fill` cards sit in a hug-width root.
 - **`layoutPositioning: ABSOLUTE`**, **`strokesIncludedInLayout: true`**,
   **`itemReverseZIndex: true`** — an out-of-flow child, layout-consuming
-  strokes, and reversed paint order have no vocabulary; treating any of
-  them as the default reflows or repaints siblings silently.
+  strokes, and reversed paint order have no vocabulary; treating any of them as
+  the default reflows or repaints siblings silently.
 
 ## Known runtime gap this lowering exposed (debt #236 — resolved at v0.8)
 
 The lowering's negative-gap output is correct — the derived
 `lowering-negative-gap` fixture's children solve to Figma's captured boxes
 exactly — but Taffy 0.12's intrinsic (hug) sizing mis-sums children with
-negative margins, so a hug-sized container over a lowered negative gap
-solved to a collapsed main-axis size. Filed as engine debt #236; the
-fidelity test pinned the wrong value so the fix would be loud.
-**Resolved at story #43**: the engine rebates the negative margin into the
-child's flex basis (`docs/decisions/negative-margin-hug-rebate.md`), and
-the fidelity test now asserts the Figma-captured root width (264).
+negative margins, so a hug-sized container over a lowered negative gap solved to
+a collapsed main-axis size. Filed as engine debt #236; the fidelity test pinned
+the wrong value so the fix would be loud. **Resolved at story #43**: the engine
+rebates the negative margin into the child's flex basis
+(`docs/decisions/negative-margin-hug-rebate.md`), and the fidelity test now
+asserts the Figma-captured root width (264).
 
 ## Trace
 
-- Satisfies: issue #140 (auto-layout scope; grid/wrap/baseline refused at
-  the story, **un-pinned and lowered at story #264** onto story #43's
-  schema fields — `docs/decisions/v08-layout-vocabulary-shape.md`), R2 via
+- Satisfies: issue #140 (auto-layout scope; grid/wrap/baseline refused at the
+  story, **un-pinned and lowered at story #264** onto story #43's schema fields
+  — `docs/decisions/v08-layout-vocabulary-shape.md`), R2 via
   `docs/decisions/flex-vocabulary-shape.md`, P1/P4.
 - Verified by: `crates/dashc/tests/flex_lowering.rs` (fixture lowering,
   Figma-captured-rect fidelity, refusals, goldens — including the v0.8

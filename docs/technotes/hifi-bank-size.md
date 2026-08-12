@@ -1,9 +1,9 @@
 # Technote — what a HiFi bank costs, measured on the committed corpus
 
 Informative. **Measured 2026-07-26**, at v0.12 story #434, the first derived
-bank. Nothing
-depends on this note; it exists so the numbers behind two decisions are on
-record, and because one of them is a finding rather than a confirmation.
+bank. Nothing depends on this note; it exists so the numbers behind two
+decisions are on record, and because one of them is a finding rather than a
+confirmation.
 
 ## What was measured
 

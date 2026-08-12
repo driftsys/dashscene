@@ -11,12 +11,12 @@
              `verification-moves-from-open-to-touch.md`,
              `the-integration-surface-is-two-published-crates.md`
 
-Story #792 bounded the browser load by the root that is shown and found that
-the bound cannot be unconditional, because nothing below the loader knows which
-root is shown. That finding was filed as issue #822. This record rules on it
-rather than carrying it as debt: what the runtime does today is deliberate, what
-it should do instead is named, and R5's status is restated in the form that is
-true on both targets.
+Story #792 bounded the browser load by the root that is shown and found that the
+bound cannot be unconditional, because nothing below the loader knows which root
+is shown. That finding was filed as issue #822. This record rules on it rather
+than carrying it as debt: what the runtime does today is deliberate, what it
+should do instead is named, and R5's status is restated in the form that is true
+on both targets.
 
 ## Context
 
@@ -24,9 +24,9 @@ true on both targets.
 
 - `crates/dashscene-engine/src/lib.rs:372` — the layout solve runs
   `for &root in arena.roots()`, inside `rebuild`, which `solve` calls. The
-  module's own documentation calls roots "independent coordinate islands"
-  (line 7). Glyph-run staging does the same at line 212, in `stage_text`, and
-  the count matters: `arena.roots()` is iterated at six sites in this file, so
+  module's own documentation calls roots "independent coordinate islands" (line
+  7). Glyph-run staging does the same at line 212, in `stage_text`, and the
+  count matters: `arena.roots()` is iterated at six sites in this file, so
   "every root" is the engine's habit rather than one loop.
 - `crates/dashscene-core/src/arena.rs:975` — `Arena::dfs_order` seeds its stack
   from **all** roots, so `CommittedScene::rects` holds every root's subtree in
@@ -43,7 +43,8 @@ a value anything below the loader read.
 
 **Settled by story #837 (2026-08-12), which is the first half of D3.** A host
 now names a `dashbuf::prefetch::ShownRoot` and both integration crates take one
-— [`the-shown-root-is-named-by-ordinal.md`](the-shown-root-is-named-by-ordinal.md).
+—
+[`the-shown-root-is-named-by-ordinal.md`](the-shown-root-is-named-by-ordinal.md).
 Everything else in this section still holds unchanged: the selection bounds the
 **load**, and the three sites above still cover every root. That is D2, and it
 is story #838.
@@ -151,11 +152,11 @@ placeholder colour comes from, and P1 forbids inventing one at compile time.
   a criterion, and `goldens/tooling/tests/per_frame_scaling.rs` is it. Over this
   record's own sixty-five-root document, on macos aarch64: a layout frame runs
   65 Taffy layout computations against a one-root document's 1, and the
-  committed rect table holds 65 rows against 1 — 65.00x on both, on every
-  frame. A paint-only frame solves nothing in either, so the retained tree's
-  fast path (issue #164) is not what D2 removes. The counts are equalities in
-  the `regression` tier, so D2 cannot land without moving them, and story #838
-  is what moves them to 1 and 1.
+  committed rect table holds 65 rows against 1 — 65.00x on both, on every frame.
+  A paint-only frame solves nothing in either, so the retained tree's fast path
+  (issue #164) is not what D2 removes. The counts are equalities in the
+  `regression` tier, so D2 cannot land without moving them, and story #838 is
+  what moves them to 1 and 1.
 - **Issue #825's payload gate waits on this**, as `docs/roadmap.md` records:
   what an embedder links changes if the runtime learns to skip roots.
 
@@ -178,17 +179,18 @@ the solve and the paint proportional to the document even once unblocked, so it
 answers the crash without answering the cost.
 
 **Fetch the missing payloads lazily, when the painter asks** — bound the initial
-load by the shown root and satisfy an unshown root's row on demand. Rejected.
-It puts a blocking wait in the frame path on the one target that cannot take
-one: `just wasm-painter` exists as a gate precisely to keep a blocking wait off
-the web path, where it deadlocks. It would also make the byte cost of a load
-unknown until the load had already happened, which is the property `Layout` was
-built to state in advance.
+load by the shown root and satisfy an unshown root's row on demand. Rejected. It
+puts a blocking wait in the frame path on the one target that cannot take one:
+`just wasm-painter` exists as a gate precisely to keep a blocking wait off the
+web path, where it deadlocks. It would also make the byte cost of a load unknown
+until the load had already happened, which is the property `Layout` was built to
+state in advance.
 
 ## What this does not decide
 
 - **Which slice builds it.** `docs/roadmap.md` holds #822 against v0.19 with the
-  rest of that slice's inputs; the sequencing is that entry's, not this record's.
+  rest of that slice's inputs; the sequencing is that entry's, not this
+  record's.
 - **Whether a host may show more than one root at a time**, and what the
   selection surface looks like. D3 says a selection concept is a prerequisite;
   its shape is the story's to settle.

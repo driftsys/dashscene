@@ -22,21 +22,22 @@ an exact version:
 
 - `flatbuffers = "=25.12.19"` — the generated Rust API can change between
   `flatc` majors, so the compiler and the runtime crate must match.
-- `skia-safe = "=0.81.0"` — golden images are bit-exact for one exact Skia
-  build (`goldens/README.md`), so a patch release changing rasterization or PNG
+- `skia-safe = "=0.81.0"` — golden images are bit-exact for one exact Skia build
+  (`goldens/README.md`), so a patch release changing rasterization or PNG
   encoding must arrive as a deliberate, re-goldened bump.
 - `fdsm = "=0.8.0"` (`crates/dashc/Cargo.toml`) — the MSDF field is compared
   against a committed reference, so an `fdsm` bump must arrive the same way.
 
-The workspace has **16 external direct dependencies** (`cargo metadata
---no-deps`). The other 13 — `taffy`, `rustybuzz`, `ttf-parser`, `nalgebra`,
-`image`, `serde`, `serde_json`, `postcard`, `blake3`, `unicode-bidi`,
-`unicode-properties`, `rustc-hash` and `tempfile` — all float on a caret
-requirement, and **every transitive dependency of all sixteen floats**,
+The workspace has **16 external direct dependencies**
+(`cargo metadata
+--no-deps`). The other 13 — `taffy`, `rustybuzz`, `ttf-parser`,
+`nalgebra`, `image`, `serde`, `serde_json`, `postcard`, `blake3`,
+`unicode-bidi`, `unicode-properties`, `rustc-hash` and `tempfile` — all float on
+a caret requirement, and **every transitive dependency of all sixteen floats**,
 including the transitive dependencies of the three that are pinned. Pinning
 `skia-safe` exactly does not pin `skia-bindings`' own graph. So "fully
-reproducible via pinned dependency versions" describes a state the manifest
-does not produce.
+reproducible via pinned dependency versions" describes a state the manifest does
+not produce.
 
 (`lyon` appears in `[workspace.dependencies]` but is not one of the 16: that
 table is explicitly a reservation "for crates to opt into as implementation
@@ -45,8 +46,7 @@ entirely.)
 
 ## What that costs, specifically
 
-This repo compares build outputs at a granularity that almost nothing else
-does.
+This repo compares build outputs at a granularity that almost nothing else does.
 
 - `goldens/dsb/*.dsb` are compared **byte for byte** by
   `the_fixture_emits_the_golden_dsb` and its siblings, through the native API,
@@ -57,11 +57,11 @@ does.
 Layout comes from `taffy`. Shaping comes from `rustybuzz` and `ttf-parser`. The
 baked MSDF vector field is generated through `fdsm`, which is pinned — but it
 takes and returns `nalgebra` points and affine transforms, and `nalgebra` is
-not. PNG encode and decode on the `dashc` side comes from `image`, also not.
-The container hash comes from `blake3`. A patch release in any of them, or in
+not. PNG encode and decode on the `dashc` side comes from `image`, also not. The
+container hash comes from `blake3`. A patch release in any of them, or in
 anything beneath them, can move a golden. When it does, the diff is
-**indistinguishable from a real regression**: the working tree is unchanged,
-the test names are the same, and the only difference is which day the machine
+**indistinguishable from a real regression**: the working tree is unchanged, the
+test names are the same, and the only difference is which day the machine
 resolved its dependencies.
 
 `fdsm` is the sharpest illustration of why pinning direct dependencies is not
@@ -80,8 +80,8 @@ The second cost is dated. v0.12's packer requires that a re-pack producing
 different bytes is a manifest diff and not an artifact of whichever machine ran
 it, and `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md` names
 `Cargo.lock` as "the mechanism on the crate side" for exactly that. The
-mechanism did not exist. That capture's claim is corrected by this change
-rather than left to be discovered by the slice that depends on it.
+mechanism did not exist. That capture's claim is corrected by this change rather
+than left to be discovered by the slice that depends on it.
 
 ## The decision
 
@@ -105,10 +105,10 @@ testing, compared at byte and bit granularity. The needs test is the one Cargo
 poses, and this package answers it clearly.
 
 There is also existing intent in the tree that this change makes work.
-`.github/workflows/ci.yml:45` already lists `Cargo.lock` as a path that
-triggers the `figma` job, on the stated reasoning that a Rust-side change can
-break the importer with no edit under `importers/`. Because the file was
-ignored, that filter could never fire. It fires now.
+`.github/workflows/ci.yml:45` already lists `Cargo.lock` as a path that triggers
+the `figma` job, on the stated reasoning that a Rust-side change can break the
+importer with no edit under `importers/`. Because the file was ignored, that
+filter could never fire. It fires now.
 
 ## Alternatives considered
 
@@ -135,17 +135,17 @@ upstream of every `.dsb` and every golden image — plus `serde`, `serde_json`,
 `libc`, `regex` and `bytemuck`. That is one machine, one day apart, with an
 unchanged manifest.
 
-**Neither graph moved a golden.** The full suite was run against both: 926
-tests pass either way, including the byte-exact `.dsb` assertions and the
-bit-exact image goldens, and no golden file changed in the working tree. So the
-risk is real in its cause and unrealised in its effect, which is what #411 said
-and what this measurement confirms rather than overturns.
+**Neither graph moved a golden.** The full suite was run against both: 926 tests
+pass either way, including the byte-exact `.dsb` assertions and the bit-exact
+image goldens, and no golden file changed in the working tree. So the risk is
+real in its cause and unrealised in its effect, which is what #411 said and what
+this measurement confirms rather than overturns.
 
 That is the whole argument. The exposure is continuous and already moving; the
 damage is occasional and, when it lands, indistinguishable from a real
-regression. An unrealised risk with an undetectable failure mode is not the
-same as a small one, and the cheap fix is available now rather than after the
-first unattributable golden diff.
+regression. An unrealised risk with an undetectable failure mode is not the same
+as a small one, and the cheap fix is available now rather than after the first
+unattributable golden diff.
 
 ## Consequences
 
@@ -163,19 +163,19 @@ first unattributable golden diff.
 
 **`--locked` is deliberately not adopted yet.** Passing `--locked` to the build
 recipes would turn a silently-updated lock into a hard error, which is the
-enforcement half of this decision. It is deferred for two reasons: CI cannot
-run at all while the Actions billing block (#263) stands, so the enforcement
-would be untestable where it matters most; and locally it turns every manifest
-edit into a two-step, which is friction paid on every branch to catch a mistake
-that is already visible as a working-tree change. Revisit when CI runs again —
-that is the point at which `--locked` starts protecting something the local
-gate cannot.
+enforcement half of this decision. It is deferred for two reasons: CI cannot run
+at all while the Actions billing block (#263) stands, so the enforcement would
+be untestable where it matters most; and locally it turns every manifest edit
+into a two-step, which is friction paid on every branch to catch a mistake that
+is already visible as a working-tree change. Revisit when CI runs again — that
+is the point at which `--locked` starts protecting something the local gate
+cannot.
 
 ## Traces
 
 - Reverses the scaffolding convention in `.gitignore` (`bbb4bfe`).
-- Protects `docs/decisions/r7-survives-the-envelope-rebaseline.md`'s
-  attribution property and `docs/decisions/dsb-frozen-fixture-r7-guard.md`.
+- Protects `docs/decisions/r7-survives-the-envelope-rebaseline.md`'s attribution
+  property and `docs/decisions/dsb-frozen-fixture-r7-guard.md`.
 - Supplies the mechanism assumed by
   `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md` and required by
   epic #345's reproducible banks.

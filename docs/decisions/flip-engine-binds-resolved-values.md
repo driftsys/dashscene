@@ -12,8 +12,8 @@ node from its old rect to its new one. `dashcue` is descriptive: it carries
 intent, never results (P1), so a `VariantTransition` spec cannot name absolute
 `x`/`y`/`w`/`h` targets. Something has to turn a declared transition into a
 concrete animation with real `(from, to)` values and a per-node address.
-(`docs/archive/2026-07-14-design-1-seed.md` §6.3; `docs/design/dashscene-engine.md`,
-"FLIP".)
+(`docs/archive/2026-07-14-design-1-seed.md` §6.3;
+`docs/design/dashscene-engine.md`, "FLIP".)
 
 ## Options
 
@@ -58,9 +58,11 @@ Option 2.
 ## Open consistency
 
 The "engine owns the packing" intent is not yet uniform. The `dashlang` reactive
-layer (story #166) packs the same opaque `PropKey` differently — `(dense << 32) |
-code` versus the engine's `(index << 2) | channel`. The two use separate
-`Scheduler` instances, so there is no runtime collision today, but v0.7's
-serialised binding table needs one canonical packing that round-trips through the
-document. Reconciling the two packings is tracked in debt #208; the related gap —
-FLIP does not validate that a track's key is engine-packed — is #207.
+layer (story #166) packs the same opaque `PropKey` differently —
+`(dense << 32) |
+code` versus the engine's `(index << 2) | channel`. The two use
+separate `Scheduler` instances, so there is no runtime collision today, but
+v0.7's serialised binding table needs one canonical packing that round-trips
+through the document. Reconciling the two packings is tracked in debt #208; the
+related gap — FLIP does not validate that a track's key is engine-packed — is
+#207.
