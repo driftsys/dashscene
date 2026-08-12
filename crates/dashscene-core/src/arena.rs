@@ -12,14 +12,15 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 
+use dashbuf::prefetch::ShownRoot;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::bindings::{Binding, Channel, ScalarTransform, SignalDecl, SignalId};
 use crate::committed::{
     Atlas, Blur, ClipBox, ClipIndex, ClipTable, ClipView, Color, CommittedScene, CornerRadii,
     EntryParts, FillSpec, GlyphQuad, GlyphRun, GlyphRunTable, GroupComposite, ImageAsset,
-    ImageFormat, ImageTable, PaintEntry, PaintIndex, PaintTable, RectEntry, Shadow, Stroke,
-    StrokeAlign, Vec2, VectorField,
+    ImageFormat, ImageTable, NO_RECT, PaintEntry, PaintIndex, PaintTable, RectEntry, Shadow,
+    Stroke, StrokeAlign, Vec2, VectorField,
 };
 
 /// Stable handle to a node in one [`Arena`]. Returned by
@@ -830,6 +831,16 @@ pub struct Arena {
     images: Arc<ImageTable>,
     /// Creation order; DFS root order at commit.
     roots: Vec<NodeId>,
+    /// Which root the traversal is confined to, or [`None`] for every root
+    /// (story #838, `docs/decisions/the-runtime-paints-the-shown-root.md`).
+    ///
+    /// `None` is the default and is what an authored scene keeps: a scene built
+    /// in code has no artboards to choose between, and its roots are as often a
+    /// way to hold several independent nodes as they are separate pictures. A
+    /// document's host names one — both integration crates do — and from then on
+    /// the DFS order the rect table is built in, the solve and the paint all
+    /// follow it.
+    shown_root: Option<ShownRoot>,
     /// Declared by [`Txn::add_variant_set`], in creation order — the
     /// order a later set's override wins ties in
     /// (`docs/decisions/variant-set-flat-index.md`).
@@ -1113,6 +1124,40 @@ impl Arena {
         &self.roots
     }
 
+    /// Which root the traversal is confined to, or [`None`] for every root.
+    ///
+    /// Set through [`Txn::show_root`]. `None` is the default: an authored scene
+    /// has no artboards to choose between, and its roots are as often several
+    /// independent nodes as they are separate pictures. A host that loaded a
+    /// document names one (story #838).
+    pub fn shown_root(&self) -> Option<ShownRoot> {
+        self.shown_root
+    }
+
+    /// The roots the traversal covers — one when a shown root is named, every
+    /// root otherwise.
+    ///
+    /// The one place the two cases meet, so `dfs_order`, the engine's solve and
+    /// its glyph staging cannot disagree about what "shown" covers.
+    ///
+    /// **An ordinal naming no root yields nothing**, rather than falling back
+    /// to the first root: an empty answer is a scene that draws nothing, which
+    /// is visible, where the first root is another artboard drawn in its place,
+    /// which is not. [`Txn::commit_with`] refuses such a commit by name, so no
+    /// *committed* scene can hold one — but [`Txn::show_root`] writes the value
+    /// eagerly and this method is `pub`, so reading it between the two returns
+    /// the empty slice. That window is the reason for the answer rather than
+    /// something the refusal removes.
+    pub fn shown_roots(&self) -> &[NodeId] {
+        match self.shown_root {
+            None => &self.roots,
+            Some(shown) => {
+                let at = shown.ordinal() as usize;
+                self.roots.get(at..=at).unwrap_or(&[])
+            }
+        }
+    }
+
     /// The node's parent, or `None` for a root. Intent-side, like
     /// [`Arena::children`] — the read seam a loader-side consumer (the
     /// reactive attach, story #167) derives tree structure from.
@@ -1228,13 +1273,19 @@ impl Arena {
         &self.node_data(node).children
     }
 
-    /// Document DFS order (the rect-table index order): roots in
+    /// Document DFS order (the rect-table index order): the shown roots in
     /// creation order, children in creation order under each parent,
     /// depth-first. The one traversal both the rect table and the
     /// solvers agree on — change it here or nowhere.
+    ///
+    /// "The shown roots" is every root until something names one
+    /// ([`Arena::shown_root`]), and exactly one after. **A change of shown root
+    /// is therefore a renumbering event**: the same rect index names a
+    /// different node before and after, so a dirty set does not span it and
+    /// [`CommittedScene::renumbered`] is what says so.
     fn dfs_order(&self) -> Vec<NodeId> {
         let mut order = Vec::with_capacity(self.nodes.len());
-        let mut stack: Vec<NodeId> = self.roots.iter().rev().copied().collect();
+        let mut stack: Vec<NodeId> = self.shown_roots().iter().rev().copied().collect();
         while let Some(id) = stack.pop() {
             order.push(id);
             stack.extend(self.nodes[id.index()].children.iter().rev());
@@ -1541,6 +1592,39 @@ impl Txn<'_> {
                 self.arena.visible_toggled.push(node);
             }
         }
+    }
+
+    /// Confine the traversal to one root, or to every root with [`None`].
+    ///
+    /// The runtime's counterpart of the load-time bound both integration crates
+    /// already take: from the next commit, the document DFS order the rect
+    /// table is built in, the solve and the paint all cover the named root's
+    /// subtree and nothing else (story #838, issue #822).
+    ///
+    /// **Changing it renumbers the rect table.** The same index names a
+    /// different node afterwards, so a painter holding per-commit state has to
+    /// be told — [`CommittedScene::renumbered`] is what tells it, and the two
+    /// integration crates turn that into `Present::document_replaced`. Setting
+    /// the value it already has is not a change and renumbers nothing.
+    ///
+    /// **A root whose payloads were never read cannot be shown.** A load bounds
+    /// what it makes resident by the root it was given, so naming a *different*
+    /// root afterwards points the paint at image-table rows that name no bytes.
+    /// A mapped desktop load binds a real range for every entry and leaves the
+    /// unshown ones unhashed (debt #779), so it survives; a browser load fetches
+    /// nothing for them, and `dashscene_gpu::residency` panics decoding an empty
+    /// slice. Switching roots at runtime therefore needs a load that read both,
+    /// which no host offers yet — `crates/dashscene-web/src/shown.rs` records
+    /// the target-by-target detail.
+    ///
+    /// # Panics
+    ///
+    /// Not here. An ordinal naming no root is refused by [`Txn::commit`] and
+    /// [`Txn::commit_with`], because roots may be added after this call in the
+    /// same transaction — a loader does exactly that — so this is the wrong
+    /// place to judge the ordinal.
+    pub fn show_root(&mut self, shown: Option<ShownRoot>) {
+        self.arena.shown_root = shown;
     }
 
     pub fn set_prop(&mut self, node: NodeId, prop: Prop) {
@@ -1927,6 +2011,34 @@ impl Txn<'_> {
         // separate fields of the guard is what keeps them usable at once.
         let arena: &mut Arena = arena;
 
+        // What the previous commit was built under, read before this one can
+        // change anything, so the renumbering test below compares two commits
+        // rather than a commit against itself.
+        let previous_shown_root = arena.buffers[arena.front].shown_root;
+
+        // The shown root is judged here rather than where it was set: roots may
+        // be added after the call, in the same transaction, which is what a
+        // loader does. An ordinal naming no root would otherwise commit an
+        // empty scene, which is a picture nobody asked for reported as success
+        // (P4).
+        if let Some(shown) = arena.shown_root {
+            assert!(
+                (shown.ordinal() as usize) < arena.roots.len(),
+                "the shown root is ordinal {} and this arena has {} root{}: a commit cannot \
+                 resolve it, and confining the traversal to nothing would draw an empty scene \
+                 rather than say so",
+                shown.ordinal(),
+                arena.roots.len(),
+                if arena.roots.len() == 1 { "" } else { "s" },
+            );
+        }
+        // A change of shown root renumbers the rect table — the same index
+        // names a different node on either side of it — so the dirty set does
+        // not span it and every consumer holding per-commit state has to be
+        // told. Recorded before the walk, and reported through
+        // `CommittedScene::renumbered`.
+        let renumbered = arena.shown_root != previous_shown_root;
+
         // DFS document order (rect-table index order).
         let order = arena.dfs_order();
 
@@ -1953,6 +2065,7 @@ impl Txn<'_> {
             for (slot, geom) in solved.iter_mut().enumerate() {
                 if geom.is_none()
                     && let Some(&ri) = previous.rect_index.get(slot)
+                    && ri != NO_RECT
                 {
                     let r = previous.rects[ri as usize];
                     *geom = Some(SolvedRect {
@@ -1978,7 +2091,10 @@ impl Txn<'_> {
         // A node was added since the previous commit iff the node count
         // grew (v0.4 never removes). A structural change re-indexes the
         // rect table, so the previous index maps cannot be reused.
-        let structural = order.len() != previous.node_ids.len();
+        // A renumbering is structural whether or not the node count moved: two
+        // roots with equal subtrees give equal lengths and different meanings,
+        // so the index maps have to be rebuilt either way.
+        let structural = order.len() != previous.node_ids.len() || renumbered;
 
         // The paint and clip tables start shared with the previous
         // commit; `intern_*` copies-on-write only when a new entry is
@@ -2041,11 +2157,16 @@ impl Txn<'_> {
                      either (P4)"
                 )
             });
-            // The node's entry from the previous commit, by NodeId. `None`
-            // for a node added since (it has no previous rect).
+            // The node's entry from the previous commit, by NodeId. `None` for
+            // a node the previous commit resolved no rect for — one added
+            // since, and since story #838 one that was under an unshown root
+            // then. `NO_RECT` is not an index, so it is filtered rather than
+            // dereferenced; reading `rects[u32::MAX]` is the panic that says
+            // the filter was missing.
             let prev_entry: Option<RectEntry> = previous
                 .rect_index
                 .get(id.index())
+                .filter(|&&ri| ri != NO_RECT)
                 .map(|&ri| previous.rects[ri as usize]);
 
             // The region reaching this node is the one its parent's masks
@@ -2390,6 +2511,16 @@ impl Txn<'_> {
         // shifted tail after a structural change reports dirty, as
         // intended.
         let mut dirty_set: FxHashSet<u32> = FxHashSet::default();
+        if renumbered {
+            // **A bit compare says nothing across a renumbering.** Index 3 named
+            // one node before this commit and names another now, so two entries
+            // that compare equal are two different nodes that happen to look
+            // alike — and showing a root whose subtree is the same shape as the
+            // last one's would report a clean frame while every pixel moved.
+            // That is issue #798's failure exactly: a comparison reading clean
+            // because what changed lived outside the compared structure.
+            dirty_set.extend(0..rects.len() as u32);
+        }
         for (i, entry) in rects.iter().enumerate() {
             if previous
                 .rects
@@ -2437,7 +2568,12 @@ impl Txn<'_> {
         // previous commit's maps still describe this DFS order, so share
         // them by reference.
         let (node_ids, rect_index) = if structural {
-            let mut rect_index = vec![0u32; n];
+            // `NO_RECT` rather than zero, so a node this commit resolved no
+            // rect for reads as absent rather than as row 0. Since story #838
+            // that is an ordinary case — every node under an unshown root — and
+            // a zero default would have answered "the shown root's own rect"
+            // for all of them.
+            let mut rect_index = vec![NO_RECT; n];
             for (i, &id) in order.iter().enumerate() {
                 // In range for u32 by the add_node guard.
                 rect_index[id.index()] = i as u32;
@@ -2461,6 +2597,8 @@ impl Txn<'_> {
             dirty,
             node_ids,
             rect_index,
+            shown_root: arena.shown_root,
+            renumbered,
         };
 
         // Publish the buffer and drain the change log.

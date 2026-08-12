@@ -139,12 +139,21 @@ impl Document {
         // time. Everything else stays cold, which is what makes cold start
         // track the root being drawn rather than the file's size (R5, D4).
         //
-        // **A row bound below whose payload was not touched is not proven.**
-        // The image table takes one row per asset entry, so a many-frame
-        // document's other frames are ranges into this mapping that nothing has
-        // hashed. Nothing draws them — a frame whose payload is not ready needs
-        // the placeholder field that has no producer, which stays in v1 (D6) —
-        // and debt #779 carries the gap.
+        // **A row bound below whose payload was not touched is not proven**, and
+        // that is still true: the image table takes one row per asset entry, so
+        // a many-frame document's other frames are ranges into this mapping
+        // that nothing has hashed.
+        //
+        // What changed at story #838 is that nothing can **reach** them. The
+        // traversal, the solve and the paint follow the shown root named below,
+        // so a row no rect references is a row no painter resolves — which is
+        // what debt #779 was waiting for, and it closes that debt rather than
+        // narrowing it.
+        //
+        // The coupling is worth naming, because it is the way it comes back:
+        // the rows are safe **because** the traversal is confined. A load that
+        // named no root — `Txn::show_root(None)` is still every root — would
+        // bind the same unverified rows and paint them.
         let residency = BlobResidency::new();
         let root = dashbuf::prefetch::resolve(&document, shown_root).ok_or_else(move || {
             DesktopError::NoSuchRoot {
@@ -176,6 +185,19 @@ impl Document {
         // run hands the table another reference to the one mapping.
         let region: Arc<dyn Region> = self.file.clone();
         dashscene_core::load_document_mapped(&document, region, &payloads, arena);
+        // The runtime's half of the bound the prefetch above took. The load
+        // replays every root — a document is every artboard it carries, and
+        // dropping one at load would make the file unreadable rather than
+        // unshown — and this confines what is solved, committed and painted to
+        // the one being shown (story #838, issue #822).
+        //
+        // A commit of its own rather than a parameter on the loader: the load
+        // has already committed by the time this runs, and this is the cheaper
+        // of the two ways to say it — one extra commit per load, against a
+        // signature change on three public loaders and every call site.
+        let mut txn = arena.open();
+        txn.show_root(Some(shown_root));
+        txn.commit();
         Ok(dashlang::attach_live(arena, Box::new(TaffySolver::new())))
     }
 }

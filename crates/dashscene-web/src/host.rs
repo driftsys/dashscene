@@ -216,6 +216,17 @@ pub struct Host {
     /// this the canvas would stay blank until something else happened to move
     /// the scene.
     forced: Option<&'static str>,
+    /// The committed generation whose renumbering this loop has already
+    /// reported (story #838).
+    ///
+    /// `CommittedScene::renumbered` describes **one commit**, and an idle tick
+    /// commits nothing — so the flag outlives the frame that raised it. This
+    /// loop runs a frame per `requestAnimationFrame` whether or not anything
+    /// moved, so without this a document that named a shown root at load would
+    /// report the same renumbering sixty times a second, and
+    /// [`SurfaceRenderer::document_replaced`] drops every resident texture as
+    /// well as the uploaded instance rows.
+    renumber_reported: Option<u64>,
 }
 
 impl Host {
@@ -247,6 +258,7 @@ impl Host {
             window: surface.window,
             extent: surface.extent,
             forced: None,
+            renumber_reported: None,
         }
     }
 
@@ -449,6 +461,11 @@ impl Host {
             renderer.document_replaced();
         }
         self.arena = Arena::new();
+        // Generations count from the new arena, so one already reported names
+        // nothing in it — and a scene that named a shown root while it built
+        // would otherwise have that commit's renumbering skipped by a match
+        // against the outgoing arena's numbering.
+        self.renumber_reported = None;
         self.live = build(&mut self.arena, width, height);
         // The new scene holds nothing the hook wrote into the old one, and the
         // elapsed time has not moved, so a hook that tracks what it applied
@@ -516,7 +533,29 @@ impl Host {
         // clock every frame can answer it. `demo-web` counts showcase pulses.
         (self.on_frame)(&mut self.live, self.elapsed, FrameKind::Continuing);
 
-        self.live.tick(dt as f32, &mut self.arena);
+        let generation = self.live.tick(dt as f32, &mut self.arena);
+        // A commit that renumbered the rect table is the one case where the
+        // renderer's per-document state goes stale without the arena being
+        // replaced: the same rect index names a different node afterwards
+        // (story #838). `resize_if_needed` reports the arena case; this reports
+        // the other, through the same call.
+        //
+        // Gated on the generation because `renumbered` is a property of a
+        // commit and this runs every frame: an idle tick returns without
+        // committing, so the last commit's answer is still what
+        // `arena.committed()` gives back.
+        //
+        // The generation is stamped only once the report has been **made**, so
+        // a renumbering landing between `release_surface` and `adopt` reaches
+        // the renderer that follows rather than being marked as delivered to
+        // nobody.
+        if self.renumber_reported != Some(generation)
+            && self.arena.committed().renumbered()
+            && let Some(renderer) = self.renderer.as_mut()
+        {
+            renderer.document_replaced();
+            self.renumber_reported = Some(generation);
+        }
         // Taken whether or not it is acted on, so a forced frame forces exactly
         // one — the same rule the native loop's `forced` follows.
         let forced = self.forced.take();

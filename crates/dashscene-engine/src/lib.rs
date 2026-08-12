@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use dashscene_core::{
     Arena, Atlas, AtlasIndex, AxisSizing, GlyphQuad, GlyphRange, GlyphRun, GridTrack, Layout,
-    LayoutMode, LayoutSolver, NodeId, SolvedRect, StagedRun, TextAlignV, TextStyle,
+    LayoutMode, LayoutSolver, NodeId, ShownRoot, SolvedRect, StagedRun, TextAlignV, TextStyle,
 };
 use dashscene_typeset::text::{TextShape, Typesetter};
 use rustc_hash::FxHashSet;
@@ -102,6 +102,10 @@ struct TreeState {
     /// The node count when the tree was built. A mismatch is a structural
     /// change and forces a rebuild.
     node_count: usize,
+    /// The shown root this tree was last read back for. A mismatch means the
+    /// newly shown root's subtree has never been reported, so the pruned
+    /// readback below cannot be used for it (story #838).
+    shown: Option<ShownRoot>,
 }
 
 impl<'a> TaffySolver<'a> {
@@ -209,7 +213,10 @@ impl LayoutSolver for TaffySolver<'_> {
             return Vec::new();
         };
         let mut out = Vec::new();
-        for &root in arena.roots() {
+        // The shown roots, not every root: a run staged under a root the
+        // committed table does not hold would be anchored on a rect index that
+        // names another node (story #838).
+        for &root in arena.shown_roots() {
             stage_subtree(arena, root, ts, geometry, &mut out);
         }
         out
@@ -388,7 +395,13 @@ fn rebuild(
         "every arena node is reachable from a root, so `build` must write every taffy_of slot"
     );
 
-    let typesetter = compute_all(&mut tree, &roots, typesetter, solves);
+    // The tree is built over **every** root above and computed over the shown
+    // ones here. Keeping the whole tree is what makes a later change of shown
+    // root cheap — no rebuild, because every root's nodes are already in it —
+    // and computing only the shown ones is the per-frame cost story #836
+    // measured at one Taffy computation per root (story #838).
+    let shown_taffy = shown_taffy_roots(arena, &roots);
+    let typesetter = compute_all(&mut tree, shown_taffy, typesetter, solves);
 
     // #272 baseline correction: re-place text children of baseline rows on
     // their glyph baseline, and (#322) re-solve when that placement needs a
@@ -399,7 +412,7 @@ fn rebuild(
     let cross_offset = baseline_pass(
         &mut tree,
         &taffy_of,
-        &roots,
+        shown_taffy,
         arena,
         typesetter,
         &mut baseline_floors,
@@ -408,13 +421,20 @@ fn rebuild(
     );
 
     let mut prev_rel = vec![[0u32; 4]; n];
-    let mut prev_root_origin = Vec::with_capacity(roots.len());
+    // One entry per **arena** root, in arena root order, so a root's slot does
+    // not move when the shown root changes. The readback below skips the
+    // unshown ones; their origins stay as recorded and are re-read when they
+    // are shown again.
+    let mut prev_root_origin = Vec::with_capacity(arena.roots().len());
     let mut out = Vec::new();
     for &root in arena.roots() {
+        let origin = arena.layout(root);
+        prev_root_origin.push([origin.x.to_bits(), origin.y.to_bits()]);
+    }
+    for &root in arena.shown_roots() {
         // Roots are their own coordinate islands: the subtree translates
         // by the root's authored offset.
         let origin = arena.layout(root);
-        prev_root_origin.push([origin.x.to_bits(), origin.y.to_bits()]);
         read_back_full(
             &tree,
             &taffy_of,
@@ -436,6 +456,7 @@ fn rebuild(
         prev_root_origin,
         baseline_floors,
         node_count: n,
+        shown: arena.shown_root(),
     };
     (state, out)
 }
@@ -449,12 +470,23 @@ fn incremental(
     arena: &Arena,
     solves: &mut u64,
 ) -> Vec<(NodeId, SolvedRect)> {
+    // A change of shown root is not an ordinary frame. The newly shown root's
+    // subtree has never been reported through this solver, so `commit_with`
+    // would find no rect for any of its nodes and refuse the commit — and the
+    // pruned readback cannot supply them, because nothing about those nodes
+    // *moved*. Report the whole of the new subtree, the way the first solve
+    // does, and leave the retained tree alone: it already holds every root
+    // (story #838).
+    let shown_changed = state.shown != arena.shown_root();
+
     // The nodes whose layout intent changed since the last commit.
     let dirty: FxHashSet<NodeId> = arena.layout_dirty().iter().copied().collect();
     // The paint-only fast path: nothing to solve. A root move is layout
     // intent (an X/Y change), so an empty set means no geometry changed
-    // anywhere, and every rect carries forward unchanged.
-    if dirty.is_empty() {
+    // anywhere, and every rect carries forward unchanged. A shown-root change
+    // is not covered by it: no layout intent changed, and the answer is still
+    // a different subtree.
+    if dirty.is_empty() && !shown_changed {
         return Vec::new();
     }
 
@@ -499,7 +531,8 @@ fn incremental(
     // `roots` is cloned so the loop does not hold a borrow of `state`
     // while `state.tree` is recomputed (the roots list is small).
     let roots = state.roots.clone();
-    let typesetter = compute_all(&mut state.tree, &roots, typesetter, solves);
+    let shown_taffy = shown_taffy_roots(arena, &roots);
+    let typesetter = compute_all(&mut state.tree, shown_taffy, typesetter, solves);
 
     // #272 baseline correction (see `rebuild`): re-place a baseline row's text
     // children on their glyph baseline. The corrected y is folded into
@@ -508,7 +541,7 @@ fn incremental(
     let cross_offset = baseline_pass(
         &mut state.tree,
         &state.taffy_of,
-        &roots,
+        shown_taffy,
         arena,
         typesetter,
         &mut state.baseline_floors,
@@ -534,24 +567,69 @@ fn incremental(
 
     let mut out = Vec::new();
     for (root_i, &root) in arena.roots().iter().enumerate() {
+        // Positional, like `shown_taffy_roots` above: "is this root shown" is
+        // an index question, and scanning the shown slice for a member of the
+        // list it was taken from answers it in O(n).
+        let shown = arena
+            .shown_root()
+            .is_none_or(|shown| shown.ordinal() as usize == root_i);
+        if !shown {
+            continue;
+        }
         let origin = arena.layout(root);
         let cur_origin = [origin.x.to_bits(), origin.y.to_bits()];
         let root_moved = state.prev_root_origin[root_i] != cur_origin;
         state.prev_root_origin[root_i] = cur_origin;
-        read_back_pruned(
-            &state.tree,
-            &state.taffy_of,
-            &mut state.prev_rel,
-            &cross_offset,
-            &on_path,
-            arena,
-            root,
-            (origin.x, origin.y),
-            root_moved,
-            &mut out,
-        );
+        if shown_changed {
+            // Every node of the newly shown subtree, not the ones that moved:
+            // "moved" is measured against `prev_rel`, and a subtree nothing has
+            // reported has no previous rect for the commit to carry forward.
+            read_back_full(
+                &state.tree,
+                &state.taffy_of,
+                &mut state.prev_rel,
+                &cross_offset,
+                arena,
+                root,
+                (origin.x, origin.y),
+                &mut out,
+            );
+        } else {
+            read_back_pruned(
+                &state.tree,
+                &state.taffy_of,
+                &mut state.prev_rel,
+                &cross_offset,
+                &on_path,
+                arena,
+                root,
+                (origin.x, origin.y),
+                root_moved,
+                &mut out,
+            );
+        }
     }
+    state.shown = arena.shown_root();
     out
+}
+
+/// The Taffy roots standing for the arena's **shown** roots, in arena root
+/// order.
+///
+/// `taffy_roots` is one entry per arena root, in that order, so this is the
+/// same positional split `Arena::shown_roots` makes over the arena's own list —
+/// written twice because the two lists hold different types, and kept in the
+/// one shape so the solve and the readback cannot disagree about it. A slice
+/// rather than a `Vec`: the answer is always a contiguous run of `taffy_roots`,
+/// either all of it or one element.
+fn shown_taffy_roots<'t>(arena: &Arena, taffy_roots: &'t [taffy::NodeId]) -> &'t [taffy::NodeId] {
+    match arena.shown_root() {
+        None => taffy_roots,
+        Some(shown) => {
+            let at = shown.ordinal() as usize;
+            taffy_roots.get(at..=at).unwrap_or(&[])
+        }
+    }
 }
 
 /// Compute the layout of every root, counting each as one solve. Text
@@ -1324,11 +1402,20 @@ fn collect_baseline_offsets(
 /// child bottoms)`, and neither a child's baseline nor its cross size
 /// depends on the row's own cross size, so the second solve computes the
 /// same floor the first one did and there is nothing left to iterate on.
+///
+/// `shown_taffy` is the Taffy roots standing for `Arena::shown_roots`, not for
+/// every root, and both collection loops below walk the same set. It has to be
+/// the shown set for two reasons and neither is cost: an unshown root's nodes
+/// were never computed, so `collect_baseline_offsets` would read a zeroed
+/// layout and shape its text at width 0 — inventing a floor from nothing — and
+/// the re-solve would then compute every root in the document, which is the
+/// per-frame cost story #838 exists to remove, on exactly the text scenes the
+/// band cannot see (it runs `TaffySolver::new()` and returns above).
 #[allow(clippy::too_many_arguments)]
 fn baseline_pass(
     tree: &mut TaffyTree<TextContext>,
     taffy_of: &[taffy::NodeId],
-    roots: &[taffy::NodeId],
+    shown_taffy: &[taffy::NodeId],
     arena: &Arena,
     typesetter: Option<&mut Typesetter>,
     floors: &mut Vec<(NodeId, f32)>,
@@ -1343,7 +1430,7 @@ fn baseline_pass(
     };
 
     let mut wanted = Vec::new();
-    for &root in arena.roots() {
+    for &root in arena.shown_roots() {
         collect_baseline_offsets(
             tree,
             taffy_of,
@@ -1370,10 +1457,11 @@ fn baseline_pass(
     }
     floors.clone_from(&wanted);
 
-    let ts = compute_all(tree, roots, Some(ts), solves).expect("the typesetter was lent, not lost");
+    let ts = compute_all(tree, shown_taffy, Some(ts), solves)
+        .expect("the typesetter was lent, not lost");
     let mut cross_offset = vec![None; node_count];
     let mut settled = Vec::new();
-    for &root in arena.roots() {
+    for &root in arena.shown_roots() {
         collect_baseline_offsets(
             tree,
             taffy_of,

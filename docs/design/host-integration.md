@@ -81,17 +81,26 @@ linear memory before the envelope could be read. In order:
 6. `shown::layout`, which decides what to fetch;
 7. fetch each payload as one range, appended into the region in layout order.
 
-**`shown::Layout` and `shown::Bound`** are where R5 lives on this target.
-`layout` compares the shown root's asset set against the union over every root:
-equal lengths mean equal sets — `shown` is a subset by construction — so the
-bound is `ShownRoot`; otherwise it fetches the union and reports `EveryRoot`.
-The guard is necessary because **the runtime paints every root**: the solver
-runs `for &root in arena.roots()`, `Arena::dfs_order` seeds from all of them,
-and a painter walks the whole committed table. A row this load skipped is a row
-the painter may still ask for, and on this target skipping it means there are no
-bytes at all. `Bound` is reported rather than inferred from a count, because
-"read everything" and "the shown root happens to draw everything" produce the
-same set and are not the same fact.
+**`shown::Layout`** is where R5 lives on this target. `layout` fetches the shown
+root's asset set — `dashbuf::prefetch::assets_of_root`, the same call the native
+host makes — and nothing else, for every document shape.
+
+**It was conditional until story #838, and the condition was not in this
+crate.** The runtime painted every root, so a row this load skipped was a row
+the painter could still ask for, and on this target skipping it means there are
+no bytes at all rather than unverified ones. `layout` therefore compared the
+shown root's set against the union over every root and fetched the union when
+they differed, reporting which it had taken through a `shown::Bound`. Story #838
+confined the traversal, the solve and the paint to the shown root, so the union
+branch, `assets_of_every_root` and `Bound` itself are gone — one bound left is
+no bound to report.
+
+**What that leaves is a constraint rather than a branch: the root named at load
+is the only root this target can show.** The other roots' payloads were never
+fetched, so naming one afterwards hands `dashscene_gpu::residency`'s
+`decode_png` an empty slice. A mapped desktop load binds a real range per entry
+and draws it instead. No host offers the switch, and
+`crates/dashscene-web/src/shown.rs` carries what it would cost.
 
 ## The desktop half
 
@@ -319,34 +328,47 @@ ordinal asked for and the count the document does carry; neither host clamps or
 falls back. The shape and the two rejected alternatives are in
 [the-shown-root-is-named-by-ordinal.md](../decisions/the-shown-root-is-named-by-ordinal.md).
 
-**It bounds the load and nothing below it**, so what each host gets out of it
-differs by target and is worth stating separately:
+**Since story #838 it bounds the load and everything below it.** Each host names
+its root on the arena it loaded into — `Txn::show_root`, in a commit of its own
+after `load_document_mapped` returns — and from there `Arena::dfs_order`, the
+engine's solve and its glyph staging all cover that root's subtree and nothing
+else. Both targets now get the same thing out of the ordinal:
 
 - **Desktop** — a different ordinal makes a different root's payloads resident
   and leaves the rest of the file cold. Observable, and asserted: the two-root
   fixture's tests exchange which payload may be corrupt with the ordinal.
-- **Web** — a different ordinal moves the reported `Bound` and **never** the
-  byte count. Not "usually": `shown` is one of the sets `assets_of_every_root`
-  unions, so `shown ⊆ painted` always, and `layout` fetches `painted` in both
-  branches — the two are the same set exactly when the shown root is the only
-  one that draws. So the set a browser fetches is independent of which root is
-  named, for every document, and `Bound::ShownRoot` against `Bound::EveryRoot`
-  is the whole of what the selector changes there.
+- **Web** — a different ordinal fetches a different set of payloads. Until #838
+  it could not: `shown` was one of the sets `assets_of_every_root` unioned, so
+  `shown ⊆ painted` always and `layout` fetched `painted` in both branches,
+  which made the byte count independent of the ordinal for every document. The
+  union is gone, so the ordinal picks the set —
+  `a_shown_root_ordinal_selects_which_payload_the_layout_fetches` is that
+  assertion, and it is the one story #837 recorded that it could not make.
+
+**A change of shown root is a renumbering event**, and both loops report it.
+`CommittedScene::renumbered` says this commit's rect indices mean something
+other than the last one's, and each loop turns that into
+`Present::document_replaced` / `SurfaceRenderer::document_replaced` once — held
+against the generation it reported, because `renumbered` describes one commit
+and an idle tick commits nothing, so a loop reading it every frame would drop
+every resident texture on every frame of a settled scene.
 
 ## Known gaps, named
 
-- **R5 is conditional on the web** — #822, and the fix is in the runtime rather
-  than in either crate: confining the solve, the committed table and the paint
-  to the shown root. Ruled at the v0.17 close —
-  [the-shown-root-bounds-the-load-not-the-paint.md](../decisions/the-shown-root-bounds-the-load-not-the-paint.md).
-  The condition is a **document shape**, not a target quirk: a document whose
-  unshown roots draw no asset is bounded, and one whose unshown roots draw is
-  not. The startup-scaling benchmark's own many-frame document is the second
-  kind. Story #837 did not change this and could not: it settled which root a
-  host names, not what the runtime paints.
-- **The C ABI carries no root selection**, and since story #837 the reason is no
-  longer that no vocabulary exists. `ds_runtime_load_document` takes the whole
-  file and uses the owning loader, which needs bytes for every asset entry, so
-  there is nothing on that path for a selection to bound. Issue #925 or story
-  #838 unblocks it; `crates/dashscene-ffi/src/lib.rs` states which shape costs
-  what.
+- **A root this load did not read cannot be shown afterwards.** This is what is
+  left of the gap #822 named, and it is narrower in one direction and wider in
+  the other: R5 holds on both targets for every document shape now, and the
+  price is that the ordinal is fixed at the load. On the web the unshown roots'
+  payloads have no bytes at all; on a mapped desktop load they have bytes
+  nothing hashed, which is the remainder of debt #779. Both are recorded on
+  `Txn::show_root` and in
+  [the-runtime-paints-the-shown-root.md](../decisions/the-runtime-paints-the-shown-root.md)
+  D7. Nothing has asked for the switch, so nothing has been built for it.
+- **The C ABI carries no root selection**, and the reason has changed twice. It
+  was that no vocabulary existed, until story #837. It was then that there was
+  nothing on that path for a selection to bound — `ds_runtime_load_document`
+  takes the whole file and uses the owning loader, which needs bytes for every
+  asset entry — and story #838 ended that half: a root selection would now bound
+  the **paint** on this path even while the load stays whole-file. What is
+  missing is the mapped entry point, which is issue #925;
+  `crates/dashscene-ffi/src/lib.rs` states which shape costs what.

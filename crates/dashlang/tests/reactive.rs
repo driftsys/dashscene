@@ -1200,3 +1200,209 @@ fn the_builder_path_drives_a_loop_staged_on_its_arena() {
         "the builder's own binding still drives its node",
     );
 }
+
+// ---------------------------------------------------------------------
+// Story #838 — the reactive layer's caches are keyed on the committed
+// table, and since that story the committed table is the shown root's
+// subtree rather than the whole document.
+//
+// All three use `attach_live` on an arena that already names its shown
+// root, because that is the order the hosts run in: `load_document_mapped`
+// stages every root's nodes and bindings, `Document::load` names the root,
+// and `attach_live` builds its caches from what that commit left. Building
+// the caches first and naming the root afterwards hides every one of these.
+// ---------------------------------------------------------------------
+
+/// Two roots, each a fixed passthrough box with a width-bound child, with
+/// `shown` named before the scene is attached. Returns the live scene and the
+/// two bars, first root's then second's.
+fn two_bound_roots(
+    arena: &mut Arena,
+    shown: dashscene_core::ShownRoot,
+) -> (dashlang::LiveScene, NodeId, NodeId) {
+    use dashscene_core::{Channel as CoreChannel, Prop, ScalarTransform};
+
+    let (first_bar, second_bar) = {
+        let mut txn = arena.open();
+        let width = txn.declare_signal(Some("bar/width"), 10.0);
+        // **The two subtrees are deliberately different shapes**, so the bound
+        // node sits at a different rect index under each root: row 2 under the
+        // first, row 1 under the second. Two roots of the same shape put it at
+        // the same index in both, and a cache left over from one then lands on
+        // the right row of the other by coincidence — which is a fixture that
+        // cannot tell a rebuilt index from a stale one.
+        let mut root_with_bar = |name: &str, fillers: usize| {
+            let root = txn.add_node(None, Some(name));
+            txn.set_prop(root, Prop::Mode(LayoutMode::None));
+            txn.set_prop(root, Prop::Width(200.0));
+            txn.set_prop(root, Prop::Height(20.0));
+            for _ in 0..fillers {
+                let filler = txn.add_node(Some(root), None);
+                txn.set_prop(filler, Prop::Mode(LayoutMode::None));
+                txn.set_prop(filler, Prop::Width(4.0));
+                txn.set_prop(filler, Prop::Height(4.0));
+            }
+            let bar = txn.add_node(Some(root), None);
+            txn.set_prop(bar, Prop::Mode(LayoutMode::None));
+            txn.set_prop(bar, Prop::Width(10.0));
+            txn.set_prop(bar, Prop::Height(12.0));
+            txn.bind(bar, CoreChannel::Width, width, ScalarTransform::Identity);
+            bar
+        };
+        let first = root_with_bar("first", 1);
+        let second = root_with_bar("second", 0);
+        // Named in the same transaction that adds the roots, which is what a
+        // loader does and what makes the ordinal judgeable only at the commit.
+        txn.show_root(Some(shown));
+        txn.commit();
+        (first, second)
+    };
+
+    let live = dashlang::attach_live(arena, Box::new(TaffySolver::new()));
+    (live, first_bar, second_bar)
+}
+
+/// **A bound node under an unshown root must not panic.**
+///
+/// `attach_live` binds every node the document declares, and `cached_index` is
+/// built from the committed table — which since story #838 holds the shown
+/// root's subtree alone. A contained rect write classifies as
+/// `WriteClass::Patch`, and indexing `cached_index[&node]` for a node with no
+/// row panics inside the frame loop. That is every multi-artboard Figma file
+/// with a variable bound on an artboard the host is not showing.
+///
+/// The write is still staged — intent is intent, and it takes effect if that
+/// root is ever shown. What is skipped is the patch, because a patch is an
+/// overlay on a solved rect and this node has none.
+#[test]
+fn a_bound_node_under_an_unshown_root_is_staged_and_not_patched() {
+    let mut arena = Arena::new();
+    let (mut live, first_bar, second_bar) =
+        two_bound_roots(&mut arena, dashscene_core::ShownRoot::FIRST);
+    assert_eq!(
+        arena.committed().rect_index_of(second_bar),
+        None,
+        "the fixture's whole point: the second root's bar has no row to patch"
+    );
+
+    let width = live.signal_named("bar/width").expect("declared above");
+    live.set(width, 44.0);
+    // Without the guard this panics on `cached_index[&second_bar]`.
+    live.tick(0.016, &mut arena);
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.rects().len(),
+        3,
+        "the shown root, its filler and its bar"
+    );
+    let row = scene
+        .rect_index_of(first_bar)
+        .expect("the shown bar has a row");
+    assert_eq!(
+        scene.rects()[row as usize].w,
+        44.0,
+        "the shown root's own bound child took the write"
+    );
+}
+
+/// **A change of shown root rebuilds the patch cache.**
+///
+/// `cached_index` maps NodeId to a row of `cached_solve`, and both are built
+/// from the committed table. A renumbering makes every row name a different
+/// node, and no layout intent changed, so nothing else reports it —
+/// `CommittedScene::renumbered` is what does, and this is the consumer it
+/// exists for. Without reading it the cache keeps the old root's mapping and
+/// every later contained write patches the wrong rect, silently in a release
+/// build.
+#[test]
+fn a_change_of_shown_root_rebuilds_the_patch_cache() {
+    let mut arena = Arena::new();
+    let (mut live, _, second_bar) = two_bound_roots(&mut arena, dashscene_core::ShownRoot::FIRST);
+    let width = live.signal_named("bar/width").expect("declared above");
+
+    live.set(width, 30.0);
+    live.tick(0.016, &mut arena);
+
+    // Show the other root, and let the tick commit it — a bare `commit()`
+    // could not, because the newly shown subtree has no previous rect for a
+    // commit to carry forward and no solver runs to produce one.
+    // A scope rather than `drop`: `Txn` implements no `Drop`, which is the
+    // whole reason a staged shown root survives to the next tick.
+    {
+        let mut txn = arena.open();
+        txn.show_root(Some(dashscene_core::ShownRoot::nth(1)));
+    }
+    live.tick(0.016, &mut arena);
+    assert!(arena.committed().renumbered(), "that tick renumbered");
+
+    // The tick that needs the rebuilt cache: a contained write on a node whose
+    // row exists only in the table the renumbering produced.
+    live.set(width, 77.0);
+    live.tick(0.016, &mut arena);
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.rects().len(),
+        2,
+        "the second root and its bar, a different shape"
+    );
+    let row = scene
+        .rect_index_of(second_bar)
+        .expect("the newly shown bar has a row");
+    assert_eq!(
+        scene.rects()[row as usize].w,
+        77.0,
+        "the newly shown root's bound child took the write, which needs the cache rebuilt \
+         against its own rows"
+    );
+}
+
+/// **A shown root staged between ticks is committed, and through the real
+/// solver.**
+///
+/// `Txn` has no `Drop` that reverts, so `show_root` leaves the arena changed
+/// and uncommitted the way a staged `set_variant` used to (issue #617). A
+/// change of shown root moves no signal and starts no track, so `tick`'s idle
+/// early return would swallow it and the host would keep painting the artboard
+/// it was already showing.
+///
+/// It must also take the reflow arm: the cached arms replay `cached_solve`,
+/// which holds the rects of the root that *was* shown, so the newly shown
+/// subtree would reach `commit_with` with no rect for any of its nodes — which
+/// it refuses by name.
+#[test]
+fn a_shown_root_staged_between_ticks_is_not_swallowed_by_the_idle_return() {
+    let mut arena = Arena::new();
+    let (mut live, _, second_bar) = two_bound_roots(&mut arena, dashscene_core::ShownRoot::FIRST);
+
+    // Settle: nothing is dirty and no track is live, so the next tick would
+    // take the idle return if the staged root did not stop it.
+    let settled = live.tick(0.016, &mut arena);
+    assert_eq!(
+        live.tick(0.016, &mut arena),
+        settled,
+        "a genuinely idle tick holds the generation, which is what makes the assertion below \
+         about the shown root rather than about ordinary churn"
+    );
+
+    // A scope rather than `drop`: `Txn` implements no `Drop`, which is the
+    // whole reason a staged shown root survives to the next tick.
+    {
+        let mut txn = arena.open();
+        txn.show_root(Some(dashscene_core::ShownRoot::nth(1)));
+    }
+
+    let after = live.tick(0.016, &mut arena);
+    assert_ne!(after, settled, "the staged shown root committed");
+    let scene = arena.committed();
+    assert_eq!(
+        scene.shown_root(),
+        Some(dashscene_core::ShownRoot::nth(1)),
+        "and the commit is the one that carried it"
+    );
+    assert!(
+        scene.rect_index_of(second_bar).is_some(),
+        "the newly shown subtree was solved rather than replayed from the old root's cache"
+    );
+}

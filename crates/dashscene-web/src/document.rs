@@ -115,11 +115,14 @@ impl Ranges {
 /// artboard it is showing, and this function runs again on every rebuild
 /// (story #837).
 ///
-/// **The bound stays conditional.** Naming a root other than the first changes
-/// which root `shown::layout` tries to bound by; it does not change that the
-/// bound widens to every root when another root draws a payload, because the
-/// runtime still paints every root. That is `shown::Bound`'s whole subject and
-/// story #838's whole subject.
+/// **The bound is unconditional since story #838.** Naming a root other than
+/// the first changes which payloads this fetches, for every document shape:
+/// the load names that root on the arena below, so the traversal, the solve and
+/// the paint follow it and a row nothing paints is a row nothing can ask for.
+/// Until then the fetch widened to every root that drew, whatever was named,
+/// and `shown`'s module documentation carries the whole of that history and the
+/// one thing it left behind — a root this load did not read cannot be shown
+/// afterwards.
 pub async fn load_document(
     url: &str,
     shown_root: ShownRoot,
@@ -251,18 +254,21 @@ pub async fn load_document(
     // the network — a server that ignored the first range sent the whole file,
     // and every read after that is a slice.
     //
-    // `bound` is reported rather than left to be inferred from the payload
-    // count, because "the shown root draws them all" and "another root draws
-    // one, so all of them are read" produce the same number and are not the
-    // same fact.
+    // The root that bounded it is reported beside the count. This line carried
+    // a `shown::Bound` until story #838, because "the shown root draws them
+    // all" and "another root draws one, so all of them are read" produced the
+    // same number and were not the same fact. There is one bound now, so the
+    // fact worth reporting is **which root** it was: the same payload count
+    // means something different for root 0 than for root 7, and the ordinal is
+    // the only thing here that says which.
     crate::host::log(&format!(
-        "{url}: {} bytes, {} sections, {} hot, {} of {} payload(s) read ({:?}), {} B, {} request(s)",
+        "{url}: {} bytes, {} sections, {} hot, {} of {} payload(s) read for root {}, {} B, {} request(s)",
         ranges.total(),
         envelope.sections().len(),
         envelope.hot_len(),
         layout.fetch.len(),
         plan.wanted().len(),
-        layout.bound,
+        shown_root.ordinal(),
         layout.bytes,
         ranges.requests(),
     ));
@@ -273,5 +279,14 @@ pub async fn load_document(
     // comment this replaced, which said a browser had no region.
     let region: Arc<dyn Region> = Arc::new(region);
     dashscene_core::load_document_mapped(&document, region, &layout.payloads, arena);
+    // The runtime's half of the bound `shown::layout` took above. The load
+    // replays every root — a document is every artboard it carries — and this
+    // confines what is solved, committed and painted to the one being shown
+    // (story #838, issue #822). A commit of its own rather than a parameter on
+    // the loader: the load has already committed, and one extra commit per load
+    // is cheaper than a signature change on three public loaders.
+    let mut txn = arena.open();
+    txn.show_root(Some(shown_root));
+    txn.commit();
     Ok(dashlang::attach_live(arena, Box::new(TaffySolver::new())))
 }

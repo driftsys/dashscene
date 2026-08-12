@@ -771,7 +771,17 @@ fn apply_scalar_write(
         }
         WriteClass::Patch => {
             txn.set_prop(b.node, prop_for(b.channel, v));
-            let idx = cached_index[&b.node];
+            // A node under an unshown root has no committed rect, so there is
+            // no row to patch (story #838). The intent is staged above and
+            // takes effect if that root is ever shown; a patch is an overlay
+            // on a solved rect and this node has none. Indexing here rather
+            // than asking would panic in the frame loop on any document whose
+            // unshown artboards carry a bound node — which is every
+            // multi-artboard Figma file with a variable on the second board.
+            let Some(&idx) = cached_index.get(&b.node) else {
+                b.last_applied = v;
+                return;
+            };
             let patch = resolve_patch(b.channel, v, b.parent, cached_solve, cached_index);
             patches.push((idx, patch));
         }
@@ -860,10 +870,17 @@ impl LayoutSolver for FlipOverlay<'_> {
         for (node, patch) in self.samples {
             match rects.iter_mut().find(|(n, _)| n == node) {
                 Some((_, rect)) => apply_patch(rect, *patch),
+                // A node the cache does not hold is one under an unshown root
+                // (story #838): the committed table it is built from covers
+                // the shown root's subtree only. There is no base rect to
+                // apply the sample to and nothing draws the node, so the
+                // sample is dropped rather than indexed for.
                 None => {
-                    let mut rect = self.cached_solve[self.cached_index[node]].1;
-                    apply_patch(&mut rect, *patch);
-                    rects.push((*node, rect));
+                    if let Some(&at) = self.cached_index.get(node) {
+                        let mut rect = self.cached_solve[at].1;
+                        apply_patch(&mut rect, *patch);
+                        rects.push((*node, rect));
+                    }
                 }
             }
         }
@@ -1300,7 +1317,18 @@ impl LiveScene {
         // churn the generation while nothing moved (D4), so skip it and hold
         // the generation steady, keeping it a meaningful "something changed"
         // signal for a downstream consumer.
+        // A shown root staged since the last tick, detected the same way and
+        // for the same reason as the variant switch above (story #838).
+        // `Txn` has no `Drop` that reverts, so `show_root` leaves the arena
+        // changed and uncommitted exactly as `set_variant` used to — and a
+        // change of shown root moves no signal and starts no track, so
+        // without this the idle return below would swallow it and the host
+        // would go on painting the artboard it was already showing, forever.
+        // That is issue #617's shape, on the state this story added.
+        let shown_root_staged = arena.shown_root() != arena.committed().shown_root();
+
         if switched.is_empty()
+            && !shown_root_staged
             && self.scheduler.is_settled()
             && !self.scalar_dirty.iter().any(|&d| d)
             && !self.bool_dirty.iter().any(|&d| d)
@@ -1478,6 +1506,15 @@ impl LiveScene {
         // 5. One commit. A reflow re-solves and refreshes the cache; a
         //    contained/paint-only frame patches the cache and replays it,
         //    so the real solver is never called.
+        //
+        //    A change of shown root takes the reflow arm whatever the writes
+        //    did (story #838). The cached arms replay `cached_solve`, which
+        //    holds the rects of the root that *was* shown, so the newly shown
+        //    subtree would reach `commit_with` with no rect for any of its
+        //    nodes — which it refuses by name (P4). Only the real solver has
+        //    the answer, and `TaffySolver` already reads the whole new subtree
+        //    back rather than pruning it for exactly this call.
+        let layout_dirty = layout_dirty || shown_root_staged;
         let generation = if layout_dirty {
             // The real solver runs inside the commit, so the layout is
             // authoritative and glyph runs stage; this frame's switch and
@@ -1519,8 +1556,22 @@ impl LiveScene {
             txn.commit_with(&mut cached)
         };
 
+        // `cached_index` is rebuilt with the cache, not built once. Before
+        // story #838 it could be built once: a reflow changes geometry and
+        // never the committed order, so a NodeId kept its row for the life of
+        // the scene. A renumbering breaks exactly that — the committed table
+        // is a different subtree and every row names a different node — and a
+        // stale index then patches the wrong rect, silently in a release
+        // build. `shown_root_staged` above is what routes a renumbering here:
+        // it forces this arm, so there is no second condition to test.
         if layout_dirty {
             refresh_cache(arena, &mut self.cached_solve);
+            self.cached_index = self
+                .cached_solve
+                .iter()
+                .enumerate()
+                .map(|(i, (id, _))| (*id, i))
+                .collect();
         }
 
         // Sweep finished FLIP tracks. `dashcue` drops a track when it
@@ -1889,11 +1940,17 @@ fn refresh_cache(arena: &Arena, cached: &mut Vec<(NodeId, SolvedRect)>) {
         .collect();
     // A static tree's committed order is invariant across reflows: a reflow
     // changes geometry, never the node count or DFS order (a `Visible` flip
-    // keeps the node with a degenerate rect). `cached_index` is built once and
-    // never rebuilt, so a shape change here would silently misalign every
+    // keeps the node with a degenerate rect). `cached_index` is rebuilt only
+    // beside this call, so a shape change here would silently misalign every
     // patch. Guard it, skipping the first call before any prior cache exists.
+    //
+    // A **renumbering** is the one legitimate shape change (story #838): the
+    // shown root moved, so the committed table is a different subtree by
+    // design. The caller rebuilds `cached_index` on exactly that condition,
+    // which is why it is excused here rather than asserted through.
     debug_assert!(
         cached.is_empty()
+            || committed.renumbered()
             || (cached.len() == rebuilt.len()
                 && cached.iter().zip(&rebuilt).all(|(a, b)| a.0 == b.0)),
         "refresh_cache: committed node count or order changed across a reflow"

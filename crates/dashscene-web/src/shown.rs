@@ -43,25 +43,46 @@
 //! - a fetch that returns the wrong number of bytes is detectable, because the
 //!   loader knows what it asked for.
 //!
-//! # The bound is conditional, and that is the story's real finding
+//! # The bound was conditional, and story #838 made it unconditional
 //!
-//! **The runtime paints every root, not the shown one.** `dashscene-engine`
-//! solves `for &root in arena.roots()`, `Arena::dfs_order` walks all of them
-//! into one committed table, and a painter walks that table. "The shown root"
-//! is a property of the load and of nothing below it.
+//! Story #792 shipped this module with a guard, and the guard was the finding
+//! rather than a detail: **the runtime painted every root, not the shown one.**
+//! `dashscene-engine` solved `for &root in arena.roots()`, `Arena::dfs_order`
+//! walked all of them into one committed table, and a painter walked that
+//! table. So "the shown root" was a property of the load and of nothing below
+//! it, and a payload this load skipped was a payload the painter could still
+//! ask for. A mapped host survives that — it binds a real range for every entry
+//! and only *hashes* the shown root's, so an unread row still decodes,
+//! unverified, which is debt #779 — and a browser cannot, because a payload it
+//! did not fetch has no bytes at all. [`layout`] therefore read the shown root's
+//! assets only when no other root drew one, and otherwise read the union over
+//! every root. The many-frame document R5's criterion is really about — many
+//! roots, one payload each — took the widened path, so R5 did not hold for that
+//! shape on this target.
 //!
-//! A mapped host survives that: it binds a real range for every entry and only
-//! *hashes* the shown root's, so an unread row still decodes — unverified,
-//! which is debt #779. A browser cannot, because a payload it did not fetch has
-//! no bytes at all.
+//! **Story #838 removed the premise, so the guard went with it.**
+//! `Arena::dfs_order`, the solve and the paint all follow the root
+//! [`crate::document`] names on the arena it loaded into, so a row nothing
+//! paints is a row nothing can ask for. [`layout`] fetches the shown root's own
+//! set for every document shape, which is the sentence issue #822 was opened to
+//! make writable.
 //!
-//! So [`layout`] reads the shown root's assets **only when no other root draws
-//! one**, and otherwise reads the union over every root, reporting which
-//! through [`Bound`]. The many-frame document R5's criterion is really about —
-//! many roots, one payload each — takes the widened path, so **R5 does not hold
-//! for that shape on this target**. Issue #822 carries the change that would
-//! make the bound unconditional: confining the solve, the committed table and
-//! the paint to the shown root.
+//! # What replaced it: the root named at load is the only one that can be shown
+//!
+//! The guard is gone and the asymmetry behind it is not. A mapped desktop load
+//! binds a real byte range for every entry, so it would survive a host that
+//! showed a different root afterwards; this one fetched nothing for the other
+//! roots, so showing one would hand `dashscene_gpu::residency`'s `decode_png` an
+//! empty slice.
+//!
+//! No host offers that switch today — `Txn::show_root` is named once, by
+//! [`crate::document`], during the load — and this is where it would be felt
+//! first. Widening the fetch is not the answer if it ever is offered: that is
+//! R5 surrendered for a capability nobody asked for. Fetching the newly shown
+//! root's payloads at the moment of the switch is, and it is the same lazy fetch
+//! `the-shown-root-bounds-the-load-not-the-paint.md` rejected for the *initial*
+//! load, for reasons — an unknown byte cost, and a blocking wait on the one
+//! target that cannot take one — that a deliberate switch does not share.
 //!
 //! # An entry no root draws gets an empty range
 //!
@@ -103,12 +124,13 @@
 //! asset, the bounded set and the whole table are the same set. That is the same
 //! property that makes a one-root fixture useless here.
 //!
-//! An empty row is one **no root draws**, which is what the guard above
-//! guarantees — an asset any painted root reaches is fetched, so nothing can
-//! ask an empty row for pixels. Without that guarantee this would be a crash
-//! rather than a placeholder: `dashscene_gpu::residency`'s `decode_png` would be
-//! handed an empty slice, and its `expect` says an image payload has a readable
-//! header.
+//! An empty row is one **the shown root does not draw**, and since story #838
+//! that is the same thing as a row nothing paints — the traversal covers that
+//! root's subtree and no other. Without that this would be a crash rather than a
+//! placeholder: `dashscene_gpu::residency`'s `decode_png` would be handed an
+//! empty slice, and its `expect` says an image payload has a readable header.
+//! Until #838 the guard above is what kept it true, by widening the fetch; the
+//! traversal is what keeps it true now.
 
 use dashbuf::{Document, Wanted};
 use dashscene_core::MappedPayload;
@@ -130,34 +152,6 @@ pub(crate) struct Layout {
     /// How many payload bytes this load will read. This is the whole of what
     /// R5 bounds, and it is known before any of them arrive.
     pub bytes: u64,
-    /// Whether the shown root bounded this load, and if not, why not.
-    pub bound: Bound,
-}
-
-/// What decided the set of payloads a load reads.
-///
-/// Reported rather than inferred from a count, because "read everything" and
-/// "the shown root happens to draw everything" produce the same set and are
-/// not the same fact. A host that logged only the number could not tell an
-/// embedder which one happened.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Bound {
-    /// Only the payloads the shown root's subtree draws. This is R5 holding.
-    ShownRoot,
-    /// Every asset **any** root draws, because a root other than the shown one
-    /// draws one and the runtime paints every root.
-    ///
-    /// Not every entry in the file: an asset no root draws is still not read,
-    /// so this is the widest safe set rather than a surrender.
-    ///
-    /// **R5 does not hold for such a document on this target**, and saying so
-    /// is the point of this variant. Bounding the fetch while the painter still
-    /// resolves every rect would leave a row with no bytes for the painter to
-    /// decode. The fix that would remove this case is confining the solve, the
-    /// committed table and the paint to the shown root, which is a change to
-    /// `dashscene-engine`, `dashscene-core` and every painter rather than to
-    /// this crate — issue #822.
-    EveryRoot,
 }
 
 impl Layout {
@@ -186,28 +180,35 @@ impl Layout {
 /// can decide what to fetch before fetching anything — which is the property
 /// that makes this bounded at all rather than merely tidier.
 pub(crate) fn layout(document: &Document<'_>, wanted: &[Wanted], root: u32) -> Layout {
-    // **The bound is only safe when nothing else draws.** The runtime paints
-    // every root, not the shown one: `dashscene_engine` solves
-    // `for &root in arena.roots()`, `Arena::dfs_order` seeds its stack from all
-    // of them, and a painter walks the whole committed table. So a payload this
-    // load skipped is a payload the painter may still ask for — and on this
-    // target skipping it means there are no bytes at all, where a mapped host
-    // still names real ones.
+    // **The bound is unconditional since story #838**, and the guard that made
+    // it conditional is gone. It read: the runtime paints every root, so a
+    // payload this load skipped is a payload the painter may still ask for —
+    // and on this target skipping it means there are no bytes at all, where a
+    // mapped host still names real ones. That was true, and it is what made the
+    // browser widen to the union whenever another root drew.
     //
-    // That asymmetry is the whole reason for this check, and it is why the
-    // native host can bind every row and this one cannot. It was found by
-    // review rather than by a test: an empty row reaches
+    // It is no longer true. `crate::document` names the shown root on the arena
+    // it loaded into, so `Arena::dfs_order`, the engine's solve and the paint
+    // all cover that root's subtree and nothing else. **A row nothing paints is
+    // a row nothing can ask for**, which is the sentence issue #822 was opened
+    // to be able to write.
+    //
+    // The consequence worth keeping in sight: an empty row still reaches
     // `dashscene_gpu::residency`'s `decode_png`, whose
     // `expect("an image payload has a readable PNG header")` is false for it.
-    let shown = dashbuf::prefetch::assets_of_root(document, root);
-    let painted = assets_of_every_root(document);
-    // `shown` is a subset of `painted` by construction, so equal lengths mean
-    // equal sets and the shown root is the only one that draws.
-    let (fetch, bound) = if painted.len() == shown.len() {
-        (shown, Bound::ShownRoot)
-    } else {
-        (painted, Bound::EveryRoot)
-    };
+    // Nothing reaches those rows now, and the reason is the traversal rather
+    // than this function — so if the traversal ever widens again, this is where
+    // it will be felt.
+    //
+    // The `Bound` this used to report went with the guard. D4 of the record
+    // required a host to say *which* bound it took, because "read everything"
+    // and "the shown root happens to draw everything" produce the same byte
+    // count and are not the same fact. There is one bound left, so the reported
+    // value would be a constant and every assertion on it a tautology — which
+    // is the near-side reading `docs/technotes/measured-verification.md` names.
+    // What the tests assert instead is the set and the byte count, which move
+    // with the ordinal now and did not before.
+    let fetch = dashbuf::prefetch::assets_of_root(document, root);
 
     // Every row starts empty; the loop below fills in the ones being read. That
     // is the honest default — a row nobody fetched names no bytes — rather than
@@ -235,32 +236,12 @@ pub(crate) fn layout(document: &Document<'_>, wanted: &[Wanted], root: u32) -> L
         fetch,
         payloads,
         bytes: at,
-        bound,
     }
-}
-
-/// Every asset any root draws, ascending and without repeats.
-///
-/// The union rather than a per-root check, because an asset two roots share is
-/// read once and is not a reason to widen anything. Matches
-/// `assets_of_root`'s own ordering contract so the two can be compared by
-/// length.
-fn assets_of_every_root(document: &Document<'_>) -> Vec<u32> {
-    // `prefetch::roots` rather than a scan of this crate's own: "what counts as
-    // a root" is the format's rule, and it gained a name at story #837. Two
-    // copies of the `parent == NO_PARENT` predicate would be two things to keep
-    // in step for no gain.
-    let mut all: Vec<u32> = dashbuf::prefetch::roots(document)
-        .flat_map(|root| dashbuf::prefetch::assets_of_root(document, root))
-        .collect();
-    all.sort_unstable();
-    all.dedup();
-    all
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Bound, Layout, layout};
+    use super::{Layout, layout};
     use dashbuf::prefetch::ShownRoot;
     use dashbuf::{
         AssetEntry, AssetEntryArgs, AssetKind, Document, DocumentArgs, Fill, ImageFill,
@@ -283,11 +264,13 @@ mod tests {
     /// fixture takes it as a parameter rather than one of them being "the"
     /// many-frame document:
     ///
-    /// - `false` — the extra frames draw no asset, so bounding the load by the
-    ///   shown root is safe and R5 holds.
-    /// - `true` — every frame draws its own, so every payload is needed the
-    ///   moment the painter walks the committed table, and the load widens to
-    ///   every root that draws ([`Bound::EveryRoot`]).
+    /// - `false` — the extra frames draw no asset, so the shown root's set and
+    ///   the union over every root are the same set.
+    /// - `true` — every frame draws its own, so the two differ: this is the
+    ///   shape the load had to widen over until story #838, and the shape that
+    ///   made R5 conditional on this target. Both are bounded by the shown root
+    ///   now, and the fixture is kept because it is the one that can tell the
+    ///   two sets apart.
     ///
     /// Roots rather than a nested tree because R5 is about the *shown* root. A
     /// one-root document cannot tell "the shown root's assets" from "every asset
@@ -396,8 +379,10 @@ mod tests {
     /// the same root.
     ///
     /// The many-frame document's other frames draw no asset, which is the shape
-    /// the bound is **safe** over — see [`Bound::EveryRoot`] for why the
-    /// other shape cannot be bounded while the painter walks every root.
+    /// the bound was **safe** over before story #838, when the other shape had
+    /// to widen because the painter walked every root. Both shapes are bounded
+    /// now, so this fixture and its `others_draw = true` twin differ in what
+    /// they draw and no longer in what they cost.
     ///
     /// This is what fails against the path this story replaced, which fetched
     /// every payload the document named.
@@ -408,9 +393,6 @@ mod tests {
 
         let small = layout_of(&small, &wanted_for(1), 0);
         let many = layout_of(&many, &wanted_for(64), 0);
-
-        assert_eq!(small.bound, Bound::ShownRoot);
-        assert_eq!(many.bound, Bound::ShownRoot);
         assert_eq!(
             small.bytes, PAYLOAD,
             "the one-frame document's only payload is the shown root's"
@@ -425,118 +407,105 @@ mod tests {
         );
     }
 
-    /// **The guard, and the reason it exists.** When another root draws an
-    /// asset, the load widens to the whole document and says so.
+    /// **The many-roots-that-draw document, which R5's criterion is really
+    /// about, is bounded now** — and this test asserted the opposite until
+    /// story #838.
     ///
-    /// Bounding it would leave that root's image row naming no bytes, and the
-    /// runtime paints every root — `dashscene_engine` solves them all,
-    /// `Arena::dfs_order` walks them all into one committed table, and a painter
-    /// walks the whole table. `dashscene_gpu`'s `decode_png` would then be
-    /// handed an empty slice, where its `expect` says an image payload has a
-    /// readable header.
+    /// It read: every frame draws, so every payload is read — the widened
+    /// answer, 64 x 4 096 B. That was honest, and it was the finding story #792
+    /// shipped: the runtime painted every root, so a payload this load skipped
+    /// was one the painter could still ask for, and on this target skipping it
+    /// means there are no bytes at all.
     ///
-    /// So this asserts the opposite of the criterion above, deliberately: R5
-    /// does not hold for this shape on this target, and the honest thing is to
-    /// read everything rather than to crash. Issue #822 is what would remove the
-    /// case.
+    /// The traversal follows the shown root now, so a row nothing paints is a
+    /// row nothing can ask for. Same fixture, same call, and the numbers below
+    /// are what issue #822 was opened to make true.
     #[test]
-    fn a_document_whose_other_roots_draw_reads_every_drawn_payload() {
+    fn a_document_whose_other_roots_draw_is_bounded_by_the_shown_one() {
         let many = many_frames(64, true);
         let layout = layout_of(&many, &wanted_for(64), 0);
-
-        assert_eq!(layout.bound, Bound::EveryRoot);
         assert_eq!(
-            layout.fetch.len(),
-            64,
-            "every frame draws, so every payload is read"
+            layout.fetch,
+            vec![0],
+            "root 0's own asset — it was all 64 until story #838, and that was the shape R5 did \
+             not hold for on this target"
         );
-        assert_eq!(layout.bytes, 64 * PAYLOAD);
-        for (index, payload) in layout.payloads.iter().enumerate() {
-            assert!(
-                payload.range.end > payload.range.start,
-                "entry {index} would be painted, so it must name bytes rather than an empty range"
-            );
-        }
+        assert_eq!(layout.bytes, PAYLOAD, "one payload, not sixty-four");
+        assert!(
+            layout.payloads[1].range.is_empty(),
+            "and entry 1 names no bytes, which is safe exactly because nothing paints it"
+        );
     }
 
-    /// **Showing a root that draws nothing still reads what is painted.**
+    /// **A root that draws nothing reads nothing**, which is the same sentence
+    /// with the opposite meaning to the one this test carried before story
+    /// #838.
     ///
-    /// This is the assertion that says the bound is about what the runtime
-    /// *draws*, not about what the host selected. Root 5 draws no asset, so a
-    /// set computed from it alone would be empty and the load would fetch
-    /// nothing — while root 0, which is painted alongside it, draws asset 0 and
-    /// would then be handed an empty row.
+    /// It read "showing a root that draws nothing still reads what is painted":
+    /// root 5 drew no asset, root 0 was painted alongside it and drew asset 0,
+    /// so the load had to widen and fetch it. Nothing paints root 0 now, so
+    /// nothing asks for its payload, and the honest answer to "what does this
+    /// root need" is: nothing at all.
     ///
-    /// It also pins that the widened set is the union over the roots and not
-    /// the whole table: entries 1 to 7 are drawn by nobody in this fixture and
-    /// are still not read.
+    /// A load that fetches no payload is the correct answer here and would be a
+    /// bug in almost any other test, so the byte count is asserted rather than
+    /// the set alone.
     #[test]
-    fn showing_a_root_that_draws_nothing_still_reads_what_is_painted() {
+    fn showing_a_root_that_draws_nothing_reads_nothing() {
         let many = many_frames(8, false);
         let layout = layout_of(&many, &wanted_for(8), 5);
-
-        assert_eq!(layout.bound, Bound::EveryRoot);
-        assert_eq!(layout.fetch, vec![0], "root 0's asset, and nothing else");
-        assert_eq!(layout.bytes, PAYLOAD);
+        assert!(
+            layout.fetch.is_empty(),
+            "root 5 draws no asset, and no other root is painted for it to widen to"
+        );
+        assert_eq!(layout.bytes, 0);
+        assert_eq!(
+            layout.payloads.len(),
+            8,
+            "a row per asset entry all the same, because `load_document_mapped` zips the two"
+        );
     }
 
-    /// A [`ShownRoot`] reaches this module's `root` argument — and on this
-    /// target it moves [`Bound`] rather than the byte count (story #837).
+    /// A [`ShownRoot`] reaches this module's `root` argument, and since story
+    /// #838 it moves the **byte count**. Until then it moved only which of two
+    /// bounds this module reported taking, which is why that report existed and
+    /// why it went when the second bound did.
     ///
     /// `load_document` is the call that joins the selector to [`layout`], and it
     /// compiles on `wasm32` alone, so this runs the same two steps in the same
     /// order on the host target. That is the only place the join can be
-    /// asserted, and it is why `ShownRoot` is not merely re-exported here and
-    /// left unused.
+    /// asserted.
     ///
-    /// **What it deliberately does not claim.** Naming a different root does not
-    /// narrow what a browser fetches, and cannot for *any* document while the
-    /// runtime paints every root. `shown` is one of the sets
-    /// [`assets_of_every_root`] unions, so `shown ⊆ painted` always, and
-    /// [`layout`] fetches `painted` in both branches — the two are the same set
-    /// exactly when the shown root is the only one that draws. The byte count is
-    /// therefore independent of the ordinal, and the equality below says so
-    /// rather than leaving a reader to look for the document shape where it is
-    /// not.
-    ///
-    /// So the ordinal's observable effect here is the reported [`Bound`], which
-    /// is the honest statement of what #837 delivers on this target: a host can
-    /// *say* which root it shows, and the browser can *say back* whether that
-    /// bounded the load. Story #838 is what makes the answer always
-    /// [`Bound::ShownRoot`].
+    /// **This is the assertion story #837 could not make.** It said then that
+    /// naming a different root could not narrow what a browser fetches, for any
+    /// document, because `shown ⊆ painted` and `layout` fetched `painted` in
+    /// both branches. There is no `painted` any more: the runtime paints the
+    /// shown root, so the fetch is that root's own set and a different ordinal
+    /// is a different set.
     ///
     /// This fixture's roots are one node each, so ordinal N happens to be node
-    /// N. That the ordinal is an index over roots rather than over nodes is
-    /// pinned where the two differ — `dashbuf`'s `residency` suite, whose second
-    /// root is node 4.
-    ///
-    /// Its two `layout` calls overlap with the tests above, which is deliberate
-    /// and is the whole content: those call `layout` with a root index written
-    /// into the test, and this one gets the same two indices out of an ordinal.
-    /// The assertion neither of them makes is the byte-count equality below.
+    /// N. That the ordinal indexes roots rather than nodes is pinned where the
+    /// two differ — `dashbuf`'s `residency` suite, whose second root is node 4.
     #[test]
-    fn a_shown_root_ordinal_reaches_the_layout_and_moves_the_reported_bound() {
-        let many = many_frames(8, false);
+    fn a_shown_root_ordinal_selects_which_payload_the_layout_fetches() {
+        let many = many_frames(8, true);
         let document = dashbuf::root_as_document(&many).expect("the fixture parses");
         let wanted = wanted_for(8);
-        let resolve = |ordinal| {
-            dashbuf::prefetch::resolve(&document, ShownRoot::nth(ordinal))
-                .expect("the fixture has eight roots")
-        };
 
-        // Root 0 is the only root that draws, so showing it is bounded. Root 5
-        // draws nothing and root 0 does, so the guard widens. Same bytes,
-        // different fact — which is why `Bound` is reported rather than
-        // inferred from a count.
-        let first = layout(&document, &wanted, resolve(0));
-        let fifth = layout(&document, &wanted, resolve(5));
-        assert_eq!(first.bound, Bound::ShownRoot);
-        assert_eq!(fifth.bound, Bound::EveryRoot);
-        assert_eq!(
-            fifth.bytes, first.bytes,
-            "the ordinal moved the bound and not the byte count, which is all this target can \
-             deliver until story #838"
-        );
+        for ordinal in [0u32, 1, 7] {
+            let root = dashbuf::prefetch::resolve(&document, ShownRoot::nth(ordinal))
+                .expect("the fixture has eight roots");
+            let layout = layout(&document, &wanted, root);
+            assert_eq!(
+                layout.fetch,
+                vec![ordinal],
+                "root {ordinal} draws asset {ordinal}, and the ordinal is what picked it"
+            );
+            assert_eq!(
+                layout.bytes, PAYLOAD,
+                "one payload, whichever root is named"
+            );
+        }
 
         assert_eq!(
             dashbuf::prefetch::resolve(&document, ShownRoot::nth(8)),
@@ -553,8 +522,6 @@ mod tests {
     fn every_asset_entry_gets_a_row_and_the_unread_ones_are_empty() {
         let many = many_frames(8, false);
         let layout = layout_of(&many, &wanted_for(8), 0);
-
-        assert_eq!(layout.bound, Bound::ShownRoot);
         assert_eq!(layout.payloads.len(), 8, "one row per asset entry");
         for (index, payload) in layout.payloads.iter().enumerate() {
             let read = index == 0;
@@ -622,8 +589,6 @@ mod tests {
 
         let bytes = one_root_drawing_all(4);
         let layout = layout_of(&bytes, &wanted, 0);
-
-        assert_eq!(layout.bound, Bound::ShownRoot);
         assert_eq!(layout.fetch, vec![0, 1, 2, 3]);
         assert_eq!(layout.bytes, 100 + 200 + 400 + 800);
         let ranges: Vec<_> = layout
