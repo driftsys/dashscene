@@ -22,6 +22,17 @@
 //! that story is about to settle. It joins when #837 lands, and the versioning
 //! rule below says what that costs.
 //!
+//! **A font is absent for a different reason: nothing can supply one yet.**
+//! [`ds_runtime_load_document`] builds its solver with `TaffySolver::new()`,
+//! which has neither a typesetter nor an atlas set, so **a `.dsb` containing
+//! text draws no glyphs and its text nodes measure as empty leaves** — the
+//! layout is wrong, not merely bare. Shaping needs a font; the document format
+//! has no font payload, `AssetKind` being `Image` and `DistanceField` and
+//! nothing else; so a font can only come from the host, and this ABI has no
+//! entry point that takes one. Ruled in
+//! `docs/decisions/fonts-are-host-supplied.md`, built by issue #863, and it is
+//! a versioned addition here for the same reason root selection is.
+//!
 //! # The three rules this ABI keeps
 //!
 //! 1. **No panic crosses the boundary.** Every entry point runs inside

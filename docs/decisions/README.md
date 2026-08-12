@@ -21,6 +21,13 @@ into the records below. Per-story decisions land here directly:
   — what an embedder consumes on the web and on the desktop, why it is two
   crates rather than one, and the finding that the shared half is policy
   rather than mechanism (issues #741 and #803, slice v0.17).
+- [fonts-are-host-supplied.md](fonts-are-host-supplied.md) — the glyph atlas
+  travels in the document as a `DistanceField` asset; the font does not and
+  cannot, because `AssetKind` has two variants and neither is a font, and P1
+  forbids the document carrying shaped runs instead. So the host is the only
+  place a font can come from. Until an integration crate can accept one, a
+  `.dsb` containing text draws no glyphs and its text nodes measure as empty
+  leaves through all three (issue #863, slice v0.19).
 - [dsb-format-and-one-schema.md](dsb-format-and-one-schema.md) — `.dsb`
   is the file extension; one flatbuffer schema serves both the file and
   wire roles (`docs/archive/2026-07-14-scope-decisions.md` §3).

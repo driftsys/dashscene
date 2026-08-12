@@ -307,6 +307,16 @@ were in the same position, and moved all of it into one job.
 
 ## Known gaps, named
 
+- **A loaded document's text does not draw, on any of the three** — #863. All
+  of them build their solver with `TaffySolver::new()`, which has neither a
+  typesetter nor an atlas set, so `stage_text` stages nothing: a `.dsb`
+  containing text draws no glyphs **and** its text nodes measure as empty
+  leaves, which reflows their siblings. The layout is wrong rather than merely
+  bare. None of the three can build a better solver yet — shaping needs a font,
+  the format carries none, and none of them can accept one — which is ruled in
+  [fonts-are-host-supplied.md](../decisions/fonts-are-host-supplied.md). The
+  programmatic path is unaffected and is why this stayed invisible: the showcase
+  brings its own solver, so all three demonstrations draw text.
 - **R5 is conditional on the web** — #822, and the fix is in the runtime rather
   than in either crate: confining the solve, the committed table and the paint
   to the shown root. Ruled at the v0.17 close —

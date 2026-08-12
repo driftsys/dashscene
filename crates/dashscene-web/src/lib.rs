@@ -58,6 +58,25 @@
 //!   whether a failure was survivable — the loop has already acted, and
 //!   `recovery::recovery` is the same classification it used.
 //!
+//! # A loaded document's text does not draw yet
+//!
+//! **A `.dsb` containing text, loaded through `load_document`, draws no glyphs,
+//! and its text nodes measure as empty leaves** — so a hug-sized text node
+//! collapses and its siblings reflow around a box the design did not specify.
+//! The layout is wrong rather than merely bare, which is the half that is
+//! easier to miss.
+//!
+//! The cause is that this crate builds its solver with `TaffySolver::new()`,
+//! which has neither a typesetter nor an atlas set, and `stage_text` stages
+//! nothing without both. It cannot yet build a better one: shaping needs a
+//! font, the document format has no font payload — `AssetKind` is `Image` and
+//! `DistanceField` and nothing else — so a font can only come from an embedder,
+//! and this crate has no way to accept one. That is ruled in
+//! `docs/decisions/fonts-are-host-supplied.md` and built by issue #863.
+//!
+//! A scene built in code is unaffected: it brings its own solver, which is why
+//! `demo-web` draws text correctly and this gap stayed invisible.
+//!
 //! # WebGPU only
 //!
 //! `wgpu`'s WebGL2 backend allows **zero** storage buffers per shader stage
