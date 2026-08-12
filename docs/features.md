@@ -528,8 +528,12 @@ absence of any mobile target in the workspace.
       sufficient for layer 0 — and what established that it was not quite:
       `ds_runtime_detach_surface` was added there, because the destroy
       handshake needs a call that drops the surface and keeps the document.
-      No iOS or Unity host exists. Root selection is absent, because
-      no host can name a root until story #837 lands. **A scene built in code
+      No iOS or Unity host exists. Root selection is absent, and since story
+      #837 the reason is no longer that nothing can name a root: both
+      integration crates take a `ShownRoot`, and this ABI's only entry point
+      hands the whole file to the owning loader, which copies every payload
+      whatever is shown — so there is nothing on that path for a selection to
+      bound (issue #925). **A scene built in code
       cannot be expressed through it at all** — there is no builder entry
       point, that being layer 2 (D8), so a host wanting one links the crates
       directly as `demo` and `demo-web` do.

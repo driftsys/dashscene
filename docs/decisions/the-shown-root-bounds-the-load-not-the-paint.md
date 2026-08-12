@@ -35,10 +35,18 @@ true on both targets.
   `buffer.instances()`, every instance, with no notion of which root is shown.
   `dashscene-skia` walks the same table.
 
-**And nothing selects a root.** Both integration crates call
-`dashbuf::prefetch::first_root`, so "the shown root" means "root 0" everywhere it
-is used. It is a bound on the load and a synonym for the first root; it is not a
-choice any host makes and not a value anything below the loader reads.
+**And nothing selects a root** — the state this record was written against, on
+2026-08-08. Both integration crates called `dashbuf::prefetch::first_root`, so
+"the shown root" meant "root 0" everywhere it was used. It was a bound on the
+load and a synonym for the first root; it was not a choice any host made and not
+a value anything below the loader read.
+
+**Settled by story #837 (2026-08-12), which is the first half of D3.** A host
+now names a `dashbuf::prefetch::ShownRoot` and both integration crates take one
+— [`the-shown-root-is-named-by-ordinal.md`](the-shown-root-is-named-by-ordinal.md).
+Everything else in this section still holds unchanged: the selection bounds the
+**load**, and the three sites above still cover every root. That is D2, and it
+is story #838.
 
 ## What v0.17 measured, and the part that is easy to misread
 
@@ -86,9 +94,11 @@ committed table, which no criterion currently measures at all.
 describes the traversal. Two further pieces are load-bearing and are recorded
 here so that the estimate is not taken from the issue alone:
 
-- **A selection concept has to exist first.** No host can say which root it
-  shows; both hardcode `first_root`. "Confine the paint to the shown root" is
-  meaningless until something can name a different one.
+- **A selection concept has to exist first.** No host could say which root it
+  showed; both hardcoded `first_root`. "Confine the paint to the shown root" is
+  meaningless until something can name a different one. **Done — story #837**,
+  which is the whole of this bullet and none of the next:
+  [`the-shown-root-is-named-by-ordinal.md`](the-shown-root-is-named-by-ordinal.md).
 - **`Arena::dfs_order` is the shared index space.** Its own documentation says
   it is "the one traversal both the rect table and the solvers agree on — change
   it here or nowhere", and rect-table index order is what glyph runs, instance

@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dashbuf::map::MappedFile;
+use dashbuf::prefetch::ShownRoot;
 use dashbuf::residency::BlobResidency;
 use dashlang::LiveScene;
 use dashscene_core::{Arena, MappedPayload, Region};
@@ -79,7 +80,19 @@ impl Document {
         &self.path
     }
 
-    /// Replays the document into `arena` and attaches a [`LiveScene`] to it.
+    /// Replays the document into `arena` and attaches a [`LiveScene`] to it,
+    /// bounding what it reads by the root `shown_root` names.
+    ///
+    /// **`shown_root` is a parameter rather than state on this handle**, because
+    /// `load` runs again on every rebuild and the embedder is what knows which
+    /// artboard it is showing. A field here would have to be kept in step with
+    /// that anyway, and would make "which root is on screen" answerable in two
+    /// places (story #837).
+    ///
+    /// It bounds the **load** and nothing below it. Every root is still solved,
+    /// committed and painted; story #838 is what changes that. So passing a
+    /// different `shown_root` today changes which payloads are made resident and
+    /// which are left cold, and does not change the picture.
     ///
     /// The extent is not a parameter: a loaded document already carries its own
     /// resolved canvas size (P1 — the document is intent, and a document
@@ -88,7 +101,11 @@ impl Document {
     /// drawable it is given. A resize therefore reloads the same picture rather
     /// than rescaling it, which is why [`crate::App::build`] is free to ignore
     /// the extent it is handed for this case.
-    pub fn load(&self, arena: &mut Arena) -> Result<LiveScene, DesktopError> {
+    pub fn load(
+        &self,
+        shown_root: ShownRoot,
+        arena: &mut Arena,
+    ) -> Result<LiveScene, DesktopError> {
         let name = self.path.display().to_string();
         let bytes = self.file.bytes();
 
@@ -129,9 +146,14 @@ impl Document {
         // the placeholder field that has no producer, which stays in v1 (D6) —
         // and debt #779 carries the gap.
         let residency = BlobResidency::new();
-        let shown = dashbuf::prefetch::first_root(&document)
-            .ok_or_else(|| DesktopError::NoRoot { path: name.clone() })?;
-        for index in dashbuf::prefetch::assets_of_root(&document, shown) {
+        let root = dashbuf::prefetch::resolve(&document, shown_root).ok_or_else(move || {
+            DesktopError::NoSuchRoot {
+                path: name,
+                ordinal: shown_root.ordinal(),
+                roots: dashbuf::prefetch::root_count(&document),
+            }
+        })?;
+        for index in dashbuf::prefetch::assets_of_root(&document, root) {
             let want = &wanted[index as usize];
             let payload = &bytes[want.range.start as usize..want.range.end as usize];
             residency
@@ -160,7 +182,7 @@ impl Document {
 
 #[cfg(test)]
 mod tests {
-    use super::Document;
+    use super::{Document, ShownRoot};
     use crate::DesktopError;
 
     /// A two-root `.dsb`, RAW, with `corrupt`'s payload one byte wrong.
@@ -281,16 +303,22 @@ mod tests {
         }
     }
 
-    /// Maps `bytes` and loads them, keeping the temporary directory alive for
-    /// the call.
-    fn load_bytes(bytes: &[u8]) -> Result<(), DesktopError> {
+    /// Maps `bytes` and loads them showing `shown_root`, keeping the temporary
+    /// directory alive for the call.
+    fn load_bytes_showing(bytes: &[u8], shown_root: ShownRoot) -> Result<(), DesktopError> {
         let directory = tempfile::tempdir().expect("a temporary directory");
         let path = directory.path().join("fixture.dsb");
         std::fs::write(&path, bytes).expect("the fixture writes");
 
         let document = Document::map(&path)?;
         let mut arena = dashscene_core::Arena::new();
-        document.load(&mut arena).map(|_| ())
+        document.load(shown_root, &mut arena).map(|_| ())
+    }
+
+    /// [`load_bytes_showing`] with the first root, which is what every test
+    /// written before story #837 meant.
+    fn load_bytes(bytes: &[u8]) -> Result<(), DesktopError> {
+        load_bytes_showing(bytes, ShownRoot::FIRST)
     }
 
     /// The frame nobody is showing is never read, even when its payload is
@@ -315,6 +343,76 @@ mod tests {
             matches!(error, DesktopError::Payload(_)),
             "the shown root's corrupted payload must be reported as a payload mismatch, not as \
              {error}"
+        );
+    }
+
+    /// Showing the **second** root reads the second root's payload and leaves
+    /// the first cold — the two assertions above with the roles exchanged
+    /// (story #837).
+    ///
+    /// This pair is what says a [`ShownRoot`] is read rather than accepted and
+    /// ignored, and it says it in the only way that cannot be satisfied by
+    /// reading nothing: the corruption that must be tolerated and the
+    /// corruption that must be refused swap places with the ordinal, so a
+    /// loader that read every payload fails the first and one that read none
+    /// fails the second. Nothing in the fixture changes between the four tests.
+    ///
+    /// It is also this crate's answer to story #837's "a test showing a document
+    /// with more than one root loading bounded by a root that is not root 0",
+    /// and the reason that story could be built without authoring a fixture:
+    /// `two_root_document` already existed for the R5 pair above, and its two
+    /// roots carry distinct payloads of distinct lengths.
+    #[test]
+    fn showing_the_second_root_leaves_the_first_roots_payload_cold() {
+        load_bytes_showing(&two_root_document(0), ShownRoot::nth(1))
+            .expect("the unshown first root's payload is never read");
+    }
+
+    /// The same fixture with the **second** root's payload corrupted, shown, is
+    /// refused.
+    #[test]
+    fn showing_the_second_root_refuses_its_own_corrupted_payload() {
+        let error = load_bytes_showing(&two_root_document(1), ShownRoot::nth(1))
+            .expect_err("a corrupted payload is refused");
+        assert!(
+            matches!(error, DesktopError::Payload(_)),
+            "the second root's corrupted payload must be reported as a payload mismatch, not as \
+             {error}"
+        );
+    }
+
+    /// An ordinal past the document's last root is refused by name, with the
+    /// count the embedder should have asked within.
+    ///
+    /// The two-root fixture has roots 0 and 1, so anything from 2 up is not
+    /// there. A loader that clamped to the last root, or fell back to the
+    /// first, would draw a picture the embedder did not ask for and report
+    /// nothing — which is the failure P4's "never a silent drop" rules out one
+    /// layer up.
+    ///
+    /// **Root 7, not root 2.** The obvious ordinal to ask for is one past the
+    /// end, and it makes the two numbers equal — at which point transposing
+    /// them where the error is *built* passes this test, the sibling tests and
+    /// the two rendering tests in `crate`, which construct the variant by hand
+    /// and so pin only the formatting. A review's mutation pass found exactly
+    /// that. Seven against two separates them, and the uniform-fixture trap it
+    /// closes is the one where the **arguments** are uniform rather than the
+    /// data.
+    #[test]
+    fn an_ordinal_past_the_last_root_is_refused_by_name() {
+        let error = load_bytes_showing(&two_root_document(0), ShownRoot::nth(7))
+            .expect_err("a root that is not there is refused");
+        assert!(
+            matches!(
+                error,
+                DesktopError::NoSuchRoot {
+                    ordinal: 7,
+                    roots: 2,
+                    ..
+                }
+            ),
+            "expected a NoSuchRoot naming the ordinal asked for and the count the document \
+             carries, in that order, got {error}"
         );
     }
 
@@ -373,7 +471,7 @@ mod tests {
         let mut arena = dashscene_core::Arena::new();
 
         let error = refusal(
-            document.load(&mut arena),
+            document.load(ShownRoot::FIRST, &mut arena),
             "a derived payload must be refused",
         );
         assert!(

@@ -53,7 +53,7 @@ use dashbuf::container::{
     self, Container, ContainerError, FLAVOR_ASSET, FLAVOR_UI, Section, SectionKind,
 };
 use dashbuf::cost::LoadCost;
-use dashbuf::prefetch::{assets_of_root, first_root};
+use dashbuf::prefetch::{ShownRoot, assets_of_root, resolve, root_count, roots};
 use dashbuf::prefix::{self, Envelope};
 use dashbuf::residency::BlobResidency;
 use dashbuf::{
@@ -299,6 +299,41 @@ fn open_reads_no_payload_byte() {
     assert_eq!(residency.ready_count(), 0);
 }
 
+/// An ordinal names a root, and the second one is not the first (story #837).
+///
+/// The two halves matter separately. That `FIRST` resolves to node 0 is a fact
+/// about every gated document and would hold for a resolver that ignored its
+/// argument; that `nth(1)` resolves to [`ROOT_B_NODE`] is what says the ordinal
+/// is read. `ROOT_B_NODE` is 4 rather than 1, so the two indexings — over roots
+/// and over nodes — cannot be confused for each other here.
+#[test]
+fn an_ordinal_names_a_root_and_the_second_is_not_the_first() {
+    let file = fixture();
+    let (document, _) = dashbuf::open(&file).expect("the fixture opens");
+
+    assert_eq!(
+        roots(&document).collect::<Vec<u32>>(),
+        vec![0, ROOT_B_NODE],
+        "the fixture is two roots, and they are not adjacent node indices"
+    );
+    assert_eq!(
+        root_count(&document),
+        2,
+        "and the count agrees with the list"
+    );
+    assert_eq!(resolve(&document, ShownRoot::FIRST), Some(0));
+    assert_eq!(
+        resolve(&document, ShownRoot::nth(1)),
+        Some(ROOT_B_NODE),
+        "the ordinal indexes the roots, not the node table"
+    );
+    assert_eq!(
+        resolve(&document, ShownRoot::nth(2)),
+        None,
+        "an ordinal past the last root is no root, not the last one"
+    );
+}
+
 /// The prefetch set is what one root's subtree draws.
 ///
 /// Both roots are asserted, in both directions: a walk that returned everything
@@ -309,7 +344,7 @@ fn assets_of_root_is_bounded_by_the_subtree() {
     let file = fixture();
     let (document, _) = dashbuf::open(&file).expect("the fixture opens");
 
-    let shown = first_root(&document).expect("the fixture has a root");
+    let shown = resolve(&document, ShownRoot::FIRST).expect("the fixture has a root");
     assert_eq!(shown, 0, "the first root is node 0");
 
     assert_eq!(
@@ -338,7 +373,7 @@ fn prefetching_the_shown_root_reads_only_its_payloads() {
 
     let residency = BlobResidency::new();
     let cost = LoadCost::new();
-    let shown = first_root(&document).expect("the fixture has a root");
+    let shown = resolve(&document, ShownRoot::FIRST).expect("the fixture has a root");
     for index in assets_of_root(&document, shown) {
         let want = &wanted[index as usize];
         let bytes = &file[want.range.start as usize..want.range.end as usize];

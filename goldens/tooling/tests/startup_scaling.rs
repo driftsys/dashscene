@@ -194,7 +194,8 @@ fn load_cost(file: &[u8]) -> Measured {
     // their first root by construction — `document()` pushes it before any tile
     // frame — so this is the same set of payloads out of either.
     let residency = BlobResidency::new();
-    let shown = dashbuf::prefetch::first_root(&document).expect("the document has a root");
+    let shown = dashbuf::prefetch::resolve(&document, dashbuf::prefetch::ShownRoot::FIRST)
+        .expect("the document has a root");
     for index in dashbuf::prefetch::assets_of_root(&document, shown) {
         let want = &wanted[index as usize];
         let payload = &bytes[want.range.start as usize..want.range.end as usize];
@@ -342,7 +343,8 @@ fn each_recording_site_counts_its_own_read_and_no_other() {
     let touching = LoadCost::new();
     let (document, wanted) = dashbuf::open(&file).expect("the file opens");
     let residency = BlobResidency::new();
-    let shown = dashbuf::prefetch::first_root(&document).expect("the document has a root");
+    let shown = dashbuf::prefetch::resolve(&document, dashbuf::prefetch::ShownRoot::FIRST)
+        .expect("the document has a root");
     let prefetch = dashbuf::prefetch::assets_of_root(&document, shown);
     assert_eq!(prefetch.len(), 1, "the small document shows one asset");
     for index in &prefetch {

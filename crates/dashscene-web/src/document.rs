@@ -19,6 +19,7 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::sync::Arc;
 
+use dashbuf::prefetch::ShownRoot;
 use dashbuf::prefix::{self, Envelope, MIN_PREFIX, PrefixError};
 use dashbuf::residency::BlobResidency;
 use dashlang::LiveScene;
@@ -101,13 +102,29 @@ impl Ranges {
     }
 }
 
-/// Fetches the document at `url`, loads it into `arena`, and attaches a scene.
+/// Fetches the document at `url`, loads it into `arena`, and attaches a scene,
+/// bounding what it fetches by the root `shown_root` names.
 ///
-/// The same three steps the native host runs (`demo/src/document.rs`) — open,
-/// gate, load — with the opening half replaced by the prefix flow. The gate is
-/// not skipped because the file arrived over a network: it is the one place
-/// that reports a referentially broken document by name.
-pub async fn load_document(url: &str, arena: &mut Arena) -> Result<LiveScene, WebError> {
+/// The same three steps the native host runs — open, gate, load — with the
+/// opening half replaced by the prefix flow. The gate is not skipped because the
+/// file arrived over a network: it is the one place that reports a referentially
+/// broken document by name.
+///
+/// `shown_root` is a parameter here for the same reason it is one on
+/// `dashscene_desktop::Document::load`: the embedder is what knows which
+/// artboard it is showing, and this function runs again on every rebuild
+/// (story #837).
+///
+/// **The bound stays conditional.** Naming a root other than the first changes
+/// which root `shown::layout` tries to bound by; it does not change that the
+/// bound widens to every root when another root draws a payload, because the
+/// runtime still paints every root. That is `shown::Bound`'s whole subject and
+/// story #838's whole subject.
+pub async fn load_document(
+    url: &str,
+    shown_root: ShownRoot,
+    arena: &mut Arena,
+) -> Result<LiveScene, WebError> {
     let first = fetch::range(url, 0, MIN_PREFIX as u64 - 1).await?;
     if !first.ranged {
         crate::host::log(&format!(
@@ -191,7 +208,11 @@ pub async fn load_document(url: &str, arena: &mut Arena) -> Result<LiveScene, We
     // requested. That is what bounds this load by the root being shown rather
     // than by the file's size (R5).
     let root =
-        dashbuf::prefetch::first_root(&document).ok_or_else(|| WebError::NoRoot(url.to_owned()))?;
+        dashbuf::prefetch::resolve(&document, shown_root).ok_or_else(|| WebError::NoSuchRoot {
+            url: url.to_owned(),
+            ordinal: shown_root.ordinal(),
+            roots: dashbuf::prefetch::root_count(&document),
+        })?;
     let layout = shown::layout(&document, plan.wanted(), root);
 
     // The payloads, one range each, appended into the region in the order the

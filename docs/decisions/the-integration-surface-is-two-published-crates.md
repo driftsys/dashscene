@@ -61,7 +61,8 @@ crate named `-web` is a semver-bound mistake whose only repair is a rename.
 
 **D3 — each crate publishes its own error type, and neither models the
 embedder's failures.** `WebError` has 18 variants and `DesktopError` has 9; five
-names are common to both — `Open`, `Gate`, `Payload`, `Derived`, `NoRoot` — and
+names are common to both — `Open`, `Gate`, `Payload`, `Derived`, `NoSuchRoot`
+(`NoRoot` until story #837 gave it the ordinal and the count) — and
 the rest are what each target can be wrong about. An embedder's own failures, a
 scene name it does not know or a query string it cannot parse, stay with the
 embedder. The split is deliberate rather than incidental — a published enum is a

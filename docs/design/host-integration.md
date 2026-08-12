@@ -305,6 +305,34 @@ nothing for the triple but `dashc`, so the story added its one clippy line to
 the `clippy` job; issue #903 then found that the painter's and the host's gates
 were in the same position, and moved all of it into one job.
 
+## Which root each host shows
+
+Since story #837, the embedder says.
+`dashscene_desktop::Document::load` and `dashscene_web::load_document` each take
+a `ShownRoot` — an ordinal over the document's roots, re-exported by both crates
+from `dashbuf::prefetch` so naming one needs no dependency on the format crate.
+`ShownRoot::FIRST` is what both hosts did before, and is what `demo`,
+`demo-web` and `measure/web-minimal` pass, because none of them has a second
+artboard to name. A root the document does not have is
+`DesktopError::NoSuchRoot` / `WebError::NoSuchRoot`, carrying the ordinal asked
+for and the count the document does carry; neither host clamps or falls back.
+The shape and the two rejected alternatives are in
+[the-shown-root-is-named-by-ordinal.md](../decisions/the-shown-root-is-named-by-ordinal.md).
+
+**It bounds the load and nothing below it**, so what each host gets out of it
+differs by target and is worth stating separately:
+
+- **Desktop** — a different ordinal makes a different root's payloads resident
+  and leaves the rest of the file cold. Observable, and asserted: the two-root
+  fixture's tests exchange which payload may be corrupt with the ordinal.
+- **Web** — a different ordinal moves the reported `Bound` and **never** the
+  byte count. Not "usually": `shown` is one of the sets `assets_of_every_root`
+  unions, so `shown ⊆ painted` always, and `layout` fetches `painted` in both
+  branches — the two are the same set exactly when the shown root is the only
+  one that draws. So the set a browser fetches is independent of which root is
+  named, for every document, and `Bound::ShownRoot` against `Bound::EveryRoot`
+  is the whole of what the selector changes there.
+
 ## Known gaps, named
 
 - **R5 is conditional on the web** — #822, and the fix is in the runtime rather
@@ -314,4 +342,11 @@ were in the same position, and moved all of it into one job.
   The condition is a **document shape**, not a target quirk: a document whose
   unshown roots draw no asset is bounded, and one whose unshown roots draw is
   not. The startup-scaling benchmark's own many-frame document is the second
-  kind.
+  kind. Story #837 did not change this and could not: it settled which root a
+  host names, not what the runtime paints.
+- **The C ABI carries no root selection**, and since story #837 the reason is
+  no longer that no vocabulary exists. `ds_runtime_load_document` takes the whole
+  file and uses the owning loader, which needs bytes for every asset entry, so
+  there is nothing on that path for a selection to bound. Issue #925 or story
+  #838 unblocks it; `crates/dashscene-ffi/src/lib.rs` states which shape costs
+  what.
