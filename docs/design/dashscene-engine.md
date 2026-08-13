@@ -288,18 +288,36 @@ exclusion, the re-solve and the sibling's re-placement all reach a committed
 frame. The two Figma baseline fixtures are both `counterAxisSizingMode: FIXED`,
 so none of this shape exists in the corpus.
 
-### One cache, borrowed not owned
+### One cache, lent by default and held where it cannot be
 
 The typesetter is passed in, never constructed here.
 `TaffySolver::with_typesetter(&mut Typesetter)` borrows the caller's single
 `Typesetter` for the solve; `TaffySolver::new()` carries none — the text-free
 path, and what every non-text solve and the fixed-commit equivalence tests use.
 `TaffySolver::with_text(&mut Typesetter, Vec<Atlas>)` is the third form: it
-measures text _and_ stages it (see "The one text stager" below). The borrow is
-the single-source discipline: layout measures text against the same shaped-run
-cache the painter reads at paint time (#30), so the two cannot disagree about a
-glyph's size (P2 — one typesetter). The shaped-run cache stores font-unit,
-unpositioned runs keyed by paragraph text within one shaping posture
+measures text _and_ stages it (see "The one text stager" below).
+
+`TaffySolver::owning(TextResources)` is the fourth, added at story #863, and it
+**holds** the typesetter rather than borrowing it. It exists for the caller that
+has nothing to lend: `dashlang::attach_live` takes a `Box<dyn LayoutSolver>` and
+keeps it for the life of the scene, so the solver in that box is `'static` and
+outlives every local a document loader could lend it. Every `.dsb` load path
+therefore built `TaffySolver::new()`, and a loaded document containing text drew
+no glyphs and measured its text nodes as empty leaves. The two integration
+crates that can take a `TextResources` now do; `dashscene-ffi` cannot, because
+neither a `Typesetter` nor an `Atlas` crosses a C boundary (issue #947).
+
+Holding it inside the solver rather than in a wrapper is what keeps the retained
+tree. A wrapper that owns the typesetter must build a `TaffySolver` inside every
+call — `corpus/showcase`'s `ShowcaseSolver`, and issue #950 — so every solve
+starts with no tree and rebuilds it, which is #164's saving paid back per frame.
+`docs/decisions/measure-callback-typesetter-seam.md` carries why lending remains
+the default and why the held arm satisfies its reason rather than waiving it.
+
+The borrow is the single-source discipline: layout measures text against the
+same shaped-run cache the painter reads at paint time (#30), so the two cannot
+disagree about a glyph's size (P2 — one typesetter). The shaped-run cache stores
+font-unit, unpositioned runs keyed by paragraph text within one shaping posture
 (`docs/decisions/shaped-run-cache-font-units.md`), so one entry serves every
 render size and re-measuring unchanged text costs a lookup, not a re-shape.
 

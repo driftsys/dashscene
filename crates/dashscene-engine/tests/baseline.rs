@@ -521,3 +521,74 @@ fn the_baseline_pass_solves_the_shown_root_and_not_the_document() {
         "the shown artboard's row, its box and its text run — and nothing of the other"
     );
 }
+
+/// **An owning solver measures through the typesetter it holds, and keeps its
+/// retained tree.** Both halves, because either alone is satisfied by a solver
+/// this test is not about (story #863).
+///
+/// `dashlang::attach_live` keeps a `Box<dyn LayoutSolver>` for the life of the
+/// scene, so the solver in it is `'static` and cannot borrow a typesetter. Two
+/// shapes answer that and only one is correct here:
+///
+/// - **The measurement half** fails for `TaffySolver::new()`, which holds no
+///   typesetter at all: a hug-sized text node then measures as an empty leaf.
+///   That is issue #863 itself, and without this assertion the test passes with
+///   `owning` replaced by `new` — which it did, until a review said so.
+/// - **The retained half** fails for a wrapper that owns the typesetter and
+///   builds a fresh `TaffySolver` inside every call, which is
+///   `corpus/showcase`'s `ShowcaseSolver`. Every solve starts with `state:
+///   None`, so Taffy's tree is rebuilt per frame — issue #164's whole saving,
+///   paid back per frame, on the path a loaded document takes.
+///
+/// The atlas list is empty on purpose: staging glyphs needs one and measuring
+/// does not, so this isolates the measure seam. That the *glyphs* also arrive
+/// is asserted where a real cascade exists — `demo`'s
+/// `a_loaded_document_draws_text_when_the_host_supplies_fonts`.
+#[test]
+fn an_owning_solver_measures_through_its_typesetter_and_retains_its_tree() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, None);
+    txn.set_prop(root, Prop::SizingH(AxisSizing::Hug));
+    txn.set_prop(root, Prop::SizingV(AxisSizing::Hug));
+    let text = text_leaf(&mut txn, root, "LARGE", 18.0);
+    txn.commit();
+
+    let mut solver = TaffySolver::owning(dashscene_engine::TextResources::new(
+        typesetter(),
+        std::sync::Arc::new(Vec::new()),
+    ));
+
+    let mut txn = arena.open();
+    txn.set_prop(text, Prop::X(1.0));
+    txn.commit_with(&mut solver);
+    let built = solver.solves();
+    assert!(built >= 1, "the first commit builds the tree: {built}");
+
+    let (_, _, w, h) = rect_at(&arena, 1);
+    assert!(
+        w > 1.0 && h > 1.0,
+        "the hug-sized text node measured through the held typesetter, rather than as the \
+         empty leaf a solver with no typesetter produces: {w} x {h}"
+    );
+
+    // A paint-only commit. The retained tree is not recomputed, so the counter
+    // must not move — the assertion a per-call solver fails.
+    let mut txn = arena.open();
+    txn.set_prop(
+        text,
+        Prop::Fill(Color {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        }),
+    );
+    txn.commit_with(&mut solver);
+    assert_eq!(
+        solver.solves(),
+        built,
+        "a paint-only commit through a retained tree solves nothing; a solver that rebuilt \
+         per call would report another computation here"
+    );
+}

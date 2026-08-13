@@ -151,6 +151,37 @@ own documentation says an embedder holding a path should not use it:
 `dashscene_core::load_document` copies every payload into an owned `ImageAsset`,
 so it needs bytes for every entry whether or not anything draws them.
 
+**All three load paths take the text a document cannot carry.** Each of
+`Document::load`, `load_bytes` and `dashscene_web::load_document` takes an
+`Option<TextResources>` — a `Typesetter` and the atlases its cascade samples —
+which the host supplies because the document does not. That is a ruling and not
+a gap: `docs/decisions/font-resolution-order.md` step 1 would embed a font and
+records why nothing implements it, and a rasterised atlas must never be embedded
+at all, because it is a result and P1 forbids results in the document.
+
+**`None` was the only behaviour until story #863, and it is the wrong default
+for a document with text.** Every load path built `TaffySolver::new()`, so a
+loaded `.dsb` drew no glyphs _and_ measured its text nodes as empty leaves — 0 x
+0, with siblings laying out around a box the design did not specify. It stayed
+invisible because everything that draws text builds its own solver: the
+showcase's scenes and the goldens both do, and both are cases where the code
+that builds the scene already holds the font. A loaded document is the one case
+where something else produced it. `None` remains correct for a document with no
+text, and `measure/web-minimal` passes it deliberately — that artifact exists to
+be weighed, and a cascade is about a megabyte.
+
+The solver is `TaffySolver::owning`, which holds the typesetter rather than
+borrowing it, because `dashlang::attach_live` keeps its `Box<dyn LayoutSolver>`
+for the life of the scene. Wrapping instead — the shape `corpus/showcase` uses —
+rebuilds Taffy's retained tree on every solve, which is issue #164's saving paid
+back per frame.
+
+**The C ABI is the one host still without it.** Neither a `Typesetter` nor an
+`Atlas` has a C representation, so `ds_runtime_load_document` still builds the
+bare solver and `dashscene-android`, which loads through it, still draws no
+text. Undesigned rather than blocked — a second entry point is a new symbol and
+does not move `DS_ABI_VERSION` — and it is issue #947.
+
 ## What holds it
 
 | check                                                 | what it fails on                                                                                            |
@@ -158,6 +189,7 @@ so it needs bytes for every entry whether or not anything draws them.
 | `demo/tests/integration_surface.rs`                   | any of the five pieces missing from an integration crate, or present in its demo                            |
 | `demo/tests/host_policy_invariant.rs`                 | a host holding its own clamp or its own shown generation                                                    |
 | `demo/tests/clock_invariant.rs`                       | a clock read by any crate at or below `LiveScene`, which R4 rests on                                        |
+| `demo/src/document.rs`                                | a loaded document drawing no text on either load path, and a text node collapsing to an empty leaf          |
 | `crates/dashscene-web/src/shown.rs`                   | a load that reads more than the shown root when nothing else draws (its own tests)                          |
 | `crates/dashlang/tests/frame_policy.rs`               | the clamp changing shape — including `clamp` for `max`/`min`, which NaN distinguishes                       |
 | `crates/dashscene-desktop/tests/adapter_accessors.rs` | an adapter accessor going back to a `String`, losing its `pub`, or ceasing to return the painter's own type |

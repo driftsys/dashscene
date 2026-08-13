@@ -27,6 +27,10 @@ dashlang.workspace = true
 # The product layout solver, injected for a loaded document, which unlike a
 # scene built in code has no builder of its own to inject one.
 dashscene-engine.workspace = true
+# Public since story #863, for the same reason as in `dashscene-desktop`:
+# `load_document` takes a `TextResources`, whose `Typesetter` is this crate's
+# type, so an embedder that draws text from a loaded document builds one.
+dashscene-typeset.workspace = true
 # The `.dsb` envelope, read from a prefix: `dashbuf::prefix`. This crate is the
 # reason that module exists, since `Container::parse` would require the whole
 # file in linear memory before the envelope could be read at all.

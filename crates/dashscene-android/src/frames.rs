@@ -9,8 +9,10 @@
 //!
 //! It cannot run the showcase. Those scenes are **built in code** — `SceneBuilder`
 //! is `fn(&mut Arena, u32, u32) -> LiveScene`, and the scene brings its own
-//! solver, which is the only reason its text has a typesetter at all (issue
-//! #863). The C ABI has no builder entry point and deliberately will not grow one
+//! solver, which is the only reason its text has a typesetter at all. A
+//! document loaded through the C ABI has no such solver and draws no text —
+//! story #863 fixed the other two hosts and could not fix this one, because
+//! neither a `Typesetter` nor an `Atlas` crosses a C boundary (issue #947). The C ABI has no builder entry point and deliberately will not grow one
 //! here: that is layer 2, D8 of
 //! `docs/decisions/host-integration-in-three-layers.md`, and inventing the
 //! vocabulary now would pre-empt the story that settles it.

@@ -150,6 +150,16 @@ mod page {
                         dashscene_web::load_document(
                             url,
                             dashscene_web::ShownRoot::FIRST,
+                            // The showcase's own cascade and atlases, which
+                            // this host already carries for its own scenes.
+                            // Without them a document containing text lays its
+                            // text nodes out as empty leaves and draws no
+                            // glyphs — issue #863, and the whole difference
+                            // between a scene built in code and one loaded.
+                            Some(dashscene_web::TextResources::new(
+                                showcase::resources::new_typesetter(),
+                                showcase::resources::atlases(),
+                            )),
                             &mut arena,
                         )
                         .await?,

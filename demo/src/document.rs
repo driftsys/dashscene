@@ -114,6 +114,25 @@ pub fn map_file(path: PathBuf) -> Result<(), DesktopError> {
     Ok(())
 }
 
+/// The fonts and atlases a loaded document is measured and drawn with.
+///
+/// **This is the whole of issue #863's fix on this host.** Every `.dsb` load
+/// path built `TaffySolver::new()` — no typesetter, no atlases — so a document
+/// containing text laid its text nodes out as empty leaves and drew no glyphs
+/// at all, while this same demonstration drew text correctly for its own
+/// scenes. The difference was never the document: it was that a scene built in
+/// code brings its own solver, and a loaded one had nothing to bring.
+///
+/// The resources are the showcase's, unchanged and already assembled — the same
+/// cascade and the same committed atlases its scenes draw with. That is the
+/// point: this host always had them.
+fn text() -> dashscene_desktop::TextResources {
+    dashscene_desktop::TextResources::new(
+        showcase::resources::new_typesetter(),
+        showcase::resources::atlases(),
+    )
+}
+
 /// Loads the selected document into `arena` and attaches a [`LiveScene`] to it.
 ///
 /// `width` and `height` go unused: a loaded document already carries its own
@@ -146,8 +165,8 @@ pub fn scene(arena: &mut Arena, _width: u32, _height: u32) -> LiveScene {
         // way to say otherwise. The showcase's own scenes are single-root and
         // `--dsb` takes a path rather than a root, so nothing here has a
         // second artboard to name yet (story #837).
-        Some(mapped) => mapped.load(dashscene_desktop::ShownRoot::FIRST, arena),
-        None => dashscene_desktop::load_bytes(DOCUMENT, arena),
+        Some(mapped) => mapped.load(dashscene_desktop::ShownRoot::FIRST, Some(text()), arena),
+        None => dashscene_desktop::load_bytes(DOCUMENT, Some(text()), arena),
     };
     loaded.unwrap_or_else(|error| panic!("the document does not load: {error}"))
 }
@@ -238,11 +257,89 @@ mod tests {
     #[test]
     fn the_embedded_golden_loads() {
         let mut arena = dashscene_core::Arena::new();
-        dashscene_desktop::load_bytes(super::DOCUMENT, &mut arena)
+        dashscene_desktop::load_bytes(super::DOCUMENT, Some(super::text()), &mut arena)
             .expect("the embedded golden is a committed fixture and must load");
         assert!(
             !arena.committed().rects().is_empty(),
             "the golden draws something, or the demonstration would show an empty window"
         );
+    }
+}
+
+#[cfg(test)]
+mod text_reaches_a_loaded_document {
+    /// **A loaded document draws its text**, which is issue #863 observed from
+    /// the outside — and on **both** load paths, which is not one assertion
+    /// twice.
+    ///
+    /// `Document::load` names a shown root before attaching, so
+    /// `Arena::shown_roots()` yields one root; `load_bytes` names none, so it
+    /// yields every root. `TaffySolver::stage_text` iterates that set, so the
+    /// two paths differ in exactly the arena state staging keys on — and the
+    /// mapped one is the path R5 is about and the one story #838's renumbering
+    /// moved under. A positive assertion on only the owning path would leave
+    /// `demo --dsb <a file with text>` free to draw nothing with the suite
+    /// green.
+    ///
+    /// The `None` half is asserted beside each: it is the pre-#863 picture, and
+    /// it is what says the fonts are the cause rather than the document. Both
+    /// halves matter — a text node that measures as an empty leaf makes its
+    /// siblings lay out around a box the design did not specify, so the damage
+    /// was never confined to the missing glyphs.
+    #[test]
+    fn a_loaded_document_draws_text_on_both_paths_when_the_host_supplies_fonts() {
+        const FIXTURE: &str = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../goldens/dsb/v07-text-hug-in-fill.dsb"
+        );
+        let bytes = std::fs::read(FIXTURE).expect("the committed text fixture is present");
+
+        /// Glyph runs, and the text node's resolved size.
+        fn measured(arena: &dashscene_core::Arena) -> (usize, f32, f32) {
+            let scene = arena.committed();
+            let row = (0..scene.rects().len() as u32)
+                .find(|&row| arena.text(scene.node_of(row)).is_some())
+                .expect("the fixture carries a text node");
+            let rect = scene.rects()[row as usize];
+            (scene.glyphs().runs().len(), rect.w, rect.h)
+        }
+
+        let owning = |text| {
+            let mut arena = dashscene_core::Arena::new();
+            dashscene_desktop::load_bytes(&bytes, text, &mut arena).expect("the fixture loads");
+            measured(&arena)
+        };
+        let mapped = |text| {
+            let document = dashscene_desktop::Document::map(std::path::Path::new(FIXTURE))
+                .expect("the committed fixture maps");
+            let mut arena = dashscene_core::Arena::new();
+            document
+                .load(dashscene_desktop::ShownRoot::FIRST, text, &mut arena)
+                .expect("the fixture loads");
+            measured(&arena)
+        };
+
+        for (path, with, without) in [
+            ("load_bytes", owning(Some(super::text())), owning(None)),
+            ("Document::load", mapped(Some(super::text())), mapped(None)),
+        ] {
+            let (runs, width, height) = with;
+            assert!(
+                runs > 0,
+                "{path}: the host supplied a cascade and its atlases, so the document's text \
+                 must reach the painter as glyph runs"
+            );
+            assert!(
+                width > 1.0 && height > 1.0,
+                "{path}: and the hug-sized text node must measure to its shaped size rather \
+                 than collapse: {width} x {height}"
+            );
+            assert_eq!(
+                without,
+                (0, 0.0, 0.0),
+                "{path}: and without them it is the pre-#863 picture — no glyphs, and a text \
+                 node measured as an empty leaf"
+            );
+        }
     }
 }

@@ -38,15 +38,113 @@ use rustc_hash::FxHashSet;
 use taffy::prelude::*;
 use taffy::{AlignContent, AlignItems, AlignSelf, GridPlacement, JustifyContent, Position};
 
+/// The text a host hands a document load, so its text can be measured and drawn.
+///
+/// **A `.dsb` carries neither of these**, and that is a ruling rather than a
+/// gap: `docs/decisions/font-resolution-order.md` step 1 would embed a font,
+/// and its own Consequences record why nothing implements it — the render path
+/// consumes an `AtlasBundle` and the MSDF baker is an external pinned binary,
+/// so nothing turns embedded font bytes into glyphs at load time. A rasterised
+/// atlas must never be embedded at all: it is a result, and P1 forbids results
+/// in the document.
+///
+/// So the host supplies both, and this is the type it supplies them in (story
+/// #863). A load given [`None`] instead builds `TaffySolver::new()` and lays
+/// its text out as empty leaves — which is what every load path did before this
+/// story, and is now a choice a caller makes rather than one made for it.
+///
+/// `atlases` must be in the cascade's font-slot order: a shaped glyph carries
+/// the slot of the face that shaped it, and that slot indexes this list
+/// directly. A list in any other order samples the wrong face rather than
+/// failing. `corpus/showcase/src/resources.rs` builds a cascade and its atlases
+/// together for exactly that reason, and is the worked example.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct TextResources {
+    /// The typesetter text is shaped and measured through.
+    pub typesetter: Typesetter,
+    /// The atlases staged runs sample, in the cascade's font-slot order.
+    ///
+    /// Shared rather than owned, because every producer of one already holds an
+    /// `Arc` and the solver stores an `Arc`: taking a `Vec` here would deep-copy
+    /// the whole set — three atlases with their texel payloads, about a megabyte
+    /// — between two `Arc`s, on every call. `demo` rebuilds its scene on every
+    /// resize step of a window drag.
+    pub atlases: Arc<Vec<Atlas>>,
+}
+
+impl TextResources {
+    /// The pair, in the order the cascade declares its faces.
+    ///
+    /// # Panics
+    ///
+    /// In a debug build, if `atlases` is neither empty nor one entry per face.
+    /// The list is indexed by the slot of the face that shaped a glyph, so a
+    /// short list resolves an index past its end and a reordered one samples
+    /// the wrong face — neither fails on its own, which is why this is checked
+    /// where the pair is made rather than discovered in a picture (P4).
+    ///
+    /// Empty is allowed and is not the same mistake: it is the measure-only
+    /// solver, which shapes text for layout and stages no runs.
+    pub fn new(typesetter: Typesetter, atlases: Arc<Vec<Atlas>>) -> Self {
+        debug_assert!(
+            atlases.is_empty() || atlases.len() == typesetter.fonts().len(),
+            "an atlas per face, in the cascade's font-slot order, or none at all: {} atlases \
+             against {} faces",
+            atlases.len(),
+            typesetter.fonts().len(),
+        );
+        Self {
+            typesetter,
+            atlases,
+        }
+    }
+}
+
+/// How a solver reaches its [`Typesetter`]: lent by the caller, or held.
+///
+/// Lending is the original seam and stays the default
+/// (`docs/decisions/measure-callback-typesetter-seam.md`): the caller keeps one
+/// typesetter for the whole runtime, so layout and paint read one shaped-run
+/// cache and cannot disagree about a glyph's size.
+///
+/// Holding exists for the one caller that cannot lend — a host that loads a
+/// document. `LiveScene` takes a `Box<dyn LayoutSolver>` and keeps it for the
+/// life of the scene, so the solver in that box is `'static` and a borrowed
+/// typesetter cannot travel in it. The alternative in the tree before story
+/// #863 was a wrapper type that owned the typesetter and built a fresh
+/// `TaffySolver` per call (`corpus/showcase`'s `ShowcaseSolver`), which works
+/// and **throws the retained tree away on every solve** — issue #164's whole
+/// saving, paid back per frame. Holding the typesetter inside the solver keeps
+/// the tree.
+#[derive(Debug)]
+enum Text<'a> {
+    Lent(&'a mut Typesetter),
+    Held(Box<Typesetter>),
+}
+
+impl Text<'_> {
+    fn get_mut(&mut self) -> &mut Typesetter {
+        match self {
+            Text::Lent(ts) => ts,
+            Text::Held(ts) => ts,
+        }
+    }
+}
+
 /// The Taffy implementation of `dashscene-core`'s `LayoutSolver`.
 ///
-/// The typesetter is borrowed, never owned: the caller keeps one
-/// [`Typesetter`] for the whole runtime and lends it here for the
-/// solve, so the measure callback and the painter (#30) read one
-/// shaped-run cache and cannot disagree about a glyph's size. A solver
-/// built with [`new`](TaffySolver::new) carries no typesetter and
-/// solves a text-free scene exactly as before; text nodes in such a
-/// scene are simply not measured.
+/// **The typesetter is lent by default and may be held.** Lending is the
+/// original seam: the caller keeps one [`Typesetter`] for the whole runtime and
+/// lends it here for the solve, so the measure callback and the painter (#30)
+/// read one shaped-run cache and cannot disagree about a glyph's size
+/// ([`with_typesetter`](TaffySolver::with_typesetter),
+/// [`with_text`](TaffySolver::with_text)). Holding is
+/// [`owning`](TaffySolver::owning), for the caller that has nothing to lend —
+/// a host loading a document, whose scene outlives every local it could lend
+/// (story #863). A solver built with [`new`](TaffySolver::new) carries no
+/// typesetter and solves a text-free scene; text nodes in such a scene are
+/// simply not measured, and size as empty leaves.
 ///
 /// A solver retains its Taffy tree across solves (issue #164), so it is
 /// bound to one arena for its lifetime: reusing a solver against a
@@ -55,7 +153,7 @@ use taffy::{AlignContent, AlignItems, AlignSelf, GridPlacement, JustifyContent, 
 #[derive(Debug, Default)]
 #[non_exhaustive]
 pub struct TaffySolver<'a> {
-    typesetter: Option<&'a mut Typesetter>,
+    typesetter: Option<Text<'a>>,
     /// The atlases staged runs sample, in the cascade's font-slot order.
     /// Empty for a solver that stages no text. Shared rather than copied,
     /// because commit rebuilds the run table every frame and the atlas set
@@ -132,7 +230,7 @@ impl<'a> TaffySolver<'a> {
     /// [`with_text`](TaffySolver::with_text) instead.
     pub fn with_typesetter(typesetter: &'a mut Typesetter) -> Self {
         Self {
-            typesetter: Some(typesetter),
+            typesetter: Some(Text::Lent(typesetter)),
             atlases: Arc::new(Vec::new()),
             state: None,
             solves: 0,
@@ -153,8 +251,61 @@ impl<'a> TaffySolver<'a> {
     /// order.
     pub fn with_text(typesetter: &'a mut Typesetter, atlases: Vec<Atlas>) -> Self {
         Self {
-            typesetter: Some(typesetter),
+            typesetter: Some(Text::Lent(typesetter)),
             atlases: Arc::new(atlases),
+            state: None,
+            solves: 0,
+        }
+    }
+
+    /// The boxed solver a document load hands to `dashlang::attach_live`, from
+    /// what the host supplied.
+    ///
+    /// One function, so the two integration crates that take a
+    /// [`TextResources`] cannot disagree about what [`None`] means (story
+    /// #863). The third, `dashscene-ffi`, does not call this: neither a
+    /// `Typesetter` nor an `Atlas` crosses a C boundary, so its load has
+    /// nothing to pass and builds the bare solver directly (issue #947). It means the pre-#863 solver: every text
+    /// node measures as an empty leaf and no glyph run reaches the painter,
+    /// which is correct for a document with no text and wrong for one with it.
+    ///
+    /// [`owning`](TaffySolver::owning) rather than a wrapper that owns the
+    /// typesetter, for the reason that method records: the scene keeps this box
+    /// for its whole life, and a solver rebuilt per call throws the retained
+    /// tree away on every frame.
+    pub fn boxed(text: Option<TextResources>) -> Box<dyn LayoutSolver> {
+        match text {
+            Some(text) => Box::new(TaffySolver::owning(text)),
+            None => Box::new(TaffySolver::new()),
+        }
+    }
+
+    /// A solver that **owns** its typesetter and atlas set, for a caller that
+    /// cannot lend one.
+    ///
+    /// The lifetime is free — this is a `TaffySolver<'static>` — so it can go
+    /// into the `Box<dyn LayoutSolver>` that `dashlang::attach_live` keeps for
+    /// the life of a scene. That is the whole reason it exists: a host loading
+    /// a `.dsb` has nothing to borrow from, because the scene outlives every
+    /// local it could lend (story #863, issue #379's
+    /// `docs/decisions/font-resolution-order.md`).
+    ///
+    /// It is otherwise [`with_text`](TaffySolver::with_text) exactly: text is
+    /// measured through the typesetter and every text node's glyph runs are
+    /// staged against `atlases`, which must be in the cascade's font-slot
+    /// order. **The retained tree is retained**, which is what distinguishes
+    /// this from wrapping a solver in a type that owns the typesetter and
+    /// builds a fresh `TaffySolver` per call.
+    ///
+    /// The seam record's reason for lending — one typesetter for the whole
+    /// runtime, so layout and paint cannot disagree about a glyph's size —
+    /// still holds here, and is satisfied differently: this solver *is* the
+    /// runtime's only text producer, staging runs at commit that a painter
+    /// then reads out of the committed table rather than out of a cache.
+    pub fn owning(text: TextResources) -> TaffySolver<'static> {
+        TaffySolver {
+            typesetter: Some(Text::Held(Box::new(text.typesetter))),
+            atlases: text.atlases,
             state: None,
             solves: 0,
         }
@@ -183,12 +334,12 @@ impl LayoutSolver for TaffySolver<'_> {
             .as_ref()
             .is_none_or(|s| s.node_count != arena.node_count());
         if structural {
-            let (new_state, out) = rebuild(typesetter.as_deref_mut(), arena, solves);
+            let (new_state, out) = rebuild(typesetter.as_mut().map(Text::get_mut), arena, solves);
             *state = Some(new_state);
             out
         } else {
             let state = state.as_mut().expect("non-structural implies a built tree");
-            incremental(state, typesetter.as_deref_mut(), arena, solves)
+            incremental(state, typesetter.as_mut().map(Text::get_mut), arena, solves)
         }
     }
 
@@ -209,7 +360,7 @@ impl LayoutSolver for TaffySolver<'_> {
         if self.atlases.is_empty() {
             return Vec::new();
         }
-        let Some(ts) = self.typesetter.as_deref_mut() else {
+        let Some(ts) = self.typesetter.as_mut().map(Text::get_mut) else {
             return Vec::new();
         };
         let mut out = Vec::new();

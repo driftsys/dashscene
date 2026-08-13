@@ -29,7 +29,6 @@ use dashbuf::prefetch::ShownRoot;
 use dashbuf::residency::BlobResidency;
 use dashlang::LiveScene;
 use dashscene_core::{Arena, MappedPayload, Region};
-use dashscene_engine::TaffySolver;
 
 use crate::DesktopError;
 
@@ -104,6 +103,7 @@ impl Document {
     pub fn load(
         &self,
         shown_root: ShownRoot,
+        text: Option<crate::TextResources>,
         arena: &mut Arena,
     ) -> Result<LiveScene, DesktopError> {
         let name = self.path.display().to_string();
@@ -198,7 +198,10 @@ impl Document {
         let mut txn = arena.open();
         txn.show_root(Some(shown_root));
         txn.commit();
-        Ok(dashlang::attach_live(arena, Box::new(TaffySolver::new())))
+        Ok(dashlang::attach_live(
+            arena,
+            dashscene_engine::TaffySolver::boxed(text),
+        ))
     }
 }
 
@@ -334,7 +337,7 @@ mod tests {
 
         let document = Document::map(&path)?;
         let mut arena = dashscene_core::Arena::new();
-        document.load(shown_root, &mut arena).map(|_| ())
+        document.load(shown_root, None, &mut arena).map(|_| ())
     }
 
     /// [`load_bytes_showing`] with the first root, which is what every test
@@ -493,7 +496,7 @@ mod tests {
         let mut arena = dashscene_core::Arena::new();
 
         let error = refusal(
-            document.load(ShownRoot::FIRST, &mut arena),
+            document.load(ShownRoot::FIRST, None, &mut arena),
             "a derived payload must be refused",
         );
         assert!(
@@ -512,6 +515,63 @@ mod tests {
         assert!(
             error.to_string().contains("no/such/file.dsb"),
             "the failure must name the path it could not map, and said {error}"
+        );
+    }
+
+    /// **What `None` costs, on the mapped path, stated as a measurement.**
+    ///
+    /// `None` is a supported argument and this test is not a tripwire — it
+    /// cannot fail when text is wired in, because wiring text in means passing
+    /// `Some`. What it pins is the *price* of the other choice: no glyph run
+    /// reaches the painter, and the hug-sized text node measures as an empty
+    /// leaf, so its siblings lay out around a box the design did not specify.
+    /// Before story #863 that was every load's behaviour and nothing said so.
+    ///
+    /// **The document is not at fault, and the first assertion is what says
+    /// so.** The text arrives and `Arena::text` reads it back; the solve is
+    /// what drops it. A test that only counted glyph runs would pass equally
+    /// well against a fixture carrying no text at all.
+    ///
+    /// That `Some` produces the opposite on this same path is asserted where a
+    /// real cascade exists — `demo`'s
+    /// `a_loaded_document_draws_text_on_both_paths_when_the_host_supplies_fonts`,
+    /// which needs fonts and atlases this crate has no way to build.
+    #[test]
+    fn a_mapped_load_without_text_resources_draws_no_glyphs_and_collapses_its_text() {
+        let bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../goldens/dsb/v07-text-hug-in-fill.dsb"
+        ))
+        .expect("the committed text fixture is present");
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let path = directory.path().join("text.dsb");
+        std::fs::write(&path, &bytes).expect("the fixture writes");
+
+        let document = Document::map(&path).expect("the fixture maps");
+        let mut arena = dashscene_core::Arena::new();
+        document
+            .load(ShownRoot::FIRST, None, &mut arena)
+            .expect("the fixture loads");
+
+        let scene = arena.committed();
+        let text_row = (0..scene.rects().len() as u32)
+            .find(|&row| arena.text(scene.node_of(row)).is_some())
+            .expect("the fixture carries a text node");
+        assert_eq!(
+            arena.text(scene.node_of(text_row)),
+            Some("hug inside fill"),
+            "the document carries the text, so the solve is what drops it rather than the load"
+        );
+        assert!(
+            scene.glyphs().runs().is_empty(),
+            "no glyph run reaches a painter, because the solver this path builds has no atlas set"
+        );
+        let rect = scene.rects()[text_row as usize];
+        assert_eq!(
+            (rect.w, rect.h),
+            (0.0, 0.0),
+            "and the hug-sized text node measured as an empty leaf, so its siblings lay out \
+             around a box the design did not specify"
         );
     }
 }

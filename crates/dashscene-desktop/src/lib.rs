@@ -90,6 +90,20 @@ pub use recovery::Recovery;
 /// reason the `dashscene-gpu` types above are re-exported (story #837).
 pub use dashbuf::prefetch::ShownRoot;
 
+/// What a load needs to measure and draw text, re-exported for the same reason
+/// [`ShownRoot`] is: an embedder should be able to *name* the parameter without
+/// declaring a dependency on the crate that defines it.
+///
+/// Naming is as far as the re-export goes. **Building** a [`Typesetter`] means
+/// assembling a cascade — faces, families and weights — and an [`Atlas`] is a
+/// committed sheet with its own metrics, so an embedder doing real text work
+/// depends on `dashscene-typeset` and `dashpaint` directly.
+/// `corpus/showcase/src/resources.rs` is the worked example, and it is about
+/// eighty lines.
+pub use dashpaint::Atlas;
+pub use dashscene_engine::TextResources;
+pub use dashscene_typeset::text::Typesetter;
+
 /// Replays a document already in memory, through the **owning** load path.
 ///
 /// [`Document`] is the path to prefer for a file: it maps, and it reads only
@@ -102,7 +116,11 @@ pub use dashbuf::prefetch::ShownRoot;
 /// It is here for the case that has no file to map: a document compiled into
 /// the binary, or one that arrived over a channel that yielded bytes rather
 /// than a path. An embedder holding a path should not use it.
-pub fn load_bytes(bytes: &[u8], arena: &mut Arena) -> Result<LiveScene, DesktopError> {
+pub fn load_bytes(
+    bytes: &[u8],
+    text: Option<TextResources>,
+    arena: &mut Arena,
+) -> Result<LiveScene, DesktopError> {
     let (document, payloads) = dashbuf::open_verified(bytes).map_err(DesktopError::Open)?;
     let report = dashscene_validator::validate_document(&document);
     if report.has_errors() {
@@ -112,7 +130,7 @@ pub fn load_bytes(bytes: &[u8], arena: &mut Arena) -> Result<LiveScene, DesktopE
         });
     }
     dashscene_core::load_document(&document, &payloads, arena);
-    Ok(dashlang::attach_live(arena, Box::new(TaffySolver::new())))
+    Ok(dashlang::attach_live(arena, TaffySolver::boxed(text)))
 }
 
 /// Why the integration could not run.
