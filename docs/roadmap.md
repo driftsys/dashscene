@@ -790,10 +790,10 @@ resolvable before v1 — perf and allocation micro-debt, cleanup, test-gaps, and
 latent-correctness guards, across the `dashcue`, `dashlang`, `dashscene-core`,
 `dashscene-engine`, `dashscene-typeset`, paint, packer, goldens, oracle, and
 repo/importers clusters (the items on milestone #14). This slice exists so that
-debt gets a focused pass instead of sitting under v1's Unity-and-toolchain
-scope, where it never surfaces. Feature scope gated on a specific v1 consumer
-stays on v1 — it unlocks with its consumer, so it is not burn-down-able early.
-The dividing line is recorded in
+debt gets a focused pass instead of sitting under v1's scope, which included
+Unity when this was written, where it never surfaces. Feature scope gated on a
+specific v1 consumer stays on v1 — it unlocks with its consumer, so it is not
+burn-down-able early. The dividing line is recorded in
 [`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md).
 
 Depends on: nothing in particular — the items are independent by construction.
@@ -1230,7 +1230,7 @@ the same treatment in a shape the epic settles, and the workspace learns what
 
 The rest of this entry is the survey the v0.15 revision wrote, kept because the
 five-target picture is what the split was cut from. **Android, iOS and Unity
-below are v0.19 and v1, not this slice.**
+below are v0.19, v1 and v0.21, not this slice.**
 
 Delivers, as first written: **platform reach — web, desktop and Android.** iOS
 and the Unity host follow in v1. Everything below boundary B is a library;
@@ -1715,6 +1715,10 @@ engine painter over BatchRendererGroup, and the C# host that sits on the
 `dashscene-ffi` data plane. Proposed for v0.20 on 2026-08-09 and moved here on
 2026-08-12, behind the hardening slice.
 
+**What moved here from v1**, in the terms that section used: the engine painter
+with its SDF shader library and its material classes, and the C# declarative
+skin. Everything else v1 listed stays there.
+
 **Its design is already worked out and should not be re-derived.** A long-form
 capture was drafted and closed unmerged after four review rounds found 4, 12, 15
 and 13 findings, concentrated in the sections making recommendations about
@@ -1792,25 +1796,23 @@ beside them, and the alternative — leaving them unmilestoned — is the state 
 sweep was called to fix. **An item here that turns out to block something moves
 to the slice it blocks**, which is the only rule the milestone needs.
 
-## v1 — Unity, full feature set, performance, production toolchain
+## v1 — full feature set, performance, production toolchain
 
 **The Unity painter and the C# host moved out of this section on 2026-08-12**,
-to slice v0.21 above. What stays here is the work that unlocks once a Unity host
-exists rather than the host itself. The GitHub milestone still carries the older
-title, and
+to slice v0.21 above, and the section was named after them until then. What
+stays here is the work that unlocks once a Unity host exists rather than the
+host itself. The GitHub milestone was renamed to match on 2026-08-13, and
 [`decisions/host-integration-in-three-layers.md`](decisions/host-integration-in-three-layers.md)
-still scopes iOS and Unity to v1; both need revising against this entry.
+re-scoped with it: iOS stays v1, Unity is v0.21.
 
-Engine painter (SDF shader library, material classes, a C# declarative skin) —
-**now v0.21**; LATER-tier features land per priority, including shadow baking
-switching on and `profile:core` being enforced on target documents; **of the
-loading-performance work, only placeholder activation remains here** — its
-foundations (the sectioned envelope, the asset table, the KTX2 texture pipeline)
-landed in v0.11–v0.12, and the mapping, the prefetch choreography and the
-startup-scaling benchmark that makes R5 falsifiable moved to v0.16 at the v0.13
-close, because a ratio needs no target hardware to measure; what stays is
-blocked on a producer supplying the placeholder colour, not on loading
-(guardrail G-20,
+LATER-tier features land per priority, including shadow baking switching on and
+`profile:core` being enforced on target documents; **of the loading-performance
+work, only placeholder activation remains here** — its foundations (the
+sectioned envelope, the asset table, the KTX2 texture pipeline) landed in
+v0.11–v0.12, and the mapping, the prefetch choreography and the startup-scaling
+benchmark that makes R5 falsifiable moved to v0.16 at the v0.13 close, because a
+ratio needs no target hardware to measure; what stays is blocked on a producer
+supplying the placeholder colour, not on loading (guardrail G-20,
 [`specification/05-qualification.md`](specification/05-qualification.md));
 rendering performance (tiler rules measured on target hardware; whether the lean
 native painter lands here or later is decided on those measurements, not in

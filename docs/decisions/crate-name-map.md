@@ -352,8 +352,8 @@ rejection from a 404 reads every name as unreserved.
 The eighteenth name, and the second addition after `dashscene-desktop`. D2 of
 [`host-integration-in-three-layers.md`](host-integration-in-three-layers.md)
 puts one C ABI under every platform host, so it cannot live in any of them:
-Android reaches it through JNI, and the v1 iOS and Unity hosts inherit the same
-symbols.
+Android reaches it through JNI, and the iOS and Unity hosts that follow inherit
+the same symbols.
 
 **Why not an existing crate.** `dashscene-unity` is the closest name and is the
 wrong one — it holds story #600's FFI-safety gate, the macro that makes a

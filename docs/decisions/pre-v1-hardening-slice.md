@@ -4,7 +4,8 @@
              (milestone #14, epic #362); binds where accumulated debt is
              resolved. Revised at the v0.12 close (2026-07-27): the dividing
              line gains a third term, and the slice gains a second track
-             (epic #474) for the items that term names.
+             (epic #474) for the items that term names. Context corrected in
+             place 2026-08-13: v1's scope no longer includes Unity.
     scope    docs/roadmap.md, the v0.x slice plan, the debt backlog
     related  docs/decisions/debt-streams-own-artifact-classes.md (how the
              slice's burn-down is dispatched)
@@ -18,9 +19,12 @@ latent-correctness guards — with no near-term consumer, and was anchored to v1
 
 v1's scope is "Unity, full feature set, performance, production toolchain": a
 large slice whose principal work is the Unity painter, the full feature set, the
-rendering-performance pass, and the production toolchain. Debt anchored there
-does not get a focused pass — it sits under those large deliverables and never
-surfaces.
+rendering-performance pass, and the production toolchain. (That was v1's scope
+when this was decided. The Unity painter moved to slice v0.21 on 2026-08-12 and
+the milestone was renamed to drop it on 2026-08-13; the argument below is
+unaffected, because what makes debt invisible is the size of what it sits under,
+not which deliverable is on top of it.) Debt anchored there does not get a
+focused pass — it sits under those large deliverables and never surfaces.
 
 ## Decision
 

@@ -66,7 +66,7 @@ Three stages, two boundaries:
         --> rect table + positioned glyph runs (double-buffered)
 
     STAGE 3 — painters (one per target, one trait)
-      Skia (built)    lean GPU (built, v0.15)    Unity (planned, v1)
+      Skia (built)    lean GPU (built, v0.15)    Unity (planned, v0.21)
 
     boundary A = .dsb load gate (version + per-section hashes)
     boundary B = painter contract: rect table + glyph runs + paint indices.
@@ -193,7 +193,7 @@ producer mutates) and `dashscene-engine` (the runtime that solves it),
 | `crates/dashpack`             | asset packer — per-profile derivations, cold-bank assembly, derivation manifest                                                                                                                                                                                         | in progress (epic #345) — [asset-quality-profile-bands.md](../decisions/asset-quality-profile-bands.md)                                                                         |
 | `crates/dashscene-unity`      | Rust-side FFI bindings for the Unity painter; today, the `extern "C"` surface that holds boundary B representable                                                                                                                                                       | the gate is built (story #600); the bindings are planned — see below                                                                                                            |
 | `crates/dashscene-web`        | web integration — canvas-to-surface handoff, the `requestAnimationFrame` loop, resize rebuild, byte-range `.dsb` load                                                                                                                                                   | [host-integration.md](host-integration.md) — built at v0.17 (story #741); the wasm/tiny-skia painter the name once described is retired, superseded by `dashscene-gpu`          |
-| `crates/dashscene-ffi`        | the C ABI every platform host sits on — runtime lifecycle, `.dsb` load, the tick, resize, and the surface handoff; no panic crosses it and no failure is a string only                                                                                                  | built at v0.19 (story #840); the Android host of story #841 and the v1 iOS and Unity hosts all sit on it                                                                        |
+| `crates/dashscene-ffi`        | the C ABI every platform host sits on — runtime lifecycle, `.dsb` load, the tick, resize, and the surface handoff; no panic crosses it and no failure is a string only                                                                                                  | built at v0.19 (story #840); the Android host of story #841 and the iOS and Unity hosts that follow all sit on it                                                               |
 | `crates/dashscene-desktop`    | desktop integration — window-to-surface handoff, the `winit` frame loop, resize rebuild, the published `Present` seam, a mapped `.dsb` load bounded by the shown root                                                                                                   | [host-integration.md](host-integration.md) — built at v0.17 (story #794); `demo` keeps the demonstration and consumes it                                                        |
 | `crates/dashscene-android`    | Android integration — the `android.view.Surface` to `ANativeWindow` handoff, the `AChoreographer` frame loop on its own thread, and the `surfaceDestroyed` handshake that blocks until the surface is dropped; the first host to sit on the C ABI rather than beside it | built at v0.19 (story #841); layer 0 of `docs/decisions/host-integration-in-three-layers.md`, and the layer that record calls "the whole of _show a designed screen in my app_" |
 | `crates/dashscene-gpu`        | the lean painter — instanced quads and analytic SDF over wgpu, native and web                                                                                                                                                                                           | [dashscene-gpu.md](dashscene-gpu.md)                                                                                                                                            |
@@ -223,13 +223,13 @@ crate at v0.17, which is a host concern rather than a painter. **Two things this
 does not claim**: the entry tier has not switched, because no entry SoC has been
 measured (epic #476), and the browser target is WebGPU only.
 
-- **Unity painter (v1)**, plus its C# declarative producer front end — ships as
-  a separate, not-yet-created repo behind `dashscene-unity`'s Rust FFI bindings.
-  Bound by G2 (multiple render backends) and R3 (GPU is the target's bottleneck)
-  in
+- **Unity painter (v0.21)**, plus its C# declarative producer front end — ships
+  as a separate, not-yet-created repo behind `dashscene-unity`'s Rust FFI
+  bindings. Bound by G2 (multiple render backends) and R3 (GPU is the target's
+  bottleneck) in
   [01-goals-and-requirements.md](../specification/01-goals-and-requirements.md);
-  deferred to v1 in a separate repo by
-  `docs/archive/2026-07-14-scope-decisions.md` §5. Internals:
+  put in a separate repo by `docs/archive/2026-07-14-scope-decisions.md` §5,
+  which deferred it to v1; it is v0.21 since 2026-08-12. Internals:
   [rendering-and-painters.md](../technotes/rendering-and-painters.md) §9-§10. It
   is instanced SDF quads too, so it shares `dashscene-gpu`'s instance struct and
   its layer-1 and layer-2 suites (R-T5).
