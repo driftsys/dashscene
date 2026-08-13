@@ -1656,8 +1656,8 @@ for the file-level overlap.
 
 ### v0.20 — hardening: the critical findings and the Android recovery path — open
 
-**No epic filed yet.** Planned 2026-08-12, before the v0.19 phase-end revision
-rather than at it.
+**Epic #951**, filed 2026-08-13. Planned 2026-08-12, before the v0.19 phase-end
+revision rather than at it.
 
 **That is not a departure from the revision ritual — it is the third time the
 ritual has fired off-cycle**, after v0.4 and v0.7 above, and it fired for the
@@ -1672,15 +1672,19 @@ milestone sweep for un-anchored issues part of the phase-end revision rather
 than something assumed. Fifty-five is that failure again at more than twice the
 size, so the sweep ran ahead of the revision instead of waiting for it.
 
-**What it delivers: the six critical findings of that sweep, and the Android
-recovery path finished.** The sweep classified all fifty-five issues on two
-axes, size and priority, checking each against the tree rather than against its
-own text. Three were closed rather than scheduled: one had been fixed by an
-earlier story, one duplicated an open story, and one had never been real — its
-evidence was a search that could not match the call site it was looking for.
-**Not every correctness defect the sweep found is scheduled here.** Several went
-to v1 instead, because they unlock with a v1 consumer rather than being
-resolvable now, which is the dividing line that same record sets.
+**What it delivers: the correctness defects that the sweep found and that are
+resolvable now, and the Android recovery path finished.** Six were critical in
+the sweep itself; the slice has since taken more, from the triage of what the
+v0.20 milestone was already holding and from one defect found while verifying
+another. Read the epic for the current set rather than a number here. The sweep
+classified all fifty-five issues on two axes, size and priority, checking each
+against the tree rather than against its own text. Three were closed rather than
+scheduled: one had been fixed by an earlier story, one duplicated an open story,
+and one had never been real — its evidence was a search that could not match the
+call site it was looking for. **Not every correctness defect the sweep found is
+scheduled here.** Several went to v1 instead, because they unlock with a v1
+consumer rather than being resolvable now, which is the dividing line that same
+record sets.
 
 **Why this slice runs before Unity and before SVG, reversing the 2026-08-09
 proposal.** Two reasons, and the second is the stronger. The first is the

@@ -11,12 +11,12 @@ convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports ten files
+## Why the WIP gate currently reports eleven files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-ten and exits non-zero. All ten are deliberate, accepted exceptions rather than
-ungardened debt, and they are recorded here so the gate's result is explained
-rather than merely tolerated.
+eleven and exits non-zero. All eleven are deliberate, accepted exceptions rather
+than ungardened debt, and they are recorded here so the gate's result is
+explained rather than merely tolerated.
 
 **The gate is deliberately not wired into CI, and this section is why.** Its
 result here is non-zero by design and would stay non-zero for as long as any
@@ -126,8 +126,29 @@ archiving belong in one commit**, and in this case they were not: the records
 landed with the stories and the original stayed here for a few hours, which the
 `sdd-working-memory-lifecycle` rule calls a copy rather than a gardening.
 
-**Nine of the ten are design captures**, described below, and **one driver
-prompt is held**, v0.19's Android half.
+**Eleven, when v0.20's hardening driver prompt landed** (2026-08-14 by commit
+day, which is this ledger's convention — the work was done on the 13th and the
+commit crosses local midnight, the same way the 2026-08-12 entry above does).
+Two prompts are held for two different slices — v0.19 is open and holds its
+Android half, v0.20 is planned but not started and holds this one. **That is
+ordinary**; the paragraphs below record it from 2026-08-05, and again while
+v0.18 and v0.19 ran together, and record an earlier revision of this file
+wrongly calling such an overlap a first. The paragraph above dated 2026-08-09
+still calls three prompts and a two-slice overlap a first; it is describing the
+first time each was _noticed_, not the first time each happened. The v0.20
+prompt carries only the nine items that can start before v0.19's C ABI stories
+land, and says so in its scope line — the three held items are named in it but
+are explicitly not its work.
+
+`2026-08-13-v020-HARDENING-DRIVER-PROMPT.md` **leaves at v0.20's close**,
+archived verbatim to `docs/archive/`, with the paragraphs describing it updated
+in the same commit — a driver prompt has no row in the table below. If the
+slice's held wave (#884, #940, #888) is handed to a session before then, it gets
+its own prompt rather than an edit to this one, because the two waves have
+different entry conditions.
+
+**Nine of the eleven are design captures**, described below, and **two driver
+prompts are held** — one for v0.19 and one for v0.20.
 
 Two were v0.18's, and **both left at that slice's close on 2026-08-11**:
 `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17 closed, and
@@ -150,14 +171,21 @@ first: the lowering needed a variant-set emitter that did not exist, and the
 fifteen `refused-*` nodes it counted turn out to exercise eleven constructs,
 because four of them carry no interaction at all.
 
-The one still held, brought by an earlier merge, is
-`2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`, added at the close of that slice's C
-ABI work to carry stories #841 and #842. **#841 has landed and #842 has not** —
-it waits on hardware, as does D3a (#885) — so this prompt is the one still
-carrying live work, and it was rewritten on 2026-08-13 against what had changed
-under it. It archives when epic #833 does, which its own status line says.
+Of the two now held, the older is `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`,
+added at the close of that slice's C ABI work to carry stories #841 and #842.
+**#841 has landed and #842 has not** — it waits on hardware, as does D3a (#885)
+— so it still carries live work, and it was rewritten on 2026-08-13 against what
+had changed under it. It archives when epic #833 does, which its own status line
+says. The other is `2026-08-13-v020-HARDENING-DRIVER-PROMPT.md`, described
+above, which archives at v0.20's close.
 
-For a few hours on 2026-08-12 and 2026-08-13 it had a companion,
+**This paragraph is the fifth place a count of held prompts appears**, and a
+review found it saying "the one still held" on 2026-08-14, after the v0.20
+prompt had been added and the four places above it updated. That is the same
+two-copies failure recorded at the top of this file, reached again. Run both
+derivations and fix every place.
+
+For a few hours on 2026-08-12 and 2026-08-13 the Android prompt had a companion,
 `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md`, carrying the same slice's `main`
 track. **Two prompts for one slice was new** — earlier overlaps were two slices
 at once, or one prompt superseding another within a slice, and that was neither
@@ -416,10 +444,27 @@ z-interleave, and the as-built records now carry all of it
 decision record's two resolution sections). Both it and the driver prompt that
 carried out its design are archived verbatim in `docs/archive/`.
 
-One driver prompt is held here now, v0.19's Android half, as the section above
-says. `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md` carries story #842 — #841
-landed, and `integration/v0.19-android` merged into `main` on 2026-08-09 and is
-history — and leaves at the slice's close.
+Two driver prompts are held here now, as the section above says, and they are
+for two different slices. `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md` carries
+story #842 — #841 landed, and `integration/v0.19-android` merged into `main` on
+2026-08-09 and is history — and leaves at v0.19's close.
+`2026-08-13-v020-HARDENING-DRIVER-PROMPT.md` carries the nine v0.20 items that
+can start before v0.19's C ABI stories land, and leaves at v0.20's close.
+
+**This paragraph carries a second, different count — of prompts, not of files —
+and it has to be updated by hand whenever either changes.** The heading and the
+two paragraphs above it count tracked files, and
+`git ls-files docs/wip/ | grep -v 'README.md$' | wc -l` derives that number. It
+does **not** derive this one: the prompt count is
+`git ls-files docs/wip/ | grep -c DRIVER-PROMPT`. An earlier draft of this note
+claimed the tracked prompt count had never exceeded two and that this wording
+had gone stale only once. Both were false: `git ls-tree` over this directory's
+history returns **four** tracked prompts on 2026-08-09 and 2026-08-10 and three
+on 2026-08-11, and the paragraphs above record this sentence going stale on two
+additions in a row, each caught only at a merge, and reading "none" for a day in
+August. **Adding a file here and editing this file are one change and nothing
+enforces it**, so run both derivations and fix every place, not the one you
+noticed.
 
 `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md` was archived on 2026-08-13, when
 #838 and #863 both landed — the first just after local midnight, which is why
