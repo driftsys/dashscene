@@ -1,36 +1,87 @@
 # v0.19 driver prompt — the Android half
 
-    status  written 2026-08-09, at the close of the C ABI work. Archived to
-            `docs/archive/` at v0.19's close, with its row removed from
-            `docs/wip/README.md` in the same commit.
-    scope   story #841 (layer 0) and story #842 (demo-android), on
-            `integration/v0.19-android`. Not #834 to #838, which are `main`'s.
+    status  written 2026-08-09 at the close of the C ABI work, and rewritten
+            2026-08-13 when everything it was written to carry except #842 had
+            landed and one of its environment traps had stopped being true.
+            Archived to `docs/archive/` at v0.19's close. **A driver prompt has
+            no row in `docs/wip/README.md`** — captures have the table, prompts
+            have that file's prose — so the same commit updates the four
+            paragraphs describing this one.
+    scope   stories **#842** (demo-android on a device, which waits for
+            hardware) and **#947** (the C ABI's text gap, which does not).
+            #834 to #841 have all landed.
     epic    #833
+
+## What can be done now, because #842 cannot start
+
+**Two of the slice's three open stories wait on a device.** #842's deliverable
+is a frame-rate number, and #885 — which is `debt`, not a story — is the D3a
+Vulkan measurement; both need hardware that was expected roughly 2026-08-23.
+#843 (the records) depends on them.
+
+**#947 does not wait**, and it is the one story a session can pick up today. The
+rest of the available work is debt.
+
+Re-derive the list rather than trusting this snapshot, which was taken
+2026-08-13:
+
+    gh issue list --milestone "v0.19 — Android, the C ABI, and layer 0" \
+      --state open --json number,title,labels
+
+That command returns eighteen rows. **Three carry `story`** — #842 and #843,
+both of which wait as above, and:
+
+- **#947** — the C ABI has no way to receive fonts, so a `.dsb` with text draws
+  nothing on Android. The two candidate shapes are in the issue; the atlas is
+  the harder half of either. This is the one story that is pickable now.
+
+**Thirteen carry `debt`**, and two of those are not pickable either: **#885** is
+the hardware measurement itself, and **#828** (a portable conformance suite) is
+held by the slice because no second painter has landed. The other eleven:
+
+- **#950** — `ShowcaseSolver` rebuilds Taffy's retained tree per solve, which
+  `TaffySolver::owning` made unnecessary. Six sites, three files.
+- **#943** — `ShownRoot`'s ordinal is a _document_ ordinal and `Txn::show_root`
+  uses it to index `Arena::roots()`. An API change (`Option<NodeId>`).
+- **#944, #945, #946** — the shown-root story's remainder.
+- **#922, #925, #929, #930, #931, #932** — older slice debt.
+
+The eighteenth row is **#767** (`madvise` the prefetch ranges), which carries no
+label at all and so appears in neither count. Epic #833 holds it with a reason —
+Android is the first target where a cold page cache is ordinary rather than
+contrived, and it needs on-device measurement infrastructure — so it is not
+pickable before hardware either.
 
 ## Read first
 
-- Epic **#833** — the slice's shape, the branching model, and the held issues.
+- Epic **#833** — the slice's shape and the held issues.
 - [`../decisions/host-integration-in-three-layers.md`](../decisions/host-integration-in-three-layers.md)
   — D3 (the handle), D4 (the destroy handshake), D5 (`SurfaceView` only), D6
-  (native vsync). This is the structure; break stories against it rather than
-  inventing one.
-- [`../design/android-toolchain.md`](../design/android-toolchain.md) — what the
-  toolchain is, what the probe found, and what is **not** measured.
-- `crates/dashscene-ffi/src/lib.rs` — the module documentation is the ABI's
-  contract, including the three rules it keeps.
+  (native vsync).
+- [`../design/android-toolchain.md`](../design/android-toolchain.md) — the
+  toolchain, what the probe found, and what is **not** measured.
+- `crates/dashscene-ffi/src/lib.rs` — the ABI's contract, its three rules, and
+  the text gap under "Text is absent from the document load".
 
 ## What is already built, so it is not rebuilt
 
-- **The toolchain** (#839). `just android` cross-compiles the painter _and_ the
-  ABI for `aarch64-linux-android`; `android-build` runs it in CI. The NDK is
-  discovered, not hardcoded, and is a documented prerequisite.
-- **The C ABI** (#840, closed). `dashscene-ffi` exports a version to negotiate
-  against, the runtime lifecycle, a `.dsb` load, the surface handoff, the tick,
-  resize, **a draw call**, and an error channel. Header committed; `just c-abi`
-  exercises it from C and is part of `check`.
-- **The `ANativeWindow` wrapper** — `SurfaceRenderer::for_android_ndk`, in the
-  painter beside `for_canvas`, so a host names no `wgpu` type.
-- **The API floor** — `ANDROID_API = 33`. See below.
+- **The toolchain** (#839). `just android` cross-compiles **four** members for
+  `aarch64-linux-android` — `dashscene-gpu`, `dashscene-ffi`,
+  `dashscene-android` and `demo-android` — and `android-build` runs it in CI.
+  The last two matter most: their JNI halves compile on no other target, so this
+  recipe is their only compile gate. The NDK is discovered, not hardcoded, and
+  is a documented prerequisite.
+- **The C ABI** (#840). `dashscene-ffi` exports a version to negotiate against,
+  the runtime lifecycle, a `.dsb` load, the surface handoff, the tick, resize, a
+  draw call, and an error channel. Header committed; `just c-abi` exercises it
+  from C and is part of `check`.
+- **Layer 0** (#841, closed and merged). `dashscene-android` is the third
+  integration crate: the `android.view.Surface` to `ANativeWindow` handoff, the
+  `AChoreographer` loop on its own thread, and D4's destroy handshake, which
+  blocks until rendering has stopped and the `wgpu::Surface` is dropped.
+- **The `ANativeWindow` wrapper** — `SurfaceRenderer::for_android_ndk`, beside
+  `for_canvas`, so a host names no `wgpu` type.
+- **The API floor** — `ANDROID_API = 33`.
 
 ## Decisions already made — do not re-litigate
 
@@ -41,28 +92,27 @@
   `postFrameCallback64` fallback branch.
 - **`SurfaceView` semantics only** (D5). `TextureView` is v1, with the case that
   motivates it.
-- **The Android half lands on `integration/v0.19-android`**, one pull request
-  into `main` at the end. Story branches cut from it and target it.
+- **`integration/v0.19-android` is history, not somewhere to work.** It merged
+  into `main` on 2026-08-09. Every `main`-track story went straight to `main`
+  rather than through it — #834 landed hours before that merge, #835 to #838 and
+  #863 after it — and #842 should too.
 
-## What #841 still owes
+## The text gap, which is new since this file was written
 
-- A **third integration crate** — `dashscene-android` by analogy with
-  `dashscene-web` and `dashscene-desktop`. That costs the **thirteen
-  registries** `crate-name-map.md` enumerates, plus a crates.io name reservation
-  as a standalone placeholder 0.1.0 with `repository` pointing at the public
-  `driftsys/dashscene` (that is how all eighteen were held).
-- **The JNI surface**: `AndroidExternalSurface` hands over an
-  `android.view.Surface`; `ANativeWindow_fromSurface` turns it into an
-  `ANativeWindow *`; that reaches `SurfaceRenderer::for_android_ndk`.
-- **The `AChoreographer` loop**, driven natively (D6/P3). A host that ticks from
-  its UI thread inverts P3 and puts the loop on the thread that has to run the
-  destroy handshake.
-- **D4's destroy handshake, which is the story's real risk.** `surfaceDestroyed`
-  must block until rendering has stopped and the `wgpu::Surface` is dropped. It
-  is **not** `Drawn::No` — that is a scheduling concern, this is a lifetime one.
-  Getting it wrong is use-after-free on rotation, backgrounding and
-  split-screen. **The emulator can exercise all three**, and a lifetime bug does
-  not need a fast GPU to reproduce.
+**A `.dsb` containing text draws no glyphs on Android, and lays its text nodes
+out as empty leaves.** Story #863 (2026-08-13) fixed that on desktop and on the
+web by giving their loaders a `dashscene_engine::TextResources` — a `Typesetter`
+and the atlases its cascade samples — that the host supplies, because the
+document cannot carry either. Neither value crosses a C boundary, so
+`ds_runtime_load_document` still builds the bare `TaffySolver` and
+`dashscene-android`, which loads through it, still draws no text. That is
+**#947**, and it is undesigned rather than blocked: the ABI's versioning rule
+makes a second entry point free.
+
+**#842 does not hit it**, because the showcase's scenes are built in code and
+bring their own solver — which is the whole reason its text has ever drawn. A
+session that uses the document load path will hit it, so it is named here rather
+than left to be discovered.
 
 ## What the emulator can and cannot tell you
 
@@ -77,26 +127,61 @@ the flag on and off. That was tried and reverted; do not retry it.
 
 ## What waits for hardware (roughly 2026-08-23)
 
-- **#839's D3a measurement.** Until it exists, **nothing may describe Android as
-  working** — not a record, not a document, not an issue, not a commit message.
-  That is the entire cost of having deferred it.
+- **The D3a measurement, which is #885** — not #839, which closed. Until it
+  exists, **nothing may describe Android as working** — not a record, not a
+  document, not an issue, not a commit message. That is the entire cost of
+  having deferred it.
 - **All of #842.** Its deliverable is a frame-rate number, and an emulator
   number would describe the development machine.
 
-## Environment traps that will cost an hour each
+## Environment, verified 2026-08-13
 
-- **CI cannot go green.** Actions billing is failing and every job is refused
-  before it starts. Confirm once via
-  `gh api repos/{owner}/{repo}/check-runs/<id>/annotations` — the payments
-  message appears nowhere else, and the 2-to-10 second durations look like real
-  failures. Then merge on `just verify` plus a real review.
-- **`git push` hangs.** `git-credential-manager` blocks on a prompt nothing can
-  answer. Use `git -c credential.helper='!gh auth git-credential' push`. `gh`
-  itself works throughout, and `gh api .../git/refs` can branch from an existing
-  SHA but returns 422 for a local commit.
+**One of the four traps this file carried has been withdrawn**, and it is stated
+rather than deleted because a reader who saw the old advice needs to know it no
+longer holds. The other three stand, below. Two further traps are added.
+
+- **WITHDRAWN — CI works, and `main` requires it.** The Actions billing failure
+  that made every job die before it started is **fixed**: `ci` runs green
+  routinely, and did so many times on 2026-08-13. The old advice here was to
+  merge on `just verify` plus a review; **do not.** `main` carries a ruleset
+  with an empty bypass list: a pull request and a green `ci` are required,
+  force-push and deletion are refused, and there is no direct push at all.
+- **`just verify` runs no test tier** since PR #908. It type-checks, so a
+  compile error fails there; no test does. Run `just build` and quote its
+  `Summary` line.
+- **`just calibrate` fires on more than `dashpack`.** Story #863 tripped it by
+  adding a dependency to two crates, which moved `Cargo.lock`. **The filter is
+  not reproduced here**: AGENTS.md forbids it by name, because a partial copy
+  has already drifted three times. Read the `packer` filter in the `changes` job
+  of `.github/workflows/ci.yml`, which is the list, and
+  `docs/decisions/test-tiers.md`, which gives a reason per entry.
+- **`git push` hangs** behind `git-credential-manager`. Use
+  `git -c credential.helper='!gh auth git-credential' push`, and expect a retry.
 - **Commit scopes are pinned** in `.git-std.toml`. `docs(decisions)` is
   rejected; it is `docs(docs)`.
-- **A review is the fan-out, not an author pass.** On this branch alone the
-  fan-out found a soundness bug (an FFI enum taken by value), a false claim that
-  a target was built when no recipe built it, and a `mark_shown` placement that
-  contradicted the documented contract. The author pass found none of them.
+- **Another session works this repository**, and `main` moved repeatedly during
+  the 2026-08-13 session — twice while a branch sat waiting for CI. Rebase
+  before merging rather than merging behind, and re-run CI on the commit you
+  will actually merge.
+
+## On reviews, and on evidence
+
+This section, the emulator's limits, the API floor and the D3a embargo all came
+through the rewrite unchanged, because each was checked and each held.
+
+**A review is the fan-out, not an author pass.** On the Android branch the
+fan-out found a soundness bug (an FFI enum taken by value), a false claim that a
+target was built when no recipe built it, and a `mark_shown` placement that
+contradicted the documented contract. The author pass found none of them.
+
+Two more, from 2026-08-13, both about evidence rather than code:
+
+- **A test can pass with the mechanism it names removed.** Story #838's headline
+  test did, and so did the whole sanity tier — 1 784 tests — because its fixture
+  varied an axis the mechanism did not control. Story #863's engine test passed
+  with its constructor swapped out. Mutate the fix, not the original code, and
+  check the mutation applied.
+- **A measurement is about the path its harness takes.** The per-frame band read
+  1.00x while every text document still paid per artboard, because the band
+  builds `TaffySolver::new()` and the code it was blind to returns before that.
+  List the branches a harness cannot enter before trusting its number.

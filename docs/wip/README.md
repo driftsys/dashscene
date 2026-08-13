@@ -11,12 +11,12 @@ convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports eleven files
+## Why the WIP gate currently reports ten files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-eleven and exits non-zero. All eleven are deliberate, accepted exceptions rather
-than ungardened debt, and they are recorded here so the gate's result is
-explained rather than merely tolerated.
+ten and exits non-zero. All ten are deliberate, accepted exceptions rather than
+ungardened debt, and they are recorded here so the gate's result is explained
+rather than merely tolerated.
 
 **The gate is deliberately not wired into CI, and this section is why.** Its
 result here is non-zero by design and would stay non-zero for as long as any
@@ -109,12 +109,25 @@ commit and each stays for the half that is still undone.
 after the close above took twelve to ten — the commit crosses local midnight,
 and this ledger dates by commit day). Two prompts are held for **one** slice,
 which is new: the earlier same-slice pair was v0.18's, where the second
-superseded the first. These two do not. v0.19 is worked on two tracks that share
-no branch — the Android half on `integration/v0.19-android`, the shown-root
-chain on `main` — and each track is handed its own.
+superseded the first. These two do not. v0.19 was worked on two tracks that
+shared no branch — the Android half on `integration/v0.19-android`, the
+shown-root chain on `main` — and each track was handed its own. **That split is
+over**: the Android branch merged into `main` on 2026-08-09, and everything
+since has gone straight to `main`.
 
-**Nine of the eleven are design captures**, described below, and **two driver
-prompts are held**, both for v0.19.
+**Ten, when the shown-root prompt was archived** (2026-08-13). It left as soon
+as it carried nothing rather than waiting for v0.19's close, which is what its
+own status line had said: story #773's lowering prompt set that precedent on
+2026-08-11, and a prompt tied to stories leaves when its stories do rather than
+when their slice does. Both of its — #838 and #863 — landed that day, and what
+they built is `docs/decisions/the-runtime-paints-the-shown-root.md` and the host
+half of `docs/decisions/font-resolution-order.md`. **The record and the
+archiving belong in one commit**, and in this case they were not: the records
+landed with the stories and the original stayed here for a few hours, which the
+`sdd-working-memory-lifecycle` rule calls a copy rather than a gardening.
+
+**Nine of the ten are design captures**, described below, and **one driver
+prompt is held**, v0.19's Android half.
 
 Two were v0.18's, and **both left at that slice's close on 2026-08-11**:
 `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17 closed, and
@@ -137,20 +150,18 @@ first: the lowering needed a variant-set emitter that did not exist, and the
 fifteen `refused-*` nodes it counted turn out to exercise eleven constructs,
 because four of them carry no interaction at all.
 
-The first of the two still held, brought by an earlier merge, is
+The one still held, brought by an earlier merge, is
 `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`, added at the close of that slice's C
-ABI work to carry stories #841 and #842. **Both of those have landed**, and it
-is still held rather than archived: its own status line says it archives at
-v0.19's close, and that slice is open — D3a (#885), split-screen (#874) and
-story #842's frame-rate number all wait on hardware. It archives when epic #833
-does.
+ABI work to carry stories #841 and #842. **#841 has landed and #842 has not** —
+it waits on hardware, as does D3a (#885) — so this prompt is the one still
+carrying live work, and it was rewritten on 2026-08-13 against what had changed
+under it. It archives when epic #833 does, which its own status line says.
 
-The second is `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md`, for the same slice
-and the same close condition. It carried the `main` track — stories #838 and
-#863, both of which landed — while the first carries the Android half. **Both
-are v0.19's**, which is what is unusual about this pair rather than its size:
-earlier overlaps were two slices at once, or one prompt superseding another
-within a slice, and this is neither.
+For a few hours on 2026-08-12 and 2026-08-13 it had a companion,
+`2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md`, carrying the same slice's `main`
+track. **Two prompts for one slice was new** — earlier overlaps were two slices
+at once, or one prompt superseding another within a slice, and that was neither
+— and it lasted exactly as long as the two tracks did.
 
 The two slices' prompts overlapped before that, because v0.18 and v0.19 ran at
 the same time, on `main` and on `integration/v0.19-android` respectively. **That
@@ -405,20 +416,21 @@ z-interleave, and the as-built records now carry all of it
 decision record's two resolution sections). Both it and the driver prompt that
 carried out its design are archived verbatim in `docs/archive/`.
 
-Two driver prompts are held here now, **both v0.19's**, as the section above
-says. `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md` carries stories #841 and #842
-on `integration/v0.19-android`, and leaves at the slice's close.
-`2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md` carries **nothing outstanding**:
-both stories it was written for landed, #838 on 2026-08-12 and #863 on
-2026-08-13. It is held to the same close condition as the other prompt rather
-than archived early, and its status line says so. It was written for #836 to
-#838 and rewritten on 2026-08-12 when the first two landed overnight, which is
-the hazard a handoff held across a working session carries: **its scope line is
-the first thing to go stale, and the file name keeps the original scope
-forever.** They are two because the slice is worked on two tracks that share no
-branch. Of the earlier concurrent pairs only one was a supersession — v0.18's,
-at `53e61c5` — and the paragraph further down says so; the rest were two slices,
-or two unrelated handoffs, held at once.
+One driver prompt is held here now, v0.19's Android half, as the section above
+says. `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md` carries story #842 — #841
+landed, and `integration/v0.19-android` merged into `main` on 2026-08-09 and is
+history — and leaves at the slice's close.
+
+`2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md` was archived on 2026-08-13, when
+#838 and #863 both landed — the first just after local midnight, which is why
+that story's own prose says the 12th and this ledger, which dates by commit day,
+says the 13th. It was written for #836 to #838 and rewritten twice as stories
+landed under it, which is the hazard a handoff held across a working session
+carries: **its scope line is the first thing to go stale, and the file name
+keeps the original scope forever.** It was two prompts because the slice is
+worked on two tracks that share no branch. Of the earlier concurrent pairs only
+one was a supersession — v0.18's, at `53e61c5` — and the paragraph further down
+says so; the rest were two slices, or two unrelated handoffs, held at once.
 
 This paragraph said "none" from 2026-08-07, when v0.17's prompt was added and
 this sentence was not touched, until that prompt was archived a day later and
