@@ -74,7 +74,19 @@ mod embedder {
     async fn run() -> Result<(), WebError> {
         let surface = Surface::attach(CANVAS).await?;
         let mut arena = Arena::new();
-        let live = load_document(DOCUMENT, ShownRoot::FIRST, &mut arena).await?;
+        // **No text resources, deliberately.** This artifact exists to be
+        // weighed — it is what the runtime payload budget is measured over
+        // (issue #825) — and a cascade with its atlases is roughly a megabyte
+        // of fonts and committed sheets, which would make the number a
+        // measurement of the corpus rather than of the runtime (story #863).
+        //
+        // What that costs: `DOCUMENT` is a URL fetched at run time and nothing
+        // in this repository produces the file it names, so if one carrying
+        // text were served, this embedder would draw no glyphs and lay its
+        // text nodes out as empty leaves. That is acceptable here only because
+        // this artifact is built to be weighed rather than run — an embedder
+        // copied from it that *is* run must pass a `TextResources`.
+        let live = load_document(DOCUMENT, ShownRoot::FIRST, None, &mut arena).await?;
         // Detached: this page has one canvas for its whole life, so there is
         // nothing to stop the loop for. `detach` is the call that says so —
         // dropping the handle would stop the loop instead (story #834), and a

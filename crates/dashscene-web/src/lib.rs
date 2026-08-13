@@ -129,6 +129,15 @@ pub use dashscene_gpu::{AdapterInfo, Backend, DeviceType, TextureFormat};
 /// on a host build, and intra-doc links are a lint gate here.
 pub use dashbuf::prefetch::ShownRoot;
 
+/// What a load needs to measure and draw text, re-exported for the same reason
+/// [`ShownRoot`] is — so an embedder can name the parameter without declaring a
+/// dependency on the crate that defines it. Building one means assembling a
+/// cascade and its committed atlases; `corpus/showcase/src/resources.rs` is the
+/// worked example (story #863).
+pub use dashpaint::Atlas;
+pub use dashscene_engine::TextResources;
+pub use dashscene_typeset::text::Typesetter;
+
 #[cfg(target_arch = "wasm32")]
 pub use document::load_document;
 #[cfg(target_arch = "wasm32")]

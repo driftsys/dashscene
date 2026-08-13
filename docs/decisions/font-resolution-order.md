@@ -153,6 +153,65 @@ for weight.
   are baking at pack time (#345, dashpack) or baking in process, which changes
   the pinning and reproducibility story. Embedding must not land before one of
   them exists, or documents would carry bytes no renderer can use.
+- **Step 1's absence had a second cost nobody had written down, and story #863
+  is where it was found.** The order above presumes a renderer that _has_ a
+  cascade. Until 2026-08-13 no `.dsb` load path did: all four built
+  `TaffySolver::new()`, the constructor with neither a typesetter nor an atlas
+  set, so a loaded document containing text reached step 2 with nothing to match
+  against. The effect was not the substitution this record is about — it was
+  **no text at all**. `TaffySolver::stage_text` returns on its first guard,
+  `self.atlases.is_empty()`, checked before the typesetter, so the committed
+  glyph-run table was empty; and a hug-sized text node measured as an empty
+  leaf, resolving to 0 x 0 and making its siblings lay out around a box the
+  design did not specify. Measured on the committed
+  `goldens/dsb/v07-text-hug-in-fill.dsb`: four rects, zero glyph runs, and the
+  node holding "hug inside fill" at 0 x 0.
+
+  **It stayed invisible because everything that draws text builds its own
+  solver.** `corpus/showcase` does, so `demo`, `demo-web` and `demo-android`
+  draw text for their own scenes; `goldens/tooling` does, so every text golden
+  and the Figma oracle render text and match it. Both populations build the
+  scene themselves and so already hold the font. A loaded document is the one
+  case where something else produced the scene. `goldens/tooling/src/render.rs`
+  had known this and worked around it in a comment since the goldens were
+  written — it loads, then re-commits through a typesetter-backed solver — and
+  nothing carried that knowledge to the hosts.
+
+- **The host supplies both, and that is now an argument rather than a default.**
+  `dashscene_engine::TextResources` is the pair, and
+  `dashscene_desktop::Document::load`, `dashscene_desktop::load_bytes` and
+  `dashscene_web::load_document` each take an `Option` of it. `None` is the
+  pre-#863 behaviour and stays legitimate for a document with no text; it is no
+  longer what a caller gets without asking. `TaffySolver::owning` holds the
+  typesetter inside the solver rather than wrapping it, because
+  `dashlang::attach_live` keeps its `Box<dyn LayoutSolver>` for the life of the
+  scene and a solver rebuilt per call throws away Taffy's retained tree on every
+  frame — issue #164's saving, paid back per frame.
+
+  **The C ABI is not fixed and the reason is different in kind.** Neither a
+  `Typesetter` nor an `Atlas` can cross a C boundary, so
+  `ds_runtime_load_document` still builds the bare solver and the Android host,
+  which loads through it, still draws no text. That is undesigned rather than
+  blocked — a second entry point is a new symbol and does not move
+  `DS_ABI_VERSION` — and it is issue #947.
+
+- **What stays blocked is the document carrying its own.** Everything above is
+  the _host_ half. Step 1 is unchanged: an embedded font still cannot become
+  glyphs at load time, and a rasterised atlas must never be embedded at all. Two
+  further findings from #863, for whoever revisits it:
+
+  - **An `AssetKind` append would not pack.** `dashpack`'s `AssetClass::of`
+    matches `Image` and `DistanceField` and returns `PackError::UnknownKind` for
+    anything else, so a `Font` variant would compile and then fail to pack.
+    Making it work needs an `AssetClass` variant, a colour space and a
+    lossy-rung ladder, none of which mean anything for a binary face.
+  - **The bank was never answered.** #863 asked whether these come from the
+    document, the bank, or the host, and only the host half is settled.
+    `dashpack` exists for cold-bank assembly and `crates/dashbuf/tests/bank.rs`
+    assembles one document under two banks — the natural home for bytes shared
+    across many documents, and the branch neither that issue nor this record has
+    addressed.
+
 - **An embedded font should use the content-addressed asset table** (#107,
   `docs/decisions/asset-model-content-addressed-blobs.md`), which already
   contemplates "later font atlases", rather than a parallel mechanism. Schema

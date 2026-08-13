@@ -91,3 +91,30 @@ node grows taller as the text wraps. A known axis is returned unchanged.
   as-built field list is in `docs/design/dashscene-engine.md` (Measure
   callback); why weight is a measure input rather than a paint-only one is in
   `docs/decisions/weight-selection-in-the-cascade.md`.
+- **The borrow gained an alternative at story #863, and the reason it had to is
+  worth stating: the seam is fine, the lifetime is not.** Lending assumes a
+  caller that outlives the solve. A host loading a `.dsb` is not one —
+  `dashlang::attach_live` takes a `Box<dyn LayoutSolver>` and keeps it for the
+  life of the scene, so the solver in that box is `'static` and nothing local
+  can be lent into it. Every `.dsb` load path therefore built
+  `TaffySolver::new()`, and a loaded document containing text drew no glyphs and
+  measured its text nodes as empty leaves.
+
+  `TaffySolver::owning(TextResources)` holds the typesetter instead. **Lending
+  stays the default and this record's Choice is unchanged** — the showcase, the
+  goldens and all but one test still lend, because they can. The exception is
+  the test that holds on purpose,
+  `an_owning_solver_measures_through_its_\
+typesetter_and_retains_its_tree`,
+  which exists to cover the held arm. What the held variant is _not_ is the
+  shape already in the tree: `corpus/showcase`'s `ShowcaseSolver` owns a
+  typesetter and builds a fresh `TaffySolver` inside every call, which starts
+  each solve with no retained tree and so rebuilds it per frame. That is
+  acceptable in a demonstration and is recorded there as a cost; on the product
+  path it would pay back issue #164's whole saving every frame.
+
+  The reason for lending — one typesetter for the runtime, so layout and paint
+  cannot disagree about a glyph's size — is satisfied by the held variant rather
+  than waived. The held solver _is_ the runtime's only text producer: it
+  measures and it stages, both at commit, and a painter reads the runs out of
+  the committed table rather than out of a cache it holds separately.

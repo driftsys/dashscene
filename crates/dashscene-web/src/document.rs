@@ -24,7 +24,6 @@ use dashbuf::prefix::{self, Envelope, MIN_PREFIX, PrefixError};
 use dashbuf::residency::BlobResidency;
 use dashlang::LiveScene;
 use dashscene_core::{Arena, Region};
-use dashscene_engine::TaffySolver;
 
 use crate::{WebError, fetch, shown};
 
@@ -126,6 +125,7 @@ impl Ranges {
 pub async fn load_document(
     url: &str,
     shown_root: ShownRoot,
+    text: Option<crate::TextResources>,
     arena: &mut Arena,
 ) -> Result<LiveScene, WebError> {
     let first = fetch::range(url, 0, MIN_PREFIX as u64 - 1).await?;
@@ -288,5 +288,8 @@ pub async fn load_document(
     let mut txn = arena.open();
     txn.show_root(Some(shown_root));
     txn.commit();
-    Ok(dashlang::attach_live(arena, Box::new(TaffySolver::new())))
+    Ok(dashlang::attach_live(
+        arena,
+        dashscene_engine::TaffySolver::boxed(text),
+    ))
 }

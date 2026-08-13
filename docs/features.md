@@ -544,8 +544,12 @@ absence of any mobile target in the workspace.
       entry point (layer 2, D8) — so it implements `dashscene_android::Frames`
       and shares the render thread, the vsync loop and the destroy handshake
       rather than a second copy of them. Text draws because each scene brings
-      its own solver; a *loaded document* still gets a bare `TaffySolver` and
-      draws no glyphs (issue #863).
+      its own solver; a *loaded document* still gets a bare `TaffySolver`, so it
+      draws no glyphs **and lays its text nodes out as empty leaves**, which
+      moves their siblings too. Story #863 fixed that on desktop and on the web
+      by letting the host supply a cascade and its atlases; **Android is the one
+      host left**, because neither value can cross the C ABI its document load
+      goes through (issue #947).
 
       **On an emulator, and the frame rate is not a device measurement.** The
       instrument reports in the desktop host's units — one sample read

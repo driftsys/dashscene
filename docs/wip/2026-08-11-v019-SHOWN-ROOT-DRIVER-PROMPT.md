@@ -5,12 +5,16 @@
             when a review found the rewrite had reproduced the staleness it was
             written to fix. Archived to `docs/archive/` at v0.19's close, with
             its row removed from `docs/wip/README.md` in the same commit.
-    scope   issue #863, labelled `story` with no branch yet. Story #838 is
-            **done** — it landed from `story/v019-shown-root-paint` on
-            2026-08-12, and the section below describing it is history rather
-            than work. What it built is
-            `docs/decisions/the-runtime-paints-the-shown-root.md`; read that
-            rather than this file's account of it.
+    scope   **nothing outstanding.** Both stories this file was written to
+            carry are done: #838 landed on 2026-08-12 from
+            `story/v019-shown-root-paint`, and #863 on 2026-08-13 from
+            `story/v019-text-on-the-load-path`. Every section below is history
+            rather than work, and its account of #863 in particular is the
+            pre-fix reading. What they built is
+            `docs/decisions/the-runtime-paints-the-shown-root.md` and the host
+            half of `docs/decisions/font-resolution-order.md`; read those. This
+            file now leaves at v0.19's close for the reason its status line
+            gives, carrying nothing.
     epic    #833
     slice   #834 to #838 closed. #839 to #841 closed, and
             `integration/v0.19-android` merged into `main` on 2026-08-09 — that

@@ -29,6 +29,12 @@ dashlang.workspace = true
 # The product layout solver, injected for a loaded document, which unlike a
 # scene built in code has no builder of its own to inject one.
 dashscene-engine.workspace = true
+# Public since story #863: `Document::load` takes a `TextResources`, whose
+# `Typesetter` is this crate's type. An embedder that draws text from a loaded
+# document builds one, so the dependency is part of the surface rather than an
+# implementation detail — which is why it is re-exported in `lib.rs` beside the
+# `dashscene-gpu` types and `ShownRoot`.
+dashscene-typeset.workspace = true
 # The `.dsb` envelope reader: `dashbuf::open` for the ranges, `dashbuf::map`
 # for the mapping, and `dashbuf::prefetch` for the shown root's asset set.
 dashbuf.workspace = true

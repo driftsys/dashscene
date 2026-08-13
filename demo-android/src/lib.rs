@@ -22,10 +22,17 @@
 //! Each scene builds its own solver. `typography::build` constructs a
 //! `ShowcaseSolver` carrying the fonts and the typesetter, so the `LiveScene`
 //! this host is handed can already measure and stage glyph runs. That is worth
-//! saying because the opposite is true of a **loaded document**: all three
-//! integration crates inject a bare `TaffySolver`, which has no typesetter and
-//! no atlases, so a `.dsb` with text collapses its boxes and draws no glyphs.
-//! Issue #863 carries that; this host does not hit it, and does not fix it.
+//! saying because the opposite is true of a **loaded document** on this
+//! platform: the C ABI injects a bare `TaffySolver`, which has no typesetter
+//! and no atlases, so a `.dsb` with text collapses its boxes and draws no
+//! glyphs.
+//!
+//! **Android is the only host where that is still true.** Story #863 gave
+//! `dashscene-desktop` and `dashscene-web` a `TextResources` parameter their
+//! embedder fills; neither a `Typesetter` nor an `Atlas` has a C
+//! representation, so `ds_runtime_load_document` could not take the same
+//! argument. Issue #947 carries what has to be designed first. This host draws
+//! scenes built in code, so it does not hit the gap and does not close it.
 //!
 //! # What an embedder should not read into this
 //!

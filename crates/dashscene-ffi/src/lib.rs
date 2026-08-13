@@ -49,6 +49,34 @@
 //! [`DS_ABI_VERSION`]. So the shape that costs nothing is the shape that also
 //! bounds the load, and doing them together is why neither is here yet.
 //!
+//! # Text is absent from the document load, and this is the last host it is
+//!
+//! [`ds_runtime_load_document`] builds `TaffySolver::new()` — no typesetter, no
+//! atlas set — so a `.dsb` containing text lays its text nodes out as **empty
+//! leaves** and draws **no glyphs**. The damage is not confined to the missing
+//! letters: a hug-sized text node that measures to nothing makes its siblings
+//! lay out around a box the design did not specify.
+//!
+//! **Story #863 fixed the other two hosts and could not fix this one.**
+//! `dashscene_desktop::Document::load`, `dashscene_desktop::load_bytes` and
+//! `dashscene_web::load_document` now each take a
+//! `dashscene_engine::TextResources` — a `Typesetter` and the atlases its
+//! cascade samples — which the host supplies because the document cannot
+//! (`docs/decisions/font-resolution-order.md`: an embedded font is step 1 and
+//! nothing implements it, and a rasterised atlas must never be embedded because
+//! it is a result). Neither value can cross a C boundary: a `Typesetter` is a
+//! Rust type holding a parsed cascade, and an `Atlas` is a committed sheet with
+//! its own metrics.
+//!
+//! So this is **undesigned rather than blocked**, and the distinction matters
+//! because the versioning rule below already prices it: a second entry point is
+//! a new symbol and costs nothing, where a parameter on this one bumps
+//! [`DS_ABI_VERSION`]. What has to be settled first is what a Kotlin or Swift
+//! host actually hands over — font bytes and a described cascade, or an opaque
+//! handle built by a companion call — and that is a design question this story
+//! did not answer. It is reachable today: `dashscene_android::host` loads
+//! through this entry point.
+//!
 //! # The three rules this ABI keeps
 //!
 //! 1. **No panic crosses the boundary.** Every entry point runs inside
@@ -275,6 +303,11 @@ pub unsafe extern "C" fn ds_runtime_load_document(
         // what `document_replaced` is for, and it is reported below.
         runtime.arena = Arena::new();
         dashscene_core::load_document(&document, &payloads, &mut runtime.arena);
+        // No typesetter and no atlas set, so a document containing text draws
+        // no glyphs and lays its text nodes out as empty leaves. The other two
+        // hosts take a `TextResources` from their embedder; nothing equivalent
+        // can cross a C boundary, and the module documentation above says what
+        // would have to be designed first (story #863).
         runtime.scene = Some(dashlang::attach_live(
             &mut runtime.arena,
             Box::new(TaffySolver::new()),
