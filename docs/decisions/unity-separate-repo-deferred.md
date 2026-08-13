@@ -1,7 +1,9 @@
 # Unity: separate repo, C#, deferred until v0 exits
 
-    status   accepted
-    date     2026-07-11
+    status   accepted. The separate-repo choice stands; the schedule in it does
+             not — Unity moved from v1 to slice v0.21 on 2026-08-12, so "until
+             v0 exits" in the title is superseded.
+    date     2026-07-11; schedule corrected in place 2026-08-13
     scope    the Unity painter and its producer front end; crates/dashscene-unity
 
 ## Context
@@ -10,10 +12,10 @@ Unity work can't live in the Cargo workspace — different language and toolchai
 entirely (C#, Unity project format or a UPM package). Two distinct pieces belong
 together, both C#, both in one Unity repo/package:
 
-- **Producer front end** (`docs/design/architecture.md`, "C# decl. (v1)") — a C#
-  declarative DSL running in-engine, builds a describe buffer, one commit across
-  the FFI seam (no per-prop FFI; struct/Span, pooled, GC-free; typed keys via
-  codegen).
+- **Producer front end** (`docs/design/architecture.md`, "C# declarative
+  producer front end") — a C# declarative DSL running in-engine, builds a
+  describe buffer, one commit across the FFI seam (no per-prop FFI; struct/Span,
+  pooled, GC-free; typed keys via codegen).
 - **Painter back end** (`docs/technotes/rendering-and-painters.md`) — the
   renderer: rect table + glyph runs consumed over FFI, projected onto
   pre-instantiated GameObjects, paint entries resolved to SDF-shader-library
@@ -21,11 +23,14 @@ together, both C#, both in one Unity repo/package:
 
 ## Choice
 
-Do not create the Unity repo yet. Per `docs/roadmap.md`'s plan, Unity work
-doesn't start until v1, after the v0 exit criteria (E1-E7, which are Rust+Skia
-only). The Rust-side `dashscene-unity` crate (already reserved,
-`docs/decisions/crate-name-map.md`) becomes the thin FFI-bindings crate the C#
-side links against, not the Unity project itself.
+Do not create the Unity repo yet. Per `docs/roadmap.md`'s plan as it stood,
+Unity work doesn't start until v1, after the v0 exit criteria (E1-E7, which are
+Rust+Skia only). **That schedule changed on 2026-08-12**: Unity is slice v0.21,
+inside v0, and creating the repository is one of that slice's three entry
+conditions. The reasoning below is unaffected — it is about where the code
+lives, not when it is written. The Rust-side `dashscene-unity` crate (already
+reserved, `docs/decisions/crate-name-map.md`) becomes the thin FFI-bindings
+crate the C# side links against, not the Unity project itself.
 
 ## Why
 

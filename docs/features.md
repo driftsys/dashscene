@@ -438,7 +438,7 @@ Checked against `importers/figma/src/`, `crates/dashc/src/`,
       work, but they are the repository's own development recipes rather than a
       shipped tool with a stable interface. Making the compiler a product is
       planned (v1) — see section 11.
-- [ ] **Authoring from inside a game engine** — planned (v1), alongside the
+- [ ] **Authoring from inside a game engine** — planned (v0.21), alongside the
       Unity renderer.
 
 ## 9. Rendering backends
@@ -464,7 +464,7 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       ships on has not been measured.
 - [ ] **Unity renderer** — **part built.** The contract keeping the data
       readable from C# exists and the build enforces it. The renderer, its
-      shader library and the C# projection are planned (v1), in a separate
+      shader library and the C# projection are planned (v0.21), in a separate
       repository that does not exist yet.
 - [ ] **Browsers without WebGPU** — WebGPU is the newer browser graphics
       standard the lean renderer needs. A browser lacking it is told so and
@@ -556,7 +556,8 @@ absence of any mobile target in the workspace.
       frame-rate number for a named device, is still owed.
 
       iOS and the Unity host
-      have no target, no toolchain and no automation, and follow in v1.
+      have no target, no toolchain and no automation. The Unity host is v0.21
+      and iOS is v1.
 
 ## 11. Quality tooling and workflow
 

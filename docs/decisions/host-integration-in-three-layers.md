@@ -7,12 +7,13 @@
              cut on.
     date     2026-08-05; ratified and re-scoped 2026-08-07; slice numbers
              corrected in place 2026-08-08 (story #796, the v0.17 close);
-             narrowed to layer 0 for v0.19 on 2026-08-09 (epic #833)
+             narrowed to layer 0 for v0.19 on 2026-08-09 (epic #833); Unity
+             moved from v1 to slice v0.21 on 2026-08-12, iOS unchanged
     source   the v0.15 phase-end revision (epic #569), which opened v0.17
     scope    embedding into a platform host: how a platform surface reaches
              `dashscene-gpu`, how app state drives a scene, and how a scene is
              authored from the host's language. **v0.19 applies it to Android
-             only**; iOS and Unity are v1.
+             only**; Unity is slice v0.21 and iOS is v1.
 
     Narrowed at v0.19's planning session (2026-08-09, epic #833): **that slice
     builds layer 0 and the C ABI under it.** Layers 1 and 2 are deferred to a
@@ -58,8 +59,11 @@ bindings — so it is the slice's one new platform.
 platform bring-up with the same zero foundation, and Unity is blocked on
 decisions rather than code — `unity-separate-repo-deferred.md` puts the project
 in another repository and `unity-painter-uses-brg.md` is still `proposed`. Both
-are v1. The layering below is written to be platform-general precisely so the
-iOS story inherits it rather than re-deriving it.
+were v1 when this was written; **Unity became slice v0.21 on 2026-08-12**, and
+`unity-painter-uses-brg.md` moving to `accepted` is one of that slice's three
+entry conditions. iOS stays v1. The layering below is written to be
+platform-general precisely so the iOS story inherits it rather than re-deriving
+it.
 
 What an embedder needs is already known, from the browser host story #587 built:
 the surface handoff, the tick loop, the generation-and-`shown` contract,
@@ -226,7 +230,7 @@ a layout.
 ## Consequences
 
 The Android work divides into: the C ABI (shared with the iOS and Unity hosts
-that follow in v1, and with any future out-of-process host), a handle type and
+that follow, and with any future out-of-process host), a handle type and
 lifecycle shim, a signal-binding layer, and a DSL projection. Only the first is
 shared with the web and desktop packaging half, which is the seam
 `docs/roadmap.md` named and the one v0.17's opening cut on.
@@ -238,7 +242,9 @@ API design moves them. A planning session should size that first.
 **Narrowing v0.19 to one new platform is what makes the slice sizeable at all.**
 It was five targets when the slice was opened; iOS and Unity moving to v1, and
 `TextureView` with them, leaves exactly one bring-up. The layering above is
-unchanged by that, which is the test that it was the right decomposition.
+unchanged by that, which is the test that it was the right decomposition. Unity
+has since moved again, from v1 to slice v0.21; that changes when it is built,
+not this decomposition.
 
 ## Alternatives considered
 
