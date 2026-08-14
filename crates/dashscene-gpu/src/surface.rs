@@ -345,6 +345,28 @@ impl SurfaceRenderer {
 
     /// Tells the renderer that the commits from here on come from a different
     /// chain — see [`Renderer::forget_uploaded`], which is the whole of it.
+    /// What the frame most recently presented could not make resident.
+    ///
+    /// Forwarded from [`Renderer::refusals`], because **every production host
+    /// holds a `SurfaceRenderer` and none holds a `Renderer`** —
+    /// `dashscene-desktop`, `dashscene-web` and `dashscene-ffi` all sit on this
+    /// type. Without this the refusal channel issues #718 and #720 added would be
+    /// reachable only from the offscreen renderer, which is to say only from
+    /// tests, and P4's "never a silent drop" would hold in the test binary and
+    /// nowhere a user runs.
+    pub fn refusals(&self) -> &[crate::Refusal] {
+        self.renderer.refusals()
+    }
+
+    /// How many refusals this renderer has recorded since it was built.
+    ///
+    /// Monotonic, so a host that samples rather than walking
+    /// [`refusals`](Self::refusals) every frame still learns that something was
+    /// refused.
+    pub fn refusals_seen(&self) -> u64 {
+        self.renderer.refusals_seen()
+    }
+
     pub fn document_replaced(&mut self) {
         self.renderer.forget_uploaded();
     }

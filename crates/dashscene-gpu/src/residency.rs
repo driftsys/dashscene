@@ -142,6 +142,19 @@ impl AtlasFormat {
         (extent / bx * bx, extent / by * by)
     }
 
+    /// The extent a texture holding exactly one payload of `width` x `height`
+    /// must be created at: the payload rounded **up** to whole blocks.
+    ///
+    /// The opposite rounding to [`usable_extent`](Self::usable_extent), and for
+    /// the opposite reason. That one keeps a shared atlas inside a budget, so it
+    /// rounds down; this one must not be smaller than the payload it exists to
+    /// hold, so it rounds up. Both live here so the two roundings are read
+    /// together (issue #720).
+    pub fn dedicated_extent(self, width: u32, height: u32) -> (u32, u32) {
+        let (bx, by) = self.block();
+        (width.div_ceil(bx) * bx, height.div_ceil(by) * by)
+    }
+
     /// The device feature a texture in this format needs, or `None` when every
     /// adapter can hold it.
     pub fn required_feature(self) -> Option<wgpu::Features> {
@@ -289,9 +302,13 @@ struct Atlas {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     allocator: etagere::AtlasAllocator,
-    /// This texture's own extent in texels, which is the set's nominal extent
-    /// rounded down to whole blocks.
+    /// This texture's own extent in texels. For a shared atlas that is the
+    /// set's nominal extent rounded down to whole blocks; for a dedicated one
+    /// it is its single payload's extent rounded up to whole blocks.
     extent: (u32, u32),
+    /// Holds exactly one oversized payload and is closed to any other
+    /// (issue #720). Skipped by `atlas_for`'s by-format lookup.
+    dedicated: bool,
 }
 
 /// What a resident payload's bookkeeping holds.
@@ -327,8 +344,15 @@ pub struct Residency {
     /// It is emptied by [`Residency::forget_resident`] alongside everything
     /// else keyed on the image table.
     recency: lru::LruCache<PayloadKey, ()>,
-    /// Texels on a side of every atlas this set creates.
+    /// Texels on a side of every shared atlas this set creates.
     extent: u32,
+    /// The largest texture this device will create, on a side. The ceiling a
+    /// dedicated texture is checked against, and the only extent past which a
+    /// payload is refused outright (issue #720).
+    max_extent: u32,
+    /// Payloads this set has refused, so a refusal costs one decision rather
+    /// than one per naming instance per frame (issues #718 and #720).
+    refused: HashMap<PayloadKey, ResidencyError>,
     frame: u64,
     /// Textures and views allocated, counted for the same reason
     /// `crate::render::Renderer::allocations` counts its buffers: a
@@ -350,19 +374,38 @@ pub struct Residency {
 /// Why a payload could not be made resident.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResidencyError {
-    /// The payload is larger than an atlas, so no amount of eviction helps.
+    /// The payload is larger than **the device's largest texture**, so nothing
+    /// can hold it.
     ///
     /// Named rather than scaled down: a painter that quietly halved an image
-    /// would draw a plausible wrong picture, and P4 forbids discovering a
-    /// limit at draw time. The atlas is `wgpu::Limits::downlevel_defaults`'
-    /// `max_texture_dimension_2d` on a side, which is the entry-tier floor this
-    /// painter targets.
+    /// would draw a plausible wrong picture, and P4 forbids discovering a limit
+    /// at draw time.
+    ///
+    /// **This is no longer "larger than an atlas"** (issue #720). A payload
+    /// that exceeds the shared atlas but fits the device gets a texture of its
+    /// own — see [`Residency::resident`] — so reaching here means the payload
+    /// exceeds `max_texture_dimension_2d` itself, which is a document no
+    /// arrangement of textures on this adapter can draw.
     TooLarge {
         width: u32,
         height: u32,
-        /// The atlas this payload's format is held in, in texels.
-        extent: (u32, u32),
+        /// The largest texture this device will create, in texels.
+        max: u32,
     },
+    /// The payload is in a container this painter links no decoder for
+    /// (issue #718).
+    ///
+    /// `dashscene-gpu` links one decoder, `png`, because the whole reason the
+    /// crate exists is that the trim profile removes `libpng`, `libjpeg` and
+    /// `libwebp` (`docs/technotes/rendering-and-painters.md` §6). A JPEG or GIF
+    /// payload is therefore refused **by name**, which is what this issue's own
+    /// title claims the painter does and what P4 requires — it used to panic
+    /// inside `TexelPayload::of`, on a live path.
+    ///
+    /// Distinct from [`Self::UnsupportedFormat`], which is about what the
+    /// *adapter* can sample. This one is about what this build can decode, and
+    /// no device changes it.
+    NoDecoder { format: ImageFormat },
     /// The atlas is full of payloads this same frame needs.
     ///
     /// Distinct from [`Self::TooLarge`] because the remedy is different: this
@@ -383,15 +426,15 @@ pub enum ResidencyError {
 impl std::fmt::Display for ResidencyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::TooLarge {
-                width,
-                height,
-                extent,
-            } => write!(
+            Self::TooLarge { width, height, max } => write!(
                 f,
-                "a {width}x{height} payload does not fit an atlas of {}x{}; this painter does \
-                 not tile or downscale one",
-                extent.0, extent.1
+                "a {width}x{height} payload is larger than this device's largest texture \
+                 ({max}x{max}); this painter does not tile or downscale one"
+            ),
+            Self::NoDecoder { format } => write!(
+                f,
+                "this painter links no {format:?} decoder; it links one, and that is PNG. Bind a \
+                 dashpack derivation, or a PNG payload"
             ),
             Self::FrameExceedsAtlas { format, resident } => write!(
                 f,
@@ -410,13 +453,22 @@ impl std::fmt::Display for ResidencyError {
 impl std::error::Error for ResidencyError {}
 
 impl Residency {
-    /// An empty residency set whose atlases will be `extent` texels square.
-    pub fn new(extent: u32) -> Self {
+    /// An empty residency set whose shared atlases will be `extent` texels
+    /// square, on a device whose largest texture is `max_extent` on a side.
+    ///
+    /// The two are separate numbers and issue #720 turned on the difference:
+    /// `extent` is a **memory commitment**, since an atlas is allocated whole
+    /// the first time a payload of its format appears, while `max_extent` is
+    /// what the hardware can address. A payload between them gets a texture of
+    /// its own; only one past `max_extent` is refused.
+    pub fn new(extent: u32, max_extent: u32) -> Self {
         Self {
             atlases: Vec::new(),
             resident: HashMap::new(),
             recency: lru::LruCache::unbounded(),
             extent,
+            max_extent,
+            refused: HashMap::new(),
             frame: 0,
             allocations: 0,
             evictions: 0,
@@ -424,7 +476,13 @@ impl Residency {
         }
     }
 
-    /// The extent every atlas in this set is created at, in texels.
+    /// The extent every **shared** atlas in this set is created at, in texels.
+    ///
+    /// Not a bound on the set's memory: a dedicated texture is created at its
+    /// own payload's extent instead (issue #720), so `extent` and
+    /// [`atlas_count`](Self::atlas_count) together understate the commitment
+    /// whenever one exists. [`atlas_extent`](Self::atlas_extent) reports a given
+    /// atlas's own.
     pub fn extent(&self) -> u32 {
         self.extent
     }
@@ -459,6 +517,15 @@ impl Residency {
     pub fn forget_resident(&mut self) {
         self.resident.clear();
         self.recency.clear();
+        self.refused.clear();
+        // Dedicated textures are dropped rather than reset. One holds a single
+        // oversized payload, `atlas_for` skips it so nothing else can ever
+        // allocate in it, and `evict_one` can never choose its payload — so
+        // clearing its allocator would leave a full-size texture permanently
+        // unreachable, which is a leak per document rather than the reuse this
+        // method promises. Every `Slot` is invalidated above, so the index shift
+        // this causes names nothing.
+        self.atlases.retain(|atlas| !atlas.dedicated);
         for atlas in &mut self.atlases {
             atlas.allocator.clear();
         }
@@ -542,26 +609,82 @@ impl Residency {
             return Ok(existing.slot);
         }
 
-        let texels = TexelPayload::of(asset);
-        if asset.format.is_encoded() {
-            self.decodes += 1;
+        // A payload refused once is refused for as long as this set holds it.
+        // Without this the whole refusal path re-runs for every instance naming
+        // the row, on every frame: `resolve_frame`'s memo arrays only record
+        // what *resolved*, so a refusal leaves them unresolved and the next
+        // instance asks again. That cost the decode below and one `Refusal` per
+        // instance per frame — a refusal counter measuring retries rather than
+        // refused payloads.
+        if let Some(error) = self.refused.get(&key) {
+            return Err(error.clone());
         }
-        let format = texels.atlas_format();
+
+        // Everything that can be decided from the payload's declaration is
+        // decided before the decode, so a payload that cannot be held is never
+        // inflated. `decodes` counts decodes that produced texels, and its
+        // documented contract is zero growth in steady state — a refusal that
+        // decoded first would break it silently and unboundedly.
+        let format = AtlasFormat::of(asset.format);
         if let Some(feature) = format.required_feature()
             && !device.features().contains(feature)
         {
-            return Err(ResidencyError::UnsupportedFormat { format });
-        }
-        let usable = format.usable_extent(self.extent);
-        if texels.width > usable.0 || texels.height > usable.1 {
-            return Err(ResidencyError::TooLarge {
-                width: texels.width,
-                height: texels.height,
-                extent: usable,
-            });
+            return self.refuse(key, ResidencyError::UnsupportedFormat { format });
         }
 
-        let atlas = self.atlas_for(device, format);
+        // A payload larger than the shared atlas gets a texture of its own
+        // rather than being refused (issue #720). The atlas extent is a memory
+        // commitment, not a ceiling: an atlas is allocated whole the first time
+        // a payload of its format appears, so at the 16384 an Apple M3 reports
+        // an `Rgba8Unorm` atlas would be 1 GiB committed the moment one image
+        // fill arrived. A dedicated texture is sized to the one payload in it,
+        // so the commitment is what the document actually asked for.
+        //
+        // A glyph atlas is the likeliest of the three payload kinds to land
+        // here — one sheet for a whole script at a whole weight, so a CJK
+        // coverage set exceeds 2048 square where an oversized photograph has to
+        // be authored deliberately.
+        let usable = format.usable_extent(self.extent);
+        let oversized = asset.width > usable.0 || asset.height > usable.1;
+        if oversized {
+            // Guarded on the **rounded** extent, which is the extent the texture
+            // is actually created at. Every `max_texture_dimension_2d` a device
+            // reports is a power of two, and four of the six ASTC footprints do
+            // not divide one — so a payload just inside the limit rounds up to
+            // just outside it, and `create_texture` then raises a device error.
+            // That is the host crash this whole change exists to remove,
+            // arriving on the path that reports success.
+            let (rounded_w, rounded_h) = format.dedicated_extent(asset.width, asset.height);
+            if rounded_w > self.max_extent || rounded_h > self.max_extent {
+                return self.refuse(
+                    key,
+                    ResidencyError::TooLarge {
+                        width: asset.width,
+                        height: asset.height,
+                        max: self.max_extent,
+                    },
+                );
+            }
+        }
+
+        let texels = match TexelPayload::of(asset) {
+            Ok(texels) => texels,
+            Err(error) => return self.refuse(key, error),
+        };
+        if asset.format.is_encoded() {
+            self.decodes += 1;
+        }
+        debug_assert_eq!(
+            format,
+            texels.atlas_format(),
+            "the atlas format read from the declaration must be the one the texels land in",
+        );
+
+        let atlas = if oversized {
+            self.dedicated_atlas(device, format, texels.width, texels.height)
+        } else {
+            self.atlas_for(device, format)
+        };
         let (alloc, rect) = self.allocate(atlas, texels.width, texels.height)?;
         let slot = Slot { atlas, rect };
         texels.upload(queue, &self.atlases[atlas as usize].texture, rect);
@@ -580,15 +703,72 @@ impl Residency {
         Ok(slot)
     }
 
-    /// The atlas holding `format`, creating it if this is the first payload of
-    /// that format.
+    /// Records `error` against `key` and returns it, so the same payload is not
+    /// re-decoded and re-refused on every instance that names it.
+    ///
+    /// Cleared by [`Residency::forget_resident`] alongside `resident`: a new
+    /// document's row means different bytes, and a refusal is keyed on the same
+    /// [`PayloadKey`] that could then name them.
+    fn refuse<T>(&mut self, key: PayloadKey, error: ResidencyError) -> Result<T, ResidencyError> {
+        self.refused.insert(key, error.clone());
+        Err(error)
+    }
+
+    /// The shared atlas holding `format`, creating it if this is the first
+    /// payload of that format.
+    ///
+    /// Dedicated textures are skipped by the lookup: one is full by
+    /// construction, so a later payload of the same format that matched it
+    /// would evict the oversized payload it was made for and then still not fit
+    /// (issue #720).
     fn atlas_for(&mut self, device: &wgpu::Device, format: AtlasFormat) -> u32 {
-        if let Some(index) = self.atlases.iter().position(|a| a.format == format) {
+        if let Some(index) = self
+            .atlases
+            .iter()
+            .position(|a| a.format == format && !a.dedicated)
+        {
             return index as u32;
         }
         let extent = format.usable_extent(self.extent);
+        self.push_atlas(device, format, extent, false)
+    }
+
+    /// A texture sized to one oversized payload, holding only it (issue #720).
+    ///
+    /// The extent is rounded **up** to whole blocks where the shared atlas
+    /// rounds down: rounding down here would produce a texture smaller than the
+    /// payload it exists to hold. The allocator is sized to match, so the one
+    /// allocation fills it and nothing else can land in it.
+    fn dedicated_atlas(
+        &mut self,
+        device: &wgpu::Device,
+        format: AtlasFormat,
+        width: u32,
+        height: u32,
+    ) -> u32 {
+        let extent = format.dedicated_extent(width, height);
+        debug_assert!(
+            extent.0 <= self.max_extent && extent.1 <= self.max_extent,
+            "a dedicated texture is guarded against the device limit before it is created",
+        );
+        self.push_atlas(device, format, extent, true)
+    }
+
+    /// Creates a texture of `extent` for `format` and records it, returning its
+    /// index.
+    fn push_atlas(
+        &mut self,
+        device: &wgpu::Device,
+        format: AtlasFormat,
+        extent: (u32, u32),
+        dedicated: bool,
+    ) -> u32 {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("dashscene-gpu atlas"),
+            label: Some(if dedicated {
+                "dashscene-gpu dedicated texture"
+            } else {
+                "dashscene-gpu atlas"
+            }),
             size: wgpu::Extent3d {
                 width: extent.0,
                 height: extent.1,
@@ -616,6 +796,7 @@ impl Residency {
                 (extent.1 / by) as i32,
             )),
             extent,
+            dedicated,
         });
         self.allocations += 2;
         (self.atlases.len() - 1) as u32
@@ -777,20 +958,26 @@ impl<'a> TexelPayload<'a> {
 impl<'a> TexelPayload<'a> {
     /// The texels `asset` becomes.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics on JPEG and GIF, the two containers this painter links no decoder
-    /// for. Reaching here means the binding ignored `Painter::samples`, which is
-    /// the same contract breach `dashscene-skia` asserts on for the opposite
-    /// half, and it cannot be reported from inside a frame because
-    /// `Painter::paint` returns nothing by decision.
+    /// [`ResidencyError::NoDecoder`] on JPEG and GIF, the two containers this
+    /// painter links no decoder for (issue #718). This used to panic, on a live
+    /// path — `resolve_frame → resident_image → Residency::resident` — so a
+    /// `.dsb` with a JPEG image fill, loaded through `ds_runtime_load_document`
+    /// and drawn by `GpuPainter`, crashed the host.
+    ///
+    /// It is a refusal by name rather than a panic because P4 asks for one and
+    /// because the declaration that was supposed to prevent it does not:
+    /// `Painter::samples` has no production call site, so nothing reads it
+    /// before binding and "the binding ignored the declaration" describes every
+    /// caller there is.
     ///
     /// The other half of that declaration — a block format on a device without
-    /// `TEXTURE_COMPRESSION_ASTC` — does **not** panic here. It cannot be
-    /// decided from the payload alone, so it is refused where the device is in
-    /// scope, as [`ResidencyError::UnsupportedFormat`].
-    fn of(asset: ImageRef<'a>) -> Self {
-        match asset.format {
+    /// `TEXTURE_COMPRESSION_ASTC` — is not decided here. It cannot be read off
+    /// the payload alone, so it is refused where the device is in scope, as
+    /// [`ResidencyError::UnsupportedFormat`].
+    fn of(asset: ImageRef<'a>) -> Result<Self, ResidencyError> {
+        Ok(match asset.format {
             ImageFormat::Png => {
                 let (width, height, rgba) = decode_png(asset.bytes);
                 Self {
@@ -799,11 +986,9 @@ impl<'a> TexelPayload<'a> {
                     height,
                 }
             }
-            ImageFormat::Jpeg | ImageFormat::Gif => panic!(
-                "this painter was handed a {:?} payload, which it declared it cannot sample \
-                 (Painter::samples, issue #718); it links one decoder and that is PNG",
-                asset.format
-            ),
+            format @ (ImageFormat::Jpeg | ImageFormat::Gif) => {
+                return Err(ResidencyError::NoDecoder { format });
+            }
             baked => Self {
                 texels: Texels::Baked {
                     format: AtlasFormat::of(baked),
@@ -812,7 +997,7 @@ impl<'a> TexelPayload<'a> {
                 width: asset.width,
                 height: asset.height,
             },
-        }
+        })
     }
 }
 
@@ -946,7 +1131,7 @@ mod tests {
     #[test]
     fn payloads_of_one_format_share_an_atlas_at_disjoint_rectangles() {
         let (device, queue) = device();
-        let mut residency = Residency::new(256);
+        let mut residency = Residency::new(256, 4096);
         residency.begin_frame();
         // Three different extents, so no two allocations can coincide by
         // symmetry.
@@ -986,7 +1171,7 @@ mod tests {
     #[test]
     fn a_resident_payload_keeps_its_slot_across_frames() {
         let (device, queue) = device();
-        let mut residency = Residency::new(256);
+        let mut residency = Residency::new(256, 4096);
         let images = table(vec![(16, 8, 1)]);
 
         residency.begin_frame();
@@ -1028,7 +1213,7 @@ mod tests {
     fn a_full_atlas_evicts_to_make_room_and_keeps_what_was_just_used() {
         let (device, queue) = device();
         // Four 32x32 payloads exactly fill a 64x64 atlas.
-        let mut residency = Residency::new(64);
+        let mut residency = Residency::new(64, 4096);
         let images = table(vec![
             (32, 32, 1),
             (32, 32, 2),
@@ -1083,7 +1268,7 @@ mod tests {
     #[test]
     fn a_frame_that_cannot_fit_its_own_working_set_is_named() {
         let (device, queue) = device();
-        let mut residency = Residency::new(64);
+        let mut residency = Residency::new(64, 4096);
         let images = table(vec![
             (32, 32, 1),
             (32, 32, 2),
@@ -1104,11 +1289,149 @@ mod tests {
         );
     }
 
-    /// A payload larger than an atlas is named rather than scaled or tiled.
+    /// A payload larger than the shared atlas gets a texture of its own rather
+    /// than being refused (issue #720).
+    ///
+    /// The atlas extent is a memory commitment, not a ceiling: it is allocated
+    /// whole the first time a payload of its format appears. So the answer to
+    /// an oversized payload is a texture sized to it, not a bigger atlas for
+    /// everyone.
     #[test]
-    fn a_payload_larger_than_the_atlas_is_named() {
+    fn a_payload_larger_than_the_atlas_gets_its_own_texture() {
         let (device, queue) = device();
-        let mut residency = Residency::new(64);
+        let mut residency = Residency::new(64, 4096);
+        let images = table(vec![(128, 8, 1), (16, 16, 2)]);
+        residency.begin_frame();
+
+        let big = residency
+            .resident(&device, &queue, key(&images, 0), images.resolve(0))
+            .expect("a payload the device can hold is not refused");
+        assert_eq!(
+            residency.atlas_extent(big.atlas),
+            (128, 8),
+            "the dedicated texture is sized to its one payload, not to the atlas"
+        );
+
+        // And the dedicated texture is closed: a later payload of the same
+        // format takes the shared atlas, which would otherwise have to evict
+        // the oversized payload and then still not fit.
+        let small = residency
+            .resident(&device, &queue, key(&images, 1), images.resolve(1))
+            .expect("an ordinary payload still fits the shared atlas");
+        assert_ne!(
+            small.atlas, big.atlas,
+            "an ordinary payload must not land in the dedicated texture"
+        );
+        assert_eq!(residency.atlas_extent(small.atlas), (64, 64));
+    }
+
+    /// `dedicated_extent` rounds **up**, and that is why the device guard has to
+    /// be applied to its result rather than to the payload (issue #720).
+    ///
+    /// No device is needed to pin this, and none can pin it: the failure needs an
+    /// ASTC payload, and a device without `TEXTURE_COMPRESSION_ASTC` is refused
+    /// for its format before the extent is ever considered. So the arithmetic is
+    /// asserted directly.
+    ///
+    /// Every `max_texture_dimension_2d` a device reports is a power of two, and
+    /// four of the six ASTC footprints do not divide one — so a payload just
+    /// inside the limit rounds to just outside it. Guarding the unrounded extent
+    /// would pass such a payload and then create a texture larger than the device
+    /// allows, which is a device error rather than a refusal.
+    #[test]
+    fn a_dedicated_extent_rounds_up_and_can_exceed_a_power_of_two_limit() {
+        // The round-down and the round-up are opposites, and both are needed.
+        let astc12 = AtlasFormat::Astc { block: (12, 12) };
+        assert_eq!(
+            astc12.usable_extent(2048),
+            (2040, 2040),
+            "shared: rounds down"
+        );
+        assert_eq!(
+            astc12.dedicated_extent(2045, 2045),
+            (2052, 2052),
+            "dedicated: rounds up, past the 2048 the device stated",
+        );
+
+        // Uncompressed is the identity, so the two roundings agree there and the
+        // guard's choice of operand cannot be observed through `Rgba8`.
+        assert_eq!(AtlasFormat::Rgba8.dedicated_extent(2045, 7), (2045, 7));
+
+        // The property the guard depends on, over every footprint this painter
+        // can hold: a payload inside a power-of-two limit may round outside it.
+        for block in [(4, 4), (5, 5), (6, 6), (8, 8), (10, 10), (12, 12)] {
+            let format = AtlasFormat::Astc { block };
+            let (w, _) = format.dedicated_extent(2047, 2047);
+            assert!(
+                w >= 2047,
+                "{block:?}: a dedicated texture is never smaller than its payload",
+            );
+        }
+    }
+
+    /// A refused payload is refused once: asked again it returns the same error
+    /// without decoding, so `decodes` keeps its zero-growth contract and a
+    /// hundred instances naming one bad row cost one decision (issues #718, #720).
+    #[test]
+    fn a_refusal_is_cached_and_not_recomputed() {
+        let (device, queue) = device();
+        let mut residency = Residency::new(64, 64);
+        let images = table(vec![(128, 8, 1)]);
+        residency.begin_frame();
+
+        let first = residency.resident(&device, &queue, key(&images, 0), images.resolve(0));
+        let decodes_after_first = residency.decodes();
+        assert!(first.is_err(), "the fixture is past the device limit");
+
+        // A second frame, and a second ask in it.
+        residency.begin_frame();
+        let second = residency.resident(&device, &queue, key(&images, 0), images.resolve(0));
+        let third = residency.resident(&device, &queue, key(&images, 0), images.resolve(0));
+
+        assert_eq!(second, first, "the same refusal, verbatim");
+        assert_eq!(third, first);
+        assert_eq!(
+            residency.decodes(),
+            decodes_after_first,
+            "a refused payload is never decoded again",
+        );
+    }
+
+    /// Forgetting a document drops its dedicated textures rather than resetting
+    /// them (issue #720).
+    ///
+    /// A dedicated texture holds one oversized payload, `atlas_for` skips it, and
+    /// `evict_one` can never choose its payload — so a reset allocator would
+    /// leave a full-size texture permanently unreachable, which is a leak per
+    /// document replacement rather than the reuse `forget_resident` promises.
+    #[test]
+    fn forgetting_a_document_reclaims_its_dedicated_textures() {
+        let (device, queue) = device();
+        let mut residency = Residency::new(64, 4096);
+        let images = table(vec![(128, 8, 1), (16, 16, 2)]);
+        residency.begin_frame();
+        residency
+            .resident(&device, &queue, key(&images, 0), images.resolve(0))
+            .expect("the oversized payload takes its own texture");
+        residency
+            .resident(&device, &queue, key(&images, 1), images.resolve(1))
+            .expect("the ordinary one takes the shared atlas");
+        assert_eq!(residency.atlas_count(), 2, "one shared, one dedicated");
+
+        residency.forget_resident();
+        assert_eq!(
+            residency.atlas_count(),
+            1,
+            "the dedicated texture is dropped; the shared atlas is kept and reset",
+        );
+    }
+
+    /// A payload larger than the **device's** largest texture is named. That is
+    /// the only extent left that nothing can hold (issue #720).
+    #[test]
+    fn a_payload_larger_than_the_device_is_named() {
+        let (device, queue) = device();
+        let mut residency = Residency::new(64, 64);
         let images = table(vec![(128, 8, 1)]);
         residency.begin_frame();
         let refused = residency.resident(&device, &queue, key(&images, 0), images.resolve(0));
@@ -1118,11 +1441,51 @@ mod tests {
                 Err(ResidencyError::TooLarge {
                     width: 128,
                     height: 8,
-                    extent: (64, 64)
+                    max: 64
                 })
             ),
-            "an oversized payload must name its own extent: {refused:?}"
+            "a payload past the device limit must name it: {refused:?}"
         );
+    }
+
+    /// A JPEG payload is refused by name rather than panicking (issue #718).
+    ///
+    /// This painter links one decoder and that is PNG, because the whole reason
+    /// it exists is that the trim profile removes libpng, libjpeg and libwebp.
+    /// `TexelPayload::of` used to panic here, on the live
+    /// `resolve_frame -> resident_image -> resident` path, so a `.dsb` with a
+    /// JPEG image fill crashed the host.
+    #[test]
+    fn a_payload_in_a_container_with_no_decoder_is_named() {
+        let (device, queue) = device();
+        let mut residency = Residency::new(64, 4096);
+        // The key only has to be distinct and absent from the cache: the
+        // refusal happens in `TexelPayload::of`, on the miss path, before any
+        // key-to-bytes comparison is reached.
+        let images = table(vec![(8, 8, 1), (8, 8, 2)]);
+        residency.begin_frame();
+
+        for (row, format) in [ImageFormat::Jpeg, ImageFormat::Gif]
+            .into_iter()
+            .enumerate()
+        {
+            let refused = residency.resident(
+                &device,
+                &queue,
+                key(&images, row as u32),
+                ImageRef {
+                    format,
+                    bytes: &[0xFF, 0xD8, 0xFF],
+                    width: 8,
+                    height: 8,
+                },
+            );
+            assert_eq!(
+                refused,
+                Err(ResidencyError::NoDecoder { format }),
+                "{format:?} must be refused by name, not panic"
+            );
+        }
     }
 
     /// Two payloads at the same table index but from different tables are

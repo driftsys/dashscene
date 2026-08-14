@@ -589,6 +589,18 @@ pub struct Renderer {
     offscreen_allocations: u64,
     /// Which payloads are on the device and where (story #581).
     residency: Residency,
+    /// Payloads this frame could not make resident, named rather than dropped
+    /// in silence (issues #718 and #720). Cleared at the start of every
+    /// `resolve_frame`, so it describes the frame most recently resolved.
+    refusals: Vec<Refusal>,
+    /// How many refusals this renderer has recorded since it was built, which
+    /// no per-frame list can answer. Monotonic, like `evictions` and `decodes`
+    /// beside it: a host that samples once a second still sees that something
+    /// was refused, and a test can assert on zero without polling every frame.
+    refusals_seen: u64,
+    /// The `(consumer, row)` pairs already refused in the frame being resolved,
+    /// so one refused payload is one refusal however many instances name it.
+    refused_this_frame: std::collections::HashSet<(&'static str, u32)>,
     /// The sampler an image fill's payload is read through: nearest, clamped.
     /// See [`crate::residency`] for why nearest, and for what changing it costs.
     sampler: wgpu::Sampler,
@@ -753,10 +765,12 @@ pub const TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// out of `downlevel_defaults`, because the device is no longer requested at
 /// those limits and reading it there would say something untrue.
 ///
-/// A payload larger than this is refused by name
-/// ([`crate::ResidencyError::TooLarge`]) rather than downscaled or tiled. On a
-/// device that could hold it that is a real limitation, and issue #720 carries
-/// it: the fix is a dedicated texture outside the atlas, not a bigger atlas.
+/// A payload larger than this is **not** refused: since issue #720 it gets a
+/// texture of its own, sized to itself, and only a payload past the device's own
+/// `max_texture_dimension_2d` is refused by name
+/// ([`crate::ResidencyError::TooLarge`]). A dedicated texture rather than a
+/// bigger atlas, because this constant is a memory commitment and raising it
+/// would charge every document for the one that needed it.
 pub const ATLAS_EXTENT: u32 = 2048;
 
 impl Renderer {
@@ -1270,7 +1284,7 @@ impl Renderer {
         // *budget*, not a maximum. Sizing it by the adapter would ask a
         // 16384-capable device for a 1 GiB texture the moment one image fill
         // appeared. `ATLAS_EXTENT` is what that budget is and says why.
-        let residency = Residency::new(ATLAS_EXTENT.min(max_extent));
+        let residency = Residency::new(ATLAS_EXTENT.min(max_extent), max_extent);
 
         let frame = Frame::new(&device, &layout, &sampler, &msdf_sampler, &placeholder);
         Ok(Self {
@@ -1293,6 +1307,9 @@ impl Renderer {
             offscreen_allocations: 0,
             max_extent,
             residency,
+            refusals: Vec::new(),
+            refusals_seen: 0,
+            refused_this_frame: std::collections::HashSet::new(),
             sampler,
             msdf_sampler,
             placeholder,
@@ -1372,6 +1389,13 @@ impl Renderer {
         // starts that table again from zero — so the same key can name a
         // different picture across this call. See `Residency::forget_resident`.
         self.residency.forget_resident();
+        // And the refusals, for the same reason and one table over: a `Refusal`
+        // names a row, `Refusal`'s own doc says a row means nothing outside the
+        // frame it came from, and a host reading `refusals()` after replacing a
+        // document would otherwise get rows of the dead one. This is the
+        // stale-row hazard story #585 fixed for instance rows.
+        self.refusals.clear();
+        self.refused_this_frame.clear();
     }
 
     /// Every device object this renderer has allocated since it was built —
@@ -2122,25 +2146,31 @@ impl Renderer {
     /// row index means the same thing in this array as in the table. Nothing
     /// samples it: an instance naming it is what would have made it resident.
     ///
-    /// # Panics
+    /// # A payload that cannot be made resident is named, not fatal
     ///
-    /// Panics on a payload that cannot be made resident. Every arm of
-    /// [`ResidencyError`] is a broken promise rather than a condition to
-    /// recover from — a payload larger than this device's largest texture, a
-    /// frame whose working set does not fit, or a format the adapter cannot
-    /// sample after `Painter::samples` said it could. `Painter::paint` returns
-    /// nothing by decision, so there is no channel to report any of them on,
-    /// and P4 forbids resolving them into a silently different picture.
+    /// This used to panic on every arm of [`ResidencyError`], on the reasoning
+    /// that each was a broken promise rather than a condition to recover from.
+    /// Two of them turned out to be reachable from an ordinary document, and a
+    /// host crash is not an acceptable answer to either:
     ///
-    /// **Issue #720 is that first arm, and story #582 widened what it covers.**
-    /// It was filed against image fills: a payload larger than [`ATLAS_EXTENT`]
-    /// panics rather than getting its own texture. Glyph atlases and
-    /// baked-vector atlases now take the same path, and a glyph atlas is the
-    /// more likely of the three to reach 2048 square — it is one sheet for a
-    /// whole script at a whole weight, so a CJK coverage set is exactly the
-    /// case that exceeds it, where an oversized *photograph* has to be authored
-    /// deliberately. Named here rather than left to be discovered, and recorded
-    /// on the issue.
+    /// - **Issue #718** — a JPEG or GIF image fill. `TexelPayload::of` panicked
+    ///   by name, and `Painter::samples`, the declaration that was supposed to
+    ///   stop the payload arriving, has no production call site at all.
+    /// - **Issue #720** — a payload larger than [`ATLAS_EXTENT`]. Story #582
+    ///   widened it from image fills to glyph atlases and baked-vector atlases
+    ///   too, and a glyph atlas is the likeliest of the three to reach 2048
+    ///   square: one sheet for a whole script at a whole weight, so a CJK
+    ///   coverage set exceeds it where an oversized *photograph* has to be
+    ///   authored deliberately. That arm is now mostly gone rather than
+    ///   reported — such a payload gets a texture of its own — and only one
+    ///   past the device's own limit is refused.
+    ///
+    /// So the row draws nothing and the refusal is recorded, named, on
+    /// [`Renderer::refusals`]. `Painter::paint` still returns nothing by
+    /// decision, so there is still no channel *back*; what changed is that
+    /// there is now a channel *out*, which is what P4's "never a silent drop"
+    /// needs. Widening boundary B, and refusing the document at load where
+    /// `Painter::samples` would finally have a caller, both stay open.
     fn resolve_frame(
         &mut self,
         buffer: &InstanceBuffer,
@@ -2149,6 +2179,8 @@ impl Renderer {
         glyphs: &GlyphRunTable,
     ) -> Resolved {
         self.residency.begin_frame();
+        self.refusals.clear();
+        self.refused_this_frame.clear();
         let fills = paints.all_images();
         let fields = paints.all_shapes();
         let runs = glyphs.runs();
@@ -2226,29 +2258,31 @@ impl Renderer {
                 if atlas.width == 0 || atlas.height == 0 {
                     continue;
                 }
-                let slot = self
-                    .residency
-                    .resident(
-                        &self.device,
-                        &self.queue,
-                        PayloadKey::atlas(run.atlas.0, atlas),
-                        // Built here rather than through `ImageAsset::as_ref`,
-                        // which re-parses the payload's header on every call:
-                        // an `Atlas` already states its extent, and this runs
-                        // once per run per frame.
-                        dashpaint::ImageRef {
-                            format: atlas.image.format,
-                            bytes: &atlas.image.bytes,
-                            width: atlas.width,
-                            height: atlas.height,
-                        },
-                    )
-                    .unwrap_or_else(|error: ResidencyError| {
-                        panic!(
-                            "glyph atlas {} could not be made resident: {error}",
-                            run.atlas.0
-                        )
-                    });
+                let resident = self.residency.resident(
+                    &self.device,
+                    &self.queue,
+                    PayloadKey::atlas(run.atlas.0, atlas),
+                    // Built here rather than through `ImageAsset::as_ref`,
+                    // which re-parses the payload's header on every call:
+                    // an `Atlas` already states its extent, and this runs
+                    // once per run per frame.
+                    dashpaint::ImageRef {
+                        format: atlas.image.format,
+                        bytes: &atlas.image.bytes,
+                        width: atlas.width,
+                        height: atlas.height,
+                    },
+                );
+                let slot = match resident {
+                    Ok(slot) => slot,
+                    // The run draws nothing and the refusal is named. Before
+                    // issues #718 and #720 this was a panic, which took the
+                    // host down over a document the reference painter draws.
+                    Err(error) => {
+                        self.refuse("a glyph atlas", run.atlas.0, error);
+                        continue;
+                    }
+                };
                 let extent = self.residency.atlas_extent(slot.atlas);
                 out.atlas_of_run[row] = Some(slot.atlas);
                 out.runs[row] = gpu_glyph_run(run, atlas, slot.uv(extent));
@@ -2270,35 +2304,49 @@ impl Renderer {
     /// stays zeroed, its atlas stays `None`, and `paint.wgsl`'s own guards cover
     /// the same case from the other side.
     ///
-    /// # Panics
+    /// # A refused payload returns `None` and is recorded
     ///
-    /// Panics on a payload that cannot be made resident, for the reason
-    /// [`Renderer::resolve_frame`] gives. `what` names the caller in the
-    /// message, because an image fill and a vector field's atlas are the same
-    /// table row with very different symptoms.
+    /// For the reason [`Renderer::resolve_frame`] gives. `what` names the
+    /// caller on the [`Refusal`], because an image fill and a vector field's
+    /// atlas are the same table row with very different symptoms.
+    ///
+    /// The caller cannot tell this apart from the no-extent case above, and
+    /// does not need to: both draw nothing. The difference is that the
+    /// no-extent case was already named upstream by the validator's
+    /// `image.no-bytes` rule, and this one is named here because nothing
+    /// upstream reports it.
     fn resident_image(
         &mut self,
         images: &ImageTable,
         entries: &[dashpaint::ImageEntry],
         index: u32,
-        what: &str,
+        // Static because a refusal keeps it: both call sites pass a literal
+        // naming their consumer, and a `Refusal` outlives the call. The third
+        // consumer, a glyph atlas, calls `Residency::resident` directly and
+        // never passes through here.
+        what: &'static str,
     ) -> Option<crate::residency::Slot> {
         let asset = images.resolve(index);
         if asset.width == 0 || asset.height == 0 {
             return None;
         }
-        let slot = self
-            .residency
-            .resident(
-                &self.device,
-                &self.queue,
-                PayloadKey::image(index, &entries[index as usize]),
-                asset,
-            )
-            .unwrap_or_else(|error: ResidencyError| {
-                panic!("{what} (image asset {index}) could not be made resident: {error}")
-            });
-        Some(slot)
+        let resident = self.residency.resident(
+            &self.device,
+            &self.queue,
+            PayloadKey::image(index, &entries[index as usize]),
+            asset,
+        );
+        match resident {
+            Ok(slot) => Some(slot),
+            // Same treatment as a payload with no extent above: the row stays
+            // zeroed, its atlas stays `None`, and nothing draws it. The
+            // difference is that this one is named rather than silent, because
+            // no upstream rule reported it (issues #718 and #720).
+            Err(error) => {
+                self.refuse(what, index, error);
+                None
+            }
+        }
     }
 
     /// How many draw calls the frame most recently drawn took.
@@ -2324,6 +2372,66 @@ impl Renderer {
     pub fn decodes(&self) -> u64 {
         self.residency.decodes()
     }
+
+    /// What the frame most recently resolved could not make resident.
+    ///
+    /// Empty for every frame that drew everything it was asked to, which is
+    /// every frame in this repository's corpus.
+    ///
+    /// # Why this exists, and why it is not a return value
+    ///
+    /// `Painter::paint` returns nothing by decision, so a refusal inside a
+    /// frame has no channel to travel back on. Every arm of [`ResidencyError`]
+    /// used to be a panic for that reason. Two of them turned out to be
+    /// reachable from an ordinary document rather than from a broken contract —
+    /// a JPEG or GIF image fill (issue #718) and a payload larger than the
+    /// atlas (issue #720) — and a host crash is not an acceptable answer to
+    /// either.
+    ///
+    /// So the row draws nothing and the refusal is recorded here, named. That
+    /// is what P4 asks for: never a silent drop. It deliberately does **not**
+    /// widen boundary B, which would change every painter's signature, and it
+    /// is not the larger fix — refusing the document at load, where
+    /// `Painter::samples` would finally have a caller — which stays open.
+    pub fn refusals(&self) -> &[Refusal] {
+        &self.refusals
+    }
+
+    /// How many refusals this renderer has recorded since it was built.
+    pub fn refusals_seen(&self) -> u64 {
+        self.refusals_seen
+    }
+
+    /// Records one refusal and counts it, once per consumer and row per frame.
+    ///
+    /// The dedup is not cosmetic. `resolve_frame`'s memo arrays record only what
+    /// *resolved*, so a refused row stays unresolved and every further instance
+    /// naming it asks again — a document with a hundred rects sharing one refused
+    /// image fill would otherwise record a hundred identical refusals per frame,
+    /// and `refusals_seen` would count retries rather than refused payloads.
+    fn refuse(&mut self, what: &'static str, row: u32, error: ResidencyError) {
+        if !self.refused_this_frame.insert((what, row)) {
+            return;
+        }
+        self.refusals_seen += 1;
+        self.refusals.push(Refusal { what, row, error });
+    }
+}
+
+/// One payload a frame could not make resident, and why.
+///
+/// The row it names is meaningful only against the tables of the frame it came
+/// from, the same way [`dashpaint::GlyphRun::rect`] is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    /// Which consumer asked — an image fill's payload, a vector field's atlas,
+    /// or a glyph atlas. The three reach residency through one call and have
+    /// very different symptoms.
+    pub what: &'static str,
+    /// The table row that went undrawn.
+    pub row: u32,
+    /// Why it could not be made resident.
+    pub error: ResidencyError,
 }
 
 /// Every payload-backed table of one frame, as the shaders read it, plus which
