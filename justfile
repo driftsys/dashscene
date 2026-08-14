@@ -879,6 +879,12 @@ android:
 # painter's rather than a comparison of two numbers that might not be the ones
 # that bind.
 #
+# **It covers that request and no more (issue #890).** It does not cover which
+# adapter a host would pick, whether a surface would offer a format the painter
+# can blend in, or anything after the device request. The probe prints all three
+# on every run, and `docs/design/android-toolchain.md`'s "What is not measured"
+# carries them.
+#
 # A plain executable pushed to `/data/local/tmp` rather than an APK, because
 # adapter enumeration needs no window and no Java. That keeps the probe
 # available before any of the Android host exists.

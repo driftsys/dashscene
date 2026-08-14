@@ -159,6 +159,28 @@ cost the registries a new crate has to be added to — thirteen of them when sto
 #794 added `dashscene-desktop`, enumerated in
 [`../decisions/crate-name-map.md`](../decisions/crate-name-map.md).
 
+**A passing probe covers the device request and no more (issue #890); what it
+does not cover is enumerated under "What is not measured" below.** The largest
+of those is a second requirement the probe cannot reach:
+`SurfaceRenderer::new_async` calls `surface.get_capabilities(&adapter)` and
+refuses with `RendererError::NoLinearFormat` when no offered format is either
+`TARGET_FORMAT` or otherwise free of an sRGB conversion on write, which
+[`../decisions/pipelines-and-layer-3.md`](../decisions/pipelines-and-layer-3.md)
+D3 makes a term of the contract rather than a preference. That check runs
+**before** `Renderer::on_adapter`, so on a real host it is reached first.
+
+Surface formats belong to a surface and a surface needs a window. The same
+property that makes this probe available before any of the Android host exists —
+no window, no Java — is what stops it asking. So an adapter that satisfies the
+device request and offers no linear swapchain format reports as passing here and
+then fails at `for_android_ndk` on the device, which is exactly the outcome the
+probe exists to predict. **Read "device request OK" as the device request
+succeeding, never as the painter running.** The probe prints this caveat on
+every run, passing or failing.
+
+Closing it properly needs a throwaway window on the target, which is a larger
+piece of work than the probe is; stating the limit is what is done instead.
+
 ## What was measured, and what it does not say
 
 **Host, for comparison** — `cargo run -p dashscene-gpu --example adapter_report`
@@ -229,6 +251,34 @@ for hardware rather than being approximated here.
 
 **Whether the target device class exposes Vulkan.** That is the D3a question and
 it needs hardware, which was not available (expected roughly 2026-08-23).
+
+**Which adapter the host would actually pick (issue #890).** The probe passes if
+**any** enumerated adapter satisfies the device request.
+`SurfaceRenderer::new_async` picks exactly one, through `request_adapter` with
+`PowerPreference::default()` and a `compatible_surface` — and it need not be the
+one that passed. The emulator run recorded above is precisely that shape:
+adapter 0 (Vulkan, SwiftShader, a CPU device) passes and adapter 1 (the GLES
+translator, an integrated GPU) fails, while `PowerPreference::default()` is
+`LowPower`, which ranks an integrated GPU above a CPU one. Read the summary line
+as the at-least-one claim it makes.
+
+**Whether a surface would offer a format the painter can blend in (issue
+#890).** `SurfaceRenderer::new_async` refuses with
+`RendererError::NoLinearFormat` when `linear_format` finds none, and that check
+runs **before** `Renderer::on_adapter` — so a passing device request does not
+even mean a host got as far as requesting a device. Surface formats belong to a
+surface and a surface needs a window; this probe has none, which is the same
+property that makes it available before any of the Android host exists.
+
+**Anything after the device request.** `Renderer::on_adapter` builds the shader
+module, the bind group layouts and the pipelines, and `new_async` then calls
+`check_extent`. Issue #714 is a recorded failure of that last one — a host
+aborted on the first resize past 2048 on a device reporting 16384.
+
+The first three are stated rather than closed: closing any of them needs a
+surface, and therefore a window on the target, which is a larger piece of work
+than the probe is. **The probe prints all of this on every run**, passing or
+failing, so a transcript carries it.
 
 **It is carried as debt (#885) rather than as a slice gate** (2026-08-09). The
 epic made it a gate because a lot would be built on an unverified assumption;
