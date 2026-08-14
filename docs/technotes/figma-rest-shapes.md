@@ -205,7 +205,7 @@ correction to the spec.
 `transitionNodeID` / `transitionDuration` / `transitionEasing` are emitted
 exactly when a node's **first action is a `NODE` action**, whatever its
 navigation, and are absent entirely for `URL`, `SET_VARIABLE` and `CONDITIONAL`
-(`prototype-refused.json`: eight nodes carry the triple, eleven carry
+(`prototype-refused.json`: ten nodes carry the triple, thirteen carry
 interactions).
 
 They cannot express the trigger, the navigation, the transition type, or a
@@ -295,3 +295,41 @@ is `figma.prototype.unsupported-motion`, a warning, and the fill difference
 itself still lowers as a `VariantFill` override. The reason the rule is
 rect-only is not P1 but the absence of a paint seam in commit (issue #891,
 `docs/decisions/motion-is-document-data-keyed-on-the-destination.md`).
+
+## `version` tracks neither content nor time (measured 2026-08-15)
+
+`GET /file` returns a `version` string beside `lastModified`, and the capture
+tool's pre-check skips the full fetch when the metadata endpoint reports the
+`version` a fixture's receipt already holds (`importers/figma/src/capture.ts`).
+That pre-check assumes `version` moves when the file does. Re-capturing the two
+prototype fixtures showed it does not, in two different directions.
+
+`prototype-refused.json` changed materially and its `version` did **not move at
+all** — `2385782740689572770` before and after. Between those two captures the
+file gained two nodes (`refused-mouse-down` and `scroll-anchor`), grew its root
+frame from 256 to 384 px, had every node id renumbered, and had all three of its
+component keys reminted. Only `lastModified` moved, `2026-08-09T20:01:02Z` →
+`2026-08-11T05:23:19Z`.
+
+`prototype-smart-animate.json` moved the other way: its `version` went
+**backwards**, `2385802802996040746` → `2385790038346563365`, while its
+`lastModified` moved forwards, `2026-08-09T19:51:20Z` → `2026-08-11T05:23:33Z`.
+
+Both readings come from the committed captures, which are the raw `GET /file`
+response minus `thumbnailUrl` — so this is Figma's own field and not something
+this repository stamps. What causes either behaviour is **not established
+here**; establishing it needs API calls this note cannot make.
+
+The consequence is what matters, and the two readings carry different ones.
+`prototype-refused`'s is the damaging case: a version-equality pre-check reads
+identical versions across a real change and reports the fixture unchanged, so
+the capture stays stale and no further run corrects it. Issue #965 was filed
+from that same reading and carries the live-side half of it — 23 named nodes
+against the committed 21 — which is the half a committed capture cannot show.
+`prototype-smart-animate`'s backwards move costs a wasted fetch rather than a
+stale fixture, since an unequal version re-captures either way; it is recorded
+because it rules out "`version` only fails to advance" as the description of the
+fault. Note the field that behaved in all three captures measured:
+`lastModified` moved forwards every time. The pre-check is unchanged here; a
+fixture refreshed only when `version` moves is refreshed on Figma's terms rather
+than on the corpus's.

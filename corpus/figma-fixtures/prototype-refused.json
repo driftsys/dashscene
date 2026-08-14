@@ -12,7 +12,7 @@
         "scrollBehavior": "SCROLLS",
         "children": [
           {
-            "id": "1:4",
+            "id": "1:109",
             "name": "refused-destination",
             "type": "FRAME",
             "scrollBehavior": "SCROLLS",
@@ -98,7 +98,7 @@
             }
           },
           {
-            "id": "1:5",
+            "id": "1:110",
             "name": "refused-overlay-target",
             "type": "FRAME",
             "scrollBehavior": "SCROLLS",
@@ -184,13 +184,101 @@
             }
           },
           {
-            "id": "1:6",
+            "id": "1:111",
             "name": "prototype-refused",
             "type": "FRAME",
             "scrollBehavior": "SCROLLS",
             "children": [
               {
-                "id": "1:7",
+                "id": "1:112",
+                "name": "scroll-anchor",
+                "type": "FRAME",
+                "scrollBehavior": "SCROLLS",
+                "children": [],
+                "blendMode": "PASS_THROUGH",
+                "clipsContent": true,
+                "background": [
+                  {
+                    "blendMode": "NORMAL",
+                    "type": "SOLID",
+                    "color": {
+                      "r": 0.75,
+                      "g": 0.800000011920929,
+                      "b": 0.75,
+                      "a": 1
+                    }
+                  }
+                ],
+                "fills": [
+                  {
+                    "blendMode": "NORMAL",
+                    "type": "SOLID",
+                    "color": {
+                      "r": 0.75,
+                      "g": 0.800000011920929,
+                      "b": 0.75,
+                      "a": 1
+                    }
+                  }
+                ],
+                "strokes": [],
+                "cornerRadius": 4,
+                "cornerSmoothing": 0,
+                "strokeWeight": 1,
+                "strokeAlign": "INSIDE",
+                "backgroundColor": {
+                  "r": 0.75,
+                  "g": 0.800000011920929,
+                  "b": 0.75,
+                  "a": 1
+                },
+                "fillGeometry": [
+                  {
+                    "path": "M0 4C0 1.79086 1.79086 0 4 0L156 0C158.209 0 160 1.79086 160 4L160 28C160 30.2091 158.209 32 156 32L4 32C1.79086 32 0 30.2091 0 28L0 4Z",
+                    "windingRule": "NONZERO"
+                  }
+                ],
+                "strokeGeometry": [],
+                "absoluteBoundingBox": {
+                  "x": 16,
+                  "y": 336,
+                  "width": 160,
+                  "height": 32
+                },
+                "absoluteRenderBounds": {
+                  "x": 16,
+                  "y": 336,
+                  "width": 160,
+                  "height": 32
+                },
+                "constraints": {
+                  "vertical": "TOP",
+                  "horizontal": "LEFT"
+                },
+                "relativeTransform": [
+                  [
+                    1,
+                    0,
+                    16
+                  ],
+                  [
+                    0,
+                    1,
+                    336
+                  ]
+                ],
+                "size": {
+                  "x": 160,
+                  "y": 32
+                },
+                "effects": [],
+                "interactions": [],
+                "complexStrokeProperties": {
+                  "strokeType": "BASIC"
+                }
+              },
+              {
+                "id": "1:113",
                 "name": "refused-dissolve",
                 "type": "FRAME",
                 "scrollBehavior": "SCROLLS",
@@ -272,7 +360,7 @@
                   "y": 64
                 },
                 "effects": [],
-                "transitionNodeID": "1:4",
+                "transitionNodeID": "1:109",
                 "transitionDuration": 300,
                 "transitionEasing": "EASE_IN_AND_OUT",
                 "interactions": [
@@ -283,7 +371,7 @@
                     "actions": [
                       {
                         "type": "NODE",
-                        "destinationId": "1:4",
+                        "destinationId": "1:109",
                         "navigation": "NAVIGATE",
                         "transition": {
                           "type": "DISSOLVE",
@@ -301,7 +389,7 @@
                 }
               },
               {
-                "id": "1:9",
+                "id": "1:115",
                 "name": "refused-push-left",
                 "type": "FRAME",
                 "scrollBehavior": "SCROLLS",
@@ -383,7 +471,7 @@
                   "y": 64
                 },
                 "effects": [],
-                "transitionNodeID": "1:4",
+                "transitionNodeID": "1:109",
                 "transitionDuration": 300,
                 "transitionEasing": "EASE_OUT",
                 "interactions": [
@@ -394,7 +482,7 @@
                     "actions": [
                       {
                         "type": "NODE",
-                        "destinationId": "1:4",
+                        "destinationId": "1:109",
                         "navigation": "NAVIGATE",
                         "transition": {
                           "type": "PUSH",
@@ -414,7 +502,7 @@
                 }
               },
               {
-                "id": "1:11",
+                "id": "1:117",
                 "name": "refused-scroll-animate",
                 "type": "FRAME",
                 "scrollBehavior": "SCROLLS",
@@ -496,13 +584,36 @@
                   "y": 64
                 },
                 "effects": [],
-                "interactions": [],
+                "transitionNodeID": "1:112",
+                "transitionDuration": 300,
+                "transitionEasing": "LINEAR",
+                "interactions": [
+                  {
+                    "trigger": {
+                      "type": "ON_CLICK"
+                    },
+                    "actions": [
+                      {
+                        "type": "NODE",
+                        "destinationId": "1:112",
+                        "navigation": "SCROLL_TO",
+                        "transition": {
+                          "type": "SCROLL_ANIMATE",
+                          "easing": {
+                            "type": "LINEAR"
+                          },
+                          "duration": 0.30000001192092896
+                        }
+                      }
+                    ]
+                  }
+                ],
                 "complexStrokeProperties": {
                   "strokeType": "BASIC"
                 }
               },
               {
-                "id": "1:13",
+                "id": "1:119",
                 "name": "refused-custom-cubic-bezier",
                 "type": "FRAME",
                 "scrollBehavior": "SCROLLS",
@@ -584,7 +695,7 @@
                   "y": 64
                 },
                 "effects": [],
-                "transitionNodeID": "1:4",
+                "transitionNodeID": "1:109",
                 "transitionDuration": 300,
                 "transitionEasing": "CUSTOM_BEZIER",
                 "interactions": [
@@ -595,7 +706,7 @@
                     "actions": [
                       {
                         "type": "NODE",
-                        "destinationId": "1:4",
+                        "destinationId": "1:109",
                         "navigation": "NAVIGATE",
                         "transition": {
                           "type": "SMART_ANIMATE",
@@ -619,7 +730,7 @@
                 }
               },
               {
-                "id": "1:15",
+                "id": "1:121",
                 "name": "refused-ease-out-back",
                 "type": "FRAME",
                 "scrollBehavior": "SCROLLS",
@@ -701,7 +812,7 @@
                   "y": 64
                 },
                 "effects": [],
-                "transitionNodeID": "1:4",
+                "transitionNodeID": "1:109",
                 "transitionDuration": 300,
                 "transitionEasing": "EASE_OUT_BACK",
                 "interactions": [
@@ -712,7 +823,7 @@
                     "actions": [
                       {
                         "type": "NODE",
-                        "destinationId": "1:4",
+                        "destinationId": "1:109",
                         "navigation": "NAVIGATE",
                         "transition": {
                           "type": "SMART_ANIMATE",
@@ -730,7 +841,7 @@
                 }
               },
               {
-                "id": "1:17",
+                "id": "1:123",
                 "name": "refused-after-timeout",
                 "type": "FRAME",
                 "scrollBehavior": "SCROLLS",
@@ -812,7 +923,7 @@
                   "y": 64
                 },
                 "effects": [],
-                "transitionNodeID": "1:4",
+                "transitionNodeID": "1:109",
                 "transitionDuration": 300,
                 "transitionEasing": "EASE_OUT",
                 "interactions": [
@@ -824,7 +935,7 @@
                     "actions": [
                       {
                         "type": "NODE",
-                        "destinationId": "1:4",
+                        "destinationId": "1:109",
                         "navigation": "NAVIGATE",
                         "transition": {
                           "type": "SMART_ANIMATE",
@@ -842,7 +953,7 @@
                 }
               },
               {
-                "id": "1:19",
+                "id": "1:125",
                 "name": "refused-mouse-enter",
                 "type": "FRAME",
                 "scrollBehavior": "SCROLLS",
@@ -930,8 +1041,8 @@
                 }
               },
               {
-                "id": "1:20",
-                "name": "refused-on-key-down",
+                "id": "1:126",
+                "name": "refused-mouse-down",
                 "type": "FRAME",
                 "scrollBehavior": "SCROLLS",
                 "children": [],
@@ -1012,22 +1123,19 @@
                   "y": 64
                 },
                 "effects": [],
-                "transitionNodeID": "1:4",
+                "transitionNodeID": "1:109",
                 "transitionDuration": 300,
                 "transitionEasing": "EASE_OUT",
                 "interactions": [
                   {
                     "trigger": {
-                      "type": "ON_KEY_DOWN",
-                      "device": "KEYBOARD",
-                      "keyCodes": [
-                        32
-                      ]
+                      "type": "MOUSE_DOWN",
+                      "delay": 0.25
                     },
                     "actions": [
                       {
                         "type": "NODE",
-                        "destinationId": "1:4",
+                        "destinationId": "1:109",
                         "navigation": "NAVIGATE",
                         "transition": null
                       }
@@ -1039,8 +1147,8 @@
                 }
               },
               {
-                "id": "1:22",
-                "name": "refused-url",
+                "id": "1:128",
+                "name": "refused-on-key-down",
                 "type": "FRAME",
                 "scrollBehavior": "SCROLLS",
                 "children": [],
@@ -1121,16 +1229,24 @@
                   "y": 64
                 },
                 "effects": [],
+                "transitionNodeID": "1:109",
+                "transitionDuration": 300,
+                "transitionEasing": "EASE_OUT",
                 "interactions": [
                   {
                     "trigger": {
-                      "type": "ON_CLICK"
+                      "type": "ON_KEY_DOWN",
+                      "device": "KEYBOARD",
+                      "keyCodes": [
+                        32
+                      ]
                     },
                     "actions": [
                       {
-                        "type": "URL",
-                        "url": "https://example.com/dashscene-fixture",
-                        "openInNewTab": true
+                        "type": "NODE",
+                        "destinationId": "1:109",
+                        "navigation": "NAVIGATE",
+                        "transition": null
                       }
                     ]
                   }
@@ -1140,8 +1256,8 @@
                 }
               },
               {
-                "id": "1:24",
-                "name": "refused-set-variable",
+                "id": "1:130",
+                "name": "refused-url",
                 "type": "FRAME",
                 "scrollBehavior": "SCROLLS",
                 "children": [],
@@ -1229,13 +1345,9 @@
                     },
                     "actions": [
                       {
-                        "type": "SET_VARIABLE",
-                        "variableId": "VariableID:1:3",
-                        "variableValue": {
-                          "value": true,
-                          "type": "BOOLEAN",
-                          "resolvedType": "BOOLEAN"
-                        }
+                        "type": "URL",
+                        "url": "https://example.com/dashscene-fixture",
+                        "openInNewTab": true
                       }
                     ]
                   }
@@ -1245,8 +1357,8 @@
                 }
               },
               {
-                "id": "1:26",
-                "name": "refused-overlay",
+                "id": "1:132",
+                "name": "refused-set-variable",
                 "type": "FRAME",
                 "scrollBehavior": "SCROLLS",
                 "children": [],
@@ -1327,9 +1439,6 @@
                   "y": 64
                 },
                 "effects": [],
-                "transitionNodeID": "1:5",
-                "transitionDuration": 200,
-                "transitionEasing": "EASE_OUT",
                 "interactions": [
                   {
                     "trigger": {
@@ -1337,15 +1446,12 @@
                     },
                     "actions": [
                       {
-                        "type": "NODE",
-                        "destinationId": "1:5",
-                        "navigation": "OVERLAY",
-                        "transition": {
-                          "type": "DISSOLVE",
-                          "easing": {
-                            "type": "EASE_OUT"
-                          },
-                          "duration": 0.20000000298023224
+                        "type": "SET_VARIABLE",
+                        "variableId": "VariableID:1:108",
+                        "variableValue": {
+                          "value": true,
+                          "type": "BOOLEAN",
+                          "resolvedType": "BOOLEAN"
                         }
                       }
                     ]
@@ -1356,8 +1462,8 @@
                 }
               },
               {
-                "id": "1:28",
-                "name": "refused-conditional",
+                "id": "1:134",
+                "name": "refused-overlay",
                 "type": "FRAME",
                 "scrollBehavior": "SCROLLS",
                 "children": [],
@@ -1438,6 +1544,117 @@
                   "y": 64
                 },
                 "effects": [],
+                "transitionNodeID": "1:110",
+                "transitionDuration": 200,
+                "transitionEasing": "EASE_OUT",
+                "interactions": [
+                  {
+                    "trigger": {
+                      "type": "ON_CLICK"
+                    },
+                    "actions": [
+                      {
+                        "type": "NODE",
+                        "destinationId": "1:110",
+                        "navigation": "OVERLAY",
+                        "transition": {
+                          "type": "DISSOLVE",
+                          "easing": {
+                            "type": "EASE_OUT"
+                          },
+                          "duration": 0.20000000298023224
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "complexStrokeProperties": {
+                  "strokeType": "BASIC"
+                }
+              },
+              {
+                "id": "1:136",
+                "name": "refused-conditional",
+                "type": "FRAME",
+                "scrollBehavior": "SCROLLS",
+                "children": [],
+                "blendMode": "PASS_THROUGH",
+                "clipsContent": true,
+                "background": [
+                  {
+                    "blendMode": "NORMAL",
+                    "type": "SOLID",
+                    "color": {
+                      "r": 0.8999999761581421,
+                      "g": 0.7799999713897705,
+                      "b": 0.7200000286102295,
+                      "a": 1
+                    }
+                  }
+                ],
+                "fills": [
+                  {
+                    "blendMode": "NORMAL",
+                    "type": "SOLID",
+                    "color": {
+                      "r": 0.8999999761581421,
+                      "g": 0.7799999713897705,
+                      "b": 0.7200000286102295,
+                      "a": 1
+                    }
+                  }
+                ],
+                "strokes": [],
+                "cornerRadius": 4,
+                "cornerSmoothing": 0,
+                "strokeWeight": 1,
+                "strokeAlign": "INSIDE",
+                "backgroundColor": {
+                  "r": 0.8999999761581421,
+                  "g": 0.7799999713897705,
+                  "b": 0.7200000286102295,
+                  "a": 1
+                },
+                "fillGeometry": [
+                  {
+                    "path": "M0 4C0 1.79086 1.79086 0 4 0L156 0C158.209 0 160 1.79086 160 4L160 60C160 62.2091 158.209 64 156 64L4 64C1.79086 64 0 62.2091 0 60L0 4Z",
+                    "windingRule": "NONZERO"
+                  }
+                ],
+                "strokeGeometry": [],
+                "absoluteBoundingBox": {
+                  "x": 16,
+                  "y": 256,
+                  "width": 160,
+                  "height": 64
+                },
+                "absoluteRenderBounds": {
+                  "x": 16,
+                  "y": 256,
+                  "width": 160,
+                  "height": 64
+                },
+                "constraints": {
+                  "vertical": "TOP",
+                  "horizontal": "LEFT"
+                },
+                "relativeTransform": [
+                  [
+                    1,
+                    0,
+                    16
+                  ],
+                  [
+                    0,
+                    1,
+                    256
+                  ]
+                ],
+                "size": {
+                  "x": 160,
+                  "y": 64
+                },
+                "effects": [],
                 "interactions": [
                   {
                     "trigger": {
@@ -1451,7 +1668,7 @@
                             "condition": {
                               "value": {
                                 "type": "VARIABLE_ALIAS",
-                                "id": "VariableID:1:3"
+                                "id": "VariableID:1:108"
                               },
                               "type": "VARIABLE_ALIAS",
                               "resolvedType": "BOOLEAN"
@@ -1459,7 +1676,7 @@
                             "actions": [
                               {
                                 "type": "NODE",
-                                "destinationId": "1:4",
+                                "destinationId": "1:109",
                                 "navigation": "NAVIGATE",
                                 "transition": null
                               }
@@ -1512,7 +1729,7 @@
             },
             "fillGeometry": [
               {
-                "path": "M0 0L720 0L720 256L0 256L0 0Z",
+                "path": "M0 0L720 0L720 384L0 384L0 0Z",
                 "windingRule": "NONZERO"
               }
             ],
@@ -1521,13 +1738,13 @@
               "x": 0,
               "y": 0,
               "width": 720,
-              "height": 256
+              "height": 384
             },
             "absoluteRenderBounds": {
               "x": 0,
               "y": 0,
               "width": 720,
-              "height": 256
+              "height": 384
             },
             "constraints": {
               "vertical": "TOP",
@@ -1547,7 +1764,7 @@
             ],
             "size": {
               "x": 720,
-              "y": 256
+              "y": 384
             },
             "effects": [],
             "interactions": [],
@@ -1556,7 +1773,7 @@
             }
           },
           {
-            "id": "1:32",
+            "id": "1:140",
             "name": "refused-fill-diff",
             "type": "COMPONENT_SET",
             "scrollBehavior": "SCROLLS",
@@ -1572,7 +1789,7 @@
             },
             "children": [
               {
-                "id": "1:30",
+                "id": "1:138",
                 "name": "tone=cool",
                 "type": "COMPONENT",
                 "scrollBehavior": "SCROLLS",
@@ -1621,13 +1838,13 @@
                 "strokeGeometry": [],
                 "absoluteBoundingBox": {
                   "x": 0,
-                  "y": 296,
+                  "y": 424,
                   "width": 160,
                   "height": 64
                 },
                 "absoluteRenderBounds": {
                   "x": 0,
-                  "y": 296,
+                  "y": 424,
                   "width": 160,
                   "height": 64
                 },
@@ -1652,7 +1869,7 @@
                   "y": 64
                 },
                 "effects": [],
-                "transitionNodeID": "1:31",
+                "transitionNodeID": "1:139",
                 "transitionDuration": 300,
                 "transitionEasing": "EASE_OUT",
                 "interactions": [
@@ -1663,7 +1880,7 @@
                     "actions": [
                       {
                         "type": "NODE",
-                        "destinationId": "1:31",
+                        "destinationId": "1:139",
                         "navigation": "CHANGE_TO",
                         "transition": {
                           "type": "SMART_ANIMATE",
@@ -1681,7 +1898,7 @@
                 }
               },
               {
-                "id": "1:31",
+                "id": "1:139",
                 "name": "tone=warm",
                 "type": "COMPONENT",
                 "scrollBehavior": "SCROLLS",
@@ -1730,13 +1947,13 @@
                 "strokeGeometry": [],
                 "absoluteBoundingBox": {
                   "x": 0,
-                  "y": 296,
+                  "y": 424,
                   "width": 160,
                   "height": 64
                 },
                 "absoluteRenderBounds": {
                   "x": 0,
-                  "y": 296,
+                  "y": 424,
                   "width": 160,
                   "height": 64
                 },
@@ -1795,13 +2012,13 @@
             "strokeGeometry": [],
             "absoluteBoundingBox": {
               "x": 0,
-              "y": 296,
+              "y": 424,
               "width": 160,
               "height": 64
             },
             "absoluteRenderBounds": {
               "x": 0,
-              "y": 296,
+              "y": 424,
               "width": 160,
               "height": 64
             },
@@ -1818,7 +2035,7 @@
               [
                 0,
                 1,
-                296
+                424
               ]
             ],
             "size": {
@@ -1832,7 +2049,7 @@
             }
           },
           {
-            "id": "1:34",
+            "id": "1:142",
             "name": "_manual-checklist",
             "type": "TEXT",
             "scrollBehavior": "SCROLLS",
@@ -1856,15 +2073,15 @@
             "strokeGeometry": [],
             "absoluteBoundingBox": {
               "x": 0,
-              "y": 384,
+              "y": 512,
               "width": 713,
-              "height": 45
+              "height": 30
             },
             "absoluteRenderBounds": {
               "x": -0.017045455053448677,
-              "y": 386.8636474609375,
+              "y": 514.8636474609375,
               "width": 711.495361328125,
-              "height": 41.727264404296875
+              "height": 26.72723388671875
             },
             "constraints": {
               "vertical": "TOP",
@@ -1879,23 +2096,21 @@
               [
                 0,
                 1,
-                384
+                512
               ]
             ],
             "size": {
               "x": 713,
-              "y": 45
+              "y": 30
             },
-            "characters": "_manual-steps: wire these interactions by hand in the prototype panel — the Plugin API refused the write:\n  - refused-scroll-animate (transition SCROLL_ANIMATE with navigation SCROLL_TO — scrolling is not a prop animation)\n  - refused-mouse-enter (trigger MOUSE_ENTER — carries `delay` and `deprecatedVersion`, neither of which ON_CLICK has)",
+            "characters": "_manual-steps: wire these interactions by hand in the prototype panel — the Plugin API refused the write:\n  - refused-mouse-enter (trigger MOUSE_ENTER — carries `delay` and `deprecatedVersion`, neither of which ON_CLICK has)",
             "characterStyleOverrides": [],
             "styleOverrideTable": {},
             "lineTypes": [
               "NONE",
-              "NONE",
               "NONE"
             ],
             "lineIndentations": [
-              0,
               0,
               0
             ],
@@ -1927,10 +2142,10 @@
           "b": 0.11764705926179886,
           "a": 1
         },
-        "prototypeStartNodeID": "1:6",
+        "prototypeStartNodeID": "1:111",
         "flowStartingPoints": [
           {
-            "nodeId": "1:6",
+            "nodeId": "1:111",
             "name": "Flow 1"
           }
         ],
@@ -1942,26 +2157,26 @@
     ]
   },
   "components": {
-    "1:30": {
-      "key": "05d60e708978a1c4c192dfe958189a205c564388",
+    "1:138": {
+      "key": "e41924557ca35436e1ab8fe393a9f0e8927fa8c0",
       "name": "tone=cool",
       "description": "",
       "remote": false,
-      "componentSetId": "1:32",
+      "componentSetId": "1:140",
       "documentationLinks": []
     },
-    "1:31": {
-      "key": "fa79b0a5b0bf3ec41fa4a97e1185c334b02ff9ee",
+    "1:139": {
+      "key": "4a2ac866898c63cd052cf52e7d9a6bc47924aed7",
       "name": "tone=warm",
       "description": "",
       "remote": false,
-      "componentSetId": "1:32",
+      "componentSetId": "1:140",
       "documentationLinks": []
     }
   },
   "componentSets": {
-    "1:32": {
-      "key": "3c5cb3d094521a1669e688d5705792c36541e9fa",
+    "1:140": {
+      "key": "00cb1fd673814806eed23d684df7894ff6ca7b11",
       "name": "refused-fill-diff",
       "description": "",
       "documentationLinks": []
@@ -1970,9 +2185,9 @@
   "schemaVersion": 0,
   "styles": {},
   "name": "prototype-refused",
-  "lastModified": "2026-08-09T20:01:02Z",
+  "lastModified": "2026-08-11T05:23:19Z",
   "version": "2385782740689572770",
   "role": "owner",
   "editorType": "figma",
-  "linkAccess": "inherit"
+  "linkAccess": "view"
 }

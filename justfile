@@ -362,10 +362,23 @@ secrets range="--all":
 
     # --- gate 2: history, against the triaged baseline ----------------------
     #
-    # History cannot use .gitleaksignore: a fingerprint pins a line number,
-    # and the same content sits at many line numbers across history, so
-    # fingerprints never converge. Compare the distinct <rule>:<secret> set
-    # against .secrets-history-baseline instead — anything new fails.
+    # Compare the distinct <rule>:<secret> set against
+    # .secrets-history-baseline — anything new fails. History needs a
+    # by-value record because the same content sits at many line numbers
+    # across history, so a fingerprint written for one of them does not
+    # converge on the rest.
+    #
+    # It does NOT follow that .gitleaksignore is inert here, which this
+    # comment claimed until 2026-08-15. gitleaks also matches a bare
+    # <file>:<rule>:<line> in git mode, so a fingerprint silences that path
+    # and line in EVERY commit that carries it. Measured over --all on that
+    # date: 101 findings with the file removed, 63 with it in place. The
+    # baseline therefore adjudicates only what the fingerprints leave, and a
+    # value pinned at a line it also occupies in history never reaches this
+    # comparison at all. Issue #987 carries the measurement and the options;
+    # until it is settled, do not read a clean run here as "every historical
+    # value is triaged". Note also that `-i <dir>` does not disable the file
+    # — remove it to reproduce.
     echo "── gitleaks: history ($scope_label, against the triaged baseline) ──"
     hist="$work/history.json"
     rc=0
