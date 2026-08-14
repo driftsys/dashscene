@@ -29,11 +29,14 @@ pub use flip::{VariantFlip, decode_prop_key, prop_key};
 
 use std::sync::Arc;
 
+use dashpaint::image_id::identify;
 use dashscene_core::{
-    Arena, Atlas, AtlasIndex, AxisSizing, GlyphQuad, GlyphRange, GlyphRun, GridTrack, Layout,
-    LayoutMode, LayoutSolver, NodeId, ShownRoot, SolvedRect, StagedRun, TextAlignV, TextStyle,
+    Arena, Atlas, AtlasGlyph, AtlasIndex, AxisSizing, GlyphQuad, GlyphRange, GlyphRun, GridTrack,
+    ImageAsset, ImageFormat, Layout, LayoutMode, LayoutSolver, NodeId, ShownRoot, SolvedRect,
+    StagedRun, TextAlignV, TextStyle,
 };
-use dashscene_typeset::text::{TextShape, Typesetter};
+use dashscene_typeset::atlas::AtlasMetrics;
+use dashscene_typeset::text::{Font, FontFamily, TextShape, Typesetter, WeightedFont};
 use rustc_hash::FxHashSet;
 use taffy::prelude::*;
 use taffy::{AlignContent, AlignItems, AlignSelf, GridPlacement, JustifyContent, Position};
@@ -99,6 +102,290 @@ impl TextResources {
             atlases,
         }
     }
+}
+
+/// One face a host supplies, with the atlas its shaped glyphs sample.
+///
+/// Owned bytes rather than borrowed, because the one caller is a C ABI whose
+/// pointers are valid only for the length of the call.
+#[derive(Debug)]
+pub struct FaceBytes {
+    /// The family this face belongs to. Faces sharing a name become one
+    /// family, in first-appearance order, however they are ordered here.
+    /// "Sharing a name" is [`FontFamily::name_matches`] — trimmed and
+    /// ASCII-case-insensitive, the same test a document's `TextStyle::family`
+    /// is resolved by — and the family takes the first spelling to appear.
+    pub family: String,
+    /// The CSS weight this face stands for.
+    pub weight: u16,
+    /// The font file's bytes.
+    pub font: Vec<u8>,
+    /// Which face within a collection. Zero for a single-face file.
+    pub face_index: u32,
+    /// The committed sheet, or [`None`] for a measure-only cascade. Either
+    /// every face carries one or none does.
+    pub atlas: Option<AtlasBytes>,
+}
+
+/// A committed atlas as its two files' bytes — what `corpus/atlas/*/` holds
+/// and what the MSDF tool emits.
+///
+/// **Nothing bakes one of these at run time.**
+/// `dashscene_typeset::atlas::generate` shells out to an external pinned
+/// binary and reads its font from a path, so a host arrives with a sheet or
+/// it gets no glyphs.
+#[derive(Debug)]
+pub struct AtlasBytes {
+    /// The sheet, PNG-encoded.
+    pub png: Vec<u8>,
+    /// The postcard `AtlasMetrics` beside it.
+    pub metrics: Vec<u8>,
+}
+
+/// Why a set of [`FaceBytes`] is not a cascade.
+///
+/// Every variant names the entry it came from, because the caller assembling
+/// the list is a host that cannot see this one.
+///
+/// [`Display`](std::fmt::Display) is what a host reads: `dashscene-ffi` puts
+/// it straight into `ds_last_error_message`, where every other message on
+/// that path is prose. So each variant's message is a sentence, and nothing
+/// on this path formats the error with `{:?}`.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum TextResourcesError {
+    /// No faces at all. `Typesetter::with_named_font_families` asserts on
+    /// this, so it is caught rather than reached.
+    NoFaces,
+    /// A face declared a family name that is empty once trimmed, which no
+    /// document could ever ask for: `FontFamily::name_matches` trims both
+    /// sides and returns false when either is empty, so no `TextStyle::family`
+    /// selects such a family.
+    ///
+    /// Unrequestable is not unreachable. `Typesetter::probe_order` builds
+    /// `(0..families.len())` and only *promotes* a matched family to the
+    /// head, so every family stays in the cascade and shapes whatever the
+    /// ones ahead of it do not cover — which is exactly what a
+    /// `FontFamily::unnamed` family is, the whole pre-#385 cascade shape. So
+    /// a face here would still draw, as an unlabelled coverage fallback at
+    /// whatever position the caller happened to list it. A host declaring a
+    /// cascade is naming its families; a face it can never name back is a
+    /// mistake in the descriptor rather than a fallback it asked for.
+    ///
+    /// Not a panic guard; the assertion in `with_named_font_families`
+    /// inspects a family's faces, never its name.
+    EmptyFamily { index: usize },
+    /// A face's bytes are not a parseable font.
+    Font { index: usize, message: String },
+    /// A face's sheet is unusable: the metrics did not decode, the PNG's
+    /// header did not parse or does not carry the extent the metrics
+    /// declare, or a glyph is described by exactly one of its two quads.
+    Atlas { index: usize, message: String },
+    /// Some faces carry a sheet and some do not. The list is indexed by font
+    /// slot, so a short one resolves past its end — which is why this is
+    /// rejected rather than padded or truncated.
+    MixedAtlases,
+}
+
+impl std::fmt::Display for TextResourcesError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoFaces => write!(f, "no font faces were supplied"),
+            Self::EmptyFamily { index } => write!(
+                f,
+                "face {index}: the family name is empty once trimmed, so no document could \
+                 ever request it"
+            ),
+            Self::Font { index, message } => {
+                write!(f, "face {index}: the font bytes are unusable: {message}")
+            }
+            Self::Atlas { index, message } => write!(f, "face {index}: {message}"),
+            Self::MixedAtlases => write!(
+                f,
+                "some faces carry an atlas and some do not; the atlas list is indexed by font \
+                 slot, so it is every face or none"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for TextResourcesError {}
+
+impl TextResources {
+    /// Assembles a cascade and its atlases from bytes a host supplied.
+    ///
+    /// **The two lists are built from one walk**, which is the whole point.
+    /// Faces are grouped by family in first-appearance order and
+    /// `Typesetter::with_named_font_families` flattens family-major over
+    /// exactly that order, so a face's atlas lands at the slot its glyphs
+    /// will carry however the caller ordered the argument. Building the
+    /// atlas list separately is what would let a caller mis-order it, and a
+    /// mis-ordered list samples the wrong face rather than failing.
+    pub fn from_faces(faces: Vec<FaceBytes>) -> Result<Self, TextResourcesError> {
+        if faces.is_empty() {
+            return Err(TextResourcesError::NoFaces);
+        }
+        let sheets = faces.iter().filter(|face| face.atlas.is_some()).count();
+        if sheets != 0 && sheets != faces.len() {
+            return Err(TextResourcesError::MixedAtlases);
+        }
+
+        // Group by family name, keeping first appearance. Indices only, so
+        // the owned bytes move once, below, in the flatten's order.
+        let mut names: Vec<&str> = Vec::new();
+        let mut members: Vec<Vec<usize>> = Vec::new();
+        for (index, face) in faces.iter().enumerate() {
+            // Trimmed, because `FontFamily::name_matches` trims before
+            // comparing: a name of only spaces is as unselectable as "".
+            if face.family.trim().is_empty() {
+                return Err(TextResourcesError::EmptyFamily { index });
+            }
+            // Grouped on the predicate the typesetter SELECTS with, not on
+            // string equality. `Typesetter::probe_order` promotes only the
+            // first family whose name matches and leaves the rest in cascade
+            // order, so "Inter" and "inter" as two families would send a
+            // request for Inter at 600 into the first one — which holds only
+            // the 400 face — and bold would render regular, reported through
+            // `Typesetter::weight_substitutions` where no C caller can read
+            // it.
+            match names
+                .iter()
+                .position(|name| FontFamily::name_matches(name, &face.family))
+            {
+                Some(slot) => members[slot].push(index),
+                None => {
+                    names.push(&face.family);
+                    members.push(vec![index]);
+                }
+            }
+        }
+        let names: Vec<String> = names.into_iter().map(str::to_string).collect();
+
+        let mut taken: Vec<Option<FaceBytes>> = faces.into_iter().map(Some).collect();
+        let mut families = Vec::with_capacity(names.len());
+        let mut atlases = Vec::new();
+        for (name, group) in names.into_iter().zip(members) {
+            let mut weighted = Vec::with_capacity(group.len());
+            for index in group {
+                let face = taken[index]
+                    .take()
+                    .expect("each index is grouped exactly once");
+                let font = Font::from_bytes(face.font, face.face_index).map_err(|error| {
+                    TextResourcesError::Font {
+                        index,
+                        message: format!("{error}"),
+                    }
+                })?;
+                if let Some(sheet) = face.atlas {
+                    atlases.push(atlas_from_bytes(sheet, index)?);
+                }
+                weighted.push(WeightedFont::new(font, face.weight));
+            }
+            families.push(FontFamily::new(name, weighted));
+        }
+        Ok(Self::new(
+            Typesetter::with_named_font_families(families),
+            Arc::new(atlases),
+        ))
+    }
+}
+
+/// A committed sheet's two files, as the boundary-B atlas a staged run
+/// samples.
+///
+/// A glyph described by neither a plane quad nor an atlas quad is dropped:
+/// that is an empty outline, such as the space, which occupies advance and
+/// paints nothing. It is the same filter `corpus/showcase` applies, and the
+/// reason `Atlas::new`'s sorted-and-unique assertion still holds:
+/// `AtlasMetrics::glyphs` is sorted by glyph id and filtering preserves
+/// order. A glyph carrying exactly one of the two is **refused** rather than
+/// dropped — `AtlasMetrics::from_bytes` does not check the pair agrees, and
+/// these are host bytes that passed no `dashc` gate, so dropping one would
+/// leave `Atlas::glyph`'s binary search missing that character with nothing
+/// reported.
+///
+/// # What the header check buys, and what it does not
+///
+/// The PNG is copied through unread everywhere else, so its **header** is
+/// read here through the same [`identify`] every other writer in this
+/// workspace uses: the signature, the `IHDR` chunk type and length, and the
+/// extent. That catches a file that is not a PNG at all, a re-muxed one
+/// whose first chunk is not `IHDR`, and — against the metrics — a sheet
+/// whose extent disagrees with the quads that normalise over it, which is
+/// the silent case: `TexelPayload::of` takes the extent from the decode
+/// while `gpu_glyph_run` normalises with the metrics extent, so a
+/// disagreement samples the wrong texels rather than failing.
+///
+/// **A body that fails to decode is still a panic at the first draw.**
+/// `dashscene_gpu`'s `decode_png` calls `next_frame(..).expect(..)`, so a
+/// correctly-headed PNG with a truncated or CRC-corrupt `IDAT` passes
+/// everything here and unwinds there; across the C ABI `guard` catches it
+/// and reports `DsStatus::Panic`. Closing that would mean decoding the
+/// whole sheet at load, which is a real cost and a separate decision.
+fn atlas_from_bytes(sheet: AtlasBytes, index: usize) -> Result<Atlas, TextResourcesError> {
+    let atlas_error = |message: String| TextResourcesError::Atlas { index, message };
+    let metrics = AtlasMetrics::from_bytes(&sheet.metrics)
+        .map_err(|error| atlas_error(format!("atlas_metrics did not decode: {error}")))?;
+
+    // `identify` rather than a second reading of the same bytes: it checks
+    // the chunk type is IHDR and the chunk length is 13, which a signature
+    // test and two fixed offsets do not, and it names the format it found.
+    let header = identify(&sheet.png)
+        .map_err(|error| atlas_error(format!("atlas_png is unusable: {error}")))?;
+    if header.format != ImageFormat::Png {
+        return Err(atlas_error(format!(
+            "atlas_png is {:?} and a committed sheet is PNG",
+            header.format
+        )));
+    }
+    if header.width != metrics.atlas.width || header.height != metrics.atlas.height {
+        return Err(atlas_error(format!(
+            "atlas_png is {} x {} and its metrics declare {} x {}",
+            header.width, header.height, metrics.atlas.width, metrics.atlas.height
+        )));
+    }
+
+    let mut glyphs = Vec::with_capacity(metrics.glyphs.len());
+    for glyph in &metrics.glyphs {
+        match (glyph.plane_em, glyph.atlas_px) {
+            (Some(plane_em), Some(atlas_px)) => glyphs.push(AtlasGlyph {
+                glyph_id: u32::from(glyph.glyph_id),
+                plane_em,
+                atlas_px,
+            }),
+            // Neither is an empty outline, and dropping it is what makes the
+            // space legal.
+            (None, None) => {}
+            (plane_em, _) => {
+                let (present, absent) = if plane_em.is_some() {
+                    ("plane_em", "atlas_px")
+                } else {
+                    ("atlas_px", "plane_em")
+                };
+                return Err(atlas_error(format!(
+                    "atlas_metrics glyph {} carries {present} and no {absent}; a glyph is \
+                     described by both or by neither",
+                    glyph.glyph_id
+                )));
+            }
+        }
+    }
+    // `Atlas::new` is fallible since issue #724: it refuses `px_per_em == 0`,
+    // which every painter divides by. That is a host-data error on this path
+    // rather than a broken contract between crates, so it is reported as one
+    // instead of being unwrapped.
+    Atlas::new(
+        ImageAsset {
+            format: ImageFormat::Png,
+            bytes: sheet.png,
+        },
+        metrics.atlas.width,
+        metrics.atlas.height,
+        metrics.atlas.px_per_em,
+        metrics.atlas.distance_range_px,
+        glyphs,
+    )
+    .map_err(|error| atlas_error(format!("{error}")))
 }
 
 /// How a solver reaches its [`Typesetter`]: lent by the caller, or held.
@@ -267,13 +554,16 @@ impl<'a> TaffySolver<'a> {
     /// The boxed solver a document load hands to `dashlang::attach_live`, from
     /// what the host supplied.
     ///
-    /// One function, so the two integration crates that take a
-    /// [`TextResources`] cannot disagree about what [`None`] means (story
-    /// #863). The third, `dashscene-ffi`, does not call this: neither a
-    /// `Typesetter` nor an `Atlas` crosses a C boundary, so its load has
-    /// nothing to pass and builds the bare solver directly (issue #947). It means the pre-#863 solver: every text
-    /// node measures as an empty leaf and no glyph run reaches the painter,
-    /// which is correct for a document with no text and wrong for one with it.
+    /// One function, so the integration crates that take a [`TextResources`]
+    /// cannot disagree about what [`None`] means (story #863). All three call
+    /// it, `dashscene-ffi` included since story #947 — its own
+    /// [`TextResources`] is assembled by [`TextResources::from_faces`] from
+    /// bytes that crossed a C boundary, and reaches this the same way the
+    /// other two do.
+    ///
+    /// It means the pre-#863 solver: every text node measures as an empty leaf
+    /// and no glyph run reaches the painter, which is correct for a document
+    /// with no text and wrong for one with it.
     ///
     /// [`owning`](TaffySolver::owning) rather than a wrapper that owns the
     /// typesetter, for the reason that method records: the scene keeps this box
@@ -478,6 +768,49 @@ fn vertical_offset(box_height: f32, content_height: f32, align: TextAlignV) -> f
         TextAlignV::Top => 0.0,
         TextAlignV::Center => slack / 2.0,
         TextAlignV::Bottom => slack,
+    }
+}
+
+#[cfg(test)]
+mod atlas_build_tests {
+    use super::{AtlasBytes, TextResourcesError, atlas_from_bytes};
+    use dashscene_typeset::atlas::AtlasMetrics;
+
+    /// `Atlas::new` refuses `px_per_em == 0` (issue #724), because every
+    /// painter divides by it. On this path that is a **host data** error
+    /// rather than a broken contract between crates, so it must arrive as
+    /// `TextResourcesError::Atlas` and not as an unwrap.
+    ///
+    /// A unit test rather than one beside the others in `tests/`, because
+    /// `atlas_from_bytes` is private: an integration test reaches it only
+    /// through `from_faces`, which would need a parseable face beside the
+    /// malformed sheet to say anything about the sheet at all.
+    #[test]
+    fn an_atlas_rendered_at_zero_texels_per_em_is_refused() {
+        let dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/atlas/inter-ascii"
+        );
+        let png = std::fs::read(format!("{dir}/atlas.png")).expect("the committed sheet");
+        let raw = std::fs::read(format!("{dir}/atlas.metrics")).expect("its metrics");
+
+        // A real sheet with one field zeroed, so the PNG signature and the
+        // extent check both still pass and this reaches `Atlas::new`.
+        let mut metrics = AtlasMetrics::from_bytes(&raw).expect("the committed metrics decode");
+        metrics.atlas.px_per_em = 0;
+
+        let error = atlas_from_bytes(
+            AtlasBytes {
+                png,
+                metrics: metrics.to_bytes(),
+            },
+            0,
+        )
+        .expect_err("an atlas with no scale to map its distances through is refused");
+        assert!(
+            matches!(error, TextResourcesError::Atlas { index: 0, .. }),
+            "reported as a host atlas error naming its face: {error:?}"
+        );
     }
 }
 

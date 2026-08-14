@@ -104,6 +104,73 @@ int main(void) {
   check(ds_runtime_detach_surface(runtime, NULL) == DS_OK,
         "detaching twice, and with a NULL out pointer, is allowed");
 
+  /* The text entry point and its struct exist as this header declares them.
+   * Junk bytes, so this exercises the symbol and the argument checks rather
+   * than a document: a real .dsb is not reachable from this program, and the
+   * faces are validated first in any case. */
+  DsFontFace face;
+  memset(&face, 0, sizeof face);
+  face.family = "Inter";
+  face.weight = 400;
+  uint8_t not_a_font[64] = {0};
+  face.font_bytes = not_a_font;
+  face.font_len = sizeof not_a_font;
+  uint8_t not_a_document[32] = {0};
+  check(ds_runtime_load_document_with_text(runtime, not_a_document,
+                                           sizeof not_a_document, &face,
+                                           1) == DS_FONT_FACE,
+        "a face that does not parse is DS_FONT_FACE from C");
+  check(ds_runtime_load_document_with_text(runtime, not_a_document,
+                                           sizeof not_a_document, NULL,
+                                           3) == DS_NULL_ARGUMENT,
+        "a null face array with a count is a status, not a crash");
+
+  /* The weight range, which only this ABI enforces. 0 is what an
+   * uninitialised struct carries. */
+  DsFontFace zero_weight = face;
+  zero_weight.weight = 0;
+  check(ds_runtime_load_document_with_text(runtime, not_a_document,
+                                           sizeof not_a_document, &zero_weight,
+                                           1) == DS_FONT_FACE,
+        "a weight outside 1..=1000 is DS_FONT_FACE from C");
+  /* The junk font beside it is DS_FONT_FACE as well, so the status alone does
+   * not say the weight was what failed. The message does, and without it this
+   * check passes with the range check deleted. */
+  char weight_message[256];
+  ds_last_error_message(weight_message, sizeof weight_message);
+  check(strstr(weight_message, "weight") != NULL,
+        "and the weight is what it names, not the font bytes beside it");
+
+  /* The atlas half of the struct, which nothing above reads. A face that
+   * names atlas_metrics and no atlas_png is refused before the font is
+   * parsed, so this reaches DS_ATLAS with the same junk font as above. */
+  uint8_t not_an_atlas[48] = {0};
+  DsFontFace half_atlas = face;
+  half_atlas.atlas_metrics = not_an_atlas;
+  half_atlas.atlas_metrics_len = sizeof not_an_atlas;
+  check(ds_runtime_load_document_with_text(runtime, not_a_document,
+                                           sizeof not_a_document, &half_atlas,
+                                           1) == DS_ATLAS,
+        "a face naming atlas_metrics and no atlas_png is DS_ATLAS from C");
+
+  /* And the four trailing fields read for their values rather than for
+   * NULL. A mixed set — one face with a whole sheet, one with none — is
+   * refused before either sheet is decoded, and getting there copies
+   * atlas_png_len and atlas_metrics_len bytes from atlas_png and
+   * atlas_metrics. A layout disagreement between this header and the
+   * #[repr(C)] struct in those fields is what that copy would trip over. */
+  DsFontFace mixed[2];
+  mixed[0] = face;
+  mixed[0].atlas_png = not_an_atlas;
+  mixed[0].atlas_png_len = sizeof not_an_atlas;
+  mixed[0].atlas_metrics = not_an_atlas;
+  mixed[0].atlas_metrics_len = sizeof not_an_atlas;
+  mixed[1] = face;
+  check(ds_runtime_load_document_with_text(runtime, not_a_document,
+                                           sizeof not_a_document, mixed,
+                                           2) == DS_ATLAS,
+        "one face with a sheet and one without is DS_ATLAS from C");
+
   ds_runtime_free(runtime);
   ds_runtime_free(NULL); /* free(NULL) semantics */
   check(1, "freeing the runtime and NULL both return");

@@ -21,7 +21,12 @@
 //!    `SurfaceHolder.Callback` hands over an `android.view.Surface`;
 //!    `ANativeWindow_fromSurface` turns it into an `ANativeWindow *`; that
 //!    reaches `SurfaceRenderer::for_android_ndk` through
-//!    `ds_runtime_attach_surface`. Nothing in the painter moves for it.
+//!    `ds_runtime_attach_surface`. Nothing in the painter moves for it. Two
+//!    JNI entry points start a host this way: `nativeSurfaceCreated`, which
+//!    draws a document's rectangles and none of its text, and
+//!    `nativeSurfaceCreatedWithText`, which takes the fonts and sheets its
+//!    text needs beside the document. **The second is the one an embedder
+//!    with text wants**; the first is it with no faces.
 //! 2. **The frame loop** (D6) — `AChoreographer`, driven from the native side on
 //!    its own thread. P3 says producers mutate and the runtime owns time; a host
 //!    that called a tick from its UI thread would invert that, and on Android it
@@ -44,9 +49,14 @@
 //!   `SurfaceHolder.Callback` is the embedder's, and so is the Kotlin class that
 //!   declares them. `demo-android` shows one arrangement; it is not the only
 //!   one.
-//! - **Where the document comes from.** [`ds_runtime_load_document`] takes
-//!   bytes. An asset, a download, a file — and the reading of it — is the
-//!   embedder's. This crate has no opinion and no scene registry.
+//! - **Where the document comes from, and the fonts with it.** Both JNI entry
+//!   points load through [`ds_runtime_load_document_with_text`], which takes
+//!   the document's bytes and an array of face descriptors;
+//!   `nativeSurfaceCreated` passes an empty array, so its text nodes lay out
+//!   as empty leaves and no glyph is drawn. An asset, a download, a file — and
+//!   the reading of it — is the embedder's, and so is every font file and
+//!   committed MSDF sheet, because **nothing bakes a sheet at run time**. This
+//!   crate has no opinion and no scene registry.
 //! - **`System.loadLibrary`, and the ABI check.** A host should call
 //!   `ds_abi_version` once and refuse a library it does not recognise, because
 //!   the alternative is discovering the mismatch as a corrupted argument.
@@ -75,7 +85,7 @@
 //! as working**: this crate compiles, its handshake is tested, and what it does
 //! on a device is a question the device has to answer.
 //!
-//! [`ds_runtime_load_document`]: dashscene_ffi::ds_runtime_load_document
+//! [`ds_runtime_load_document_with_text`]: dashscene_ffi::ds_runtime_load_document_with_text
 
 mod frames;
 mod handshake;

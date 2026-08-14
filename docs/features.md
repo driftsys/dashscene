@@ -516,23 +516,25 @@ absence of any mobile target in the workspace.
       publish is a separate decision (epic #793).
 - [x] **A C interface for hosts written in other languages** — **built, and used
       by one host.** `crates/dashscene-ffi` (story #840) exports a version to
-      negotiate against, the runtime lifecycle, a document load, the surface
-      handoff, the tick, resize, a draw call, a surface detach and an error
-      channel, with a committed header a C caller compiles against; `just c-abi`
-      exercises it as one. No panic crosses the boundary and no failure is
-      reachable only as a formatted string. `dashscene-android` (story #841)
-      drives it through those entry points as a C caller would, which is what
-      established that it was sufficient for layer 0 — and what established that
-      it was not quite: `ds_runtime_detach_surface` was added there, because the
-      destroy handshake needs a call that drops the surface and keeps the
-      document. No iOS or Unity host exists. Root selection is absent, and since
-      story #837 the reason is no longer that nothing can name a root: both
-      integration crates take a `ShownRoot`, and this ABI's only entry point
-      hands the whole file to the owning loader, which copies every payload
-      whatever is shown — so there is nothing on that path for a selection to
-      bound (issue #925). **A scene built in code cannot be expressed through it
-      at all** — there is no builder entry point, that being layer 2 (D8), so a
-      host wanting one links the crates directly as `demo` and `demo-web` do.
+      negotiate against, the runtime lifecycle, a document load, a second
+      document load carrying the fonts and sheets a `.dsb` cannot (story #947),
+      the surface handoff, the tick, resize, a draw call, a surface detach and
+      an error channel, with a committed header a C caller compiles against;
+      `just c-abi` exercises it as one. No panic crosses the boundary and no
+      failure is reachable only as a formatted string. `dashscene-android`
+      (story #841) drives it through those entry points as a C caller would,
+      which is what established that it was sufficient for layer 0 — and what
+      established that it was not quite: `ds_runtime_detach_surface` was added
+      there, because the destroy handshake needs a call that drops the surface
+      and keeps the document. No iOS or Unity host exists. Root selection is
+      absent, and since story #837 the reason is no longer that nothing can name
+      a root: both integration crates take a `ShownRoot`, and both of this ABI's
+      document loads hand the whole file to the owning loader, which copies
+      every payload whatever is shown — so there is nothing on that path for a
+      selection to bound (issue #925). **A scene built in code cannot be
+      expressed through it at all** — there is no builder entry point, that
+      being layer 2 (D8), so a host wanting one links the crates directly as
+      `demo` and `demo-web` do.
 - [ ] **Android and iOS** — **Android part built; iOS nothing.** The
       `aarch64-linux-android` target, an NDK toolchain and a CI job exist (story
       #839), the painter cross-compiles for it, and the C ABI above builds for
@@ -562,12 +564,25 @@ absence of any mobile target in the workspace.
       entry point (layer 2, D8) — so it implements `dashscene_android::Frames`
       and shares the render thread, the vsync loop and the destroy handshake
       rather than a second copy of them. Text draws because each scene brings
-      its own solver; a *loaded document* still gets a bare `TaffySolver`, so it
-      draws no glyphs **and lays its text nodes out as empty leaves**, which
-      moves their siblings too. Story #863 fixed that on desktop and on the web
-      by letting the host supply a cascade and its atlases; **Android is the one
-      host left**, because neither value can cross the C ABI its document load
-      goes through (issue #947).
+      its own solver.
+
+      **A loaded document can be given text on this path too, and nothing has
+      run it.** Story #863 let a host supply a cascade and its atlases on
+      desktop and on the web, and story #947 carried the same thing across the
+      C ABI: `ds_runtime_load_document_with_text` takes one descriptor per face
+      pairing the font file's bytes with the committed sheet its glyphs sample,
+      and `dashscene-android` exposes it as a second JNI entry point,
+      `nativeSurfaceCreatedWithText`. **Nothing bakes a sheet at run time** —
+      the MSDF generator is an external pinned binary reading its font from a
+      path — so a host arrives with a committed PNG and its metrics blob or its
+      text is measured and never drawn. The JNI half was compiled and never
+      executed, and the reason is issue #969 rather than the missing device:
+      the harness still calls the no-text entry point, so nothing runs it even
+      on the emulator this platform has otherwise been exercised on. The
+      device measurement issue #885 still owes is a separate debt. So a
+      document loaded through `nativeSurfaceCreated`, which is every one this
+      repository loads on Android, still draws no glyphs **and lays its text
+      nodes out as empty leaves**, which moves their siblings too.
 
       **On an emulator, and the frame rate is not a device measurement.** The
       instrument reports in the desktop host's units — one sample read

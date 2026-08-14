@@ -188,12 +188,27 @@ for weight.
   scene and a solver rebuilt per call throws away Taffy's retained tree on every
   frame — issue #164's saving, paid back per frame.
 
-  **The C ABI is not fixed and the reason is different in kind.** Neither a
-  `Typesetter` nor an `Atlas` can cross a C boundary, so
-  `ds_runtime_load_document` still builds the bare solver and the Android host,
-  which loads through it, still draws no text. That is undesigned rather than
-  blocked — a second entry point is a new symbol and does not move
-  `DS_ABI_VERSION` — and it is issue #947.
+  **The C ABI is fixed too, by a second entry point** (story #947).
+  `ds_runtime_load_document_with_text` takes an array of face descriptors, each
+  pairing a face — its font bytes, family and CSS weight — with the committed
+  sheet its glyphs sample. The sheets are all-or-nothing across the call rather
+  than a choice per face: a set where some faces carry one and some do not is
+  refused, because the atlas list is indexed by font slot and a short one
+  resolves past its end. Every face carrying no sheet is the measure-only
+  cascade, which shapes and measures text and draws none of it. Neither a
+  `Typesetter` nor an `Atlas` crosses the boundary; their **inputs** do, and
+  `dashscene_engine::TextResources::from_faces` assembles them on the far side.
+  A new symbol rather than a parameter, so `DS_ABI_VERSION` stays 1.
+
+  The atlas sits inside the descriptor rather than in a parallel array because
+  the atlas list is indexed by the font slot of the face that shaped a glyph: a
+  list in any other order samples the wrong face rather than failing, and one
+  family-major walk that emits both lists cannot disagree with itself.
+
+  **What does not change is that a host must arrive with a baked sheet.** The
+  generator is an external pinned binary that reads a font from a path, so no
+  entry point can make one. That is the constraint step 1 still waits on, rather
+  than a limitation of this ABI's shape.
 
 - **What stays blocked is the document carrying its own.** Everything above is
   the _host_ half. Step 1 is unchanged: an embedded font still cannot become

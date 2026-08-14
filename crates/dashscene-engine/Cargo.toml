@@ -15,6 +15,12 @@ name = "dashscene_engine"
 [dependencies]
 dashcue.workspace = true
 dashscene-core.workspace = true
+# `image_id::identify`, for the sheet header check in
+# `TextResources::from_faces`. `dashscene-core` re-exports every paint type
+# this crate names, so that is the one item only `dashpaint` publishes.
+# `dashpaint` has no dependencies of its own, so this edge adds nothing to
+# the graph but the name.
+dashpaint.workspace = true
 dashscene-typeset.workspace = true
 rustc-hash.workspace = true
 taffy.workspace = true

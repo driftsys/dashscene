@@ -55,7 +55,16 @@ typedef enum DsStatus {
    * A panic was caught at the boundary. The library is in an unspecified state:
    * free the runtime and make no further calls on it.
    */
-  DS_PANIC = 8
+  DS_PANIC = 8,
+  /* A face descriptor is unusable: family is not UTF-8, family is empty or
+   * only whitespace, weight is outside 1..=1000, or font_bytes do not parse
+   * as a font face. */
+  DS_FONT_FACE = 9,
+  /* An atlas is unusable: atlas_metrics did not decode, atlas_png is not a
+   * PNG header carrying the extent those metrics declare, a glyph in those
+   * metrics is described by exactly one of its two quads, or the set is
+   * mixed — some faces carrying a sheet and some not. */
+  DS_ATLAS = 10
 } DsStatus;
 
 /* Which platform handle ds_runtime_attach_surface's pointers carry. */
@@ -66,6 +75,40 @@ typedef enum DsSurfaceKind {
    */
   DS_SURFACE_ANDROID_NDK = 0
 } DsSurfaceKind;
+
+/*
+ * One face, with the atlas its shaped glyphs sample.
+ *
+ * The atlas is in here rather than in a second array on purpose: the atlas
+ * list is indexed by the font slot of the face that shaped a glyph, so a
+ * list in any other order samples the wrong face RATHER THAN FAILING.
+ * Pairing them here means the library builds both from one walk and you
+ * cannot get the order wrong — including when you list one family's faces
+ * non-contiguously.
+ *
+ * atlas_png and atlas_metrics must both be NULL or both point at real bytes.
+ * Both NULL is the measure-only cascade, where text is shaped and measured
+ * and no glyph is drawn. Exactly one NULL is DS_ATLAS, not a silent fall
+ * back to measure-only — and so is a mixed set across faces, where some
+ * carry a sheet and some do not.
+ *
+ * weight must be in 1..=1000, the CSS range. Outside it is DS_FONT_FACE,
+ * naming the face's index and the value — including 0, which is what an
+ * uninitialised struct carries and which no CSS weight can be. This is the
+ * only place the range is enforced: a host that binds to this ABI inherits
+ * the rule rather than repairing the value in its own way.
+ */
+typedef struct DsFontFace {
+  const char *family;  /* NUL-terminated UTF-8 */
+  uint16_t weight;     /* CSS weight, 1..=1000 */
+  uint32_t face_index; /* index within a collection; 0 for one face */
+  const uint8_t *font_bytes;
+  size_t font_len;
+  const uint8_t *atlas_png;
+  size_t atlas_png_len;
+  const uint8_t *atlas_metrics;
+  size_t atlas_metrics_len;
+} DsFontFace;
 
 /* A live runtime. Opaque: the layout is free to change without moving the ABI
  * version. */
@@ -90,6 +133,31 @@ void ds_runtime_free(DsRuntime *runtime);
  */
 DsStatus ds_runtime_load_document(DsRuntime *runtime, const uint8_t *bytes,
                                   size_t len);
+
+/*
+ * Loads a .dsb held in memory, with the fonts and atlases its text needs.
+ *
+ * ds_runtime_load_document is this call with no faces. A NULL faces, or a
+ * zero face_count, loads without text: text nodes lay out as empty leaves
+ * and no glyph is drawn.
+ *
+ * WHAT YOU MUST SUPPLY. A face is a font file's bytes plus the family and
+ * weight it stands for. An atlas is a committed MSDF sheet — a PNG and the
+ * metrics blob beside it. NOTHING BAKES ONE AT RUN TIME: the generator is
+ * an external pinned binary that reads a font from a path, so these arrive
+ * with you or your text is measured and never drawn.
+ *
+ * The faces are validated before the document is opened, so a bad cascade is
+ * reported as itself rather than as whatever the document turned out to be.
+ *
+ * Nothing is retained: every byte is copied before this returns.
+ *
+ * Adding this symbol did not move DS_ABI_VERSION.
+ */
+DsStatus ds_runtime_load_document_with_text(DsRuntime *runtime,
+                                            const uint8_t *bytes, size_t len,
+                                            const DsFontFace *faces,
+                                            size_t face_count);
 
 /*
  * Hands a platform surface to the painter. width and height are device pixels.

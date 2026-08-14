@@ -22,17 +22,22 @@
 //! Each scene builds its own solver. `typography::build` constructs a
 //! `ShowcaseSolver` carrying the fonts and the typesetter, so the `LiveScene`
 //! this host is handed can already measure and stage glyph runs. That is worth
-//! saying because the opposite is true of a **loaded document** on this
-//! platform: the C ABI injects a bare `TaffySolver`, which has no typesetter
-//! and no atlases, so a `.dsb` with text collapses its boxes and draws no
-//! glyphs.
+//! saying because a **loaded document** needs the same thing supplied to it:
+//! `ds_runtime_load_document` injects a bare `TaffySolver`, which has no
+//! typesetter and no atlases, so a `.dsb` with text collapses its boxes and
+//! draws no glyphs.
 //!
-//! **Android is the only host where that is still true.** Story #863 gave
+//! **A second entry point takes them** (story #947). Story #863 gave
 //! `dashscene-desktop` and `dashscene-web` a `TextResources` parameter their
-//! embedder fills; neither a `Typesetter` nor an `Atlas` has a C
-//! representation, so `ds_runtime_load_document` could not take the same
-//! argument. Issue #947 carries what has to be designed first. This host draws
-//! scenes built in code, so it does not hit the gap and does not close it.
+//! embedder fills, and neither a `Typesetter` nor an `Atlas` has a C
+//! representation — so `ds_runtime_load_document_with_text` takes their inputs
+//! instead: one descriptor per face, pairing the font file's bytes with the
+//! committed sheet its glyphs sample. `dashscene_android`'s
+//! `nativeSurfaceCreatedWithText` carries them through. This host draws scenes
+//! built in code, so it neither hits the gap nor calls the JNI entry point that
+//! closes it. **Nothing in this repository calls that one from Java yet**
+//! (issue #969); the C entry point beneath it is covered by this workspace's
+//! own tests.
 //!
 //! # What an embedder should not read into this
 //!
