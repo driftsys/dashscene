@@ -303,9 +303,57 @@ has nothing to lend: `dashlang::attach_live` takes a `Box<dyn LayoutSolver>` and
 keeps it for the life of the scene, so the solver in that box is `'static` and
 outlives every local a document loader could lend it. Every `.dsb` load path
 therefore built `TaffySolver::new()`, and a loaded document containing text drew
-no glyphs and measured its text nodes as empty leaves. The two integration
-crates that can take a `TextResources` now do; `dashscene-ffi` cannot, because
-neither a `Typesetter` nor an `Atlas` crosses a C boundary (issue #947).
+no glyphs and measured its text nodes as empty leaves. Every integration crate
+that loads a document can now be handed the text it needs — `dashscene-desktop`
+and `dashscene-web` take a `TextResources` directly, and `dashscene-ffi` reaches
+one through `from_faces` below.
+
+`TextResources::from_faces` is how a caller that holds no Rust type builds one
+(story #947). It takes owned bytes per face — the family name, the CSS weight,
+the font file, the index within a collection, and an optional committed sheet as
+its PNG and metrics blob — and returns the typesetter and the atlas list
+together. Owned rather than borrowed because the caller it exists for is a C
+ABI, whose pointers are valid only for the length of the call.
+
+**Both lists come out of one walk, which is the whole point.** Faces are grouped
+into families on `FontFamily::name_matches`, the same predicate that resolves a
+document's `TextStyle::family`, so two spellings of one name are one family
+rather than two — grouping by string equality instead would put a requested
+weight in a family that does not hold it, because `Typesetter::probe_order`
+promotes only the first family whose name matches.
+`Typesetter::with_named_font_families` then flattens family-major over that
+grouping, and the atlases are emitted in the same pass, so each face's sheet
+lands at the slot its glyphs will carry however the caller ordered the argument.
+Building the atlas list separately is what would let a caller mis-order it, and
+a mis-ordered list samples the wrong face rather than failing.
+
+What is refused rather than assembled, each error naming the descriptor it came
+from: no faces at all, a family name that is empty once trimmed and so could
+never be requested, bytes that are not a parseable face, metrics that do not
+decode, a sheet whose PNG header does not parse or does not carry the extent its
+metrics declare, a glyph in those metrics described by exactly one of its two
+quads, and a set where some faces carry a sheet and some do not.
+`TextResourcesError` carries `Display` and `Error` so that each of those reads
+as a sentence: `dashscene-ffi` puts the string straight into
+`ds_last_error_message`, where every other message on that path is prose.
+
+The header is read through `dashpaint::image_id::identify` — the same reader
+`dashc`'s compile gate and `dashscene-validator`'s load gate use, which verifies
+the first chunk is `IHDR` and its length is 13 rather than trusting two fixed
+offsets. It is read at all because `dashscene-gpu`'s decoder panics rather than
+returning on a payload that does not decode, resting that on an upstream gate a
+host's bytes never passed. **What it buys is the header and the extent, and no
+more**: a correctly-headed PNG whose `IDAT` is truncated or CRC-corrupt still
+passes here and still panics at the first draw, caught at the C boundary and
+reported as `DS_PANIC`. Closing that would mean decoding the whole sheet at
+load, which is a cost and a separate decision.
+
+A glyph carrying neither quad is dropped rather than refused — that is an empty
+outline, which the space is — and it is a drop rather than a diagnostic because
+`Atlas::glyph` never needs to find one. Exactly one of the two is the
+inconsistency: `AtlasMetrics::from_bytes` does not check the pair agrees, so a
+dropped half-described glyph would leave the binary search missing that
+character with the load reporting success.
 
 Holding it inside the solver rather than in a wrapper is what keeps the retained
 tree. A wrapper that owns the typesetter must build a `TaffySolver` inside every

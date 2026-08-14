@@ -176,11 +176,44 @@ for the life of the scene. Wrapping instead — the shape `corpus/showcase` uses
 rebuilds Taffy's retained tree on every solve, which is issue #164's saving paid
 back per frame.
 
-**The C ABI is the one host still without it.** Neither a `Typesetter` nor an
-`Atlas` has a C representation, so `ds_runtime_load_document` still builds the
-bare solver and `dashscene-android`, which loads through it, still draws no
-text. Undesigned rather than blocked — a second entry point is a new symbol and
-does not move `DS_ABI_VERSION` — and it is issue #947.
+**The C ABI takes it too, through a second entry point** (story #947).
+`ds_runtime_load_document_with_text` takes an array of `DsFontFace`, each
+pairing one face — its font file's bytes, the family and CSS weight it stands
+for, and its index within a collection — with the committed sheet its glyphs
+sample. Neither a `Typesetter` nor an `Atlas` crosses the boundary; their
+**inputs** do, and `dashscene_engine::TextResources::from_faces` assembles both
+on the far side from one family-major walk. A new symbol rather than a changed
+signature, so `DS_ABI_VERSION` stays 1, and `ds_runtime_load_document` is this
+call with no faces.
+
+The atlas sits inside the descriptor rather than in a parallel array for the
+reason `TextResources` gives: the atlas list is indexed by the font slot of the
+face that shaped a glyph, so a list in any other order samples the wrong face
+rather than failing. One walk that emits both lists cannot disagree with itself.
+
+The CSS weight range is decided here and in no host: a `weight` outside
+`1..=1000` is `DS_FONT_FACE`, naming the face's index and the value. 0 is what
+an uninitialised descriptor carries, so refusing it is what keeps a host from
+declaring a face at a weight it never chose.
+
+**No entry point can bake a sheet.** The MSDF generator is an external pinned
+binary that reads its font from a path, so a host arrives with a committed PNG
+and the metrics blob beside it, or its text is measured and never drawn. That is
+a property of the generator rather than of this ABI's shape.
+
+`dashscene-android` reaches the same entry point through a second JNI one,
+`nativeSurfaceCreatedWithText`, but carries a **subset** of the descriptor: five
+parallel arrays for the family, the weight, the font bytes and the sheet's two
+files, and no array for the face's index within a collection. `host.rs` writes
+`face_index: 0` for every face, so a Kotlin host with a `.ttc` reaches only its
+first face where a C host on the same ABI reaches any of them. A sixth parallel
+array is deliberately not the fix — five already have to agree in length — and
+issue #981 carries the alternatives.
+
+**It has been compiled and not run**: there is no device, which is the
+measurement issue #885 still owes. Nothing in this repository exercises it
+either — the harness still calls the no-text entry point, which is issue #969 —
+so what a device would run today is the path that draws no glyphs.
 
 ## What holds it
 

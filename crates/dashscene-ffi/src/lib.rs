@@ -49,33 +49,43 @@
 //! [`DS_ABI_VERSION`]. So the shape that costs nothing is the shape that also
 //! bounds the load, and doing them together is why neither is here yet.
 //!
-//! # Text is absent from the document load, and this is the last host it is
+//! # What a host supplies for text
 //!
-//! [`ds_runtime_load_document`] builds `TaffySolver::new()` — no typesetter, no
-//! atlas set — so a `.dsb` containing text lays its text nodes out as **empty
-//! leaves** and draws **no glyphs**. The damage is not confined to the missing
-//! letters: a hug-sized text node that measures to nothing makes its siblings
-//! lay out around a box the design did not specify.
+//! [`ds_runtime_load_document_with_text`] takes the fonts and atlases a
+//! document's text needs, because the document carries neither and cannot:
+//! `docs/decisions/font-resolution-order.md` makes an embedded font step 1
+//! and records why nothing implements it, and a rasterised atlas must never
+//! be embedded at all — it is a result, and P1 forbids results in the
+//! document.
 //!
-//! **Story #863 fixed the other two hosts and could not fix this one.**
-//! `dashscene_desktop::Document::load`, `dashscene_desktop::load_bytes` and
-//! `dashscene_web::load_document` now each take a
-//! `dashscene_engine::TextResources` — a `Typesetter` and the atlases its
-//! cascade samples — which the host supplies because the document cannot
-//! (`docs/decisions/font-resolution-order.md`: an embedded font is step 1 and
-//! nothing implements it, and a rasterised atlas must never be embedded because
-//! it is a result). Neither value can cross a C boundary: a `Typesetter` is a
-//! Rust type holding a parsed cascade, and an `Atlas` is a committed sheet with
-//! its own metrics.
+//! A face ([`DsFontFace`]) is its font file's bytes plus the family and the
+//! CSS weight it stands for, the weight in `1..=1000` and refused as
+//! [`DsStatus::FontFace`] outside it. An atlas is a committed MSDF sheet: a PNG and
+//! the postcard metrics blob beside it, which is what `corpus/atlas/*/`
+//! holds. **A face's `atlas_png` and `atlas_metrics` must both be null or
+//! both point at real bytes.** Both null is the measure-only cascade — text
+//! is shaped and measured, and no glyph run is staged. Exactly one null is
+//! [`DsStatus::Atlas`], not a silent fall back to measure-only, and so is a
+//! mixed set where some faces in the call carry a sheet and some do not.
 //!
-//! So this is **undesigned rather than blocked**, and the distinction matters
-//! because the versioning rule below already prices it: a second entry point is
-//! a new symbol and costs nothing, where a parameter on this one bumps
-//! [`DS_ABI_VERSION`]. What has to be settled first is what a Kotlin or Swift
-//! host actually hands over — font bytes and a described cascade, or an opaque
-//! handle built by a companion call — and that is a design question this story
-//! did not answer. It is reachable today: `dashscene_android::host` loads
-//! through this entry point.
+//! **Nothing bakes an atlas at run time**, and that is a constraint a host
+//! plans around rather than a gap that will close on its own.
+//! `dashscene_typeset::atlas::generate` shells out to an external pinned
+//! binary and reads its font from a path
+//! (`docs/decisions/atlas-gen-external-pinned-binary.md`). So a sheet is
+//! built where the build runs, and travels with the host.
+//!
+//! [`ds_runtime_load_document`] is the same call with no faces, and stays
+//! exactly that: a document loaded through it lays its text nodes out as
+//! **empty leaves** and draws **no glyphs**, and the damage is not confined
+//! to the missing letters — a hug-sized text node that measures to nothing
+//! makes its siblings lay out around a box the design did not specify. That
+//! is now a choice a caller makes rather than one made for it, which is what
+//! story #947 changed.
+//!
+//! `dashscene_android::host` calls [`ds_runtime_load_document_with_text`],
+//! but that path has been compiled for its target and never run on device
+//! hardware — nothing here describes Android as working; that is issue #885.
 //!
 //! # The three rules this ABI keeps
 //!
@@ -112,7 +122,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use dashlang::LiveScene;
 use dashpaint::Painter;
 use dashscene_core::Arena;
-use dashscene_engine::TaffySolver;
+use dashscene_engine::{TaffySolver, TextResources, TextResourcesError};
 use dashscene_gpu::{Changes, Drawn, GpuPainter, SurfaceRenderer};
 
 /// The ABI generation. See the module's "Versioning" section for what moves it.
@@ -156,6 +166,17 @@ pub enum DsStatus {
     /// A panic was caught at the boundary. The library is left in an
     /// unspecified state and the runtime should be freed without further calls.
     Panic = 8,
+    /// A face descriptor is unusable: its `family` is not UTF-8, its `family`
+    /// is empty or only whitespace, its `weight` is outside `1..=1000`, or its
+    /// `font_bytes` do not parse as a font face.
+    FontFace = 9,
+    /// An atlas is unusable: its `atlas_metrics` did not decode, its
+    /// `atlas_png` is not a PNG header carrying the extent those metrics
+    /// declare, a glyph in those metrics is described by exactly one of its
+    /// two quads, or the set is mixed — some faces carrying a sheet and some
+    /// not. The atlas list is indexed by font slot, so a short one resolves
+    /// past its end.
+    Atlas = 10,
 }
 
 /// Which platform handle the pointers in [`ds_runtime_attach_surface`] carry.
@@ -285,40 +306,246 @@ pub unsafe extern "C" fn ds_runtime_load_document(
         }
         let runtime = unsafe { &mut *runtime };
         let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
+        load_into(runtime, bytes, None)
+    })
+}
 
-        let (document, payloads) = match dashbuf::open_verified(bytes) {
-            Ok(opened) => opened,
+/// The load both entry points run. `text` is what the caller could supply.
+fn load_into(runtime: &mut DsRuntime, bytes: &[u8], text: Option<TextResources>) -> DsStatus {
+    let (document, payloads) = match dashbuf::open_verified(bytes) {
+        Ok(opened) => opened,
+        Err(error) => {
+            set_last_error(format!("{error:?}"));
+            return DsStatus::Open;
+        }
+    };
+    let report = dashscene_validator::validate_document(&document);
+    if report.has_errors() {
+        set_last_error(format!("{report:?}"));
+        return DsStatus::Gate;
+    }
+    // A fresh arena per load, so a second load does not stack a second
+    // document on the first. The generation restart that implies is exactly
+    // what `document_replaced` is for, and it is reported below.
+    runtime.arena = Arena::new();
+    dashscene_core::load_document(&document, &payloads, &mut runtime.arena);
+    // `TaffySolver::boxed` rather than the same two arms written here: it
+    // exists so that no document loader can disagree with another about what
+    // `None` means, and `dashscene-desktop` and `dashscene-web` both call it.
+    runtime.scene = Some(dashlang::attach_live(
+        &mut runtime.arena,
+        TaffySolver::boxed(text),
+    ));
+    if let Some(surface) = runtime.surface.as_mut() {
+        // The arena is new, so its generations restart and nothing in the
+        // frames themselves says so — the trap `dashscene-web` and
+        // `dashscene-desktop` both name under "rebuilding on resize".
+        surface.document_replaced();
+    }
+    DsStatus::Ok
+}
+
+/// One face a host hands [`ds_runtime_load_document_with_text`], with the
+/// atlas its shaped glyphs sample.
+///
+/// **The atlas is in here rather than in a second array on purpose.** The
+/// atlas list is indexed by the font slot of the face that shaped a glyph,
+/// so a list in any other order samples the wrong face rather than failing.
+/// Pairing them here means the library builds both from one walk and a
+/// caller cannot get the order wrong — including when it lists one family's
+/// faces non-contiguously.
+///
+/// `atlas_png` and `atlas_metrics` must both be null or both point at real
+/// bytes. Both null is the measure-only cascade: text is shaped and
+/// measured, and no glyph run is staged. Exactly one null is
+/// [`DsStatus::Atlas`], not a silent fall back to measure-only — and so is a
+/// mixed set across faces, where some carry a sheet and some do not.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct DsFontFace {
+    /// The family, as NUL-terminated UTF-8. Faces sharing a name become one
+    /// family however they are ordered in the array.
+    pub family: *const c_char,
+    /// The CSS weight this face stands for, in `1..=1000`.
+    ///
+    /// **Validated here and nowhere else.** A value outside that range is
+    /// [`DsStatus::FontFace`], naming the face's index and the value —
+    /// including 0, which is what an uninitialised descriptor carries and
+    /// which no CSS weight can be. Every host on this ABI inherits the one
+    /// rule rather than repairing the value in its own way; the JNI half in
+    /// `dashscene-android` clamped it until story #947's review, which meant
+    /// two answers to one question.
+    pub weight: u16,
+    /// Which face within a collection. Zero for a single-face file.
+    pub face_index: u32,
+    pub font_bytes: *const u8,
+    pub font_len: usize,
+    pub atlas_png: *const u8,
+    pub atlas_png_len: usize,
+    pub atlas_metrics: *const u8,
+    pub atlas_metrics_len: usize,
+}
+
+/// Reads the descriptors into owned bytes, or says which pointer was null.
+///
+/// # Safety
+///
+/// `faces` must point to `count` readable descriptors whose own pointers are
+/// valid for the lengths beside them.
+unsafe fn faces_from_c(
+    faces: *const DsFontFace,
+    count: usize,
+) -> Result<Vec<dashscene_engine::FaceBytes>, DsStatus> {
+    let faces = unsafe { std::slice::from_raw_parts(faces, count) };
+    let mut out = Vec::with_capacity(count);
+    for (index, face) in faces.iter().enumerate() {
+        if face.family.is_null() || face.font_bytes.is_null() {
+            set_last_error(format!(
+                "ds_runtime_load_document_with_text: face {index} has a null family or \
+                 font_bytes"
+            ));
+            return Err(DsStatus::NullArgument);
+        }
+        let family = match unsafe { std::ffi::CStr::from_ptr(face.family) }.to_str() {
+            Ok(family) => family.to_string(),
             Err(error) => {
-                set_last_error(format!("{error:?}"));
-                return DsStatus::Open;
+                set_last_error(format!("face {index}: family is not UTF-8: {error}"));
+                return Err(DsStatus::FontFace);
             }
         };
-        let report = dashscene_validator::validate_document(&document);
-        if report.has_errors() {
-            set_last_error(format!("{report:?}"));
-            return DsStatus::Gate;
+        // The CSS range, checked here so that this is the only place any host
+        // on this ABI gets an answer about it. 0 is the value an
+        // uninitialised descriptor carries, which is why refusing beats
+        // repairing: a face declared at weight 0 resolves against every
+        // request as if the host had meant it.
+        if !(1..=1000).contains(&face.weight) {
+            set_last_error(format!(
+                "face {index}: weight {} is outside the CSS range 1..=1000",
+                face.weight
+            ));
+            return Err(DsStatus::FontFace);
         }
-        // A fresh arena per load, so a second load does not stack a second
-        // document on the first. The generation restart that implies is exactly
-        // what `document_replaced` is for, and it is reported below.
-        runtime.arena = Arena::new();
-        dashscene_core::load_document(&document, &payloads, &mut runtime.arena);
-        // No typesetter and no atlas set, so a document containing text draws
-        // no glyphs and lays its text nodes out as empty leaves. The other two
-        // hosts take a `TextResources` from their embedder; nothing equivalent
-        // can cross a C boundary, and the module documentation above says what
-        // would have to be designed first (story #863).
-        runtime.scene = Some(dashlang::attach_live(
-            &mut runtime.arena,
-            Box::new(TaffySolver::new()),
-        ));
-        if let Some(surface) = runtime.surface.as_mut() {
-            // The arena is new, so its generations restart and nothing in the
-            // frames themselves says so — the trap `dashscene-web` and
-            // `dashscene-desktop` both name under "rebuilding on resize".
-            surface.document_replaced();
+        // Both null is the measure-only cascade. Exactly one null is a face
+        // that half-described its atlas — silently falling back to
+        // measure-only there would draw no glyphs for it while reporting
+        // success, which is the silent gap P4 forbids by name.
+        let atlas = if face.atlas_png.is_null() && face.atlas_metrics.is_null() {
+            None
+        } else if face.atlas_png.is_null() {
+            set_last_error(format!(
+                "face {index}: atlas_metrics is set but atlas_png is null"
+            ));
+            return Err(DsStatus::Atlas);
+        } else if face.atlas_metrics.is_null() {
+            set_last_error(format!(
+                "face {index}: atlas_png is set but atlas_metrics is null"
+            ));
+            return Err(DsStatus::Atlas);
+        } else {
+            Some(dashscene_engine::AtlasBytes {
+                png: unsafe { std::slice::from_raw_parts(face.atlas_png, face.atlas_png_len) }
+                    .to_vec(),
+                metrics: unsafe {
+                    std::slice::from_raw_parts(face.atlas_metrics, face.atlas_metrics_len)
+                }
+                .to_vec(),
+            })
+        };
+        out.push(dashscene_engine::FaceBytes {
+            family,
+            weight: face.weight,
+            font: unsafe { std::slice::from_raw_parts(face.font_bytes, face.font_len) }.to_vec(),
+            face_index: face.face_index,
+            atlas,
+        });
+    }
+    Ok(out)
+}
+
+/// Loads a `.dsb` held in memory, with the fonts and atlases its text needs.
+///
+/// [`ds_runtime_load_document`] is this call with no faces, and stays
+/// exactly that. A null `faces`, or a zero `face_count`, is a document
+/// loaded without text: its text nodes lay out as empty leaves and no glyph
+/// run is staged.
+///
+/// **What a host must supply, and what it cannot get here.** A face is its
+/// font file's bytes plus the family and weight it stands for. An atlas is a
+/// committed MSDF sheet — a PNG and the metrics blob beside it — and
+/// **nothing bakes one at run time**: the generator is an external pinned
+/// binary that reads a font from a path, so these arrive with the host or
+/// its text is measured and never drawn.
+///
+/// Adding this symbol did not move [`DS_ABI_VERSION`].
+///
+/// # Safety
+///
+/// `bytes` must point to `len` readable bytes, `runtime` must be live, and
+/// `faces` must point to `face_count` readable [`DsFontFace`] whose own
+/// pointers are valid for the lengths beside them. Nothing is retained:
+/// every byte is copied before this returns.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ds_runtime_load_document_with_text(
+    runtime: *mut DsRuntime,
+    bytes: *const u8,
+    len: usize,
+    faces: *const DsFontFace,
+    face_count: usize,
+) -> DsStatus {
+    guard(|| {
+        if runtime.is_null() || bytes.is_null() {
+            set_last_error("ds_runtime_load_document_with_text: runtime or bytes is null");
+            return DsStatus::NullArgument;
         }
-        DsStatus::Ok
+        if faces.is_null() && face_count != 0 {
+            set_last_error(
+                "ds_runtime_load_document_with_text: faces is null but face_count is not 0",
+            );
+            return DsStatus::NullArgument;
+        }
+        let runtime = unsafe { &mut *runtime };
+        let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
+
+        // The faces are read and assembled BEFORE the document is opened, so
+        // a bad cascade is reported as itself rather than as whatever the
+        // document turned out to be. `tests/abi.c` depends on that ordering.
+        let text = if face_count == 0 {
+            None
+        } else {
+            let described = match unsafe { faces_from_c(faces, face_count) } {
+                Ok(described) => described,
+                Err(status) => return status,
+            };
+            match TextResources::from_faces(described) {
+                Ok(text) => Some(text),
+                Err(error) => {
+                    // `{error}` rather than `{error:?}`: this string reaches
+                    // a host through `ds_last_error_message`, where every
+                    // other message is prose, and nested `Debug` would put
+                    // escaped quotes in front of it.
+                    set_last_error(format!("{error}"));
+                    // Every variant that exists is named rather than swept
+                    // into the wildcard. `TextResourcesError` is
+                    // `#[non_exhaustive]` and lives in another crate, so an
+                    // arm for the unknown is still required — but a future
+                    // atlas-shaped variant landing there would report as a
+                    // font-face failure and send a host branching on the
+                    // discriminant to the wrong half of its own descriptor.
+                    // Naming them is what makes the compiler's requirement
+                    // the only thing the wildcard carries.
+                    return match error {
+                        TextResourcesError::Atlas { .. } | TextResourcesError::MixedAtlases => {
+                            DsStatus::Atlas
+                        }
+                        TextResourcesError::NoFaces
+                        | TextResourcesError::EmptyFamily { .. }
+                        | TextResourcesError::Font { .. } => DsStatus::FontFace,
+                        _ => DsStatus::FontFace,
+                    };
+                }
+            }
+        };
+        load_into(runtime, bytes, text)
     })
 }
 
@@ -895,5 +1122,472 @@ mod tests {
         };
         assert_eq!(status, DsStatus::UnsupportedHandle);
         unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// **A loaded document draws its text**, which is the story's whole
+    /// deliverable, asserted on the **committed** tables rather than on the
+    /// arena calls — the painter reads `committed()`, and a test that asserted
+    /// the document would pass while the feature rendered nothing.
+    ///
+    /// The `None` half beside it is the pre-#947 picture, and is what says the
+    /// fonts are the cause rather than the document.
+    /// `docs/decisions/font-resolution-order.md` records this same fixture
+    /// measuring four rects, zero glyph runs, and its text node at 0 x 0.
+    #[test]
+    fn a_document_loaded_with_fonts_stages_glyph_runs_and_measures_its_text() {
+        let document = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../goldens/dsb/v07-text-hug-in-fill.dsb"
+        ))
+        .expect("the committed text fixture is present");
+        let font = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/fonts/inter/Inter-Regular.otf"
+        ))
+        .expect("the corpus font is present");
+        let png = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/atlas/inter-ascii/atlas.png"
+        ))
+        .expect("the committed sheet is present");
+        let metrics = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/atlas/inter-ascii/atlas.metrics"
+        ))
+        .expect("the committed metrics are present");
+
+        // Held in a local: the pointer must outlive the call.
+        let family = std::ffi::CString::new("Inter").expect("no interior nul");
+        let face = DsFontFace {
+            family: family.as_ptr(),
+            weight: 400,
+            face_index: 0,
+            font_bytes: font.as_ptr(),
+            font_len: font.len(),
+            atlas_png: png.as_ptr(),
+            atlas_png_len: png.len(),
+            atlas_metrics: metrics.as_ptr(),
+            atlas_metrics_len: metrics.len(),
+        };
+
+        /// Glyph runs, and the text node's resolved size.
+        ///
+        /// Takes a reference rather than the handle, so the one dereference
+        /// sits at the call site beside the check that earns it. Passing the
+        /// raw pointer in and dereferencing it here put the deref out of
+        /// reach of the null check, which is what CodeQL's
+        /// `rust/access-invalid-pointer` reported against this test.
+        fn measured(runtime: &DsRuntime) -> (usize, f32, f32) {
+            let scene = runtime.arena.committed();
+            let row = (0..scene.rects().len() as u32)
+                .find(|&row| runtime.arena.text(scene.node_of(row)).is_some())
+                .expect("the fixture carries a text node");
+            let rect = scene.rects()[row as usize];
+            (scene.glyphs().runs().len(), rect.w, rect.h)
+        }
+
+        let load = |faces: *const DsFontFace, count: usize| {
+            let mut runtime = std::ptr::null_mut();
+            assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+            assert!(
+                !runtime.is_null(),
+                "ds_runtime_new answered Ok, so it wrote a live handle"
+            );
+            assert_eq!(
+                unsafe {
+                    ds_runtime_load_document_with_text(
+                        runtime,
+                        document.as_ptr(),
+                        document.len(),
+                        faces,
+                        count,
+                    )
+                },
+                DsStatus::Ok
+            );
+            // SAFETY: `ds_runtime_new` answered Ok and wrote a non-null handle,
+            // asserted above, and nothing has freed it yet.
+            let out = measured(unsafe { &*runtime });
+            unsafe { ds_runtime_free(runtime) };
+            out
+        };
+
+        let (runs, width, height) = load(&face, 1);
+        assert!(
+            runs > 0,
+            "the host supplied a face and its sheet, so the document's text must reach the \
+             painter as glyph runs"
+        );
+        assert!(
+            width > 1.0 && height > 1.0,
+            "and the hug-sized text node must measure to its shaped size rather than \
+             collapse: {width} x {height}"
+        );
+        assert_eq!(
+            load(std::ptr::null(), 0),
+            (0, 0.0, 0.0),
+            "and without them it is the pre-#947 picture — no glyphs, and a text node that \
+             makes its siblings lay out around a box the design did not specify"
+        );
+    }
+
+    /// A null face array with a non-zero count is a status, not a dereference.
+    #[test]
+    fn a_null_face_array_with_a_count_is_a_status() {
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        let junk = [0_u8; 32];
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_with_text(
+                    runtime,
+                    junk.as_ptr(),
+                    junk.len(),
+                    std::ptr::null(),
+                    3,
+                )
+            },
+            DsStatus::NullArgument
+        );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// Bytes that are not a face are `FontFace` — not a panic, and not `Open`.
+    /// The faces are validated before the document is opened, which is what
+    /// makes junk document bytes safe to use here.
+    #[test]
+    fn junk_font_bytes_are_a_font_face_status() {
+        let family = std::ffi::CString::new("Junk").expect("no interior nul");
+        let not_a_font = [0_u8; 64];
+        let face = DsFontFace {
+            family: family.as_ptr(),
+            weight: 400,
+            face_index: 0,
+            font_bytes: not_a_font.as_ptr(),
+            font_len: not_a_font.len(),
+            atlas_png: std::ptr::null(),
+            atlas_png_len: 0,
+            atlas_metrics: std::ptr::null(),
+            atlas_metrics_len: 0,
+        };
+        let not_a_document = [0_u8; 32];
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_with_text(
+                    runtime,
+                    not_a_document.as_ptr(),
+                    not_a_document.len(),
+                    &face,
+                    1,
+                )
+            },
+            DsStatus::FontFace
+        );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// A weight outside the CSS range is `FontFace`, refused rather than
+    /// repaired.
+    ///
+    /// 0 is the value an uninitialised descriptor carries, and a face
+    /// declared at it resolves against every request as if the host had meant
+    /// it. **This is the only place the range is decided**: the JNI half in
+    /// `dashscene-android` clamped it as well until story #947's review,
+    /// which gave one question two answers.
+    ///
+    /// The font bytes are real, so nothing but the weight can be what is
+    /// refused.
+    #[test]
+    fn a_weight_outside_the_css_range_is_a_font_face_status() {
+        let font = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/fonts/inter/Inter-Regular.otf"
+        ))
+        .expect("the corpus font is present");
+        let family = std::ffi::CString::new("Inter").expect("no interior nul");
+        let not_a_document = [0_u8; 32];
+
+        for weight in [0, 1001, u16::MAX] {
+            let face = DsFontFace {
+                family: family.as_ptr(),
+                weight,
+                face_index: 0,
+                font_bytes: font.as_ptr(),
+                font_len: font.len(),
+                atlas_png: std::ptr::null(),
+                atlas_png_len: 0,
+                atlas_metrics: std::ptr::null(),
+                atlas_metrics_len: 0,
+            };
+            let mut runtime = std::ptr::null_mut();
+            assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+            assert_eq!(
+                unsafe {
+                    ds_runtime_load_document_with_text(
+                        runtime,
+                        not_a_document.as_ptr(),
+                        not_a_document.len(),
+                        &face,
+                        1,
+                    )
+                },
+                DsStatus::FontFace,
+                "weight {weight} is outside 1..=1000 and the ABI is what says so"
+            );
+            unsafe { ds_runtime_free(runtime) };
+        }
+
+        // The ends of the range are accepted, so the check is a range and not
+        // a rejection of everything unusual. The document is still junk, so
+        // the status that proves the faces passed is `Open`.
+        for weight in [1, 400, 1000] {
+            let face = DsFontFace {
+                family: family.as_ptr(),
+                weight,
+                face_index: 0,
+                font_bytes: font.as_ptr(),
+                font_len: font.len(),
+                atlas_png: std::ptr::null(),
+                atlas_png_len: 0,
+                atlas_metrics: std::ptr::null(),
+                atlas_metrics_len: 0,
+            };
+            let mut runtime = std::ptr::null_mut();
+            assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+            assert_eq!(
+                unsafe {
+                    ds_runtime_load_document_with_text(
+                        runtime,
+                        not_a_document.as_ptr(),
+                        not_a_document.len(),
+                        &face,
+                        1,
+                    )
+                },
+                DsStatus::Open,
+                "weight {weight} is inside 1..=1000, so the faces assemble and the junk \
+                 document is what fails"
+            );
+            unsafe { ds_runtime_free(runtime) };
+        }
+    }
+
+    /// The message a host reads for a cascade failure is **prose**.
+    ///
+    /// `TextResourcesError` had no `Display` until story #947's review, so
+    /// this string was nested `Debug` — `Font { index: 1, message:
+    /// "FontParse(\"...\")" }`, escaped quotes and all — where every other
+    /// message on this path is a sentence. Asserted on the punctuation that
+    /// only `Debug` produces, so a caller reverting to `{:?}` fails here.
+    #[test]
+    fn a_cascade_failure_reports_a_sentence_rather_than_debug() {
+        let family = std::ffi::CString::new("Junk").expect("no interior nul");
+        let not_a_font = [0_u8; 64];
+        let face = DsFontFace {
+            family: family.as_ptr(),
+            weight: 400,
+            face_index: 0,
+            font_bytes: not_a_font.as_ptr(),
+            font_len: not_a_font.len(),
+            atlas_png: std::ptr::null(),
+            atlas_png_len: 0,
+            atlas_metrics: std::ptr::null(),
+            atlas_metrics_len: 0,
+        };
+        let not_a_document = [0_u8; 32];
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_with_text(
+                    runtime,
+                    not_a_document.as_ptr(),
+                    not_a_document.len(),
+                    &face,
+                    1,
+                )
+            },
+            DsStatus::FontFace
+        );
+        unsafe { ds_runtime_free(runtime) };
+
+        let message = LAST_ERROR.with(|slot| slot.borrow().clone());
+        assert!(
+            message.starts_with("face 0: "),
+            "the message names the descriptor it came from: {message}"
+        );
+        assert!(
+            !message.contains('{') && !message.contains('\\'),
+            "a Rust struct literal and an escaped quote are what `{{:?}}` produces, and \
+             neither belongs in a host-facing message: {message}"
+        );
+    }
+
+    /// A mixed set — some faces carrying a sheet and some not — is `Atlas`.
+    /// The atlas list is indexed by font slot, so a short list would resolve
+    /// past its end; refusing the set is what keeps that indexing sound.
+    #[test]
+    fn a_mixed_set_of_faces_is_an_atlas_status() {
+        let font = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/fonts/inter/Inter-Regular.otf"
+        ))
+        .expect("the corpus font is present");
+        let png = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/atlas/inter-ascii/atlas.png"
+        ))
+        .expect("the committed sheet is present");
+        let metrics = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/atlas/inter-ascii/atlas.metrics"
+        ))
+        .expect("the committed metrics are present");
+
+        let family = std::ffi::CString::new("Inter").expect("no interior nul");
+        let faces = [
+            DsFontFace {
+                family: family.as_ptr(),
+                weight: 400,
+                face_index: 0,
+                font_bytes: font.as_ptr(),
+                font_len: font.len(),
+                atlas_png: png.as_ptr(),
+                atlas_png_len: png.len(),
+                atlas_metrics: metrics.as_ptr(),
+                atlas_metrics_len: metrics.len(),
+            },
+            DsFontFace {
+                family: family.as_ptr(),
+                weight: 700,
+                face_index: 0,
+                font_bytes: font.as_ptr(),
+                font_len: font.len(),
+                atlas_png: std::ptr::null(),
+                atlas_png_len: 0,
+                atlas_metrics: std::ptr::null(),
+                atlas_metrics_len: 0,
+            },
+        ];
+        let not_a_document = [0_u8; 32];
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_with_text(
+                    runtime,
+                    not_a_document.as_ptr(),
+                    not_a_document.len(),
+                    faces.as_ptr(),
+                    faces.len(),
+                )
+            },
+            DsStatus::Atlas
+        );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// Atlas metrics that do not decode are `Atlas`, not a panic and not `Ok`.
+    #[test]
+    fn atlas_metrics_that_do_not_decode_are_an_atlas_status() {
+        let font = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/fonts/inter/Inter-Regular.otf"
+        ))
+        .expect("the corpus font is present");
+        let png = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/atlas/inter-ascii/atlas.png"
+        ))
+        .expect("the committed sheet is present");
+        let not_metrics = [0xff_u8; 32];
+
+        let family = std::ffi::CString::new("Inter").expect("no interior nul");
+        let face = DsFontFace {
+            family: family.as_ptr(),
+            weight: 400,
+            face_index: 0,
+            font_bytes: font.as_ptr(),
+            font_len: font.len(),
+            atlas_png: png.as_ptr(),
+            atlas_png_len: png.len(),
+            atlas_metrics: not_metrics.as_ptr(),
+            atlas_metrics_len: not_metrics.len(),
+        };
+        let not_a_document = [0_u8; 32];
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_with_text(
+                    runtime,
+                    not_a_document.as_ptr(),
+                    not_a_document.len(),
+                    &face,
+                    1,
+                )
+            },
+            DsStatus::Atlas
+        );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// Exactly one atlas pointer set is `Atlas`, not a silent fall back to
+    /// measure-only. Only both null is the legitimate measure-only cascade.
+    #[test]
+    fn a_face_with_only_one_atlas_pointer_set_is_an_atlas_status() {
+        let font = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/fonts/inter/Inter-Regular.otf"
+        ))
+        .expect("the corpus font is present");
+        let png = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/atlas/inter-ascii/atlas.png"
+        ))
+        .expect("the committed sheet is present");
+
+        let family = std::ffi::CString::new("Inter").expect("no interior nul");
+        let face = DsFontFace {
+            family: family.as_ptr(),
+            weight: 400,
+            face_index: 0,
+            font_bytes: font.as_ptr(),
+            font_len: font.len(),
+            atlas_png: png.as_ptr(),
+            atlas_png_len: png.len(),
+            atlas_metrics: std::ptr::null(),
+            atlas_metrics_len: 0,
+        };
+        let not_a_document = [0_u8; 32];
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_with_text(
+                    runtime,
+                    not_a_document.as_ptr(),
+                    not_a_document.len(),
+                    &face,
+                    1,
+                )
+            },
+            DsStatus::Atlas
+        );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// The shipped symbols are unchanged, which is what "additive" has to mean.
+    #[test]
+    fn the_abi_version_did_not_move() {
+        assert_eq!(DS_ABI_VERSION, 1);
+        assert_eq!(DsStatus::Panic as i32, 8);
+        // The two this story appended. A discriminant is the contract, and
+        // these are the ones a later variant would renumber by being
+        // inserted rather than appended.
+        assert_eq!(DsStatus::FontFace as i32, 9);
+        assert_eq!(DsStatus::Atlas as i32, 10);
     }
 }

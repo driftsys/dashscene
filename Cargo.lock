@@ -640,6 +640,7 @@ name = "dashscene-engine"
 version = "0.0.0"
 dependencies = [
  "dashcue",
+ "dashpaint",
  "dashscene-core",
  "dashscene-typeset",
  "rustc-hash 2.1.3",

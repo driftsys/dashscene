@@ -22,10 +22,10 @@
 use std::ffi::c_void;
 
 use dashscene_ffi::{DsRuntime, DsStatus, DsSurfaceKind};
-use jni::EnvUnowned;
 use jni::errors::LogErrorAndDefault;
-use jni::objects::{JByteArray, JClass, JObject};
+use jni::objects::{JByteArray, JClass, JIntArray, JObject, JObjectArray, JString};
 use jni::sys::{jboolean, jint, jlong};
+use jni::{Env, EnvUnowned};
 
 use crate::frames::{AttachError, Frames, Step};
 use crate::log;
@@ -48,6 +48,20 @@ fn last_error() -> String {
     String::from_utf8_lossy(&buffer).into_owned()
 }
 
+/// One face as this host holds it, so `attach` can rebuild the borrowed
+/// `DsFontFace` array on every surface cycle.
+///
+/// The family is a `CString` rather than a `String` because the ABI takes a
+/// NUL-terminated pointer, and building one per attach would leave the
+/// pointer dangling the moment the temporary dropped.
+struct OwnedFace {
+    family: std::ffi::CString,
+    weight: u16,
+    font: Vec<u8>,
+    atlas_png: Vec<u8>,
+    atlas_metrics: Vec<u8>,
+}
+
 /// A compiled `.dsb`, drawn through the C ABI.
 struct DocumentFrames {
     runtime: *mut DsRuntime,
@@ -62,6 +76,11 @@ struct DocumentFrames {
     /// one remedy `Step::Rebuild` exists to provide into a guaranteed way to
     /// kill the loop.
     document: Vec<u8>,
+    /// The cascade and its sheets, **kept for the life of this object**, for
+    /// the same reason `document` is: a rebuild after a recoverable surface
+    /// loss detaches — which frees the runtime — and attaches again, and an
+    /// attach needs them. Empty is a document loaded without text.
+    faces: Vec<OwnedFace>,
 }
 
 impl Frames for DocumentFrames {
@@ -82,12 +101,46 @@ impl Frames for DocumentFrames {
         // attach path the wgpu device inside it, leaked once per surface cycle.
         self.runtime = runtime;
 
-        // SAFETY: `runtime` is live and `document` is a readable slice.
+        // An empty sheet is a null pointer, so the Java surface can say what
+        // the C one can. `Vec::as_ptr` on an empty vector returns a dangling
+        // but NON-NULL pointer, so a Kotlin host passing `ByteArray(0)` — the
+        // natural way to say "this face has no sheet" — would otherwise build
+        // a descriptor the ABI reads as "atlas present, length 0" and fails to
+        // decode. Both empty is now the measure-only cascade the C header
+        // documents, and one empty against one filled is still `DS_ATLAS`,
+        // which is the half-described face the ABI refuses on purpose.
+        let sheet = |bytes: &[u8]| {
+            if bytes.is_empty() {
+                std::ptr::null()
+            } else {
+                bytes.as_ptr()
+            }
+        };
+        let descriptors: Vec<dashscene_ffi::DsFontFace> = self
+            .faces
+            .iter()
+            .map(|face| dashscene_ffi::DsFontFace {
+                family: face.family.as_ptr(),
+                weight: face.weight,
+                face_index: 0,
+                font_bytes: face.font.as_ptr(),
+                font_len: face.font.len(),
+                atlas_png: sheet(&face.atlas_png),
+                atlas_png_len: face.atlas_png.len(),
+                atlas_metrics: sheet(&face.atlas_metrics),
+                atlas_metrics_len: face.atlas_metrics.len(),
+            })
+            .collect();
+        // SAFETY: `runtime` is live, `document` is a readable slice, and every
+        // pointer in `descriptors` borrows a field of `self.faces`, which
+        // outlives this call.
         let loaded = unsafe {
-            dashscene_ffi::ds_runtime_load_document(
+            dashscene_ffi::ds_runtime_load_document_with_text(
                 runtime,
                 self.document.as_ptr(),
                 self.document.len(),
+                descriptors.as_ptr(),
+                descriptors.len(),
             )
         };
         if loaded != DsStatus::Ok {
@@ -179,6 +232,70 @@ impl Frames for DocumentFrames {
     }
 }
 
+/// Acquires the window from `surface`, builds a [`DocumentFrames`] from
+/// `document` and `faces`, and starts its frame loop.
+///
+/// Shared by `nativeSurfaceCreated` and `nativeSurfaceCreatedWithText`, which
+/// differ only in what they put in `faces`. The three `unsafe` blocks here —
+/// acquiring the window, starting the frame loop, and releasing the window on
+/// a failed start — used to be duplicated between the two entry points; this
+/// crate's own history has an example of exactly that leak shape (see the
+/// comment on `self.runtime =
+/// runtime` in [`DocumentFrames::attach`]), and issue #945 is the general
+/// case: a host rule written twice can drift once. This module compiles for
+/// one target that no test in this repository can reach, which is what makes
+/// that drift worth spending a helper on rather than tolerating it.
+///
+/// Returns an opaque handle, or 0 if the window or the thread could not be
+/// obtained. **A non-zero handle does not mean the runtime started** — see
+/// [`crate::loop_::start`] for why that is deliberate — and `nativeIsRunning`
+/// is what answers it.
+fn start_document_host(
+    env: &mut Env<'_>,
+    surface: &JObject<'_>,
+    document: Vec<u8>,
+    faces: Vec<OwnedFace>,
+    width: jint,
+    height: jint,
+) -> jni::errors::Result<jlong> {
+    // The one call that must happen on this thread: it needs the `JNIEnv`
+    // and the live `jobject`, and both are the UI thread's.
+    //
+    // SAFETY: `env` and `surface` are the JVM's own, valid for this call.
+    let window = unsafe {
+        ndk_sys::ANativeWindow_fromSurface(env.get_raw().cast(), surface.as_raw().cast())
+    };
+    if window.is_null() {
+        log("ANativeWindow_fromSurface returned null");
+        return Ok(0);
+    }
+    // A factory: the value is built on the render thread. Only `document` and
+    // `faces` cross, and both are `Send`.
+    let frames = move || -> Box<dyn Frames> {
+        Box::new(DocumentFrames {
+            runtime: std::ptr::null_mut(),
+            document,
+            faces,
+        })
+    };
+    // SAFETY: `window` is the reference `fromSurface` returned, which this
+    // crate owns until the handshake completes.
+    let host = unsafe {
+        loop_::start(
+            window.cast(),
+            frames,
+            width.max(0) as u32,
+            height.max(0) as u32,
+        )
+    };
+    if host.is_null() {
+        // SAFETY: the one reference `fromSurface` gave this crate.
+        unsafe { ndk_sys::ANativeWindow_release(window) };
+        return Ok(0);
+    }
+    Ok(host as jlong)
+}
+
 /// Creates a host that draws a compiled `.dsb`, and starts its frame loop.
 ///
 /// `surface` is the `android.view.Surface` the view handed over; `document` is
@@ -204,41 +321,134 @@ pub extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_nativeSurface
     unowned
         .with_env(|env| -> jni::errors::Result<jlong> {
             let bytes = env.convert_byte_array(&document)?;
-            // The one call that must happen on this thread: it needs the
-            // `JNIEnv` and the live `jobject`, and both are the UI thread's.
-            //
-            // SAFETY: `env` and `surface` are the JVM's own, valid for this call.
-            let window = unsafe {
-                ndk_sys::ANativeWindow_fromSurface(env.get_raw().cast(), surface.as_raw().cast())
+            start_document_host(env, &surface, bytes, Vec::new(), width, height)
+        })
+        .resolve::<LogErrorAndDefault>()
+}
+
+/// Creates a host that draws a compiled `.dsb` with the fonts its text
+/// needs, and starts its frame loop.
+///
+/// The five arrays are parallel and must be the same length: one entry per
+/// face — a family name, a CSS weight, a font file's bytes, and the
+/// committed MSDF sheet the face's glyphs sample. A length disagreement is a
+/// 0 handle and a log line rather than a cascade assembled from entries that
+/// do not belong together.
+///
+/// **This is a subset of what `DsFontFace` carries.** There is no array for
+/// the face's index within a collection: every face is declared at index 0,
+/// so a `.ttc` reaches only its first face through this entry point. Issue
+/// #981 carries the rest.
+///
+/// The weight is checked by the ABI, in `1..=1000`, and by nothing here —
+/// what this rejects is only a value a `u16` cannot carry.
+///
+/// **Nothing bakes an atlas at run time**, so a host reads these from its
+/// own assets. `nativeSurfaceCreated` is this call with no faces.
+///
+/// # Safety
+///
+/// Called by the JVM with a valid environment and a live `Surface`.
+///
+/// One parameter per JNI argument is the only shape a native method binds
+/// to, so this stays over clippy's default threshold.
+#[allow(clippy::too_many_arguments)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_nativeSurfaceCreatedWithText<
+    'local,
+>(
+    mut unowned: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    surface: JObject<'local>,
+    document: JByteArray<'local>,
+    families: JObjectArray<'local, JString<'local>>,
+    weights: JIntArray<'local>,
+    fonts: JObjectArray<'local, JByteArray<'local>>,
+    atlas_pngs: JObjectArray<'local, JByteArray<'local>>,
+    atlas_metrics: JObjectArray<'local, JByteArray<'local>>,
+    width: jint,
+    height: jint,
+) -> jlong {
+    unowned
+        .with_env(|env| -> jni::errors::Result<jlong> {
+            let bytes = env.convert_byte_array(&document)?;
+
+            // Every array must agree with `families`. `weights` is checked
+            // apart from the other three because it is a primitive array and
+            // they are object arrays, so the two cannot share one list.
+            let count = families.len(env)?;
+            let mismatched = if weights.len(env)? != count {
+                Some("weights")
+            } else if fonts.len(env)? != count {
+                Some("fonts")
+            } else if atlas_pngs.len(env)? != count {
+                Some("atlasPngs")
+            } else if atlas_metrics.len(env)? != count {
+                Some("atlasMetrics")
+            } else {
+                None
             };
-            if window.is_null() {
-                log("ANativeWindow_fromSurface returned null");
+            if let Some(what) = mismatched {
+                log(&format!(
+                    "nativeSurfaceCreatedWithText: {what} has a different length from families"
+                ));
                 return Ok(0);
             }
-            // A factory: the value is built on the render thread. Only the
-            // bytes cross, and a `Vec<u8>` is `Send`.
-            let frames = move || -> Box<dyn Frames> {
-                Box::new(DocumentFrames {
-                    runtime: std::ptr::null_mut(),
-                    document: bytes,
-                })
-            };
-            // SAFETY: `window` is the reference `fromSurface` returned, which
-            // this crate owns until the handshake completes.
-            let host = unsafe {
-                loop_::start(
-                    window.cast(),
-                    frames,
-                    width.max(0) as u32,
-                    height.max(0) as u32,
-                )
-            };
-            if host.is_null() {
-                // SAFETY: the one reference `fromSurface` gave this crate.
-                unsafe { ndk_sys::ANativeWindow_release(window) };
-                return Ok(0);
+
+            let mut faces = Vec::with_capacity(count);
+            for index in 0..count {
+                let mut weight = [0_i32; 1];
+                weights.get_region(env, index as jint, &mut weight)?;
+                // **The CSS range is not checked here.** `DsFontFace::weight`
+                // is where a weight is judged, and one rule in one place is
+                // why: this clamped as well until story #947's review, so a
+                // Kotlin host and a C host got different answers to the same
+                // question. What is refused here is only what a `u16` cannot
+                // carry to the ABI at all — a truncating cast would turn
+                // 65 936 into 400 and the ABI would accept it.
+                let Ok(weight) = u16::try_from(weight[0]) else {
+                    log(&format!(
+                        "nativeSurfaceCreatedWithText: face {index} declares weight {}, \
+                         which does not fit the descriptor; the accepted range is 1..=1000",
+                        weight[0]
+                    ));
+                    return Ok(0);
+                };
+
+                // A frame per face, because each `get_element` below returns a
+                // local reference and JNI guarantees only 16 slots without
+                // asking for more. Four per face means a five-face cascade
+                // exhausts the frame the JVM gave this call. Everything that
+                // leaves the frame is owned, so nothing here outlives it.
+                let (name, font, atlas_png, atlas_metrics_bytes) = env.with_local_frame(
+                    8,
+                    |env| -> jni::errors::Result<(String, Vec<u8>, Vec<u8>, Vec<u8>)> {
+                        let name = families.get_element(env, index)?.try_to_string(env)?;
+                        let font: JByteArray = fonts.get_element(env, index)?;
+                        let font = env.convert_byte_array(&font)?;
+                        let atlas_png: JByteArray = atlas_pngs.get_element(env, index)?;
+                        let atlas_png = env.convert_byte_array(&atlas_png)?;
+                        let atlas_metrics_bytes: JByteArray =
+                            atlas_metrics.get_element(env, index)?;
+                        let atlas_metrics_bytes = env.convert_byte_array(&atlas_metrics_bytes)?;
+                        Ok((name, font, atlas_png, atlas_metrics_bytes))
+                    },
+                )?;
+
+                let Ok(family) = std::ffi::CString::new(name) else {
+                    log("nativeSurfaceCreatedWithText: a family name contains a NUL");
+                    return Ok(0);
+                };
+                faces.push(OwnedFace {
+                    family,
+                    weight,
+                    font,
+                    atlas_png,
+                    atlas_metrics: atlas_metrics_bytes,
+                });
             }
-            Ok(host as jlong)
+
+            start_document_host(env, &surface, bytes, faces, width, height)
         })
         .resolve::<LogErrorAndDefault>()
 }
