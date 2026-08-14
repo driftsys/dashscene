@@ -195,7 +195,12 @@ struct Shape {
     uv: vec4f,
     half_uv: vec2f,
     px_range: f32,
-    _pad: f32,
+    // Non-zero when the four members above describe a field this frame made
+    // resident. `render::GpuShape::resolved` is where that is derived and what
+    // it is for; the short version is that a zeroed row is not a field, and
+    // reading one as though it were produces exactly half coverage rather than
+    // none.
+    resolved: u32,
 }
 
 @group(0) @binding(0) var<storage, read> instances: array<Instance>;
@@ -277,11 +282,18 @@ struct VertexOut {
     //
     //     text          params0 = the run's colour
     //                   params1 = the glyph's sub-rect in the atlas texture
+    //                   params2 = (half_u, half_v, px_range, 0)
     //     masked        params0 = the field's device quad, [x, y, w, h]
     //                   params1 = the field's sub-rect in the atlas texture
+    //                   params2 = (half_u, half_v, px_range, resolved)
     //     everything    zero, and nothing reads them
     //
-    // `params2` is `(half_u, half_v, px_range, 0)` for both.
+    // **`params2.w` is not spare on the masked path** (issue #972). It carries
+    // `Shape::resolved`, and the fragment stage's masked arm draws nothing when
+    // it is zero — a field the frame could not make resident, where sampling
+    // the zeroed row would report half coverage rather than none. A fourth
+    // component taken here for something else would silently paint every
+    // refused mask.
     //
     // Flat, and stated: these are per-instance constants, and a flat varying is
     // exact where an interpolated one is only exact because every vertex agreed.
@@ -347,10 +359,12 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
     // field's padded quad — `plane` is relative to the node's origin, at unit
     // scale, which is what `docs/decisions/baked-vector-msdf-field.md` fixes.
     //
-    // A masked instance whose field could not be resolved has a zeroed row, so
-    // its quad has no area and it draws nothing. That is the reference
-    // painter's own answer to a degenerate field, reached here without a
-    // second branch.
+    // A masked instance whose field could not be resolved has a zeroed row, and
+    // `field.resolved` is what says so — carried into `params2.w` for the
+    // fragment stage, which is where it draws nothing (issue #972). **The
+    // zeroed quad does not do that on its own**: it has no area, but the margin
+    // below then grows it into a square two antialiasing widths across, and the
+    // fragment stage was shading that square at exactly half coverage.
     var quad = inst.bounds;
     if inst.shape != 0u {
         let field = shapes[inst.shape - 1u];
@@ -359,7 +373,7 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
         quad = vec4f(lo, hi - lo);
         out.params0 = quad;
         out.params1 = field.uv;
-        out.params2 = vec4f(field.half_uv, field.px_range, 0.0);
+        out.params2 = vec4f(field.half_uv, field.px_range, f32(field.resolved));
     } else if inst.kind == KIND_TEXT {
         let run = glyph_runs[inst.row];
         out.params0 = run.color;
@@ -724,10 +738,19 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
         //
         // Checked before the kind, because a mask applies to whatever it is
         // masking. Its own colour still comes from the kind below.
-        shape = msdf_coverage(
-            msdf_sample(in.params1, in.params0, in.params2.xy, in.local),
-            in.params2.z,
-        );
+        //
+        // A field this frame did not make resident leaves the coverage at zero,
+        // so the `discard` below takes this fragment (issue #972). Sampling it
+        // would not: the row is zeroed, so `px_range` is zero, and
+        // `msdf_coverage` is then `0.5` whatever the sample was — the node's
+        // own ink at half alpha, over the margin, in a picture that is meant to
+        // be empty.
+        if in.params2.w != 0.0 {
+            shape = msdf_coverage(
+                msdf_sample(in.params1, in.params0, in.params2.xy, in.local),
+                in.params2.z,
+            );
+        }
     } else if kind == KIND_TEXT {
         // The glyph's quad is its own bounds — a glyph has no rounded box, and
         // `corners` carried its atlas rectangle instead.

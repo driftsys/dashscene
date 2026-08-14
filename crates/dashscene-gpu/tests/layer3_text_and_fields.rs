@@ -35,7 +35,7 @@ use dashpaint::{
     GlyphRange, GlyphRun, GlyphRunTable, ImageAsset, ImageFill, ImageFormat, ImageTable, Mat23,
     PaintEntry, PaintTable, Painter, RectEntry, ScaleMode, Vec2, VectorField,
 };
-use dashscene_gpu::{GpuPainter, Renderer};
+use dashscene_gpu::{GpuPainter, Renderer, ResidencyError};
 
 const W: u32 = 64;
 const H: u32 = 48;
@@ -758,4 +758,277 @@ fn a_masked_gradient_takes_its_frame_from_the_node_box_and_its_coverage_from_the
         "x 40 is inside the node's box and outside the field's quad"
     );
     assert_eq!(texel(&pixels, 2, 24)[3], 0, "x 2 is outside both");
+}
+
+/// The corpus payload this painter links no decoder for — the same JPEG
+/// `layer3_image_fills` refuses on the image-fill path.
+///
+/// The bytes are a real JPEG whose header parses, so the extent is stated and
+/// the no-extent arm cannot answer first. The point is that the *decode* never
+/// happens, so a valid picture would prove less rather than more.
+const JPEG_FIXTURE: &[u8] = include_bytes!(
+    "../../../corpus/figma-fixtures/jpeg-fill.images/4045fd0419fbcbbd03505d2d258c6dbbeb2da1fe.jpg"
+);
+
+/// **A refused glyph atlas draws nothing and names itself** (issue #973).
+///
+/// The refusal path had one end-to-end test and it was over an image fill, which
+/// reaches neither of the other two consumers' shader code. A glyph atlas is the
+/// one the widening was written for: one sheet for a whole script at a whole
+/// weight, so a CJK coverage set is exactly the payload that outgrows a device,
+/// where an oversized photograph has to be authored deliberately.
+///
+/// What the whole-canvas sweep pins is that the run does not paint — and it is
+/// an outcome rather than a mechanism, because **three** unrelated things hold
+/// it up and none of them is about refusal (issue #993):
+///
+/// 1. The resolved row stays at `GpuGlyphRun::default()`, so `px_range` is zero
+///    and `msdf_coverage(sample, 0)` is exactly `0.5` for any sample. The
+///    coverage clears the `cover <= 0.0` discard, so the fragment **is** shaded.
+/// 2. The same default leaves `run.color` at zero alpha, and the `KIND_TEXT`
+///    arm has no `discard` of its own — unlike the image-fill arm beside it —
+///    so what the fragment returns is `vec4f(0, 0, 0, 0)`.
+/// 3. Writing that changes nothing only because the pipeline blends
+///    premultiplied.
+///
+/// The ground rect is opaque for the third: over a transparent canvas the sweep
+/// compares `[0, 0, 0, 0]` against `[0, 0, 0, 0]` and cannot see a blend state
+/// that stopped treating a zero write as a no-op.
+///
+/// That arithmetic is the backdrop defect issue #972 records, surviving here on
+/// a coincidence rather than on a guard; this is the test that fails when any
+/// of the three moves.
+#[test]
+fn a_refused_glyph_atlas_draws_nothing_and_names_itself() {
+    // The passing fixture's atlas, with one thing changed: its payload is a
+    // container this painter cannot decode. The extent is stated by the
+    // `Atlas`, not read from the payload, so `resolve_frame`'s zero-extent arm
+    // does not answer first and the refusal is what is left.
+    let atlas = Atlas::new(
+        ImageAsset {
+            format: ImageFormat::Jpeg,
+            bytes: JPEG_FIXTURE.to_vec(),
+        },
+        ATLAS,
+        ATLAS,
+        4,
+        0.5,
+        vec![AtlasGlyph {
+            glyph_id: 11,
+            plane_em: [0.0, 0.0, 1.0, 1.0],
+            atlas_px: [0.0, 4.0, 4.0, 8.0],
+        }],
+    )
+    .expect("a test atlas states a non-zero px_per_em");
+
+    // **Opaque, not the empty entry the drawn glyph tests use.** Over a
+    // transparent canvas every texel is already `[0, 0, 0, 0]`, so a sweep
+    // cannot tell a run that was never drawn from one that wrote premultiplied
+    // zero over nothing — and the second of those is what actually happens
+    // here, because the refused row's coverage is `0.5` and only its zero alpha
+    // makes the write a no-op. That the write disappears is a property of the
+    // pipeline's premultiplied-alpha blend, which is a third thing holding this
+    // outcome up and which no transparent canvas can see.
+    let mut paints = PaintTable::new();
+    let ground = paints.intern_fill(&FillSpec::Solid {
+        color: Color {
+            r: 0.0,
+            g: 0.5,
+            b: 0.25,
+            a: 1.0,
+        },
+    });
+    let paint = paints.push(PaintEntry {
+        fill: ground,
+        ..PaintEntry::default()
+    });
+    let rects = vec![RectEntry {
+        x: 0.0,
+        y: 0.0,
+        w: W as f32,
+        h: H as f32,
+        paint,
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
+    }];
+
+    let mut glyphs = GlyphRunTable::new();
+    glyphs.push_atlas(atlas);
+    // Two runs naming the one refused atlas, because one refused payload must be
+    // one refusal: `resolve_frame`'s memo arrays record only what *resolved*, so
+    // a refused atlas stays unresolved and every further run asks again. With a
+    // single run this test would pass whether or not the dedup existed.
+    let ink = Color {
+        r: 0.2,
+        g: 0.6,
+        b: 1.0,
+        a: 1.0,
+    };
+    for (run, quads) in [
+        one_glyph(11, 10.0, 30.0, 20.0, ink, 1.0),
+        one_glyph(11, 34.0, 30.0, 20.0, ink, 1.0),
+    ] {
+        glyphs.push_run(run, &quads);
+    }
+
+    let clips = ClipTable::new();
+    let images = ImageTable::new();
+    let mut painter = GpuPainter::new();
+    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, None);
+    let mut renderer = renderer();
+    let pixels = renderer
+        .render(painter.instances(), &paints, &images, &clips, &glyphs, W, H)
+        .expect("the fixture extent is within any device's maximum");
+
+    // Named, not silent — the half P4 is about.
+    let refusals = renderer.refusals();
+    assert_eq!(
+        refusals.len(),
+        1,
+        "two runs name one refused atlas, so one refusal — got {refusals:?}",
+    );
+    assert_eq!(
+        refusals[0].what, "a glyph atlas",
+        "the consumer is named: a glyph atlas and an image fill are refused by the same call and \
+         a host can do nothing with either without knowing which it was",
+    );
+    assert_eq!(refusals[0].row, 0, "the atlas row, not the run's");
+    assert_eq!(
+        refusals[0].error,
+        ResidencyError::NoDecoder {
+            format: ImageFormat::Jpeg
+        },
+    );
+    assert_eq!(renderer.refusals_seen(), 1);
+
+    // And nothing drawn, rather than a plausible wrong picture.
+    // The ground, everywhere: the runs left it exactly as the rect drew it.
+    let ground = texel(&pixels, 0, 0);
+    assert_eq!(
+        ground,
+        [0, 128, 64, 255],
+        "the ground rect is what every texel should still be",
+    );
+    for y in 0..H {
+        for x in 0..W {
+            assert_eq!(
+                texel(&pixels, x, y),
+                ground,
+                "a refused glyph atlas painted ({x}, {y})"
+            );
+        }
+    }
+}
+
+/// **A masked fill whose coverage field was refused draws nothing** (issues
+/// #972, #973).
+///
+/// The fill half of the same defect the backdrop carries. `paint.wgsl`'s vertex
+/// stage says a zeroed field row leaves a quad with no area, and that is true of
+/// the quad and not of what is drawn: the quad is then grown by the
+/// antialiasing width, and the fragment stage's masked arm computes
+/// `msdf_coverage(sample, px_range = 0)`, which is `0.5` whatever the sample
+/// was. A solid fill has no zero-alpha default to save it the way a glyph run
+/// does, so the coverage survives the `discard` and the node's own colour lands
+/// at half alpha in a small square at its top-left corner.
+#[test]
+fn a_refused_coverage_field_draws_no_masked_fill() {
+    let mut images = ImageTable::new();
+    let field = images.push(ImageAsset {
+        format: ImageFormat::Jpeg,
+        bytes: JPEG_FIXTURE.to_vec(),
+    });
+    // Both axes, not the pair: `resident_image` returns early when *either* is
+    // zero, so `!= (0, 0)` would pass a payload it still never offers a decoder.
+    let extent = images.resolve(field);
+    assert!(
+        extent.width != 0 && extent.height != 0,
+        "the fixture must have an extent on both axes, or `resident_image` answers with the \
+         no-bytes case before it ever reaches a decoder and nothing is refused — got {} x {}",
+        extent.width,
+        extent.height,
+    );
+
+    let mut paints = PaintTable::new();
+    // `draw_masked_node`'s fixture with one thing changed: the field's payload
+    // cannot be decoded. So that test's picture — an opaque orange silhouette —
+    // is what this one would draw if the refusal were not honoured.
+    let ink = paints.intern_fill(&FillSpec::Solid {
+        color: Color {
+            r: 1.0,
+            g: 0.5,
+            b: 0.0,
+            a: 1.0,
+        },
+    });
+    let paint = paints.push_with(
+        PaintEntry {
+            fill: ink,
+            ..PaintEntry::default()
+        },
+        EntryParts {
+            shape: Some(VectorField {
+                image: field,
+                atlas_rect: MASK_RECT,
+                plane_bounds: [0.0, 0.0, 20.0, 32.0],
+                distance_range: 0.5,
+            }),
+            ..EntryParts::default()
+        },
+    );
+    // Two nodes naming the one refused field, because one refused payload must
+    // be one refusal. `resolve_frame`'s memo array records only what *resolved*,
+    // so a refused field stays unresolved and the second node asks again; the
+    // dedup that answers is keyed on the consumer and the row, and this is the
+    // only test that exercises it for a field rather than an image fill. With a
+    // single node the count below would hold whether or not it existed.
+    let rects: Vec<RectEntry> = (0..2)
+        .map(|i| RectEntry {
+            x: 8.0,
+            y: 8.0 + i as f32 * 4.0,
+            w: 40.0,
+            h: 32.0,
+            paint,
+            clip: ClipIndex::UNCLIPPED,
+            opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
+        })
+        .collect();
+
+    let clips = ClipTable::new();
+    let glyphs = GlyphRunTable::new();
+    let mut painter = GpuPainter::new();
+    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, None);
+    let mut renderer = renderer();
+    let pixels = renderer
+        .render(painter.instances(), &paints, &images, &clips, &glyphs, W, H)
+        .expect("the fixture extent is within any device's maximum");
+
+    let refusals = renderer.refusals();
+    assert_eq!(
+        refusals.len(),
+        1,
+        "two nodes name one refused field, so one refusal — got {refusals:?}",
+    );
+    assert_eq!(refusals[0].what, "a vector field's atlas");
+    assert_eq!(refusals[0].row, field);
+    assert_eq!(
+        refusals[0].error,
+        ResidencyError::NoDecoder {
+            format: ImageFormat::Jpeg
+        },
+    );
+
+    for y in 0..H {
+        for x in 0..W {
+            assert_eq!(
+                texel(&pixels, x, y),
+                [0, 0, 0, 0],
+                "a refused coverage field painted ({x}, {y})"
+            );
+        }
+    }
 }

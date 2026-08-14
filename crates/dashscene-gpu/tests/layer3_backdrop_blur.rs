@@ -23,7 +23,7 @@ use dashpaint::{
     GroupComposite, ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintTable, Painter,
     RectEntry, Vec2, VectorField,
 };
-use dashscene_gpu::{GpuPainter, Renderer};
+use dashscene_gpu::{GpuPainter, Renderer, ResidencyError};
 
 const W: u32 = 64;
 const H: u32 = 48;
@@ -656,6 +656,292 @@ fn a_masked_backdrop_follows_the_fields_outline_rather_than_its_box() {
          got {past_the_quad:?}, which means the quad came from the node's box and \
          `msdf_sample`'s clamp reported this field's inside edge column out here",
     );
+}
+
+/// The corpus payload this painter links no decoder for — the same JPEG
+/// `layer3_image_fills` refuses on the image-fill path, reused here because a
+/// coverage field and an image fill reach residency through the same call and
+/// the refusal is what the two have in common.
+const JPEG_FIXTURE: &[u8] = include_bytes!(
+    "../../../corpus/figma-fixtures/jpeg-fill.images/4045fd0419fbcbbd03505d2d258c6dbbeb2da1fe.jpg"
+);
+
+/// **A refused backdrop still consumes its slot, so the next one binds its own
+/// mask** (issue #972).
+///
+/// `BlurTargets` builds one bind-group pair per backdrop **in plan order**, each
+/// binding that backdrop's own coverage atlas, and `pass` indexes them by that
+/// ordinal. So the ordinal a backdrop is resolved with is a position in the
+/// plan and not a count of the ones that drew — and skipping a refused backdrop
+/// must not renumber the ones behind it. It did in the first draft of this fix:
+/// the second backdrop took slot 0, whose mask entry is the *first* backdrop's,
+/// which for a refused field is the 1x1 placeholder nothing ever writes. The
+/// second node's frost then vanished with no refusal recorded, which is a silent
+/// drop and the thing P4 forbids.
+///
+/// Two backdrops, refused first, because one cannot see an off-by-one in an
+/// index — and no other test in this file draws two masked backdrops at all.
+#[test]
+fn a_refused_backdrop_does_not_renumber_the_one_behind_it() {
+    let mut images = ImageTable::new();
+    // Pushed first, so the refused node is also first in the plan.
+    let refused = images.push(ImageAsset {
+        format: ImageFormat::Jpeg,
+        bytes: JPEG_FIXTURE.to_vec(),
+    });
+    // Both axes, not the pair, for the reason its two siblings give.
+    let extent = images.resolve(refused);
+    assert!(
+        extent.width != 0 && extent.height != 0,
+        "the fixture must have an extent on both axes, or `resident_image` answers with the \
+         no-bytes case before it ever reaches a decoder and nothing is refused — got {} x {}",
+        extent.width,
+        extent.height,
+    );
+    let atlas = images.push_baked(mask_field(), MASK_ATLAS, MASK_ATLAS);
+
+    let mut paints = PaintTable::new();
+    let mut rects = halves(&mut paints);
+
+    // The refused one, below the live node and **with its top-left corner one
+    // texel left of the seam**. A refused field zeroes the plane, so the quad
+    // that grows from that corner is where the defect drew; putting the corner
+    // beside the seam is what makes the sweep below able to fail at all. Placed
+    // in a far corner — where this fixture first put it — the frost would be a
+    // half-coverage copy of a uniform red neighbourhood, which is that same
+    // red, and the sweep would pass with the defect present. The module
+    // docstring says exactly this about probes and it applies to sweeps too.
+    let dead = paints.push_with(
+        PaintEntry::default(),
+        EntryParts {
+            blurs: &[backdrop(24.0)],
+            shape: Some(VectorField {
+                image: refused,
+                atlas_rect: MASK_RECT,
+                plane_bounds: [0.0, 0.0, 8.0, 4.0],
+                distance_range: 0.5,
+            }),
+            ..EntryParts::default()
+        },
+    );
+    rects.push(rect(SEAM as f32 - 1.0, 44.0, 8.0, 4.0, dead));
+
+    // And the live one — `a_masked_backdrop_follows_the_fields_outline_rather_than_its_box`'s
+    // node exactly, so its three probes mean here what they mean there.
+    let panel = paints.push_with(
+        PaintEntry::default(),
+        EntryParts {
+            blurs: &[backdrop(24.0)],
+            shape: Some(VectorField {
+                image: atlas,
+                atlas_rect: MASK_RECT,
+                plane_bounds: [0.0, 0.0, 20.0, 32.0],
+                distance_range: 0.5,
+            }),
+            ..EntryParts::default()
+        },
+    );
+    rects.push(rect(24.0, 8.0, 36.0, 32.0, panel));
+
+    let clips = ClipTable::new();
+    let mut painter = GpuPainter::new();
+    painter.paint(
+        &rects,
+        &paints,
+        &images,
+        &clips,
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+    let mut renderer = renderer();
+    let pixels = renderer
+        .render(
+            painter.instances(),
+            &paints,
+            &images,
+            &clips,
+            &GlyphRunTable::new(),
+            W,
+            H,
+        )
+        .expect("the fixture extent is within any device's maximum");
+
+    // Which one was refused, not merely how many. A count alone would hold just
+    // as well if the *panel's* baked atlas had been the refused one, and every
+    // picture assertion below is written for the opposite pairing.
+    let refusals = renderer.refusals();
+    assert_eq!(
+        refusals.len(),
+        1,
+        "only the first node's field is refused — got {refusals:?}",
+    );
+    assert_eq!(refusals[0].what, "a vector field's atlas");
+    assert_eq!(
+        refusals[0].row, refused,
+        "the refused row is the JPEG the first node names, not the panel's baked atlas",
+    );
+    assert_eq!(
+        refusals[0].error,
+        ResidencyError::NoDecoder {
+            format: ImageFormat::Jpeg
+        },
+    );
+
+    // The live backdrop draws its own picture, unchanged by the refused one in
+    // front of it. A renumbered slot binds the placeholder here and this probe
+    // reads pure blue.
+    let inside_field = texel(&pixels, 36, 24);
+    assert!(
+        inside_field[0] > 40,
+        "the second backdrop frosts its own outline — got {inside_field:?}, and a pure blue means \
+         it bound the refused node's bind group and sampled the placeholder",
+    );
+    assert_eq!(
+        texel(&pixels, 26, 24),
+        [255, 0, 0, 255],
+        "its field's first column is still outside its outline",
+    );
+    assert_eq!(
+        texel(&pixels, 46, 24),
+        [0, 0, 255, 255],
+        "and past its quad the backdrop is still untouched",
+    );
+
+    // And the refused one drew nothing. The band below the live node's box,
+    // whole width: its quad reaches y 41 at most once the antialiasing width is
+    // added, so everything from 42 down belongs to the refused node alone, and
+    // its corner sits on the seam where a frost of either half is visible.
+    for y in 42..H {
+        for x in 0..W {
+            let untouched = if x < SEAM {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            };
+            assert_eq!(
+                texel(&pixels, x, y),
+                untouched,
+                "the refused node frosted ({x}, {y})"
+            );
+        }
+    }
+}
+
+/// **A backdrop whose coverage field was refused draws nothing at all** (issue
+/// #972).
+///
+/// The masked arm of `fs_blur_resolve` reads four members of `GpuShape`, and
+/// `GpuBlur::masked` used to say they were there whenever the instance named a
+/// field — never whether that field resolved. A refused one leaves the row
+/// zeroed, so the shader computed `msdf_coverage(sample, px_range = 0)`, which
+/// is `0.5` for every sample it could possibly take, over a plane of no area
+/// that `clamped_quad` then grows by the antialiasing width. The result was a
+/// small square of half-strength frost at the node's top-left corner, on a
+/// pipeline that writes with no blending: a plausible wrong picture on exactly
+/// the path issues #718 and #720 exist to make quiet.
+///
+/// The whole canvas rather than a probe, for the reason the image-fill refusal
+/// gives: the defect's own footprint is a couple of texels wide and sits where
+/// no probe placed for the *drawn* case would look.
+#[test]
+fn a_refused_coverage_field_leaves_the_backdrop_untouched() {
+    let mut images = ImageTable::new();
+    let field = images.push(ImageAsset {
+        format: ImageFormat::Jpeg,
+        bytes: JPEG_FIXTURE.to_vec(),
+    });
+    // Both axes, not the pair: `resident_image` returns early when *either* is
+    // zero, so `!= (0, 0)` would pass a payload it still never offers a decoder.
+    let extent = images.resolve(field);
+    assert!(
+        extent.width != 0 && extent.height != 0,
+        "the fixture must have an extent on both axes, or `resident_image` answers with the \
+         no-bytes case before it ever reaches a decoder and nothing is refused — got {} x {}",
+        extent.width,
+        extent.height,
+    );
+
+    let mut paints = PaintTable::new();
+    let mut rects = halves(&mut paints);
+    // The fixture of `a_masked_backdrop_follows_the_fields_outline_rather_than_its_box`,
+    // with one thing changed: the field's payload cannot be decoded. So that
+    // test's picture is what this one would draw if the refusal were not
+    // honoured, and it frosts a wide region straddling the seam.
+    let panel = paints.push_with(
+        PaintEntry::default(),
+        EntryParts {
+            blurs: &[backdrop(24.0)],
+            shape: Some(VectorField {
+                image: field,
+                atlas_rect: MASK_RECT,
+                plane_bounds: [0.0, 0.0, 20.0, 32.0],
+                distance_range: 0.5,
+            }),
+            ..EntryParts::default()
+        },
+    );
+    rects.push(rect(24.0, 8.0, 36.0, 32.0, panel));
+
+    let clips = ClipTable::new();
+    let mut painter = GpuPainter::new();
+    painter.paint(
+        &rects,
+        &paints,
+        &images,
+        &clips,
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+    let mut renderer = renderer();
+    let pixels = renderer
+        .render(
+            painter.instances(),
+            &paints,
+            &images,
+            &clips,
+            &GlyphRunTable::new(),
+            W,
+            H,
+        )
+        .expect("the fixture extent is within any device's maximum");
+
+    // Named, not silent — the half P4 is about.
+    let refusals = renderer.refusals();
+    assert_eq!(
+        refusals.len(),
+        1,
+        "one refused payload is one refusal — got {refusals:?}",
+    );
+    assert_eq!(
+        refusals[0].what, "a vector field's atlas",
+        "the consumer is named, because an image fill and a field's atlas are the same table row \
+         with very different symptoms",
+    );
+    assert_eq!(refusals[0].row, field);
+    assert_eq!(
+        refusals[0].error,
+        ResidencyError::NoDecoder {
+            format: ImageFormat::Jpeg
+        },
+    );
+
+    // And nothing drawn: the two halves stand exactly as they were composited.
+    for y in 0..H {
+        for x in 0..W {
+            let untouched = if x < SEAM {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            };
+            assert_eq!(
+                texel(&pixels, x, y),
+                untouched,
+                "a refused coverage field frosted ({x}, {y})"
+            );
+        }
+    }
 }
 
 /// A blur of no radius draws nothing, and `pack::frosts` is what makes that

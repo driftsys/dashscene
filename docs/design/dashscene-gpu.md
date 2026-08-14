@@ -289,6 +289,62 @@ are not this: widening the painter's return type, and refusing the document at
 load, which is the only shape that would give `Painter::samples` a caller and
 make `baked-texel-payloads-cross-boundary-b.md` D6 true rather than decorative.
 
+**"The row draws nothing" is a property of the resolved row, not of the
+instance.** A coverage mask reaching this painter is resolved, degenerate — no
+quad or no atlas rectangle, which `field_draws` rejects before residency — or
+refused. `GpuShape::resolved` is what distinguishes the first from the other
+two, and both consumers read it rather than inferring the mask from
+`Instance::shape`. Inferring it is what made a refused field draw: an unresolved
+row carries a zero `px_range`, and `msdf_coverage(sample, 0)` is `0.5` for every
+sample there is, so the fill drew the node's ink at half alpha and the backdrop
+drew half-strength frost — each over the antialiasing margin at the node's
+top-left corner, since a zeroed plane has no area for the margin to grow (issue
+#972). The flag is stated rather than derived from `px_range` for the reason
+`blur.wgsl` gives against its own `masked`: a zero range is a degenerate field,
+not an absent one, and a real field can take a value a sentinel would claim.
+
+**This closes the route through an unresolved row and not the class.** A field
+that _does_ resolve carrying `distance_range == 0` reaches the same
+`msdf_coverage(sample, 0)` and paints the same half coverage, this time over the
+field's whole plane rather than the antialiasing margin. `field_draws` does not
+reject it, and neither painter guards it — the reference painter derives
+`px_range` from the same operand — so the seam is `dashpaint`, where issue #964
+put the matching guard on the atlas's two operands. Issue #986 is that work and
+is open; nothing here should be read as having done it.
+
+**An unresolved mask makes the backdrop encode nothing at all**, which is not
+the same as encoding it unmasked. Unmasked means the parametric rounded box, so
+clearing `GpuBlur::masked` would frost the node's whole box where the defect had
+frosted a corner patch — a larger wrong picture, measured rather than reasoned
+about. A baked-vector node's silhouette _is_ its field, so with no field there
+is no region to frost.
+
+**A refused backdrop still takes its ordinal.** `BlurTargets` builds one
+bind-group pair per backdrop of the plan, in order, each binding that backdrop's
+own coverage atlas, and `BlurTargets::pass` indexes them by that position — so
+the number `resolve_backdrop` is called with is a position and not a count of
+the ones that drew. Advancing it only on success moved every backdrop behind a
+refused one onto the previous one's mask, which for a refused field is the
+placeholder nothing writes: the next node's frost vanished with no refusal
+recorded, which is the silent drop P4 forbids. Its allocations are made either
+way — `prepare` builds one pair per _planned_ backdrop — so what the refusal
+saves is the two draws, which is why `resolve_backdrop` reports whether it
+encoded them.
+
+That is a property of where the skip sits and not of what is known when.
+`resolve_frame` records every refusal before `backdrop_masks` is built, and the
+`None` a refused field puts in that list is already what selects the placeholder
+view — so a refused backdrop could be dropped there instead, and allocate
+nothing. It is not, because the ordinal is a position in that same list and
+renumbering it is the defect above; doing it safely means the filter and the
+ordinal come from one list rather than two. Issue #994.
+
+The third consumer, a glyph run, draws nothing on refusal for a weaker reason:
+its row keeps `GpuGlyphRun::default()`, whose zero alpha the text arm carries
+into a colour it never discards on. Nothing structural holds it, so
+`a_refused_glyph_atlas_draws_nothing_and_names_itself` pins the outcome rather
+than the mechanism (issue #973).
+
 ## Two targets, one device
 
 `Renderer` draws into a texture view and reads it back; `SurfaceRenderer`
