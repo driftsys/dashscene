@@ -294,21 +294,27 @@ rather than reported. That is what separates this group from everything above.
 ## Where the specification disagrees with the code
 
 `docs/specification/04-figma-vocabulary-profile.md` is the engineering profile
-for this vocabulary. It is **not** the source for this page, and in five places
-the two say different things. The code is what runs:
+for this vocabulary. It is **not** the source for this page: this page is
+derived from the lowering, and that profile is derived from the design intent.
 
-| Construct                | The specification says                                     | The importer does                                   |
-| ------------------------ | ---------------------------------------------------------- | --------------------------------------------------- |
-| Text case                | supported, "applied in the typesetter"                     | drops the layer; no such vocabulary exists anywhere |
-| Luminance masks          | later, with a warning                                      | drops the layer by name                             |
-| Dashed strokes           | later, with a warning                                      | drops the layer by name                             |
-| Per-side stroke widths   | later, with a warning                                      | reads them nowhere; nothing is reported             |
-| Stroke on text alignment | inside and outside "collapses to centered", with a warning | drops the layer for any stroke on text              |
+The five disagreements this section listed were corrected in the profile on
+2026-08-14 (issue #802) — text case, luminance masks, dashed strokes, per-side
+stroke widths and stroke-on-text alignment — along with a sixth the list had
+missed, single-stop gradients, which the profile described as lowering to a
+solid fill with an info diagnostic and which in fact lowers verbatim as a
+one-stop gradient with no diagnostic at all. The profile also gained the
+disposition it had no vocabulary for: **NOT READ (silent)**, the class per-side
+stroke widths belongs to.
 
-Every one of these five reads as more supported in the specification than it is
-in the code, which is the direction that costs a designer time. They should be
-corrected there. Until they are, this page is the one derived from what actually
-runs.
+That closes the six rows. It does **not** mean the two documents now agree
+everywhere: they are derived from opposite ends, and the pass that produced this
+section found one error they shared rather than disagreed on — both placed
+prototyping in the silent class, where the importer in fact reads `interactions`
+and reports what it cannot lower. The profile is corrected; this page's "Read
+nowhere" table still lists it and is the next thing to check.
+
+Repeat the derivation whenever either document moves. Agreement between two
+documents derived from opposite ends is evidence about one of them at most.
 
 ---
 

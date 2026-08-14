@@ -174,10 +174,14 @@ Checked against `crates/dashc/src/figma/mod.rs`,
 - [ ] **Blend modes, layer blur, corner smoothing, luminance masks, dashed and
       variable-width strokes, noise and progressive blur, and boolean shape
       operations** — none of these are drawn, and each is reported by name with
-      a workaround. What the report does depends on the construct: blend modes,
-      noise and progressive blur stop the file compiling; the rest drop the
-      element and let the file emit, because the importer's default is to carry
-      on rather than stop. A stricter mode exists and is not the default.
+      a workaround. What the report does depends on the construct, in three
+      groups rather than two: blend modes, noise and progressive blur stop the
+      file compiling; **layer blur and corner smoothing leave the element drawn
+      and report the one property**, because they travel the validator's triage
+      path where the node still lowers; and luminance masks, dashed and
+      variable-width strokes and boolean operations drop the element and let the
+      file emit, because the importer's default is to carry on rather than stop.
+      A stricter mode exists and is not the default.
 - [ ] **Different stroke widths per side** — **the one gap in this section that
       is not reported.** Nothing detects it. The design compiles using whichever
       single width the file reports, with no message. Workaround: four edge
@@ -422,11 +426,21 @@ Checked against `importers/figma/src/`, `crates/dashc/src/`,
       plugin lets a designer mark scaffolding that should not ship. Which
       elements are screens is chosen by whoever runs the import, not marked in
       Figma.
-- [x] **Nothing is dropped silently** — every unsupported construct is a named
-      message naming the workaround. This is enforced as a design principle
-      rather than a habit, with **two** known exceptions: stroke widths that
-      differ per side (section 3), and a character no font in the cascade
-      covers, which draws as an empty box with nothing reported.
+- [ ] **Nothing is dropped silently** — every construct the importer _reads_ is
+      a named message naming the workaround, and that half holds. **What it does
+      not read is a structural gap rather than a short list of exceptions**
+      (issue #802): the Figma data model in `rest.rs` does not set
+      `deny_unknown_fields`, so any property it was never taught is dropped with
+      nothing reported. `docs/figma-support.md`'s "Read nowhere" entries
+      enumerate the class against the code — constraints (the largest of them),
+      stroke cap and join, layout grids, export settings, paragraph spacing, and
+      stroke widths that differ per side (section 3). A character no font in the
+      cascade covers is a separate silent case, drawing as an empty box.
+
+      This entry read "**two** known exceptions" until the profile was corrected
+      against the lowering. Counting the exceptions was the wrong shape for the
+      claim: the parser reports nothing it was not taught, so the list is open
+      until it is closed at the parse boundary.
 - [x] **Authoring in code** — a Rust interface fills the same model directly,
       with no file in between, and the two routes are proven to produce the same
       result over the vocabulary both express.
