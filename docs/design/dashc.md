@@ -158,6 +158,27 @@ diagnostic's path disambiguates duplicate sibling names with the node's Figma id
 — `Frame 1 (1:23)` — or its child position when a synthetic node has no id (debt
 #150).
 
+**A refusal takes the node's subtree with it, and a second rule says how much**
+(issue #875). The walk returns before pushing the refused node's children onto
+the visit stack, so a subtree of any depth used to leave exactly one diagnostic
+naming only its root — P4 satisfied for the refused node and not for what went
+with it. Dropping the subtree is correct: the children have no parent to attach
+to, and re-parenting them onto the grandparent would move them in the tree and
+change what the solver sees. So the drop stands and the reporting is what
+changed:
+
+    figma.subtree-dropped   the refused layer had descendants, and this many
+                            went with it
+
+Emitted once per refused node rather than once per blocker — a node with three
+blockers loses its subtree once — and silent for a leaf, whose own refusal
+already covers it. Its severity follows the emit policy, as `figma.unsupported`
+does: under `Strict` the file is withheld anyway, and under `Partial` — the
+production importer's default — this is the line that makes the hole visible at
+all. `fn visit` has three early returns before it pushes children, and two of
+them raise it: the blocker verdict, and the unsupported-node-kind arm, which is
+reached by **any** unlowered kind and is by far the commoner of the two.
+
 ### The image gate — `image_id`
 
 Since v0.11 (story #400) every image entering through the `images` map is
