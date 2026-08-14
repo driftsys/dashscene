@@ -176,7 +176,9 @@ pub fn load_atlas(dir: &str) -> Atlas {
     Atlas::new(
         ImageAsset {
             format: ImageFormat::Png,
-            bytes: bundle.image_png.clone(),
+            // Moved, not copied: the only borrow still outstanding is `m`, a
+            // disjoint field of the same bundle (issue #967).
+            bytes: bundle.image_png,
         },
         m.atlas.width,
         m.atlas.height,
