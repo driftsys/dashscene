@@ -98,8 +98,7 @@ pub use dashbuf::prefetch::ShownRoot;
 /// assembling a cascade — faces, families and weights — and an [`Atlas`] is a
 /// committed sheet with its own metrics, so an embedder doing real text work
 /// depends on `dashscene-typeset` and `dashpaint` directly.
-/// `corpus/showcase/src/resources.rs` is the worked example, and it is about
-/// eighty lines.
+/// `corpus/showcase/src/resources.rs` is the worked example.
 pub use dashpaint::Atlas;
 pub use dashscene_engine::TextResources;
 pub use dashscene_typeset::text::Typesetter;

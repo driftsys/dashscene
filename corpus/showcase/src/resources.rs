@@ -10,9 +10,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use dashc_wasm::figma::vector_field::{VectorAtlasBaker, VectorPath, WindingRule};
-use dashpaint::{Atlas, AtlasGlyph, ImageAsset, ImageFormat, VectorField};
-use dashscene_typeset::atlas::{AtlasBundle, AtlasMetrics};
-use dashscene_typeset::text::{Font, FontFamily, Typesetter, WeightedFont};
+use dashpaint::{Atlas, ImageAsset, ImageFormat, VectorField};
+use dashscene_engine::{AtlasBytes, FaceBytes, TextResources};
+use dashscene_typeset::text::Typesetter;
 
 /// A path under the repository root, resolved from this crate's manifest
 /// directory (`corpus/showcase`).
@@ -77,128 +77,104 @@ pub const LATIN_FAMILY: &str = "Inter";
 pub const ARABIC_FAMILY: &str = "Noto Sans Arabic";
 
 /// The cascade the showcase is authored against: Inter at 400 and 600, then
-/// Noto Sans Arabic at 400.
+/// Noto Sans Arabic at 400, each with the committed sheet its glyphs sample.
 ///
-/// Three faces rather than the goldens' eight. The atlas list beside it is
-/// cloned once per commit that stages text, so every face carried here that
-/// no scene uses is a per-frame copy of an atlas nothing samples.
+/// Three faces rather than the goldens' eight. A face no scene uses is not
+/// free: its font is parsed again on every scene build, and its sheet is
+/// converted once and then held for the run of the program. It is no longer a
+/// per-frame copy of the payload, which is what the sentence here used to say
+/// — `ShowcaseSolver::stage_text` stopped deep-copying the set at issue #621.
 ///
-/// **The order is the contract.** Families flatten family-major, so a shaped
+/// **The pairing is the contract.** Families flatten family-major, so a shaped
 /// glyph's font slot is `0` for Inter Regular, `1` for Inter SemiBold and `2`
-/// for Noto Sans Arabic, and that slot indexes [`atlases`] directly. A list in
-/// any other order samples the wrong face rather than failing, which is why
-/// both are built in this one module.
-fn typesetter() -> Typesetter {
-    let load = |bytes: Vec<u8>, what: &str| {
-        Font::from_bytes(bytes, 0)
-            .unwrap_or_else(|error| panic!("corpus font {what} parses: {error}"))
-    };
-    Typesetter::with_named_font_families(vec![
-        FontFamily::new(
-            LATIN_FAMILY,
-            vec![
-                WeightedFont::new(
-                    load(
-                        corpus_bytes!("corpus/fonts/inter/Inter-Regular.otf"),
-                        "Inter Regular",
-                    ),
-                    400,
-                ),
-                WeightedFont::new(
-                    load(
-                        corpus_bytes!("corpus/fonts/inter/Inter-SemiBold.otf"),
-                        "Inter SemiBold",
-                    ),
-                    600,
-                ),
-            ],
-        ),
-        FontFamily::new(
-            ARABIC_FAMILY,
-            vec![WeightedFont::new(
-                load(
-                    corpus_bytes!("corpus/fonts/noto-sans-arabic/NotoSansArabic-Regular.ttf"),
-                    "Noto Sans Arabic Regular",
-                ),
-                400,
-            )],
-        ),
-    ])
+/// for Noto Sans Arabic, and that slot indexes [`atlases`] directly.
+/// Reordering this list is safe on its own: [`TextResources::from_faces`]
+/// pushes a face's sheet in the same step it pushes the face, so both move
+/// together and only the cascade's coverage order changes. Handing a face the
+/// **wrong** sheet is what samples one face through another's atlas, and it
+/// fails no assertion — a valid sheet for the wrong face is still a valid
+/// sheet. That is why the two are written side by side on one entry here.
+///
+/// `with_atlases` says which of the two is being fed, because they cannot be
+/// one call. [`atlases`] converts its sheets once and shares the result for
+/// the whole run of the program, while a scene's typesetter is built fresh per
+/// scene — the solver that shapes with it needs it exclusively, and
+/// [`Typesetter`] is not [`Clone`]. So what is declared once is this list, and
+/// not the single [`TextResources::from_faces`] walk that binds a cascade to
+/// its atlases inside the engine.
+fn faces(with_atlases: bool) -> Vec<FaceBytes> {
+    vec![
+        FaceBytes {
+            family: LATIN_FAMILY.to_string(),
+            weight: 400,
+            font: corpus_bytes!("corpus/fonts/inter/Inter-Regular.otf"),
+            face_index: 0,
+            atlas: with_atlases.then(|| AtlasBytes {
+                png: corpus_bytes!("corpus/atlas/inter-ascii/atlas.png"),
+                metrics: corpus_bytes!("corpus/atlas/inter-ascii/atlas.metrics"),
+            }),
+        },
+        FaceBytes {
+            family: LATIN_FAMILY.to_string(),
+            weight: 600,
+            font: corpus_bytes!("corpus/fonts/inter/Inter-SemiBold.otf"),
+            face_index: 0,
+            atlas: with_atlases.then(|| AtlasBytes {
+                png: corpus_bytes!("corpus/atlas/inter-ascii-semibold/atlas.png"),
+                metrics: corpus_bytes!("corpus/atlas/inter-ascii-semibold/atlas.metrics"),
+            }),
+        },
+        FaceBytes {
+            family: ARABIC_FAMILY.to_string(),
+            weight: 400,
+            font: corpus_bytes!("corpus/fonts/noto-sans-arabic/NotoSansArabic-Regular.ttf"),
+            face_index: 0,
+            atlas: with_atlases.then(|| AtlasBytes {
+                png: corpus_bytes!("corpus/atlas/arabic/atlas.png"),
+                metrics: corpus_bytes!("corpus/atlas/arabic/atlas.metrics"),
+            }),
+        },
+    ]
 }
 
 /// A fresh typesetter for one scene. Each live scene owns its own, because
 /// the solver that shapes with it needs it exclusively.
+///
+/// Assembled without the sheets: a solve only measures, and the set a staged
+/// run samples comes from [`atlases`] instead — once, rather than once per
+/// scene. A cascade carrying no atlas at all is the measure-only case
+/// [`TextResources::from_faces`] admits, not the mixed one it refuses.
 pub fn new_typesetter() -> Typesetter {
-    typesetter()
+    TextResources::from_faces(faces(false))
+        .unwrap_or_else(|error| panic!("the showcase cascade assembles: {error}"))
+        .typesetter
 }
 
 /// The atlases the staged runs sample, in the cascade's font-slot order.
 ///
 /// Shared behind an `Arc` because commit rebuilds the glyph-run table every
 /// frame while the atlas set behind it never changes.
+///
+/// The conversion from a committed sheet's two files to a boundary-B [`Atlas`]
+/// is `dashscene-engine`'s and no longer restated here (issue #962), which
+/// also buys the checks a second copy never had: the PNG header against the
+/// extent the metrics declare, and a glyph described by one quad and not the
+/// other. Only glyphs that paint carry a quad, so an empty outline such as the
+/// space is still dropped.
+///
+/// The typesetter assembled beside them is dropped. That is one parse of the
+/// three faces, once per process, against carrying a second copy of the
+/// conversion — and it is the same list of faces, so the atlas at each slot is
+/// the one that slot's face shapes with.
 pub fn atlases() -> Arc<Vec<Atlas>> {
     static ATLASES: LazyLock<Arc<Vec<Atlas>>> = LazyLock::new(|| {
-        Arc::new(vec![
-            load_atlas(
-                corpus_bytes!("corpus/atlas/inter-ascii/atlas.png"),
-                &corpus_bytes!("corpus/atlas/inter-ascii/atlas.metrics"),
-                "inter-ascii",
-            ),
-            load_atlas(
-                corpus_bytes!("corpus/atlas/inter-ascii-semibold/atlas.png"),
-                &corpus_bytes!("corpus/atlas/inter-ascii-semibold/atlas.metrics"),
-                "inter-ascii-semibold",
-            ),
-            load_atlas(
-                corpus_bytes!("corpus/atlas/arabic/atlas.png"),
-                &corpus_bytes!("corpus/atlas/arabic/atlas.metrics"),
-                "arabic",
-            ),
-        ])
+        TextResources::from_faces(faces(true))
+            // The face index the error names is an index into `faces` above,
+            // which is where the fixture path for it is written.
+            .unwrap_or_else(|error| panic!("the committed showcase atlases load: {error}"))
+            .atlases
     });
     Arc::clone(&ATLASES)
-}
-
-/// Converts a committed build-time atlas fixture at `dir` into a boundary-B
-/// [`Atlas`]. Only glyphs that paint (bounded outlines) carry a quad, so an
-/// empty-outline glyph such as the space is dropped.
-fn load_atlas(image_png: Vec<u8>, metrics_bytes: &[u8], what: &str) -> Atlas {
-    // Built from the two files' bytes rather than through
-    // `AtlasBundle::load_from_dir`, which reads a directory. The bundle is two
-    // public fields, so this needs nothing from `dashscene-typeset` that it did
-    // not already offer.
-    let bundle = AtlasBundle {
-        image_png,
-        metrics: AtlasMetrics::from_bytes(metrics_bytes)
-            .unwrap_or_else(|error| panic!("committed atlas metrics for {what}: {error}")),
-    };
-    let metrics = &bundle.metrics;
-    let glyphs = metrics
-        .glyphs
-        .iter()
-        .filter_map(|glyph| {
-            Some(AtlasGlyph {
-                glyph_id: u32::from(glyph.glyph_id),
-                plane_em: glyph.plane_em?,
-                atlas_px: glyph.atlas_px?,
-            })
-        })
-        .collect();
-    // The one value the metrics blob carries that no reader can recover from:
-    // every painter divides by it (issue #724). Named with `what` like the
-    // parse failure above, because a committed fixture is the thing at fault.
-    Atlas::new(
-        ImageAsset {
-            format: ImageFormat::Png,
-            bytes: bundle.image_png.clone(),
-        },
-        metrics.atlas.width,
-        metrics.atlas.height,
-        metrics.atlas.px_per_em,
-        metrics.atlas.distance_range_px,
-        glyphs,
-    )
-    .unwrap_or_else(|error| panic!("boundary-B atlas for {what}: {error}"))
 }
 
 /// The corpus photograph, as the payload an image fill references.
