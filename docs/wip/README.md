@@ -152,10 +152,20 @@ because four of them carry no interaction at all.
 
 The one still held, brought by an earlier merge, is
 `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`, added at the close of that slice's C
-ABI work to carry stories #841 and #842. **#841 has landed and #842 has not** —
-it waits on hardware, as does D3a (#885) — so this prompt is the one still
-carrying live work, and it was rewritten on 2026-08-13 against what had changed
-under it. It archives when epic #833 does, which its own status line says.
+ABI work to carry stories #841 and #842, and given #947 when that was split out
+of #863 on 2026-08-13. **#841 and #947 have landed and #842 has not** — it waits
+on hardware, as does D3a (#885) — so this prompt is the one still carrying live
+work, and it was rewritten on 2026-08-13 and corrected on 2026-08-14 against
+what had changed under it. It archives when epic #833 does, which its own status
+line says.
+
+**Correcting it rather than archiving it is the convention, not a hedge.** A
+driver prompt is archived verbatim rather than gardened into records, so the
+test is whether it still carries live work: it carries #842, so it stays. Both
+of its durable findings — the emulator's SwiftShader-only Vulkan adapter, and
+the `__INTRODUCED_IN(33)` consequence for `AChoreographer_postVsyncCallback` —
+are already in `docs/design/android-toolchain.md`, so a verbatim archive later
+loses nothing.
 
 For a few hours on 2026-08-12 and 2026-08-13 it had a companion,
 `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md`, carrying the same slice's `main`
