@@ -505,7 +505,23 @@ struct GpuShape {
     /// quad over its atlas rectangle — a vector field carries no `px_per_em`,
     /// because that ratio already is the scale.
     px_range: f32,
-    _pad: f32,
+    /// Non-zero when the four members above describe a field this frame
+    /// actually made resident (issue #972).
+    ///
+    /// **The third state a coverage mask has**, and the one that was missing.
+    /// A row is zeroed both when a field is degenerate — no quad, or no atlas
+    /// rectangle, which [`field_draws`] rejects before residency — and when its
+    /// payload was *refused*, and neither draws. What made that a defect rather
+    /// than a saving is that both consumers inferred "this instance is masked"
+    /// from [`Instance::shape`] alone: a zeroed row then means `px_range = 0`,
+    /// and `msdf_coverage(sample, 0)` is `0.5` for every sample there is. Half
+    /// coverage over the antialiasing margin, on both pipelines.
+    ///
+    /// Stated rather than inferred, for the reason `blur.wgsl` gives against
+    /// its own `masked`: a zero `px_range` is a degenerate field and not an
+    /// absent one, and inferring absence from a value a real field could take
+    /// is how a sentinel goes wrong.
+    resolved: u32,
 }
 
 /// One clip box, in the shader's own layout.
@@ -1750,7 +1766,11 @@ impl Renderer {
                 label: Some("dashscene-gpu frame"),
             });
         let mut draws = 0usize;
-        let mut resolved_backdrops = 0usize;
+        // Which backdrop of the plan is being resolved, counting the refused
+        // ones — the index `BlurTargets::pass` is stated in. Named for the
+        // position rather than for the outcome, because the two came apart once
+        // and nothing but a two-backdrop frame can tell.
+        let mut backdrop_ordinal = 0usize;
         for planned in &plan {
             let target = if planned.target == Instance::NONE {
                 frame_view
@@ -1772,9 +1792,20 @@ impl Renderer {
                 } else {
                     self.layers.texture(planned.target)
                 };
-                self.resolve_backdrop(
+                // **The ordinal always advances, whether or not anything was
+                // encoded.** `BlurTargets` builds one bind-group pair per
+                // backdrop of `backdrop_masks`, which is `plan` in order, and
+                // each pair binds that backdrop's own coverage atlas — so this
+                // is a position in the plan and not a count of the ones that
+                // drew. Skipping it for a refused backdrop moved every backdrop
+                // behind it onto the previous one's mask, which for a refused
+                // field is the placeholder nothing writes: the next node's
+                // frost vanished with no refusal recorded, and a silent drop is
+                // what P4 forbids. The slot is allocated either way; what a
+                // refusal saves is the two draws.
+                let drew = self.resolve_backdrop(
                     &mut encoder,
-                    resolved_backdrops,
+                    backdrop_ordinal,
                     index,
                     buffer,
                     paints,
@@ -1784,8 +1815,10 @@ impl Renderer {
                     width,
                     height,
                 );
-                resolved_backdrops += 1;
-                draws += 2;
+                backdrop_ordinal += 1;
+                if drew {
+                    draws += 2;
+                }
             }
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("dashscene-gpu frame"),
@@ -1900,6 +1933,14 @@ impl Renderer {
     /// composited back into the target. `shaders/blur.wgsl` is the arithmetic
     /// and the reason for each.
     ///
+    /// Returns whether it encoded anything. **A backdrop confined to a coverage
+    /// field this frame could not make resident encodes nothing at all** (issue
+    /// #972), and that is not the same as encoding it unmasked: unmasked means
+    /// the parametric rounded box, so a refused field would frost the node's
+    /// whole box rather than its outline — a larger wrong picture than the one
+    /// the issue was filed for, measured. A baked-vector node's silhouette *is*
+    /// its field, so with no field there is no region to frost.
+    ///
     /// # Panics
     ///
     /// Panics when `index` does not name a backdrop instance, or when its row
@@ -1918,7 +1959,7 @@ impl Renderer {
         view: &wgpu::TextureView,
         width: u32,
         height: u32,
-    ) {
+    ) -> bool {
         let instance = &buffer.instances()[index as usize];
         debug_assert_eq!(
             instance.kind,
@@ -1948,8 +1989,19 @@ impl Renderer {
         // confined to the field's outline rather than to its box — and the row
         // is the same one the node's own fill resolves, so the parameters come
         // from the frame's own resolution rather than a second derivation.
-        let mask = (instance.shape != Instance::NONE)
-            .then(|| resolved.shapes[instance.shape as usize - 1]);
+        // `row`, not `slot`: this function's own `slot` is the backdrop's
+        // ordinal in the frame, and the two are index-like values whose
+        // confusion is silent.
+        let mask = match instance.shape {
+            Instance::NONE => None,
+            row => {
+                let shape = resolved.shapes[row as usize - 1];
+                if shape.resolved == 0 {
+                    return false;
+                }
+                Some(shape)
+            }
+        };
 
         // **A masked backdrop's quad is the field's padded plane quad, not the
         // node's box**, and that is a correctness property rather than a saving.
@@ -2080,6 +2132,7 @@ impl Renderer {
         pass.set_pipeline(&self.blur_resolve_pipeline);
         pass.set_bind_group(0, bind_group, &[]);
         pass.draw(0..4, 0..1);
+        true
     }
 
     /// One axis of the separable kernel, into a scratch that is cleared because
@@ -2288,6 +2341,19 @@ impl Renderer {
                 out.runs[row] = gpu_glyph_run(run, atlas, slot.uv(extent));
             }
         }
+        // The two records of one fact agree. `atlas_of_shape` is what this side
+        // segments draw runs and picks bind groups by, and `GpuShape::resolved`
+        // is what the shaders read, because a shader cannot see the map. Both
+        // are written in the one arm above, two lines apart — this is what says
+        // a later arm cannot write one without the other and leave the backdrop
+        // path and the draw-run path disagreeing about whether a field exists.
+        debug_assert!(
+            out.atlas_of_shape
+                .iter()
+                .zip(&out.shapes)
+                .all(|(atlas, shape)| atlas.is_some() == (shape.resolved != 0)),
+            "a coverage-mask row is resolved exactly when it landed in an atlas",
+        );
         out
     }
 
@@ -2532,7 +2598,10 @@ fn gpu_shape(
         // Device pixels per atlas texel, at unit scale. `dashscene-skia` takes
         // the x ratio alone, and this matches it rather than re-deriving it.
         px_range: field.distance_range * (right - left) / aw as f32,
-        _pad: 0.0,
+        // This function is reached only from the arm that made the payload
+        // resident, so building a row *is* resolving one. Every other row keeps
+        // `GpuShape::default()`'s zero.
+        resolved: 1,
     }
 }
 
@@ -3941,6 +4010,24 @@ const _: () = assert!(size_of::<GpuImage>() == 64);
 /// change size without this failing.
 const _: () = assert!(size_of::<GpuGlyphRun>() == 48);
 const _: () = assert!(size_of::<GpuShape>() == 48);
+
+/// And [`GpuShape`]'s offsets, because since issue #972 its last word carries
+/// meaning rather than padding.
+///
+/// A size assertion alone does not pin a layout — [`GpuBlur`]'s own block says
+/// so and calls itself the proof, having been reordered on one side at an
+/// unchanged size. This struct is now the case that reasoning was written for:
+/// swapping `px_range` and `resolved` on one side alone keeps it at 48 bytes,
+/// and the shader would then read `resolved` out of the range slot — non-zero
+/// for any real field, so the gate opens — and the range out of the flag slot,
+/// where `1u32`'s bit pattern is 1.4e-45. `msdf_coverage(sample, ~0)` is `0.5`,
+/// which is exactly the defect #972 removed, restored for every masked fill in
+/// the frame and caught by nothing.
+const _: () = assert!(std::mem::offset_of!(GpuShape, plane) == 0);
+const _: () = assert!(std::mem::offset_of!(GpuShape, uv) == 16);
+const _: () = assert!(std::mem::offset_of!(GpuShape, half_uv) == 32);
+const _: () = assert!(std::mem::offset_of!(GpuShape, px_range) == 40);
+const _: () = assert!(std::mem::offset_of!(GpuShape, resolved) == 44);
 
 /// The per-frame uniform. **Thirty-two bytes on both sides since story #584**,
 /// where it was sixteen: five scalars is twenty bytes, and a uniform's size
