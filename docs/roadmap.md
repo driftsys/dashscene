@@ -1498,10 +1498,10 @@ after it. What it changed:
   matters.
 - **The v1 section of this file still called rotation about a pivot a
   candidate**, four hundred lines below. Corrected above.
-- **The `figma::variants` module doc states its own severity split backwards** —
-  it claims two of three rules follow the emit policy where the code has one
-  following and two hard-coded to warn. Filed as issue #916, not fixed here,
-  because this revision is documentation-only.
+- **The `figma::variants` module doc stated its own severity split backwards** —
+  it claimed two of three rules follow the emit policy where the code has one
+  following and two hard-coded to warn. Filed as issue #916 and **corrected
+  there**; this revision was documentation-only, so it did not touch the crate.
 - **v0.9's open marker was stale and is now closed**, above.
 
 **What the revision did not do, and is still owed.** It did not decide what

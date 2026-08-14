@@ -48,9 +48,13 @@
 //!
 //! # Severity: an omission, or a degrade
 //!
-//! Two of the three rules below follow the emit policy the way
+//! One of the three rules below follows the emit policy the way
 //! `figma.unsupported` does — an error under `Strict`, a warning under
-//! `Partial`. The third never does, and the split is what each one costs:
+//! `Partial`. **Unlike `figma.unsupported` it does not skip the node**: what has
+//! no lowering is the behaviour, not the box
+//! (`docs/decisions/figma-component-lowering.md`, and
+//! `docs/specification/06-dashc-figma-lowering.md` states it as a `shall`). The
+//! other two never follow the policy, and the split is what each one costs:
 //!
 //! - An **interaction with no lowering** is an omission. Nothing about it
 //!   reaches the document, and under `Strict` the contract is that no bytes
@@ -91,6 +95,14 @@ pub mod rule {
     /// channel no transition can animate. Always a warning — the state change
     /// ships and lands in one frame, which is what a member with no
     /// transition has always meant.
+    ///
+    /// **One site does not fit that description**, and it is filed rather than
+    /// reclassified here: a `CHANGE_TO` naming a destination that is no member
+    /// of any set the file carries lowers *no switch at all*, so it is an
+    /// omission wearing a degrade's rule and severity. Its own message says the
+    /// switch "lowers nowhere". Issue filed against it; moving it changes what
+    /// `Strict` withholds, which is a behaviour change rather than a comment
+    /// correction. Issue #976.
     pub const UNSUPPORTED_MOTION: &str = "figma.prototype.unsupported-motion";
     /// A component set whose members differ in a way no `VariantOverride` can
     /// express, so no `VariantSet` is emitted for it. Always a warning: the

@@ -414,8 +414,12 @@ Checked against `importers/figma/src/`, `crates/dashc/src/`,
       a fill, rotation or visibility difference is carried by the switch and
       arrives immediately. See the known limit in section 4.
 
-      **The first of those three refuses the file under the strict setting;
-      the other two never do.** An unlowerable set and an unanimated
+      **Only part of the first refuses the file under the strict setting; the
+      other two never do.** Limit 1 folds two behaviours together, and they
+      differ: a refused trigger, action or navigation is an omission and is an
+      error under strict, while a refused **easing** — Figma's spring presets
+      and its custom bezier — is always a warning, because the switch still
+      ships and lands in one frame. An unlowerable set and an unanimated
       difference each leave a correct picture, so refusing the file would
       withhold something that renders properly. A dropped interaction is
       authored intent going missing, which strict mode exists to catch —
