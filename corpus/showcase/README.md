@@ -245,15 +245,37 @@ phases at 1920x1200 and timing `SkiaPainter::paint` alone:
 
 At 960x600 the same three read 15.0 ms, 4.1 ms and 0.2 ms.
 
+**These figures predate issues #639 and #644**, both of which removed per-frame
+decoding after the table was taken: #639 moved the image decodes onto the
+painter, and #644 did the same for the MSDF glyph atlases and the
+resolve-shader compile. `docs/technotes/frame-budget.md` measures both fixes,
+each against its own before-and-after run. Its figures are **not** this table
+re-taken — that note times `paint` offscreen as a median of per-frame medians,
+where this table is a mean over an interactive replay, and its own "before"
+column for `surfaces` does not agree with the 28.3 ms here. Read the two as
+separate measurements rather than as one series.
+
 A measurement, not a threshold, and not the slice's frame budget — that is the
 epic's to record, over both the static and the animated case. Three things this
 does say:
 
 - `surfaces` is forty times the cost of `layout`, and it is the scene with four
-  image fills and a backdrop blur in it. Issue #101 (image assets re-decoded per
-  rect, per paint) is the debt this scene stands on: at 28 ms it does not hold
-  60 Hz at 1920x1200, and the loop degrades to running flat out, which is
-  exactly what `demo/src/shell.rs` says a frame that overruns the interval does.
+  image fills and a backdrop blur in it. At 28 ms it did not hold 60 Hz at
+  1920x1200, and the loop degrades to running flat out, which is exactly what
+  `crates/dashscene-desktop/src/host.rs` says a frame overrunning
+  `FRAME_INTERVAL` does. **The debt this scene stood on, issue #101, is
+  closed** — image assets are no longer decoded per rect, and since issue #639
+  not once per frame either. What it carries now is two residuals rather than
+  one, and `crates/dashscene-skia/src/lib.rs`'s `ImageCache` doc states both
+  with their measured bytes: the cache holds one decode per asset until the
+  table changes or the painter is dropped, but the *decoded* pixels are not
+  held there — Skia keeps that raster in a global resource cache that purges
+  under pressure, so a document whose images decode past the limit is
+  re-inflated whatever this cache does — and establishing that the table has
+  not changed walks its encoded payloads once per frame, a cost linear in the
+  table's encoded size. Read that doc for the numbers rather than keeping a
+  second copy of them here; there is no memory budget anywhere in the project
+  to size any of it against (issue #462).
 - A debug build measures the same, within a few per cent. The cost is in Skia
   and in the per-frame image decode, neither of which is Rust the profile
   affects.
