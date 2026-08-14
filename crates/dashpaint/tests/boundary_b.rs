@@ -1323,6 +1323,47 @@ fn an_atlas_refuses_a_glyph_id_no_font_can_produce() {
     );
 }
 
+/// An atlas refuses a zero `px_per_em`, in every build profile (issue #724).
+///
+/// `Atlas::new`'s own doc carries what the value costs and why the refusal is a
+/// `Result` rather than an assertion; this asserts the behaviour it describes.
+/// The short version: a returned error runs in every profile, and no tier here
+/// runs `cargo test --release`.
+#[test]
+fn an_atlas_refuses_a_zero_px_per_em() {
+    let refused = Atlas::new(
+        ImageAsset {
+            format: ImageFormat::Png,
+            bytes: Vec::new(),
+        },
+        64,
+        64,
+        0,
+        2.0,
+        Vec::new(),
+    );
+    assert_eq!(refused, Err(dashpaint::AtlasBuildError::ZeroPxPerEm));
+}
+
+/// The smallest legal `px_per_em` is accepted, so the check above refuses zero
+/// rather than refusing a small atlas.
+#[test]
+fn an_atlas_accepts_the_smallest_non_zero_px_per_em() {
+    let atlas = Atlas::new(
+        ImageAsset {
+            format: ImageFormat::Png,
+            bytes: Vec::new(),
+        },
+        64,
+        64,
+        1,
+        2.0,
+        Vec::new(),
+    )
+    .expect("1 texel per em is a valid atlas scale");
+    assert_eq!(atlas.px_per_em(), 1);
+}
+
 // ---------------------------------------------------------------------------
 // Baked texel payloads and the flattened image table (story #640)
 // ---------------------------------------------------------------------------

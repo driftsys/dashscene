@@ -1322,21 +1322,24 @@ fn anchor_paints() -> PaintTable {
 /// A one-glyph atlas placing the whole image over one em, all "inside".
 fn inside_atlas() -> (GlyphRunTable, AtlasIndex) {
     let mut glyphs = GlyphRunTable::new();
-    let atlas = glyphs.push_atlas(Atlas::new(
-        ImageAsset {
-            format: ImageFormat::Png,
-            bytes: solid_atlas_png(4),
-        },
-        4,
-        4,
-        4,
-        4.0,
-        vec![AtlasGlyph {
-            glyph_id: 1,
-            plane_em: [0.0, 0.0, 1.0, 1.0],
-            atlas_px: [0.0, 0.0, 4.0, 4.0],
-        }],
-    ));
+    let atlas = glyphs.push_atlas(
+        Atlas::new(
+            ImageAsset {
+                format: ImageFormat::Png,
+                bytes: solid_atlas_png(4),
+            },
+            4,
+            4,
+            4,
+            4.0,
+            vec![AtlasGlyph {
+                glyph_id: 1,
+                plane_em: [0.0, 0.0, 1.0, 1.0],
+                atlas_px: [0.0, 0.0, 4.0, 4.0],
+            }],
+        )
+        .expect("a test atlas states a non-zero px_per_em"),
+    );
     (glyphs, atlas)
 }
 

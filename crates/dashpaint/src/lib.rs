@@ -2405,7 +2405,13 @@ pub struct Atlas {
     pub width: u32,
     pub height: u32,
     /// The size, in texels per em, the atlas was rendered at.
-    pub px_per_em: u16,
+    ///
+    /// Private, and that is what makes [`Atlas::new`]'s refusal of zero an
+    /// invariant rather than a formality: `pub` here would let any holder write
+    /// `atlas.px_per_em = 0` after construction and reach both painters' divide
+    /// exactly as before the check existed (issue #724). Read it through
+    /// [`px_per_em`](Self::px_per_em).
+    px_per_em: u16,
     /// The MSDF distance range in atlas texels. The painter's
     /// screen-pixel range is `distance_range_px * render_size /
     /// px_per_em` (`plane_em` and `atlas_px` bake the range into the
@@ -2416,10 +2422,84 @@ pub struct Atlas {
     glyphs: Vec<AtlasGlyph>,
 }
 
+/// Why an [`Atlas`] could not be built.
+///
+/// One variant today. It is an enum rather than a unit struct because the
+/// sibling degenerate cases this one joins — a zero extent, a payload with no
+/// bytes — are each named separately at their own seams, and a second reason to
+/// refuse an atlas belongs beside the first rather than in a new type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AtlasBuildError {
+    /// `px_per_em` was zero: the atlas states no scale to map its distances
+    /// through, and every painter divides by it (issue #724).
+    ZeroPxPerEm,
+}
+
+impl std::fmt::Display for AtlasBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ZeroPxPerEm => write!(
+                f,
+                "an atlas rendered at zero texels per em has no scale to map its distances \
+                 through; every painter divides by px_per_em"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AtlasBuildError {}
+
 impl Atlas {
     /// An atlas over `glyphs`, which must be sorted and unique by
     /// `glyph_id` — the metrics blob guarantees it, so [`glyph`](Self::glyph)
     /// binary-searches.
+    ///
+    /// # Errors
+    ///
+    /// [`AtlasBuildError::ZeroPxPerEm`] when `px_per_em` is zero (issue #724).
+    ///
+    /// This one value is refused through the return type where the two checks
+    /// below are `debug_assert!`s, and the difference is what an invalid value
+    /// costs rather than how likely it is:
+    ///
+    /// - The two assertions below are about a **glyph**, so at worst one
+    ///   character of a run is wrong. The sorted-unique one is a real
+    ///   invariant of the metrics blob and `AtlasMetrics::from_bytes` already
+    ///   refuses a blob that breaks it, in every profile — this is its second
+    ///   line of defence. The glyph-id one is *not* covered that way, and
+    ///   `docs/decisions/sub-word-members-widen-rather-than-pad.md` classes it
+    ///   as a silent drop under P4 as well; it is left alone here only because
+    ///   it is a separate value with a separate story, filed rather than folded
+    ///   into this change.
+    /// - `px_per_em` is a **divisor**. Both painters compute their screen-pixel
+    ///   range as `distance_range_px * size / px_per_em`, so zero makes it an
+    ///   infinity, and `msdf_coverage` then degenerates to a hard edge —
+    ///   `clamp(inf + 0.5, 0, 1)` is 1 inside and 0 outside, with a NaN at the
+    ///   single sample whose median is exactly 0.5, where WGSL leaves `clamp`
+    ///   implementation-defined. That fails towards *a plausible wrong
+    ///   picture*: text that still looks like text, aliased rather than
+    ///   antialiased, and diverging between the two painters.
+    ///
+    /// P4 forbids discovering a limit at draw time, so the check has to hold in
+    /// release. A `debug_assert!` compiles out and leaves exactly the silent
+    /// degrade it was added to remove — and an `assert!` would hold, but no test
+    /// tier in this repository runs `--release`, so nothing would fail if it
+    /// were weakened back to a `debug_assert!`. A `Result` runs in every
+    /// profile and is pinned by a test in every profile.
+    ///
+    /// Refused where the value enters boundary B, which fixes both painters at
+    /// once and is why neither of them carries a guard. `px_per_em` is private,
+    /// so this is the only way to set it and the check holds for every atlas
+    /// that exists — neither a struct literal nor a later assignment can reach
+    /// it. The type's other fields stay public: none of them is a divisor, and
+    /// `distance_range_px` — which shares this expression — is unvalidated
+    /// anywhere and is filed separately rather than quietly fixed here.
+    ///
+    /// An embedder supplying its own font depends on `dashpaint` directly, as
+    /// `dashscene-desktop` and `dashscene-web` both say of their `Atlas`
+    /// re-export: naming is as far as that re-export goes. So the error is
+    /// nameable wherever the constructor is.
     pub fn new(
         image: ImageAsset,
         width: u32,
@@ -2427,7 +2507,10 @@ impl Atlas {
         px_per_em: u16,
         distance_range_px: f32,
         glyphs: Vec<AtlasGlyph>,
-    ) -> Self {
+    ) -> Result<Self, AtlasBuildError> {
+        if px_per_em == 0 {
+            return Err(AtlasBuildError::ZeroPxPerEm);
+        }
         debug_assert!(
             glyphs.windows(2).all(|w| w[0].glyph_id < w[1].glyph_id),
             "atlas glyphs must be sorted and unique by glyph id"
@@ -2441,14 +2524,21 @@ impl Atlas {
             glyphs.iter().all(|g| g.glyph_id <= u32::from(u16::MAX)),
             "a glyph id above u16::MAX cannot come from a font: OpenType ids are 16-bit"
         );
-        Self {
+        Ok(Self {
             image,
             width,
             height,
             px_per_em,
             distance_range_px,
             glyphs,
-        }
+        })
+    }
+
+    /// The size, in texels per em, this atlas was rendered at. Never zero —
+    /// [`Atlas::new`] refuses that, and the field is private so nothing can
+    /// reintroduce it (issue #724).
+    pub fn px_per_em(&self) -> u16 {
+        self.px_per_em
     }
 
     /// The placement for `glyph_id`, or `None` when the atlas has no quad

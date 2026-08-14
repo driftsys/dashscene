@@ -136,6 +136,7 @@ fn glyph_atlas() -> Atlas {
             },
         ],
     )
+    .expect("a test atlas states a non-zero px_per_em")
 }
 
 /// A scene of one unpainted rect with `runs` anchored to it, rendered.

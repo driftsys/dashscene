@@ -29,6 +29,7 @@ fn dummy_atlas() -> Atlas {
         2.0,
         vec![],
     )
+    .expect("a test atlas states a non-zero px_per_em")
 }
 
 fn ink() -> Color {
