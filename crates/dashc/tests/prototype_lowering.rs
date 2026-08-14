@@ -270,12 +270,16 @@ fn the_refused_capture_withholds_the_bytes_and_names_every_construct() {
     // The diagnostic fixture's contract (`corpus/figma-fixtures/README.md`):
     // under R6 it must emit no `.dsb`, and each node names what it holds.
     //
-    // Two of its fifteen `refused-*` nodes are navigation targets carrying no
-    // interaction, and two more — `refused-scroll-animate` and
-    // `refused-mouse-enter` — carry none either, because both
-    // `setReactionsAsync` writes were refused when the capture was authored.
-    // So eleven constructs are exercisable here, not fifteen; the README
-    // already says a test asserting on the last two will find nothing.
+    // Four of its sixteen `refused-*` nodes carry no interaction, so twelve
+    // do: `refused-destination` and `refused-overlay-target` are the two
+    // navigation targets, `refused-mouse-enter`'s `setReactionsAsync` write is
+    // still refused, and `refused-fill-diff` is a `COMPONENT_SET` — the
+    // variant-diff case, asserted by its own test below rather than here.
+    // The list below is thirteen construct *names* drawn from those twelve
+    // cells, because `refused-scroll-animate` contributes two — its transition
+    // and its navigation. They are grouped by what the diagnostic calls each
+    // one, which is not always what the authoring command calls it: `OVERLAY`
+    // and `SCROLL_TO` arrive as the `navigation` of a `NODE` action.
     let error = compile_figma(REFUSED, Profile::Core, &BTreeMap::new())
         .expect_err("a refused prototype construct withholds the bytes under Strict (R6)");
     let CompileError::Diagnostics(found) = error else {
@@ -284,15 +288,23 @@ fn the_refused_capture_withholds_the_bytes_and_names_every_construct() {
     let report = format!("{found}");
 
     for construct in [
+        // transitions
         "DISSOLVE",
         "PUSH",
+        "SCROLL_ANIMATE",
+        // easings
         "CUSTOM_CUBIC_BEZIER",
         "EASE_OUT_BACK",
+        // triggers
         "AFTER_TIMEOUT",
+        "MOUSE_DOWN",
         "ON_KEY_DOWN",
+        // navigations
+        "SCROLL_TO",
+        "OVERLAY",
+        // actions
         "URL",
         "SET_VARIABLE",
-        "OVERLAY",
         "CONDITIONAL",
     ] {
         assert!(
@@ -311,15 +323,19 @@ fn the_refused_capture_withholds_the_bytes_and_names_every_construct() {
         !errors.is_empty(),
         "an interaction with no lowering is the omission class, which withholds the bytes",
     );
-    // Seventeen, not ten: every finding survives one pass (debt #149), so
-    // seven of the ten interaction-carrying nodes report two independent gaps
+    // Twenty-one, not twelve: every finding survives one pass (debt #149), so
+    // nine of the twelve interaction-carrying nodes report two independent gaps
     // — a refused navigation beside a refused transition or trigger. The
     // number is pinned here because `corpus/figma-fixtures/README.md` and the
     // manifest both state it, and nothing else would notice it going stale.
-    assert_eq!(errors.len(), 17, "{found}");
+    //
+    // It was seventeen across ten until the re-capture, which landed the
+    // `SCROLL_ANIMATE` write that had been refused and added a
+    // `refused-mouse-down` cell.
+    assert_eq!(errors.len(), 21, "{found}");
     let nodes: std::collections::BTreeSet<String> =
         errors.iter().map(|d| format!("{}", d.at)).collect();
-    assert_eq!(nodes.len(), 10, "across ten nodes: {found}");
+    assert_eq!(nodes.len(), 12, "across twelve nodes: {found}");
 }
 
 #[test]

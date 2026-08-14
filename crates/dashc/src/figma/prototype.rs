@@ -272,7 +272,7 @@ mod tests {
         assert_eq!(
             read.switches,
             vec![Switch {
-                destination: "1:6".to_string(),
+                destination: "6:183".to_string(),
                 tween: Some((0.3, Easing::EaseOut)),
             }],
         );
@@ -480,7 +480,16 @@ mod tests {
     #[test]
     fn a_node_with_no_interactions_lowers_nothing_and_names_nothing() {
         let f = file(REFUSED);
-        for name in ["refused-destination", "refused-scroll-animate"] {
+        // Both are navigation *targets* that the authoring command builds
+        // without reactions, which is the property this test needs. Note what
+        // that is not: Figma imposes no rule that a target carries no
+        // interaction, so this holds by how the fixture is authored and not by
+        // construction. `refused-scroll-animate` stood here until the
+        // re-capture landed the `setReactionsAsync` write that had been
+        // refused, at which point it gained one and stopped being an example of
+        // the case — and a later re-capture can do the same to these two
+        // (`corpus/figma-fixtures/README.md`).
+        for name in ["refused-destination", "refused-overlay-target"] {
             let read = read(find(&f, name));
             assert!(read.switches.is_empty(), "{name}");
             assert!(read.unsupported.is_empty(), "{name}");

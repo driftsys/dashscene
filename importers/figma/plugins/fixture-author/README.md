@@ -226,7 +226,7 @@ below.
   settings > Details panel > Ligatures**. The `liga-on` node stays at default
   (ligatures on) for contrast; the plugin's summary and the `_manual-checklist`
   node it leaves both repeat this step.
-- **prototype-smart-animate** / **prototype-refused**: **three steps are
+- **prototype-smart-animate** / **prototype-refused**: **two steps are
   outstanding**, and both committed captures carry a `_manual-checklist` node
   naming them. Everything else is written through `setReactionsAsync`, which the
   Plugin API exposes on 17 node types and makes read-only only under
@@ -234,13 +234,17 @@ below.
   not set.
 
   Each reaction is written independently, so a refused arm costs only itself.
-  Three were refused on the first authoring run and are the outstanding work:
-  `CUSTOM_SPRING` in `prototype-smart-animate`, and `SCROLL_ANIMATE` and
-  `MOUSE_ENTER` in `prototype-refused`. Their payloads have since been revised,
-  each with a reason stated at the call site, but **the revised payloads have
-  never been run**: both committed captures predate them. So re-running either
-  command now produces a file that differs from its committed capture, and the
-  fixture must be re-captured — the same situation `node-fx` documents above.
+  Three were refused on the first authoring run. The `prototype-refused` command
+  has since been re-run and landed one of them — `SCROLL_ANIMATE`, which brought
+  `SCROLL_TO` and a `scroll-anchor` destination frame with it — and added a
+  `refused-mouse-down` cell. Two remain outstanding: `CUSTOM_SPRING` in
+  `prototype-smart-animate` and `MOUSE_ENTER` in `prototype-refused`.
+
+  `prototype-refused`'s revised payload has therefore been run, and the
+  committed capture is its result. `prototype-smart-animate`'s has **never been
+  run**, so re-running that command produces a file differing from its committed
+  capture, and the fixture must be re-captured — the same situation `node-fx`
+  documents above.
 
   The checklist node is not free. It is a TEXT node at 12 px, so it lowers into
   the emitted document and raises `text.style-below-msdf-floor`; both committed

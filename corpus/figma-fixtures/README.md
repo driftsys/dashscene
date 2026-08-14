@@ -107,13 +107,16 @@ then showed is recorded in
 error in Figma's own published REST spec.
 
 Both are written through the Plugin API's `setReactionsAsync`, so each is one
-menu command rather than a hand-authoring job. **Three reaction writes were
-refused and are still outstanding**, so neither capture is complete:
-`CUSTOM_SPRING` in the first, and `SCROLL_ANIMATE` and `MOUSE_ENTER` in the
-second. Each capture carries a `_manual-checklist` node naming its own. The
-payloads have since been revised, but the revisions have never been run — so
-re-running either command produces a file that no longer matches its
-committed capture and must be re-captured.
+menu command rather than a hand-authoring job. **Two reaction writes were
+refused and are still outstanding**: `CUSTOM_SPRING` in the first, and
+`MOUSE_ENTER` in the second. Each capture carries a `_manual-checklist` node
+naming its own.
+
+`SCROLL_ANIMATE` was a third until the second capture was re-run, which landed
+it and added a `refused-mouse-down` cell. That re-capture is what this branch
+carries, and it moved every count below — the first capture's revisions have
+still never been run, so re-running that command produces a file that no longer
+matches its committed capture.
 
 | fixture                     | covers                                                                                                                                                                                                                                                                                |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -149,10 +152,10 @@ vocabulary refused by name cannot share a file without the mapping case
 losing its emission test.
 
 Since story #773 that is true of the as-built compiler and not only of the
-intent: under `EmitPolicy::Strict` its ten interaction-carrying nodes earn
-**17** error-severity `figma.prototype.unsupported-interaction` findings and R6
-withholds the bytes, so `manifest.json` now records `emits: false`. Seventeen
-rather than ten because every finding survives one pass (debt #149): seven of
+intent: under `EmitPolicy::Strict` its twelve interaction-carrying nodes earn
+**21** error-severity `figma.prototype.unsupported-interaction` findings and R6
+withholds the bytes, so `manifest.json` now records `emits: false`. Twenty-one
+rather than twelve because every finding survives one pass (debt #149): nine of
 those nodes carry two independent gaps, a refused navigation beside a refused
 transition or trigger. Under `EmitPolicy::Partial` —
 the importer's default — they downgrade to warnings and the file emits
@@ -163,17 +166,38 @@ is an error.
 
 It carries one node per refused construct, named for what it holds, so a
 diagnostic bisects to a name. What the committed capture actually carries is
-transitions `DISSOLVE` and `PUSH` (the `DirectionalTransition` arm, which adds
-`direction` and `matchLayers`); easings `CUSTOM_CUBIC_BEZIER` and
-`EASE_OUT_BACK`, neither of which any of `dashcue`'s four fixed cubics
-expresses; triggers `AFTER_TIMEOUT` and `ON_KEY_DOWN`; and actions `URL`,
-`SET_VARIABLE`, `OVERLAY` and `CONDITIONAL`, whose `conditionalBlocks` nest
-`Action[]` recursively.
+transitions `DISSOLVE`, `PUSH` (the `DirectionalTransition` arm, which adds
+`direction` and `matchLayers`) and `SCROLL_ANIMATE`; easings
+`CUSTOM_CUBIC_BEZIER` and `EASE_OUT_BACK`, neither of which any of `dashcue`'s
+four fixed cubics expresses; triggers `AFTER_TIMEOUT`, `MOUSE_DOWN` and
+`ON_KEY_DOWN`; navigations `SCROLL_TO` and `OVERLAY`; and actions `URL`,
+`SET_VARIABLE` and `CONDITIONAL`, whose `conditionalBlocks` nest `Action[]`
+recursively. Those are the thirteen names
+`the_refused_capture_withholds_the_bytes_and_names_every_construct` asserts on
+— thirteen names across twelve nodes, because `refused-scroll-animate` is the
+one cell contributing two, its transition and its navigation.
 
-Two nodes the command builds carry **no** interaction in this capture:
-`refused-scroll-animate` and `refused-mouse-enter`, both refused by
-`setReactionsAsync`. A test asserting a diagnostic on either name will find
-nothing there. The capture's `_manual-checklist` node names both.
+`SCROLL_TO` and `OVERLAY` are listed as navigations and not as actions because
+that is what the diagnostic calls them: both arrive as the `navigation` of a
+`NODE` action, so a test grepping the report for them under the word "action"
+is reading the wrong field.
+
+A `SCROLL_TO` needs somewhere to scroll to, so the re-capture also added
+`scroll-anchor` (`1:112`): a plain `FRAME` carrying no interaction, named
+outside the `refused-*` convention because it is a destination rather than a
+refused construct. It lowers into the emitted document like any other frame,
+and it is half of what moved the `EmitPolicy::Partial` emission from 1768 to
+1832 bytes — the `refused-mouse-down` cell is the other half, and between them
+they grew the root frame from 256 to 384 px.
+
+One node the command builds to carry an interaction carries **none**:
+`refused-mouse-enter`, refused by `setReactionsAsync`. A test asserting a
+diagnostic on that name will find nothing there. The capture's
+`_manual-checklist` node names it.
+
+`refused-scroll-animate` was the other until the re-capture landed its write.
+It now carries `SCROLL_ANIMATE` + `SCROLL_TO` like every other cell, which is
+why it is no longer usable as the no-interaction example a test picks.
 
 The last cell is the one worth reading twice. Its reaction maps perfectly —
 `ON_CLICK`, `CHANGE_TO`, `SMART_ANIMATE` — but its two variants differ in
@@ -195,12 +219,15 @@ is emitted per instance, so a lowering that only diffed members when an
 instance asked for one would leave this construct unexercised. The member diff
 is computed at the `COMPONENT_SET` for that reason.
 
-**How many constructs this file actually exercises: eleven, not fifteen.** Of
-its fifteen `refused-*` nodes, `refused-destination` and
-`refused-overlay-target` are navigation targets carrying no interaction, and
-`refused-scroll-animate` and `refused-mouse-enter` carry none either (above).
-The remaining ten interaction constructs plus the fill diff are what a test
-can assert on.
+**How many constructs this file actually exercises: thirteen, not sixteen.**
+Of its sixteen `refused-*` nodes, four carry no interaction:
+`refused-destination` and `refused-overlay-target` are navigation targets,
+`refused-mouse-enter`'s write is still refused (above), and `refused-fill-diff`
+is a `COMPONENT_SET` holding a variant diff rather than a reaction. The
+remaining twelve interaction cells plus that fill diff are what a test can
+assert on. Counted by construct _name_ the figure is thirteen as well, for the
+unrelated reason given further up — `refused-scroll-animate` contributes two
+names — so do not try to reconcile the two thirteens into one.
 
 ### Manual authoring step still open
 
