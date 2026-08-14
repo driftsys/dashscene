@@ -295,8 +295,9 @@ impl TextResources {
 ///
 /// A glyph described by neither a plane quad nor an atlas quad is dropped:
 /// that is an empty outline, such as the space, which occupies advance and
-/// paints nothing. It is the same filter `corpus/showcase` applies, and the
-/// reason `Atlas::new`'s sorted-and-unique assertion still holds:
+/// paints nothing. It is the filter `corpus/showcase` reaches through this
+/// function rather than restating (issue #962), and the reason
+/// `Atlas::new`'s sorted-and-unique assertion still holds:
 /// `AtlasMetrics::glyphs` is sorted by glyph id and filtering preserves
 /// order. A glyph carrying exactly one of the two is **refused** rather than
 /// dropped — `AtlasMetrics::from_bytes` does not check the pair agrees, and
