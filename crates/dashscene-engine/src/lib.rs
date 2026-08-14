@@ -249,10 +249,16 @@ impl<'a> TaffySolver<'a> {
     /// other order samples the wrong face rather than failing, so it is
     /// built next to the typesetter's own font list and from the same
     /// order.
-    pub fn with_text(typesetter: &'a mut Typesetter, atlases: Vec<Atlas>) -> Self {
+    /// Takes anything that becomes an `Arc<Vec<Atlas>>`, so a caller already
+    /// holding one shares it rather than deep-copying the set. A `Vec<Atlas>`
+    /// still works unchanged. The distinction matters because issue #621 made
+    /// `stage_text` a per-frame call rather than a per-solve one, and an atlas
+    /// carries its own PNG payload — the showcase's three faces are about 226 kB,
+    /// which a copy per frame would put in the frame loop of every host.
+    pub fn with_text(typesetter: &'a mut Typesetter, atlases: impl Into<Arc<Vec<Atlas>>>) -> Self {
         Self {
             typesetter: Some(Text::Lent(typesetter)),
-            atlases: Arc::new(atlases),
+            atlases: atlases.into(),
             state: None,
             solves: 0,
         }

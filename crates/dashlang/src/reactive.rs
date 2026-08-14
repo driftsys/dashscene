@@ -799,21 +799,56 @@ fn apply_scalar_write(
 /// that moved... leaves the rest... to carry forward from the previous
 /// commit") supplies every other node's rect unchanged, so publishing a
 /// contained-scalar change never touches, let alone allocates, the whole
-/// retained geometry (debt #191). Feeding it to `commit_with` also never
-/// invokes the real solver, which is how a contained write performs no
+/// retained geometry (debt #191). Feeding it to `commit_with` never invokes
+/// the real solver's `solve`, which is how a contained write performs no
 /// layout solve (A1). Core is unchanged: the "no solve" decision lives
 /// entirely in `dashlang`.
-struct CachedSolver {
+///
+/// # The text halves are forwarded, and only they (issue #621)
+///
+/// `solve` is replaced; [`LayoutSolver::atlases`] and
+/// [`LayoutSolver::stage_text`] are handed straight to `inner`. Taking
+/// their defaults instead is what issue #621 was: both default to nothing,
+/// `Txn::commit_with` rebuilds the glyph-run table from whatever the solver
+/// stages and carries nothing forward, so **every glyph run disappeared on
+/// a paint-only commit** and came back only on the next frame that solved.
+/// A scene whose only animation is a changing string blanked that string
+/// the moment it changed, which is the plainest use of the reactive text
+/// binding there is.
+///
+/// Forwarding them costs no layout solve, which is why it does not argue
+/// with the paragraph above. `atlases` is an `Arc::clone` of a build
+/// artifact. `stage_text` shapes each text node against the `geometry`
+/// closure `commit_with` supplies — the rects this commit just published,
+/// which for this solver are the retained cache with the tick's patches
+/// applied — and reads no Taffy tree. `FlipOverlay`, directly below, made
+/// the same call for the same reason and says so.
+struct CachedSolver<'a> {
     /// This tick's changed rects only, built fresh by `patched_rects` for
     /// one `commit_with` call.
     rects: Vec<(NodeId, SolvedRect)>,
+    /// The scene's real solver, for the two halves that are forwarded
+    /// rather than replaced.
+    inner: &'a mut dyn LayoutSolver,
 }
 
-impl LayoutSolver for CachedSolver {
+impl LayoutSolver for CachedSolver<'_> {
     fn solve(&mut self, _arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
         // Moved, not cloned: `self.rects` is already this call's answer,
         // built for exactly one `solve`.
         std::mem::take(&mut self.rects)
+    }
+
+    fn atlases(&mut self) -> Arc<Vec<Atlas>> {
+        self.inner.atlases()
+    }
+
+    fn stage_text(
+        &mut self,
+        arena: &Arena,
+        geometry: &dyn Fn(NodeId) -> SolvedRect,
+    ) -> Vec<StagedRun> {
+        self.inner.stage_text(arena, geometry)
     }
 }
 
@@ -1547,11 +1582,13 @@ impl LiveScene {
             changed.dedup();
             let mut cached = CachedSolver {
                 rects: changed.into_iter().map(|i| self.cached_solve[i]).collect(),
+                inner: &mut *self.solver,
             };
             txn.commit_with(&mut cached)
         } else {
             let mut cached = CachedSolver {
                 rects: patched_rects(&mut self.cached_solve, &patches),
+                inner: &mut *self.solver,
             };
             txn.commit_with(&mut cached)
         };

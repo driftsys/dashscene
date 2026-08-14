@@ -59,9 +59,15 @@ impl LayoutSolver for ShowcaseSolver {
     ) -> Vec<StagedRun> {
         // `TaffySolver::stage_text` stages nothing when its own atlas list is
         // empty, so the list has to be handed over here even though the table
-        // commit builds takes its atlases from `atlases` above. The clone is
-        // the reason `resources` declares three faces and not eight.
-        TaffySolver::with_text(&mut self.typesetter, self.atlases.as_ref().clone())
+        // commit builds takes its atlases from `atlases` above.
+        //
+        // The `Arc` is shared, never deep-copied. It used to be
+        // `self.atlases.as_ref().clone()`, which copied every atlas's own PNG
+        // payload — about 226 kB across the three faces — and that was tolerable
+        // only while this ran on solving ticks alone. Issue #621 made it a
+        // per-frame call, which would have put that copy in the frame loop of
+        // all three hosts at 60 Hz.
+        TaffySolver::with_text(&mut self.typesetter, Arc::clone(&self.atlases))
             .stage_text(arena, geometry)
     }
 }

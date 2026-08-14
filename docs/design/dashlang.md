@@ -296,24 +296,36 @@ ancestor-contained (every ancestor to the root is fixed or fill, propagated
 through passthrough non-hug parents) **and** the write moves no descendant
 (`write_is_single_rect`). A frame with only patchable writes patches the cached
 rects and replays them through a private `CachedSolver` fed to `commit_with`, so
-the real solver is never invoked and cost is independent of scene size. The "no
-solve" decision lives entirely in `dashlang`; core's `commit_with` is unchanged.
-A non-contained write, a `Visible` flip, or a variant switch sets `layout_dirty`
+the real solver's **solve** is never invoked and the layout cost is independent
+of scene size. Since issue #621 the replay does forward the seam's other two
+methods to that solver — see below — so text staging is not. The "no solve"
+decision lives entirely in `dashlang`; core's `commit_with` is unchanged. A
+non-contained write, a `Visible` flip, or a variant switch sets `layout_dirty`
 and forces the real solve, after which the cache is refreshed from the committed
 buffer (DFS order is invariant for a static tree, so the node-to-index map does
 not change).
 
-**The replay stages no glyph runs.** `CachedSolver` implements `LayoutSolver`
-and takes the trait's defaulted `atlases` and `stage_text`, so it stages no
-text; commit rebuilds the glyph-run table from what the solver it was handed
-stages (`docs/decisions/glyph-runs-cross-boundary-b.md`). A replaying commit
-therefore publishes a run table with **no runs in it at all** — every text node
-in the scene, not only the node that changed. Since `bind_text` and
-`Channel::Opacity` are both paint-only, the frame that changes a string is the
-frame that erases the scene's text unless something else on that tick forces the
-solve. The authoring rule that holds until the replay is fixed, and what
-qualifies as a forcing write, are in
-`docs/decisions/signal-driven-text-needs-a-solving-write.md`.
+**The replay stages glyph runs, since issue #621.** `CachedSolver` borrows the
+solver `LiveScene` retains and forwards `atlases` and `stage_text` to it, while
+still answering `solve` from the patched cache. Commit rebuilds the glyph-run
+table from what the solver it was handed stages
+(`docs/decisions/glyph-runs-cross-boundary-b.md`), so forwarding is what keeps a
+paint-only commit's text.
+
+It used to take the trait's defaults for both, and a replaying commit then
+published a run table with **no runs in it at all** — every text node in the
+scene, not only the one that changed. Since `bind_text` and `Channel::Opacity`
+are both paint-only, the frame that changed a string was the frame that erased
+the scene's text. `docs/decisions/signal-driven-text-needs-a-solving-write.md`
+carried an authoring rule that worked around it and is now retired.
+
+**What that costs.** A paint-only tick re-stages text, at about 1.5 µs per text
+node per commit with a warm shaping cache
+(`docs/decisions/glyph-runs-cross-boundary-b.md`, "Per-frame cost, measured").
+So A1's "independent of scene size" holds for layout and not for text. The
+cheaper design — carrying runs forward inside `commit_with`, which re-stages
+nothing — is recorded in the retired decision and is where a frame-budget
+problem here should be answered.
 
 **Smoothing.** `Node::smooth(channel, Spring)` drives a bound channel through
 `dashcue`'s `Scheduler`: the signal sets the spring's target, the scheduler

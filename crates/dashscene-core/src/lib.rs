@@ -57,9 +57,10 @@ pub use bindings::{
 pub use committed::{
     Atlas, AtlasGlyph, AtlasIndex, Blur, BlurKind, ClipBox, ClipIndex, ClipRegion, ClipTable,
     ClipView, Color, CommittedScene, CornerRadii, Fill, FillSpec, GlyphQuad, GlyphRange, GlyphRun,
-    GlyphRunTable, Gradient, GradientKind, GradientStop, GradientView, GroupComposite, ImageFill,
-    Mat23, PaintEntry, PaintIndex, PaintKind, PaintTable, PaintTag, RectEntry, Region, ScaleMode,
-    Shadow, ShadowKind, StopRange, Stroke, StrokeAlign, Vec2, VectorField,
+    GlyphRunTable, Gradient, GradientKind, GradientStop, GradientView, GroupComposite, ImageAsset,
+    ImageFill, ImageFormat, Mat23, PaintEntry, PaintIndex, PaintKind, PaintTable, PaintTag,
+    RectEntry, Region, ScaleMode, Shadow, ShadowKind, StopRange, Stroke, StrokeAlign, Vec2,
+    VectorField,
 };
 pub use load::{
     BoundPayload, MappedPayload, load_document, load_document_bound, load_document_bound_with_cost,

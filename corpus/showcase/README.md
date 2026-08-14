@@ -136,24 +136,30 @@ and `TransitionSpec::Keyframes`, and `dashlang::Node::smooth` accepts only a
 `Spring`. Every eased motion in these scenes is therefore a spring. Reaching the
 other two specs from an authored scene is a `dashlang` widening, not a scene.
 
-## The defect these scenes are written around
+## The defect these scenes were written around — fixed at issue #621
 
-**A tick that commits without solving publishes a scene with no glyph runs in
+**A tick that committed without solving published a scene with no glyph runs in
 it.** `LiveScene::tick` commits through a rect-replaying solver whenever no
-binding forced a re-solve, that solver takes `LayoutSolver`'s defaulted
-`atlases` and `stage_text`, and commit rebuilds the glyph-run table from
-whatever the solver stages — so every run disappears until the next frame that
-does solve. It is not a text-specific path that is wrong; it is that text has
-never been driven through the reactive layer before.
+binding forced a re-solve; that solver took `LayoutSolver`'s defaulted `atlases`
+and `stage_text`, and commit rebuilds the glyph-run table from whatever the
+solver stages — so every run disappeared until the next frame that did solve. It
+was not a text-specific path that was wrong; it was that text had never been
+driven through the reactive layer before.
 
-It bites hardest exactly where it is least expected: a `bind_text` write is
-itself paint-only, so a scene whose only animation is a changing string blanks
-that string the moment it changes.
+It bit hardest exactly where it was least expected: a `bind_text` write is itself
+paint-only, so a scene whose only animation was a changing string blanked that
+string the moment it changed.
 
-Every scene here is written so that **every signal drives at least one
-layout-affecting channel**, which keeps every commit a solving commit and every
-glyph run staged. That is why `surfaces` animates the header's width rather than
-its fill alpha, and why `typography`'s readout shares its signal with a bar that
+**Issue #621 fixed it.** The replay now borrows the scene's own solver and
+forwards both methods to it, so a paint-only commit keeps its text.
+
+Every scene here is still written so that **every signal drives at least one
+layout-affecting channel**, and that is now a property of how the scenes were
+tuned rather than a requirement. It is also why these scenes could not catch the
+defect: every commit in them is a solving commit, so the run count never fell —
+the tests that pin the fix are in `crates/dashlang/tests/reactive.rs`, on a scene
+built for it. That is why `surfaces` animates the header's width rather than its
+fill alpha, and why `typography`'s readout shares its signal with a bar that
 reflows. Replaying the host's loop over all three scenes for eight phases at
 both 960x600 and 1920x1200 — 1,200 ticks and around 700 commits each — the
 staged run count never falls below its starting value.

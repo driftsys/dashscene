@@ -1406,3 +1406,212 @@ fn a_shown_root_staged_between_ticks_is_not_swallowed_by_the_idle_return() {
         "the newly shown subtree was solved rather than replayed from the old root's cache"
     );
 }
+
+// ---------------------------------------------------------------------
+// Issue #621 — a tick that does not solve must still publish the text.
+//
+// `LiveScene::tick` commits through `CachedSolver`, the retained rect
+// replay, whenever no binding forced a re-solve. That solver used to
+// implement `solve` alone and take the trait's defaults for `atlases` and
+// `stage_text`, which return an empty atlas set and no runs — and
+// `Txn::commit_with` rebuilds the glyph-run table from whatever the solver
+// stages, carrying nothing forward. So every glyph run disappeared on such
+// a commit and came back on the next frame that solved.
+//
+// The two halves are asserted separately because they fail separately: a
+// solver can publish the atlas set and stage no runs, or the reverse.
+// Every assertion below reads `arena.committed()`, never the arena's
+// staged intent — the painter reads the committed table, and a run that
+// never reached it is a run nothing draws.
+// ---------------------------------------------------------------------
+
+/// A stager that publishes one atlas and stages one run against the first
+/// root, on every commit it is asked to serve.
+///
+/// Deliberately not a wrapper around `TaffySolver`: this test is about
+/// whether `CachedSolver` *asks* the scene's solver at all, so the stub
+/// answers unconditionally and any empty result is `CachedSolver`'s doing
+/// rather than a font, a cascade or a measure path failing to produce one.
+/// `CountingSolver` above cannot serve here — it implements `solve` alone,
+/// so it carries the very defaults this is testing for.
+struct TextStubSolver {
+    atlases: std::sync::Arc<Vec<dashscene_core::Atlas>>,
+    /// How many times the real solve ran. A paint-only tick must not increment
+    /// it — which is what says the commit went through `CachedSolver` and not
+    /// through `FlipOverlay`, whose forward of these two methods predates this
+    /// change and would make both tests pass with `CachedSolver`'s deleted.
+    solves: Rc<Cell<u32>>,
+}
+
+impl TextStubSolver {
+    fn boxed(solves: Rc<Cell<u32>>) -> Box<dyn LayoutSolver> {
+        use dashscene_core::{Atlas, ImageAsset, ImageFormat};
+        Box::new(TextStubSolver {
+            solves,
+            atlases: std::sync::Arc::new(vec![
+                Atlas::new(
+                    ImageAsset {
+                        format: ImageFormat::Png,
+                        bytes: vec![0],
+                    },
+                    1,
+                    1,
+                    16,
+                    2.0,
+                    vec![],
+                )
+                .expect("16 texels per em is a valid atlas scale"),
+            ]),
+        })
+    }
+}
+
+impl LayoutSolver for TextStubSolver {
+    /// Every node at a fixed box. `commit_with` requires every node to have
+    /// a rect from this call or from the previous commit, and reporting all
+    /// of them keeps the stub out of the incremental question entirely.
+    fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+        self.solves.set(self.solves.get() + 1);
+        let mut out = Vec::new();
+        let mut stack: Vec<NodeId> = arena.roots().to_vec();
+        while let Some(id) = stack.pop() {
+            let layout = arena.layout(id);
+            out.push((
+                id,
+                SolvedRect {
+                    x: layout.x,
+                    y: layout.y,
+                    w: layout.width,
+                    h: layout.height,
+                },
+            ));
+            stack.extend(arena.children(id).iter().copied());
+        }
+        out
+    }
+
+    fn atlases(&mut self) -> std::sync::Arc<Vec<dashscene_core::Atlas>> {
+        std::sync::Arc::clone(&self.atlases)
+    }
+
+    fn stage_text(
+        &mut self,
+        arena: &Arena,
+        _geometry: &dyn Fn(NodeId) -> SolvedRect,
+    ) -> Vec<dashscene_core::StagedRun> {
+        use dashscene_core::{AtlasIndex, Color, GlyphQuad, GlyphRange, GlyphRun, StagedRun};
+        vec![StagedRun {
+            node: arena.roots()[0],
+            run: GlyphRun {
+                rect: u32::MAX,
+                atlas: AtlasIndex(0),
+                size: 12.0,
+                color: Color {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 1.0,
+                    a: 1.0,
+                },
+                glyphs: GlyphRange::UNASSIGNED,
+                opacity: 1.0,
+            },
+            quads: vec![GlyphQuad {
+                glyph_id: 7,
+                x: 0.0,
+                y: 0.0,
+            }],
+        }]
+    }
+}
+
+/// A scene whose only binding is a fill alpha, which is paint-only: `tick`
+/// does not set `layout_dirty` for it, so the commit goes through
+/// `CachedSolver`.
+fn paint_only_text_scene() -> (
+    Arena,
+    dashlang::LiveScene,
+    dashlang::Signal<f32>,
+    Rc<Cell<u32>>,
+) {
+    let mut arena = Arena::new();
+    let mut scene = Scene::new();
+    let alpha = scene.signal(1.0f32);
+    scene.roots([node("label")
+        .mode(LayoutMode::None)
+        .size(100.0, 20.0)
+        .bind(Channel::FillA, alpha)]);
+    let solves = Rc::new(Cell::new(0));
+    let live = scene.build_live(&mut arena, TextStubSolver::boxed(Rc::clone(&solves)));
+    (arena, live, alpha, solves)
+}
+
+/// Runs the paint-only tick, having established that it actually commits and
+/// actually takes the replay path.
+///
+/// Both are load-bearing. `tick` has an idle early return, so a test that only
+/// compared two equal numbers would pass if no commit happened at all. And
+/// `FlipOverlay` already forwards these two methods, so a test that did not pin
+/// "no solve" would pass with `CachedSolver`'s forward deleted — the regression
+/// would go unnoticed.
+fn drive_paint_only_tick(
+    arena: &mut Arena,
+    live: &mut dashlang::LiveScene,
+    alpha: dashlang::Signal<f32>,
+    solves: &Rc<Cell<u32>>,
+) {
+    let solves_before = solves.get();
+    let generation_before = live.generation();
+
+    live.set(alpha, 0.25);
+    live.tick(0.016, arena);
+
+    assert!(
+        live.generation() > generation_before,
+        "the tick must commit, or the assertions compare the build commit with itself",
+    );
+    assert_eq!(
+        solves.get(),
+        solves_before,
+        "a fill-alpha write must not solve — this is the tick that goes through CachedSolver",
+    );
+}
+
+/// The first half: a paint-only tick must still stage the scene's glyph
+/// runs. Without the forward this reads 1 before the tick and 0 after —
+/// the scene blanks its own text on the frame the alpha changes.
+#[test]
+fn a_paint_only_tick_still_publishes_glyph_runs() {
+    let (mut arena, mut live, alpha, solves) = paint_only_text_scene();
+
+    let before = arena.committed().glyphs().runs().len();
+    assert_eq!(before, 1, "the build commit stages the stub's one run");
+
+    drive_paint_only_tick(&mut arena, &mut live, alpha, &solves);
+
+    let after = arena.committed().glyphs().runs().len();
+    assert_eq!(
+        after, 1,
+        "a tick that changes only the fill alpha must not drop the scene's glyph runs \
+         ({before} before, {after} after)"
+    );
+}
+
+/// The second half: the same tick must still publish the atlas set. A run
+/// whose atlas index resolves against an empty table is a run no painter
+/// can draw, so this fails independently of the run count above.
+#[test]
+fn a_paint_only_tick_still_publishes_the_atlas_set() {
+    let (mut arena, mut live, alpha, solves) = paint_only_text_scene();
+
+    let before = arena.committed().glyphs().atlases().len();
+    assert_eq!(before, 1, "the build commit publishes the stub's one atlas");
+
+    drive_paint_only_tick(&mut arena, &mut live, alpha, &solves);
+
+    let after = arena.committed().glyphs().atlases().len();
+    assert_eq!(
+        after, 1,
+        "a tick that changes only the fill alpha must not drop the atlas set \
+         ({before} before, {after} after)"
+    );
+}

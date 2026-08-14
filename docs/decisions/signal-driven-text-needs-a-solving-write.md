@@ -1,6 +1,9 @@
 # A signal that drives text must also drive a write that solves
 
-    status   accepted (story/demo-backend-badge, 2026-08-04)
+    status   RETIRED 2026-08-14 by the replay fix this record defers
+             (issue #621). Kept for the reasoning, which is why the fix took
+             the shape it did; the authoring rule below no longer binds.
+             Was: accepted (story/demo-backend-badge, 2026-08-04)
     scope    every scene authored against dashlang's reactive layer, and every
              producer driving text through it — corpus/showcase today, the
              loader-side attach_live path on the same terms; retired by the
@@ -39,6 +42,33 @@ anyway: the painter badge first bound only text and opacity, and announcing a
 painter wiped the scene's own text along with its own label. The hazard was
 recorded in one scene's prose, which is not where a person designing a new scene
 looks.
+
+## Retired, and what discharged each reason for deferring
+
+**Option 1 landed at issue #621.** `CachedSolver` now borrows the solver
+`LiveScene` already retains and forwards `atlases` and `stage_text` to it, so a
+replaying commit re-stages text and **the authoring rule below is no longer
+required**. A signal may drive `bind_text` alone.
+
+The two reasons this record gave for deferring, and what became of them:
+
+- **"`reactive.rs` was under change on another branch."** Discharged. Epic #951
+  placed the fix in `dashlang` for the mirror-image reason: it is
+  `dashscene-core`'s `arena.rs` that is contended now, by three open v0.19
+  stories, and `reactive.rs` is free.
+- **"A change to the cost model of every paint-only frame ... belongs to whoever
+  owns that budget."** This is the reason that mattered, and it is **accepted
+  rather than discharged**: a paint-only tick now re-stages text, at the ~1.5 µs
+  per text node per commit that `glyph-runs-cross-boundary-b.md` measures. Epic
+  #951 scheduled the fix knowing the alternative — carrying runs forward inside
+  `commit_with`, which re-stages nothing — and chose this side on
+  file-contention grounds. **The cheaper design is still the cheaper design**,
+  and it is where a future frame-budget problem should be answered.
+
+  One cost that would have been paid per frame was removed rather than accepted:
+  `ShowcaseSolver::stage_text` deep-copied the whole atlas set, about 226 kB of
+  PNG payload, on every call. It shares the `Arc` now, because this change is
+  what moved that call into the frame loop.
 
 ## Options
 
