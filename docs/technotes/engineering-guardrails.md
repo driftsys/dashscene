@@ -45,8 +45,20 @@ rules.
 - **G-7** — The paint-and-text edge-case triage covers stroke-on-text, per-side
   strokes, dashed strokes, single-stop gradients, and mask scoping
   ([04-figma-vocabulary-profile.md](../specification/04-figma-vocabulary-profile.md),
-  "Paint and text edge cases"). (R6)
+  "Paint and text edge cases"). (R6) **Unchecked for two of the five, and
+  scheduled work rather than a waiver:** correcting that table against the
+  lowering (issue #802) showed that **per-side stroke widths** are read nowhere
+  and reported by nothing — `rest.rs` has no field for them — and that a
+  **single-stop gradient** lowers verbatim with no diagnostic of any kind, where
+  the profile had described an explicit lowering with an info diagnostic.
+  Neither is triaged, so neither is covered. The other three are. The cited
+  section now holds seven rows rather than the five this item enumerates.
 - **G-8** — Letter-case transforms happen in the typesetter, pre-shaping. (P2)
+  **Unchecked, and scheduled work rather than a waiver:** no case-transform
+  vocabulary exists in the workspace, and the Figma lowering refuses a
+  `textCase` other than `ORIGINAL` by name. The guardrail binds whenever the
+  construct is built; it does not describe an implemented behaviour today (issue
+  #802).
 - **G-9** — Image scale-mode edge semantics (fill / fit / tile / stretch; clamp
   versus decal) are specified in `dashpaint` and identical across painters —
   never inherited from a backend default. (G2, P2)
