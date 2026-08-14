@@ -194,6 +194,13 @@ total, nineteen of them the crates above.
     just android-probe  cross-compile the D3a probe, push it to an attached
                       device and run it: what the painter's own device request
                       reports on that adapter (docs/design/android-toolchain.md)
+    just android-splitscreen  build, install and launch the lifecycle harness
+                      ready for D4's split-screen case (issue #874). Needs a
+                      handheld emulator image, not target hardware — the
+                      automotive one does not offer split-screen. The last step
+                      is a hand gesture: Android 12 removed the adb path into
+                      split-screen, so the recipe stops at a launched activity
+                      and prints what to press
     just web-build    assemble the browser host into target/web (needs
                       wasm-bindgen-cli, which bootstrap does not install)
     just web          serve target/web on 127.0.0.1, byte ranges honoured

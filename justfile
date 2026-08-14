@@ -928,6 +928,85 @@ android-probe:
     "${adb}" shell chmod 755 /data/local/tmp/adapter_report
     "${adb}" shell /data/local/tmp/adapter_report
 
+# Build, install and launch the lifecycle harness, ready for the split-screen
+# exercise of issue #874.
+#
+# D4 of `docs/decisions/host-integration-in-three-layers.md` names three cases
+# that get the surface handshake wrong: rotation, backgrounding and
+# split-screen. The first two have been exercised; the third has not, and
+# `crates/dashscene-android/src/handshake.rs` has six host-side unit tests and
+# no instrumented one.
+#
+# **This needs no target hardware.** The issue was filed believing it did, on
+# the reading that the only installed system image was the automotive one —
+# split-screen is not offered there. A standard handheld image offers it, and
+# this recipe checks for one and prints the `sdkmanager` line if it is missing.
+# Only #885, the D3a Vulkan measurement, genuinely needs the device.
+#
+# **The last step is a hand gesture and cannot be scripted.** Android 12 removed
+# the adb path into split-screen: `am start --windowingMode 6` is rejected on a
+# handheld the same way it was on automotive, and there is no `cmd` equivalent.
+# So this recipe takes it as far as a launched activity and then prints what to
+# press. Everything before that is deterministic.
+android-splitscreen:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sdk="${ANDROID_HOME:-${HOME}/Library/Android/sdk}"
+    img="system-images;android-35;google_apis_playstore;arm64-v8a"
+    # Resolved the same way `android-probe` does, and for the same reason: a
+    # missing platform-tools otherwise surfaces as "no device attached", which
+    # sends the reader looking for a cable rather than for an install.
+    if command -v adb >/dev/null 2>&1; then adb=adb; else adb="${sdk}/platform-tools/adb"; fi
+    if [ ! -x "${adb}" ] && ! command -v adb >/dev/null 2>&1; then
+      echo "android-splitscreen: no adb on PATH and none at ${adb}" >&2
+      echo "android-splitscreen:   sdkmanager --install platform-tools" >&2
+      exit 1
+    fi
+    # A handheld image, checked by path rather than by `sdkmanager --list`,
+    # which needs the network. The automotive image does not offer split-screen,
+    # so finding *an* image is not enough.
+    if [ ! -d "${sdk}/system-images/android-35/google_apis_playstore/arm64-v8a" ]; then
+      echo "android-splitscreen: no handheld system image installed." >&2
+      echo "android-splitscreen:   sdkmanager --install '${img}'" >&2
+      echo "android-splitscreen: the automotive image does not offer split-screen." >&2
+      exit 1
+    fi
+    if [ -z "$("${adb}" devices | sed '1d' | grep -w device || true)" ]; then
+      echo "android-splitscreen: no device attached. Create and start one:" >&2
+      echo "android-splitscreen:   avdmanager create avd -n dashscene-phone -k '${img}'" >&2
+      echo "android-splitscreen:   ${sdk}/emulator/emulator -avd dashscene-phone &" >&2
+      exit 1
+    fi
+    ./crates/dashscene-android/harness/build.sh
+    apk="target/android-harness/harness.apk"
+    # `adb install -r` fails with INSTALL_FAILED_UPDATE_INCOMPATIBLE when the
+    # signing key has changed, and the device then goes on running the previous
+    # build — a green install reporting success while the change is not on the
+    # device. build.sh keeps the keystore outside the directory it wipes to
+    # avoid that; this uninstalls first so a keystore that *was* regenerated
+    # cannot reproduce it.
+    "${adb}" uninstall dev.driftsys.dashscene.harness >/dev/null 2>&1 || true
+    "${adb}" install "${apk}"
+    "${adb}" shell am start -n dev.driftsys.dashscene.harness/dev.driftsys.dashscene.HarnessActivity
+    "${adb}" logcat -c
+    echo
+    echo "The harness is running. Split-screen is a hand gesture — Android 12"
+    echo "removed the adb path, so this is the part that cannot be scripted:"
+    echo
+    echo "  1. ${adb} shell input keyevent 187      # opens Recents"
+    echo "  2. long-press the harness icon in Recents"
+    echo "  3. choose \"Split screen\""
+    echo "  4. pick any second app for the other half"
+    echo
+    echo "What to watch, from D4: the surfaceDestroyed handshake must block"
+    echo "until the surface is dropped. A use-after-free shows as a native"
+    echo "crash in logcat; a missed handshake shows as a frozen or black half."
+    echo
+    echo "  ${adb} logcat -s dashscene:V DEBUG:V"
+    echo
+    echo "Record the result on issue #874 either way — an exercise that passes"
+    echo "is the point, and today the case has never been run at all."
+
 # Assemble the browser host into `target/web`, ready to serve.
 #
 # `wasm-bindgen` post-processes the module cargo produced into the JS glue a
