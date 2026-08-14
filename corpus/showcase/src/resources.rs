@@ -184,6 +184,9 @@ fn load_atlas(image_png: Vec<u8>, metrics_bytes: &[u8], what: &str) -> Atlas {
             })
         })
         .collect();
+    // The one value the metrics blob carries that no reader can recover from:
+    // every painter divides by it (issue #724). Named with `what` like the
+    // parse failure above, because a committed fixture is the thing at fault.
     Atlas::new(
         ImageAsset {
             format: ImageFormat::Png,
@@ -195,6 +198,7 @@ fn load_atlas(image_png: Vec<u8>, metrics_bytes: &[u8], what: &str) -> Atlas {
         metrics.atlas.distance_range_px,
         glyphs,
     )
+    .unwrap_or_else(|error| panic!("boundary-B atlas for {what}: {error}"))
 }
 
 /// The corpus photograph, as the payload an image fill references.

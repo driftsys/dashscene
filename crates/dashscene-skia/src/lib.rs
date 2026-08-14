@@ -952,7 +952,7 @@ impl MsdfFrame<'_> {
         // The screen-pixel range scales the atlas distance range by the
         // ratio of render size to the size the atlas was baked at
         // (docs/design/atlas-pipeline.md).
-        let px_range = atlas.distance_range_px * run.size / f32::from(atlas.px_per_em);
+        let px_range = atlas.distance_range_px * run.size / f32::from(atlas.px_per_em());
         // Fold the run's free-path group alpha into the fill (story #44):
         // the MSDF resolve modulates coverage by `color.a`, so multiplying
         // the alpha dims the whole run.
@@ -2207,23 +2207,26 @@ mod tests {
     /// `ink`.
     fn one_atlas_table(atlas_color: dashpaint::Color, ink: dashpaint::Color) -> GlyphRunTable {
         let mut glyphs = GlyphRunTable::new();
-        let atlas = glyphs.push_atlas(Atlas::new(
-            ImageAsset {
-                format: dashpaint::ImageFormat::Png,
-                bytes: one_pixel_png(atlas_color),
-            },
-            1,
-            1,
-            1,
-            2.0,
-            vec![dashpaint::AtlasGlyph {
-                glyph_id: 0,
-                // y-up, baseline origin: a 2-em quad sitting above the
-                // baseline, which the run's 2.0 size places over the surface.
-                plane_em: [0.0, 0.0, 1.0, 1.0],
-                atlas_px: [0.0, 0.0, 1.0, 1.0],
-            }],
-        ));
+        let atlas = glyphs.push_atlas(
+            Atlas::new(
+                ImageAsset {
+                    format: dashpaint::ImageFormat::Png,
+                    bytes: one_pixel_png(atlas_color),
+                },
+                1,
+                1,
+                1,
+                2.0,
+                vec![dashpaint::AtlasGlyph {
+                    glyph_id: 0,
+                    // y-up, baseline origin: a 2-em quad sitting above the
+                    // baseline, which the run's 2.0 size places over the surface.
+                    plane_em: [0.0, 0.0, 1.0, 1.0],
+                    atlas_px: [0.0, 0.0, 1.0, 1.0],
+                }],
+            )
+            .expect("a test atlas states a non-zero px_per_em"),
+        );
         glyphs.push_run(
             GlyphRun {
                 rect: 0,

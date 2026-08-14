@@ -76,6 +76,7 @@ pub fn load_atlas(dir: &str) -> Atlas {
         m.atlas.distance_range_px,
         glyphs,
     )
+    .unwrap_or_else(|e| panic!("committed atlas fixture at {dir} loads: {e}"))
 }
 
 /// A 4×4 checker `ImageAsset`, rendered through the painter itself — the

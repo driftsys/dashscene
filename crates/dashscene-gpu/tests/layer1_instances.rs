@@ -495,6 +495,7 @@ fn text_atlas(width: u32, height: u32, px_per_em: u16, range: f32) -> Atlas {
             atlas_glyph(23, [0.05, 0.15, 0.45, 0.5], [21.0, 7.0, 33.0, 27.0]),
         ],
     )
+    .expect("a test atlas states a non-zero px_per_em")
 }
 
 fn glyph_quad(glyph_id: u32, x: f32, y: f32) -> GlyphQuad {
