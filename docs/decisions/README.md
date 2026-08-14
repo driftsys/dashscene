@@ -548,8 +548,10 @@ their parent rather than apart from it:
   — a boundary-B member narrower than the ones around it widens to the word
   rather than declaring a `_pad` beside it: a public padding member would
   participate in the derived equality, the widening costs no bytes and moves no
-  offsets, and the type-level domain guarantee it gives up is asserted in
-  `Atlas::new` instead (story #578).
+  offsets, and the type-level domain guarantee it gives up is replaced in
+  `Atlas::new` instead — for `AtlasGlyph` only, refused rather than asserted
+  since issue #966, while `GlyphQuad`'s half stays unchecked and is the one that
+  silently drops (story #578, issue #985).
 - [shader-library-and-layer-2.md](shader-library-and-layer-2.md) — the lean
   painter's SDF math is one WGSL file included textually by every consumer, and
   layer 2 evaluates it by compute shader against independently derived

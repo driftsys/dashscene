@@ -53,9 +53,21 @@ hold a value no font can produce, and such a value would make `Atlas::glyph`
 miss and the glyph paint nothing with no diagnostic — a silent drop (P4).
 
 `Atlas::new` refuses it by name, beside the sorted-and-unique assertion it
-already carries. A type-level guarantee became an asserted one, which is the
-trade this decision makes and the reason it is written down rather than left in
-a commit message.
+already carries. A type-level guarantee became a checked one, which is the trade
+this decision makes and the reason it is written down rather than left in a
+commit message.
+
+That check was a `debug_assert!` until issue #966, which made it
+`AtlasBuildError::GlyphIdAboveU16Max` — an assertion that compiles out holds in
+no release build, so the trade as first made held in no shipping profile.
+
+**It covers `AtlasGlyph` only, and the drop described above is on the other
+side.** The sentence naming `Atlas::glyph` is about a **`GlyphQuad`**: a row
+this constructor accepted is _found_ by that binary search and paints, where a
+quad naming an id the atlas has no row for is what both painters skip without a
+diagnostic. `GlyphQuad::glyph_id` passes through no constructor and is checked
+at no seam, so for that half the widening's lost guarantee is still lost. Issue
+#985 carries it, and names `GlyphRunTable::push_run` as the seam.
 
 ## How the property is held
 
