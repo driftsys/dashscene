@@ -252,14 +252,16 @@ consumer and the seam the other two will come through.
 available and a test performs it; wiring a rung choice into the showcase host is
 later work, and the profile question `dashpack` already answers.
 
-**A payload larger than one atlas is refused, not tiled.** The atlas is
-`ATLAS_EXTENT` texels on a side — 2048, or 2046 at a 6x6 footprint — clamped by
-what the device will give. That is a **budget**, not the device's maximum, and
-the two must not be confused: an atlas is allocated whole the first time a
-payload of its format appears, so sizing it by an adapter reporting 16384 would
-commit a gigabyte the moment one image fill appeared. It is the opposite of the
-question `Renderer::max_extent` answers, which issue #714 deliberately took from
-the adapter.
+**A payload larger than one atlas gets a texture of its own, not a tiling and
+not a refusal** (revised at issue #720; the original ruling, which refused it,
+is recorded at the end of this section). The atlas is `ATLAS_EXTENT` texels on a
+side — 2048, or 2046 at a 6x6 footprint — clamped by what the device will give.
+That is a **budget**, not the device's maximum, and the two must not be
+confused: an atlas is allocated whole the first time a payload of its format
+appears, so sizing it by an adapter reporting 16384 would commit a gigabyte the
+moment one image fill appeared. It is the opposite of the question
+`Renderer::max_extent` answers, which issue #714 deliberately took from the
+adapter.
 
 An earlier draft of this record said the atlas "is the device's largest texture
 under downlevel limits", and the code read it back out of
@@ -268,7 +270,25 @@ requested at those limits. Neither was true after issue #714 changed the request
 to `.using_resolution(adapter.limits())`. Both are now stated as the constant
 they are, with the reason attached.
 
-The limitation that remains is real: on a device that could hold a 3000-texel
-image, this painter refuses it by name rather than drawing it. Issue #720
-carries the fix, which is a dedicated texture outside the atlas — not a bigger
-atlas.
+**Revised at issue #720.** This section used to end here, saying that on a
+device which could hold a 3000-texel image the painter refused it by name rather
+than drawing it, and that the fix would be a dedicated texture outside the
+atlas. That fix has landed, and the reasoning above is why it took that shape
+rather than a larger atlas: the extent is a budget, so raising it would charge
+every document for the one that needed it.
+
+A payload past `ATLAS_EXTENT` but inside the device's own
+`max_texture_dimension_2d` is now given a texture sized to itself, entered in
+the same atlas list, and bound as its own draw run — which the renderer already
+supported, because it binds one atlas per run and segments the instance buffer
+when a frame needs more than one. That texture is closed to every other payload
+(`atlas_for` skips it) and is dropped rather than reset when a document is
+replaced, because nothing else can ever allocate in it.
+
+`ResidencyError::TooLarge` survives with a narrower meaning: larger than the
+**device**, which is a document no arrangement of textures on that adapter can
+draw. It, and a payload in a container this build links no decoder for
+(`NoDecoder`, issue #718), are recorded on `Renderer::refusals` and the row
+draws nothing — `Painter::paint` still returns nothing by decision, so the
+refusal travels out rather than back. `docs/design/dashscene-gpu.md` carries the
+as-built detail.

@@ -26,6 +26,13 @@ use dashscene_gpu::{GpuPainter, Renderer};
 const W: u32 = 64;
 const H: u32 = 48;
 
+/// The corpus JPEG the issue names, so the payload is a real one whose header
+/// parses — `ImageTable::push` derives an encoded asset's extent from it. What
+/// the test below is about is that the *decode* never happens.
+const JPEG_FIXTURE: &[u8] = include_bytes!(
+    "../../../corpus/figma-fixtures/jpeg-fill.images/4045fd0419fbcbbd03505d2d258c6dbbeb2da1fe.jpg"
+);
+
 /// A renderer, or a named failure — the reason `layer3_render_smoke` gives.
 fn renderer() -> Renderer {
     Renderer::new().expect("layer 3 needs a device")
@@ -530,8 +537,12 @@ fn a_table_row_the_frame_does_not_draw_is_not_made_resident() {
         4,
         2,
     );
-    // An asset no rect names, and that `ResidencyError::TooLarge` would refuse
-    // if anything asked for it.
+    // An asset no rect names. Since issue #720 it would no longer be *refused*
+    // if anything asked — a payload past the atlas but inside the device gets a
+    // dedicated texture, and every adapter this suite runs on reports more than
+    // 2048. It is still one texel past `ATLAS_EXTENT`, which is what the
+    // docstring above derives it from the constant to stay: what it now proves
+    // is that the row is never made resident at all, not how it would fail.
     let too_wide = dashscene_gpu::ATLAS_EXTENT + 1;
     images.push_baked(payload(too_wide, 1, |_, _| [1, 2, 3, 255]), too_wide, 1);
     // And an ordinary one, so the fill table is three rows and the drawn row is
@@ -1027,6 +1038,116 @@ fn an_image_with_no_bytes_draws_nothing() {
                 texel(&pixels, x, y),
                 [0, 0, 0, 0],
                 "an asset with no bytes painted ({x}, {y})"
+            );
+        }
+    }
+}
+
+/// A JPEG image fill draws nothing, names itself, and does not take the host
+/// down (issue #718).
+///
+/// This is the live path the issue names — `resolve_frame -> resident_image ->
+/// Residency::resident` — reached the way a real document reaches it, through
+/// `Painter::paint`. `TexelPayload::of` used to panic inside it, so a `.dsb`
+/// with a JPEG image fill loaded through `ds_runtime_load_document` and drawn
+/// by `GpuPainter` crashed. `corpus/figma-fixtures/jpeg-fill.json` is exactly
+/// such a document.
+///
+/// The bytes are a JPEG header and nothing more: this never reaches a decoder,
+/// which is the whole point, so a valid image would prove less rather than
+/// more.
+#[test]
+fn a_jpeg_image_fill_is_refused_by_name_rather_than_panicking() {
+    let mut images = ImageTable::new();
+    // The corpus fixture the issue names, so the payload is a real JPEG whose
+    // header parses — `ImageTable::push` derives the extent from it. What this
+    // test is about is that the *decode* never happens.
+    let jpeg = images.push(ImageAsset {
+        format: ImageFormat::Jpeg,
+        bytes: JPEG_FIXTURE.to_vec(),
+    });
+    assert_ne!(
+        (images.resolve(jpeg).width, images.resolve(jpeg).height),
+        (0, 0),
+        "the fixture must have an extent, or the no-bytes path would answer first",
+    );
+
+    let mut paints = PaintTable::new();
+    let fill = paints.intern_fill(&FillSpec::Image(ImageFill {
+        image: jpeg,
+        scale_mode: ScaleMode::Fill,
+        transform: Mat23::IDENTITY,
+        tile_scale: 1.0,
+    }));
+    let paint = paints.push(PaintEntry {
+        fill,
+        ..PaintEntry::default()
+    });
+    // Two rects naming the same refused row, because one refused payload must be
+    // one refusal. `resolve_frame`'s memo arrays record only what resolved, so a
+    // refused row stays unresolved and every further instance asks again — with a
+    // single rect this test would pass whether or not the dedup existed.
+    let rects: Vec<RectEntry> = (0..2)
+        .map(|i| RectEntry {
+            x: 8.0 + i as f32 * 20.0,
+            y: 8.0,
+            w: 16.0,
+            h: 24.0,
+            paint,
+            clip: ClipIndex::UNCLIPPED,
+            opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
+        })
+        .collect();
+    let clips = ClipTable::new();
+    let mut painter = GpuPainter::new();
+    painter.paint(
+        &rects,
+        &paints,
+        &images,
+        &clips,
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+
+    let mut renderer = renderer();
+    let pixels = renderer
+        .render(
+            painter.instances(),
+            &paints,
+            &images,
+            &clips,
+            &GlyphRunTable::new(),
+            W,
+            H,
+        )
+        .expect("the fixture extent is within any device's maximum");
+
+    // Named, not silent — the half P4 is about.
+    let refusals = renderer.refusals();
+    assert_eq!(
+        refusals.len(),
+        1,
+        "two rects name one refused row, so one refusal — got {refusals:?}",
+    );
+    assert_eq!(refusals[0].row, jpeg);
+    assert_eq!(
+        refusals[0].error,
+        dashscene_gpu::ResidencyError::NoDecoder {
+            format: ImageFormat::Jpeg
+        },
+    );
+    assert_eq!(renderer.refusals_seen(), 1);
+
+    // And nothing drawn, rather than a plausible wrong picture.
+    for y in 0..H {
+        for x in 0..W {
+            assert_eq!(
+                texel(&pixels, x, y),
+                [0, 0, 0, 0],
+                "a refused payload painted ({x}, {y})"
             );
         }
     }

@@ -114,7 +114,7 @@ use dashpaint::{
 
 pub use composite::{Pass, Step};
 pub use instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan, Layer};
-pub use render::{ATLAS_EXTENT, Changes, InstanceUpload, Renderer, RendererError};
+pub use render::{ATLAS_EXTENT, Changes, InstanceUpload, Refusal, Renderer, RendererError};
 pub use residency::{AtlasFormat, Residency, ResidencyError};
 pub use shader::SDF_WGSL;
 pub use surface::{Drawn, FrameError, SurfaceRenderer};

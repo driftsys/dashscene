@@ -249,6 +249,46 @@ a multiple of four of the six ASTC footprints, so `usable_extent` trims the
 atlas to what the footprint divides. A feature must also be requested from the
 device, not merely advertised by the adapter.
 
+### A payload the atlas cannot hold, and one this build cannot decode
+
+Both used to abort the frame, and both were reachable from an ordinary document
+rather than from a broken contract between crates (issues #720 and #718).
+
+**Larger than the atlas is not larger than the device.** A payload that exceeds
+`ATLAS_EXTENT` but fits `max_texture_dimension_2d` now gets a texture of its
+own, sized to itself and rounded **up** to whole blocks where a shared atlas
+rounds down. The machinery was already there: residency answers with a
+`Slot { atlas, rect }`, each atlas carries its own extent, and the renderer
+already binds one atlas per draw run and segments the instance buffer when a
+frame needs more than one. A dedicated texture is another entry in that list
+whose allocator is fully occupied by one payload, and `atlas_for`'s by-format
+lookup skips it — a later payload matching it would evict the oversized one it
+exists for and then still not fit. Only a payload past the device's own limit is
+refused, which is a document no arrangement of textures on that adapter can
+draw. A glyph atlas is the likeliest of the three consumers to reach the old
+bound: one sheet for a whole script at a whole weight, so a CJK coverage set
+exceeds 2048 square where an oversized photograph has to be authored
+deliberately.
+
+**A JPEG or GIF payload is refused by name.** This painter links one decoder and
+that is `png`, for the reason the trim profile exists at all. `TexelPayload::of`
+panicked on the other two, on the live
+`resolve_frame → resident_image → Residency::resident` path, so a `.dsb` with a
+JPEG image fill crashed the host — and `Painter::samples`, the declaration meant
+to stop the payload arriving, has no production call site, so nothing read it
+before binding.
+
+**Where a refusal goes.** `Painter::paint` still returns nothing by decision, so
+there is no channel back to the caller. What there is now is a channel _out_:
+the row draws nothing and the refusal is recorded on `Renderer::refusals`,
+naming the consumer, the row and the `ResidencyError`, with a monotonic
+`Renderer::refusals_seen` beside `evictions` and `decodes` for a host that
+samples rather than polls. That is what P4's "never a silent drop" asks for
+without widening boundary B for every painter. Two larger changes stay open and
+are not this: widening the painter's return type, and refusing the document at
+load, which is the only shape that would give `Painter::samples` a caller and
+make `baked-texel-payloads-cross-boundary-b.md` D6 true rather than decorative.
+
 ## Two targets, one device
 
 `Renderer` draws into a texture view and reads it back; `SurfaceRenderer`
@@ -281,9 +321,18 @@ would pass just as happily if every frame quietly wrote the whole buffer.
 
 ## What this painter declares it can sample
 
-`Painter::samples` is a capability declaration, asked before a payload is bound
-rather than inside a frame, because `Painter::paint` is infallible by decision
+`Painter::samples` is a capability declaration, meant to be asked before a
+payload is bound rather than inside a frame, because `Painter::paint` is
+infallible by decision
 (`docs/decisions/baked-texel-payloads-cross-boundary-b.md`).
+
+**Nothing asks it.** It has no production call site — every caller is a test,
+and `GpuPainter::sampled_formats` has none at all — which is why a JPEG payload
+reached the renderer and panicked there rather than being turned away at the
+bind (issue #718). The declaration is correct and currently decorative;
+`docs/technotes/implementing-a-backend.md` says the same. Until a host reads it,
+the refusal described under "Atlas residency" below is the behaviour that
+actually holds.
 
 `SampledFormats` is the first override of the trait's default. It claims PNG but
 neither JPEG nor GIF — this painter links one decoder, because the trim profile
