@@ -72,6 +72,25 @@ pub mod rule {
     /// message names the construct; the node path names the layer.
     pub const UNSUPPORTED: &str = "figma.unsupported";
 
+    /// A refused node had descendants, and they went with it (issue #875).
+    ///
+    /// Separate from [`UNSUPPORTED`] because it answers a different question.
+    /// That rule says *what* was refused; this one says *how much* went with it.
+    /// The walk returns before pushing the refused node's children onto the
+    /// visit stack, so before this rule existed a subtree of any depth **left
+    /// exactly one diagnostic naming only its root**.
+    ///
+    /// Dropping the subtree is correct — the children have no parent to attach
+    /// to, and re-parenting them onto the grandparent would move them in the
+    /// tree and change what the solver sees. The defect was in the reporting:
+    /// P4 was satisfied for the refused node and not for what went with it, so
+    /// a reader saw one warning and had to work out for themselves that the
+    /// missing content was downstream of it.
+    ///
+    /// Emitted once per refused node, never once per blocker: a node with three
+    /// blockers loses its subtree once.
+    pub const SUBTREE_DROPPED: &str = "figma.subtree-dropped";
+
     /// The walk resolved every top-level node to no paintable content — the
     /// definitions-only case: a canvas holding only `COMPONENT`/`COMPONENT_SET`
     /// resolves but paints nothing
@@ -119,7 +138,7 @@ pub mod rule {
 /// image is a caller-contract failure over the `images` map, not a
 /// vocabulary gap the rest of the document can ship without.
 ///
-/// `index` is the advisory locator `Walk::unsupported`/`unsupported_at` use:
+/// `index` is the advisory locator [`Walk::unsupported_at`] uses:
 /// the document index this node would have taken had it lowered.
 fn image_diagnostic(rule: &'static str, index: u32, path: &str, message: String) -> CompileError {
     CompileError::Diagnostics(
@@ -315,8 +334,10 @@ pub fn lower_with_bindings(
 /// [`lower_with_bindings`], choosing the emit policy
 /// (`docs/decisions/unsupported-figma-constructs-refuse-the-compile.md`).
 ///
-/// The policy rides on the `Walk` and reaches `Walk::unsupported_at`: under
-/// [`crate::EmitPolicy::Partial`] a `figma.unsupported` omission is minted at
+/// The policy rides on the `Walk` and reaches two diagnostics. Under
+/// [`crate::EmitPolicy::Partial`] a `figma.unsupported` omission
+/// (`Walk::unsupported_at`) and the `figma.subtree-dropped` that names what
+/// went with it (`Walk::refused_subtree`, issue #875) are both minted at
 /// `Severity::Warning` instead of `Severity::Error`, so the skipped node's gap
 /// no longer blocks emission. Nothing else in the walk changes — the subtree is
 /// skipped either way, and `figma.no-content` and the triaged
@@ -679,7 +700,12 @@ impl Walk<'_> {
             && node.kind != "GROUP"
             && node.kind != "VECTOR"
         {
-            self.unsupported(path, format!("node type {}", node.kind));
+            let index = self.doc.nodes.len() as u32;
+            self.unsupported_at(index, path, format!("node type {}", node.kind));
+            // The commoner of the two subtree drops by far: any node kind the
+            // walk does not lower reaches here, where a blocker needs a
+            // specific construct (issue #875).
+            self.refused_subtree(index, path, node);
             return Ok(());
         }
 
@@ -940,6 +966,9 @@ impl Walk<'_> {
             for what in blockers {
                 self.unsupported_at(index, path, what);
             }
+            // Once for the node, not once per blocker: a node with three
+            // blockers loses its subtree once (issue #875).
+            self.refused_subtree(index, path, node);
             // The node's triaged constructs are still real findings on a
             // real layer; dropping them because a sibling property was
             // unsupported would re-create the one-finding-per-pass loop
@@ -1118,13 +1147,14 @@ impl Walk<'_> {
 
     /// One unsupported-construct diagnostic at the index the node would have
     /// taken had it lowered.
-    fn unsupported(&mut self, path: &str, what: String) {
-        let index = self.doc.nodes.len() as u32;
-        self.unsupported_at(index, path, what);
-    }
-
+    ///
+    /// The index is the caller's, because a refusal now reports twice at the
+    /// same one: the construct, and the subtree that went with it
+    /// ([`Walk::refused_subtree`], issue #875). A thin wrapper computing
+    /// `self.doc.nodes.len()` for one of the two would let them disagree.
     fn unsupported_at(&mut self, index: u32, path: &str, what: String) {
-        // The one policy-sensitive diagnostic (story S0-impl): an omission is
+        // One of the two policy-sensitive diagnostics (story S0-impl;
+        // `figma.subtree-dropped` is the other, issue #875): an omission is
         // an error under Strict (R6 refuses the file) and a warning under
         // Partial (the node is skipped either way, so the document still
         // emits with the gap named — P4, never a silent drop).
@@ -1137,6 +1167,58 @@ impl Walk<'_> {
             severity,
             at: Location::Node(NodePath::new(index, path)),
             message: format!("{what} is not in the document vocabulary yet"),
+        });
+    }
+
+    /// Names the subtree a refusal took with it, at the same index the refusal
+    /// itself was reported at (issue #875).
+    ///
+    /// `fn visit` has **three** early returns before the child-push loop, and
+    /// this is called at two of them: the unsupported-node-kind arm and the
+    /// blocker verdict. The third — a `COMPONENT` or `COMPONENT_SET`, which
+    /// resolves but paints nothing — is deliberately exempt: nothing below a
+    /// definition would have reached the document anyway, so a count there would
+    /// name a loss that did not happen.
+    ///
+    /// Silent for a leaf,
+    /// because there is nothing extra to say about one — the refusal's own
+    /// diagnostic already covers it, and a line reading "0 descendants" on
+    /// every refused rectangle would bury the case that matters.
+    ///
+    /// Severity follows the emit policy for the same reason
+    /// [`Walk::unsupported_at`] does: under `Strict` the file is withheld
+    /// anyway, and under `Partial` — which is what the production importer runs
+    /// — this is the line that makes the hole visible at all.
+    fn refused_subtree(&mut self, index: u32, path: &str, node: &Node) {
+        // Iterative, with an explicit stack, for the reason the whole walk is
+        // (debt #148): tree depth costs heap and never call stack. `lower` is
+        // public and takes an already-built `FigmaFile`, so the parse-side
+        // `MAX_JSON_DEPTH` does not bound what reaches here — and `dashc`
+        // compiles to `wasm32-unknown-unknown`, where a stack overflow is a trap
+        // and `docs/decisions/dashc-wasm-abi.md` promises a status instead.
+        // `image_refs` above has the same shape.
+        let mut count = 0usize;
+        let mut stack: Vec<&Node> = node.children.iter().collect();
+        while let Some(next) = stack.pop() {
+            count += 1;
+            stack.extend(next.children.iter());
+        }
+        if count == 0 {
+            return;
+        }
+        let severity = match self.policy {
+            crate::EmitPolicy::Strict => Severity::Error,
+            crate::EmitPolicy::Partial => Severity::Warning,
+        };
+        self.diagnostics.push(Diagnostic {
+            rule: rule::SUBTREE_DROPPED,
+            severity,
+            at: Location::Node(NodePath::new(index, path)),
+            message: format!(
+                "this layer was refused, so the {count} layer(s) below it in the Figma file were \
+                 dropped with it and are not named individually; they have no parent to attach \
+                 to. Some may not have lowered on their own terms either"
+            ),
         });
     }
 

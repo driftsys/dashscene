@@ -23,18 +23,25 @@ anywhere refused every byte.
 - **`EmitPolicy::Strict`** is the original posture, unchanged: any vocabulary
   gap is an error and the file refuses to emit (R6). This stays the Rust library
   default, so every existing caller and test keeps today's behavior.
-- **`EmitPolicy::Partial`** downgrades one class of diagnostic — the
-  `figma.unsupported` omission — from error to warning. The node's subtree is
-  still skipped (nothing is lowered approximately), so the document emits with
-  the covered majority and the skipped nodes ride back as named warnings. The
-  Deno importer defaults to Partial; its new `--strict` flag restores Strict.
+- **`EmitPolicy::Partial`** downgrades the omission class — `figma.unsupported`,
+  and since issue #875 `figma.subtree-dropped` beside it — from error to
+  warning. The node's subtree is still skipped (nothing is lowered
+  approximately), so the document emits with the covered majority and the
+  skipped nodes ride back as named warnings. The Deno importer defaults to
+  Partial; its new `--strict` flag restores Strict.
 
 The line partial-emit does **not** cross is approximation. Two kinds of
 vocabulary diagnostic already exist, and Partial treats them oppositely:
 
 - **Omission** (`figma.unsupported`, minted by `Walk::unsupported_at`): the node
-  is skipped, leaving a hole plus a named diagnostic. This is the only
-  policy-sensitive diagnostic. Downgraded to a warning under Partial.
+  is skipped, leaving a hole plus a named diagnostic. Downgraded to a warning
+  under Partial.
+
+  `figma.subtree-dropped` (issue #875) joins this class and is policy-sensitive
+  for the same reason: it names how many layers went with a refused one, so it
+  describes the same hole and must not withhold a document that Partial has
+  already decided to emit. **These two are the policy-sensitive diagnostics** —
+  the count was one until #875, and this line said so.
 - **Approximation-if-shipped** (a REJECT-band construct triaged on the success
   path — noise, texture, progressive blur): the node **is** lowered, just
   without the rejected feature, so shipping it would render a picture the

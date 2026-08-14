@@ -1426,6 +1426,246 @@ fn a_rotated_node_with_children_is_refused_because_rotation_does_not_compose() {
     );
 }
 
+/// Every `figma.subtree-dropped` diagnostic, as `(path, index, severity,
+/// message)`.
+///
+/// The index and the severity are carried because both are load-bearing and
+/// neither is visible in the message: the index must match the
+/// `figma.unsupported` raised at the same refusal — that agreement is what
+/// removing `Walk::unsupported` was for — and the severity must follow the emit
+/// policy, or `Partial` stops emitting bytes for any file with a refused
+/// non-leaf node.
+type Dropped = (String, u32, Severity, String);
+
+fn subtrees_dropped(diagnostics: &[dashscene_validator::Diagnostic]) -> Vec<Dropped> {
+    located(diagnostics, "figma.subtree-dropped")
+}
+
+/// Every diagnostic under `rule`, in the same shape.
+fn located(diagnostics: &[dashscene_validator::Diagnostic], rule: &str) -> Vec<Dropped> {
+    diagnostics
+        .iter()
+        .filter(|d| d.rule == rule)
+        .map(|d| {
+            let Location::Node(at) = &d.at else {
+                panic!("{rule} is located at a node");
+            };
+            (at.path.clone(), at.index, d.severity, d.message.clone())
+        })
+        .collect()
+}
+
+/// A refused node takes its whole subtree with it, and says how much (issue
+/// #875).
+///
+/// Dropping the subtree is correct — the children have no parent to attach to.
+/// The defect was that only the refused node was named, so a reader saw one
+/// warning and had to work out for themselves that the missing content was
+/// downstream of it. Under `EmitPolicy::Partial`, which is what the production
+/// importer runs, the document emits and that one line was the only trace.
+#[test]
+fn a_refused_node_names_how_many_layers_went_with_it() {
+    // Four descendants under the refused frame, two levels deep, so the count
+    // is a recursive one rather than `children.len()`.
+    let file = document(serde_json::json!({
+        "name": "rotated-frame",
+        "type": "FRAME",
+        "rotation": 0.25,
+        "size": { "x": 10.0, "y": 10.0 },
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "children": [
+            {
+                "name": "a",
+                "type": "RECTANGLE",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 4.0, "height": 4.0 },
+            },
+            {
+                "name": "b",
+                "type": "RECTANGLE",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 4.0, "height": 4.0 },
+            },
+            {
+                "name": "group",
+                "type": "FRAME",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 8.0, "height": 8.0 },
+                "children": [{
+                    "name": "deep",
+                    "type": "RECTANGLE",
+                    "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 2.0, "height": 2.0 },
+                }],
+            },
+        ],
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+
+    assert!(doc.nodes.is_empty(), "the whole subtree is dropped");
+
+    let dropped = subtrees_dropped(&diagnostics);
+    assert_eq!(dropped.len(), 1, "one per refused node, got {dropped:?}");
+    assert!(
+        dropped[0].0.contains("rotated-frame"),
+        "reported at the refused node, got {}",
+        dropped[0].0,
+    );
+    assert!(
+        dropped[0].3.contains("the 4 layer(s) below it"),
+        "the count is recursive — a, b, group and deep — got {}",
+        dropped[0].3,
+    );
+
+    // The two diagnostics at one refusal must name the same node. Removing
+    // `Walk::unsupported` was justified by exactly this: a wrapper computing the
+    // index separately could let them disagree, and `at` is what an editor jumps
+    // to and what a waiver keys on (issue #41).
+    let refused = located(&diagnostics, "figma.unsupported");
+    assert_eq!(
+        refused.len(),
+        1,
+        "one blocker on this fixture, got {refused:?}"
+    );
+    assert_eq!(
+        dropped[0].1, refused[0].1,
+        "the subtree diagnostic and the refusal must point at the same layer",
+    );
+    assert_eq!(dropped[0].0, refused[0].0, "and at the same path");
+}
+
+/// The severity follows the emit policy, both ways (issue #875).
+///
+/// Not cosmetic. `figma.subtree-dropped` is the second policy-sensitive rule in
+/// this walk, and a hard `Severity::Error` would reach `Report::has_errors` under
+/// `Partial` — so **every file containing a refused non-leaf node would stop
+/// emitting bytes**, which is the commonest refusal there is. Mutating the
+/// `match self.policy` to a constant passes every other test in this file.
+#[test]
+fn a_dropped_subtree_follows_the_emit_policy() {
+    let file = document(serde_json::json!({
+        "name": "star",
+        "type": "STAR",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "children": [{
+            "name": "inner",
+            "type": "RECTANGLE",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 4.0, "height": 4.0 },
+        }],
+    }));
+
+    for (policy, expected) in [
+        (EmitPolicy::Strict, Severity::Error),
+        (EmitPolicy::Partial, Severity::Warning),
+    ] {
+        let (_, diagnostics) = dashc_wasm::figma::lower_with_bindings_and_policy(
+            &file,
+            Profile::Core,
+            &BTreeMap::new(),
+            &[],
+            policy,
+        )
+        .expect("an unsupported construct is diagnosed, not fatal");
+        let dropped = subtrees_dropped(&diagnostics);
+        assert_eq!(dropped.len(), 1, "{policy:?}: got {dropped:?}");
+        assert_eq!(
+            dropped[0].2, expected,
+            "{policy:?} must give the dropped subtree {expected:?}",
+        );
+    }
+}
+
+/// One refused node loses its subtree once, however many blockers it carries
+/// (issue #875).
+///
+/// The single-blocker fixtures above cannot tell "once per node" from "once per
+/// blocker": both give one. This node carries three.
+#[test]
+fn a_node_with_several_blockers_reports_one_dropped_subtree() {
+    let file = document(serde_json::json!({
+        "name": "many-blockers",
+        "type": "FRAME",
+        "rotation": 0.25,
+        "strokesIncludedInLayout": true,
+        "strokeDashes": [4.0, 2.0],
+        "strokes": [{ "type": "SOLID", "color": { "r": 0.0, "g": 0.0, "b": 0.0, "a": 1.0 } }],
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "children": [{
+            "name": "inner",
+            "type": "RECTANGLE",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 4.0, "height": 4.0 },
+        }],
+    }));
+
+    let (_, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+
+    let refused = located(&diagnostics, "figma.unsupported");
+    assert!(
+        refused.len() > 1,
+        "the fixture must carry more than one blocker, or this proves nothing: {refused:?}",
+    );
+    assert_eq!(
+        subtrees_dropped(&diagnostics).len(),
+        1,
+        "one refused node loses its subtree once, not once per blocker",
+    );
+}
+
+/// The same, at the other site the walk returns from before pushing children:
+/// a node kind the lowering does not handle at all (issue #875's comment).
+///
+/// This one is reached by **any** unlowered kind, which is a far commoner
+/// refusal than a rotated node with children, and the issue body did not scope
+/// it.
+#[test]
+fn an_unsupported_node_kind_also_names_the_subtree_it_dropped() {
+    let file = document(serde_json::json!({
+        "name": "star",
+        "type": "STAR",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "children": [{
+            "name": "inner",
+            "type": "RECTANGLE",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 4.0, "height": 4.0 },
+        }],
+    }));
+
+    let (_, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+
+    let dropped = subtrees_dropped(&diagnostics);
+    assert_eq!(dropped.len(), 1, "one per refused node, got {dropped:?}");
+    assert!(
+        dropped[0].0.contains("star"),
+        "reported at the refused node, got {}",
+        dropped[0].0,
+    );
+    assert!(
+        dropped[0].3.contains("the 1 layer(s) below it"),
+        "the STAR's one child went with it, got {}",
+        dropped[0].3,
+    );
+}
+
+/// A refused **leaf** says nothing extra. Its own refusal already covers it,
+/// and a line reading "0 descendants" on every refused rectangle would bury
+/// the case that matters.
+#[test]
+fn a_refused_leaf_reports_no_dropped_subtree() {
+    let file = document(serde_json::json!({
+        "name": "star",
+        "type": "STAR",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+    }));
+
+    let (_, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+
+    assert!(
+        subtrees_dropped(&diagnostics).is_empty(),
+        "a leaf drops no subtree",
+    );
+}
+
 #[test]
 fn a_rotated_node_without_size_is_refused_rather_than_measured_from_its_bounds() {
     // Without `size` the only extent available is `absoluteBoundingBox`, which
