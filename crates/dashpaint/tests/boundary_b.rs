@@ -1294,19 +1294,28 @@ fn an_empty_glyph_run_table_names_no_quads() {
     assert!(glyphs.runs().is_empty());
 }
 
-/// An atlas refuses a glyph id no font can produce, by name.
+/// An atlas refuses a glyph id no font can produce, in every build profile
+/// (issue #966).
 ///
 /// `GlyphQuad` and `AtlasGlyph` widened their ids from `u16` to `u32` so that
 /// neither struct carries padding it does not declare
 /// (`docs/decisions/sub-word-members-widen-rather-than-pad.md`). The `u16` made
-/// an out-of-domain id unrepresentable; this is what replaces that. Without it
-/// such an id would place a row `Atlas::glyph` can still be asked for, and a
-/// quad naming it would paint nothing with no diagnostic — the silent drop P4
-/// forbids.
+/// an out-of-domain id unrepresentable, and this replaces that on the
+/// `AtlasGlyph` side only: such a row is one no font can name.
+///
+/// It is deliberately not the silent drop that record describes — a row this
+/// constructor accepts is found by `Atlas::glyph` and paints, and what paints
+/// nothing is a `GlyphQuad` the atlas has no row for. That side is unchecked
+/// (issue #985).
+///
+/// This asserted a panic until issue #966. A `debug_assert!` compiles out, so
+/// the guard held in no release build, and no tier here runs `cargo test
+/// --release` — so a `should_panic` test could not tell the assertion from the
+/// silent drop. The sibling invariant, sorted-unique ids, needs no such change:
+/// `AtlasMetrics::from_bytes` refuses a blob that breaks it in every profile.
 #[test]
-#[should_panic(expected = "a glyph id above u16::MAX cannot come from a font")]
 fn an_atlas_refuses_a_glyph_id_no_font_can_produce() {
-    let _ = Atlas::new(
+    let refused = Atlas::new(
         ImageAsset {
             format: ImageFormat::Png,
             bytes: Vec::new(),
@@ -1321,6 +1330,30 @@ fn an_atlas_refuses_a_glyph_id_no_font_can_produce() {
             atlas_px: [0.0, 0.0, 8.0, 8.0],
         }],
     );
+    assert_eq!(refused, Err(dashpaint::AtlasBuildError::GlyphIdAboveU16Max));
+}
+
+/// The largest glyph id a font can produce is accepted, so the check above
+/// refuses an out-of-domain id rather than the top of the domain.
+#[test]
+fn an_atlas_accepts_the_largest_glyph_id_a_font_can_produce() {
+    let atlas = Atlas::new(
+        ImageAsset {
+            format: ImageFormat::Png,
+            bytes: Vec::new(),
+        },
+        64,
+        64,
+        16,
+        2.0,
+        vec![AtlasGlyph {
+            glyph_id: u32::from(u16::MAX),
+            plane_em: [0.0, 0.0, 1.0, 1.0],
+            atlas_px: [0.0, 0.0, 8.0, 8.0],
+        }],
+    )
+    .expect("u16::MAX is a glyph id OpenType can name");
+    assert!(atlas.glyph(u32::from(u16::MAX)).is_some());
 }
 
 /// An atlas refuses a zero `px_per_em`, in every build profile (issue #724).
@@ -1362,6 +1395,86 @@ fn an_atlas_accepts_the_smallest_non_zero_px_per_em() {
     )
     .expect("1 texel per em is a valid atlas scale");
     assert_eq!(atlas.px_per_em(), 1);
+}
+
+/// An atlas refuses a zero distance range (issue #964).
+///
+/// The other operand of the expression `px_per_em` was guarded in, and the one
+/// that fails least visibly: `px_range` becomes 0, so `msdf_coverage` returns
+/// `clamp(signed_distance * 0 + 0.5, 0, 1)` — exactly 0.5 for every sample — and
+/// each glyph paints as a uniform half-alpha box. Text that is still text-shaped
+/// and uniformly wrong is the plausible-wrong-picture class P4 forbids, not the
+/// nothing-drawn class.
+#[test]
+fn an_atlas_refuses_a_zero_distance_range() {
+    assert_eq!(
+        atlas_with_distance_range(0.0),
+        Err(dashpaint::AtlasBuildError::DistanceRangeOutOfDomain)
+    );
+}
+
+/// An atlas refuses a negative distance range, which would invert coverage —
+/// glyph interiors transparent and exteriors opaque.
+#[test]
+fn an_atlas_refuses_a_negative_distance_range() {
+    assert_eq!(
+        atlas_with_distance_range(-2.0),
+        Err(dashpaint::AtlasBuildError::DistanceRangeOutOfDomain)
+    );
+}
+
+/// An atlas refuses a distance range that is not finite.
+///
+/// Both non-finite values reach a wrong picture the same way the zero
+/// `px_per_em` of issue #724 did, through the other operand: an infinity makes
+/// `px_range` an infinity, so `clamp(inf + 0.5, 0, 1)` is a hard aliased edge
+/// with an implementation-defined WGSL result at the sample whose median is
+/// exactly 0.5, and a NaN reaches that same `clamp` directly. This is why the
+/// domain is finite-and-positive rather than merely positive: an infinity is
+/// positive.
+#[test]
+fn an_atlas_refuses_a_non_finite_distance_range() {
+    for range in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        assert_eq!(
+            atlas_with_distance_range(range),
+            Err(dashpaint::AtlasBuildError::DistanceRangeOutOfDomain),
+            "a distance range of {range} is not finite"
+        );
+    }
+}
+
+/// A narrow distance range is accepted, so the checks above refuse an
+/// out-of-domain value rather than a small one.
+///
+/// `f32::MIN_POSITIVE` is not the smallest value that passes — subnormals below
+/// it are finite and greater than zero, and `f32::from_bits(1)` is accepted too.
+/// The domain has one bound at each end and neither is a useful-range bound: a
+/// range this narrow makes `px_range` small enough that coverage is 0.5
+/// everywhere, which is the same picture the zero case is refused for. Choosing
+/// the value where a range stops resolving an edge needs a number relating it to
+/// the atlas extent, and no measurement in this repository supplies one — the
+/// same reason there is no upper bound.
+#[test]
+fn an_atlas_accepts_a_narrow_distance_range() {
+    let atlas = atlas_with_distance_range(f32::MIN_POSITIVE)
+        .expect("a narrow distance range is out of no domain this constructor states");
+    assert_eq!(atlas.distance_range_px(), f32::MIN_POSITIVE);
+}
+
+/// An otherwise-valid atlas carrying `distance_range_px`, so the four tests
+/// above vary only the value under test.
+fn atlas_with_distance_range(distance_range_px: f32) -> Result<Atlas, dashpaint::AtlasBuildError> {
+    Atlas::new(
+        ImageAsset {
+            format: ImageFormat::Png,
+            bytes: Vec::new(),
+        },
+        64,
+        64,
+        16,
+        distance_range_px,
+        Vec::new(),
+    )
 }
 
 // ---------------------------------------------------------------------------

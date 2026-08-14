@@ -2348,8 +2348,12 @@ impl PaintTable {
 /// The value's domain is unchanged: OpenType ids are 16-bit, every producer
 /// widens with `u32::from`, and nothing here widens what a font may express.
 /// What the `u16` used to give for free — an out-of-domain id being
-/// unrepresentable — is asserted in [`Atlas::new`] instead. The trade, and why
-/// widening beat declaring the padding, are in
+/// unrepresentable — is **not** replaced on this type: `glyph_id` here is
+/// checked at no seam, and a quad naming an id no atlas has a row for is skipped
+/// by both painters without a diagnostic. Issue #985 carries it.
+/// [`Atlas::new`] refuses such an id on [`AtlasGlyph`], which is the atlas side
+/// of the same widening and a different value. The trade, and why widening beat
+/// declaring the padding, are in
 /// `docs/decisions/sub-word-members-widen-rather-than-pad.md`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2416,7 +2420,14 @@ pub struct Atlas {
     /// screen-pixel range is `distance_range_px * render_size /
     /// px_per_em` (`plane_em` and `atlas_px` bake the range into the
     /// bounds, so this scales the sharpness of the edge, not the size).
-    pub distance_range_px: f32,
+    ///
+    /// Private for the reason [`px_per_em`](Self::px_per_em) is, and it is the
+    /// other operand of that same expression: `pub` here would let any holder
+    /// write `atlas.distance_range_px = 0.0` after construction and paint every
+    /// glyph as a uniform half-alpha box, exactly as before [`Atlas::new`]'s
+    /// check existed (issue #964). Read it through
+    /// [`distance_range_px`](Self::distance_range_px).
+    distance_range_px: f32,
     /// Placement per glyph, sorted and unique by `glyph_id` (the metrics
     /// blob's own invariant — painters may binary-search it).
     glyphs: Vec<AtlasGlyph>,
@@ -2424,16 +2435,27 @@ pub struct Atlas {
 
 /// Why an [`Atlas`] could not be built.
 ///
-/// One variant today. It is an enum rather than a unit struct because the
-/// sibling degenerate cases this one joins — a zero extent, a payload with no
-/// bytes — are each named separately at their own seams, and a second reason to
-/// refuse an atlas belongs beside the first rather than in a new type.
+/// It is an enum rather than a unit struct because the sibling degenerate cases
+/// these join — a zero extent, a payload with no bytes — are each named
+/// separately at their own seams, and a further reason to refuse an atlas
+/// belongs beside the existing ones rather than in a new type.
+///
+/// The first two are the two operands of one expression, `distance_range_px *
+/// size / px_per_em`, and between them they fix its domain. The third is about
+/// a single glyph rather than the whole run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AtlasBuildError {
     /// `px_per_em` was zero: the atlas states no scale to map its distances
     /// through, and every painter divides by it (issue #724).
     ZeroPxPerEm,
+    /// `distance_range_px` was not finite and greater than zero, so the
+    /// screen-pixel range every painter derives from it is not a range
+    /// (issue #964).
+    DistanceRangeOutOfDomain,
+    /// A glyph id exceeded `u16::MAX`, which no OpenType font can produce
+    /// (issue #966).
+    GlyphIdAboveU16Max,
 }
 
 impl std::fmt::Display for AtlasBuildError {
@@ -2443,6 +2465,15 @@ impl std::fmt::Display for AtlasBuildError {
                 f,
                 "an atlas rendered at zero texels per em has no scale to map its distances \
                  through; every painter divides by px_per_em"
+            ),
+            Self::DistanceRangeOutOfDomain => write!(
+                f,
+                "an atlas distance range must be finite and greater than zero; every painter \
+                 scales it into the screen-pixel range it samples coverage over"
+            ),
+            Self::GlyphIdAboveU16Max => write!(
+                f,
+                "a glyph id above u16::MAX cannot come from a font: OpenType ids are 16-bit"
             ),
         }
     }
@@ -2457,48 +2488,81 @@ impl Atlas {
     ///
     /// # Errors
     ///
-    /// [`AtlasBuildError::ZeroPxPerEm`] when `px_per_em` is zero (issue #724).
+    /// - [`AtlasBuildError::ZeroPxPerEm`] when `px_per_em` is zero (issue #724).
+    /// - [`AtlasBuildError::DistanceRangeOutOfDomain`] when
+    ///   `distance_range_px` is not finite and greater than zero (issue #964).
+    /// - [`AtlasBuildError::GlyphIdAboveU16Max`] when any glyph id exceeds
+    ///   `u16::MAX` (issue #966).
     ///
-    /// This one value is refused through the return type where the two checks
-    /// below are `debug_assert!`s, and the difference is what an invalid value
-    /// costs rather than how likely it is:
+    /// The first two are the two operands of one expression, and every painter
+    /// computes it: `px_range = distance_range_px * size / px_per_em`. Between
+    /// them they fix its domain, and each way out of that domain reaches *a
+    /// plausible wrong picture* — text that still looks like text — rather than
+    /// nothing drawn:
     ///
-    /// - The two assertions below are about a **glyph**, so at worst one
-    ///   character of a run is wrong. The sorted-unique one is a real
-    ///   invariant of the metrics blob and `AtlasMetrics::from_bytes` already
-    ///   refuses a blob that breaks it, in every profile — this is its second
-    ///   line of defence. The glyph-id one is *not* covered that way, and
-    ///   `docs/decisions/sub-word-members-widen-rather-than-pad.md` classes it
-    ///   as a silent drop under P4 as well; it is left alone here only because
-    ///   it is a separate value with a separate story, filed rather than folded
-    ///   into this change.
-    /// - `px_per_em` is a **divisor**. Both painters compute their screen-pixel
-    ///   range as `distance_range_px * size / px_per_em`, so zero makes it an
-    ///   infinity, and `msdf_coverage` then degenerates to a hard edge —
-    ///   `clamp(inf + 0.5, 0, 1)` is 1 inside and 0 outside, with a NaN at the
-    ///   single sample whose median is exactly 0.5, where WGSL leaves `clamp`
-    ///   implementation-defined. That fails towards *a plausible wrong
-    ///   picture*: text that still looks like text, aliased rather than
-    ///   antialiased, and diverging between the two painters.
+    /// - `px_per_em` is the **divisor**, so zero makes `px_range` an infinity
+    ///   and `msdf_coverage` degenerates to a hard edge: `clamp(inf + 0.5, 0, 1)`
+    ///   is 1 inside and 0 outside, with a NaN at the single sample whose median
+    ///   is exactly 0.5, where WGSL leaves `clamp` implementation-defined. So the
+    ///   glyph is aliased rather than antialiased, and the two painters diverge.
+    /// - `distance_range_px` is the **numerator**, and it has three ways out
+    ///   where a `u16` divisor had one. Zero makes `px_range` zero, so
+    ///   `clamp(signed_distance * 0 + 0.5, 0, 1)` is exactly 0.5 for every
+    ///   sample and each glyph paints as a uniform half-alpha box. A negative
+    ///   value inverts coverage — interiors transparent, exteriors opaque. A NaN
+    ///   or an infinity reaches the same implementation-defined `clamp` as
+    ///   above, which is why the domain is finite-and-positive rather than
+    ///   merely positive: an infinity is positive.
     ///
-    /// P4 forbids discovering a limit at draw time, so the check has to hold in
-    /// release. A `debug_assert!` compiles out and leaves exactly the silent
-    /// degrade it was added to remove — and an `assert!` would hold, but no test
-    /// tier in this repository runs `--release`, so nothing would fail if it
-    /// were weakened back to a `debug_assert!`. A `Result` runs in every
+    /// There is deliberately **no upper bound** on `distance_range_px`. One
+    /// would have to relate the range to the atlas extent, and no measurement in
+    /// this repository supplies that number; an over-wide range also saturates
+    /// towards the same aliased edge the infinity case already names, rather than
+    /// into a class of its own.
+    ///
+    /// The third is about a single **glyph**, and it refuses an *atlas row*
+    /// naming an id no font can produce — an id the `u16` these were widened
+    /// from made unrepresentable
+    /// (`docs/decisions/sub-word-members-widen-rather-than-pad.md`).
+    ///
+    /// It is **not** the silent drop that record describes, and issue #985 is
+    /// that drop. The two are different sides of the same widening: a row this
+    /// constructor accepted would be *found* by [`glyph`](Self::glyph), which
+    /// binary-searches the rows the atlas holds, so it paints. What paints
+    /// nothing is a [`GlyphQuad`] naming an id the atlas has no row for, and
+    /// both painters `continue` past it — deliberately, because an empty outline
+    /// and a charset gap take that same path. `GlyphQuad::glyph_id` is
+    /// domain-checked nowhere, and this constructor never sees one.
+    ///
+    /// P4 forbids discovering a limit at draw time, so every one of these has to
+    /// hold in release. A `debug_assert!` compiles out and leaves exactly the
+    /// silent degrade it was added to remove — and an `assert!` would hold, but
+    /// no test tier in this repository runs `--release`, so nothing would fail if
+    /// it were weakened back to a `debug_assert!`. A `Result` runs in every
     /// profile and is pinned by a test in every profile.
     ///
-    /// Refused where the value enters boundary B, which fixes both painters at
-    /// once and is why neither of them carries a guard. `px_per_em` is private,
-    /// so this is the only way to set it and the check holds for every atlas
-    /// that exists — neither a struct literal nor a later assignment can reach
-    /// it. The type's other fields stay public: none of them is a divisor, and
-    /// `distance_range_px` — which shares this expression — is unvalidated
-    /// anywhere and is filed separately rather than quietly fixed here.
+    /// The one assertion left below is the odd one out, and legitimately: sorted-
+    /// unique glyph ids are a real invariant of the metrics blob, and
+    /// `AtlasMetrics::from_bytes` refuses a blob that breaks it **in every
+    /// profile**, at the parse boundary. This is its second line of defence
+    /// rather than its only one.
+    ///
+    /// Refused where the values enter boundary B, which fixes both painters at
+    /// once and is why neither of them carries a guard. `px_per_em` and
+    /// `distance_range_px` are both private, so this is the only way to set
+    /// either and the checks hold for every atlas that exists — neither a struct
+    /// literal nor a later assignment can reach them. The type's other fields
+    /// stay public: none of them feeds that expression.
+    ///
+    /// This is a statement about *this* type, not about boundary B.
+    /// [`VectorField::distance_range`] is the same operand on the coverage-mask
+    /// path and is validated nowhere — issue #986. That type has no constructor
+    /// to refuse it in, which is why it is a separate issue rather than a
+    /// sibling variant here.
     ///
     /// An embedder supplying its own font depends on `dashpaint` directly, as
     /// `dashscene-desktop` and `dashscene-web` both say of their `Atlas`
-    /// re-export: naming is as far as that re-export goes. So the error is
+    /// re-export: naming is as far as that re-export goes. So the errors are
     /// nameable wherever the constructor is.
     pub fn new(
         image: ImageAsset,
@@ -2511,19 +2575,19 @@ impl Atlas {
         if px_per_em == 0 {
             return Err(AtlasBuildError::ZeroPxPerEm);
         }
+        // `is_finite` rejects both NaN and the infinities; `> 0.0` is false for
+        // NaN as well, so the pair is not redundant only because of the
+        // infinities — a positive infinity passes the comparison.
+        if !distance_range_px.is_finite() || distance_range_px <= 0.0 {
+            return Err(AtlasBuildError::DistanceRangeOutOfDomain);
+        }
         debug_assert!(
             glyphs.windows(2).all(|w| w[0].glyph_id < w[1].glyph_id),
             "atlas glyphs must be sorted and unique by glyph id"
         );
-        // The `u16` these ids were widened from made this unrepresentable.
-        // Widening bought a struct with no padding and gave up that guarantee,
-        // so it is asserted instead: an id no font can produce would place a
-        // row [`glyph`](Self::glyph) can still be asked for, and a quad naming
-        // it would paint nothing with no diagnostic.
-        debug_assert!(
-            glyphs.iter().all(|g| g.glyph_id <= u32::from(u16::MAX)),
-            "a glyph id above u16::MAX cannot come from a font: OpenType ids are 16-bit"
-        );
+        if !glyphs.iter().all(|g| g.glyph_id <= u32::from(u16::MAX)) {
+            return Err(AtlasBuildError::GlyphIdAboveU16Max);
+        }
         Ok(Self {
             image,
             width,
@@ -2539,6 +2603,13 @@ impl Atlas {
     /// reintroduce it (issue #724).
     pub fn px_per_em(&self) -> u16 {
         self.px_per_em
+    }
+
+    /// The MSDF distance range in atlas texels. Always finite and greater than
+    /// zero — [`Atlas::new`] refuses anything else, and the field is private so
+    /// nothing can reintroduce it (issue #964).
+    pub fn distance_range_px(&self) -> f32 {
+        self.distance_range_px
     }
 
     /// The placement for `glyph_id`, or `None` when the atlas has no quad

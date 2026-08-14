@@ -370,9 +370,11 @@ fn atlas_from_bytes(sheet: AtlasBytes, index: usize) -> Result<Atlas, TextResour
             }
         }
     }
-    // `Atlas::new` is fallible since issue #724: it refuses `px_per_em == 0`,
-    // which every painter divides by. That is a host-data error on this path
-    // rather than a broken contract between crates, so it is reported as one
+    // `Atlas::new` is fallible since issue #724, and refuses three values: a
+    // zero `px_per_em`, a `distance_range_px` that is not finite and positive
+    // (issue #964), and a glyph id above `u16::MAX` (issue #966). All three come
+    // from the metrics blob a host supplied, so each is a host-data error on this
+    // path rather than a broken contract between crates, and is reported as one
     // instead of being unwrapped.
     Atlas::new(
         ImageAsset {

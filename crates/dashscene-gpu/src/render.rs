@@ -2500,7 +2500,7 @@ fn gpu_glyph_run(run: &dashpaint::GlyphRun, atlas: &dashpaint::Atlas, uv: [f32; 
         // `dashscene-skia`'s own formula. `plane_em` and `atlas_px` bake the
         // range into the bounds, so this scales the sharpness of the edge and
         // not the size.
-        px_range: atlas.distance_range_px * run.size / f32::from(atlas.px_per_em()),
+        px_range: atlas.distance_range_px() * run.size / f32::from(atlas.px_per_em()),
         _pad: 0.0,
     }
 }

@@ -952,7 +952,7 @@ impl MsdfFrame<'_> {
         // The screen-pixel range scales the atlas distance range by the
         // ratio of render size to the size the atlas was baked at
         // (docs/design/atlas-pipeline.md).
-        let px_range = atlas.distance_range_px * run.size / f32::from(atlas.px_per_em());
+        let px_range = atlas.distance_range_px() * run.size / f32::from(atlas.px_per_em());
         // Fold the run's free-path group alpha into the fill (story #44):
         // the MSDF resolve modulates coverage by `color.a`, so multiplying
         // the alpha dims the whole run.
