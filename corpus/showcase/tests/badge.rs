@@ -245,8 +245,9 @@ fn every_showcase_scene_carries_the_badge_as_its_last_root() {
 /// a version of the badge whose signal drove only paint-only channels
 /// (opacity and the text itself) could pass a prop-only assertion while
 /// staging no glyph runs at all — a paint-only tick commits through the
-/// cached-rect replay, which stages none (`badge.rs`'s "Why the pill's
-/// width is bound"). The plus-one is what a wipe cannot fake: `layout`
+/// cached-rect replay, which staged none until issue #621 fixed it
+/// (`badge.rs`'s "Why the pill's width is bound"). The plus-one is what a
+/// wipe cannot fake: `layout`
 /// has no text of its own, so a run count that only checked "greater
 /// than zero" would not catch it losing every run it started with.
 #[test]

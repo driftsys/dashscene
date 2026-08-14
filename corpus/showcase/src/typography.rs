@@ -15,12 +15,15 @@
 //! # Every signal here drives layout, deliberately
 //!
 //! A tick that changes only paint props commits through `dashlang`'s rect
-//! replay, and that replay stages no glyph runs at all, so the text vanishes
-//! for exactly as long as the paint-only frames last (see `README.md`). Every
-//! binding in this scene therefore writes a layout-affecting channel, and the
-//! one text binding shares its signal with a width that reflows. That is not a
-//! decoration: remove the width binding and the readout goes blank the moment
-//! its number changes.
+//! replay, which **used to** stage no glyph runs at all, so the text vanished
+//! for exactly as long as the paint-only frames lasted. Every binding in this
+//! scene therefore writes a layout-affecting channel, and the one text binding
+//! shares its signal with a width that reflows.
+//!
+//! **Issue #621 fixed the replay**, so removing the width binding no longer
+//! blanks the readout — the sentence that used to stand here said it did, and
+//! it was true when written. The binding stays because it is part of what this
+//! scene demonstrates, not because text depends on it.
 //!
 //! # The strings
 //!

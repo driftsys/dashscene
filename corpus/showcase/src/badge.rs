@@ -20,13 +20,17 @@
 //!
 //! # Why the pill's width is bound
 //!
-//! A tick that changes only a paint-only channel — opacity, a fill, or a
-//! text prop by itself — commits through the cached-rect replay, and that
-//! replay stages no glyph runs at all (`typography.rs`'s "Every signal
-//! here drives layout, deliberately"). Announcing a painter through a
-//! paint-only write would wipe every glyph run already staged in the
-//! scene, this badge's own label included, rather than adding the
-//! badge's run to what was already there.
+//! **Historical, and kept because the binding is still there.** A tick
+//! that changed only a paint-only channel — opacity, a fill, or a text
+//! prop by itself — used to commit through the cached-rect replay, and
+//! that replay staged no glyph runs at all: announcing a painter through
+//! a paint-only write wiped every glyph run already staged in the scene,
+//! this badge's own label included.
+//!
+//! Issue #621 fixed the replay, which now forwards `stage_text` to the
+//! scene's own solver, so the width binding is no longer required for
+//! that reason. It is left in place because removing it changes what the
+//! scene animates, which is a scene decision rather than a fix.
 //!
 //! The root is therefore a flex container (`LayoutMode::Horizontal`) with
 //! the label as its one child, and the same `backend` signal also drives

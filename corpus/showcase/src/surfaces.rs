@@ -8,12 +8,16 @@
 //! # Every animated channel here is layout-affecting, deliberately
 //!
 //! A tick that writes only paint props commits through `dashlang`'s rect
-//! replay, and that replay stages no glyph runs at all, so the header's title
-//! would blink out for as long as such a frame lasted (the defect recorded in
-//! `README.md`). Both springs in this scene therefore drive a channel that
-//! re-solves: the header's width, on a node with children, and the frosted
-//! panel's x, likewise. Group opacity and the frosted panel's own alpha are
-//! set once rather than animated, for the same reason.
+//! replay, which **used to** stage no glyph runs at all — so the header's
+//! title blinked out for as long as such a frame lasted. Both springs in this
+//! scene therefore drive a channel that re-solves: the header's width, on a
+//! node with children, and the frosted panel's x, likewise. Group opacity and
+//! the frosted panel's own alpha are set once rather than animated, for the
+//! same reason.
+//!
+//! Issue #621 fixed the replay and it stages text now, so this shape is no
+//! longer required. It is kept because it is what the scene was tuned to
+//! animate; changing that is a scene decision rather than a fix.
 
 use dashlang::{Channel, LiveScene, Scene, Spring, node};
 use dashpaint::{GradientKind, Mat23, ScaleMode, Stroke, StrokeAlign};

@@ -247,8 +247,10 @@ impl App for Showcase {
     ///
     /// Writing the signal is also what makes a swap re-solve, but not because
     /// of the text it carries: a write that only changes text or opacity is
-    /// paint-only and commits through the cached-rect replay, which stages no
-    /// glyph runs at all. The badge binds the same signal to its pill's width
+    /// paint-only and commits through the cached-rect replay. That replay
+    /// staged no glyph runs at all until issue #621 fixed it; it stages them
+    /// now, so what follows is about the solve and no longer about the text
+    /// surviving. The badge binds the same signal to its pill's width
     /// as well (`corpus/showcase/src/badge.rs`'s "Why the pill's width is
     /// bound"), and a width write on a container with children cannot patch a
     /// single cached rect, so it forces the tick to solve. That is what commits

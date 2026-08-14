@@ -740,8 +740,11 @@ their parent rather than apart from it:
   changed. The record names what qualifies as a forcing write (it depends on the
   target node, not only the channel), obliges that write to be real content
   rather than a lever, and obliges the test to assert on the committed run count
-  rather than the text prop. Retired by the replay fix, which is deferred
-  because it gives every paint-only frame back a per-text-node cost.
+  rather than the text prop. **Retired at issue #621**, which made the replay
+  fix: the rule no longer binds, and a signal may drive `bind_text` alone. The
+  record is kept for its reasoning — the per-text-node cost it deferred over is
+  accepted rather than removed, and the cheaper design it names is still the
+  cheaper one.
 
 See the `sdd-working-memory-lifecycle` rule.
 
