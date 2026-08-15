@@ -55,9 +55,14 @@ held by the slice because no second painter has landed. The other ten:
   findings and is now three: its `rect_of_slot` half moved to v0.20 as **#980**,
   being the only correctness defect of the four, and **#980 has since been
   fixed** (pull request #990, 2026-08-15). What is left here is not correctness.
-- **#922, #929, #930, #931, #932** — older slice debt. #931 is the cheapest and
-  is about this repository's own bookkeeping: `test-tiers.md`'s tier table is
-  hundreds of tests stale, and #947 moved the count again.
+- **#922, #929, #930, #931, #932** — older slice debt. **Two of those five have
+  landed**: #931, which was this repository's own bookkeeping and ended by
+  taking the test counts out of `test-tiers.md` rather than refreshing them, and
+  #922, whose flatc install now verifies its download against a committed
+  checksum table. What is pickable is **#929, #930 and #932**, all three in
+  `goldens/tooling/tests/`. Read them from
+  `2026-08-15-v019-REMAINING-DEBT-DRIVER-PROMPT.md` rather than from this line:
+  it re-derived each of their counts, and found three of them stale.
 
 **#943 is no longer on this milestone, and is fixed.** It moved to v0.20 on
 2026-08-14, on the rule that slice states — no correctness defect waits behind a

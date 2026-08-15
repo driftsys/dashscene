@@ -277,7 +277,12 @@ jobs:
           sha=d7054cf41ff14affc3d51520daa0a744911d224a8c0db9c34d8e07a133970d28
           curl -sSL --fail -o prim.tgz \
             "https://github.com/driftsys/prim/releases/download/v${v}/prim-x86_64-unknown-linux-musl.tar.gz"
-          echo "${sha}  prim.tgz" | sha256sum -c -
+          # --strict, as the flatc install uses for the reason issue #922
+          # measured: without it a malformed checksum line is a warning and the
+          # exit code stays 0. Safe by accident here today, since the line is
+          # generated one field at a time; the flag makes it safe by
+          # construction.
+          echo "${sha}  prim.tgz" | sha256sum -c --strict -
           # Extracted whole into a scratch directory, then installed — rather
           # than naming the member the way the gitleaks step above does. prim's
           # tarball stores its entries as `./prim` and `./prim.1`, and whether
@@ -308,8 +313,20 @@ jobs:
   # `cargo install` builds in its own temp target directory, and the cache key
   # is derived from the workspace `Cargo.lock`, so the dependency bump that
   # makes an audit interesting is exactly what invalidates it. Every other tool
-  # is fetched prebuilt — gitleaks as a checksummed tarball here, flatc as a
-  # release zip in `.github/actions/install-flatc`.
+  # is fetched prebuilt, and the split worth knowing is whether that fetch is
+  # checked. **Verified against a committed sha256**: `prim` and `gitleaks`
+  # here, and `flatc` — whose fetch is not in this file at all, but in
+  # `.github/actions/install-flatc/action.yml`, keyed since issue #922 by the
+  # version that action derives from the manifest. **Not verified**:
+  # `cargo-nextest`, piped from `get.nexte.st/latest` straight into tar at three
+  # steps, unpinned, which is issue #657. Marketplace actions are a third shape
+  # and a separate question: they are pinned by tag, not by digest.
+  #
+  # **No grep derives that split**, which is why it is written out. The fetches
+  # live in two files and three shapes, and the obvious commands mislead: a
+  # `curl|wget` grep of this file misses flatc entirely and matches this comment,
+  # and a `sha256sum -c` grep reports flatc as unchecked. An install added here
+  # joins this list by hand.
   #
   # DELIBERATELY UNPINNED, unlike every other tool in this file. `cargo audit`
   # reads a live upstream database rather than only the repository, so a pinned
@@ -358,7 +375,7 @@ jobs:
           sha=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
           curl -sSL --fail -o gitleaks.tgz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${v}/gitleaks_${v}_linux_x64.tar.gz"
-          echo "${sha}  gitleaks.tgz" | sha256sum -c -
+          echo "${sha}  gitleaks.tgz" | sha256sum -c --strict -
           tar -xz -C /usr/local/bin -f gitleaks.tgz gitleaks
           rm -f gitleaks.tgz
           gitleaks version

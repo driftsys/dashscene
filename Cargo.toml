@@ -144,6 +144,13 @@ ttf-parser = "0.25"
 # from github.com/google/flatbuffers/releases) — the generated Rust API
 # can change between flatc majors, so compiler and runtime crate must
 # match.
+#
+# BUMPING THIS LINE ALSO NEEDS A ROW IN
+# `.github/actions/install-flatc/flatc-sha256.txt`, which that file's header
+# tells you how to derive. CI installs flatc at the version read from here and
+# refuses to install one it has no checksum for, so a bump without the row
+# fails every job that compiles dashbuf (issue #922). Nothing local catches it:
+# no test tier runs the composite action, which is issue #1084.
 flatbuffers = "=25.12.19"
 # The .dsb container's content hash (docs/design/dsb-container-format.md).
 # BLAKE3 rather than SHA-256 for the reason the asset-model decision named when

@@ -185,13 +185,44 @@ under `lto = true` is caught by no job.
 
 Every job that compiles something reaching `dashbuf` needs `flatc`, whose
 build.rs shells out to it — nine of them, which is more than this paragraph
-names, so derive the list with `grep -c install-flatc .github/workflows/ci.yml`
-rather than from the prose above. That install is a **local composite action**,
+names, so derive the list with
+`grep -c 'uses: ./.github/actions/install-flatc' .github/workflows/ci.yml`
+rather than from the prose above. Match the `uses:` line, not the bare name: two
+comments in that file also mention the action, so a bare `grep -c install-flatc`
+answers eleven. That install is a **local composite action**,
 `.github/actions/install-flatc`, referenced as a path so the reference needs no
 release and no third-party trust. It reads the version from the workspace
 manifest's exact `flatbuffers` requirement rather than restating it, and asserts
 what it installed — so the pin has one home and a mismatch fails there by name
 (issue #909). Why each job needs it differs per job and stays at the call site.
+
+**The payload is checksum-verified since issue #922.**
+`.github/actions/install-flatc/flatc-sha256.txt` maps a version to the sha256 of
+the release asset, and the action refuses a version it holds no row for. So
+**bumping `flatbuffers` means adding a row in the same commit** — an obligation
+stated at the pin in `Cargo.toml`, which is where a bump is actually written,
+because no local gate runs the composite action and the first signal is
+otherwise nine red CI jobs.
+
+Alternatives considered, and why each was rejected. **Verify a signature**:
+flatbuffers publishes none — no `.sig`, no `.asc`, no `SHA256SUMS`, and no SLSA
+attestation, all measured against v25.12.19. **Read GitHub's per-asset `digest`
+field**: it is served by the host that serves the asset, so it proves the
+transfer was not corrupted and nothing more — the same argument the `prim`
+install already makes for committing its sum rather than fetching one. It is
+recorded because it looks like an option and is not. **Vendor flatc**: declined
+for the reason
+[atlas-gen-external-pinned-binary.md](atlas-gen-external-pinned-binary.md) gives
+for rejecting its own Option 3 — vendoring a **build tool** makes every
+workspace build pay a C++ toolchain cost and complicates contributor setup. Note
+that this repository does vendor C++ where the cost buys something else:
+`crates/dashpack-astcenc-sys/vendor/` holds the astcenc sources, recorded in
+[native-astc-codec-table.md](native-astc-codec-table.md). The distinction is
+library-linked-into-a-crate versus compiler-run-at-build-time, not a blanket
+position against vendoring — and issue #922's own phrasing, "declines to do for
+its size", is not a reason any record here gives. **A hardcoded sum**: cannot
+survive a version derived from the manifest, which is what makes this a table
+keyed on that version rather than a constant.
 
 No cross-platform `build-release` matrix yet — that's git-std's own
 binary-distribution concern, not relevant until dashscene ships a distributable
