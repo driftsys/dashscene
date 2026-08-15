@@ -666,21 +666,33 @@ const JPEG_FIXTURE: &[u8] = include_bytes!(
     "../../../corpus/figma-fixtures/jpeg-fill.images/4045fd0419fbcbbd03505d2d258c6dbbeb2da1fe.jpg"
 );
 
-/// **A refused backdrop still consumes its slot, so the next one binds its own
-/// mask** (issue #972).
+/// **A refused backdrop does not renumber the one behind it** (issues #972 and
+/// #994).
 ///
-/// `BlurTargets` builds one bind-group pair per backdrop **in plan order**, each
-/// binding that backdrop's own coverage atlas, and `pass` indexes them by that
-/// ordinal. So the ordinal a backdrop is resolved with is a position in the
-/// plan and not a count of the ones that drew — and skipping a refused backdrop
-/// must not renumber the ones behind it. It did in the first draft of this fix:
-/// the second backdrop took slot 0, whose mask entry is the *first* backdrop's,
-/// which for a refused field is the 1x1 placeholder nothing ever writes. The
-/// second node's frost then vanished with no refusal recorded, which is a silent
-/// drop and the thing P4 forbids.
+/// `BlurTargets` builds one bind-group pair per backdrop it is prepared for,
+/// each binding that backdrop's own coverage atlas, and `pass` indexes them by
+/// position. So there are two numbers here — a backdrop's position in the plan
+/// and its slot in that list — and everything turns on which one reaches
+/// `pass`.
 ///
-/// Two backdrops, refused first, because one cannot see an off-by-one in an
-/// index — and no other test in this file draws two masked backdrops at all.
+/// **They have been the same number and are not any more.** Under issue #972
+/// `BlurTargets` was prepared for every _planned_ backdrop, so the two agreed
+/// and a refused backdrop consumed a slot it never drew through; the defect was
+/// a `resolved_backdrops += 1` made conditional, which moved every backdrop
+/// behind a refused one onto the previous one's mask — the 1x1 placeholder
+/// nothing ever writes. The second node's frost vanished with no refusal
+/// recorded, which is a silent drop and the thing P4 forbids. Under issue #994
+/// a refused backdrop is filtered out before `prepare`, so the two numbers
+/// differ by every refusal ahead of it, and `PlannedBackdrop::slot` — assigned
+/// by the step that does the filtering — is the one that binds.
+///
+/// This fixture is what tells them apart: refused first, so the live backdrop
+/// sits at plan position 1 and slot 0. Taking the plan position instead now
+/// indexes `bind_groups[2]` of a two-element list and panics, where before it
+/// drew the wrong picture.
+///
+/// Two backdrops, because one cannot see an off-by-one in an index — and no
+/// other test in this file draws two masked backdrops at all.
 #[test]
 fn a_refused_backdrop_does_not_renumber_the_one_behind_it() {
     let mut images = ImageTable::new();
@@ -939,6 +951,274 @@ fn a_refused_coverage_field_leaves_the_backdrop_untouched() {
                 texel(&pixels, x, y),
                 untouched,
                 "a refused coverage field frosted ({x}, {y})"
+            );
+        }
+    }
+}
+
+/// **A frame whose only backdrop is refused allocates nothing** (issue #994).
+///
+/// The refusal used to be decided inside `Renderer::resolve_backdrop`, which
+/// runs after every allocation that backdrop needed has been made: three
+/// drawable-sized textures and their views — the largest per-frame allocation
+/// this painter makes — two uniform buffers and two bind groups for a slot
+/// nothing writes, plus routing the whole frame through `BlurTargets::base`
+/// and a full-target blit to put it back. `backdrop_mask` now decides it where
+/// `backdrop_masks` is built, which is before any of that.
+///
+/// # The comparison, and why it is three scenes rather than two
+///
+/// Equality alone is not falsifiable: a frame that allocates nothing equals a
+/// frame that allocates nothing whether or not `Renderer::allocations` counts
+/// `BlurTargets` at all, and that term has gone uncounted three times in this
+/// crate — `a_frame_with_a_backdrop_allocates_and_a_steady_one_does_not` is the
+/// test written for exactly that. So the live backdrop is here too, and it is
+/// the one that must differ.
+///
+/// **The live one carries no coverage mask**, and that is deliberate rather
+/// than incidental: it makes the JPEG the only payload any of the three scenes
+/// names, so residency is identical across all of them and the delta below is
+/// the blur targets and nothing else. A live *masked* backdrop would need a
+/// baked atlas of its own, and making that resident is an allocation this
+/// measurement would then have to exclude.
+///
+/// Every scene is drawn once before anything is measured, for the reason its
+/// sibling gives: cold frames differ in instance count, and `Frame`'s own
+/// buffers growing satisfies "allocated more" whatever the blur targets do.
+#[test]
+fn a_frame_whose_only_backdrop_is_refused_allocates_nothing() {
+    let mut images = ImageTable::new();
+    let field = images.push(ImageAsset {
+        format: ImageFormat::Jpeg,
+        bytes: JPEG_FIXTURE.to_vec(),
+    });
+    // Both axes, not the pair, for the reason its two siblings give.
+    let extent = images.resolve(field);
+    assert!(
+        extent.width != 0 && extent.height != 0,
+        "the fixture must have an extent on both axes, or `resident_image` answers with the \
+         no-bytes case before it ever reaches a decoder and nothing is refused — got {} x {}",
+        extent.width,
+        extent.height,
+    );
+
+    // Three scenes over one image table. `plain` holds no backdrop at all,
+    // `refused` one confined to the undecodable field, and `live` one over the
+    // node's own box — the only one of the three that draws.
+    // A radius of zero emits no backdrop instance at all (`pack::frosts`), so
+    // this is `live` with one number changed and nothing else.
+    let plain = {
+        let mut paints = PaintTable::new();
+        let mut rects = halves(&mut paints);
+        let panel = frosted(&mut paints, &[backdrop(0.0)], CornerRadii::default());
+        rects.push(rect(24.0, 8.0, 36.0, 32.0, panel));
+        (rects, paints)
+    };
+    let refused = {
+        let mut paints = PaintTable::new();
+        let mut rects = halves(&mut paints);
+        let panel = paints.push_with(
+            PaintEntry::default(),
+            EntryParts {
+                blurs: &[backdrop(24.0)],
+                shape: Some(VectorField {
+                    image: field,
+                    atlas_rect: MASK_RECT,
+                    plane_bounds: [0.0, 0.0, 20.0, 32.0],
+                    distance_range: 0.5,
+                }),
+                ..EntryParts::default()
+            },
+        );
+        rects.push(rect(24.0, 8.0, 36.0, 32.0, panel));
+        (rects, paints)
+    };
+    let live = {
+        let mut paints = PaintTable::new();
+        let mut rects = halves(&mut paints);
+        let panel = frosted(&mut paints, &[backdrop(24.0)], CornerRadii::default());
+        rects.push(rect(24.0, 8.0, 36.0, 32.0, panel));
+        (rects, paints)
+    };
+
+    let clips = ClipTable::new();
+    let mut renderer = renderer();
+    // The refusals with the count, because `resolve_frame` clears them at the
+    // head of every frame: read after a later draw they would be that frame's.
+    let mut draw_once = |rects: &[RectEntry], paints: &PaintTable| {
+        let mut painter = GpuPainter::new();
+        painter.paint(
+            rects,
+            paints,
+            &images,
+            &clips,
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        renderer
+            .render(
+                painter.instances(),
+                paints,
+                &images,
+                &clips,
+                &GlyphRunTable::new(),
+                W,
+                H,
+            )
+            .expect("the fixture extent is within any device's maximum");
+        (renderer.allocations(), renderer.refusals().to_vec())
+    };
+
+    draw_once(&live.0, &live.1);
+    draw_once(&refused.0, &refused.1);
+    draw_once(&plain.0, &plain.1);
+
+    let (after_plain, _) = draw_once(&plain.0, &plain.1);
+    let (after_refused, refusals) = draw_once(&refused.0, &refused.1);
+    assert_eq!(
+        after_refused, after_plain,
+        "a frame whose only backdrop is refused must allocate exactly what a frame with no \
+         backdrop allocates — {after_plain} then {after_refused}, so it is still building the \
+         targets, the uniforms and the bind groups for a backdrop that encodes nothing",
+    );
+
+    // Named, not silent: dropping the backdrop earlier must not drop the
+    // diagnostic with it. The refusal is recorded in `resolve_frame`, which
+    // runs before any of this, and this is what says so.
+    assert_eq!(
+        refusals.len(),
+        1,
+        "one refused payload is one refusal — got {refusals:?}",
+    );
+    assert_eq!(refusals[0].what, "a vector field's atlas");
+    assert_eq!(refusals[0].row, field);
+    assert_eq!(
+        refusals[0].error,
+        ResidencyError::NoDecoder {
+            format: ImageFormat::Jpeg
+        },
+    );
+
+    let (after_live, _) = draw_once(&live.0, &live.1);
+    assert!(
+        after_live > after_refused,
+        "a backdrop that draws still allocates its targets: {after_refused} then {after_live} \
+         — equal means `Renderer::allocations` does not count `BlurTargets`, and the assertion \
+         above would hold with the defect present",
+    );
+}
+
+/// **A frame whose backdrop is refused still clears its target** (issue #994).
+///
+/// A pass that resolves a backdrop clears the target itself, before the blur
+/// snapshots it, and its render pass then loads — clearing twice would erase
+/// the frosted region the pass exists to draw over. Filtering the refused
+/// backdrop out also removed that clear, so the condition the render pass
+/// reads had to become *what was encoded* rather than *what was planned*. Read
+/// from the plan, a refused backdrop leaves the first pass on a target loading
+/// a texture nothing cleared.
+///
+/// **The two frames are what makes it visible.** `Renderer::render` keeps its
+/// offscreen texture across calls at one extent, so the second frame draws into
+/// the first frame's pixels — and every other refusal test in this file paints
+/// an opaque rect over the whole canvas, which hides a missing clear completely.
+/// Here the second frame's only node has no fill of its own and its backdrop is
+/// refused, so a correct painter writes nothing at all and the canvas must come
+/// back transparent. Loading instead returns the first frame's red and blue.
+#[test]
+fn a_refused_backdrop_does_not_leave_the_previous_frame_on_the_target() {
+    let mut images = ImageTable::new();
+    let field = images.push(ImageAsset {
+        format: ImageFormat::Jpeg,
+        bytes: JPEG_FIXTURE.to_vec(),
+    });
+    // Both axes, not the pair, for the reason its three siblings give.
+    let extent = images.resolve(field);
+    assert!(
+        extent.width != 0 && extent.height != 0,
+        "the fixture must have an extent on both axes, or `resident_image` answers with the \
+         no-bytes case before it ever reaches a decoder and nothing is refused — got {} x {}",
+        extent.width,
+        extent.height,
+    );
+
+    let clips = ClipTable::new();
+    let mut renderer = renderer();
+    let mut draw_once = |rects: &[RectEntry], paints: &PaintTable| {
+        let mut painter = GpuPainter::new();
+        painter.paint(
+            rects,
+            paints,
+            &images,
+            &clips,
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        let pixels = renderer
+            .render(
+                painter.instances(),
+                paints,
+                &images,
+                &clips,
+                &GlyphRunTable::new(),
+                W,
+                H,
+            )
+            .expect("the fixture extent is within any device's maximum");
+        (pixels, renderer.allocations())
+    };
+
+    // The first frame fills the target, so anything left of it in the second is
+    // the load this test is about.
+    let mut ground = PaintTable::new();
+    let (filled, after_first) = draw_once(&halves(&mut ground), &ground);
+    assert_eq!(
+        texel(&filled, 8, 24),
+        [255, 0, 0, 255],
+        "the first frame paints the whole target, or the second cannot inherit anything",
+    );
+
+    // The second draws one node: no fill of its own, and a backdrop confined to
+    // a field that cannot be decoded. Nothing to draw, on a target that must
+    // still be cleared.
+    let mut paints = PaintTable::new();
+    let panel = paints.push_with(
+        PaintEntry::default(),
+        EntryParts {
+            blurs: &[backdrop(24.0)],
+            shape: Some(VectorField {
+                image: field,
+                atlas_rect: MASK_RECT,
+                plane_bounds: [0.0, 0.0, 20.0, 32.0],
+                distance_range: 0.5,
+            }),
+            ..EntryParts::default()
+        },
+    );
+    let (pixels, after_second) = draw_once(&[rect(24.0, 8.0, 36.0, 32.0, panel)], &paints);
+
+    // **The premise, asserted rather than assumed.** This test can only see a
+    // missing clear because the second frame draws into the texture the first
+    // one left; `render_dirty` reuses its offscreen at one extent and charges
+    // three allocations when it does not. wgpu zero-initialises a new texture,
+    // so a rebuild here would make the sweep below pass against a target
+    // nothing had to clear — the test would keep passing and stop testing.
+    assert_eq!(
+        after_second, after_first,
+        "the second frame must draw into the first frame's texture: {after_first} then \
+         {after_second} means `render` built a fresh offscreen, which arrives zeroed and makes \
+         the sweep below unable to fail",
+    );
+
+    for y in 0..H {
+        for x in 0..W {
+            assert_eq!(
+                texel(&pixels, x, y),
+                [0, 0, 0, 0],
+                "({x}, {y}) carries the previous frame: the pass loaded a target the refused \
+                 backdrop no longer clears",
             );
         }
     }

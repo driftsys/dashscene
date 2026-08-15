@@ -325,31 +325,67 @@ frosted a corner patch — a larger wrong picture, measured rather than reasoned
 about. A baked-vector node's silhouette _is_ its field, so with no field there
 is no region to frost.
 
-**A refused backdrop still takes its ordinal.** `BlurTargets` builds one
-bind-group pair per backdrop of the plan, in order, each binding that backdrop's
-own coverage atlas, and `BlurTargets::pass` indexes them by that position — so
-the number `resolve_backdrop` is called with is a position and not a count of
-the ones that drew. Advancing it only on success moved every backdrop behind a
-refused one onto the previous one's mask, which for a refused field is the
-placeholder nothing writes: the next node's frost vanished with no refusal
-recorded, which is the silent drop P4 forbids. Its allocations are made either
-way — `prepare` builds one pair per _planned_ backdrop — so what the refusal
-saves is the two draws, which is why `resolve_backdrop` reports whether it
-encoded them.
+**A refused backdrop is dropped before anything is allocated for it** (issue
+#994). `backdrop_mask` decides it where `backdrop_masks` is built, which is
+ahead of `BlurTargets::prepare`: a frame whose only backdrop is refused now
+allocates **twelve fewer device objects** — three drawable-sized textures and
+their three views, the base blit's bind group and its uniform, and the two
+uniform buffers and two bind groups of the slot itself — and draws into the
+caller's view rather than through `BlurTargets::base` and a full-target blit.
+`BlurTargets::prepare` is where that inventory is derivable and the one place it
+is written down. All of it is what a frame with no backdrop planned at all
+already did, and `a_frame_whose_only_backdrop_is_refused_allocates_nothing`
+measures the difference between the two.
 
-That is a property of where the skip sits and not of what is known when.
-`resolve_frame` records every refusal before `backdrop_masks` is built, and the
-`None` a refused field puts in that list is already what selects the placeholder
-view — so a refused backdrop could be dropped there instead, and allocate
-nothing. It is not, because the ordinal is a position in that same list and
-renumbering it is the defect above; doing it safely means the filter and the
-ordinal come from one list rather than two. Issue #994.
+The saving has a cost in the other direction, and it is filed rather than
+hidden: `prepare` releases the three textures for any frame it is prepared for
+no backdrop at all, which now includes a refused-only frame. A refusal that
+changes from frame to frame therefore releases and rebuilds those twelve objects
+on each change, where before the targets were held across it. Issue #1020.
 
-The third consumer, a glyph run, draws nothing on refusal for a weaker reason:
-its row keeps `GpuGlyphRun::default()`, whose zero alpha the text arm carries
-into a colour it never discards on. Nothing structural holds it, so
-`a_refused_glyph_atlas_draws_nothing_and_names_itself` pins the outcome rather
-than the mechanism (issue #973).
+**The filter and the slot come from one list**, and that is the whole of why
+this is safe. `BlurTargets` builds one bind-group pair per entry of
+`backdrop_masks`, each binding that backdrop's own coverage atlas, and
+`BlurTargets::pass` indexes them by position — so a filter applied in one place
+and an ordinal counted in another are two records of one fact. When they
+disagreed, every backdrop behind a refused one drew through the previous one's
+mask, which for a refused field is the placeholder nothing writes: the next
+node's frost vanished with no refusal recorded, which is the silent drop P4
+forbids. `PlannedBackdrop::slot` is assigned by the same step that decides the
+backdrop draws at all, so there is no second count to disagree with, and
+`a_refused_backdrop_does_not_renumber_the_one_behind_it` is what fails when the
+slot is taken from anywhere else — it panics on the bound now, where it drew a
+wrong picture before.
+
+**The entry list steps for a refused backdrop too**, because it holds one entry
+per _planned_ backdrop and is what the slot is read out of. It is consumed as an
+iterator rather than indexed by a counter, so taking an entry and advancing past
+it are one step — a counter advanced in a separate statement is the shape the
+defect above had.
+
+It is also what says whether anything was encoded, which the render pass then
+reads. Only the **first** pass on a target clears — `D5` of
+`docs/decisions/a-backdrop-blur-snapshots-the-target-it-draws-into.md`, and
+`Pass::clear` is where the planner decides it — and when that pass also resolves
+a backdrop the clear has to happen before the snapshot rather than at the pass,
+which is why the pass then loads. A first pass whose backdrop was refused
+encodes no clear of its own, so it clears at the pass exactly as it would with
+no backdrop planned. Reading the plan rather than what was encoded leaves it
+loading a texture nothing cleared, and
+`a_refused_backdrop_does_not_leave_the_previous_frame_on_the_target` is what
+sees it — the offscreen texture is held across `render` calls, so the frame
+comes back carrying the previous one.
+
+The third consumer, a glyph run, states the same thing in
+`GpuGlyphRun::resolved` (issue #993). It did not until then: the row kept
+`GpuGlyphRun::default()`, whose zero alpha the text arm carried into a colour it
+never discards on, so an empty picture was two defaults agreeing across two
+files. The vertex stage now carries the flag into `params2.w` — the component
+the masked path already uses for exactly this — and the `KIND_TEXT` arm leaves
+the coverage at zero without it, so the fragment is discarded before any colour
+is read. **Deleting that gate changes no rendered texel**, measured, which is
+why `both_msdf_arms_gate_on_the_row_the_frame_resolved` reads the shader source:
+it is the only thing that can fail on it.
 
 ## Two targets, one device
 

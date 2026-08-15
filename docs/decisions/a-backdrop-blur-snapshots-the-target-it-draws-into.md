@@ -63,13 +63,21 @@ because sampling through the group would composite the backdrop twice, once
 directly and once inside the group's own alpha. Splitting the pass the backdrop
 is _in_ gives that reading with no lookup and no special case.
 
-**D4 — a frame that holds a backdrop draws into a texture this painter owns and
+**D4 — a frame that draws a backdrop draws into a texture this painter owns and
 composites it into the caller's view as its last act.** Forced by D1 and the
 `TextureView` signature above. The composite is one draw at alpha one through
-the pipeline story #583 built, so it costs no new pipeline. A frame with no
-backdrop allocates none of this and reaches the caller's view directly, exactly
-as every frame before this story did — which is two of the three showcase
-scenes.
+the pipeline story #583 built, so it costs no new pipeline. A frame that draws
+none allocates none of this and reaches the caller's view directly, exactly as
+every frame before this story did — which is two of the three showcase scenes.
+
+**Draws, not holds** (issue #994, 2026-08-15). A backdrop confined to a coverage
+field the frame could not make resident encodes nothing, and the decision is
+taken where the renderer builds its list of backdrops rather than where it
+resolves one — which is ahead of every allocation. So a frame that plans a
+backdrop and refuses it is on the second half of this decision, not the first:
+it allocates nothing and draws into the caller's view. D5 follows it there, and
+the clear moves with the resolve rather than staying behind on a pass that no
+longer snapshots anything.
 
 **D5 — a pass that both clears and carries a backdrop clears before the
 snapshot.** An unwritten texture's contents are undefined, so a backdrop at the
@@ -114,9 +122,12 @@ composited over itself is darker than the original.
 
 The planner's `Pass` gains one field and the renderer gains two pipelines, three
 full-target textures and a per-backdrop uniform. The textures are released for
-any frame that holds no backdrop, because three drawable-sized textures are the
+any frame that draws no backdrop, because three drawable-sized textures are the
 largest allocation this painter makes and holding them for a scene that stopped
-having a frosted panel would keep them alive for nothing.
+having a frosted panel would keep them alive for nothing. Under D4's amendment
+that includes a frame whose backdrops were all refused, so a refusal that
+changes from frame to frame releases and rebuilds them on each change — issue
+#1020.
 
 R-T4's per-frame budget grows for a frame with a backdrop by one full-target
 copy, two blur passes and one composite. That is stated rather than hidden, and
