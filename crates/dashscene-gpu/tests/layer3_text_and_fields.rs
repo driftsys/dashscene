@@ -778,26 +778,40 @@ const JPEG_FIXTURE: &[u8] = include_bytes!(
 /// weight, so a CJK coverage set is exactly the payload that outgrows a device,
 /// where an oversized photograph has to be authored deliberately.
 ///
-/// What the whole-canvas sweep pins is that the run does not paint — and it is
-/// an outcome rather than a mechanism, because **three** unrelated things hold
-/// it up and none of them is about refusal (issue #993):
+/// What the whole-canvas sweep pins is that the run does not paint. **Since
+/// issue #993 that is a mechanism**: `GpuGlyphRun::resolved` is zero on the
+/// row a refusal leaves, the vertex stage carries it into `params2.w`, and the
+/// `KIND_TEXT` arm leaves the coverage at zero without it — so the fragment is
+/// discarded before any colour is read.
+///
+/// Until then it was an outcome, supported by **three** unrelated things and none
+/// of them about refusal:
 ///
 /// 1. The resolved row stays at `GpuGlyphRun::default()`, so `px_range` is zero
 ///    and `msdf_coverage(sample, 0)` is exactly `0.5` for any sample. The
-///    coverage clears the `cover <= 0.0` discard, so the fragment **is** shaded.
+///    coverage clears the `cover <= 0.0` discard, so the fragment **was**
+///    shaded.
 /// 2. The same default leaves `run.color` at zero alpha, and the `KIND_TEXT`
 ///    arm has no `discard` of its own — unlike the image-fill arm beside it —
-///    so what the fragment returns is `vec4f(0, 0, 0, 0)`.
+///    so what the fragment returned was `vec4f(0, 0, 0, 0)`.
 /// 3. Writing that changes nothing only because the pipeline blends
 ///    premultiplied.
 ///
 /// The ground rect is opaque for the third: over a transparent canvas the sweep
 /// compares `[0, 0, 0, 0]` against `[0, 0, 0, 0]` and cannot see a blend state
-/// that stopped treating a zero write as a no-op.
+/// that stopped treating a zero write as a no-op. **The gate retired that
+/// reason** — a refused run is discarded and reaches no blender at all, so the
+/// opaque ground no longer guards the blend state on this path. It is kept
+/// because it costs nothing and because it is what makes the sweep able to
+/// distinguish a drawn glyph from an absent one at all.
 ///
-/// That arithmetic is the backdrop defect issue #972 records, surviving here on
-/// a coincidence rather than on a guard; this is the test that fails when any
-/// of the three moves.
+/// **This test cannot fail on the gate alone**, and that is why the mechanism
+/// has one: deleting it restores the coincidence above and changes no rendered
+/// texel, measured. `render::tests::both_msdf_arms_gate_on_the_row_the_frame_resolved`
+/// is what fails there. What this test does catch is the pairing — with an
+/// opaque colour written beside the refusal, the gate is the only thing left
+/// keeping the canvas clean, which is the mutation issue #993 measured at
+/// `[255, 255, 255, 128]`.
 #[test]
 fn a_refused_glyph_atlas_draws_nothing_and_names_itself() {
     // The passing fixture's atlas, with one thing changed: its payload is a
@@ -928,11 +942,16 @@ fn a_refused_glyph_atlas_draws_nothing_and_names_itself() {
 /// The fill half of the same defect the backdrop carries. `paint.wgsl`'s vertex
 /// stage says a zeroed field row leaves a quad with no area, and that is true of
 /// the quad and not of what is drawn: the quad is then grown by the
-/// antialiasing width, and the fragment stage's masked arm computes
+/// antialiasing width, and the fragment stage's masked arm computed
 /// `msdf_coverage(sample, px_range = 0)`, which is `0.5` whatever the sample
-/// was. A solid fill has no zero-alpha default to save it the way a glyph run
-/// does, so the coverage survives the `discard` and the node's own colour lands
-/// at half alpha in a small square at its top-left corner.
+/// was. The coverage survived the `discard` and the node's own colour landed at
+/// half alpha in a small square at its top-left corner.
+///
+/// **The gate is what empties it, on this arm and on the text arm alike.** Until
+/// issue #993 that was only true here, and a glyph run reached the same half
+/// coverage and painted nothing for an unrelated reason — its zero-alpha
+/// default. `a_refused_glyph_atlas_draws_nothing_and_names_itself` above is
+/// where that is written up; both arms now read `params2.w`.
 #[test]
 fn a_refused_coverage_field_draws_no_masked_fill() {
     let mut images = ImageTable::new();

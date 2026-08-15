@@ -481,7 +481,24 @@ struct GpuGlyphRun {
     /// formula. The painter draws at unit scale, so the run's size in document
     /// units is its size in pixels.
     px_range: f32,
-    _pad: f32,
+    /// Non-zero when the four members above describe an atlas this frame
+    /// actually made resident (issue #993).
+    ///
+    /// The same third state [`GpuShape::resolved`] carries, for the same
+    /// reason and read the same way. A refused glyph atlas leaves this row at
+    /// [`Default`], and the row's own values then say nothing true: `px_range`
+    /// is zero, and `msdf_coverage(sample, 0)` is `0.5` for every sample there
+    /// is, so the fragment stage shaded the glyph's quad at half coverage and
+    /// reached the colour arm.
+    ///
+    /// **It painted nothing anyway, and that was the defect.** The colour it
+    /// took there is `Instance::opacity` times this row's own zero alpha, so
+    /// the outcome rested on two defaults agreeing across two files with
+    /// nothing stating the connection — measured on PR #989's branch, writing
+    /// `color = [1.0; 4]` beside the refusal painted the predicted
+    /// `[255, 255, 255, 128]`. Stated here, the coverage is zero and the
+    /// fragment is discarded before any colour is read.
+    resolved: u32,
 }
 
 /// One baked-vector coverage mask, in the shader's own layout, with its atlas's
@@ -1722,21 +1739,52 @@ impl Renderer {
         // pipeline's draw runs come from, rather than a second walk: a masked
         // backdrop and the masked fill beneath it are the same node's coverage
         // field, so they name one row and one atlas.
-        let backdrop_masks: Vec<(Option<u32>, &wgpu::TextureView)> = plan
-            .iter()
-            .filter_map(|pass| pass.backdrop)
-            .map(|index| {
-                let atlas = resolved.atlas_of(&buffer.instances()[index as usize]);
-                let view = match atlas {
-                    Some(index) => self.residency.view(index),
-                    // A backdrop with no coverage mask still needs a texture
-                    // named for the binding its layout declares, exactly as a
-                    // frame with no atlas does for the paint pipeline.
-                    None => &self.placeholder,
-                };
-                (atlas, view)
-            })
-            .collect();
+        //
+        // # A refused backdrop is dropped here, not below (issue #994)
+        //
+        // A backdrop confined to a coverage field this frame could not make
+        // resident draws nothing, and until this loop it decided that inside
+        // [`Renderer::resolve_backdrop`] — after every allocation it needed had
+        // already been made. A frame whose only backdrop was refused still paid
+        // the twelve device objects [`BlurTargets::prepare`] itemises, drew the
+        // whole frame into `BlurTargets::base` rather than the caller's view,
+        // and blitted it back at the end.
+        //
+        // **One list decides both halves**, and that is what keeps this from
+        // becoming the defect it removes. `BlurTargets` builds one bind-group
+        // pair per entry of `backdrop_masks` and `pass` indexes them by
+        // ordinal, so a filter applied here and an ordinal counted separately
+        // below would be two records of one fact. When they disagreed, every
+        // backdrop behind a refused one drew through the previous one's mask
+        // with no refusal recorded — the silent drop P4 forbids, and what
+        // `a_refused_backdrop_does_not_renumber_the_one_behind_it` guards. The
+        // slot is assigned by the same step that decides the backdrop draws at
+        // all, so there is no second count to disagree with.
+        let mut backdrop_masks: Vec<(Option<u32>, &wgpu::TextureView)> = Vec::new();
+        // One entry per planned backdrop, in plan order and including the
+        // refused ones, so the loop below can read its slot by position.
+        let mut planned_backdrops: Vec<Option<PlannedBackdrop>> = Vec::new();
+        for index in plan.iter().filter_map(|pass| pass.backdrop) {
+            let instance = &buffer.instances()[index as usize];
+            let Some(mask) = backdrop_mask(instance, &resolved) else {
+                planned_backdrops.push(None);
+                continue;
+            };
+            let atlas = resolved.atlas_of(instance);
+            let view = match atlas {
+                Some(index) => self.residency.view(index),
+                // A backdrop with no coverage mask still needs a texture
+                // named for the binding its layout declares, exactly as a
+                // frame with no atlas does for the paint pipeline.
+                None => &self.placeholder,
+            };
+            planned_backdrops.push(Some(PlannedBackdrop {
+                instance: index,
+                slot: backdrop_masks.len(),
+                mask,
+            }));
+            backdrop_masks.push((atlas, view));
+        }
         let backdrops = backdrop_masks.len();
         self.blurs.prepare(
             &self.device,
@@ -1752,7 +1800,7 @@ impl Renderer {
         );
         // A backdrop snapshots the target it draws into, and a snapshot is a
         // texture-to-texture copy — which needs a `Texture`, where this function
-        // is handed a `TextureView`. So a frame with a backdrop draws into a
+        // is handed a `TextureView`. So a frame that draws a backdrop draws into a
         // texture this painter owns and composites it into `view` at the end.
         let frame_view = if backdrops == 0 {
             view
@@ -1766,57 +1814,78 @@ impl Renderer {
                 label: Some("dashscene-gpu frame"),
             });
         let mut draws = 0usize;
-        // Which backdrop of the plan is being resolved, counting the refused
-        // ones — the index `BlurTargets::pass` is stated in. Named for the
-        // position rather than for the outcome, because the two came apart once
-        // and nothing but a two-backdrop frame can tell.
-        let mut backdrop_ordinal = 0usize;
+        // Consumed one entry per planned backdrop as the loop reaches it, so
+        // that taking an entry and advancing past it are one step. See the
+        // block inside the loop for why that matters.
+        let mut planned_backdrops = planned_backdrops.into_iter();
         for planned in &plan {
             let target = if planned.target == Instance::NONE {
                 frame_view
             } else {
                 self.layers.view(planned.target)
             };
+            // Whether the block below cleared this pass's target. A pass that
+            // resolves a backdrop has to clear before the blur reads, so the
+            // render pass then loads; a pass whose backdrop was refused
+            // encodes nothing here and the render pass clears as it would with
+            // no backdrop planned at all.
+            let mut cleared = false;
             // The backdrop this pass resolves, before anything draws into the
             // target — the blur reads it as the previous pass on it left it.
             if let Some(index) = planned.backdrop {
-                if planned.clear {
-                    // Nothing has been written here yet, so the texture holds
-                    // whatever the allocator handed over and the blur would
-                    // read it. There is nothing to see beneath this backdrop,
-                    // but it has to be *transparent* nothing.
-                    clear(&mut encoder, target);
-                }
-                let texture = if planned.target == Instance::NONE {
-                    &self.blurs.base().texture
-                } else {
-                    self.layers.texture(planned.target)
-                };
-                // **The ordinal always advances, whether or not anything was
-                // encoded.** `BlurTargets` builds one bind-group pair per
-                // backdrop of `backdrop_masks`, which is `plan` in order, and
-                // each pair binds that backdrop's own coverage atlas — so this
-                // is a position in the plan and not a count of the ones that
-                // drew. Skipping it for a refused backdrop moved every backdrop
-                // behind it onto the previous one's mask, which for a refused
-                // field is the placeholder nothing writes: the next node's
-                // frost vanished with no refusal recorded, and a silent drop is
-                // what P4 forbids. The slot is allocated either way; what a
-                // refusal saves is the two draws.
-                let drew = self.resolve_backdrop(
-                    &mut encoder,
-                    backdrop_ordinal,
-                    index,
-                    buffer,
-                    paints,
-                    &resolved,
-                    texture,
-                    target,
-                    width,
-                    height,
-                );
-                backdrop_ordinal += 1;
-                if drew {
+                // **One step of the entry list per planned backdrop, whether or
+                // not it draws.** The list is built over the same positions
+                // this loop walks, and its `slot` is what carries a drawn
+                // backdrop's place in `backdrop_masks` across the filter. Read
+                // by a counter this was the shape issue #994 was — a skipped
+                // advance moved every backdrop behind a refused one onto the
+                // previous one's entry, its frost vanished with no refusal
+                // recorded, and a silent drop is what P4 forbids. Advancing by
+                // taking the next entry is the same step as reading it, so no
+                // later edit can do one without the other.
+                let backdrop = planned_backdrops
+                    .next()
+                    .expect("one entry per planned backdrop: both walks are over `plan`");
+                // A backdrop that draws nothing holds no slot (issue #994).
+                // What it saves is the two draws here and, when it was the
+                // frame's only one, everything `BlurTargets::prepare` would
+                // have allocated for it.
+                if let Some(backdrop) = backdrop {
+                    // Where the two walks meet: `index` comes from the plan and
+                    // everything else from the list built over it. Cheap, and
+                    // it is the only thing that catches them drifting apart in
+                    // a frame whose backdrops are all masked — where the mask is
+                    // present either way and only its values are wrong.
+                    debug_assert_eq!(
+                        backdrop.instance, index,
+                        "the entry taken here describes instance {} and the plan says {index}: \
+                         the two walks over `plan` have drifted, and this backdrop would draw \
+                         through another node's field",
+                        backdrop.instance,
+                    );
+                    if planned.clear {
+                        // Nothing has been written here yet, so the texture
+                        // holds whatever the allocator handed over and the blur
+                        // would read it. There is nothing to see beneath this
+                        // backdrop, but it has to be *transparent* nothing.
+                        clear(&mut encoder, target);
+                        cleared = true;
+                    }
+                    let texture = if planned.target == Instance::NONE {
+                        &self.blurs.base().texture
+                    } else {
+                        self.layers.texture(planned.target)
+                    };
+                    self.resolve_backdrop(
+                        &mut encoder,
+                        backdrop,
+                        buffer,
+                        paints,
+                        texture,
+                        target,
+                        width,
+                        height,
+                    );
                     draws += 2;
                 }
             }
@@ -1838,7 +1907,13 @@ impl Renderer {
                         // its clear, and the resolve drew into the target after
                         // it: clearing again here would erase the frosted
                         // region this pass exists to draw over.
-                        load: if planned.clear && planned.backdrop.is_none() {
+                        //
+                        // `cleared`, not `planned.backdrop.is_none()`: since
+                        // issue #994 a planned backdrop may encode nothing at
+                        // all, and reading the plan rather than what was
+                        // encoded would leave this pass loading a target no
+                        // step had cleared.
+                        load: if planned.clear && !cleared {
                             wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
                         } else {
                             wgpu::LoadOp::Load
@@ -1877,6 +1952,14 @@ impl Renderer {
                 }
             }
         }
+        // The two walks over `plan` covered the same backdrops. A shorter entry
+        // list panics inside the loop on the `expect` above; a longer one is
+        // silent, and would mean the loop skipped a backdrop the list did not.
+        debug_assert!(
+            planned_backdrops.next().is_none(),
+            "the entry list outlived the passes that read it: one of the two walks over `plan` \
+             takes a backdrop the other does not",
+        );
         // The frame drew into a texture this painter owns so that its backdrops
         // could read it; this is what puts it on the caller's target. One
         // composite at alpha one, through the pipeline story #583 built —
@@ -1925,41 +2008,53 @@ impl Renderer {
         self.frame.last_runs = draws;
     }
 
-    /// Resolves the `slot`th backdrop blur of this frame — instance `index` —
-    /// into the target it draws into.
+    /// Resolves one planned backdrop blur into the target it draws into.
     ///
     /// Three encoded things, in order: a copy of the target, the horizontal
     /// half of the separable kernel over a scratch, and the vertical half
     /// composited back into the target. `shaders/blur.wgsl` is the arithmetic
     /// and the reason for each.
     ///
-    /// Returns whether it encoded anything. **A backdrop confined to a coverage
-    /// field this frame could not make resident encodes nothing at all** (issue
-    /// #972), and that is not the same as encoding it unmasked: unmasked means
-    /// the parametric rounded box, so a refused field would frost the node's
-    /// whole box rather than its outline — a larger wrong picture than the one
-    /// the issue was filed for, measured. A baked-vector node's silhouette *is*
-    /// its field, so with no field there is no region to frost.
+    /// [`PlannedBackdrop::mask`] is the coverage field the blur is confined to,
+    /// or `None` for a backdrop over the node's parametric rounded box.
+    /// **A backdrop that draws nothing never reaches here** (issues #972 and
+    /// #994): [`backdrop_mask`] decides that where `backdrop_masks` is built,
+    /// which is before the slot exists to pass in, and this function has no
+    /// third case to represent. Drawing one unmasked would not do instead —
+    /// unmasked means the parametric box, so a refused field would frost the
+    /// node's whole box rather than its outline, a larger wrong picture than
+    /// the one #972 was filed for, measured. A baked-vector node's silhouette
+    /// *is* its field, so with no field there is no region to frost.
     ///
     /// # Panics
     ///
-    /// Panics when `index` does not name a backdrop instance, or when its row
-    /// is not a row of the blur table it names. Both are broken contracts
-    /// between the packer and this renderer rather than frames to skip (P4).
+    /// Panics when the named instance is not a backdrop, or when its row is not
+    /// a row of the blur table it names. Both are broken contracts between the
+    /// packer and this renderer rather than frames to skip (P4).
+    ///
+    /// **They are checked for the backdrops that draw, and no longer for the
+    /// rest.** Until issue #994 every planned backdrop reached this function
+    /// and both checks ran above the refusal; a backdrop dropped at
+    /// [`backdrop_mask`] now reaches neither. A caller that packed against one
+    /// paint table and drew against another therefore has one fewer place the
+    /// mismatch is named — issue #1022.
     #[allow(clippy::too_many_arguments)]
     fn resolve_backdrop(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        slot: usize,
-        index: u32,
+        backdrop: PlannedBackdrop,
         buffer: &InstanceBuffer,
         paints: &PaintTable,
-        resolved: &Resolved,
         target: &wgpu::Texture,
         view: &wgpu::TextureView,
         width: u32,
         height: u32,
-    ) -> bool {
+    ) {
+        let PlannedBackdrop {
+            instance: index,
+            slot,
+            mask,
+        } = backdrop;
         let instance = &buffer.instances()[index as usize];
         debug_assert_eq!(
             instance.kind,
@@ -1984,24 +2079,13 @@ impl Renderer {
         let support = (BLUR_SUPPORT_SIGMAS * sigma).ceil();
         let size = [width as f32, height as f32];
 
-        // The coverage mask, when the node carries one. `Instance::shape` rides
-        // on the backdrop instance for exactly this — a masked node's blur is
-        // confined to the field's outline rather than to its box — and the row
-        // is the same one the node's own fill resolves, so the parameters come
-        // from the frame's own resolution rather than a second derivation.
-        // `row`, not `slot`: this function's own `slot` is the backdrop's
-        // ordinal in the frame, and the two are index-like values whose
-        // confusion is silent.
-        let mask = match instance.shape {
-            Instance::NONE => None,
-            row => {
-                let shape = resolved.shapes[row as usize - 1];
-                if shape.resolved == 0 {
-                    return false;
-                }
-                Some(shape)
-            }
-        };
+        debug_assert_eq!(
+            mask.is_some(),
+            instance.shape != Instance::NONE,
+            "the mask passed in is the one `backdrop_mask` read off this instance: a masked \
+             instance drawn unmasked frosts its whole box rather than its outline, and an \
+             unmasked one drawn masked samples a field it never named",
+        );
 
         // **A masked backdrop's quad is the field's padded plane quad, not the
         // node's box**, and that is a correctness property rather than a saving.
@@ -2132,7 +2216,6 @@ impl Renderer {
         pass.set_pipeline(&self.blur_resolve_pipeline);
         pass.set_bind_group(0, bind_group, &[]);
         pass.draw(0..4, 0..1);
-        true
     }
 
     /// One axis of the separable kernel, into a scratch that is cleared because
@@ -2354,6 +2437,17 @@ impl Renderer {
                 .all(|(atlas, shape)| atlas.is_some() == (shape.resolved != 0)),
             "a coverage-mask row is resolved exactly when it landed in an atlas",
         );
+        // And the same for a glyph run, which since issue #993 carries the same
+        // flag for the same reason. Its arm has three ways out — a zero-extent
+        // atlas, a refusal, and the memo that skips a row already resolved —
+        // and only the last of them leaves the row written.
+        debug_assert!(
+            out.atlas_of_run
+                .iter()
+                .zip(&out.runs)
+                .all(|(atlas, run)| atlas.is_some() == (run.resolved != 0)),
+            "a glyph-run row is resolved exactly when its atlas landed in one",
+        );
         out
     }
 
@@ -2567,7 +2661,11 @@ fn gpu_glyph_run(run: &dashpaint::GlyphRun, atlas: &dashpaint::Atlas, uv: [f32; 
         // range into the bounds, so this scales the sharpness of the edge and
         // not the size.
         px_range: atlas.distance_range_px() * run.size / f32::from(atlas.px_per_em()),
-        _pad: 0.0,
+        // This function is reached only from the arm that made the atlas
+        // resident, so building a row *is* resolving one — the same property
+        // `gpu_shape` states. Every other row keeps `GpuGlyphRun::default()`'s
+        // zero.
+        resolved: 1,
     }
 }
 
@@ -2602,6 +2700,81 @@ fn gpu_shape(
         // resident, so building a row *is* resolving one. Every other row keeps
         // `GpuShape::default()`'s zero.
         resolved: 1,
+    }
+}
+
+/// One planned backdrop that will draw: where its bind groups sit, and the
+/// coverage mask it is confined to.
+///
+/// One that draws nothing has no value of this type at all — [`backdrop_mask`]
+/// answers `None` and the whole entry is `None` — which is what makes that case
+/// unrepresentable inside [`Renderer::resolve_backdrop`] rather than a case it
+/// checks for (issue #994).
+#[derive(Debug, Clone, Copy)]
+struct PlannedBackdrop {
+    /// Which instance this describes, so the pairing can be checked rather than
+    /// trusted.
+    ///
+    /// The slot and the mask are read out of this list by position while the
+    /// instance index comes from the plan, and nothing but the two walks
+    /// agreeing keeps them together — which is the shape issue #994 was. This
+    /// is what [`Renderer::resolve_backdrop`] asserts against its own argument,
+    /// and it catches a drift that the masked-ness check alone cannot: two
+    /// masked backdrops swapping entries agree on `shape.is_some()` and differ
+    /// in every value the blur reads.
+    instance: u32,
+    /// Its position in `backdrop_masks`, which is the index
+    /// [`BlurTargets::pass`] is stated in. **Not its position in the plan**:
+    /// the two differ by every backdrop ahead of it that draws nothing, and
+    /// assigning this where the list it indexes is built is what keeps them
+    /// from being counted twice.
+    slot: usize,
+    /// The field the blur is confined to, or `None` for a backdrop over the
+    /// node's parametric rounded box.
+    mask: Option<GpuShape>,
+}
+
+/// The coverage mask a backdrop instance draws through, or `None` for one that
+/// draws nothing at all.
+///
+/// Three answers in two layers, and the nesting is the thing to read carefully:
+///
+/// ```text
+/// Some(Some(shape))   masked, and the field is resolved
+/// Some(None)          unmasked — the node's parametric rounded box
+/// None                draws nothing
+/// ```
+///
+/// # `None` has two producers, and only one of them is named
+///
+/// A row is left unresolved both when its payload was **refused** and when the
+/// field is **degenerate** — no quad, or no atlas rectangle, which
+/// [`field_draws`] rejects before residency is ever asked. Only the first is
+/// recorded on [`Renderer::refusals`]; the second reaches no diagnostic at any
+/// seam, which is the silent drop issue #1021 is about. It predates this
+/// function — [`Renderer::resolve_backdrop`] read the same flag and returned
+/// the same way — so nothing here made it, and nothing here fixes it either.
+///
+/// # Why the decision is here
+///
+/// Not inside [`Renderer::resolve_backdrop`], because everything that backdrop
+/// needs is allocated between the two (issue #994): the twelve device objects
+/// [`BlurTargets::prepare`] itemises, plus routing the whole frame through
+/// [`BlurTargets::base`] and blitting it back. A frame whose only backdrop
+/// draws nothing now allocates none of it and draws into the caller's view,
+/// which is what a frame with no backdrop at all already did.
+///
+/// `Instance::shape` rides on the backdrop instance so that a masked node's
+/// blur follows the field's outline rather than its box, and the row is the
+/// same one the node's own fill resolves — so the parameters come from the
+/// frame's own resolution rather than a second derivation.
+fn backdrop_mask(instance: &Instance, resolved: &Resolved) -> Option<Option<GpuShape>> {
+    match instance.shape {
+        Instance::NONE => Some(None),
+        row => {
+            let shape = resolved.shapes[row as usize - 1];
+            (shape.resolved != 0).then_some(Some(shape))
+        }
     }
 }
 
@@ -3178,8 +3351,12 @@ const _: () = assert!(std::mem::offset_of!(GpuBlur, rotation_pivot) % 8 == 0);
 /// is drawing into, this painter cannot snapshot it. A frame that holds a
 /// backdrop therefore draws into [`base`](Self::base) and composites that into
 /// the caller's view as its last act. That is the whole of the cost, it is paid
-/// only by a frame that has a backdrop in it, and two of the three showcase
+/// only by a frame that **draws** a backdrop, and two of the three showcase
 /// scenes have none.
+///
+/// Draws, not holds: since issue #994 a frame whose every backdrop was refused
+/// allocates nothing here and draws into the caller's view, exactly as a frame
+/// with no backdrop planned at all does.
 ///
 /// A backdrop *inside a render-target group* snapshots that group's layer
 /// instead, which is already a texture this painter owns — so the base is only
@@ -3191,7 +3368,7 @@ const _: () = assert!(std::mem::offset_of!(GpuBlur, rotation_pivot) % 8 == 0);
 /// there are, and a stale uniform would blur at the previous frame's sigma.
 #[derive(Default)]
 struct BlurTargets {
-    /// The frame's own target, when the frame holds a backdrop.
+    /// The frame's own target, when the frame draws a backdrop.
     base: Option<Owned>,
     /// The destination as it stood before the backdrop being resolved — the
     /// blur's input, and the sharp original the resolve pass mixes against.
@@ -3204,8 +3381,13 @@ struct BlurTargets {
     /// The alpha uniform that blit reads. Always one; held because a bind group
     /// must name a buffer that outlives it.
     blit_alpha: Option<wgpu::Buffer>,
-    /// Two uniform buffers per backdrop the frame holds — the axis pass's, then
-    /// the resolve pass's.
+    /// Two uniform buffers per backdrop the frame **draws** — the axis pass's,
+    /// then the resolve pass's.
+    ///
+    /// Draws, not holds: since issue #994 a backdrop whose coverage field was
+    /// refused is filtered out before `prepare` is called, so nothing here is
+    /// built for one. [`PlannedBackdrop::slot`] is what carries a backdrop's
+    /// position in this list across that filter.
     ///
     /// Separate buffers rather than one written between passes, for the reason
     /// [`LayerTargets::alphas`] gives: writes queued against a single buffer
@@ -3217,8 +3399,9 @@ struct BlurTargets {
     bind_groups: Vec<wgpu::BindGroup>,
     width: u32,
     height: u32,
-    /// The atlas each backdrop's bind groups were built naming, in plan order,
-    /// with `None` for a backdrop that carries no coverage mask.
+    /// The atlas each drawn backdrop's bind groups were built naming, in the
+    /// order they will be drawn, with `None` for a backdrop that carries no
+    /// coverage mask.
     ///
     /// A bind group names one texture view, so a backdrop whose mask moved to a
     /// different atlas — or that gained or lost a mask — needs its groups
@@ -3232,14 +3415,38 @@ struct BlurTargets {
 }
 
 impl BlurTargets {
-    /// Makes `count` backdrops' worth of targets and parameters available at
-    /// `width` x `height`, rebuilding when any of those has changed or when the
-    /// frame's buffers moved under the bind groups.
+    /// Makes one backdrop's worth of targets and parameters available per entry
+    /// of `masks`, at `width` x `height`, rebuilding when any of those has
+    /// changed or when the frame's buffers moved under the bind groups.
     ///
-    /// A frame with no backdrop releases everything: the three full-target
-    /// textures are the largest allocation this painter makes per frame, and
-    /// holding them for a scene that stopped having a frosted panel would keep
-    /// three drawable-sized textures alive for nothing.
+    /// # What one backdrop costs, counted here and nowhere else
+    ///
+    /// This is the one place the inventory is derivable, so it is the one place
+    /// it is written; every other site names the total and points here. A frame
+    /// whose first backdrop this is allocates **twelve** device objects:
+    ///
+    /// ```text
+    /// 6   base, snapshot and scratch — three textures and three views
+    /// 2   the base blit's bind group and its alpha uniform
+    /// 4   two uniform buffers and two bind groups, per backdrop
+    /// ```
+    ///
+    /// Only the last line scales; the first two are the frame's, however many
+    /// backdrops it holds.
+    ///
+    /// # A frame prepared for no backdrop releases everything
+    ///
+    /// The three full-target textures are the largest allocation this painter
+    /// makes per frame, and holding them for a scene that stopped having a
+    /// frosted panel would keep three drawable-sized textures alive for
+    /// nothing.
+    ///
+    /// **Prepared for, not planned.** Since issue #994 `masks` holds the
+    /// backdrops that draw, so a frame that plans one and refuses it takes this
+    /// path too. That is what makes a refused-only frame cost what a frame with
+    /// no backdrop costs; it also means a refusal that changes between frames
+    /// releases and rebuilds those twelve objects on each change, which issue
+    /// #1020 is about.
     #[allow(clippy::too_many_arguments)]
     fn prepare(
         &mut self,
@@ -3374,12 +3581,16 @@ impl BlurTargets {
         }
     }
 
-    /// The frame's own target for a frame that holds a backdrop.
+    /// The frame's own target for a frame that draws a backdrop.
     ///
     /// # Panics
     ///
-    /// Panics when the frame holds none, which is a caller that asked for the
-    /// base without planning a backdrop.
+    /// Panics when the frame draws none. **Which is not the same as planning
+    /// none** since issue #994: a frame that plans one backdrop and refuses it
+    /// releases the base along with everything else, so a caller that guards
+    /// this on `plan.iter().any(|pass| pass.backdrop.is_some())` rather than on
+    /// the count `BlurTargets::prepare` was given panics on exactly that
+    /// frame.
     fn base(&self) -> &Owned {
         self.base
             .as_ref()
@@ -4011,23 +4222,30 @@ const _: () = assert!(size_of::<GpuImage>() == 64);
 const _: () = assert!(size_of::<GpuGlyphRun>() == 48);
 const _: () = assert!(size_of::<GpuShape>() == 48);
 
-/// And [`GpuShape`]'s offsets, because since issue #972 its last word carries
-/// meaning rather than padding.
+/// And both types' offsets, because their last word carries meaning rather
+/// than padding — [`GpuShape`]'s since issue #972, [`GpuGlyphRun`]'s since
+/// #993.
 ///
 /// A size assertion alone does not pin a layout — [`GpuBlur`]'s own block says
 /// so and calls itself the proof, having been reordered on one side at an
-/// unchanged size. This struct is now the case that reasoning was written for:
-/// swapping `px_range` and `resolved` on one side alone keeps it at 48 bytes,
-/// and the shader would then read `resolved` out of the range slot — non-zero
-/// for any real field, so the gate opens — and the range out of the flag slot,
-/// where `1u32`'s bit pattern is 1.4e-45. `msdf_coverage(sample, ~0)` is `0.5`,
-/// which is exactly the defect #972 removed, restored for every masked fill in
-/// the frame and caught by nothing.
+/// unchanged size. These two are now the case that reasoning was written for:
+/// swapping `px_range` and `resolved` on one side alone keeps either at 48
+/// bytes, and the shader would then read `resolved` out of the range slot —
+/// non-zero for any real field or run, so the gate opens — and the range out of
+/// the flag slot, where `1u32`'s bit pattern is 1.4e-45.
+/// `msdf_coverage(sample, ~0)` is `0.5`, which is exactly the defect those two
+/// issues removed, restored for every masked fill and every glyph in the frame
+/// and caught by nothing.
 const _: () = assert!(std::mem::offset_of!(GpuShape, plane) == 0);
 const _: () = assert!(std::mem::offset_of!(GpuShape, uv) == 16);
 const _: () = assert!(std::mem::offset_of!(GpuShape, half_uv) == 32);
 const _: () = assert!(std::mem::offset_of!(GpuShape, px_range) == 40);
 const _: () = assert!(std::mem::offset_of!(GpuShape, resolved) == 44);
+const _: () = assert!(std::mem::offset_of!(GpuGlyphRun, color) == 0);
+const _: () = assert!(std::mem::offset_of!(GpuGlyphRun, uv) == 16);
+const _: () = assert!(std::mem::offset_of!(GpuGlyphRun, half_uv) == 32);
+const _: () = assert!(std::mem::offset_of!(GpuGlyphRun, px_range) == 40);
+const _: () = assert!(std::mem::offset_of!(GpuGlyphRun, resolved) == 44);
 
 /// The per-frame uniform. **Thirty-two bytes on both sides since story #584**,
 /// where it was sixteen: five scalars is twenty bytes, and a uniform's size
@@ -4046,8 +4264,8 @@ const _: () = assert!(size_of::<GpuComposite>() == 16);
 mod tests {
     use super::{
         DrawRun, GRADIENT_WORDS, GpuGlyphRun, GpuImage, GpuShape, MINIMUM_CAPACITY, PAINT_WGSL,
-        PaintHeap, Resolved, SHADOW_WORDS, dirty_ranges, draw_runs, gradient_kind, grown,
-        paint_heap, scale_mode,
+        PaintHeap, Resolved, SHADOW_WORDS, dirty_ranges, draw_runs, gpu_glyph_run, gradient_kind,
+        grown, paint_heap, scale_mode,
     };
     use crate::instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
     use dashpaint::{
@@ -4278,6 +4496,126 @@ mod tests {
             )),
             "sdf.wgsl's stop ceiling must be boundary B's {}",
             dashpaint::MAX_GRADIENT_STOPS
+        );
+    }
+
+    /// A glyph-run row says it was resolved only when [`gpu_glyph_run`] built
+    /// it (issue #993).
+    ///
+    /// The whole of the Rust half: the flag has exactly one writer, and that
+    /// writer is reachable only from the arm that made the atlas resident. A
+    /// refused run keeps [`Default`]'s row, and this is what says that row does
+    /// not claim to be an atlas.
+    #[test]
+    fn a_glyph_run_row_is_resolved_only_when_it_was_built_from_an_atlas() {
+        assert_eq!(
+            GpuGlyphRun::default().resolved,
+            0,
+            "the row a refusal leaves must not claim to describe an atlas — this is the default \
+             `resolve_frame` writes and never touches again",
+        );
+        // The payload is never read: `gpu_glyph_run` takes the atlas's extent,
+        // its texels-per-em and its distance range, and residency is what
+        // decodes bytes. So the bytes here need only be bytes.
+        let atlas = dashpaint::Atlas::new(
+            dashpaint::ImageAsset {
+                format: dashpaint::ImageFormat::Png,
+                bytes: vec![0; 4],
+            },
+            1,
+            1,
+            16,
+            2.0,
+            Vec::new(),
+        )
+        .expect("a positive px-per-em and distance range");
+        let run = dashpaint::GlyphRun {
+            rect: 0,
+            atlas: dashpaint::AtlasIndex(0),
+            size: 16.0,
+            color: colour(1.0, 1.0, 1.0, 1.0),
+            opacity: 1.0,
+            glyphs: dashpaint::GlyphRange::UNASSIGNED,
+        };
+        assert_ne!(
+            gpu_glyph_run(&run, &atlas, [0.0, 0.0, 1.0, 1.0]).resolved,
+            0,
+            "a row built from an atlas is resolved: this function is reached only from the arm \
+             that made one resident",
+        );
+    }
+
+    /// Both MSDF arms of `paint.wgsl` gate their coverage on the flag the
+    /// vertex stage carries in `params2.w` (issues #972 and #993).
+    ///
+    /// **A source assertion, because no pixel can tell the two answers apart.**
+    /// That is the whole of issue #993: a refused glyph shaded its quad at
+    /// `msdf_coverage(sample, px_range = 0)`, which is exactly `0.5`, and then
+    /// painted nothing because the same zeroed row's colour has zero alpha —
+    /// premultiplied to transparent black, which source-over leaves the target
+    /// exactly as it found it. Deleting the gate restores that coincidence and
+    /// changes no rendered texel, so a rendering test cannot fail on it and
+    /// `a_refused_glyph_atlas_draws_nothing_and_names_itself` would keep
+    /// passing.
+    ///
+    /// The same reasoning `the_gradient_kinds_are_distinct_and_match_the_shader`
+    /// gives for its own text assertions: nothing holds these numbers but the
+    /// two files agreeing, and the failure is a plausible picture rather than a
+    /// visible one.
+    ///
+    /// # What it asserts, and what defeats a weaker version
+    ///
+    /// **Comments are stripped first.** Both gates sit under long explanatory
+    /// blocks that quote the condition, so a count over the raw source stays at
+    /// two with the gate deleted and its comment left behind.
+    ///
+    /// **The carry is matched as a whole statement**, not as the substring
+    /// `f32(run.resolved)`. Reordering it to
+    /// `vec4f(f32(run.resolved), run.half_uv, run.px_range)` keeps any
+    /// `contains` green while `params2.w` carries `px_range` — non-zero for
+    /// every real run, so the gate is permanently open.
+    ///
+    /// **The gates are counted against the `msdf_coverage` calls**, not against
+    /// the literal two. One arm passing says nothing about the other —
+    /// `KIND_TEXT` and the masked arm are separate branches over separate
+    /// tables, and #993 exists because #972 gated only the second — but a
+    /// literal two would also fail on a third consumer correctly gated, and the
+    /// cheapest way to make that pass is to raise the number, which is how a
+    /// count stops guarding anything.
+    #[test]
+    fn both_msdf_arms_gate_on_the_row_the_frame_resolved() {
+        // WGSL line comments only; this file has no block comments and no
+        // string literals, so there is nothing else a `//` can be inside.
+        let code: String = PAINT_WGSL
+            .lines()
+            .map(|line| line.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for carried in [
+            "vec4f(field.half_uv, field.px_range, f32(field.resolved))",
+            "vec4f(run.half_uv, run.px_range, f32(run.resolved))",
+        ] {
+            assert!(
+                code.contains(carried),
+                "the vertex stage must write `{carried}` — the flag in the **fourth** component, \
+                 which is the one the fragment stage's gate reads. Any other order leaves the \
+                 gate reading a component that carries something else",
+            );
+        }
+        let gates = code.matches("in.params2.w != 0.0").count();
+        let sampled = code.matches("msdf_coverage(").count();
+        assert_eq!(
+            gates, sampled,
+            "every `msdf_coverage` call in paint.wgsl must sit behind the resolved flag — {gates} \
+             gates against {sampled} calls. A call without one shades a refused payload at half \
+             coverage, and no zeroed colour makes that a mechanism rather than a coincidence",
+        );
+        assert_eq!(
+            sampled, 2,
+            "the masked arm and the `KIND_TEXT` arm are the two MSDF consumers this file has — \
+             found {sampled}. A third is fine and this test admits it, but it must arrive with \
+             its own gate and with this number updated deliberately rather than to make the \
+             assertion above pass",
         );
     }
 

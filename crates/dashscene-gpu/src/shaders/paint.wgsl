@@ -183,7 +183,12 @@ struct GlyphRun {
     uv: vec4f,
     half_uv: vec2f,
     px_range: f32,
-    _pad: f32,
+    // Non-zero when the four members above describe an atlas this frame made
+    // resident. `render::GpuGlyphRun::resolved` is where that is derived and
+    // what it is for; the short version is the one `Shape::resolved` gives —
+    // a zeroed row is not an atlas, and reading one as though it were produces
+    // exactly half coverage rather than none.
+    resolved: u32,
 }
 
 // Mirrors `dashscene_gpu::render::GpuShape` — one baked-vector coverage mask.
@@ -282,18 +287,19 @@ struct VertexOut {
     //
     //     text          params0 = the run's colour
     //                   params1 = the glyph's sub-rect in the atlas texture
-    //                   params2 = (half_u, half_v, px_range, 0)
+    //                   params2 = (half_u, half_v, px_range, resolved)
     //     masked        params0 = the field's device quad, [x, y, w, h]
     //                   params1 = the field's sub-rect in the atlas texture
     //                   params2 = (half_u, half_v, px_range, resolved)
     //     everything    zero, and nothing reads them
     //
-    // **`params2.w` is not spare on the masked path** (issue #972). It carries
-    // `Shape::resolved`, and the fragment stage's masked arm draws nothing when
-    // it is zero — a field the frame could not make resident, where sampling
-    // the zeroed row would report half coverage rather than none. A fourth
-    // component taken here for something else would silently paint every
-    // refused mask.
+    // **`params2.w` is spare on neither path** (issues #972 and #993). It
+    // carries `Shape::resolved` on the one and `GlyphRun::resolved` on the
+    // other, and the fragment stage's arm draws nothing when it is zero — a
+    // payload the frame could not make resident, where sampling the zeroed row
+    // would report half coverage rather than none. A fourth component taken
+    // here for something else would silently paint every refused mask and every
+    // refused glyph.
     //
     // Flat, and stated: these are per-instance constants, and a flat varying is
     // exact where an interpolated one is only exact because every vertex agreed.
@@ -365,6 +371,11 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
     // zeroed quad does not do that on its own**: it has no area, but the margin
     // below then grows it into a square two antialiasing widths across, and the
     // fragment stage was shading that square at exactly half coverage.
+    //
+    // A glyph whose atlas could not be resolved carries `run.resolved` through
+    // the same component for the same reason (issue #993). Its quad is the
+    // glyph's own rectangle and is not zeroed at all, so there was never
+    // anything geometric to rely on: the fragment stage is the whole of it.
     var quad = inst.bounds;
     if inst.shape != 0u {
         let field = shapes[inst.shape - 1u];
@@ -384,7 +395,7 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
             run.uv.xy + inst.corners.xy * run.uv.zw,
             inst.corners.zw * run.uv.zw,
         );
-        out.params2 = vec4f(run.half_uv, run.px_range, 0.0);
+        out.params2 = vec4f(run.half_uv, run.px_range, f32(run.resolved));
     }
 
     // Grown by the antialiasing width so the ramp is not clipped by the
@@ -752,12 +763,25 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
             );
         }
     } else if kind == KIND_TEXT {
-        // The glyph's quad is its own bounds — a glyph has no rounded box, and
-        // `corners` carried its atlas rectangle instead.
-        shape = msdf_coverage(
-            msdf_sample(in.params1, in.bounds, in.params2.xy, in.local),
-            in.params2.z,
-        );
+        // A glyph whose atlas this frame did not make resident leaves the
+        // coverage at zero, so the `discard` below takes this fragment (issue
+        // #993). The same gate as the masked arm above, and it is needed for
+        // the same reason: the row is zeroed, so `px_range` is zero and
+        // `msdf_coverage` is then `0.5` whatever the sample was.
+        //
+        // **It is the gate and not the colour that draws nothing here.** The
+        // row's own zero alpha did that before this existed, which made an
+        // empty frame the agreement of two defaults in two files rather than a
+        // decision anything states — and unlike `KIND_FILL_IMAGE`, the colour
+        // arm below has no `discard` of its own behind it.
+        if in.params2.w != 0.0 {
+            // The glyph's quad is its own bounds — a glyph has no rounded box,
+            // and `corners` carried its atlas rectangle instead.
+            shape = msdf_coverage(
+                msdf_sample(in.params1, in.bounds, in.params2.xy, in.local),
+                in.params2.z,
+            );
+        }
     } else if kind == KIND_STROKE {
         let s = strokes[row];
         shape = stroke_coverage(d, s.width, f32(s.align), globals.aa);
