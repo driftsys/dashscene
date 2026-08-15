@@ -227,6 +227,18 @@ reads is the pass's own target — which is the correct reading of "the backdrop
 beneath this node" when the node is inside a group layer
 (`docs/decisions/a-backdrop-blur-snapshots-the-target-it-draws-into.md`).
 
+**An empty frame clears** (issue #1025). `composite::plan` returns one pass over
+the frame's own target with no steps rather than no passes at all, so
+`Renderer::draw` begins a render pass that loads by clearing and encodes nothing
+into it. It planned nothing before: the loop ran no iterations and the final
+`emit` was dropped by its own empty-range guard. `Renderer::render` asserts a
+non-empty buffer, so no offscreen caller could reach it — but
+`SurfaceRenderer::present` hands `draw` the swapchain view and presents
+immediately after, so a document with no ink presented whatever the compositor
+last had, or undefined contents on the first frame. The planner is what emits
+it, because deciding who clears is what `Pass::clear` is for and a renderer
+clearing on its own initiative would be a second such decision.
+
 ## Atlas residency
 
 One mechanism serves three consumers: image fills, MSDF glyph atlases and baked
@@ -445,6 +457,19 @@ refused frame costs **less** than returning from two is what says the frame-wide
 half was held — with the grace removed both cost twelve. That it costs **more
 than nothing** is what says the per-backdrop half was not, which is what keeps
 the grace clear of issue #1050.
+
+**`BlurTargets::bound_atlases` keys the rebuild per slot, not per backdrop**
+(issue #1026), and that is correct for one reason: the atlas texture view is the
+only per-backdrop entry in the blur layout. Since issue #994 the list holds only
+the backdrops that draw, so two frames whose masked and refused backdrops swap
+places both produce `[Some(0)]` and slot 0's group — built for the first — is
+reused for the second. The snapshot, the scratch, the clips and the sampler are
+frame-wide, and the `GpuBlur` uniform is rewritten from that backdrop's own
+instance every frame, so the reuse binds exactly the right things. The hazard is
+the next entry, which would bind the previous frame's value with no rebuild
+triggered. `BLUR_BINDINGS` is what makes that fail rather than drift: both entry
+arrays are declared at that length, so a seventh is a type error and whoever
+adds one has to decide what the rebuild is keyed on first.
 
 **The filter and the slot come from one list**, and that is the whole of why
 this is safe. `BlurTargets` builds one bind-group pair per entry of

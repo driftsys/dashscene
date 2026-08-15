@@ -54,6 +54,18 @@ and returns the passes: a target, whether it clears or loads, and the ordered
 steps drawn into it. A layer composites at the point its instances **end**, so
 members following a group in slice order draw over it.
 
+**The plan is never empty** (issue #1025). A stream with no instances plans one
+pass over the frame's own target with no steps, so a frame with no ink clears
+and draws nothing. That is the one pass not derived from an instance, and it is
+derived from their absence rather than from anything else. It is emitted here
+rather than in the renderer because who clears is this planner's decision —
+`Pass::clear` is what that decision is — and it returned no passes at all until
+then, so `Renderer::draw` began no render pass and submitted an empty command
+buffer. `Renderer::render` asserts a non-empty buffer, so only the surface path
+could reach it: `SurfaceRenderer::present` hands `draw` the swapchain view and
+presents immediately after, and a document with no ink presented whatever the
+compositor last had.
+
 ## Why
 
 - **The layer table belongs with the instances (D1, over a `render`
