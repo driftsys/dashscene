@@ -1917,6 +1917,16 @@ impl Renderer {
                     draws += 2;
                 }
             }
+            // The atlas the pass currently has bound, or `None` before its first
+            // draw. A bind group belongs to the render pass, so this is reset
+            // with the pass and never carried across one.
+            //
+            // **Two adjacent runs can now share an atlas** (issue #1024): a gap
+            // splits a range without changing what either half samples, so a
+            // frame with fifty refused text stretches would otherwise re-bind
+            // the same group fifty times. Before the gap existed, consecutive
+            // runs always differed in atlas and this could not fire.
+            let mut bound: Option<Option<u32>> = None;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("dashscene-gpu frame"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1958,13 +1968,20 @@ impl Renderer {
                 match step {
                     // Four vertices per instance, as a triangle strip, and one
                     // draw per atlas run. Slice order is draw order, and both
-                    // partitions of the buffer — this pass's range and the
-                    // atlas runs — are ordered, so the buffer's own order is
-                    // still the stacking order.
+                    // splits of the buffer — this pass's range and the atlas
+                    // runs — are ordered and disjoint, so the buffer's own
+                    // order is still the stacking order. Ordered and disjoint,
+                    // not a partition: since issue #1024 the atlas runs leave
+                    // out the instances whose rows did not resolve, and it is
+                    // those two properties rather than the cover that draw
+                    // order rests on.
                     composite::Step::Instances(range) => {
                         pass.set_pipeline(&self.pipeline);
                         for run in overlapping(&runs, range) {
-                            pass.set_bind_group(0, self.frame.bind_group(run.atlas), &[]);
+                            if bound != Some(run.atlas) {
+                                pass.set_bind_group(0, self.frame.bind_group(run.atlas), &[]);
+                                bound = Some(run.atlas);
+                            }
                             pass.draw(0..4, run.instances.clone());
                             draws += 1;
                         }
@@ -2353,6 +2370,7 @@ impl Renderer {
             atlas_of_image: vec![None; fills.len()],
             atlas_of_run: vec![None; runs.len()],
             atlas_of_shape: vec![None; fields.len()],
+            undrawn: false,
         };
 
         let entries = images.all_entries();
@@ -2379,6 +2397,12 @@ impl Renderer {
                     out.atlas_of_shape[row] = Some(slot.atlas);
                     out.shapes[row] = gpu_shape(field, slot.uv(extent), asset.width, asset.height);
                 }
+                // A masked instance whose field did not resolve draws nothing,
+                // whatever its kind — the same precedence `Resolved::draws` and
+                // `paint.wgsl` read it in. Tested after the block rather than
+                // inside it because the memo above leaves a *resolved* row
+                // untouched too, and that instance does draw.
+                out.undrawn |= out.atlas_of_shape[row].is_none();
             }
 
             if instance.kind == InstanceKind::FillImage.as_u32() {
@@ -2390,6 +2414,7 @@ impl Renderer {
                 let Some(slot) =
                     self.resident_image(images, entries, fill.image, "an image fill's payload")
                 else {
+                    out.undrawn = true;
                     continue;
                 };
                 let asset = images.resolve(fill.image);
@@ -2422,7 +2447,15 @@ impl Renderer {
                 // An atlas with no extent has no texels to sample, and every
                 // mapping below divides by it. The same case, and the same
                 // treatment, as a zero-extent image payload.
+                // The one `undrawn` site no test reaches. The other three are
+                // covered end to end — a refused image fill, a refused glyph
+                // atlas, a degenerate coverage field — and this one needs an
+                // `Atlas` of no extent, which `Atlas::new` accepts only because
+                // `width` and `height` are `pub` and unchecked. Issue #1001 is
+                // that, and closing it makes this arm unreachable rather than
+                // untested.
                 if atlas.width == 0 || atlas.height == 0 {
+                    out.undrawn = true;
                     continue;
                 }
                 let resident = self.residency.resident(
@@ -2447,6 +2480,7 @@ impl Renderer {
                     // host down over a document the reference painter draws.
                     Err(error) => {
                         self.refuse("a glyph atlas", run.atlas.0, error);
+                        out.undrawn = true;
                         continue;
                     }
                 };
@@ -2490,6 +2524,26 @@ impl Renderer {
                 .zip(&out.images)
                 .all(|(atlas, image)| atlas.is_some() == (image.resolved != 0)),
             "an image-fill row is resolved exactly when its payload landed in an atlas",
+        );
+        // And the flag `draw_runs` reads agrees with the rows it stands for.
+        //
+        // `undrawn` is set at four arms above rather than derived here, because
+        // deriving it is a second walk over the instances on a path R-T4 bounds
+        // and the answer is false for every frame this repository draws. Four
+        // sites is four places to drift, so the derivation runs anyway — in
+        // debug, where it is the whole guard against that, and compiled out of
+        // the frames the bound is about.
+        debug_assert_eq!(
+            out.undrawn,
+            buffer
+                .instances()
+                .iter()
+                .any(|i| out.sampled_row(i) == Some(None)),
+            "`Resolved::undrawn` disagrees with the rows it stands for. Too low — an arm above \
+             left a row unresolved without recording it — and `draw_runs` takes its whole-buffer \
+             path and submits that instance's quad. Too high and it walks a frame with no gap in \
+             it, every frame, for nothing. The expression on the right is the one `draw_runs` \
+             decides each gap with, so the two cannot drift apart",
         );
         out
     }
@@ -2554,9 +2608,16 @@ impl Renderer {
 
     /// How many draw calls the frame most recently drawn took.
     ///
-    /// One unless the frame's image fills sat in more than one atlas, or it
-    /// held a render-target group: since story #583 a group costs one draw for
-    /// its composite, plus one more for each run its own quads are split into.
+    /// One for an ordinary frame. It is more when the frame's payloads sat in
+    /// more than one atlas, when it held a render-target group — since story
+    /// #583 a group costs one draw for its composite, plus one more for each run
+    /// its own quads are split into — when it drew a backdrop, which costs two
+    /// passes and a base blit, or when an instance whose row did not resolve
+    /// split a range in two (issue #1024).
+    ///
+    /// It can also be **zero**, for a frame every instance of which draws
+    /// nothing: those are in no range, and a frame of nothing but them encodes
+    /// no draw at all.
     /// Public because a test that asserted only the picture could not tell a
     /// frame that batched from one that did not, and the batching is the
     /// property R-T2 cares about.
@@ -2650,26 +2711,69 @@ struct Resolved {
     atlas_of_image: Vec<Option<u32>>,
     atlas_of_run: Vec<Option<u32>>,
     atlas_of_shape: Vec<Option<u32>>,
+    /// Whether any instance of this frame names a row it could not resolve
+    /// (issue #1024).
+    ///
+    /// [`draw_runs`] needs the answer for the whole buffer before it can decide
+    /// whether to take its whole-buffer path, and it is **false for every frame
+    /// in this repository's corpus** — so it is recorded where the rows are
+    /// resolved rather than re-derived by a second walk over the instances.
+    /// [`Renderer::resolve_frame`] is already visiting each one.
+    ///
+    /// Set at each arm that leaves a row unresolved, which is four places; the
+    /// assertion at the foot of that function is what says the four agree with
+    /// [`Resolved::draws`], and it costs nothing in release.
+    undrawn: bool,
 }
 
 impl Resolved {
+    /// The row `instance` samples, in three answers rather than two.
+    ///
+    /// ```text
+    /// None              samples nothing — a solid fill, a stroke, a shadow
+    /// Some(None)        names a row this frame could not resolve
+    /// Some(Some(atlas)) resolved, and this is where it landed
+    /// ```
+    ///
+    /// **The middle answer is the one this exists for** (issue #1024).
+    /// [`Resolved::atlas_of`] folds it into the first, which is right for
+    /// "which atlas do I bind" and wrong for "does this instance draw": a row
+    /// that did not resolve has its shader gate shut — `GpuShape::resolved`,
+    /// `GpuGlyphRun::resolved`, `GpuImage::resolved` — so the quad is
+    /// rasterized and every fragment discarded, where an instance that samples
+    /// nothing draws normally.
+    ///
+    /// Both of those callers read this rather than each dispatching on the kind
+    /// themselves, so the precedence is written once. It matters that it is
+    /// only once: a masked instance is decided by its field whatever its kind,
+    /// which is what `paint.wgsl` does, and a copy that reordered the two would
+    /// bind an instance's atlas from its field while deciding its drawn-ness
+    /// from its row.
+    fn sampled_row(&self, instance: &Instance) -> Option<Option<u32>> {
+        if instance.shape != Instance::NONE {
+            return Some(self.atlas_of_shape[instance.shape as usize - 1]);
+        }
+        if instance.kind == InstanceKind::FillImage.as_u32() {
+            return Some(self.atlas_of_image[instance.row as usize]);
+        }
+        if instance.kind == InstanceKind::Text.as_u32() {
+            return Some(self.atlas_of_run[instance.row as usize]);
+        }
+        None
+    }
+
     /// The atlas `instance` samples, or `None` when it samples none.
     ///
     /// A masked instance samples its coverage field whatever its kind, and the
     /// packer emits no masked image fill — which is what makes "at most one
     /// atlas per instance" true, and what the debug assertion in
     /// [`Renderer::resolve_frame`] holds.
+    ///
+    /// The two reasons for `None` are folded together here, which is right for
+    /// this question and wrong for whether the instance draws at all — see
+    /// [`Resolved::sampled_row`], which this reads.
     fn atlas_of(&self, instance: &Instance) -> Option<u32> {
-        if instance.shape != Instance::NONE {
-            return self.atlas_of_shape[instance.shape as usize - 1];
-        }
-        if instance.kind == InstanceKind::FillImage.as_u32() {
-            return self.atlas_of_image[instance.row as usize];
-        }
-        if instance.kind == InstanceKind::Text.as_u32() {
-            return self.atlas_of_run[instance.row as usize];
-        }
-        None
+        self.sampled_row(instance).flatten()
     }
 
     /// Every atlas this frame samples, ascending and without repeats.
@@ -2950,6 +3054,9 @@ struct DrawRun {
 /// texel format, and so every frame this repository draws today, since a glyph
 /// atlas and a decoded image are both `Rgba8` — takes one run over the whole
 /// buffer, decided from the resolved rows alone without looking at an instance.
+/// **And only while every instance draws**, since issue #1024: one range over
+/// the buffer is wrong the moment one of them is not in it, so a frame with a
+/// gap walks whatever its atlases say.
 /// Segmenting happens only when a frame genuinely mixes texel formats, which a
 /// document does when a host binds `dashpack` derivations for some assets and
 /// not others.
@@ -2957,67 +3064,149 @@ struct DrawRun {
 /// That is a claim about *this* pass and not about the frame:
 /// [`Renderer::resolve_frame`] already walks the instance rows once in any
 /// frame that samples anything, and says why.
+///
+/// # The runs no longer cover the buffer (issue #1024)
+///
+/// An instance whose row this frame could not resolve is left **out of every
+/// run**, so the ranges are an ordered, disjoint subsequence of the buffer
+/// rather than a partition of it. That is the whole of what this function does
+/// about a refusal, and it is what the correctness gate on the row cannot do:
+/// the gate makes the fragments discard, and this keeps the quad from being
+/// submitted at all. A text node whose atlas was refused otherwise paid one
+/// instance per glyph — the vertex stage, the rasterizer, `rounded_box_sdf`,
+/// the gate, `clip_coverage` and a `discard`, per fragment — on every frame it
+/// was drawn, and `Residency` memoizes the refusal so it never recovers.
+///
+/// `resolve_frame`'s own doc names the likeliest refusal as a CJK coverage set,
+/// one sheet for a whole script at a whole weight, which is also the case with
+/// the most glyphs.
+///
+/// **One more `pass.draw` per gap, not per frame.** A document whose CJK sheet
+/// was refused has every text stretch unresolved, so a screen interleaving fifty
+/// text nodes with fifty rects goes from one draw to about fifty. That is still
+/// the trade this is for — fifty draws against the glyph quads of fifty runs,
+/// each rasterized and each fragment discarded — but it is a trade and not a
+/// saving, and it is why [`Renderer::draw`] binds a run's atlas only when it
+/// differs from the last.
+///
+/// **The population is wider than a refusal.** `undrawn` is set for any row this
+/// frame did not resolve, which includes a *degenerate* coverage field —
+/// ordinary authored content that reaches no refusal at all — so a document
+/// holding one empty baked-vector node takes the walk below on every frame.
+///
+/// And the walk is not avoided on a frame that has a gap: the whole-buffer
+/// answers exist for frames with none, and finding where the gaps are is what
+/// the walk is. What [`Resolved::undrawn`] buys is that a frame without one
+/// never pays for the question.
+///
+/// The gate stays. The two are not alternatives: it is what makes a frame that
+/// *does* draw the quad paint nothing.
 fn draw_runs(buffer: &InstanceBuffer, resolved: &Resolved) -> Vec<DrawRun> {
     let total = buffer.instances().len() as u32;
-    // The rows this frame did not draw are `None` and contribute no atlas: a
-    // sentinel counted here would conjure a run for an atlas nothing samples.
-    let distinct = resolved.atlases();
 
-    match distinct.as_slice() {
-        // No image row at all: nothing samples an atlas.
-        [] => vec![DrawRun {
-            instances: 0..total,
-            atlas: None,
-        }],
-        // Every image row in one atlas: one run, and the instance rows are
-        // never read.
-        [only] => vec![DrawRun {
-            instances: 0..total,
-            atlas: Some(*only),
-        }],
-        _ => {
-            let mut runs: Vec<DrawRun> = Vec::new();
-            let mut start = 0u32;
-            let mut current: Option<u32> = None;
-            for (index, instance) in buffer.instances().iter().enumerate() {
-                // An instance that samples nothing, and a row that was not made
-                // resident — a zero-extent payload — both draw without an
-                // atlas, so neither constrains a run.
-                let Some(wanted) = resolved.atlas_of(instance) else {
-                    continue;
-                };
-                match current {
-                    Some(atlas) if atlas == wanted => {}
-                    None => current = Some(wanted),
-                    Some(_) => {
-                        let index = index as u32;
-                        runs.push(DrawRun {
-                            instances: start..index,
-                            atlas: current,
-                        });
-                        start = index;
-                        current = Some(wanted);
-                    }
-                }
+    // The whole-buffer answers, which need no gap and so need no walk. **Both
+    // arms are inside the guard**: a single gap makes the buffer's own range
+    // wrong whatever the atlases say, and the one-atlas arm is the one a real
+    // frame takes — an image fill that resolved beside a glyph atlas that did
+    // not is `[Some(0)]` with a gap in it.
+    //
+    // `atlases()` is inside too: it collects, sorts and dedups across all three
+    // maps, and a frame with a gap never reads the answer. That frame is the
+    // memoized refusal this function is about, so it is every frame until the
+    // document changes.
+    if !resolved.undrawn {
+        // The rows this frame did not draw are `None` and contribute no atlas:
+        // a sentinel counted here would conjure a run for an atlas nothing
+        // samples.
+        let distinct = resolved.atlases();
+        match distinct.as_slice() {
+            // No image row at all: nothing samples an atlas.
+            [] => {
+                return vec![DrawRun {
+                    instances: 0..total,
+                    atlas: None,
+                }];
             }
-            runs.push(DrawRun {
-                instances: start..total,
-                atlas: current,
-            });
-            runs
+            // Every image row in one atlas: one run, and the instance rows are
+            // never read.
+            [only] => {
+                return vec![DrawRun {
+                    instances: 0..total,
+                    atlas: Some(*only),
+                }];
+            }
+            _ => {}
         }
     }
+
+    let mut runs: Vec<DrawRun> = Vec::new();
+    // The run being built: where it starts, and the atlas it has committed to.
+    // `None` between runs, which is what an undrawn instance leaves behind.
+    let mut open: Option<(u32, Option<u32>)> = None;
+    for (index, instance) in buffer.instances().iter().enumerate() {
+        let index = index as u32;
+        // One dispatch on the kind, not two: `draws` and `atlas_of` are both
+        // this value read differently, and the loop needs both of them.
+        let sampled = resolved.sampled_row(instance);
+        if sampled == Some(None) {
+            // The gap. Whatever run was open ends here, and the next begins
+            // after this instance — so its quad is in no range and is never
+            // submitted.
+            if let Some((start, atlas)) = open.take() {
+                runs.push(DrawRun {
+                    instances: start..index,
+                    atlas,
+                });
+            }
+            continue;
+        }
+        let wanted = sampled.flatten();
+        match open {
+            // The first drawn instance after a gap fixes where the run starts.
+            None => open = Some((index, wanted)),
+            // An instance that samples nothing does not constrain a run, and
+            // joins whichever one spans it.
+            Some(_) if wanted.is_none() => {}
+            // A run that has not committed to an atlas takes this one.
+            Some((start, None)) => open = Some((start, wanted)),
+            // A different atlas ends the run and starts the next here.
+            Some((start, atlas)) if atlas != wanted => {
+                runs.push(DrawRun {
+                    instances: start..index,
+                    atlas,
+                });
+                open = Some((index, wanted));
+            }
+            // The same atlas: the run continues.
+            Some(_) => {}
+        }
+    }
+    if let Some((start, atlas)) = open {
+        runs.push(DrawRun {
+            instances: start..total,
+            atlas,
+        });
+    }
+    runs
 }
 
 /// The atlas runs overlapping `range`, each clipped to it.
 ///
-/// Two independent partitions of one instance buffer meet here: [`draw_runs`]
+/// Two independent splits of one instance buffer meet here: [`draw_runs`]
 /// splits it by the atlas a quad samples, and [`crate::composite::plan`] splits
 /// it by the target a quad draws into. Neither is a refinement of the other —
 /// an atlas run can span a group boundary and a group can hold quads from two
-/// atlases — so the draws are their intersection. Both are ordered ranges over
-/// the same index space, which is what makes the intersection a filter rather
-/// than a merge.
+/// atlases — so the draws are their intersection. Both are ordered, disjoint
+/// ranges over the same index space, which is what makes the intersection a
+/// filter rather than a merge.
+///
+/// **Neither of them covers the buffer**, and they leave out different things.
+/// `plan` omits every backdrop, which draws through its own pipeline; since
+/// issue #1024 `draw_runs` omits every instance naming a row this frame could
+/// not resolve, and that omission is the point — the intersection is what keeps
+/// its quad from being submitted. So an index missing from an atlas run is not
+/// on its own a #1024 gap. Nothing here needs a cover from either side: a filter
+/// over ordered, disjoint ranges is correct without one.
 fn overlapping<'a>(
     runs: &'a [DrawRun],
     range: &'a Range<u32>,
@@ -4598,6 +4787,10 @@ mod tests {
             atlas_of_image: images.to_vec(),
             atlas_of_run: runs.to_vec(),
             atlas_of_shape: shapes.to_vec(),
+            // The fixture states which rows resolved and says nothing about
+            // which instances name them, so this is stated per case. `false`
+            // is the shape every case below the gap ones is written against.
+            undrawn: false,
         }
     }
 
@@ -4713,14 +4906,22 @@ mod tests {
         );
     }
 
-    /// The runs partition the buffer, in order, with no gap and no overlap.
+    /// The runs partition the buffer, in order, with no gap and no overlap —
+    /// **for a frame every instance of which draws**.
     ///
     /// Stated separately from the cases above because it is the property that
     /// makes slice order still be draw order: a run boundary that dropped or
     /// repeated an instance would draw a wrong picture in a way a per-case
     /// expectation might not name.
+    ///
+    /// The qualifier is issue #1024's: an instance naming a row this frame
+    /// could not resolve is left out of every run, so the ranges are then an
+    /// ordered disjoint subsequence rather than a cover. What survives
+    /// unconditionally is *order* and *disjointness*, which is what draw order
+    /// rests on, and `a_gap_is_ordered_and_disjoint_like_a_partition` asserts
+    /// them over a frame with gaps.
     #[test]
-    fn the_runs_partition_the_buffer_in_order() {
+    fn the_runs_partition_the_buffer_in_order_when_every_instance_draws() {
         let frame = buffer(&[
             (InstanceKind::FillImage, 0),
             (InstanceKind::FillImage, 1),
@@ -4740,6 +4941,175 @@ mod tests {
                 "the runs must meet exactly: {runs:?}"
             );
         }
+    }
+
+    /// A frame whose glyph run was refused submits its quads to nothing
+    /// (issue #1024).
+    ///
+    /// **The instances are counted, not the runs.** The defect this closes is
+    /// not a wrong picture and not an extra draw call: it is one instance per
+    /// glyph, every frame, each rasterized and each fragment discarded. A draw
+    /// count cannot see it — the range covering the glyphs was the same range
+    /// covering everything else — so what this sums is the length of what
+    /// `Renderer::draw` hands to `pass.draw(0..4, run.instances)`, which is the
+    /// instance count by definition.
+    #[test]
+    fn a_refused_glyph_run_is_in_no_range_at_all() {
+        // A rect, four glyphs of one refused run, and a rect after them.
+        let frame = buffer(&[
+            (InstanceKind::FillSolid, 0),
+            (InstanceKind::Text, 0),
+            (InstanceKind::Text, 0),
+            (InstanceKind::Text, 0),
+            (InstanceKind::Text, 0),
+            (InstanceKind::FillSolid, 0),
+        ]);
+        let mut refused = resolved(&[], &[None], &[]);
+        refused.undrawn = true;
+        let runs = draw_runs(&frame, &refused);
+        let submitted: u32 = runs.iter().map(|r| r.instances.len() as u32).sum();
+        assert_eq!(
+            submitted, 2,
+            "only the two rects may be submitted — four glyph quads of a refused run were \
+             rasterized and discarded, every frame, and `Residency` memoizes the refusal so it \
+             never recovers: {runs:?}",
+        );
+
+        // The same frame with the run resolved draws all six, which is what
+        // says the two above are the rects and not an arithmetic coincidence.
+        let drawn = draw_runs(&frame, &resolved(&[], &[Some(0)], &[]));
+        let all: u32 = drawn.iter().map(|r| r.instances.len() as u32).sum();
+        assert_eq!(all, 6, "a resolved run draws every instance: {drawn:?}");
+    }
+
+    /// **A gap suppresses the one-atlas whole-buffer answer too**, not only the
+    /// no-atlas one (issue #1024).
+    ///
+    /// This is the shape a real frame takes, and the two whole-buffer arms are
+    /// separate `match` arms: an image fill that resolved beside a glyph atlas
+    /// that did not is `distinct == [Some(0)]` with `undrawn` set, and the
+    /// other gap cases in this module all resolve **no** atlas and so exercise
+    /// the `[]` arm alone. Guarding one and not the other leaves them green
+    /// while a document with one picture and one refused CJK sheet goes back to
+    /// submitting a quad per glyph — which is the whole of what issue #1024 is.
+    #[test]
+    fn a_gap_suppresses_the_one_atlas_answer_as_well_as_the_no_atlas_one() {
+        let frame = buffer(&[
+            (InstanceKind::FillImage, 0),
+            (InstanceKind::Text, 0),
+            (InstanceKind::FillImage, 0),
+        ]);
+        // One image row, resolved into atlas 0; one glyph run, refused.
+        let mut mixed = resolved(&[Some(0)], &[None], &[]);
+        mixed.undrawn = true;
+        assert_eq!(
+            mixed.atlases(),
+            vec![0],
+            "the fixture must resolve exactly one atlas, or this is the `[]` arm the other cases \
+             already cover",
+        );
+        assert_eq!(
+            draw_runs(&frame, &mixed),
+            vec![run(0..1, Some(0)), run(2..3, Some(0))],
+            "the one-atlas answer covers the whole buffer and must not be taken when an instance \
+             in it draws nothing",
+        );
+    }
+
+    /// The gap costs a draw call where it saves the instances, and that is
+    /// stated rather than hidden (issue #1024).
+    ///
+    /// A refused run between two drawn stretches splits what was one range into
+    /// two, so the frame encodes one more `pass.draw` than it did. The trade is
+    /// deliberate: one draw call against one instance per glyph, on a run that
+    /// `resolve_frame`'s own doc names a CJK coverage set — one sheet for a
+    /// whole script at a whole weight, so the population that costs the most is
+    /// the population most likely to be refused.
+    #[test]
+    fn a_gap_between_two_drawn_stretches_costs_one_more_draw() {
+        let frame = buffer(&[
+            (InstanceKind::FillSolid, 0),
+            (InstanceKind::Text, 0),
+            (InstanceKind::FillSolid, 0),
+        ]);
+        let mut refused = resolved(&[], &[None], &[]);
+        refused.undrawn = true;
+        assert_eq!(
+            draw_runs(&frame, &refused),
+            vec![run(0..1, None), run(2..3, None)],
+            "the run ends at the refused instance and the next begins after it",
+        );
+        assert_eq!(
+            draw_runs(&frame, &resolved(&[], &[Some(0)], &[])),
+            vec![run(0..3, Some(0))],
+            "and a resolved run is one range over the whole buffer",
+        );
+    }
+
+    /// A gap at the head and a gap at the tail, which the loop's `open` state
+    /// takes on different branches from one in the middle.
+    #[test]
+    fn a_gap_at_either_end_leaves_no_empty_range() {
+        let frame = buffer(&[
+            (InstanceKind::Text, 0),
+            (InstanceKind::FillSolid, 0),
+            (InstanceKind::Text, 0),
+        ]);
+        let mut refused = resolved(&[], &[None], &[]);
+        refused.undrawn = true;
+        assert_eq!(
+            draw_runs(&frame, &refused),
+            vec![run(1..2, None)],
+            "a leading gap must not open a run at 0, and a trailing one must not close at 3",
+        );
+
+        // And a frame that is nothing but refused instances draws nothing at
+        // all, rather than one empty range or one covering them.
+        let all_refused = buffer(&[(InstanceKind::Text, 0), (InstanceKind::Text, 0)]);
+        assert!(
+            draw_runs(&all_refused, &refused).is_empty(),
+            "a frame whose every instance is undrawn encodes no draw",
+        );
+    }
+
+    /// The properties draw order rests on survive a gap: the ranges are still
+    /// ordered, still disjoint, and still inside the buffer.
+    ///
+    /// The partition property does not, which is why its own test now says
+    /// "when every instance draws" — but a run that overlapped another, or came
+    /// out of order, would draw a wrong picture rather than an absent one, and
+    /// those two are what this holds over a frame with gaps in it.
+    #[test]
+    fn a_gap_is_ordered_and_disjoint_like_a_partition() {
+        let frame = buffer(&[
+            (InstanceKind::FillImage, 0),
+            (InstanceKind::Text, 0),
+            (InstanceKind::FillImage, 1),
+            (InstanceKind::FillSolid, 0),
+            (InstanceKind::Text, 1),
+            (InstanceKind::FillImage, 0),
+        ]);
+        let mut mixed = resolved(&[Some(0), Some(1)], &[None, Some(0)], &[]);
+        mixed.undrawn = true;
+        let runs = draw_runs(&frame, &mixed);
+        let total = frame.instances().len() as u32;
+        for r in &runs {
+            assert!(
+                r.instances.start < r.instances.end && r.instances.end <= total,
+                "every range is non-empty and inside the buffer: {runs:?}",
+            );
+        }
+        for pair in runs.windows(2) {
+            assert!(
+                pair[0].instances.end <= pair[1].instances.start,
+                "the ranges are ordered and do not overlap: {runs:?}",
+            );
+        }
+        // And instance 1, the refused run, is in none of them.
+        assert!(
+            !runs.iter().any(|r| r.instances.contains(&1)),
+            "the refused instance must be in no range: {runs:?}",
+        );
     }
 
     /// The four scale modes are four distinct numbers, and they are the ones

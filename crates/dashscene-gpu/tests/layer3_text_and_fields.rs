@@ -1051,3 +1051,155 @@ fn a_refused_coverage_field_draws_no_masked_fill() {
         }
     }
 }
+
+/// **A refused glyph run is submitted as no instances at all** (issue #1024),
+/// and that is visible from outside the crate as a split draw.
+///
+/// The correctness fix for a refused atlas was `GpuGlyphRun::resolved` (issue
+/// #993), which makes the fragment stage discard. The quads were still drawn:
+/// `draw_runs` emitted ranges covering the whole buffer and dropped none, so a
+/// text node whose atlas was refused still submitted one instance per glyph —
+/// the vertex stage, the rasterizer, `rounded_box_sdf`, the gate,
+/// `clip_coverage` and a `discard`, per fragment, on every frame it was drawn.
+/// `Residency` memoizes the refusal, so it never recovered.
+///
+/// # Why the scene has a rect on each side
+///
+/// **The instance count is not observable from outside this crate, and the
+/// draw count is.** A refused run at the *end* of the buffer changes neither —
+/// the range simply stops earlier, and one draw is still one draw. Put it
+/// between two drawn stretches and the gap splits what was one range into two,
+/// so `Renderer::last_draw_runs` goes from one to two.
+///
+/// That is the trade, stated rather than hidden: **one more draw call, against
+/// one instance per glyph**. `resolve_frame`'s own doc names the likeliest
+/// refusal as a CJK coverage set — one sheet for a whole script at a whole
+/// weight — which is also the case with the most glyphs, so the population that
+/// costs the most is the population most likely to be refused.
+///
+/// `a_refused_glyph_run_is_in_no_range_at_all` is the unit half, and it counts
+/// the instances directly rather than inferring them from the draw split.
+#[test]
+fn a_refused_glyph_run_splits_the_frame_rather_than_drawing_its_quads() {
+    let mut paints = PaintTable::new();
+    let ground = paints.intern_fill(&FillSpec::Solid {
+        color: Color {
+            r: 0.0,
+            g: 0.5,
+            b: 0.25,
+            a: 1.0,
+        },
+    });
+    let paint = paints.push(PaintEntry {
+        fill: ground,
+        ..PaintEntry::default()
+    });
+    let rect_at = |y: f32| RectEntry {
+        x: 0.0,
+        y,
+        w: W as f32,
+        h: 16.0,
+        paint,
+        clip: ClipIndex::UNCLIPPED,
+        opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
+    };
+    // Rect 0 carries the glyphs, rect 1 follows them in the buffer. So the
+    // instance order is fill, glyph, glyph, fill — and the refused pair is
+    // between two drawn stretches rather than at an end.
+    let rects = vec![rect_at(0.0), rect_at(24.0)];
+
+    let build = |bytes: Vec<u8>, format: ImageFormat| {
+        let mut glyphs = GlyphRunTable::new();
+        glyphs.push_atlas(
+            Atlas::new(
+                ImageAsset { format, bytes },
+                ATLAS,
+                ATLAS,
+                4,
+                0.5,
+                vec![AtlasGlyph {
+                    glyph_id: 11,
+                    plane_em: [0.0, 0.0, 1.0, 1.0],
+                    atlas_px: [0.0, 4.0, 4.0, 8.0],
+                }],
+            )
+            .expect("a test atlas states a non-zero px_per_em"),
+        );
+        let ink = Color {
+            r: 0.2,
+            g: 0.6,
+            b: 1.0,
+            a: 1.0,
+        };
+        for (run, quads) in [
+            one_glyph(11, 10.0, 4.0, 12.0, ink, 1.0),
+            one_glyph(11, 34.0, 4.0, 12.0, ink, 1.0),
+        ] {
+            glyphs.push_run(run, &quads);
+        }
+        glyphs
+    };
+
+    let clips = ClipTable::new();
+    let images = ImageTable::new();
+    // One device for both cases, for the reason
+    // `a_degenerate_coverage_field_draws_nothing` gives: `Renderer::new` is an
+    // adapter request and a device creation, the dominant cost of every test in
+    // this file. Sharing it is safe here because the two atlases differ in
+    // `ImageFormat`, which `PayloadKey::atlas` keys on — so the baked one being
+    // resident does not answer for the JPEG, and the refusal below is a real one
+    // rather than a cache hit.
+    let mut renderer = renderer();
+    let mut draw = |glyphs: &GlyphRunTable| {
+        let mut painter = GpuPainter::new();
+        painter.paint(&rects, &paints, &images, &clips, &[], glyphs, None);
+        let pixels = renderer
+            .render(painter.instances(), &paints, &images, &clips, glyphs, W, H)
+            .expect("the fixture extent is within any device's maximum");
+        (renderer.last_draw_runs(), renderer.refusals().len(), pixels)
+    };
+
+    // The same scene twice, differing only in whether the atlas can be decoded.
+    // The baked one is the control: it says the split below is the refusal and
+    // not the shape of the fixture.
+    let (drawn_calls, drawn_refusals, _) =
+        draw(&build(glyph_field().bytes, ImageFormat::Rgba8Unorm));
+    assert_eq!(drawn_refusals, 0, "the baked atlas must not be refused");
+    assert_eq!(
+        drawn_calls, 1,
+        "a resolved run is one range over the whole buffer, so the frame is one draw",
+    );
+
+    let (refused_calls, refused_refusals, pixels) =
+        draw(&build(JPEG_FIXTURE.to_vec(), ImageFormat::Jpeg));
+    assert_eq!(
+        refused_refusals, 1,
+        "two runs name one refused atlas, so one refusal",
+    );
+    assert_eq!(
+        refused_calls, 2,
+        "the refused glyphs must be in no range, which splits the frame's one range in two — \
+         one draw means their quads are still being submitted and discarded per fragment",
+    );
+
+    // **Both rects still draw**, which the draw count alone cannot say. The
+    // failure this change could introduce is the opposite of the one it fixes:
+    // `Resolved::draws` answering `false` for an instance that does draw leaves
+    // the same two ranges and takes that instance's ink out of the picture.
+    // Every sibling refusal test in this file probes the canvas, and this is
+    // why.
+    let ground = [0, 128, 64, 255];
+    for (what, y) in [
+        ("the rect before the glyphs", 8),
+        ("the rect after them", 30),
+    ] {
+        let seen = texel(&pixels, W / 2, y);
+        assert!(
+            seen.iter().zip(ground).all(|(a, b)| a.abs_diff(b) <= 1),
+            "{what} must still be drawn — got {seen:?} against {ground:?}, so an instance that \
+             draws was excluded from every range",
+        );
+    }
+}

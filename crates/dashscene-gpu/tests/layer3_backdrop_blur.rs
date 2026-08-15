@@ -1115,10 +1115,12 @@ fn a_refused_backdrops_blur_row_is_still_checked_against_its_table() {
 /// **The picture is not the only observable**, which is why that case is guarded
 /// here rather than merely pinned. A field that resolves makes `backdrop_mask`
 /// answer `Some`, so the backdrop is planned, `resolve_backdrop` encodes its two
-/// passes, and the frame routes through `BlurTargets::base` and blits back —
-/// three draws that a degenerate field does not pay for. `Renderer::last_draw_runs`
-/// exists for exactly this distinction and its own doc says so: a test asserting
-/// only the picture cannot tell a frame that batched from one that did not.
+/// passes, and the frame routes through `BlurTargets::base` and blits back. It
+/// also brings the masked fill naming that field back into a range of its own,
+/// which since issue #1024 it is otherwise left out of — **four** draws in all
+/// that a degenerate field does not pay for. `Renderer::last_draw_runs` exists
+/// for exactly this distinction and its own doc says so: a test asserting only
+/// the picture cannot tell a frame that batched from one that did not.
 ///
 /// **This is not the whole of #1021.** What that issue is about is that the drop
 /// is nowhere *named* — a refused payload is recorded on `Renderer::refusals`
@@ -1219,16 +1221,20 @@ fn a_degenerate_coverage_field_draws_nothing() {
         // plan the backdrop: two passes for the blur and one blit to put the
         // base back, against the single instance run this frame encodes.
         //
-        // Two, not one: `composite::plan` breaks the pass at the backdrop
-        // instance whether or not it draws, so the frame is one instance run
-        // either side of it. What a resolved field adds on top is the blur's two
-        // passes and the base blit.
+        // **One.** `composite::plan` breaks the pass at the backdrop instance
+        // whether or not it draws, so there is a range either side of it — and
+        // since issue #1024 the range after it is empty, because the masked
+        // fill names the same unresolved field and is left out of every run.
+        // So the two halves are the whole of what this frame submits.
+        //
+        // A resolved field adds four to that: the fill's own instance back in a
+        // second range, the blur's two passes, and the base blit.
         assert_eq!(
             renderer.last_draw_runs(),
-            2,
-            "a field with {what} must leave the frame at the two instance runs the backdrop's own \
-             pass break makes — a resolved one adds two blur passes and a base blit, and no texel \
-             of this fixture can show them",
+            1,
+            "a field with {what} must leave the frame at the one instance run its two halves \
+             make — a resolved one plans the backdrop and draws the masked fill, and no texel of \
+             this fixture can show either",
         );
 
         // The whole canvas rather than a probe, for the reason the refusal tests
