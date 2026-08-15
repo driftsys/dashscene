@@ -58,6 +58,7 @@ use dashpack::profile::{AssetClass, Binding, PACK_QUALITY, Profile, Rung, pack};
 use goldens::metric::{self, Scores};
 
 mod common;
+use common::decode_png;
 use common::manifest::repo_root;
 use common::stress::{STRESS_AMPLITUDE, STRESS_EXTENT, block_stress};
 
@@ -134,40 +135,19 @@ const FIXTURES: [Fixture; 9] = [
     },
 ];
 
-/// Decodes a canonical payload to 8-bit RGBA with the `png` crate.
-///
-/// The same decode `crates/dashpack/tests/band_contract.rs` uses, through the
-/// same crate, and deliberately not Skia's. It matters that it is the same one:
-/// these scores are read beside that file's band fractions, and a second
-/// decoder's disagreement would sit inside every comparison, indistinguishable
-/// from codec error. `goldens/tooling/tests/derived_bank.rs` carries the same
-/// helper for the same reason.
-fn decode_png(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
-    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    let mut reader = decoder
-        .read_info()
-        .expect("the canonical payload has a readable PNG header");
-    let mut buffer = vec![0; reader.output_buffer_size().expect("a bounded frame")];
-    let info = reader.next_frame(&mut buffer).expect("it decodes");
-    buffer.truncate(info.buffer_size());
-    let texels = match info.color_type {
-        png::ColorType::Rgba => buffer,
-        png::ColorType::Rgb => buffer
-            .chunks_exact(3)
-            .flat_map(|p| [p[0], p[1], p[2], 255])
-            .collect(),
-        other => panic!("the canonical payload is {other:?}; the corpus images are RGB or RGBA"),
-    };
-    (info.width, info.height, texels)
-}
-
 /// A fixture's canonical texels.
+///
+/// Decoded through [`common::decode_png`], which is the `png` crate and
+/// deliberately not Skia's: these scores are read beside
+/// `crates/dashpack/tests/band_contract.rs`'s band fractions, and a second
+/// decoder's disagreement would sit inside every comparison,
+/// indistinguishable from codec error.
 fn canonical(fixture: &Fixture) -> (u32, u32, Vec<u8>) {
     match fixture.path {
         Some(path) => {
             let bytes = std::fs::read(repo_root().join(path))
                 .unwrap_or_else(|e| panic!("the committed payload {path} reads: {e}"));
-            decode_png(&bytes)
+            decode_png(&bytes, "the canonical payload")
         }
         None => (
             STRESS_EXTENT,

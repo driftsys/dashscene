@@ -94,6 +94,27 @@ scope above is ordinary debt that gates nothing.
 
 ## The four that are ordinary, with what is stale in each
 
+**#929, #930 and #932 are settled by PR #1099 (2026-08-16); #950 is not, and is
+now a story.** Their sections below describe the tree as it was before that
+branch and are kept for the reasoning, not as a current reading — #930's says
+the memoisation is absent and #932's says the measurement has not been taken,
+and both are now false. What changed:
+
+- **#932** was measured and closed **on the measurement**: 0.31 s across the
+  eleven binaries that name none of the three generators, under the threshold
+  the issue set itself, so nothing was split.
+- **#930**'s memoisation buys CPU and not wall clock — the redundant builds
+  already overlapped on parallel test threads.
+- **#929** collapsed only the two copies in binaries that already declared
+  `mod common;`. `derived_bank.rs` keeps its own, measured at 0.43 s to 0.77 s
+  for that binary if it joined; issue #1090 carries the rest.
+- **#950** turned out not to be debt: the conversion it prescribes regresses
+  `demo`'s variant-switch test, because the showcase commits through solvers
+  that are not the `LiveScene`'s and a retained tree never sees those dirty
+  sets. See the comment on the issue; it is re-labelled `story`.
+
+This leaves **#944**, **#828** and **#767** live in this prompt.
+
 This section held five until #922 landed; its bullet is kept below, struck,
 because the reasoning in the ones around it refers to the count.
 

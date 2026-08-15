@@ -26,6 +26,9 @@
 //! carries a distinct payload: a distinct 128x128 tile cut from a distinct
 //! place in a corpus photo, re-encoded.
 
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, OnceLock};
+
 use dashc_wasm::{Asset, AssetKind, Box2D, Document, Node, Paint, PaintEntry, compile};
 use dashpaint::{FillSpec, ImageFill, ImageFormat, Mat23, ScaleMode};
 
@@ -75,27 +78,6 @@ pub fn corpus_payload(path: &str) -> Vec<u8> {
         .unwrap_or_else(|error| panic!("{path} reads: {error}"))
 }
 
-/// Decodes a corpus PNG to 8-bit RGBA.
-///
-/// The same decode `goldens/tooling/tests/derived_bank.rs` and
-/// `crates/dashpack/tests/band_contract.rs` use, through the same crate.
-fn decode_png(bytes: &[u8]) -> (u32, u32, Vec<u8>) {
-    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
-    let mut reader = decoder.read_info().expect("a readable PNG header");
-    let mut buffer = vec![0; reader.output_buffer_size().expect("a bounded frame")];
-    let info = reader.next_frame(&mut buffer).expect("it decodes");
-    buffer.truncate(info.buffer_size());
-    let texels = match info.color_type {
-        png::ColorType::Rgba => buffer,
-        png::ColorType::Rgb => buffer
-            .chunks_exact(3)
-            .flat_map(|p| [p[0], p[1], p[2], 255])
-            .collect(),
-        other => panic!("a corpus photo is {other:?}; they are RGB or RGBA"),
-    };
-    (info.width, info.height, texels)
-}
-
 /// Encodes the [`TILE`]-sided tile whose top-left texel is `(x0, y0)` as a PNG.
 ///
 /// The tile's pixels are the photograph's, so each one is a distinct payload
@@ -131,7 +113,8 @@ fn tiles(wanted: usize) -> Vec<Vec<u8>> {
         return out;
     }
     for path in TILE_PHOTOS {
-        let (width, height, texels) = decode_png(&corpus_payload(path));
+        let (width, height, texels) =
+            super::decode_png(&corpus_payload(path), &format!("the corpus photo {path}"));
         for y0 in (0..height - height % TILE).step_by(TILE as usize) {
             for x0 in (0..width - width % TILE).step_by(TILE as usize) {
                 out.push(encode_tile(&texels, width, x0, y0));
@@ -193,9 +176,75 @@ fn frame(name: &str, asset: u32, side: f32) -> Node {
 /// Every frame is a leaf, so the document's node count is `extra + 1` and each
 /// root is one node — which is what lets `per_frame_scaling.rs` read a rect
 /// table's row count as a root count.
+///
+/// # Memoised per size, and what that is worth (issue #930)
+///
+/// [`build`] decodes four 512x512 corpus photos and encodes `extra` 128x128
+/// tiles, about 2.5 s at `EXTRA_FRAMES` on macOS aarch64. The two binaries
+/// stated over this document ask for it nine times between them:
+/// `per_frame_scaling.rs` four (once at `0`, three at `EXTRA_FRAMES`) and
+/// `startup_scaling.rs` five (three at `0`, two at `EXTRA_FRAMES`). This turns
+/// those nine builds into two per process.
+///
+/// **What it buys is CPU, not elapsed time — measure before claiming
+/// otherwise.** `cargo test` runs a binary's tests on parallel threads, so the
+/// redundant builds were already overlapping on separate cores. Measured on
+/// macOS aarch64, three runs each, `cargo test -p goldens --test <binary>`:
+///
+/// | binary              | wall before | wall after | CPU before | CPU after |
+/// |---------------------|-------------|------------|------------|-----------|
+/// | `per_frame_scaling` | 2.87 s      | 2.83 s     | 8.00 s     | 2.69 s    |
+/// | `startup_scaling`   | 2.79 s      | 2.74 s     | 5.40 s     | 2.69 s    |
+///
+/// So the wall clock does not move on a machine with cores to spare, and
+/// about 8 s of CPU across the two goes away. Elapsed time does move where
+/// the builds cannot overlap: `per_frame_scaling` under `--test-threads=1`
+/// went from 7.96 s to 2.81 s.
+///
+/// **The two callers are the CI steps that run these binaries under
+/// `cargo test`**, one process per *binary*, in `.github/workflows/ci.yml`:
+///
+/// - `startup-scaling criterion (R5 / G-20)`
+/// - `per-frame scaling criterion (#822's per-frame half)`
+///
+/// The tiers gain nothing: `just test`, `just test-regression` and
+/// `just build` run under nextest, one process per test, and each test asks
+/// for at most one document of each size. They pay a little instead — the
+/// returned `Vec` is now a clone of the cached one rather than the buffer
+/// `build` moved out, so a nextest process holds about 2 MB twice.
+///
+/// The cache is a map of per-size cells rather than one lock held across
+/// [`build`], so a `document(0)` caller does not queue behind a 65-root build
+/// it shares nothing with. Same-size callers do wait, which is the point.
+///
+/// Two consequences worth knowing when reading this file's numbers. A test
+/// that waits on another test's build counts that wait in its own elapsed
+/// time, and a test that arrives after the build counts none of it — so the
+/// figure `per_frame_scaling.rs`'s criterion prints varies with scheduling
+/// order under `cargo test`. Nothing asserts on it (D6). And under
+/// `cargo test` the binary's tests now read one build's output rather than
+/// each generating their own, so they no longer cross-check a
+/// non-deterministic builder; nextest still builds independently, which is
+/// where that guard now lives.
 pub fn document(extra: usize) -> Vec<u8> {
+    // The map's lock is released before `build` runs, so a panic in `build`
+    // cannot poison it; `into_inner` is here only so an unrelated poisoning
+    // could not turn every later call into a second failure.
+    static BUILT: Mutex<BTreeMap<usize, Arc<OnceLock<Vec<u8>>>>> = Mutex::new(BTreeMap::new());
+
+    let cell = {
+        let mut built = BUILT
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Arc::clone(built.entry(extra).or_default())
+    };
+    cell.get_or_init(|| build(extra)).clone()
+}
+
+/// Compiles the document [`document`] memoises.
+fn build(extra: usize) -> Vec<u8> {
     let root_payload = corpus_payload(ROOT_PHOTO);
-    let (root_width, root_height, _) = decode_png(&root_payload);
+    let (root_width, root_height, _) = super::decode_png(&root_payload, "the shown root's photo");
 
     let mut doc = Document::new();
     let root_asset = doc.push_asset(Asset {
