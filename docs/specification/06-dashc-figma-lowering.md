@@ -307,7 +307,10 @@ and vertical alignment. Verified in `crates/dashc/tests/text_lowering.rs`.
    `partial_emits_the_frame_and_warns_on_the_skipped_vector`,
    `a_second_visible_fill_fails_loudly_rather_than_being_silently_dropped`,
    `a_second_visible_stroke_fails_loudly_rather_than_being_silently_dropped`,
-   `a_rotated_node_fails_loudly_rather_than_silently_dropping_the_rotation`,
+   `a_rotated_node_with_children_is_refused_because_rotation_does_not_compose`,
+   `a_rotated_node_without_size_is_refused_rather_than_measured_from_its_bounds`,
+   `a_turn_carried_only_by_relative_transform_still_refuses_a_node_with_children`,
+   `a_half_turn_in_relative_transform_is_read_as_a_turn`,
    `an_alpha_mask_is_refused_by_name`, `a_luminance_mask_is_refused_by_name`,
    `a_text_node_used_as_a_mask_is_refused_by_name`,
    `a_non_basic_stroke_fails_loudly_rather_than_lowering_as_a_solid_one`,
@@ -394,17 +397,24 @@ Verified by `crates/dashc/tests/prototype_lowering.rs` and the unit tests in
     `figma.prototype.unsupported-interaction` — an error that withholds the
     bytes under `EmitPolicy::Strict` (R6), a warning under
     `EmitPolicy::Partial`. Unlike `figma.unsupported` it shall **not** skip the
-    node: what has no lowering is the behaviour, not the box.
+    node: what has no lowering is the behaviour, not the box. A `CHANGE_TO`
+    naming a destination no component set in the file carries is one of these:
+    it lowers no switch at all.
     (`the_refused_capture_withholds_the_bytes_and_names_every_construct`,
-    `the_partial_policy_downgrades_an_interaction_refusal`)
+    `the_partial_policy_downgrades_an_interaction_refusal`,
+    `a_change_to_naming_no_member_of_the_set_is_named`)
 
 11. **A degrade shall never withhold the bytes.** An easing with no `dashcue`
     spelling (`figma.prototype.unsupported-motion`) and a component set no
     override can express (`figma.variants.unlowerable-set`) shall be warnings in
     both policies, because the picture is unchanged and a switch that lands in
-    one frame is what a member with no transition has always meant.
+    one frame is what a member with no transition has always meant. A second
+    member declaring a different transition to a destination one already claimed
+    is a degrade for the same reason: the switch still ships, with the
+    transition that won.
     (`a_spring_preset_is_named_and_its_switch_lands_in_one_frame`,
-    `the_variant_topology_fixture_compiles_and_names_its_topology_change`)
+    `the_variant_topology_fixture_compiles_and_names_its_topology_change`,
+    `two_members_declaring_a_different_transition_to_one_destination_are_named`)
 
 12. **A component set with fewer than two members shall name nothing.** There is
     no alternative state, so there is no switch to lose.

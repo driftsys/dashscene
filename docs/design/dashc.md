@@ -381,7 +381,11 @@ noted, because a real Figma file will hit them:
   remainder. A rotated **leaf** lowers into `Node.rotation` and
   `Node.rotation_anchor_x`/`_y`: the angle is Figma's own radians, unconverted
   and unflipped, and the anchor is `(0, 0)` because Figma turns a node about its
-  local origin. Its box comes from `size` and its origin is recovered from
+  local origin. Every rule that asks whether a node turns reads one accessor,
+  `rest::Node::turn` — Figma's `rotation` field where it is present and
+  non-zero, and otherwise the angle its `relativeTransform` carries, which the
+  matrix's determinant admits as a rotation and not as a mirror (issue #878).
+  Its box comes from `size` and its origin is recovered from
   `absoluteBoundingBox` by subtracting the rotated box's own offset to those
   bounds — the bounding box is the axis-aligned bounds of the _rotated_ shape (a
   result, P1), 22.5 % too large at 15°. Two shapes still refuse by name: a

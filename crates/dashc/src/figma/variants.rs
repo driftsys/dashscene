@@ -85,24 +85,19 @@ use crate::figma::rest::{FigmaFile, Node, Paint};
 /// prototype interactions that animate it.
 pub mod rule {
     /// A prototype interaction the document has no construct for at all — a
-    /// trigger, action or navigation outside the vocabulary. Nothing about it
-    /// reaches the document, so its severity follows the emit policy: an
-    /// error that withholds the bytes under `EmitPolicy::Strict` (R6), a
-    /// warning under `EmitPolicy::Partial`.
+    /// trigger, action or navigation outside the vocabulary, **or** a
+    /// `CHANGE_TO` naming a destination no set in the file carries, which
+    /// lowers no switch at all (issue #976). Nothing about either reaches the
+    /// document, so the severity follows the emit policy: an error that
+    /// withholds the bytes under `EmitPolicy::Strict` (R6), a warning under
+    /// `EmitPolicy::Partial`.
     pub const UNSUPPORTED_INTERACTION: &str = "figma.prototype.unsupported-interaction";
     /// A variant switch lowers, but the motion Figma declared for it does
-    /// not: an easing with no `dashcue` spelling, or a difference on a
-    /// channel no transition can animate. Always a warning — the state change
-    /// ships and lands in one frame, which is what a member with no
-    /// transition has always meant.
-    ///
-    /// **One site does not fit that description**, and it is filed rather than
-    /// reclassified here: a `CHANGE_TO` naming a destination that is no member
-    /// of any set the file carries lowers *no switch at all*, so it is an
-    /// omission wearing a degrade's rule and severity. Its own message says the
-    /// switch "lowers nowhere". Issue filed against it; moving it changes what
-    /// `Strict` withholds, which is a behaviour change rather than a comment
-    /// correction. Issue #976.
+    /// not: an easing with no `dashcue` spelling, a difference on a channel no
+    /// transition can animate, or a second member declaring a different
+    /// transition to a destination one already claimed. Always a warning — the
+    /// state change ships and lands in one frame, or with the transition that
+    /// won, which is what a member with no transition has always meant.
     pub const UNSUPPORTED_MOTION: &str = "figma.prototype.unsupported-motion";
     /// A component set whose members differ in a way no `VariantOverride` can
     /// express, so no `VariantSet` is emitted for it. Always a warning: the
@@ -205,9 +200,15 @@ pub(super) fn apply(
             let lands =
                 found.is_some_and(|(plan, _)| plan.member_of(&switch.destination).is_some());
             if !lands {
+                // An omission, not a degrade: no switch reaches the document
+                // at all, so this follows the emit policy like every other
+                // interaction with no lowering. Under `Strict` a file whose
+                // export closure trimmed a `destinationId` used to compile
+                // clean and ship a button whose click does nothing (issue
+                // #976).
                 diagnostics.push(Diagnostic {
-                    rule: rule::UNSUPPORTED_MOTION,
-                    severity: Severity::Warning,
+                    rule: rule::UNSUPPORTED_INTERACTION,
+                    severity: omission_severity(policy),
                     at: at(),
                     message: format!(
                         "a CHANGE_TO names destination {}, which is not a member of a component \
@@ -243,16 +244,23 @@ fn is_definition(node: &Node) -> bool {
     node.kind == "COMPONENT" || node.kind == "COMPONENT_SET"
 }
 
+/// The severity an **omission** carries under `policy`: nothing about the
+/// construct reaches the document, so `Strict` withholds the bytes rather than
+/// handing over a picture missing what the designer authored (R6).
+fn omission_severity(policy: crate::EmitPolicy) -> Severity {
+    match policy {
+        crate::EmitPolicy::Strict => Severity::Error,
+        crate::EmitPolicy::Partial => Severity::Warning,
+    }
+}
+
 /// One node's read interactions, as diagnostics at `at`.
 fn interaction_diagnostics(
     read: &Interactions,
     at: &Location,
     policy: crate::EmitPolicy,
 ) -> Vec<Diagnostic> {
-    let severity = match policy {
-        crate::EmitPolicy::Strict => Severity::Error,
-        crate::EmitPolicy::Partial => Severity::Warning,
-    };
+    let severity = omission_severity(policy);
     read.unsupported
         .iter()
         .map(|what| Diagnostic {
@@ -381,7 +389,10 @@ impl<'a> Props<'a> {
     /// lowered before trusting any of it.
     fn of(node: &'a Node, parent: Option<&Node>) -> Self {
         let bbox = node.absolute_bounding_box;
-        let rotation = node.rotation.unwrap_or(0.0);
+        // The walk's own source for a turn, not `rotation` alone (issue
+        // #878), so a member's rotation prop cannot drift from the angle the
+        // walk lowered.
+        let rotation = node.turn();
         let (own_w, own_h) = match node.size {
             Some(size) if rotation != 0.0 => (size.x, size.y),
             _ => bbox.map_or((0.0, 0.0), |b| (b.width, b.height)),
@@ -548,6 +559,10 @@ struct Plan<'a> {
     /// The tween a switch **to** member `i` animates with, as the set's own
     /// reactions declare it. An instance's own reaction overrides this.
     tween: Vec<Option<(f32, Easing)>>,
+    /// The members more than one declaration named as a destination with
+    /// transitions that disagree, by name — the transitions `tween` above
+    /// could not all carry (issue #976).
+    collisions: Vec<String>,
     /// What each member's own reactions could not lower, kept per member so a
     /// finding can be named only when no instance echoes it.
     reactions: Vec<Interactions>,
@@ -652,15 +667,36 @@ impl<'a> Plan<'a> {
 
         // The set's own default transitions: a member's reaction names the
         // member it changes to, and that destination is the key the schema
-        // stores the transition under.
-        let mut tween = vec![None; members.len()];
+        // stores the transition under. Collected per destination first,
+        // because two members may name the same one.
+        // Only one declaration per destination can be kept, so each entry
+        // carries the tween that survived and whether anything it displaced
+        // disagreed with it. Two members declaring the *same* transition lose
+        // nothing and name nothing.
         let reactions: Vec<Interactions> = members.iter().map(|m| prototype::read(m)).collect();
+        let mut declared: BTreeMap<usize, (Option<(f32, Easing)>, bool)> = BTreeMap::new();
         for read in &reactions {
             for switch in &read.switches {
                 if let Some(destination) = position_of(&members, &switch.destination) {
-                    tween[destination] = switch.tween;
+                    let entry = declared.entry(destination).or_insert((switch.tween, false));
+                    entry.1 |= entry.0 != switch.tween;
+                    entry.0 = switch.tween;
                 }
             }
+        }
+        // The later declaration wins, which is the direction `emit` already
+        // takes for an instance's own reaction over the set's. What is named
+        // is that a declaration was displaced at all, never which one
+        // survived: `emit` applies the instance's own echoed reaction over
+        // this table afterwards, so the transition an instance ships is not
+        // this member order's answer (P4, issue #976).
+        let mut tween = vec![None; members.len()];
+        let mut collisions = Vec::new();
+        for (destination, (kept, contended)) in declared {
+            if contended {
+                collisions.push(members[destination].name.clone());
+            }
+            tween[destination] = kept;
         }
 
         Ok(Self {
@@ -668,6 +704,7 @@ impl<'a> Plan<'a> {
             props,
             differing,
             tween,
+            collisions,
             reactions,
         })
     }
@@ -698,10 +735,23 @@ impl<'a> Plan<'a> {
         // it, and those instances name it themselves. What no instance shows
         // is named here instead — the reverse arm of a two-variant set is the
         // ordinary case, since an instance echoes only the member it is on.
-        for (member, read) in self.members.iter().zip(&self.reactions) {
-            let echoed = member.id.as_deref().is_some_and(|id| shown.contains(id));
-            if !echoed && !shown.is_empty() {
-                out.extend(interaction_diagnostics(read, at, policy));
+        //
+        // The question is per-set, not per-file (issue #976): a set nothing
+        // instantiates paints nothing, so its members' refused reactions cost
+        // the picture nothing and are named nowhere. Asking whether the *file*
+        // holds any instance let an unrelated one — which every real Figma
+        // file has — turn those reactions into findings, and under `Strict`
+        // withhold the whole document over a layer that never ships.
+        let instantiated = self
+            .members
+            .iter()
+            .any(|member| member.id.as_deref().is_some_and(|id| shown.contains(id)));
+        if instantiated {
+            for (member, read) in self.members.iter().zip(&self.reactions) {
+                let echoed = member.id.as_deref().is_some_and(|id| shown.contains(id));
+                if !echoed {
+                    out.extend(interaction_diagnostics(read, at, policy));
+                }
             }
         }
 
@@ -739,7 +789,32 @@ impl<'a> Plan<'a> {
                           nothing to animate and the switch lands in one frame"
                     .to_string(),
             });
+            // Nothing this set declares reaches the document, so a contended
+            // destination has lost nothing beyond what the line above already
+            // says. Naming both would have the set report that a transition
+            // ships and that none does (issue #976).
+            return out;
         }
+
+        // The document carries one transition per destination, so where two
+        // members declared a different one to the same member, one of them
+        // does not lower. Naming it is what keeps that loss from riding
+        // silently on the order Figma happens to list the members in.
+        //
+        // Which one survives is deliberately not stated: `emit` applies the
+        // instance's own echoed reaction over this table, so an instance
+        // sitting on the *earlier* member ships that member's transition
+        // rather than the one this table kept (issue #976).
+        out.extend(self.collisions.iter().map(|member| Diagnostic {
+            rule: rule::UNSUPPORTED_MOTION,
+            severity: Severity::Warning,
+            at: at.clone(),
+            message: format!(
+                "more than one member declares a CHANGE_TO to \"{member}\" with a different \
+                 transition, and the document carries one transition per destination, so only \
+                 one of them lowers",
+            ),
+        }));
         out
     }
 
@@ -943,7 +1018,7 @@ fn tree_of(root: &Node) -> Result<BTreeMap<String, Entry<'_>>, String> {
 /// `serde_json::Map` are not cheap, and this runs once per node per member
 /// pair.
 fn differs_beyond_overrides(a: &Node, b: &Node) -> Option<&'static str> {
-    // The eight fields deliberately not compared, and why:
+    // The eleven fields deliberately not compared, and why:
     //
     // `id` and `name` are identity — the members are joined *by* name, and
     // their ids differ by construction. `children` are compared through the
@@ -951,7 +1026,13 @@ fn differs_beyond_overrides(a: &Node, b: &Node) -> Option<&'static str> {
     // here, or a child's overridable prop would count as a structural
     // difference. `absolute_bounding_box`, `size`, `fills`, `visible` and
     // `rotation` are exactly the inputs to `Props`, which is the overridable
-    // half. `interactions` and `component_id` are the prototype layer, which
+    // half. `relative_transform` is not compared for a narrower reason: the
+    // only thing read off it is the turn `Node::turn` derives, which is a
+    // `Props` input, and its other five components are read by nothing at
+    // all. So two members differing only in the scale or translation their
+    // matrices carry compare equal here — unchanged from before the field was
+    // parsed, and a gap rather than a classification (issue #1019).
+    // `interactions` and `component_id` are the prototype layer, which
     // differs between members by design.
     let Node {
         id: _,
@@ -1005,6 +1086,7 @@ fn differs_beyond_overrides(a: &Node, b: &Node) -> Option<&'static str> {
         item_reverse_z_index,
         absolute_bounding_box: _,
         rotation: _,
+        relative_transform: _,
         size: _,
         is_mask,
         mask_type,

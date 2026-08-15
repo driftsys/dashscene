@@ -754,8 +754,10 @@ impl Walk<'_> {
 
         // Rotation lowers as of story #770, but only where the document can
         // carry it faithfully. Figma omits `rotation` entirely when it is
-        // zero, so `None` and `Some(0.0)` both mean unrotated and reach
-        // none of this.
+        // zero, and a turn can also arrive in `relativeTransform`, so
+        // `rest::Node::turn` is the one source both blockers and the origin
+        // derivation below read (issue #878). An unrotated node reads `0.0`
+        // from it and reaches none of this.
         //
         // Two shapes are still refused by name rather than lowered wrong
         // (P4):
@@ -776,7 +778,7 @@ impl Walk<'_> {
         // to come from `absolute_bounding_box`, which for a rotated node is
         // the bounds of the rotated shape rather than the node's own box
         // (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`).
-        if node.rotation.is_some_and(|r| r != 0.0) {
+        if node.turn() != 0.0 {
             if !node.children.is_empty() {
                 blockers.push(
                     "a rotated node with children (a rotation does not compose down the tree)"
@@ -998,7 +1000,7 @@ impl Walk<'_> {
         // by subtracting the rotated box's own offset to those bounds. A
         // rotated node with no `size` is a blocker above, so the fallback
         // here is only ever taken by an unrotated one.
-        let rotation = node.rotation.unwrap_or(0.0);
+        let rotation = node.turn();
         let (own_w, own_h) = match node.size {
             Some(size) if rotation != 0.0 => (size.x, size.y),
             _ => (bbox.width, bbox.height),

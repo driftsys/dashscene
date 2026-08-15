@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use dashc_wasm::figma::lower;
+use dashc_wasm::figma::{lower, lower_with_bindings_and_policy};
 use dashc_wasm::{
     CompileError, Document, EmitPolicy, TransitionSpec, VariantValue, compile_figma,
     compile_figma_with_bindings_and_policy,
@@ -434,9 +434,20 @@ fn document_with(top: serde_json::Value) -> serde_json::Value {
 }
 
 fn lower_json(value: serde_json::Value) -> (Document, Vec<dashscene_validator::Diagnostic>) {
+    lower_json_with_policy(value, EmitPolicy::Strict)
+}
+
+/// [`lower_json`] under a chosen emit policy, which is what separates an
+/// omission — withheld under `Strict` — from a degrade that is a warning
+/// either way.
+fn lower_json_with_policy(
+    value: serde_json::Value,
+    policy: EmitPolicy,
+) -> (Document, Vec<dashscene_validator::Diagnostic>) {
     let file: dashc_wasm::figma::rest::FigmaFile =
         serde_json::from_value(value).expect("the synthetic document parses");
-    lower(&file, Profile::Core, &BTreeMap::new()).expect("the document lowers")
+    lower_with_bindings_and_policy(&file, Profile::Core, &BTreeMap::new(), &[], policy)
+        .expect("the document lowers")
 }
 
 fn solid(r: f64, g: f64, b: f64) -> serde_json::Value {
@@ -841,12 +852,29 @@ fn a_change_to_naming_no_member_of_the_set_is_named() {
         }],
     }]);
 
-    let (_, diagnostics) = lower_json(doc_json);
+    // An omission, not a degrade (issue #976). The switch lowers nowhere, so
+    // nothing about the interaction reaches the document — which is the
+    // description of `unsupported-interaction`, and the reason `Strict`
+    // withholds the bytes rather than shipping a button whose click does
+    // nothing. It carried `unsupported-motion` at a hard-coded warning until
+    // this, so a file whose export closure trimmed a `destinationId` compiled
+    // clean.
+    let (_, diagnostics) = lower_json(doc_json.clone());
     let named = diagnostics
         .iter()
         .find(|d| d.message.contains("9:99"))
         .unwrap_or_else(|| panic!("the dangling destination is named: {diagnostics:?}"));
-    assert_eq!(named.rule, "figma.prototype.unsupported-motion");
+    assert_eq!(named.rule, "figma.prototype.unsupported-interaction");
+    assert_eq!(named.severity, Severity::Error);
+
+    // And it follows the policy rather than being pinned to either end of it:
+    // under `Partial` the same omission is a warning and the bytes go out.
+    let (_, relaxed) = lower_json_with_policy(doc_json, EmitPolicy::Partial);
+    let named = relaxed
+        .iter()
+        .find(|d| d.message.contains("9:99"))
+        .unwrap_or_else(|| panic!("the dangling destination is named: {relaxed:?}"));
+    assert_eq!(named.rule, "figma.prototype.unsupported-interaction");
     assert_eq!(named.severity, Severity::Warning);
 }
 
@@ -856,6 +884,15 @@ fn a_reaction_on_a_master_nothing_instantiates_is_not_a_finding() {
     // in it paints. A refused reaction on a master no instance shows costs the
     // picture nothing either — and at error severity under Strict it would
     // withhold the whole document over a layer that never ships.
+    //
+    // `elsewhere` is an INSTANCE of a component outside this set, not a plain
+    // frame: the rule is per-master, so an unrelated instance anywhere in the
+    // file must not turn this set's reactions into findings. That is the state
+    // every real Figma file is in, and a file-global guard passed this test
+    // only while nothing else in the tree was instantiated — the
+    // uniform-fixture trap (issue #976).
+    let mut elsewhere = boxed("1:30", "elsewhere", "INSTANCE", 0.0, 200.0, 100.0, 50.0);
+    elsewhere["componentId"] = serde_json::json!("7:77");
     let mut doc_json = document_with(serde_json::json!([{
         "id": "1:10",
         "name": "set",
@@ -866,7 +903,7 @@ fn a_reaction_on_a_master_nothing_instantiates_is_not_a_finding() {
             boxed("1:6", "state=active", "COMPONENT", 0.0, 0.0, 100.0, 50.0),
         ],
     },
-    boxed("1:30", "elsewhere", "FRAME", 0.0, 200.0, 100.0, 50.0)]));
+    elsewhere]));
     doc_json["document"]["children"][0]["children"][0]["children"][0]["interactions"] = serde_json::json!([{
         "trigger": { "type": "AFTER_TIMEOUT", "timeout": 1.5 },
         "actions": [{ "type": "URL", "url": "https://example.com" }],
@@ -876,5 +913,189 @@ fn a_reaction_on_a_master_nothing_instantiates_is_not_a_finding() {
     assert!(
         diagnostics.is_empty(),
         "a definition nothing instantiates names nothing: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn a_contended_destination_is_not_named_where_the_set_animates_nothing() {
+    // A set whose members differ on no rect channel writes no transition at
+    // all — every member's `transition` is `None`, because a transition with
+    // no track animates nothing. So a contended destination has lost nothing
+    // beyond what the no-rect-channel finding already says, and naming both
+    // would have one set report that a transition lowers and that none does
+    // (issue #976).
+    //
+    // The members are identical here, so nothing differs anywhere and the
+    // track list is empty for the strongest reason available.
+    let switch_to_done = |duration: f64| {
+        serde_json::json!([{
+            "trigger": { "type": "ON_CLICK" },
+            "actions": [{
+                "type": "NODE",
+                "destinationId": "1:20",
+                "navigation": "CHANGE_TO",
+                "transition": {
+                    "type": "SMART_ANIMATE",
+                    "easing": { "type": "EASE_OUT" },
+                    "duration": duration,
+                },
+            }],
+        }])
+    };
+    let member = |id: &str, name: &str, to: Option<f64>| {
+        let mut node = boxed(id, name, "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+        if let Some(duration) = to {
+            node["interactions"] = switch_to_done(duration);
+        }
+        node
+    };
+    // A definition paints nothing, so the set needs a painting sibling or the
+    // document is `figma.no-content`. A plain FRAME, not an INSTANCE, so
+    // nothing instantiates this set and its members' reactions stay unnamed.
+    let (_, diagnostics) = lower_json(document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "set",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [
+                member("1:2", "state=rest", Some(0.3)),
+                member("1:6", "state=active", Some(0.6)),
+                member("1:20", "state=done", None),
+            ],
+        },
+        boxed("1:30", "elsewhere", "FRAME", 0.0, 200.0, 100.0, 50.0),
+    ])));
+
+    let [only] = &diagnostics[..] else {
+        panic!("a set that animates nothing names that, and nothing else: {diagnostics:?}");
+    };
+    assert!(
+        only.message.contains("differ on no rect channel"),
+        "the one finding is that there is nothing to animate: {only:?}",
+    );
+}
+
+#[test]
+fn two_members_declaring_a_different_transition_to_one_destination_are_named() {
+    // The schema keys a transition on its destination
+    // (`docs/decisions/motion-is-document-data-keyed-on-the-destination.md`),
+    // so where two members declare a `CHANGE_TO` to the same member with
+    // different tweens, only one of them lowers. Which one is not a fact
+    // about the set: `emit` applies an instance's own echoed reaction over
+    // the set's table afterwards, so two instances of one set can ship
+    // different transitions to the same destination. Naming the contention is
+    // what keeps that from being silent (P4, issue #976).
+    //
+    // Three members, because the realistic shape is two states that both
+    // animate into a third. The child `bar` sits at a different x in each, so
+    // the switch has a rect channel to animate and the set earns no other
+    // motion finding.
+    let switch_to_done = |duration: f64| {
+        serde_json::json!([{
+            "trigger": { "type": "ON_CLICK" },
+            "actions": [{
+                "type": "NODE",
+                "destinationId": "1:20",
+                "navigation": "CHANGE_TO",
+                "transition": {
+                    "type": "SMART_ANIMATE",
+                    "easing": { "type": "EASE_OUT" },
+                    "duration": duration,
+                },
+            }],
+        }])
+    };
+    let member = |id: &str, name: &str, x: f64, to: Option<f64>| {
+        let mut node = boxed(id, name, "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+        node["children"] = serde_json::json!([boxed(
+            &format!("{id}-bar"),
+            "bar",
+            "FRAME",
+            x,
+            10.0,
+            20.0,
+            20.0
+        )]);
+        if let Some(duration) = to {
+            node["interactions"] = switch_to_done(duration);
+        }
+        node
+    };
+    // Two instances, one on each declaring member. Figma echoes a member's
+    // reaction verbatim onto every instance showing it, so an instance
+    // carrying none is a shape no real file has — the uniform-fixture trap,
+    // and the one that would hide `emit`'s override entirely.
+    let instance = |id: &str, component: &str, y: f64, duration: f64| {
+        let mut node = boxed(id, "card", "INSTANCE", 0.0, y, 100.0, 50.0);
+        node["componentId"] = serde_json::json!(component);
+        node["interactions"] = switch_to_done(duration);
+        node["children"] = serde_json::json!([boxed(
+            &format!("I{id};bar"),
+            "bar",
+            "FRAME",
+            if component == "1:2" { 10.0 } else { 30.0 },
+            y + 10.0,
+            20.0,
+            20.0
+        )]);
+        node
+    };
+    let (doc, diagnostics) = lower_json(document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "set",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [
+                member("1:2", "state=rest", 10.0, Some(0.3)),
+                member("1:6", "state=active", 30.0, Some(0.6)),
+                member("1:20", "state=done", 50.0, None),
+            ],
+        },
+        instance("1:14", "1:2", 200.0, 0.3),
+        instance("1:15", "1:6", 400.0, 0.6),
+    ])));
+
+    let [named] = &diagnostics[..] else {
+        panic!("the contention is the set's only finding: {diagnostics:?}");
+    };
+    assert_eq!(named.rule, "figma.prototype.unsupported-motion");
+    assert_eq!(
+        named.severity,
+        Severity::Warning,
+        "one of the two transitions still lowers, so this degrades rather than omits",
+    );
+    assert!(
+        named.message.contains("state=done"),
+        "the diagnostic names the destination whose transition was contended: {named:?}",
+    );
+
+    // And the diagnostic is right not to say which one survives: each
+    // instance ships the transition its own echoed reaction declares, so the
+    // two disagree on the same destination of the same set.
+    let to_done = |set: usize| {
+        doc.variant_sets[set].members[2]
+            .transition
+            .as_ref()
+            .expect("the destination carries a transition")
+            .tracks[0]
+            .spec
+            .clone()
+    };
+    assert_eq!(
+        (to_done(0), to_done(1)),
+        (
+            TransitionSpec::Tween {
+                duration: 0.3,
+                easing: dashc_wasm::Easing::EaseOut,
+            },
+            TransitionSpec::Tween {
+                duration: 0.6,
+                easing: dashc_wasm::Easing::EaseOut,
+            },
+        ),
+        "an instance's own reaction overrides the set's table, so no member \
+         order decides what ships",
     );
 }

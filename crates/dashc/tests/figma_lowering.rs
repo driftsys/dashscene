@@ -1426,6 +1426,212 @@ fn a_rotated_node_with_children_is_refused_because_rotation_does_not_compose() {
     );
 }
 
+/// The `relativeTransform` of `corpus/figma-fixtures/node-fx.json`'s
+/// `rotated-15deg` — `[[cos, +sin, tx], [−sin, cos, ty]]` at 15°, whose
+/// `atan2(m10, m00)` is the `-0.26179940325453416` that fixture also carries
+/// in `rotation`.
+///
+/// The three cases below drop the `rotation` field and keep this, which is
+/// the shape issue #878 is about: nothing pins that Figma always populates
+/// both, and the corpus cannot settle it, because its one rotated node
+/// carries both.
+const TURN_15_DEG: [[f64; 3]; 2] = [
+    [0.965_925_872_325_897_2, 0.258_819_073_438_644_4, 30.0],
+    [-0.258_819_073_438_644_4, 0.965_925_872_325_897_2, 30.0],
+];
+
+#[test]
+fn a_turn_carried_only_by_relative_transform_still_refuses_a_node_with_children() {
+    // Issue #878. Both rotated-node blockers share one guard, so a turn the
+    // guard cannot see misses both: a rotated frame would lower, and draw
+    // turned with its contents straight — the silent wrong picture P4
+    // forbids and the failure the refusal above exists to prevent.
+    let file = document(serde_json::json!({
+        "name": "matrix-rotated-frame",
+        "type": "FRAME",
+        "relativeTransform": TURN_15_DEG,
+        "size": { "x": 10.0, "y": 10.0 },
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+        "children": [{
+            "name": "inner",
+            "type": "RECTANGLE",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 4.0, "height": 4.0 },
+        }],
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+    assert_sole_unsupported(
+        &doc,
+        &diagnostics,
+        "matrix-rotated-frame",
+        "a rotated node with children (a rotation does not compose down the tree)",
+    );
+}
+
+#[test]
+fn a_turn_carried_only_by_relative_transform_lowers_the_leafs_own_box() {
+    // Issue #878's second half, and the larger one: the origin derivation
+    // reads the same value as the blockers, so a turn read as zero does not
+    // merely slip past a refusal — it lowers the node at the bounding box's
+    // top-left and extent, which for a rotated node are the bounds of the
+    // rotated shape (P1). Here that is (30, 4.118) at 122.474 against a true
+    // (30, 30) at 100 x 100.
+    //
+    // Same numbers as the `rotation`-carrying leaf above, with the field
+    // removed, so the two tests differ in exactly the source of the turn.
+    let file = document(serde_json::json!({
+        "name": "page-frame",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 200.0 },
+        "children": [{
+            "name": "matrix-rotated-15deg",
+            "type": "RECTANGLE",
+            "relativeTransform": TURN_15_DEG,
+            "size": { "x": 100.0, "y": 100.0 },
+            "absoluteBoundingBox": {
+                "x": 30.0, "y": 4.118092656135559,
+                "width": 122.47449457645416, "height": 122.47449457645416,
+            },
+        }],
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("a rotated leaf lowers as of story #770");
+    assert!(
+        diagnostics.iter().all(|d| d.rule != "figma.unsupported"),
+        "a rotated leaf is not refused, however its turn arrives: {diagnostics:?}",
+    );
+
+    let (_, n) = node(&doc, "matrix-rotated-15deg");
+    assert!(
+        (n.rotation - (-15.0f32).to_radians()).abs() < 1e-6,
+        "the matrix off-diagonal carries -15 degrees in this repository's own \
+         sign convention: got {}",
+        n.rotation,
+    );
+    assert_eq!(
+        (n.box2d.width, n.box2d.height),
+        (100.0, 100.0),
+        "the extent comes from `size`; `absoluteBoundingBox` would be 122.474",
+    );
+    assert!(
+        (n.box2d.x - 30.0).abs() < 1e-3 && (n.box2d.y - 30.0).abs() < 1e-3,
+        "the node's own top-left is (30, 30), not the bounding box's \
+         (30, 4.118): got ({}, {})",
+        n.box2d.x,
+        n.box2d.y,
+    );
+}
+
+#[test]
+fn a_half_turn_in_relative_transform_is_read_as_a_turn() {
+    // The case an off-diagonal test cannot see, and the reason the derivation
+    // reads the determinant instead: a half-turn's off-diagonals are both
+    // zero, exactly like a mirror's, and only the determinant separates them
+    // (+1 here, −1 for the mirror below). Read as unrotated, this frame would
+    // lower upright while Figma draws it upside-down — the silent wrong
+    // picture issue #878 is about, at the one angle the narrower test misses.
+    let file = document(serde_json::json!({
+        "name": "half-turned-frame",
+        "type": "FRAME",
+        "relativeTransform": [[-1.0, 0.0, 30.0], [0.0, -1.0, 40.0]],
+        "size": { "x": 10.0, "y": 10.0 },
+        "absoluteBoundingBox": { "x": 20.0, "y": 30.0, "width": 10.0, "height": 10.0 },
+        "children": [{
+            "name": "inner",
+            "type": "RECTANGLE",
+            "absoluteBoundingBox": { "x": 20.0, "y": 30.0, "width": 4.0, "height": 4.0 },
+        }],
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("an unsupported construct is diagnosed, not fatal");
+    assert_sole_unsupported(
+        &doc,
+        &diagnostics,
+        "half-turned-frame",
+        "a rotated node with children (a rotation does not compose down the tree)",
+    );
+}
+
+#[test]
+fn an_explicit_rotation_is_read_ahead_of_the_matrix() {
+    // The precedence the derivation documents, which no capture can pin
+    // because the one node carrying both encodings has them agree. `rotation`
+    // is Figma's own reported angle; the matrix is read only where that field
+    // is absent or zero, and `atan2(m10, m00)` is the true turn only for a
+    // matrix whose linear part is a pure rotation. Reading the matrix first
+    // would swap a reported angle for a derived one at every rotated node.
+    //
+    // The two disagree here by construction: the field says −15°, the matrix
+    // carries +45°.
+    let root = 45.0f64.to_radians();
+    let file = document(serde_json::json!({
+        "name": "page-frame",
+        "type": "FRAME",
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 200.0 },
+        "children": [{
+            "name": "disagreeing",
+            "type": "RECTANGLE",
+            "rotation": -0.26179940325453416,
+            "relativeTransform": [
+                [root.cos(), -root.sin(), 30.0],
+                [root.sin(), root.cos(), 30.0],
+            ],
+            "size": { "x": 100.0, "y": 100.0 },
+            "absoluteBoundingBox": {
+                "x": 30.0, "y": 4.118092656135559,
+                "width": 122.47449457645416, "height": 122.47449457645416,
+            },
+        }],
+    }));
+
+    let (doc, _) = lower(&file, Profile::Core, &BTreeMap::new()).expect("a rotated leaf lowers");
+    let (_, n) = node(&doc, "disagreeing");
+    assert!(
+        (n.rotation - (-15.0f32).to_radians()).abs() < 1e-6,
+        "`rotation` is read ahead of the matrix, which here carries +45 degrees: got {}",
+        n.rotation,
+    );
+}
+
+#[test]
+fn a_mirror_in_relative_transform_is_not_read_as_a_turn() {
+    // The other side of the determinant test. A single mirror's determinant
+    // is negative, and `atan2(m10, m00)` would report it as a half-turn — a
+    // new wrong picture rather than a repair, since the document has no
+    // mirror and a node drawn at 180 degrees is not one. It lowers as it did
+    // before `relativeTransform` was parsed: unrotated, from its bounding
+    // box, and with children, which a genuine turn would refuse.
+    let file = document(serde_json::json!({
+        "name": "mirrored-frame",
+        "type": "FRAME",
+        "relativeTransform": [[-1.0, 0.0, 30.0], [0.0, 1.0, 40.0]],
+        "absoluteBoundingBox": { "x": 30.0, "y": 40.0, "width": 50.0, "height": 60.0 },
+        "children": [{
+            "name": "inner",
+            "type": "RECTANGLE",
+            "absoluteBoundingBox": { "x": 30.0, "y": 40.0, "width": 4.0, "height": 4.0 },
+        }],
+    }));
+
+    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("a mirrored node carries no construct the walk refuses");
+    assert!(
+        diagnostics.iter().all(|d| d.rule != "figma.unsupported"),
+        "a mirror is not a turn, so no rotated-node blocker fires: {diagnostics:?}",
+    );
+
+    let (_, n) = node(&doc, "mirrored-frame");
+    assert_eq!(n.rotation, 0.0, "a mirror carries no angle");
+    assert_eq!(
+        (n.box2d.width, n.box2d.height),
+        (50.0, 60.0),
+        "an unrotated node's extent is still its bounding box's",
+    );
+}
+
 /// Every `figma.subtree-dropped` diagnostic, as `(path, index, severity,
 /// message)`.
 ///
