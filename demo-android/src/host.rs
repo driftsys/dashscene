@@ -236,11 +236,16 @@ impl Frames for ShowcaseFrames {
         // Dropping the renderer is what drops the `wgpu::Surface`, and this is
         // the call the destroy handshake waits on.
         self.renderer = None;
-        // **And everything else.** The loop's state is leaked — a posted vsync
-        // callback cannot be cancelled, so it must stay readable — and this
-        // object is inside it. Anything left here is retained for the life of
-        // the process, once per surface cycle, and on Android that is every
-        // rotation. The arena and the painter are the large ones.
+        // **And everything else.** The arena and the painter are the large
+        // ones, and nothing here is kept for a rebuild: `attach` builds the
+        // arena and the scene again whatever this leaves, so this implementation
+        // has nothing the next attach needs.
+        //
+        // It is no longer also a leak. The loop's state is leaked — a posted
+        // vsync callback cannot be cancelled, so it must stay readable — and
+        // this object used to be retained inside it for the life of the
+        // process, once per surface cycle. `LoopState::shut_down` now drops the
+        // implementation after calling this (issue #1085).
         self.live = None;
         self.arena = Arena::new();
         self.painter = GpuPainter::new();

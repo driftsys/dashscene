@@ -35,7 +35,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::frames::Frames;
-use crate::machine::{Action, LoopState, pack, unpack};
+use crate::machine::{Action, LoopState, pack};
 use crate::{Handshake, log};
 
 /// One live view, as the UI thread holds it.
@@ -191,21 +191,20 @@ pub unsafe fn destroy(host: *mut AndroidHost) {
     // use-after-free — it says the UI thread is still parked. Nothing else
     // does: no application-not-responding kill fired in any run of #960's
     // reproducer, including a 128 s block.
-    host.handshake
-        .request_teardown(crate::handshake::REPORT_EVERY, |elapsed| {
-            // **The observation, not the diagnosis.** An earlier wording said
-            // the loop was "still inside a call that cannot be interrupted",
-            // which this line cannot know: a debug teardown measured at 1.15 s
-            // can pass two seconds while progressing normally through `detach`,
-            // `ds_runtime_free` and the wgpu device drop, and that wording
-            // would have sent the next reader looking at `Frames::attach`. What
-            // is true is only that the loop has not released yet.
-            log(&format!(
-                "surfaceDestroyed has been waiting {} s for the frame loop to \
+    host.handshake.request_teardown(|elapsed| {
+        // **The observation, not the diagnosis.** An earlier wording said
+        // the loop was "still inside a call that cannot be interrupted",
+        // which this line cannot know: a debug teardown measured at 1.15 s
+        // can pass two seconds while progressing normally through `detach`,
+        // `ds_runtime_free` and the wgpu device drop, and that wording
+        // would have sent the next reader looking at `Frames::attach`. What
+        // is true is only that the loop has not released yet.
+        log(&format!(
+            "surfaceDestroyed has been waiting {} s for the frame loop to \
                  release the surface",
-                elapsed.as_secs()
-            ));
-        });
+            elapsed.as_secs()
+        ));
+    });
     // Joining as well as waiting on the acknowledgement: the thread's own stack,
     // and anything still on it, is gone before the window is released.
     if let Some(render) = host.render.take()
@@ -241,118 +240,112 @@ fn render_thread<F>(
 
     // Built here, on the thread that will use it, for the reason `start`
     // records.
-    let mut frames = frames();
+    let frames = frames();
 
-    let extent = unpack(extent_cell.load(Ordering::Acquire));
+    // **Built un-attached, and it takes the surface up itself** (issue #1083).
+    // The teardown check that has to run before an acquisition binds no NDK
+    // symbol, so by this crate's rule it belongs in [`crate::machine`] with a
+    // test — and it could not go there while the state was built from an
+    // already-attached `Frames`, because the state that carries the handshake
+    // did not exist until after the attach had returned. `LoopState::start`
+    // reads the request, writes the marker pair and attaches; the rebuild path
+    // runs the same code. Every logcat line the sequence used to write is still
+    // written, by that one path rather than by two copies of it.
+    let mut state = LoopState::new(frames, window, extent_cell, Arc::clone(&handshake));
 
-    // **Asked before the acquisition, not after it** — the same rule the
-    // rebuild bound follows in [`crate::machine`], and for the same reason: an
-    // attach acquires an adapter, a device and the whole pipeline set, and a
-    // surface that has already been asked to go away has no use for any of it.
-    // `surfaceDestroyed` is parked in `request_teardown` for however long this
-    // takes, so the cost of asking afterwards is paid by the UI thread.
-    //
-    // It closes the window before the attach and **not the one inside it**:
-    // once the call below is entered nothing here runs again until it returns,
-    // which is the whole of issue #960.
-    if handshake.teardown_requested() {
-        log("teardown was requested before the surface was taken up — not attaching");
-        return;
-    }
+    // Whether a surface was ever taken up. `shut_down` runs either way — it is
+    // what gives up an attach that failed partway — but the closing line below
+    // must not claim a detach that did not happen. Logcat is the only witness a
+    // device gives, and reading it is how issue #960 was finally diagnosed.
+    let attached = state.start();
 
-    // **Logged before the call, which is the half that was missing.** The two
-    // lines below report an attach that ended; nothing reported one that
-    // started, so an attach still in flight and a thread that never reached
-    // this point were the same picture in logcat — no line either way. That is
-    // what left #960 reading as "draws nothing and reports nothing", and what
-    // made a wedged acquisition take a person watching an emulator to find.
-    //
-    // Not free: it costs one logcat line per surface cycle, so once per
-    // rotation. That is the same order as the two it joins.
-    log(&format!("attaching a {}x{} surface", extent.0, extent.1));
-    // SAFETY: `window` is live — this crate holds the reference
-    // `ANativeWindow_fromSurface` returned, released only after the handshake
-    // completes, which is exactly the lifetime `Frames::attach` is promised.
-    let attached = unsafe { frames.attach(window as *mut c_void, extent.0, extent.1) };
-    if let Err(error) = attached {
-        log(&format!("attach failed: {error}"));
-        // **`detach` IS called, and this comment used to say the opposite.** It
-        // said there was nothing to drop because the attach had failed — but an
-        // attach fails *partway*, and what it built before failing is exactly
-        // what leaks. `DocumentFrames::attach` creates the runtime first and
-        // stores it before anything else can fail, precisely so this call has
-        // the pointer to free; that field's own comment already said the loop
-        // calls `detach` even on `Err`, and the two disagreed. On a device
-        // where the attach keeps failing — #960's emulator is one — the leak is
-        // a whole runtime, and on the surface path a wgpu device with it, once
-        // per surface cycle and so once per rotation.
-        //
-        // `Frames::detach` is required to tolerate this: it is the same call
-        // the rebuild path makes before re-attaching, and `DocumentFrames`
-        // returns immediately on a null runtime.
-        frames.detach();
-        return;
-    }
-    log(&format!("attached a {}x{} surface", extent.0, extent.1));
+    if attached {
+        // SAFETY: this thread prepared a looper, which is what `getInstance`
+        // needs.
+        let choreographer = unsafe { ndk_sys::AChoreographer_getInstance() };
+        if choreographer.is_null() {
+            // No instance means no frame will ever run. Torn down rather than
+            // left as a live handle over a loop that does not exist.
+            log("AChoreographer_getInstance returned null — no frame loop");
+        } else {
+            // **Leaked, deliberately, and this is a use-after-free fix rather
+            // than an oversight.** `on_vsync` re-posts itself before the loop
+            // notices a teardown request, so the loop almost always exits with
+            // a callback still registered — and a posted vsync cannot be
+            // cancelled. A `LoopState` on this thread's stack would die while
+            // that callback still pointed at it, so it is leaked and `running`
+            // is what tells a late callback there is nothing left to do.
+            //
+            // **Only from here**, because this is the first point at which a
+            // callback that can outlive this thread exists. Neither refusal
+            // above posts one, so neither needs the leak and neither takes it.
+            //
+            // **What stays leaked is this struct and no implementation.**
+            // `LoopState::shut_down` drops the `Frames` box, so a scene, a
+            // document and a font file are no longer retained for the life of
+            // the process once per surface cycle — which on Android is every
+            // rotation (issue #1085).
+            //
+            // Not *nothing*, and the difference is worth stating: the struct is
+            // tens of bytes, and it holds the last strong reference to the
+            // `Handshake` and to the extent cell once `destroy` has freed the
+            // `AndroidHost`, so two small allocations leak with it. That is the
+            // residue, against the 328 324 B the harness's own cascade came to.
+            let state: &'static mut LoopState = Box::leak(Box::new(state));
 
-    // **Leaked, deliberately, and this is a use-after-free fix rather than an
-    // oversight.** `on_vsync` re-posts itself before the loop notices a teardown
-    // request, so the loop almost always exits with a callback still registered
-    // — and a posted vsync cannot be cancelled. A `Loop` on this thread's stack
-    // would die while that callback still pointed at it, so it is leaked and
-    // `running` is what tells a late callback there is nothing left to do.
-    //
-    // **What is leaked is this struct, which holds the `Frames` box.** That is
-    // why `Frames::detach` is required to release what the implementation owns:
-    // a scene left inside here is retained for the life of the process, once per
-    // surface cycle, and on Android a surface cycle is every rotation. The
-    // struct itself is tens of bytes; what an implementation leaves in it is
-    // not bounded by anything this crate can enforce.
-    let state: &'static mut LoopState = Box::leak(Box::new(LoopState::new(
-        frames,
-        window,
-        extent_cell,
-        extent,
-        Arc::clone(&handshake),
-    )));
+            handshake.started();
+            post_vsync(choreographer, state);
+            // The loop is the looper's: `pollOnce` dispatches the vsync
+            // callback, which draws and re-posts. The teardown check sits
+            // between polls rather than inside the callback, so a request never
+            // waits on a frame that is mid-flight.
+            while state.is_running() && !handshake.teardown_requested() {
+                // A 100 ms timeout rather than an indefinite wait, so the
+                // teardown check runs even if vsync stops arriving — which is
+                // what a surface that has gone away looks like from here.
+                // SAFETY: called on the thread that prepared the looper.
+                unsafe {
+                    ndk_sys::ALooper_pollOnce(
+                        100,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    )
+                };
+            }
 
-    // SAFETY: this thread prepared a looper, which is what `getInstance` needs.
-    let choreographer = unsafe { ndk_sys::AChoreographer_getInstance() };
-    if choreographer.is_null() {
-        // No instance means no frame will ever run. Torn down rather than left
-        // as a live handle over a loop that does not exist.
-        log("AChoreographer_getInstance returned null — no frame loop");
-    } else {
-        handshake.started();
-        post_vsync(choreographer, state);
-        // The loop is the looper's: `pollOnce` dispatches the vsync callback,
-        // which draws and re-posts. The teardown check sits between polls rather
-        // than inside the callback, so a request never waits on a frame that is
-        // mid-flight.
-        while state.is_running() && !handshake.teardown_requested() {
-            // A 100 ms timeout rather than an indefinite wait, so the teardown
-            // check runs even if vsync stops arriving — which is what a surface
-            // that has gone away looks like from here.
-            // SAFETY: called on the thread that prepared the looper.
-            unsafe {
-                ndk_sys::ALooper_pollOnce(
-                    100,
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                )
-            };
+            // D4's ordering, and the only one that is correct: tell a callback
+            // the choreographer may still hold that there is nothing left to
+            // do, drop the surface, and only then let the UI thread release the
+            // window. The first two are `shut_down`'s, which holds them
+            // together where they can be read as one rule; the release happens
+            // as `_release` drops, immediately after this returns.
+            state.shut_down();
+            log("surface detached");
+            return;
         }
     }
 
-    // D4's ordering, and the only one that is correct: tell a callback the
-    // choreographer may still hold that there is nothing left to do, drop the
-    // surface, and only then let the UI thread release the window. The first two
-    // are `shut_down`'s, which holds them together where they can be read as one
-    // rule; the release happens as `_release` drops, immediately after this
-    // returns.
+    // Reached by three outcomes, and `start` has already said which: a teardown
+    // requested before the surface was taken up, an attach that failed, or a
+    // null choreographer over a surface that came up fine.
+    //
+    // **`shut_down` is not a no-op on the middle one**, which is the reason to
+    // name all three rather than call them "the refusals". An attach fails
+    // *partway*: `DocumentFrames::attach` stores the runtime before anything
+    // else can fail precisely so this call has the pointer to free, and on the
+    // surface path a wgpu device goes with it. Deleting this because nothing
+    // was attached would reinstate a once-per-surface-cycle leak.
+    //
+    // Nothing was posted on any of the three, so this state is dropped rather
+    // than leaked.
     state.shut_down();
-    log("surface detached");
+    if attached {
+        // The choreographer was null: a surface was taken up and is now given
+        // up, so this reports what happened. On the other refusal there was no
+        // surface, and writing this would be a detach that did not occur.
+        log("surface detached");
+    }
 }
 
 /// Posts the next vsync callback.
