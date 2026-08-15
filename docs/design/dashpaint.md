@@ -88,7 +88,13 @@ after everything here
   already carries one, because a producer cannot know where its quads will land
   in a table it has not entered — and commit sorts runs by anchor before
   pushing, so no offset a stager computed would survive. A stager therefore
-  hands back a `StagedRun`, its quads beside the run rather than inside it.
+  hands back a `StagedRun`, its quads beside the run rather than inside it. It
+  **also refuses** a quad whose `glyph_id` exceeds `u16::MAX`, an id no OpenType
+  font can produce (issue #985): that quad matches no atlas row, and both
+  painters skip such a quad with no diagnostic, so it is the silent drop
+  `docs/decisions/sub-word-members-widen-rather-than-pad.md` describes. It does
+  **not** refuse an id the atlas merely has no row for — an empty outline and a
+  charset gap take that same path legitimately.
 
   Each run carries `rect: u32`, the rect-table index of the text node it was
   shaped from — its **anchor**, stamped by `dashscene-core`'s commit (story
@@ -208,7 +214,12 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   `GlyphRunTable::push_run` gives. `push` is the bare-entry shorthand and
   refuses the same way. An empty range is assigned `(0, 0)` rather than the
   offset it would have started at, so two entries that both draw nothing compare
-  equal.
+  equal. It **also refuses** a `parts.shape` whose `distance_range` is not
+  finite and greater than zero (issue #986) — the coverage-mask copy of the
+  operand `Atlas::new` refuses for glyphs, and this is the seam because the
+  `shapes` array is private and `push` refuses an entry naming a shape. Only
+  that check runs before the five arrays are extended; the method is not atomic
+  on its other panics (issue #1012).
 - `PaintTable::intern_fill(&FillSpec) -> PaintKind` — the only way a fill enters
   the table. Unlike `push_with`, which copies an entry's parts in without dedup,
   this **deduplicates**: a shadow list belongs to one entry and has no identity

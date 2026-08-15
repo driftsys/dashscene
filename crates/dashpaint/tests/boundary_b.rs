@@ -1305,8 +1305,9 @@ fn an_empty_glyph_run_table_names_no_quads() {
 ///
 /// It is deliberately not the silent drop that record describes — a row this
 /// constructor accepts is found by `Atlas::glyph` and paints, and what paints
-/// nothing is a `GlyphQuad` the atlas has no row for. That side is unchecked
-/// (issue #985).
+/// nothing is a `GlyphQuad` the atlas has no row for. That side is refused at
+/// `GlyphRunTable::push_run` (issue #985), which the four tests after the next
+/// one pin.
 ///
 /// This asserted a panic until issue #966. A `debug_assert!` compiles out, so
 /// the guard held in no release build, and no tier here runs `cargo test
@@ -1354,6 +1355,110 @@ fn an_atlas_accepts_the_largest_glyph_id_a_font_can_produce() {
     )
     .expect("u16::MAX is a glyph id OpenType can name");
     assert!(atlas.glyph(u32::from(u16::MAX)).is_some());
+}
+
+/// `push_run` refuses a quad naming a glyph id no font can produce (issue #985).
+///
+/// This is the *other* side of the widening above, and the side that carries
+/// the silent drop `docs/decisions/sub-word-members-widen-rather-than-pad.md`
+/// describes: such a quad matches no atlas row, so `Atlas::glyph` returns `None`
+/// and both painters `continue` past it with no diagnostic. `Atlas::new` never
+/// sees a `GlyphQuad`, so nothing it does reaches here.
+///
+/// Refused at the table rather than on the type because making `glyph_id`
+/// private would break `neither_glyph_type_carries_padding`, which reads it
+/// from another crate — see `GlyphQuad`'s own documentation.
+#[test]
+#[should_panic(expected = "above u16::MAX")]
+fn push_run_refuses_a_glyph_id_no_font_can_produce() {
+    let mut glyphs = GlyphRunTable::new();
+    glyphs.push_run(bare_run(0), &[unrepresentable_quad(0.0)]);
+}
+
+/// A quad naming an id no OpenType font can produce.
+///
+/// A helper rather than a literal at each site, because the bound is the thing
+/// under test: spelled out four times it would be four places to miss when it
+/// changes, and a missed one becomes an *in-domain* quad, quietly turning a
+/// test that pinned a refusal into one that pins an acceptance and still passes.
+fn unrepresentable_quad(x: f32) -> GlyphQuad {
+    GlyphQuad {
+        glyph_id: u32::from(u16::MAX) + 1,
+        x,
+        y: 0.0,
+    }
+}
+
+/// The refusal reads every quad, not just the first.
+///
+/// A check written as `quads[0]`, or one that stopped at the first quad it
+/// found acceptable, passes the test above and lets every later quad through.
+/// The out-of-domain quad is third of four here, so neither shortcut survives —
+/// the ordering trap a uniform fixture cannot catch.
+/// The quad at the top of the domain sits immediately before the refused one,
+/// so the message must name the quad that is actually out of the domain. The
+/// guard is two expressions — a fold that decides, and a search that names —
+/// and the search having its own copy of the bound is how the second could
+/// drift from the first: relax it to `>=` and this fixture reports "glyph quad
+/// 1 names id 65535", which is a false statement about a legal quad.
+#[test]
+#[should_panic(expected = "glyph quad 2 names id 65536")]
+fn push_run_reads_every_quad_not_only_the_first() {
+    let mut glyphs = GlyphRunTable::new();
+    glyphs.push_run(
+        bare_run(0),
+        &[quad(1), quad(u16::MAX), unrepresentable_quad(3.0), quad(4)],
+    );
+}
+
+/// The largest glyph id a font can produce is accepted, so the check refuses an
+/// out-of-domain id rather than the top of the domain — the boundary, on the
+/// quad side, that `an_atlas_accepts_the_largest_glyph_id_a_font_can_produce`
+/// pins on the atlas side.
+///
+/// Built through `quad`, so the fixture reaches the top of the domain the way
+/// every producer does — by widening the `u16` a font produces, a conversion
+/// the compiler checks as exact.
+#[test]
+fn push_run_accepts_the_largest_glyph_id_a_font_can_produce() {
+    let mut glyphs = GlyphRunTable::new();
+    let top = quad(u16::MAX);
+    glyphs.push_run(bare_run(0), &[top]);
+    assert_eq!(glyphs.all_quads(), &[top]);
+}
+
+/// A refused run leaves the table unchanged.
+///
+/// The guard runs before the quads are copied, so a refusal cannot leave the
+/// flat array holding a run's quads with no run naming them. Asserted rather
+/// than left to inspection: "the guard is above the copy" is a property of the
+/// current line order and nothing else pins it.
+///
+/// The property is worth pinning on its own terms, not because a caller is
+/// known to observe it — `Arena::commit` builds a fresh `GlyphRunTable` every
+/// commit, so an unwind through `push_run` drops the whole table on the way
+/// out. `PaintTable` is the retained one, and its sibling test says what does
+/// and does not hold there.
+#[test]
+fn a_refused_run_leaves_the_table_unchanged() {
+    let mut glyphs = GlyphRunTable::new();
+    glyphs.push_run(bare_run(0), &[quad(1)]);
+
+    let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        glyphs.push_run(bare_run(1), &[quad(2), unrepresentable_quad(0.0)]);
+    }));
+
+    assert!(
+        panic_message(&refused.expect_err("the push must have panicked"))
+            .contains("above u16::MAX"),
+        "the refusal must be the domain guard, not another panic in push_run"
+    );
+    assert_eq!(
+        glyphs.all_quads(),
+        &[quad(1)],
+        "the refused run's quads must not have reached the flat array"
+    );
+    assert_eq!(glyphs.runs().len(), 1, "and no run may name them");
 }
 
 /// An atlas refuses a zero `px_per_em`, in every build profile (issue #724).
@@ -1475,6 +1580,175 @@ fn atlas_with_distance_range(distance_range_px: f32) -> Result<Atlas, dashpaint:
         distance_range_px,
         Vec::new(),
     )
+}
+
+/// `push_with` refuses a coverage mask whose distance range is out of domain
+/// (issue #986), for every value out of it.
+///
+/// The coverage-mask twin of the three `Atlas::new` refusals above, and the same
+/// three wrong pictures: zero paints uniform half coverage, a negative value
+/// inverts it, and a NaN or an infinity reaches the implementation-defined WGSL
+/// `clamp`. Both painters compute it — `dashscene-skia` as
+/// `distance_range * sx`, `dashscene-gpu` as `distance_range * (right - left) / aw`.
+///
+/// `-0.0` is in the list because the guard is spelled `> 0.0` rather than
+/// against an explicit zero: it is finite, it is not greater than zero, and it
+/// reaches the painters' multiply exactly as `0.0` does.
+///
+/// One test over the array rather than one `#[should_panic]` per value, because
+/// `should_panic` cannot say which value it expected to be refused. It asserts
+/// the message rather than only that something unwound: `push_with` panics for
+/// an unrelated reason a few lines above this guard, so `is_err()` alone would
+/// stay green with the guard deleted.
+#[test]
+fn push_with_refuses_a_distance_range_out_of_domain() {
+    for range in [0.0, -0.0, -2.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let refused = std::panic::catch_unwind(|| {
+            let mut table = PaintTable::new();
+            table.push_with(
+                PaintEntry::default(),
+                EntryParts {
+                    shape: Some(field_with_distance_range(range)),
+                    ..EntryParts::default()
+                },
+            );
+        })
+        .expect_err("a distance range of {range} must be refused");
+        assert!(
+            panic_message(&refused).contains("is not finite and greater than zero"),
+            "a distance range of {range} must be refused by the domain guard, not by some other \
+             panic in push_with; got: {}",
+            panic_message(&refused)
+        );
+    }
+}
+
+/// A distance range at the bottom of the accepted domain is accepted, so the
+/// guard refuses what is out of the domain rather than what is merely small.
+///
+/// **`f32::MIN_POSITIVE` is not the smallest value that passes** — subnormals
+/// below it are finite and greater than zero, and `f32::from_bits(1)` is
+/// accepted too. Both are here because they pin `> 0.0` against `>=
+/// f32::MIN_POSITIVE`, a mutation the whole rest of this suite survives.
+///
+/// Neither is a *useful* range, and the accepted domain deliberately does not
+/// claim they are: a range this narrow drives `px_range` to zero and paints the
+/// same uniform half coverage the zero case is refused for, which
+/// `an_atlas_accepts_a_narrow_distance_range` above states for the atlas twin.
+/// There is no lower bound above zero for the same reason `Atlas::new` gives
+/// for having no upper one — it needs a number no measurement in this
+/// repository supplies.
+#[test]
+fn push_with_accepts_a_narrow_distance_range() {
+    for range in [f32::MIN_POSITIVE, f32::from_bits(1)] {
+        let mut table = PaintTable::new();
+        let field = field_with_distance_range(range);
+        let index = table.push_with(
+            PaintEntry::default(),
+            EntryParts {
+                shape: Some(field),
+                ..EntryParts::default()
+            },
+        );
+        assert_eq!(
+            table.shape(table.resolve(index)),
+            Some(&field),
+            "{range} is finite and greater than zero, so it is out of no domain this seam states"
+        );
+    }
+}
+
+/// The panic payload as a string, for the tests that catch an unwind rather
+/// than declaring `#[should_panic]`.
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
+    payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("<panic payload was not a string>")
+}
+
+/// A refused coverage mask grows none of the five flat arrays `push_with`
+/// extends — the sibling of `a_refused_run_leaves_the_table_unchanged`, and
+/// pinned for the same reason: the guard sits above them by line order alone.
+///
+/// **Every one of the five is a sentinel**, because they are extended in a
+/// fixed order — `extra_fills`, `strokes`, `shadows`, `blurs`, `shapes` — and a
+/// fixture that left any of them empty could not tell the guard sitting above
+/// all five from the guard sitting between two of them. With only the stroke
+/// and the shape populated, moving the guard below the `extra_fills` extend
+/// passes.
+///
+/// This is not a claim that `push_with` is atomic on any refusal: the extends
+/// happen before `push_entry`'s own panics, and the production caller interns
+/// the entry's fills into this same table first. Issue #1012 carries that.
+#[test]
+fn a_refused_coverage_mask_grows_no_flat_array() {
+    let mut table = PaintTable::new();
+    let layer = table.intern_fill(&FillSpec::Solid { color: RED });
+    table.push_with(
+        PaintEntry::default(),
+        EntryParts {
+            shape: Some(field_with_distance_range(4.0)),
+            ..EntryParts::default()
+        },
+    );
+
+    let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        table.push_with(
+            PaintEntry::default(),
+            EntryParts {
+                extra_fills: &[layer],
+                stroke: Some(Stroke {
+                    width: 3.0,
+                    align: StrokeAlign::Outside,
+                    color: RED,
+                }),
+                shadows: &[Shadow {
+                    kind: ShadowKind::Drop,
+                    offset: Vec2 { x: 1.0, y: 2.0 },
+                    blur: 3.0,
+                    spread: 0.0,
+                    color: RED,
+                }],
+                blurs: &[Blur {
+                    kind: BlurKind::Layer,
+                    radius: 4.0,
+                }],
+                shape: Some(field_with_distance_range(0.0)),
+            },
+        );
+    }));
+
+    assert!(
+        panic_message(&refused.expect_err("the push must have panicked"))
+            .contains("is not finite and greater than zero"),
+        "the refusal must be the domain guard, not another panic in push_with"
+    );
+    assert_eq!(table.len(), 1, "the refused entry must not have landed");
+    assert_eq!(
+        (
+            table.all_extra_fills().len(),
+            table.all_strokes().len(),
+            table.all_shadows().len(),
+            table.all_blurs().len(),
+            table.all_shapes().len(),
+        ),
+        (0, 0, 0, 0, 1),
+        "no array push_with extends may have grown; only the accepted shape from the first push \
+         is present"
+    );
+}
+
+/// An otherwise-valid coverage mask carrying `distance_range`, so the three
+/// tests above vary only the value under test.
+fn field_with_distance_range(distance_range: f32) -> VectorField {
+    VectorField {
+        image: 0,
+        atlas_rect: [0, 0, 8, 8],
+        plane_bounds: [0.0, 0.0, 1.0, 1.0],
+        distance_range,
+    }
 }
 
 // ---------------------------------------------------------------------------

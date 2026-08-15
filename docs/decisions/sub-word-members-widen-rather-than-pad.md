@@ -65,9 +65,21 @@ no release build, so the trade as first made held in no shipping profile.
 side.** The sentence naming `Atlas::glyph` is about a **`GlyphQuad`**: a row
 this constructor accepted is _found_ by that binary search and paints, where a
 quad naming an id the atlas has no row for is what both painters skip without a
-diagnostic. `GlyphQuad::glyph_id` passes through no constructor and is checked
-at no seam, so for that half the widening's lost guarantee is still lost. Issue
-#985 carries it, and names `GlyphRunTable::push_run` as the seam.
+diagnostic.
+
+Issue #985 closed that half at `GlyphRunTable::push_run`, the one seam every
+quad passes through to reach a painter, so both sides of `Atlas::glyph`'s lookup
+now agree on which ids are representable. A panic there rather than a `Result`
+in a constructor, because a constructor needs private fields and
+`neither_glyph_type_carries_padding` — the pin this record names below as what
+has teeth — reads `glyph_id` from another crate.
+`boundary-b-domain-checks-sit-at-the-table-seam.md` records the choice.
+
+Note what that closes and what it does not: it refuses an id **no font can
+express**, not an id this atlas has no row for. The painters still skip a quad
+whose id the atlas lacks, which is correct for an empty outline and for a
+charset gap. So the widening's lost guarantee is replaced on both types, and the
+silent skip that is not about the widening remains, by design.
 
 ## How the property is held
 

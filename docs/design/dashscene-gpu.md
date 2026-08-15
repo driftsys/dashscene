@@ -304,13 +304,19 @@ top-left corner, since a zeroed plane has no area for the margin to grow (issue
 not an absent one, and a real field can take a value a sentinel would claim.
 
 **This closes the route through an unresolved row and not the class.** A field
-that _does_ resolve carrying `distance_range == 0` reaches the same
-`msdf_coverage(sample, 0)` and paints the same half coverage, this time over the
+that _does_ resolve carrying `distance_range == 0` would reach the same
+`msdf_coverage(sample, 0)` and paint the same half coverage, this time over the
 field's whole plane rather than the antialiasing margin. `field_draws` does not
 reject it, and neither painter guards it — the reference painter derives
 `px_range` from the same operand — so the seam is `dashpaint`, where issue #964
-put the matching guard on the atlas's two operands. Issue #986 is that work and
-is open; nothing here should be read as having done it.
+put the matching guard on the atlas's two operands.
+
+Issue #986 did that work: `PaintTable::push_with` now refuses a `distance_range`
+that is not finite and greater than zero, and `PaintTable::shapes` is private
+with `push_with` its only writer, so no such field reaches either painter. The
+paragraph above therefore describes a route that is closed at the seam rather
+than here. What is still open on this path is `atlas_rect` and `plane_bounds`,
+where `field_draws` skips and `dashscene-skia` divides — issue #1000.
 
 **An unresolved mask makes the backdrop encode nothing at all**, which is not
 the same as encoding it unmasked. Unmasked means the parametric rounded box, so
