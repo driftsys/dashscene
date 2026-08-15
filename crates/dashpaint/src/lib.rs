@@ -1534,19 +1534,12 @@ pub struct VectorField {
     /// top-left origin.
     ///
     /// A zero width or height means the field draws nothing —
-    /// `dashscene-gpu`'s `field_draws` skips it before residency, and since
-    /// issue #1000 `dashscene-skia`'s `field_coverage` takes the same answer.
-    /// That is a legal state, not an out-of-domain one, so nothing refuses it.
+    /// `dashscene-gpu`'s `field_draws` skips it before residency. That is a
+    /// legal state, not an out-of-domain one, so nothing refuses it (issue
+    /// #1000 covers `dashscene-skia` dividing by it instead of skipping).
     pub atlas_rect: [u32; 4],
     /// The padded field quad in shape space, node-box-relative, y-down:
     /// `[left, top, right, bottom]`.
-    ///
-    /// An empty or inverted quad means the field draws nothing, decided by the
-    /// same predicate `atlas_rect` names. **That predicate rejects a NaN and
-    /// admits an infinity** — every comparison against a NaN is false, while
-    /// `f32::INFINITY > left` is true — so a field carrying an infinite bound
-    /// reaches both painters and drives each one's screen-pixel range to an
-    /// infinity. Nothing refuses it at any seam: issue #1034.
     pub plane_bounds: [f32; 4],
     /// The MSDF distance range in atlas texels (msdfgen `-pxrange`).
     ///
@@ -1853,17 +1846,15 @@ impl PaintTable {
                 let index = match existing {
                     Some(i) => i,
                     None => {
-                        // Through `flat_range` rather than two `fill_index`
-                        // calls: a count and an offset that each fit a `u32`
-                        // can still name an end past one, which is the shape
-                        // issue #1014 names in `push_with` and this is the
-                        // second instance of it. Not `span`, whose empty-range
-                        // canonicalization would move a no-stop gradient's
-                        // offset and is a property entry equality depends on.
-                        let (offset, count) = Self::flat_range(self.stops.len(), stops.len());
+                        let offset = Self::fill_index(self.stops.len());
                         self.stops.extend_from_slice(stops);
                         self.gradients.push(Gradient {
-                            stops: StopRange { offset, count },
+                            stops: StopRange {
+                                offset,
+                                // A count, not a row index, but bounded the
+                                // same way and by the same reason.
+                                count: Self::fill_index(stops.len()),
+                            },
                             ..*gradient
                         });
                         self.gradients.len() - 1
@@ -1920,34 +1911,7 @@ impl PaintTable {
         if count == 0 {
             return (0, 0);
         }
-        Self::flat_range(array_len, count)
-    }
-
-    /// `(offset, count)` for `count` rows about to be appended at `array_len`,
-    /// refusing a range whose **end** runs past `u32::MAX`.
-    ///
-    /// The sum, not the two lengths separately (issue #1014). Converting each
-    /// alone accepts an array at `u32::MAX - 999` taking a 1000-row part: both
-    /// conversions succeed, the append takes the array past what a `u32` offset
-    /// can address, and the range handed back names rows the next caller cannot
-    /// reach. The refusal then lands on whichever later push happens to tip the
-    /// offset itself over, a call away from the cause.
-    ///
-    /// Unreachable in practice on the target hardware — every array this bounds
-    /// is a boundary-B row array, and four billion of any of them is orders of
-    /// magnitude past a fixed memory budget. It is checked because it is a
-    /// contract these methods state.
-    fn flat_range(array_len: usize, count: usize) -> (u32, u32) {
-        let offset = Self::fill_index(array_len);
-        let count = Self::fill_index(count);
-        if offset.checked_add(count).is_none() {
-            panic!(
-                "a part of {count} rows appended at offset {offset} would end past u32::MAX: \
-                 boundary B names a flat array's rows with a u32 offset and a u32 count, so \
-                 nothing past that end has a range that can be expressed (story #578)"
-            );
-        }
-        (offset, count)
+        (Self::fill_index(array_len), Self::fill_index(count))
     }
 
     /// A row index, offset or count as the flattened types carry them.
@@ -2199,36 +2163,18 @@ impl PaintTable {
     /// `atlas_rect`'s width and height are divisors in both painters and are
     /// **not** refused here, deliberately: `dashscene-gpu`'s `field_draws`
     /// treats a zero extent as a field that draws nothing, so it is a legal
-    /// state rather than an out-of-domain one. Issue #1000 closed the painter
-    /// half of that instead — `dashscene-skia`'s `field_coverage` now takes the
-    /// same predicate — so the two painters agree on such a field without this
-    /// seam deciding anything about it.
+    /// state rather than an out-of-domain one. That `dashscene-skia` divides by
+    /// it instead of taking the same skip is a painter divergence, issue #1000,
+    /// which covers a non-finite `plane_bounds` on the same grounds.
     ///
-    /// **`plane_bounds` is not refused here either, and is only partly covered
-    /// there.** `field_draws` rejects a NaN, because every comparison against
-    /// one is false, and admits an infinity; both painters then derive an
-    /// infinite screen-pixel range from it. That is issue #1034, and it is the
-    /// one operand of the three in that expression with no check on any path.
-    ///
-    /// # Atomic on its own refusals, and what that does not reach
-    ///
-    /// **Every refusal above runs before the first flat array is extended**
-    /// (issue #1012), so a caller that catches an unwind from any of them holds
-    /// the table exactly as it was. The five `extend` calls and the entry's own
-    /// append are the last statements in the method and none of them refuses
-    /// anything.
-    ///
-    /// That is a statement about this method, not about a commit. **The
-    /// production caller has already mutated this table by the time it calls
-    /// here**: `intern_paint` in `dashscene-core` takes `Arc::make_mut` and
-    /// interns the entry's own fill and every stacked layer through
-    /// [`intern_fill`](Self::intern_fill), growing `solids`, `gradients`,
-    /// `stops` and `images` first. A refusal here leaves those interned rows
-    /// behind. They are inert — an interned fill is deduplicated by content, so
-    /// the next commit that stages the same fill reuses the row rather than
-    /// appending beside it — and `dashscene-core`'s `compact_paints` rebuilds
-    /// the table from the entries that survived. What is gone is the claim that
-    /// a refusal *here* is what leaves the table grown.
+    /// **This method is not atomic on a refusal, and only the check above runs
+    /// before the first array is extended.** The five `extend` calls below
+    /// happen before `push_entry`'s own documented panics,
+    /// so a caller that catches an unwind from *those* holds a table carrying
+    /// rows no entry names. That is unchanged by this check and is issue #1012.
+    /// The production caller widens the window further: `intern_paint` in
+    /// `dashscene-core` interns the entry's fills into this same table before
+    /// calling here.
     pub fn push_with(&mut self, mut entry: PaintEntry, parts: EntryParts<'_>) -> PaintIndex {
         assert_eq!(
             (
@@ -2249,9 +2195,9 @@ impl PaintTable {
              NONE, not offsets into some other table"
         );
         // An `if` around a `panic!` rather than an `assert!`, for the reason
-        // `GlyphRunTable::push_run`'s guard gives. Above the five `extend`
-        // calls, as every refusal in this method now is; see the `# Panics`
-        // note for what that does and does not reach.
+        // `GlyphRunTable::push_run`'s guard gives. Placed above the five
+        // `extend` calls so this refusal in particular grows no array — which is
+        // not the same as making the method atomic; see the `# Panics` note.
         if let Some(shape) = parts.shape {
             let range = shape.distance_range;
             if !(range.is_finite() && range > 0.0) {
@@ -2273,19 +2219,12 @@ impl PaintTable {
         entry.blurs = BlurRange { offset, count };
         let (offset, count) = Self::span(self.shapes.len(), usize::from(parts.shape.is_some()));
         entry.shape = ShapeRange { offset, count };
-        // The last refusal, and it is here rather than after the extends so
-        // that every refusal in this method runs before the first array grows
-        // (issue #1012). `push_entry` would raise these two after the copies,
-        // leaving the table carrying rows no entry names, so this takes them
-        // through `check_entry` and appends the entry itself below.
-        let index = self.check_entry(&entry, parts.extra_fills);
         self.extra_fills.extend_from_slice(parts.extra_fills);
         self.strokes.extend(parts.stroke);
         self.shadows.extend_from_slice(parts.shadows);
         self.blurs.extend_from_slice(parts.blurs);
         self.shapes.extend(parts.shape);
-        self.entries.push(entry);
-        PaintIndex(index)
+        self.push_entry(entry)
     }
 
     /// Interns a solid color and appends the entry that fills a rect with
@@ -2300,29 +2239,11 @@ impl PaintTable {
     }
 
     fn push_entry(&mut self, entry: PaintEntry) -> PaintIndex {
-        let index = self.check_entry(&entry, self.extra_fills(&entry));
+        self.check_fills(&entry);
+        let index =
+            u32::try_from(self.entries.len()).expect("paint table exceeds u32::MAX entries");
         self.entries.push(entry);
         PaintIndex(index)
-    }
-
-    /// Every refusal appending `entry` can raise, and the index it will take
-    /// if none of them fires.
-    ///
-    /// Separate from the append so that [`push_with`](Self::push_with) can run
-    /// both refusals *before* it extends the first flat array (issue #1012).
-    /// That caller has not copied its parts in yet, so `entry.extra_fills`
-    /// names rows the array does not hold and reading them back through it
-    /// would panic here for the wrong reason — it passes the slice it is about
-    /// to copy as `layers` instead.
-    ///
-    /// `push_entry` resolves the entry's own range instead, which for its one
-    /// caller is always empty: [`push`](Self::push) refuses an entry arriving
-    /// with any range assigned. It is read rather than passed as `&[]` so that
-    /// this stays a check over whatever the entry names, and not a second place
-    /// stating what that assert already does.
-    fn check_entry(&self, entry: &PaintEntry, layers: &[PaintKind]) -> u32 {
-        self.check_fills(entry, layers);
-        u32::try_from(self.entries.len()).expect("paint table exceeds u32::MAX entries")
     }
 
     /// Refuses an entry whose fills name rows this table does not hold.
@@ -2335,16 +2256,17 @@ impl PaintTable {
     /// the producer that mismatched them; letting it through moves the
     /// panic to whichever painter reads the entry first, or, if the other
     /// table happened to be longer, silently paints the wrong fill (P4).
-    fn check_fills(&self, entry: &PaintEntry, layers: &[PaintKind]) {
-        // `layers` is [`check_entry`]'s argument rather than a list resolved
-        // here, and for a caller that has already copied its layers in that
-        // list comes from the accessor: it panics by name when a range runs
-        // past its array, and this function exists to refuse exactly that kind
-        // of mismatched entry. Resolving it any other way would validate
-        // however many layers happened to be in reach and wave the rest
-        // through, which is the silent drop P4 forbids — in the one place
-        // written to catch it.
-        for (position, kind) in std::iter::once(&entry.fill).chain(layers).enumerate() {
+    fn check_fills(&self, entry: &PaintEntry) {
+        // Through the accessor, not by slicing the array here: it panics by
+        // name when a range runs past its array, and this function exists to
+        // refuse exactly that kind of mismatched entry. Resolving it any
+        // other way would validate however many layers happened to be in
+        // reach and wave the rest through, which is the silent drop P4
+        // forbids — in the one place written to catch it.
+        for (position, kind) in std::iter::once(&entry.fill)
+            .chain(self.extra_fills(entry))
+            .enumerate()
+        {
             let len = match kind.tag {
                 // The entry's own fill may name no row — that is the
                 // paint-less node, and there is nothing to be in range of.
@@ -2968,9 +2890,7 @@ impl GlyphRunTable {
     /// the closure owns rather than a per-frame decision. Only the
     /// unrepresentable id is refused here.
     ///
-    /// Also panics if the flat array *would* exceed `u32::MAX` quads — the
-    /// length the append produces, not the two lengths going into it, which is
-    /// what `quad_range` checks and issue #1014 was.
+    /// Also panics if the flat array would exceed `u32::MAX` quads.
     ///
     /// # What this seam does not cover
     ///
@@ -3016,39 +2936,12 @@ impl GlyphRunTable {
                 quad.glyph_id
             );
         }
-        let (offset, count) = Self::quad_range(self.quads.len(), quads.len());
+        let offset =
+            u32::try_from(self.quads.len()).expect("glyph-run table exceeds u32::MAX quads");
+        let count = u32::try_from(quads.len()).expect("a glyph run exceeds u32::MAX quads");
         self.quads.extend_from_slice(quads);
         run.glyphs = GlyphRange { offset, count };
         self.runs.push(run);
-    }
-
-    /// `(offset, count)` for `count` quads about to be appended to a flat array
-    /// already `array_len` long, refusing a range whose **end** runs past
-    /// `u32::MAX`.
-    ///
-    /// The sum, not the two lengths separately (issue #1014). Converting each
-    /// alone accepts an array at `u32::MAX - 999` taking a 1000-quad run: both
-    /// conversions succeed, `extend_from_slice` takes the array past what a
-    /// `u32` offset can address, and the run is given a [`GlyphRange`] as though
-    /// it were valid. The push that "would exceed `u32::MAX`" does not refuse,
-    /// and the *next* one does — one call away from its cause.
-    ///
-    /// The [`PaintTable`] side of this is `PaintTable::flat_range`, which the
-    /// five ranges [`PaintTable::push_with`] assigns go through. Both are
-    /// unreachable on the target hardware, where four billion 12-byte quads is
-    /// about 48 GB against a fixed memory budget; they are checked because they
-    /// are a contract these methods state.
-    fn quad_range(array_len: usize, count: usize) -> (u32, u32) {
-        let offset = u32::try_from(array_len).expect("glyph-run table exceeds u32::MAX quads");
-        let count = u32::try_from(count).expect("a glyph run exceeds u32::MAX quads");
-        if offset.checked_add(count).is_none() {
-            panic!(
-                "a run of {count} quads appended at offset {offset} would take the flat array \
-                 past u32::MAX: boundary B names a run's quads with a u32 offset and a u32 \
-                 count, so nothing past that end has a range that can be expressed (story #578)"
-            );
-        }
-        (offset, count)
     }
 
     /// The quads `run` draws, in draw order.
@@ -3302,72 +3195,4 @@ pub trait Painter {
         glyphs: &GlyphRunTable,
         dirty: Option<&[u32]>,
     );
-}
-
-/// The two flat-array range assignments, tested here rather than through the
-/// public pushes because the case they refuse needs an array four billion rows
-/// long — about 48 GB of `GlyphQuad` — which no test can build (issue #1014).
-///
-/// The arithmetic is the whole of the fix, so testing it directly is testing
-/// the fix: both helpers are the only producer of a range in their table, and
-/// both pushes route every range they assign through one of them.
-#[cfg(test)]
-mod flat_ranges {
-    use super::{GlyphRunTable, PaintTable};
-
-    /// The tipping case from the issue: an array just under the ceiling taking
-    /// a part that carries it over. Each length converts to a `u32` on its own,
-    /// which is exactly why checking them separately let this through.
-    #[test]
-    fn a_range_whose_end_runs_past_u32_max_is_refused() {
-        let array_len = u32::MAX as usize - 999;
-        let count = 1000;
-        assert!(u32::try_from(array_len).is_ok() && u32::try_from(count).is_ok());
-
-        let paint = std::panic::catch_unwind(|| PaintTable::flat_range(array_len, count))
-            .expect_err("a paint range ending past u32::MAX must be refused");
-        let quads = std::panic::catch_unwind(|| GlyphRunTable::quad_range(array_len, count))
-            .expect_err("a quad range ending past u32::MAX must be refused");
-        for payload in [paint, quads] {
-            let message = payload
-                .downcast_ref::<String>()
-                .map(String::as_str)
-                .unwrap_or("<panic payload was not a string>")
-                .to_owned();
-            assert!(
-                message.contains("past u32::MAX"),
-                "the refusal must be the end-of-range check, not one of the two length \
-                 conversions above it; got: {message}"
-            );
-        }
-    }
-
-    /// The largest range that fits is assigned rather than refused, so the
-    /// guard bounds the range and does not merely bound the offset.
-    #[test]
-    fn a_range_ending_exactly_at_u32_max_is_assigned() {
-        let array_len = u32::MAX as usize - 1000;
-        let count = 1000;
-        assert_eq!(
-            PaintTable::flat_range(array_len, count),
-            (u32::MAX - 1000, 1000)
-        );
-        assert_eq!(
-            GlyphRunTable::quad_range(array_len, count),
-            (u32::MAX - 1000, 1000)
-        );
-    }
-
-    /// An empty part at a non-empty array keeps the offset it is given.
-    ///
-    /// `PaintTable::span` canonicalizes that case to `(0, 0)` before it reaches
-    /// `flat_range`, and `intern_fill`'s stop range deliberately does not —
-    /// which is the whole reason the two are separate functions, and what this
-    /// pins.
-    #[test]
-    fn an_empty_part_keeps_its_offset() {
-        assert_eq!(PaintTable::flat_range(7, 0), (7, 0));
-        assert_eq!(PaintTable::span(7, 0), (0, 0));
-        assert_eq!(GlyphRunTable::quad_range(7, 0), (7, 0));
-    }
 }

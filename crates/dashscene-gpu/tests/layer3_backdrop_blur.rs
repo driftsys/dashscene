@@ -956,6 +956,301 @@ fn a_refused_coverage_field_leaves_the_backdrop_untouched() {
     }
 }
 
+/// **A refused backdrop's blur row is still checked against the table that
+/// assigned it** (issue #1022).
+///
+/// The row check is a *release* panic by design: it guards a caller that packs
+/// against one `PaintTable` and renders against another, which is the mistake
+/// that produces a plausible wrong picture rather than an absent one. It opened
+/// `Renderer::resolve_backdrop` and ran for every planned backdrop, because the
+/// refusal was decided further down that same function. Issue #994 moved the
+/// refusal up to `backdrop_mask` and left the check below it, so whether a
+/// packer/renderer mismatch was named at all had become conditional on an
+/// unrelated residency outcome — named for a backdrop whose field resolved,
+/// silent for one whose field did not.
+///
+/// **The refusal is what makes this a regression test**, and it is asserted
+/// rather than assumed. The sibling case — a backdrop that draws, with the same
+/// bad row — panicked throughout, so a test over one would have passed before
+/// the fix and after it. If the JPEG ever stops being refused — a decoder linked
+/// for it, a fixture swap, a payload whose extent makes `resident_image` answer
+/// on the no-extent arm instead — this scene silently becomes that one, and the
+/// same `names blur row 0 of 0` still arrives from the drawn path. So the frame
+/// is drawn **first** against the table that holds the blur row, where it does
+/// not panic, and the refusal is checked there by consumer and by error.
+///
+/// That check is load-bearing under `should_panic` only because the attribute
+/// names its message: a failed assertion panics too, and with a different
+/// message, so `expected` is what makes a broken premise a failure rather than
+/// a pass.
+///
+/// The two tables are built by the same calls in the same order and differ in
+/// one thing: the second holds no blur rows. So every other index the frame
+/// resolves — the entry, the coverage field, the two halves' fills — still lines
+/// up, and the row is the only thing that can panic.
+#[test]
+#[should_panic(expected = "names blur row 0 of 0")]
+fn a_refused_backdrops_blur_row_is_still_checked_against_its_table() {
+    let mut images = ImageTable::new();
+    let field = images.push(ImageAsset {
+        format: ImageFormat::Jpeg,
+        bytes: JPEG_FIXTURE.to_vec(),
+    });
+
+    /// The scene, over a table that holds `blurs` — the same rects and the same
+    /// field either way.
+    fn scene(field: u32, blurs: &[Blur]) -> (PaintTable, Vec<RectEntry>) {
+        let mut paints = PaintTable::new();
+        let mut rects = halves(&mut paints);
+        let panel = paints.push_with(
+            PaintEntry::default(),
+            EntryParts {
+                blurs,
+                shape: Some(VectorField {
+                    image: field,
+                    atlas_rect: MASK_RECT,
+                    plane_bounds: [0.0, 0.0, 20.0, 32.0],
+                    distance_range: 0.5,
+                }),
+                ..EntryParts::default()
+            },
+        );
+        rects.push(rect(24.0, 8.0, 36.0, 32.0, panel));
+        (paints, rects)
+    }
+
+    let (packed, rects) = scene(field, &[backdrop(24.0)]);
+    let (rendered, _) = scene(field, &[]);
+    assert!(
+        rendered.all_blurs().is_empty(),
+        "the render-side table must hold no blur row, or the instance's row 0 is valid and \
+         nothing is being checked",
+    );
+
+    let clips = ClipTable::new();
+    let mut painter = GpuPainter::new();
+    painter.paint(
+        &rects,
+        &packed,
+        &images,
+        &clips,
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+    let mut renderer = renderer();
+
+    // The premise, proved rather than assumed, and against the table that holds
+    // the blur row so that this frame reaches the end. A backdrop whose field
+    // resolved would panic here too, from the drawn path, and this test would
+    // then be asserting nothing #1022 is about.
+    let _ = renderer
+        .render(
+            painter.instances(),
+            &packed,
+            &images,
+            &clips,
+            &GlyphRunTable::new(),
+            W,
+            H,
+        )
+        .expect("the fixture extent is within any device's maximum");
+    let refusals = renderer.refusals();
+    assert_eq!(
+        refusals.len(),
+        1,
+        "the coverage field must be refused, or this scene is the drawn case — got {refusals:?}",
+    );
+    assert_eq!(refusals[0].what, "a vector field's atlas");
+    assert_eq!(refusals[0].row, field);
+    assert_eq!(
+        refusals[0].error,
+        ResidencyError::NoDecoder {
+            format: ImageFormat::Jpeg
+        },
+        "refused for the reason this test needs — a no-extent payload never reaches a decoder and \
+         would be a different scene",
+    );
+
+    // And now the same instances against the table that holds no blur row.
+    let _ = renderer.render(
+        painter.instances(),
+        &rendered,
+        &images,
+        &clips,
+        &GlyphRunTable::new(),
+        W,
+        H,
+    );
+}
+
+/// **A degenerate coverage field draws nothing** — the painter's half of issue
+/// #1021.
+///
+/// `field_draws` rejects a field with no quad or no atlas rectangle *before*
+/// residency is asked, so the row keeps `GpuShape::default()` and both consumers
+/// read the same zero a refusal leaves: the backdrop is not drawn and the masked
+/// fill's coverage arm is gated shut. Nothing covered that, and the guard is not
+/// cosmetic — every mapping in `gpu_shape` divides by the atlas rectangle, so
+/// removing it feeds `msdf_coverage` a NaN range over a quad `clamped_quad` has
+/// grown by the antialiasing width.
+///
+/// # What this falsifies, and what it only pins
+///
+/// Both rejections are here because they are independent conditions over
+/// independent members, but they are **not equally falsifiable**, and the
+/// difference was measured rather than reasoned about:
+///
+/// - Dropping the **quad** half of `field_draws` fails this test. A field with
+///   no quad divides by nothing, keeps a finite range, and frosts a corner
+///   patch — the same shape of wrong picture issue #972 was filed for.
+/// - Dropping the **atlas-rectangle** half changes no texel either consumer
+///   draws, on this adapter. `gpu_shape` divides by the rectangle, so the row
+///   goes out with a NaN `half_uv` and an infinite `px_range`, and both arms
+///   come back at zero coverage and discard. The guard stays because that is a
+///   coincidence of how one adapter resolves a NaN sampler coordinate and not
+///   a decision the shader states — the same argument `GpuShape::resolved`
+///   makes against inferring absence from a value.
+///
+/// **The picture is not the only observable**, which is why that case is guarded
+/// here rather than merely pinned. A field that resolves makes `backdrop_mask`
+/// answer `Some`, so the backdrop is planned, `resolve_backdrop` encodes its two
+/// passes, and the frame routes through `BlurTargets::base` and blits back —
+/// three draws that a degenerate field does not pay for. `Renderer::last_draw_runs`
+/// exists for exactly this distinction and its own doc says so: a test asserting
+/// only the picture cannot tell a frame that batched from one that did not.
+///
+/// **This is not the whole of #1021.** What that issue is about is that the drop
+/// is nowhere *named* — a refused payload is recorded on `Renderer::refusals`
+/// and a degenerate one reaches no diagnostic at any seam, which is what P4
+/// forbids. Nothing is asserted about refusals here, deliberately: the seam that
+/// issue argues for is `dashscene-validator`, which already names
+/// `asset.image-no-bytes` for the sibling case and would settle both painters
+/// at once where a check in `resolve_frame` names it for this one alone.
+///
+/// The atlas is a real baked payload, so residency is not what stops it.
+#[test]
+fn a_degenerate_coverage_field_draws_nothing() {
+    // One device for both cases. `Renderer::new` is an adapter request and a
+    // device creation, the dominant cost of every test in this file, and the
+    // renderer holds no scene state the second case would inherit — each
+    // `render` call plans its own frame and the first pass on the target clears.
+    let mut renderer = renderer();
+    for (what, atlas_rect, plane_bounds) in [
+        ("no atlas rectangle", [3, 2, 0, 0], [0.0, 0.0, 20.0, 32.0]),
+        ("no quad", MASK_RECT, [0.0, 0.0, 0.0, 0.0]),
+    ] {
+        let mut images = ImageTable::new();
+        let atlas = images.push_baked(mask_field(), MASK_ATLAS, MASK_ATLAS);
+
+        let mut paints = PaintTable::new();
+        let mut rects = halves(&mut paints);
+        // The geometry of `a_masked_backdrop_follows_the_fields_outline_rather_than_its_box`
+        // with one member made degenerate — **and a fill that test deliberately
+        // has not got**. `frosted` says why it omits one: a panel's own colour
+        // would sit over the frosted region and every probe there would read it
+        // instead of the blur. This test has no probe to protect, and the fill
+        // is what puts **both consumers of the flag in one node**, where the
+        // refusal tests beside it take them a file apart: the masked fill is the
+        // arm `paint.wgsl` gates and the backdrop is the one `backdrop_mask`
+        // filters, and a degenerate field has to be empty on both.
+        //
+        // So the picture this would draw with the guard removed is not that
+        // test's: the fill shades the field's plane quad green at half coverage
+        // as well, over whatever frost the backdrop leaves.
+        let green = paints.intern_fill(&dashpaint::FillSpec::Solid {
+            color: rgba(0.0, 1.0, 0.0, 1.0),
+        });
+        let panel = paints.push_with(
+            PaintEntry {
+                fill: green,
+                ..PaintEntry::default()
+            },
+            EntryParts {
+                blurs: &[backdrop(24.0)],
+                shape: Some(VectorField {
+                    image: atlas,
+                    atlas_rect,
+                    plane_bounds,
+                    distance_range: 0.5,
+                }),
+                ..EntryParts::default()
+            },
+        );
+        rects.push(rect(24.0, 8.0, 36.0, 32.0, panel));
+
+        let clips = ClipTable::new();
+        let mut painter = GpuPainter::new();
+        painter.paint(
+            &rects,
+            &paints,
+            &images,
+            &clips,
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        let pixels = renderer
+            .render(
+                painter.instances(),
+                &paints,
+                &images,
+                &clips,
+                &GlyphRunTable::new(),
+                W,
+                H,
+            )
+            .expect("the fixture extent is within any device's maximum");
+
+        // The premise, proved rather than stated: the atlas is a real baked
+        // payload, so this scene is about degeneracy and not about a refusal
+        // wearing its clothes. Every sibling in this file proves its own the
+        // same way, and this is the negative form of it. It asserts nothing
+        // about the *diagnostic* issue #1021 asks for — only that residency is
+        // not what stopped the field.
+        assert!(
+            renderer.refusals().is_empty(),
+            "the field's atlas must be resident, or this measures a refusal and not a field with \
+             {what} — got {:?}",
+            renderer.refusals(),
+        );
+        // And the draw count, which is what makes the atlas-rectangle case
+        // falsifiable where its picture cannot be. A field that resolved would
+        // plan the backdrop: two passes for the blur and one blit to put the
+        // base back, against the single instance run this frame encodes.
+        //
+        // Two, not one: `composite::plan` breaks the pass at the backdrop
+        // instance whether or not it draws, so the frame is one instance run
+        // either side of it. What a resolved field adds on top is the blur's two
+        // passes and the base blit.
+        assert_eq!(
+            renderer.last_draw_runs(),
+            2,
+            "a field with {what} must leave the frame at the two instance runs the backdrop's own \
+             pass break makes — a resolved one adds two blur passes and a base blit, and no texel \
+             of this fixture can show them",
+        );
+
+        // The whole canvas rather than a probe, for the reason the refusal tests
+        // give: a NaN coordinate can land anywhere, so a check at one point
+        // could miss what it drew.
+        for y in 0..H {
+            for x in 0..W {
+                let untouched = if x < SEAM {
+                    [255, 0, 0, 255]
+                } else {
+                    [0, 0, 255, 255]
+                };
+                assert_eq!(
+                    texel(&pixels, x, y),
+                    untouched,
+                    "a field with {what} drew at ({x}, {y})"
+                );
+            }
+        }
+    }
+}
+
 /// **A frame whose only backdrop is refused allocates nothing** (issue #994).
 ///
 /// The refusal used to be decided inside `Renderer::resolve_backdrop`, which

@@ -1159,72 +1159,8 @@ fn draw_vector_field(
 /// disagree about where the shape is or how sharp its edge resolves.
 ///
 /// The padded field quad (`plane_bounds`) maps to device space at unit scale,
-/// origin at the node box top-left. `None` for a field that draws nothing,
-/// which is two separate answers taken in order.
-///
-/// # The lean painter's predicate first (issue #1000)
-///
-/// `dashscene-gpu`'s `field_draws` — `right > left && bottom > top &&
-/// atlas_rect[2] > 0 && atlas_rect[3] > 0` — decides before residency whether a
-/// field draws at all, because every mapping in its `gpu_shape` divides by the
-/// atlas rectangle. A zero atlas extent is a **legal** state rather than an
-/// out-of-domain one, which is why `PaintTable::push_with` does not refuse it
-/// (`docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md`), and it
-/// is restated here so the reference painter takes the same answer.
-///
-/// Restated rather than shared: `dashscene-skia` does not depend on
-/// `dashscene-gpu`, and boundary B carries the rows rather than the predicate
-/// over them.
-///
-/// Without it this function returned `Some` for such a field and `sx` became an
-/// infinity. On the masked-fill path that resolved to zero coverage and drew
-/// nothing anyway, so the two painters agreed by accident. On the
-/// **backdrop-blur** path they did not: `draw_backdrop_blur_field` clips to the
-/// coverage shader and opens a backdrop layer, and with an infinity in the
-/// shader's local matrix the layer composited over the backdrop and **erased
-/// it** — the reference painter destroying content the lean painter leaves
-/// untouched. Measured on a bar-under-frosted-node scene at 8×8: 32 of 64
-/// pixels, the whole bar, from opaque white to transparent.
-///
-/// **What this predicate does not reject is an infinite `plane_bounds`.**
-/// `inf > left` is true, so `field_draws` admits it and so does this; both
-/// painters then compute an infinite `px_range` from it and neither refuses it
-/// at any seam. That is issue #1034, and closing it belongs in `field_draws`
-/// and the seam rather than in one painter.
-///
-/// # Then this painter's own device quad
-///
-/// `dest` is the plane bounds offset by the node origin, and the predicate
-/// above cannot see it: with a large `rect.x` a positive `right - left` can
-/// cancel to a zero-width device quad, which would divide by zero here alone.
-/// `dashscene-gpu` has no such case — it hands `plane_bounds` to the shader and
-/// derives its scale from `right - left` directly — so this second guard is
-/// this painter's and not a restatement of anything.
-///
-/// # Which half of the shared predicate decides, and which is restatement
-///
-/// **The two `atlas_rect` terms decide; the two `plane_bounds` terms do not.**
-/// Measured by deleting each term in turn and running this crate's suite:
-/// deleting either atlas term fails one test —
-/// `a_coverage_mask_with_no_area_draws_nothing_through_the_backdrop` — and
-/// deleting `right > left`, `bottom > top`, or both together fails nothing.
-///
-/// No fixture can isolate **the two `plane_bounds` terms**, and the reason is a
-/// one-way implication rather than an equivalence. Adding the node origin to
-/// both ends of an interval cannot make a non-positive width positive, so
-/// wherever `right > left` is false the guard below is also true and refuses the
-/// field on its own. The converse does not hold, and that is what the guard
-/// below exists for: a large `rect.x` can collapse a positive `right - left` to
-/// a zero-width device quad, which this predicate accepts and the guard refuses.
-///
-/// So neither check is redundant, and the measurement says something narrower
-/// than that they are: **on the fixtures this crate can build**, every plane
-/// case is refused twice over, so no test tells which refusal ran.
-///
-/// The plane terms are written anyway, because the predicate's job here is to
-/// *be* `field_draws`. A reader holding the two painters side by side sees one
-/// expression rather than two that happen to agree, and issue #1034 — which has
-/// to change both — changes one shape in two files.
+/// origin at the node box top-left. `None` for a degenerate quad (no area),
+/// which draws nothing rather than dividing by zero.
 fn field_coverage(
     rect: &RectEntry,
     field: &VectorField,
@@ -1232,30 +1168,8 @@ fn field_coverage(
     effect: &RuntimeEffect,
 ) -> Option<(Rect, Shader)> {
     let [left, top, right, bottom] = field.plane_bounds;
-    if !(right > left && bottom > top && field.atlas_rect[2] > 0 && field.atlas_rect[3] > 0) {
-        return None;
-    }
     let dest = Rect::from_ltrb(rect.x + left, rect.y + top, rect.x + right, rect.y + bottom);
-    // Spelled as a negated positive rather than `<= 0.0`, so a NaN is refused
-    // rather than admitted — `NaN <= 0.0` is false and waved the quad through.
-    // The plane bounds reaching here are finite, because the predicate above
-    // rejected every NaN among them, but `dest` adds the **node origin** and
-    // nothing refuses a non-finite one: `check_rect_extent` covers a rect's `w`
-    // and `h` and not its `x` and `y`, and it belongs to `validate_scene`, which
-    // has no production caller. A NaN origin — or one large enough that both
-    // ends overflow to an infinity, whose difference is a NaN — reaches this
-    // line with a NaN width. Issue #1048 is the upstream half.
-    //
-    // **This changes no picture, and the claim is narrower than it looks.**
-    // Measured with the admitting spelling: a NaN device quad reaches the
-    // resolve shader and Skia draws nothing regardless, on the masked fill and
-    // the backdrop blur alike. So it is not the erasure issue #1000 closed —
-    // that needed a *finite* quad and an infinite scale. What this spelling buys
-    // is that "a degenerate quad draws nothing", which this function's contract
-    // states, is decided here rather than resting on Skia's undocumented
-    // handling of a NaN rectangle. It is the idiom `PaintTable::push_with` uses
-    // two seams away, for the same reason.
-    if !(dest.width() > 0.0 && dest.height() > 0.0) {
+    if dest.width() <= 0.0 || dest.height() <= 0.0 {
         return None;
     }
 

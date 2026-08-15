@@ -124,7 +124,14 @@ struct Image {
     size: vec2f,
     scale_mode: u32,
     tile_scale: f32,
-    _pad: vec2u,
+    // Non-zero when the members above describe a payload this frame made
+    // resident. `render::GpuImage::resolved` is where that is derived and what
+    // it is for; the short version is the one `Shape::resolved` gives — a zeroed
+    // row is not a payload, and until issue #1023 the only thing emptying a
+    // refused fill's picture was `image_colour`'s `size` guard, which is written
+    // for the validator's `asset.image-no-bytes` case and not for this one.
+    resolved: u32,
+    _pad: u32,
 }
 
 // `ScaleMode`, mapped on the Rust side by an exhaustive match for the reason
@@ -490,6 +497,21 @@ fn image_colour(fill: Image, bounds: vec4f, p: vec2f) -> vec4f {
     // false against everything, so the guard would pass it straight through to
     // the sampler with non-finite coordinates. Refused here instead, where
     // "no bytes" and "draws nothing" agree.
+    //
+    // **Unreachable from `fs_main` since issue #1023, and kept deliberately.**
+    // `resolve_frame` writes an `Image` row only where residency succeeded, and
+    // `resident_image` answers `None` for a payload with no extent — so a 0 x 0
+    // row is always an *unwritten* row, and the `KIND_FILL_IMAGE` arm's
+    // `Image::resolved` gate now stops it one call earlier. The no-bytes payload
+    // named above therefore no longer arrives here either; it is the same row
+    // the gate turns away.
+    //
+    // It stays because it is this function's own precondition rather than that
+    // arm's: every branch below divides by `fill.size`, and a second caller —
+    // or a `resolve_frame` that ever filled a row from the asset before
+    // residency succeeded, which is the edit issue #1023 was filed against —
+    // would need it. Removing it would move that guarantee into the caller,
+    // where the layout assertions cannot see it.
     if fill.size.x <= 0.0 || fill.size.y <= 0.0 {
         return vec4f(0.0);
     }
@@ -858,10 +880,57 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
         // own free-path alpha is on `opacity` and is already in `cover`.
         colour = in.params0;
     } else if kind == KIND_FILL_IMAGE {
-        colour = image_colour(images[row], in.bounds, in.local);
-        // A payload's own transparency, and the letterboxing Fit leaves. Both
-        // reach here as a zero alpha, and discarding keeps an image fill from
-        // writing transparent black over what it was composited onto.
+        let fill = images[row];
+        // A payload this frame did not make resident draws nothing, and this is
+        // what says so (issue #1023). The same gate the two MSDF arms above
+        // carry, on the third table residency resolves.
+        //
+        // It replaces a coincidence rather than adding a second guard: a refused
+        // row is zeroed, so `image_colour`'s `size.x <= 0.0` arm answered
+        // transparent black and the `discard` below took the fragment. That
+        // guard is `asset.image-no-bytes`'s — a payload whose binding supplied
+        // no bytes, stored at 0 x 0 rather than refused — and a real payload
+        // cannot be told from a refused one by a value a real payload could
+        // take. This gate now turns both rows away before that guard, which is
+        // therefore unreachable from here; see it for why it stays.
+        //
+        // **The call is inside the gate, not behind a `discard` above it.** Both
+        // forms draw the same picture — a discarded fragment writes nothing
+        // whatever `colour` becomes — so this is not a correctness argument, and
+        // it is worth saying so rather than inventing one. Two other things make
+        // it the right form:
+        //
+        // 1. It is what makes the gate falsifiable. Emptying this branch drops
+        //    the `image_colour` call with it, so
+        //    `the_image_arm_gates_on_the_row_the_frame_resolved` counts one gate
+        //    against no calls and fails. A gate whose body could be emptied
+        //    while the call stayed outside it passes every count that test can
+        //    make, with the gate inert — and deleting the gate changes no
+        //    rendered texel, measured, so no other test fails either.
+        // 2. It does not pay for a texture sample on a fragment that will be
+        //    discarded. `discard` does not end the invocation: WGSL demotes it
+        //    to a helper and control flow continues past the statement, and naga
+        //    lowers it to `metal::discard_fragment()` on MSL, where the same is
+        //    true. So a `discard` above the call would still run the call.
+        //
+        // The two MSDF arms have the same shape, and it is what lets them share
+        // one instrument: each leaves its coverage at zero rather than
+        // discarding beside the sample.
+        //
+        // `colour` is `vec4f(0.0)` until an arm writes it, so a refused row
+        // reaches the alpha check below unchanged.
+        if fill.resolved != 0u {
+            colour = image_colour(fill, in.bounds, in.local);
+        }
+        // A payload's own transparency, the letterboxing Fit leaves, and a row
+        // the gate above left untouched. All three reach here as a zero alpha.
+        //
+        // **A saving rather than a correctness guard**, and the comment here said
+        // otherwise until issue #1023's review. This pipeline blends
+        // `PREMULTIPLIED_ALPHA_BLENDING` — `dst' = src + dst * (1 - src.a)` — so
+        // a premultiplied `vec4f(0.0)` is the identity and the target is
+        // untouched with or without this. What it buys is the blend and the
+        // write, per fragment, over every letterboxed texel a Fit fill leaves.
         if colour.a <= 0.0 {
             discard;
         }

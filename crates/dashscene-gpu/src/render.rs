@@ -168,7 +168,35 @@ struct GpuImage {
     size: [f32; 2],
     scale_mode: u32,
     tile_scale: f32,
-    _pad: [u32; 2],
+    /// Non-zero when the members above describe a payload this frame actually
+    /// made resident (issue #1023).
+    ///
+    /// The third flag of the three tables residency resolves, arriving after
+    /// [`GpuShape::resolved`] (issue #972) and [`GpuGlyphRun::resolved`]
+    /// (issue #993) and read the same way. A refused image fill leaves this row
+    /// at [`Default`], and until this existed what emptied its picture was
+    /// `image_colour` returning transparent black on `size.x <= 0.0` — a guard
+    /// written for a *different* case, `dashscene-validator`'s
+    /// `asset.image-no-bytes`, where boundary B stores a payload whose binding
+    /// supplied no bytes at 0 x 0 rather than refusing it.
+    ///
+    /// The two coincide only because [`Renderer::resolve_frame`] writes the row
+    /// on the success path alone. The asset's extent is in hand two lines from
+    /// the refusal, so an edit that filled the row before residency succeeded
+    /// would give a refused fill a real `size`, a fully shaded box, and whatever
+    /// texels the bound atlas happened to hold at the default `uv`. Stated
+    /// rather than inferred, for the reason [`GpuShape::resolved`] gives against
+    /// its own: inferring absence from a value a real payload could take is how
+    /// a sentinel goes wrong.
+    ///
+    /// One consequence, stated because it is easy to read the other way: the
+    /// `size` guard is now **unreachable** from the fragment stage rather than
+    /// covering a case this flag does not. A 0 x 0 row is always an unwritten
+    /// row — `resident_image` answers `None` for a payload with no extent — so
+    /// the gate turns the no-bytes payload away too. `paint.wgsl` says why the
+    /// guard stays.
+    resolved: u32,
+    _pad: u32,
 }
 
 /// The value [`GpuImage::scale_mode`] carries.
@@ -1766,7 +1794,7 @@ impl Renderer {
         let mut planned_backdrops: Vec<Option<PlannedBackdrop>> = Vec::new();
         for index in plan.iter().filter_map(|pass| pass.backdrop) {
             let instance = &buffer.instances()[index as usize];
-            let Some(mask) = backdrop_mask(instance, &resolved) else {
+            let Some((radius, mask)) = planned_backdrop(instance, index, paints, &resolved) else {
                 planned_backdrops.push(None);
                 continue;
             };
@@ -1781,6 +1809,7 @@ impl Renderer {
             planned_backdrops.push(Some(PlannedBackdrop {
                 instance: index,
                 slot: backdrop_masks.len(),
+                radius,
                 mask,
             }));
             backdrop_masks.push((atlas, view));
@@ -1880,7 +1909,6 @@ impl Renderer {
                         &mut encoder,
                         backdrop,
                         buffer,
-                        paints,
                         texture,
                         target,
                         width,
@@ -2026,25 +2054,39 @@ impl Renderer {
     /// the one #972 was filed for, measured. A baked-vector node's silhouette
     /// *is* its field, so with no field there is no region to frost.
     ///
+    /// # Where the packer-contract checks went
+    ///
+    /// This function used to open with them — that the named instance is a
+    /// backdrop, and that its row is a row of the blur table it names. They now
+    /// run in [`backdrop_blur_radius`], above the filter that decides a backdrop
+    /// draws at all. Issue #994 put a refusal between the two and left them
+    /// covering only the backdrops that draw; issue #1022 is that, and moving
+    /// them is the fix. [`PlannedBackdrop::radius`] is what this reads instead,
+    /// already checked against the table that assigned it.
+    ///
     /// # Panics
     ///
-    /// Panics when the named instance is not a backdrop, or when its row is not
-    /// a row of the blur table it names. Both are broken contracts between the
-    /// packer and this renderer rather than frames to skip (P4).
+    /// Panics when `backdrop.instance` is not an index of `buffer`, which is a
+    /// plan built over some other buffer.
     ///
-    /// **They are checked for the backdrops that draw, and no longer for the
-    /// rest.** Until issue #994 every planned backdrop reached this function
-    /// and both checks ran above the refusal; a backdrop dropped at
-    /// [`backdrop_mask`] now reaches neither. A caller that packed against one
-    /// paint table and drew against another therefore has one fewer place the
-    /// mismatch is named — issue #1022.
+    /// Panics when [`PlannedBackdrop::slot`] is past what
+    /// [`BlurTargets::prepare`] built for this frame, on
+    /// [`BlurTargets::pass`]'s slice bound. That is the guard on the defect
+    /// issue #994 was: a slot counted separately from the filter that decides a
+    /// backdrop draws made every backdrop behind a refused one draw through the
+    /// previous one's mask, and `a_refused_backdrop_does_not_renumber_the_one_behind_it`
+    /// reaches this bound rather than a wrong picture.
+    ///
+    /// Panics in debug when the mask passed in disagrees with the instance's own
+    /// [`Instance::shape`] — a masked instance drawn unmasked frosts its whole
+    /// box rather than its outline, and an unmasked one drawn masked samples a
+    /// field it never named.
     #[allow(clippy::too_many_arguments)]
     fn resolve_backdrop(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         backdrop: PlannedBackdrop,
         buffer: &InstanceBuffer,
-        paints: &PaintTable,
         target: &wgpu::Texture,
         view: &wgpu::TextureView,
         width: u32,
@@ -2053,29 +2095,13 @@ impl Renderer {
         let PlannedBackdrop {
             instance: index,
             slot,
+            radius,
             mask,
         } = backdrop;
         let instance = &buffer.instances()[index as usize];
-        debug_assert_eq!(
-            instance.kind,
-            InstanceKind::Backdrop.as_u32(),
-            "the planner named instance {index} a backdrop and it is a {}",
-            InstanceKind::from_u32(instance.kind).name(),
-        );
-        let blur = paints
-            .all_blurs()
-            .get(instance.row as usize)
-            .unwrap_or_else(|| {
-                panic!(
-                    "backdrop instance {index} names blur row {} of {}: a row is valid only in the \
-                 table that assigned it",
-                    instance.row,
-                    paints.all_blurs().len(),
-                )
-            });
         // The one mapping, applied where every other blur in this painter
         // applies it. `pack::frosts` is what guarantees it is positive here.
-        let sigma = crate::pack::blur_sigma(blur.radius);
+        let sigma = crate::pack::blur_sigma(radius);
         let support = (BLUR_SUPPORT_SIGMAS * sigma).ceil();
         let size = [width as f32, height as f32];
 
@@ -2379,7 +2405,12 @@ impl Renderer {
                     size: [asset.width as f32, asset.height as f32],
                     scale_mode: scale_mode(fill.scale_mode),
                     tile_scale: fill.tile_scale,
-                    _pad: [0; 2],
+                    // Written on this path and on no other, which is the same
+                    // property `gpu_shape` and `gpu_glyph_run` state: reaching
+                    // here *is* having made the payload resident. Every other
+                    // row keeps `GpuImage::default()`'s zero.
+                    resolved: 1,
+                    _pad: 0,
                 };
             } else if instance.kind == InstanceKind::Text.as_u32() {
                 let row = instance.row as usize;
@@ -2447,6 +2478,18 @@ impl Renderer {
                 .zip(&out.runs)
                 .all(|(atlas, run)| atlas.is_some() == (run.resolved != 0)),
             "a glyph-run row is resolved exactly when its atlas landed in one",
+        );
+        // And the third table, which since issue #1023 carries the flag the
+        // other two do. Its arm has two ways out — the memo that skips a row
+        // already resolved, and `resident_image` answering `None` for a payload
+        // with no extent or a refused one — and only the first leaves the row
+        // written.
+        debug_assert!(
+            out.atlas_of_image
+                .iter()
+                .zip(&out.images)
+                .all(|(atlas, image)| atlas.is_some() == (image.resolved != 0)),
+            "an image-fill row is resolved exactly when its payload landed in an atlas",
         );
         out
     }
@@ -2729,9 +2772,105 @@ struct PlannedBackdrop {
     /// assigning this where the list it indexes is built is what keeps them
     /// from being counted twice.
     slot: usize,
+    /// The authored blur radius from the row this backdrop names, already
+    /// checked against the table that assigned it by [`backdrop_blur_radius`].
+    ///
+    /// The radius rather than the sigma, so that the one mapping between them
+    /// still happens where every other blur in this painter applies it —
+    /// [`Renderer::resolve_backdrop`], which reads this.
+    radius: f32,
     /// The field the blur is confined to, or `None` for a backdrop over the
     /// node's parametric rounded box.
     mask: Option<GpuShape>,
+}
+
+/// What one planned backdrop draws with — its blur radius and its coverage mask
+/// — or `None` for one that draws nothing.
+///
+/// # Why this is one function and not two calls
+///
+/// Because the order of the two steps is the whole of issue #1022:
+/// [`backdrop_blur_radius`] must run for **every** planned backdrop, and
+/// [`backdrop_mask`] decides that some of them draw nothing, so the check has to
+/// be above the filter. Written as two statements in `draw`'s loop the radius
+/// binding was consumed only after the filter, and sinking a binding to its one
+/// use is the most ordinary refactor there is — clippy would not object, and
+/// doing it restores #1022 exactly.
+///
+/// So there is no binding here either. The two calls are the operands of one
+/// tuple expression, which Rust evaluates left to right, and the `?` is on the
+/// second — there is nothing to move without rewriting the expression.
+///
+/// **That is a smaller guarantee than the entry list one screen down**, where
+/// taking an entry and advancing past it are literally one operation. Reordering
+/// the two operands here is still an edit someone could make, and what would
+/// catch it is `a_refused_backdrops_blur_row_is_still_checked_against_its_table`
+/// rather than the shape. This narrows the opening; the test is the guard.
+fn planned_backdrop(
+    instance: &Instance,
+    index: u32,
+    paints: &PaintTable,
+    resolved: &Resolved,
+) -> Option<(f32, Option<GpuShape>)> {
+    // The check first, and the filter second, because a backdrop that draws
+    // nothing is exactly as capable of naming a row of the wrong table as one
+    // that draws — so a residency outcome must not decide whether the mismatch
+    // is named.
+    Some((
+        backdrop_blur_radius(instance, index, paints),
+        backdrop_mask(instance, resolved)?,
+    ))
+}
+
+/// The authored radius of the blur row a planned backdrop names, checked
+/// against the table that assigned it.
+///
+/// The radius rather than the row, because the radius is the whole of what a
+/// caller wants: [`Renderer::resolve_backdrop`] reads nothing else off a
+/// [`dashpaint::Blur`], and handing back the row would advertise a `kind` that
+/// no caller has and tie the return to `paints`'s lifetime for nothing.
+///
+/// # Panics
+///
+/// Panics when `instance.row` is not a row of `paints.all_blurs()` — in release
+/// too, deliberately. It is a broken contract between the packer and this
+/// renderer rather than a frame to skip (P4), and the mistake it guards, a
+/// caller packing against one [`PaintTable`] and drawing against another,
+/// produces a plausible wrong picture rather than an absent one.
+///
+/// Panics in debug when the named instance is not a backdrop. A debug assertion
+/// rather than a release one because that plan is built inside this crate,
+/// where the blur table crosses boundary B.
+///
+/// # Why the checks are here rather than where the blur is resolved
+///
+/// They were [`Renderer::resolve_backdrop`]'s opening, and ran for every planned
+/// backdrop because the refusal was decided further down that same function.
+/// Issue #994 moved the refusal up to [`backdrop_mask`], and a backdrop that
+/// draws nothing then reached neither check — so whether a packer/renderer
+/// mismatch was named at all had become conditional on an unrelated residency
+/// outcome, which is issue #1022. [`planned_backdrop`] is what puts this back
+/// above the filter and keeps it there; [`PlannedBackdrop::radius`] then carries
+/// the validated row's value to the backdrops that draw.
+fn backdrop_blur_radius(instance: &Instance, index: u32, paints: &PaintTable) -> f32 {
+    debug_assert_eq!(
+        instance.kind,
+        InstanceKind::Backdrop.as_u32(),
+        "the planner named instance {index} a backdrop and it is a {}",
+        InstanceKind::from_u32(instance.kind).name(),
+    );
+    paints
+        .all_blurs()
+        .get(instance.row as usize)
+        .unwrap_or_else(|| {
+            panic!(
+                "backdrop instance {index} names blur row {} of {}: a row is valid only in the \
+                 table that assigned it",
+                instance.row,
+                paints.all_blurs().len(),
+            )
+        })
+        .radius
 }
 
 /// The coverage mask a backdrop instance draws through, or `None` for one that
@@ -4216,6 +4355,38 @@ const _: () = assert!(size_of::<Instance>() == 80);
 /// nothing.
 const _: () = assert!(size_of::<GpuImage>() == 64);
 
+/// And its offsets, because since issue #1023 its second-to-last word carries
+/// meaning rather than padding.
+///
+/// The size assertion above did not pin this: `resolved` was carved out of
+/// `_pad: [u32; 2]`, so the struct is 64 bytes either way and a member reordered
+/// on one side alone leaves the shader reading each word out of its neighbour's
+/// slot. [`GpuShape`]'s own block below is the same argument written first.
+///
+/// The two swaps this admits are worth naming, because neither does what a first
+/// reading suggests. A refused row is [`GpuImage::default()`] — every word zero —
+/// so a swap cannot open the gate on one:
+///
+/// - **`resolved` against `_pad`** leaves the shader reading a word `resolve_frame`
+///   writes as zero on *every* path, so the gate is permanently **closed** and no
+///   image fill in the document draws at all. Loud, and any image-fill test sees it.
+/// - **`resolved` against `tile_scale`** leaves the gate reading a word that is
+///   zero on a refused row and non-zero on a resolved one, so it keeps working by
+///   accident — and `tile_scale` then reads `1u32`'s bit pattern, 1.4e-45, which
+///   destroys every `SCALE_TILE` fill and nothing else. Quiet unless a tiling
+///   fixture is drawn, which is what makes it the one to pin.
+///
+/// The WGSL half of the same layout is pinned by
+/// `the_image_arm_gates_on_the_row_the_frame_resolved`, since these assertions
+/// constrain only this side of it.
+const _: () = assert!(std::mem::offset_of!(GpuImage, uv) == 0);
+const _: () = assert!(std::mem::offset_of!(GpuImage, transform) == 16);
+const _: () = assert!(std::mem::offset_of!(GpuImage, translate) == 32);
+const _: () = assert!(std::mem::offset_of!(GpuImage, size) == 40);
+const _: () = assert!(std::mem::offset_of!(GpuImage, scale_mode) == 48);
+const _: () = assert!(std::mem::offset_of!(GpuImage, tile_scale) == 52);
+const _: () = assert!(std::mem::offset_of!(GpuImage, resolved) == 56);
+
 /// The glyph-run rows and the coverage-mask rows, for the same reason: three
 /// 16-byte-aligned groups each, so both strides are 48 and neither type may
 /// change size without this failing.
@@ -4584,13 +4755,7 @@ mod tests {
     /// count stops guarding anything.
     #[test]
     fn both_msdf_arms_gate_on_the_row_the_frame_resolved() {
-        // WGSL line comments only; this file has no block comments and no
-        // string literals, so there is nothing else a `//` can be inside.
-        let code: String = PAINT_WGSL
-            .lines()
-            .map(|line| line.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let code = stripped_paint_wgsl();
         for carried in [
             "vec4f(field.half_uv, field.px_range, f32(field.resolved))",
             "vec4f(run.half_uv, run.px_range, f32(run.resolved))",
@@ -4617,6 +4782,143 @@ mod tests {
              its own gate and with this number updated deliberately rather than to make the \
              assertion above pass",
         );
+    }
+
+    /// The `KIND_FILL_IMAGE` arm gates its colour on the flag the row carries
+    /// (issue #1023).
+    ///
+    /// **A source assertion, because no pixel can tell the two answers apart.**
+    /// The reason is the one `both_msdf_arms_gate_on_the_row_the_frame_resolved`
+    /// gives, arriving one table over: a refused fill's row is zeroed, so its
+    /// `size` is `[0, 0]`, so `image_colour` returns transparent black and the
+    /// arm's own `discard` takes the fragment. Deleting the gate restores that
+    /// coincidence and changes no rendered texel, so
+    /// `a_jpeg_image_fill_is_refused_by_name_rather_than_panicking` would keep
+    /// passing over a picture that is right for the wrong reason.
+    ///
+    /// The coincidence is what issue #1023 is about: `resolve_frame` holds the
+    /// asset's extent two lines from the refusal, and an edit that wrote the row
+    /// from it before residency succeeded would give a refused fill a real
+    /// `size`, a fully shaded box, and whatever texels the bound atlas happened
+    /// to hold at the default `uv`.
+    ///
+    /// # What it asserts, and what defeats a weaker version
+    ///
+    /// **The gate and the call are matched as one block, not counted
+    /// separately.** Counting cannot see structure: with one gate literal and
+    /// one call in the file, emptying the branch and moving the call out from
+    /// under it leaves both counts at one, and the gate is then inert. That
+    /// mutation was run, and a count-only version of this test passed it. It
+    /// matters more than usual on this arm, because deleting the gate changes
+    /// no rendered texel — measured — so nothing else in the suite fails
+    /// either.
+    ///
+    /// **Runs of whitespace are collapsed before the block is matched**, so it
+    /// is matched across the line breaks and indentation the source has. That is
+    /// not the same as whitespace-insensitive: `fill.resolved!=0u` would not
+    /// match, and neither would a call written without spaces after its commas.
+    /// Nothing in this repository formats `.wgsl` — `just prim` covers Markdown,
+    /// JSON, YAML and TOML — so the strictness costs nothing today, and a
+    /// failure that is really a respacing reads as one from the block printed in
+    /// the message.
+    ///
+    /// **The counts stay, and they answer a different question**: gates against
+    /// `image_colour` calls, so a *second* consumer must arrive with its own
+    /// gate rather than riding on this one. The definition is subtracted, since
+    /// `fn image_colour(` matches the call spelling.
+    ///
+    /// **The row binding is matched as a whole statement**, so a gate reading
+    /// some row other than the one the arm draws fails here rather than passing
+    /// on a substring.
+    ///
+    /// **Comments are stripped first.** No comment in `paint.wgsl` contains any
+    /// matched literal today — the prose writes `image_colour` without its
+    /// parenthesis — so this is defence against a comment that later quotes one,
+    /// not against a comment that does. The sibling test strips for the same
+    /// reason and states a stronger one, and it has the structural hole this one
+    /// closes: issues #1040 and #1043.
+    #[test]
+    fn the_image_arm_gates_on_the_row_the_frame_resolved() {
+        assert_eq!(
+            GpuImage::default().resolved,
+            0,
+            "the row a refusal leaves must not claim to describe a payload — this is the default \
+             `resolve_frame` writes and never touches again",
+        );
+        let code = stripped_paint_wgsl();
+        assert!(
+            code.contains("let fill = images[row];"),
+            "the arm must bind the row it draws, so that the gate below reads that row's own flag \
+             rather than another's",
+        );
+        // Runs of whitespace collapsed to one space, so the two blocks below are
+        // matched across their line breaks and indentation. Not whitespace-
+        // insensitive: `!=0u` would not match, and neither would a call written
+        // without spaces after its commas.
+        let flat = code.split_whitespace().collect::<Vec<_>>().join(" ");
+        // **The WGSL half of the layout**, which the `offset_of!` block at the
+        // foot of this file cannot reach: it constrains the Rust struct, and a
+        // member reordered here alone keeps every one of those assertions true.
+        // The block itself names what each swap actually does — the quiet one is
+        // `resolved` against `tile_scale`, which leaves the gate working by
+        // accident and destroys every `SCALE_TILE` fill, and no fixture in this
+        // crate tiles.
+        //
+        // `Shape` and `GlyphRun` have the same exposure and no such assertion,
+        // and theirs is worse: a swap there restores the half-coverage defect
+        // #972 and #993 removed, across the whole frame. Issue #1049.
+        let declared = "struct Image { uv: vec4f, transform: vec4f, translate: vec2f, \
+                        size: vec2f, scale_mode: u32, tile_scale: f32, resolved: u32, _pad: u32, }";
+        assert!(
+            flat.contains(declared),
+            "paint.wgsl's `Image` must declare exactly \n\n    {declared}\n\nwhich is `GpuImage`'s \
+             own order. The Rust `offset_of!` assertions pin one side of that and nothing else \
+             pins the other",
+        );
+        let guarded =
+            "if fill.resolved != 0u { colour = image_colour(fill, in.bounds, in.local); }";
+        assert!(
+            flat.contains(guarded),
+            "the `image_colour` call must sit **inside** the resolved gate, as \n\n    {guarded}\n\n\
+             A gate that discards above the call instead is two things this does not accept: its \
+             body can be emptied while the call stays, which every count below still agrees with; \
+             and `discard` does not end the invocation — WGSL demotes it to a helper and control \
+             flow continues past the statement, which naga lowers to `metal::discard_fragment()` \
+             on MSL, where the same is true — so the call would still run",
+        );
+        let gates = code.matches("fill.resolved != 0u").count();
+        let coloured =
+            code.matches("image_colour(").count() - code.matches("fn image_colour(").count();
+        assert_eq!(
+            gates, coloured,
+            "every `image_colour` call in paint.wgsl must sit **inside** the resolved gate — \
+             {gates} gates against {coloured} calls. A call outside one shades a refused payload's \
+             box in full, and no zeroed `size` makes that a mechanism rather than a coincidence",
+        );
+        assert_eq!(
+            coloured, 1,
+            "the `KIND_FILL_IMAGE` arm is the one image consumer this file has — found \
+             {coloured}. A second is fine and this test admits it, but it must arrive with its \
+             own gate and with this number updated deliberately rather than to make the \
+             assertion above pass",
+        );
+    }
+
+    /// `paint.wgsl` with its comments removed, for the two tests that assert
+    /// over its source.
+    ///
+    /// One helper rather than the same four lines twice, so the assumption that
+    /// makes the strip sound is stated once: **WGSL line comments only.** This
+    /// file has no block comments and no string literals, so there is nothing
+    /// else a `//` can be inside. A `/* */` introduced into it would defeat this
+    /// silently, and the copy that carried none of this reasoning is how that
+    /// would have gone unnoticed.
+    fn stripped_paint_wgsl() -> String {
+        PAINT_WGSL
+            .lines()
+            .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn colour(r: f32, g: f32, b: f32, a: f32) -> Color {

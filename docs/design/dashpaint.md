@@ -217,11 +217,9 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   equal. It **also refuses** a `parts.shape` whose `distance_range` is not
   finite and greater than zero (issue #986) — the coverage-mask copy of the
   operand `Atlas::new` refuses for glyphs, and this is the seam because the
-  `shapes` array is private and `push` refuses an entry naming a shape. **Every
-  refusal runs before the first of the five arrays is extended** (issue #1012),
-  so a caught unwind leaves the table as it was — which is a property of the
-  method and not of a commit, since the production caller interns the entry's
-  fills into the same table before calling in.
+  `shapes` array is private and `push` refuses an entry naming a shape. Only
+  that check runs before the five arrays are extended; the method is not atomic
+  on its other panics (issue #1012).
 - `PaintTable::intern_fill(&FillSpec) -> PaintKind` — the only way a fill enters
   the table. Unlike `push_with`, which copies an entry's parts in without dedup,
   this **deduplicates**: a shadow list belongs to one entry and has no identity
