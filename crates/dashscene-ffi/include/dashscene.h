@@ -262,6 +262,16 @@ DsStatus ds_runtime_resize(DsRuntime *runtime, uint32_t width, uint32_t height);
 /*
  * Advances the scene by dt seconds. out_advanced, if non-NULL, receives whether
  * the generation moved — which is what says a frame is worth drawing.
+ *
+ * THIS CALL MAY TOUCH THE ATTACHED SURFACE. A commit that changed the shown
+ * root renumbers the rect table, and the tick reports that to the painter so it
+ * forgets what it uploaded. So the tick takes the same "no other call in flight
+ * on this runtime" rule the rest of this header states, rather than being a
+ * scene-only call you could make beside a draw.
+ *
+ * No load in this ABI can raise that today: a document's root is named once,
+ * inside the load, and no call changes it afterwards. The report is here so a
+ * host is already correct if that changes.
  */
 DsStatus ds_runtime_tick(DsRuntime *runtime, float dt, bool *out_advanced);
 

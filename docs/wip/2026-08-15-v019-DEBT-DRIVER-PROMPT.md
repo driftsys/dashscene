@@ -12,7 +12,7 @@
     scope   the v0.19 debt that is pickable without hardware. **#925 and
             #946 have since landed** and are struck from this list below;
             what remains is **#944**, a story wearing a `debt` label, and
-            **#922**, **#930**, **#945**.
+            **#922** and **#930**. (**#945** landed too — struck below.)
     epic    #833
 
 ## Re-derive before trusting any of this
@@ -92,16 +92,21 @@ Both are worth their own spec and plan rather than a sweep commit.
 
 ## The three smaller ones, each with a question to settle first
 
-- **#945 — the renumbering report is written twice and absent from the C ABI.**
-  **The sequencing this prompt asserted was wrong, and #925 landing proved it.**
-  It said the stale-upload defect becomes real on Android the moment #925 lands.
-  It did not: the mapped load names the shown root once, at load, and adds no
-  symbol to change it afterwards, so `renumbered` can fire only on the load's
-  own commit — which `load_into` and `load_mapped_into` both report
-  `document_replaced` after. The issue itself is amended with this. It is a
-  de-duplication, orderable freely. The shape #945 suggests is a
-  `LiveScene::renumbered_since_shown()`, so the rule has one statement rather
-  than a copy in each host — the same move story #810 made for the frame clamp.
+- **#945 — LANDED.** The gate is `LiveScene::take_renumbering`, which stamps as
+  it answers; both hosts dropped their copy and `dashscene-ffi` gained the
+  report it never had. Do not re-do it. What the prompt said before, kept
+  because the correction below is the useful part:
+
+  > **The sequencing this prompt asserted was wrong, and #925 landing proved
+  > it.** It said the stale-upload defect becomes real on Android the moment
+  > #925 lands. It did not: the mapped load names the shown root once, at load,
+  > and adds no symbol to change it afterwards, so `renumbered` can fire only on
+  > the load's own commit — which `load_into` and `load_mapped_into` both report
+  > `document_replaced` after. The issue itself is amended with this. It is a
+  > de-duplication, orderable freely. The shape #945 suggests is a
+  > `LiveScene::renumbered_since_shown()`, so the rule has one statement rather
+  > than a copy in each host — the same move story #810 made for the frame
+  > clamp.
 - **#930 — the many-root document is rebuilt on every call.** Read the saving
   before spending on it: the issue states there is **none under nextest**, which
   runs one process per test, so a `LazyLock` is never shared. The regression

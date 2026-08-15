@@ -422,7 +422,6 @@ pub fn run<A: App>(app: A) -> Result<(), DesktopError> {
         ticks: 0,
         presents: 0,
         rebinds: 0,
-        renumber_reported: None,
         parked: None,
         failure: None,
     };
@@ -466,16 +465,6 @@ struct Host<A: App> {
     /// Consecutive presenter rebinds with no successful frame between them. See
     /// [`MAX_CONSECUTIVE_REBINDS`].
     rebinds: u32,
-    /// The committed generation whose renumbering this loop has already
-    /// reported (story #838).
-    ///
-    /// `CommittedScene::renumbered` describes **one commit**, and an idle tick
-    /// commits nothing — so the flag outlives the frame that raised it.
-    /// Without this the loop would report the same renumbering on every frame
-    /// until the scene next moved, and [`Present::document_replaced`] is not a
-    /// cheap call to repeat: it drops every resident texture as well as the
-    /// uploaded instance rows.
-    renumber_reported: Option<u64>,
     parked: Option<Parked>,
     /// The first failure that stopped the loop. `ApplicationHandler`'s methods
     /// return nothing, so a failure is parked here and reported by [`run`]
@@ -614,23 +603,16 @@ impl<A: App> Host<A> {
         // (story #838). `rebuild` below reports the arena case; this reports
         // the other, and both answer the same `Present::document_replaced`.
         //
-        // Gated on the generation because `renumbered` is a property of a
-        // commit and this runs once a frame: an idle tick returns without
-        // committing, so the last commit's answer is still what
-        // `arena.committed()` gives back, and reporting it again would drop the
-        // presenter's resident textures on every frame of a settled scene.
-        //
-        // The generation is stamped only once the report has been **made**, so
-        // a renumbering that lands on a frame with no presenter — a frame
-        // between `rebind`'s release and the next bind — is still reported to
-        // the presenter that follows, rather than marked as delivered to
-        // nobody.
-        if self.renumber_reported != Some(generation)
-            && self.arena.committed().renumbered()
-            && let Some(presenter) = self.presenter.as_mut()
+        // The gate is `LiveScene`'s, not this loop's (issue #945): it was the
+        // same six lines here and in `dashscene-web`, and `dashscene-ffi` had
+        // no copy at all. `take_renumbering` carries why it is read
+        // once per commit rather than once per frame, and why the stamp is made
+        // only after the report — a renumbering landing on a frame with no
+        // presenter still reaches the one that follows.
+        if let Some(presenter) = self.presenter.as_mut()
+            && live.take_renumbering(&self.arena)
         {
             presenter.document_replaced();
-            self.renumber_reported = Some(generation);
         }
 
         let advanced = live.advanced();
@@ -839,26 +821,29 @@ impl<A: App> Host<A> {
         // description of the outgoing arena on exactly the path `demo` takes by
         // default.
         //
-        // On the `--dsb` path both do fire, because `Document::load` flips
-        // `shown_root` from `None` and that commit renumbers. The second is a
-        // no-op rather than a defect: nothing is uploaded between them, and the
-        // alternative — suppressing it by carrying `renumber_reported` across
-        // the arena swap — is what the line below deliberately refuses, because
-        // it would skip a genuine renumbering.
+        // **This is the only notification on the `--dsb` path too**, and issue
+        // #946 recorded the opposite — that both fired there and the second was
+        // a harmless no-op. It does not. `Document::load` flips `shown_root`
+        // from `None` and that commit renumbers, but `attach_live` then commits
+        // once more to seed the scene, and by that commit `previous_shown_root`
+        // already equals the arena's — so `renumbered` is **false** before this
+        // loop ever ticks. `a_renumbering_is_reported_once_and_not_on_every_later_frame`
+        // asserts exactly that as its first step.
+        //
+        // Which makes the call below load-bearing on every path rather than
+        // only on the authored-scene one, and #946's ruling that it must not be
+        // removed stronger than the argument it was made on.
         if let Some(presenter) = self.presenter.as_mut() {
             presenter.document_replaced();
         }
         self.arena = Arena::new();
-        // Generations count from the new arena, so one already reported names
-        // nothing in it — and a scene that names a shown root while it builds
-        // would otherwise have that commit's renumbering skipped by a match
-        // against the outgoing arena's numbering.
-        self.renumber_reported = None;
         let live = self.app.build(&mut self.arena, width, height);
         // Generations count from a new arena, so nothing this scene commits can
-        // be compared against what the window showed of the last one. The gate
-        // is `LiveScene`'s and a new one starts unshown, so replacing the scene
-        // clears it rather than this loop remembering to (story #810).
+        // be compared against what the window showed of the last one. **Both**
+        // gates are `LiveScene`'s and a new one starts clear — unshown, and
+        // with no renumbering reported — so replacing the scene clears them
+        // rather than this loop remembering to (story #810, issue #945). This
+        // loop cleared the renumber stamp by hand until #945 moved it.
         self.live = Some(live);
         self.attached();
     }
@@ -1082,7 +1067,6 @@ mod tests {
             ticks: 0,
             presents: 0,
             rebinds: 0,
-            renumber_reported: None,
             parked: None,
             failure: None,
         }

@@ -2,7 +2,9 @@
 
     status   accepted (2026-08-12), **as built** in story #838 (epic #833,
              slice v0.19); D4 and D6 amended 2026-08-15 by issues #980 and
-             #943 (slice v0.20)
+             #943 (slice v0.20); D3 and D6 amended 2026-08-15 by issues
+             #945 and #925, which made the report one statement and gave
+             the mapped load a third caller
     scope    `Arena::dfs_order`, `dashscene-engine`'s solve, its glyph
              staging and its #322 baseline pass, `dashlang`'s per-commit
              caches, what each painter is handed, the browser's load
@@ -87,27 +89,57 @@ It is also the more honest reading. A shown root is a property of a
 artboard is what a producer lowered. A scene built in code has no artboards to
 choose between, and its roots are as often several independent pictures the
 author wants drawn together as they are alternatives. So a document's host names
-one — both integration crates do, at the load — and an authored scene keeps what
-it always had.
+one — every host that loads a mapped document does, at the load — and an
+authored scene keeps what it always had.
 
 **D3 — a change of shown root is a renumbering event, and it is reported.**
 `CommittedScene::renumbered` says the rect indices of this commit mean something
 different from the previous commit's, every rect is dirty on such a commit, and
-the index maps are rebuilt whether or not the table's length moved. Both
-integration crates turn it into `Present::document_replaced`, which
-`dashscene-gpu` answers by forgetting what it uploaded.
+the index maps are rebuilt whether or not the table's length moved. **Every loop
+that ticks a `LiveScene`** turns it into `Present::document_replaced` /
+`SurfaceRenderer::document_replaced`, which `dashscene-gpu` answers by
+forgetting what it uploaded — the three published hosts, and `demo-android`'s
+showcase loop, which drives a renderer of its own without going through any of
+them.
 
-**Each host reports it once, against the generation it reported.** `renumbered`
-describes one commit and both loops read it once a frame, and an idle tick
-returns from `LiveScene::tick` without committing — so the flag outlives the
-frame that raised it, and a loop reading it as a level reports the same
-renumbering on every frame until the scene next moves. That is not a spare call:
+**It is reported once per commit, against the generation reported — and the rule
+has one statement.** `renumbered` describes one commit, and an idle tick returns
+from `LiveScene::tick` without committing, so the flag outlives the frame that
+raised it and a loop reading it as a **level** reports the same renumbering on
+every frame until the scene next moves. That is not a spare call:
 `Renderer::forget_uploaded` drops every resident texture along with the uploaded
 rows, and the browser loop runs a frame per `requestAnimationFrame` whether or
-not anything moved. Each host holds `renumber_reported`, stamps it only once the
-report has been **made** — so a renumbering landing on a frame with no presenter
-reaches the one that follows — and clears it when it replaces the arena, because
-generations count from the new one.
+not anything moved.
+
+**Amended at issue #945.** This originally read "each host holds
+`renumber_reported`", and that was the defect rather than the design: the same
+six lines sat in `dashscene-desktop` and `dashscene-web`, and `dashscene-ffi`
+held no copy at all while AGENTS.md lists three integration surfaces. The gate
+is now `LiveScene::take_renumbering`, the way story #810 moved the frame clamp
+and the shown-generation gate. Two properties came with the move: the stamp is
+still made only once the report **has been**, so a renumbering landing on a
+frame with no presenter stays pending for the one that follows — **while the
+scene stays idle across the gap**, which issue #1070 records as the limit it is;
+and clearing it on a rebuild stopped being a step a host must remember, because
+a rebuild makes a new `LiveScene` and the stamp starts clear with it.
+
+The call is `take_renumbering`, which stamps as it answers. A separate
+`mark_reported` would be a second call every host must remember, and forgetting
+it is precisely the level-read defect above.
+
+The arena stays a **parameter** of that call because every call site already
+holds it: a host ticks and reports in the same frame. An earlier draft justified
+it by claiming the load's `show_root` commit would need seeding at attach; that
+is wrong, and the review caught it. `attach_live` commits once more to seed the
+scene, and by that commit `previous_shown_root` already equals the arena's — so
+the load's renumbering is **already cleared** before any host ticks, on every
+host. A `tick`-recorded field would answer identically.
+
+**That is worth stating on its own, because it is not what D3 implied.** The
+tick-side report does not fire after a load anywhere. The load's own eager
+`document_replaced` is the only notification on every path, not merely on the
+authored-scene path — which makes issue #946's ruling that it must not be
+removed stronger than the argument that ruling was made on.
 
 **The painter is not the only consumer keyed on a rect index, and `dashlang` is
 the other one.** `LiveScene` holds `cached_solve` and `cached_index`, both built
@@ -231,10 +263,16 @@ new subtree back in **full** rather than pruned, because "pruned" means "what
 moved" and nothing about a root that was never shown has moved.
 
 **D6 — the host names the root in a commit of its own, rather than through the
-loader.** Both integration crates call `show_root` after `load_document_mapped`
-returns. One extra commit per load, against a signature change on three public
-loaders and every call site; the load has already committed by then, so there is
-no ordering to get wrong.
+loader.** Every host that loads a mapped document calls `show_root` after
+`load_document_mapped` returns. One extra commit per load, against a signature
+change on three public loaders and every call site; the load has already
+committed by then, so there is no ordering to get wrong.
+
+**Amended at issue #925**, which read "both integration crates" and became wrong
+when `dashscene-ffi` gained `ds_runtime_load_document_mapped`: there are three
+callers now, and none of them writes the step itself. It is
+`dashscene_core::show_appended_root`, which also carries the ordinal correction
+the amendment below records.
 
 **Amended 2026-08-15 (issue #943): that commit names the root by `NodeId`, and
 the loader is what converts.** `Txn::show_root` took the `ShownRoot` the host
@@ -335,7 +373,13 @@ second turns every assertion over it into one that cannot fail.
   here reopens it. `show_root(None)` is not a set — it is the absence of a
   choice, and it means every root.
 - **What a host should do when the shown root changes mid-scene.** The contract
-  is here and both loops honour it; no host in this repository changes the shown
-  root after the load, so nothing has exercised the transition outside the
+  is here and every host honours it; no host in this repository changes the
+  shown root after the load, so nothing has exercised the transition outside the
   tests. The first host that wants to is where the frame-pacing question gets
   asked.
+
+  Issue #945 narrowed that gap without closing it: the report is now one gate
+  every host reads rather than a copy per host, so the transition has one
+  implementation to exercise instead of three. The C ABI is the sharpest case —
+  it names the root once, inside the load, and offers no symbol to change it —
+  so the gate is correct there and unreachable, deliberately.

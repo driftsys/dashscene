@@ -1170,6 +1170,20 @@ pub struct LiveScene {
     /// it, so no host can forget to clear a `shown` that no longer means
     /// anything.
     shown: Option<u64>,
+    /// The generation whose renumbering a host has reported, through
+    /// [`LiveScene::take_renumbering`]. `None` before the first one.
+    ///
+    /// Here for the same reason `shown` is, and it arrived later for the same
+    /// reason: it was written twice, in `dashscene-desktop` and
+    /// `dashscene-web`, and the C ABI had no copy at all (issue #945).
+    ///
+    /// **Beside `shown` rather than merged with it.** A frame is marked shown
+    /// when the present call returns; a renumbering is marked reported when the
+    /// renderer has been told. They are different events, and a renumbering can
+    /// land on a frame that is never presented — which is exactly the case both
+    /// hosts' comments called out, a commit arriving while no renderer is
+    /// attached.
+    renumber_reported: Option<u64>,
 }
 
 impl LiveScene {
@@ -1311,6 +1325,62 @@ impl LiveScene {
     /// reports `false` until the next one that moves it.
     pub fn mark_shown(&mut self) {
         self.shown = Some(self.generation);
+    }
+
+    /// Whether the last commit renumbered the rect table and this loop has not
+    /// reported it yet.
+    ///
+    /// A change of shown root renumbers: the same index names a different node
+    /// on either side of it, so the dirty set does not span it and every
+    /// consumer holding per-commit state has to be told. Each host turns this
+    /// into `document_replaced`, which `dashscene-gpu` answers by forgetting
+    /// what it uploaded.
+    ///
+    /// **It has to be read once per commit, not once per frame.**
+    /// `CommittedScene::renumbered` describes one commit, and an idle tick
+    /// returns without committing — so `arena.committed()` keeps answering the
+    /// renumbering commit on every frame after it. A loop reading it as a level
+    /// re-drops every resident texture on every frame of a settled scene. That
+    /// is what the stamp prevents.
+    ///
+    /// **The stamp is made only when the report is**, which is why a host
+    /// checks its renderer before calling this. A renumbering landing on a
+    /// frame with no renderer attached is not marked as delivered to nobody —
+    /// it is still pending for the renderer that follows.
+    ///
+    /// That carries over the gap **only while the scene stays idle across it**,
+    /// and this is a real limit rather than a caveat: `renumbered` lives on the
+    /// arena's last commit, so any commit in between — one live spring is
+    /// enough — replaces it with a commit that did not renumber, and the report
+    /// is lost. Both hosts had this property before the gate moved here and
+    /// neither said so. Issue #1070 carries it, with the second sequence that loses one.
+    ///
+    /// # Why the arena is a parameter
+    ///
+    /// The renumbering is a property of the arena's last commit, and this scene
+    /// does not hold the arena. Recording it inside [`tick`](Self::tick)
+    /// instead would work equally well on every path in this workspace and is
+    /// simply not needed: the arena is already in hand at every call site,
+    /// because a host ticks and then reports in the same frame.
+    ///
+    /// This is the gate stated once for every host, the way story #810 moved
+    /// the frame clamp and [`advanced`](Self::advanced) (issue #945). A rebuild
+    /// makes a new scene over a new arena, so the stamp starts clear and no
+    /// host has to remember to clear it.
+    ///
+    /// # It stamps, which is why it takes `&mut self`
+    ///
+    /// A separate `mark_reported` would be a second call every host must
+    /// remember, and forgetting it is exactly the level-read defect above. The
+    /// renderer is therefore checked **before** this is called, so a `true`
+    /// answer is always acted on — which is what keeps the "no renderer means
+    /// no stamp" property the hosts' comments describe.
+    pub fn take_renumbering(&mut self, arena: &Arena) -> bool {
+        if self.renumber_reported == Some(self.generation) || !arena.committed().renumbered() {
+            return false;
+        }
+        self.renumber_reported = Some(self.generation);
+        true
     }
 
     /// Advance one frame: open one `Txn`, flush every dirty binding,
@@ -1837,6 +1907,7 @@ pub fn attach_live(arena: &mut Arena, mut solver: Box<dyn LayoutSolver>) -> Live
         rotation_shadow,
         generation,
         shown: None,
+        renumber_reported: None,
     }
 }
 
@@ -2171,6 +2242,7 @@ impl Scene {
             rotation_shadow: ctx.rotation_shadow,
             generation,
             shown: None,
+            renumber_reported: None,
         }
     }
 }
