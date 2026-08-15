@@ -199,23 +199,32 @@ int main(void) {
                                         NULL, 1) == DS_NULL_ARGUMENT,
         "NULL faces with a non-zero count is DS_NULL_ARGUMENT from C");
 
-  /* The three statuses this file cannot reach without writing a .dsb, pinned
-   * by value instead.
+  /* Discriminants pinned by value.
    *
    * Reaching a status from C is the stronger check and is what the tests above
-   * do wherever it is cheap. These three need a real two-root document with a
-   * corrupted payload, which is 95 lines of flatbuffer assembly in the Rust
-   * tests and does not belong here. But leaving them unchecked would leave the
-   * one gate that compares the two halves blind to exactly the mistake it
-   * exists to catch: a discriminant typed wrong in this hand-written header.
+   * do wherever it is cheap. What is left needs a real two-root document with
+   * a corrupted payload (95 lines of flatbuffer assembly in the Rust tests), a
+   * surface whose swapchain is lost, or a panic crossing the boundary — none
+   * of which belong here. Leaving those unchecked would leave the one gate
+   * that compares the two halves blind to exactly the mistake it exists to
+   * catch: a discriminant typed wrong in this hand-written header.
    *
-   * These four literals and the four in the Rust test the_abi_version_did_not_move
-   * are two independent statements of the same numbers. A header typo makes one
-   * of the pair disagree with the library, and this file is what fails. */
+   * **No count.** Three successive versions of this comment claimed a
+   * correspondence with the Rust test the_abi_version_did_not_move — "four and
+   * four", then "five and five", then a derivation that double-counted DS_MAP,
+   * which this file both reaches by call and pins below. The two cover
+   * overlapping sets on purpose and there is no number that describes them
+   * both, so stating one has only ever produced a claim to falsify. Add a pin
+   * when a variant is added; do not count them. */
+  check(DS_PANIC == 8, "DS_PANIC is 8 in the header");
   check(DS_MAP == 11, "DS_MAP is 11 in the header");
   check(DS_NO_SUCH_ROOT == 12, "DS_NO_SUCH_ROOT is 12 in the header");
   check(DS_DERIVED == 13, "DS_DERIVED is 13 in the header");
   check(DS_PAYLOAD == 14, "DS_PAYLOAD is 14 in the header");
+  /* The tail variant issue #884 added. The one most likely to be typed wrong,
+   * being the newest and the only one a host is told to branch on differently
+   * from its neighbour. */
+  check(DS_SURFACE_LOST == 15, "DS_SURFACE_LOST is 15 in the header");
 
   ds_runtime_free(runtime);
   ds_runtime_free(NULL); /* free(NULL) semantics */

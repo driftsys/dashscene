@@ -43,7 +43,15 @@ typedef enum DsStatus {
   DS_OPEN = 2,
   /* The document opened but does not pass the referential load gate. */
   DS_GATE = 3,
-  /* The surface could not be created, or the painter could not start on it. */
+  /*
+   * A surface failure that rebuilding the presenter does not fix. THREE
+   * different conditions reach it, so branch on which call returned it rather
+   * than on this value alone: ds_runtime_attach_surface could not create the
+   * surface or start the painter on it, ds_runtime_resize was refused (an
+   * extent past the device maximum, which is neither fatal nor fixed by
+   * rebuilding), and ds_runtime_draw failed for a reason that is not a lost
+   * swapchain. A lost swapchain is DS_SURFACE_LOST at the tail of this enum.
+   */
   DS_SURFACE = 4,
   /* The handle kind is not one this build supports. */
   DS_UNSUPPORTED_HANDLE = 5,
@@ -80,7 +88,19 @@ typedef enum DsStatus {
    * file is refused instead. */
   DS_DERIVED = 13,
   /* An asset the shown root draws did not hash to what its entry names. */
-  DS_PAYLOAD = 14
+  DS_PAYLOAD = 14,
+  /*
+   * The frame failed because the surface was LOST, and rebuilding the presenter
+   * is the remedy. Only ds_runtime_draw reports it.
+   *
+   * Everything else stays DS_SURFACE, whose own comment above lists what
+   * reaches it. Stated once, there: two copies of that list is how one of them
+   * goes stale.
+   *
+   * Bound your consecutive rebuilds even so. A surface lost on every frame is
+   * a device that has gone away, and the remedy keeps not working.
+   */
+  DS_SURFACE_LOST = 15
 } DsStatus;
 
 /* Which platform handle ds_runtime_attach_surface's pointers carry. */

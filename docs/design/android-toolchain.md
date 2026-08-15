@@ -112,10 +112,12 @@ painter-capable adapter there is a CPU rasteriser.
 - **Backgrounding** and **rotation** each ran the destroy handshake, and the
   thread ids in logcat show the ordering: the UI thread entered, the render
   thread detached and freed, and only then did the UI thread return. The UI
-  thread was blocked for **88-115 ms** on a release build; the first teardown of
-  a debug build took 1.15 s. Neither crashed, and re-attach built a fresh render
-  thread each time. That block is a whole runtime teardown rather than just a
-  surface drop, which is issue #872.
+  thread was blocked for **80 ms** on a release build — 27 ms on the
+  split-screen transition — and the first teardown of a debug build took 1.15 s.
+  `crates/dashscene-android/src/handshake.rs` carries the same three figures
+  beside the reporting interval they set. Neither crashed, and re-attach built a
+  fresh render thread each time. That block is a whole runtime teardown rather
+  than just a surface drop, which is issue #872.
 - **Split-screen was not exercised on this image.** It declares no multi-window,
   freeform or split-screen feature at all — `pm list features` returns none and
   `ro.build.characteristics` is `automotive` — so the third of D4's three cases
@@ -126,10 +128,25 @@ painter-capable adapter there is a CPU rasteriser.
   and it asserts on the markers `HarnessActivity` logs. Since 2026-08-15 the
   completion marker is logged only inside the `handle != 0` guard, and a third
   marker names the case where no runtime handle was obtained; a device that
-  could not be obtained is not that case, because it returns a non-zero handle
-  and is answered by `nativeIsRunning`, which the harness does not call. The
-  v0.19 driver prompt asserted the emulator could exercise all three; for this
-  AVD that is false.
+  could not be obtained is not that case, because it returns a non-zero handle.
+  **`nativeIsRunning` does not answer it either**, which this record said until
+  2026-08-15: it reports `Handshake::is_running`, true for `Starting` as well as
+  `Running`, and the render thread reports `started()` only once its attach has
+  returned — so a thread wedged inside an attach answers `true`, the same answer
+  a drawing loop gives. What does answer it is the pair of markers around the
+  attach: `attaching a WxH surface` with no `attached a WxH surface` after it.
+  The `android-splitscreen` recipe still names `nativeIsRunning` in two comments
+  and belongs to issue #1006. The v0.19 driver prompt asserted the emulator
+  could exercise all three cases; for this AVD that is false.
+
+  **The measurement that explains it, taken 2026-08-15 (issue #960).** The
+  attach never returned because the build was unoptimized, not because the
+  emulator cannot run this path. Cold launch to first frame, same emulator:
+  **0.74 s for a release build**, and **over 218 s for a debug one**, abandoned
+  before it completed. `just android` builds debug and `android-splitscreen`
+  packages what it built, so every run of that recipe has used the slow build.
+  With a release library the split-screen case passes end to end and the
+  handshake completes in **27 ms**.
 
 A static document draws once and then stops, which is the idle skip working: the
 generation does not advance, so no frame is worth drawing. Nothing about frame

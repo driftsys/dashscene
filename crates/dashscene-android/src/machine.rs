@@ -37,6 +37,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::frames::{Frames, Step};
+use crate::handshake::Handshake;
 use crate::log;
 
 /// Packs a physical-pixel extent into one word, so it is published and read
@@ -102,6 +103,15 @@ pub(crate) struct LoopState {
     /// Consecutive surface rebuilds with no frame between them. See
     /// [`MAX_CONSECUTIVE_REBUILDS`].
     rebuilds: u32,
+    /// Read before a rebuild's re-attach, which is the **second** place this
+    /// crate acquires a device and the one no earlier version guarded.
+    ///
+    /// The first is `loop_::render_thread`, before this state exists. That one
+    /// cannot move here for that reason and is the single decision in this
+    /// crate that binds no NDK symbol and still sits behind the platform
+    /// `cfg`; this one can, so it does, and the test below is what a
+    /// compile-only gate cannot give it.
+    handshake: Arc<Handshake>,
 }
 
 impl LoopState {
@@ -114,6 +124,7 @@ impl LoopState {
         window: usize,
         extent: Arc<AtomicU64>,
         configured: (u32, u32),
+        handshake: Arc<Handshake>,
     ) -> Self {
         Self {
             frames,
@@ -127,6 +138,7 @@ impl LoopState {
             vsyncs: 0,
             frames_run: 0,
             rebuilds: 0,
+            handshake,
         }
     }
 
@@ -254,9 +266,31 @@ impl LoopState {
                     return Action::Stop;
                 }
 
+                // **Asked before the re-attach, not after it** — the same rule
+                // the count above follows, and the same one
+                // `loop_::render_thread` follows before the first attach. A
+                // re-attach acquires a fresh adapter, device and pipeline set:
+                // 0.74 s for a release build on an emulator and over 218 s for
+                // a debug one (issue #960). `surfaceDestroyed` is parked in
+                // `request_teardown` for the whole of it, and a surface that
+                // has already been asked to go away has no use for a device.
+                if self.handshake.teardown_requested() {
+                    log("teardown was requested — not rebuilding the lost surface");
+                    self.running = false;
+                    return Action::Stop;
+                }
+
                 log("the surface was lost — rebuilding");
                 self.frames.detach();
                 let (width, height) = self.configured;
+                // **The same marker the first attach writes**, and it belongs
+                // here for the same reason: an acquisition in flight and one
+                // that never started are otherwise the same picture in logcat
+                // — no line either way. Without it the rule the harness's own
+                // comment states ("`attaching` with no `attached` after it is a
+                // wedged acquisition") would be false on this path, which is
+                // the path a lost surface takes.
+                log(&format!("attaching a {width}x{height} surface"));
                 // SAFETY: the window outlives the loop — the destroy handshake
                 // is what makes that true — so it is as live now as it was at
                 // attach.
@@ -265,6 +299,11 @@ impl LoopState {
                         .attach(self.window as *mut c_void, width, height)
                 } {
                     Ok(()) => {
+                        // The other half of the marker pair. Without it the
+                        // successful rebuild would leave an `attaching` line
+                        // with nothing after it, which is exactly the shape a
+                        // wedge is read by.
+                        log(&format!("attached a {width}x{height} surface"));
                         // The new device has drawn nothing and the scene has not
                         // changed, so the generation cannot ask for this frame.
                         self.forced = true;
@@ -383,17 +422,41 @@ mod tests {
         attaches: Vec<Result<(), AttachError>>,
         accept_resize: bool,
     ) -> (LoopState, Arc<AtomicU64>, Rc<RefCell<Recording>>) {
+        let (state, extent, recording, _) =
+            scripted_with_handshake(outcomes, attaches, accept_resize);
+        (state, extent, recording)
+    }
+
+    /// [`scripted`] with the handshake handed back, for the tests that need to
+    /// ask for a teardown mid-run.
+    fn scripted_with_handshake(
+        outcomes: Vec<Step>,
+        attaches: Vec<Result<(), AttachError>>,
+        accept_resize: bool,
+    ) -> (
+        LoopState,
+        Arc<AtomicU64>,
+        Rc<RefCell<Recording>>,
+        Arc<Handshake>,
+    ) {
         let configured = (1080, 2400);
         let recording = Rc::new(RefCell::new(Recording::default()));
         let extent = Arc::new(AtomicU64::new(pack(configured.0, configured.1)));
+        let handshake = Arc::new(Handshake::new());
         let frames = ScriptedFrames {
             outcomes: outcomes.into(),
             attaches: attaches.into(),
             accept_resize,
             recording: Rc::clone(&recording),
         };
-        let state = LoopState::new(Box::new(frames), WINDOW, Arc::clone(&extent), configured);
-        (state, extent, recording)
+        let state = LoopState::new(
+            Box::new(frames),
+            WINDOW,
+            Arc::clone(&extent),
+            configured,
+            Arc::clone(&handshake),
+        );
+        (state, extent, recording, handshake)
     }
 
     /// Drives `count` vsyncs at 60 Hz and returns what each one decided.
@@ -489,6 +552,56 @@ mod tests {
             vec![(WINDOW, 1080, 2400)],
             "the same window, at the extent the surface is configured for"
         );
+    }
+
+    /// **A teardown asked for while the surface is lost stops the loop instead
+    /// of acquiring a device for a surface that is going away** (issue #960).
+    ///
+    /// The rebuild is the second place this crate attaches, and it was the
+    /// unguarded one: the first attach reads the request in
+    /// `loop_::render_thread`, and this path read it nowhere. On a debug build
+    /// that re-attach was measured at over 218 s, and `surfaceDestroyed` is
+    /// parked for the whole of it — so the wedge the issue reports had a second
+    /// entrance that the fix for the first did not close.
+    #[test]
+    fn a_teardown_requested_while_the_surface_is_lost_stops_instead_of_re_attaching() {
+        let (mut state, _extent, recording, handshake) =
+            scripted_with_handshake(vec![Step::Rebuild], Vec::new(), true);
+
+        // `request_teardown` blocks by design, so the request is made from
+        // another thread and this one waits for it to land. Only the handshake
+        // crosses: `LoopState` holds an `Rc` and cannot.
+        let waiter = {
+            let handshake = Arc::clone(&handshake);
+            std::thread::spawn(move || {
+                handshake.request_teardown(std::time::Duration::from_secs(30), |_| {});
+            })
+        };
+        while !handshake.teardown_requested() {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+
+        assert_eq!(
+            state.step(FRAME_NANOS),
+            Action::Stop,
+            "the surface was lost and a teardown is pending — rebuilding here \
+             acquires a device the handshake is already waiting to have dropped"
+        );
+        assert!(
+            !state.running,
+            "and the poll loop must read that it stopped"
+        );
+        assert!(
+            recording.borrow().attaches.is_empty(),
+            "no re-attach: the whole point is that the acquisition does not \
+             start, got {:?}",
+            recording.borrow().attaches
+        );
+
+        // The loop would reach `shut_down` and drop its `ReleaseOnExit`; here
+        // that is done by hand so the parked thread comes back.
+        handshake.released();
+        waiter.join().unwrap();
     }
 
     /// A rebuild whose re-attach fails stops the loop rather than rescheduling

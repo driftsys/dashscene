@@ -35,12 +35,63 @@ public final class HarnessActivity extends Activity implements SurfaceHolder.Cal
     /** The document this harness draws, from the APK's assets. */
     private static final String DOCUMENT = "scene.dsb";
 
+    /**
+     * The one face the document's text is drawn with, staged by build.sh.
+     *
+     * <p>Four assets, because a .dsb carries neither a font nor a sheet and
+     * <b>nothing bakes a sheet at run time</b>: the font file, the committed
+     * MSDF sheet as a PNG and its metrics blob, and {@code cascade} — one
+     * tab-separated line holding the family name and the CSS weight, which are
+     * the only two values that cannot be read out of the bytes.
+     *
+     * <p>The names are the contract with build.sh and nothing else. The family
+     * and the weight are deliberately <i>not</i> constants here: they are
+     * chosen in build.sh beside the files they describe, so changing the font
+     * is one edit rather than two that must agree (issue #969).
+     */
+    private static final String FONT = "face.font";
+
+    private static final String ATLAS_PNG = "face-atlas.png";
+
+    private static final String ATLAS_METRICS = "face-atlas.metrics";
+
+    private static final String CASCADE = "cascade";
+
     static {
         System.loadLibrary("dashscene_android");
     }
 
     private long handle = 0;
     private byte[] document = null;
+
+    /**
+     * The cascade, or null when any part of it could not be read.
+     *
+     * <p>Null is not a failure to report and stop on: the entry point takes an
+     * empty cascade, which is exactly {@code nativeSurfaceCreated}, and a
+     * harness that refused to draw rectangles because a font was missing would
+     * lose the lifecycle coverage that is its actual purpose. What it must not
+     * do is claim the text path ran, which is why the marker below names which
+     * of the two it took.
+     */
+    private Cascade cascade = null;
+
+    /** One face and the two values that describe it. */
+    private static final class Cascade {
+        final String family;
+        final int weight;
+        final byte[] font;
+        final byte[] atlasPng;
+        final byte[] atlasMetrics;
+
+        Cascade(String family, int weight, byte[] font, byte[] atlasPng, byte[] atlasMetrics) {
+            this.family = family;
+            this.weight = weight;
+            this.font = font;
+            this.atlasPng = atlasPng;
+            this.atlasMetrics = atlasMetrics;
+        }
+    }
 
     @Override
     protected void onCreate(Bundle state) {
@@ -53,6 +104,7 @@ public final class HarnessActivity extends Activity implements SurfaceHolder.Cal
         } catch (IOException error) {
             Log.e(TAG, "harness: could not read " + DOCUMENT, error);
         }
+        cascade = readCascade();
 
         SurfaceView view = new SurfaceView(this);
         view.getHolder().addCallback(this);
@@ -77,9 +129,46 @@ public final class HarnessActivity extends Activity implements SurfaceHolder.Cal
         if (handle == 0) {
             // Physical pixels, which is what surfaceChanged reports and what the
             // ABI's resize takes.
-            handle = DashsceneNative.nativeSurfaceCreated(
-                    holder.getSurface(), document, width, height);
-            Log.i(TAG, "harness: runtime handle " + handle);
+            //
+            // **The text entry point, with a real cascade** — issue #969. It
+            // was compiled and called by nothing, so a device run measured the
+            // path that draws no glyphs while the one an embedder with text
+            // would use had never executed. `nativeSurfaceCreated` is this call
+            // with no faces, so taking the other branch below is not a second
+            // code path so much as the empty case of this one.
+            if (cascade != null) {
+                handle = DashsceneNative.nativeSurfaceCreatedWithText(
+                        holder.getSurface(),
+                        document,
+                        new String[] {cascade.family},
+                        new int[] {cascade.weight},
+                        new byte[][] {cascade.font},
+                        new byte[][] {cascade.atlasPng},
+                        new byte[][] {cascade.atlasMetrics},
+                        width,
+                        height);
+                Log.i(TAG, "harness: runtime handle " + handle + " (with text: "
+                        + cascade.family + " " + cascade.weight + ")");
+            }
+            // **A refused cascade falls back to the no-text call**, and this
+            // is not belt-and-braces. The four assets can read cleanly and the
+            // ABI still reject the face — metrics that do not decode, a PNG
+            // whose extent disagrees with them, a weight outside 1..=1000 —
+            // and the entry point answers 0 for all of it. Without this the
+            // harness would then draw nothing at all, which costs the
+            // lifecycle coverage that is its whole purpose, and the zero
+            // handle would take a branch whose own comment says a zero handle
+            // means the window or the thread could not be obtained. Reading
+            // the assets is not the only way a cascade fails.
+            if (handle == 0) {
+                handle = DashsceneNative.nativeSurfaceCreated(
+                        holder.getSurface(), document, width, height);
+                Log.i(TAG, "harness: runtime handle " + handle + " (no glyphs — "
+                        + (cascade == null
+                                ? "no cascade was staged"
+                                : "the cascade was refused; check the log above")
+                        + ", so text lays out as empty leaves)");
+            }
         } else {
             DashsceneNative.nativeSurfaceChanged(handle, width, height);
         }
@@ -103,13 +192,64 @@ public final class HarnessActivity extends Activity implements SurfaceHolder.Cal
         } else {
             // `handle` is zero only when nativeSurfaceCreated could not obtain
             // the window or spawn the thread — see start_document_host. It is
-            // NOT the no-GPU-device case: that returns a non-zero handle and
-            // needs nativeIsRunning, which this activity does not call
-            // (issue #960).
+            // NOT the case where the painter never got a device: that returns a
+            // non-zero handle and takes the branch above.
+            //
+            // **nativeIsRunning does not tell those apart, and this activity
+            // deliberately does not call it.** It answers `Handshake::is_running`,
+            // which is true for `Starting` as well as `Running`, and the render
+            // thread reports `started()` only once its attach has returned. So
+            // a thread wedged inside an attach answers `true` — the same answer
+            // a drawing loop gives — and a marker built on it would assert the
+            // loop was live at the exact moment it was not. Measured on
+            // 2026-08-15 (issue #960).
+            //
+            // What does tell them apart is the pair of native markers around
+            // the attach: `attaching a WxH surface` with no `attached a WxH
+            // surface` after it is a wedged acquisition, and
+            // `surfaceDestroyed has been waiting N s` names the wait it holds.
             //
             // A distinct marker rather than silence, so the recipe can tell
             // this apart from a handshake that entered and hung.
             Log.i(TAG, "harness: surfaceDestroyed — no runtime handle, nothing to hand back");
+        }
+    }
+
+    /**
+     * Reads the one face build.sh staged, or null if any part of it is absent
+     * or malformed.
+     *
+     * <p>All four assets or none. A cascade assembled from three of them would
+     * declare a face whose sheet was missing, and the ABI refuses a
+     * half-described face on purpose — so a partial read here would turn a
+     * staging mistake into a load failure at the surface, which is much further
+     * from its cause.
+     */
+    private Cascade readCascade() {
+        try {
+            String[] fields = new String(readAsset(CASCADE), "UTF-8").trim().split("\t");
+            if (fields.length != 2) {
+                Log.e(TAG, "harness: " + CASCADE + " is not 'family<TAB>weight'");
+                return null;
+            }
+            // Not clamped and not defaulted. The ABI checks the CSS range in one
+            // place; a weight repaired here would make this host and a C host
+            // give different answers to the same input, which is the divergence
+            // story #947's review removed from the JNI layer.
+            int weight = Integer.parseInt(fields[1].trim());
+            Cascade read = new Cascade(
+                    fields[0].trim(),
+                    weight,
+                    readAsset(FONT),
+                    readAsset(ATLAS_PNG),
+                    readAsset(ATLAS_METRICS));
+            Log.i(TAG, "harness: cascade " + read.family + " " + read.weight + " — font "
+                    + read.font.length + " B, sheet " + read.atlasPng.length + " B, metrics "
+                    + read.atlasMetrics.length + " B");
+            return read;
+        } catch (IOException | NumberFormatException error) {
+            Log.e(TAG, "harness: no cascade; the document's text will draw no glyphs", error);
+            return null;
         }
     }
 

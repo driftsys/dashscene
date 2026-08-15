@@ -213,10 +213,13 @@ first face where a C host on the same ABI reaches any of them. A sixth parallel
 array is deliberately not the fix — five already have to agree in length — and
 issue #981 carries the alternatives.
 
-**It has been compiled and not run**: there is no device, which is the
-measurement issue #885 still owes. Nothing in this repository exercises it
-either — the harness still calls the no-text entry point, which is issue #969 —
-so what a device would run today is the path that draws no glyphs.
+**It runs on an emulator, and on no device.** Since 2026-08-15 the harness
+stages a committed cascade — Inter at weight 400, its font file and the
+`corpus/atlas/inter-ascii` sheet — beside a text-carrying document and calls
+`nativeSurfaceCreatedWithText`, and the glyphs are drawn (issue #969). Before
+that nothing in this repository called it at all, so what a device would have
+run was the path that draws no glyphs. There is still no device, which is the
+measurement issue #885 owes, so #969 stays open for that half.
 
 ## What holds it
 

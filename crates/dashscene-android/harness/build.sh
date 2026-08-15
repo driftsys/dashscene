@@ -65,11 +65,52 @@ fi
 # The document the harness draws. A committed golden rather than something
 # generated here: the point is that a compiled .dsb reaches the painter, and a
 # fixture the rest of the suite already trusts is the honest input.
-scene="${DASHSCENE_HARNESS_SCENE:-${root}/goldens/dsb/v03-paint.dsb}"
+#
+# **This moved from v03-paint.dsb to a text fixture (issue #969), and
+# assert-drew.py's threshold is coupled to the choice.** That script counts
+# distinct colours below the title bar and passes at 16, and its own comment
+# says the harness ships a fixture that is not solid "and if that ever changes,
+# this threshold has to change with it". Measured on the emulator after the
+# change: **68 distinct colours** against the threshold of 16, so it passes —
+# but the margin is roughly four times rather than the "thousands" a gradient
+# fixture gives, and most of it now comes from glyph antialiasing. That script
+# belongs to issue #1006 and is not edited here; the narrowed margin and its
+# stale docstring are filed instead.
+scene="${DASHSCENE_HARNESS_SCENE:-${root}/goldens/dsb/v07-text-hug-in-fill.dsb}"
 if [ ! -f "${scene}" ]; then
   echo "harness: no scene at ${scene}" >&2
   exit 1
 fi
+
+# The cascade that scene's text needs, and the reason the default scene is a
+# text one (issue #969).
+#
+# `nativeSurfaceCreatedWithText` existed, compiled, and was called by nothing —
+# so the device measurement still owed under #885 would have measured the path
+# that draws no glyphs. A `.dsb` cannot carry a font or a sheet, and **nothing
+# bakes a sheet at run time**, so both have to be committed and read out of the
+# APK. These four values are one set: the fixture below is authored against
+# Inter at weight 400, and `corpus/atlas/inter-ascii` is that font's committed
+# MSDF sheet. `crates/dashscene-ffi`'s own
+# `a_document_loaded_with_fonts_stages_glyph_runs_and_measures_its_text` loads
+# exactly this combination, which is what says the four agree.
+#
+# The family and the weight are **written into the APK beside the bytes they
+# describe** rather than restated as constants in `HarnessActivity`. They are
+# chosen here, with the files; a copy in the Java is a second place to change
+# and the one that would be forgotten (the shape issue #945 names).
+font="${DASHSCENE_HARNESS_FONT:-${root}/corpus/fonts/inter/Inter-Regular.otf}"
+atlas="${DASHSCENE_HARNESS_ATLAS:-${root}/corpus/atlas/inter-ascii}"
+family="${DASHSCENE_HARNESS_FAMILY:-Inter}"
+weight="${DASHSCENE_HARNESS_WEIGHT:-400}"
+for path in "${font}" "${atlas}/atlas.png" "${atlas}/atlas.metrics"; do
+  if [ ! -f "${path}" ]; then
+    echo "harness: no cascade file at ${path}" >&2
+    echo "harness: the text entry point needs a font and a committed sheet;" >&2
+    echo "harness: nothing bakes one at run time (issue #969)." >&2
+    exit 1
+  fi
+done
 
 # The keystore lives **outside** the directory this wipes, and that is not
 # incidental. A key regenerated on every build signs every build differently,
@@ -129,6 +170,19 @@ find "${out}/classes" -name '*.class' -exec "${bt}/d8" --min-api 33 --output "${
 cp "${out}/classes.dex" "${out}/staging/"
 cp "${lib}" "${out}/staging/lib/arm64-v8a/"
 cp "${scene}" "${out}/staging/assets/scene.dsb"
+
+# The cascade, under names the activity opens directly. One face: the harness
+# proves the entry point carries a face and its sheet through to glyphs, and a
+# second face would prove the same thing twice.
+#
+# `cascade` is one line, tab-separated, `family<TAB>weight` — the two values
+# that are chosen here and cannot be derived from the bytes. `printf` rather
+# than `echo` so the tab is a tab on every shell.
+cp "${font}" "${out}/staging/assets/face.font"
+cp "${atlas}/atlas.png" "${out}/staging/assets/face-atlas.png"
+cp "${atlas}/atlas.metrics" "${out}/staging/assets/face-atlas.metrics"
+printf '%s\t%s\n' "${family}" "${weight}" > "${out}/staging/assets/cascade"
+echo "harness: ${family} ${weight} from $(basename "${font}") and $(basename "${atlas}")"
 
 cp "${out}/base.apk" "${out}/harness-unsigned.apk"
 (cd "${out}/staging" && zip -q -r "${out}/harness-unsigned.apk" . -x '.*')
