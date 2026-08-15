@@ -550,8 +550,16 @@ their parent rather than apart from it:
   participate in the derived equality, the widening costs no bytes and moves no
   offsets, and the type-level domain guarantee it gives up is replaced in
   `Atlas::new` instead — for `AtlasGlyph` only, refused rather than asserted
-  since issue #966, while `GlyphQuad`'s half stays unchecked and is the one that
-  silently drops (story #578, issue #985).
+  since issue #966, with `GlyphQuad`'s half refused at `GlyphRunTable::push_run`
+  by issue #985 (story #578).
+- [boundary-b-domain-checks-sit-at-the-table-seam.md](boundary-b-domain-checks-sit-at-the-table-seam.md)
+  — `GlyphQuad::glyph_id` and `VectorField::distance_range` are refused at the
+  table push, `GlyphRunTable::push_run` and `PaintTable::push_with`, rather than
+  in a constructor: for the quad because making the field private would break
+  the no-padding pin that reads it from another crate, for the field because
+  private fields would mean rewriting every literal in eight packages. Panics
+  written to resist being weakened, with what the pair still does not cover
+  named operand by operand (issues #985 and #986).
 - [shader-library-and-layer-2.md](shader-library-and-layer-2.md) — the lean
   painter's SDF math is one WGSL file included textually by every consumer, and
   layer 2 evaluates it by compute shader against independently derived

@@ -1507,6 +1507,24 @@ pub struct Blur {
 /// `atlas_rect`-to-device-quad ratio already is the scale, so a bake
 /// resolution carried alongside it would be redundant for every reader that
 /// only paints.
+///
+/// # Why the domain check is not a constructor here
+///
+/// [`distance_range`](Self::distance_range) has a domain — finite and greater
+/// than zero — and it is refused at [`PaintTable::push_with`] rather than by a
+/// constructor on this type (issue #986). The reason is cost, not
+/// impossibility: private fields plus accessors would work for this type, and
+/// would mean rewriting every literal and every read of it outside `dashpaint`
+/// — including both painters' draw paths. Keeping the fields public and
+/// adding a constructor
+/// beside them would not be a check at all — that is the shape PR #983's review
+/// rejected on [`Atlas`], where `px_per_em` had to become private before its
+/// check meant anything.
+///
+/// `docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md` records
+/// the choice, including what it gives up. [`Atlas`] holds its own invariant in
+/// a constructor because it already had one to put the check in; this type has
+/// none, and the table it enters is a seam every field passes through.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VectorField {
@@ -1514,11 +1532,22 @@ pub struct VectorField {
     pub image: u32,
     /// This shape's sub-rect in the atlas, in texels: `[x, y, width, height]`,
     /// top-left origin.
+    ///
+    /// A zero width or height means the field draws nothing —
+    /// `dashscene-gpu`'s `field_draws` skips it before residency. That is a
+    /// legal state, not an out-of-domain one, so nothing refuses it (issue
+    /// #1000 covers `dashscene-skia` dividing by it instead of skipping).
     pub atlas_rect: [u32; 4],
     /// The padded field quad in shape space, node-box-relative, y-down:
     /// `[left, top, right, bottom]`.
     pub plane_bounds: [f32; 4],
     /// The MSDF distance range in atlas texels (msdfgen `-pxrange`).
+    ///
+    /// Finite and greater than zero for every field that reached a painter:
+    /// [`PaintTable::push_with`] refuses anything else (issue #986). It is the
+    /// coverage-mask twin of [`Atlas::distance_range_px`], and out of that
+    /// domain it paints the same three wrong pictures that constructor's
+    /// documentation enumerates.
     pub distance_range: f32,
 }
 
@@ -2113,6 +2142,39 @@ impl PaintTable {
     /// arriving here is one that will be replaced, and replacing it
     /// silently is how a producer comes to believe its own offsets were
     /// used.
+    ///
+    /// Panics if `parts.shape`'s [`distance_range`](VectorField::distance_range)
+    /// is not finite and greater than zero (issue #986). It is the coverage-mask
+    /// path's copy of the operand [`Atlas::new`] refuses for glyphs, and the
+    /// three ways out of that domain reach the same three plausible wrong
+    /// pictures: zero paints uniform half coverage, a negative value inverts
+    /// it — interiors transparent, exteriors opaque — and a NaN or an infinity
+    /// reaches the implementation-defined WGSL `clamp`. Both painters compute
+    /// it, `dashscene-skia` as `distance_range * sx` and `dashscene-gpu` as
+    /// `distance_range * (right - left) / aw`.
+    ///
+    /// This is the seam because the table's `shapes` array is private and
+    /// [`push`](Self::push) refuses an entry that names a shape, so this is the
+    /// only way a field reaches a painter. Why not a constructor on
+    /// [`VectorField`] is in that type's own documentation.
+    ///
+    /// # What this seam does not cover
+    ///
+    /// `atlas_rect`'s width and height are divisors in both painters and are
+    /// **not** refused here, deliberately: `dashscene-gpu`'s `field_draws`
+    /// treats a zero extent as a field that draws nothing, so it is a legal
+    /// state rather than an out-of-domain one. That `dashscene-skia` divides by
+    /// it instead of taking the same skip is a painter divergence, issue #1000,
+    /// which covers a non-finite `plane_bounds` on the same grounds.
+    ///
+    /// **This method is not atomic on a refusal, and only the check above runs
+    /// before the first array is extended.** The five `extend` calls below
+    /// happen before `push_entry`'s own documented panics,
+    /// so a caller that catches an unwind from *those* holds a table carrying
+    /// rows no entry names. That is unchanged by this check and is issue #1012.
+    /// The production caller widens the window further: `intern_paint` in
+    /// `dashscene-core` interns the entry's fills into this same table before
+    /// calling here.
     pub fn push_with(&mut self, mut entry: PaintEntry, parts: EntryParts<'_>) -> PaintIndex {
         assert_eq!(
             (
@@ -2132,6 +2194,21 @@ impl PaintTable {
             "push_with assigns an entry's ranges; the entry must arrive with every range at \
              NONE, not offsets into some other table"
         );
+        // An `if` around a `panic!` rather than an `assert!`, for the reason
+        // `GlyphRunTable::push_run`'s guard gives. Placed above the five
+        // `extend` calls so this refusal in particular grows no array — which is
+        // not the same as making the method atomic; see the `# Panics` note.
+        if let Some(shape) = parts.shape {
+            let range = shape.distance_range;
+            if !(range.is_finite() && range > 0.0) {
+                panic!(
+                    "a coverage mask's distance range is {range}, which is not finite and greater \
+                     than zero: every painter scales it into the screen-pixel range it samples \
+                     coverage over, and each way out of that domain paints a plausible wrong \
+                     picture (P4)"
+                );
+            }
+        }
         let (offset, count) = Self::span(self.extra_fills.len(), parts.extra_fills.len());
         entry.extra_fills = FillRange { offset, count };
         let (offset, count) = Self::span(self.strokes.len(), usize::from(parts.stroke.is_some()));
@@ -2348,12 +2425,22 @@ impl PaintTable {
 /// The value's domain is unchanged: OpenType ids are 16-bit, every producer
 /// widens with `u32::from`, and nothing here widens what a font may express.
 /// What the `u16` used to give for free — an out-of-domain id being
-/// unrepresentable — is **not** replaced on this type: `glyph_id` here is
-/// checked at no seam, and a quad naming an id no atlas has a row for is skipped
-/// by both painters without a diagnostic. Issue #985 carries it.
-/// [`Atlas::new`] refuses such an id on [`AtlasGlyph`], which is the atlas side
-/// of the same widening and a different value. The trade, and why widening beat
-/// declaring the padding, are in
+/// unrepresentable — is replaced by a check rather than by the type, and the
+/// check is at [`GlyphRunTable::push_run`] (issue #985), which is the one seam
+/// every quad passes through to reach a painter. [`Atlas::new`] refuses the same
+/// id on [`AtlasGlyph`], the atlas side of the same widening; between them the
+/// two sides of [`Atlas::glyph`]'s lookup agree on the domain.
+///
+/// **The check is not on this type, and for this type cannot be.** A checked
+/// constructor holds only if the fields are private, and `glyph_id` cannot be:
+/// `neither_glyph_type_carries_padding` — the test
+/// `docs/decisions/sub-word-members-widen-rather-than-pad.md` names as what
+/// holds the no-padding property — reads `offset_of!(GlyphQuad, glyph_id)` and
+/// `size_of_val(&quad.glyph_id)` from `dashscene-unity`, another crate. Private
+/// fields make both a compile error, so the constructor would be bought by
+/// deleting the assertion that holds the widening.
+///
+/// The trade, and why widening beat declaring the padding, are in
 /// `docs/decisions/sub-word-members-widen-rather-than-pad.md`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2525,14 +2612,16 @@ impl Atlas {
     /// from made unrepresentable
     /// (`docs/decisions/sub-word-members-widen-rather-than-pad.md`).
     ///
-    /// It is **not** the silent drop that record describes, and issue #985 is
-    /// that drop. The two are different sides of the same widening: a row this
-    /// constructor accepted would be *found* by [`glyph`](Self::glyph), which
-    /// binary-searches the rows the atlas holds, so it paints. What paints
-    /// nothing is a [`GlyphQuad`] naming an id the atlas has no row for, and
-    /// both painters `continue` past it — deliberately, because an empty outline
-    /// and a charset gap take that same path. `GlyphQuad::glyph_id` is
-    /// domain-checked nowhere, and this constructor never sees one.
+    /// It is **not** the silent drop that record describes. The two are
+    /// different sides of the same widening: a row this constructor accepted
+    /// would be *found* by [`glyph`](Self::glyph), which binary-searches the
+    /// rows the atlas holds, so it paints. What paints nothing is a
+    /// [`GlyphQuad`] naming an id the atlas has no row for, and both painters
+    /// `continue` past it — deliberately, because an empty outline and a
+    /// charset gap take that same path. This constructor never sees a
+    /// `GlyphQuad`, so nothing here reaches that side; issue #985 put its check
+    /// at [`GlyphRunTable::push_run`] instead, which refuses the same
+    /// unrepresentable id while leaving that deliberate `continue` reachable.
     ///
     /// P4 forbids discovering a limit at draw time, so every one of these has to
     /// hold in release. A `debug_assert!` compiles out and leaves exactly the
@@ -2556,9 +2645,15 @@ impl Atlas {
     ///
     /// This is a statement about *this* type, not about boundary B.
     /// [`VectorField::distance_range`] is the same operand on the coverage-mask
-    /// path and is validated nowhere — issue #986. That type has no constructor
-    /// to refuse it in, which is why it is a separate issue rather than a
-    /// sibling variant here.
+    /// path, and issue #986 refused it at [`PaintTable::push_with`] rather than
+    /// as a sibling variant here, because that type has far more construction
+    /// sites than this one and the table they all pass through is a seam.
+    ///
+    /// "Between them they fix its domain" above is scoped to the two operands
+    /// *this type* owns. The expression's third is [`GlyphRun::size`], which
+    /// nothing in this crate refuses; on the document path
+    /// `dashscene-validator`'s `text.style-size-out-of-range` does, with the
+    /// same predicate.
     ///
     /// An embedder supplying its own font depends on `dashpaint` directly, as
     /// `dashscene-desktop` and `dashscene-web` both say of their `Atlas`
@@ -2779,7 +2874,35 @@ impl GlyphRunTable {
     /// silently replacing it is how a producer comes to believe its own
     /// offsets were used. Refused by name instead (P4).
     ///
+    /// Panics if any quad's `glyph_id` exceeds `u16::MAX`, which no OpenType
+    /// font can produce (issue #985). This is the [`GlyphQuad`] side of the
+    /// widening `docs/decisions/sub-word-members-widen-rather-than-pad.md`
+    /// records, and the side that carries the silent drop: such a quad matches
+    /// no [`Atlas`] row, so [`Atlas::glyph`] returns `None` and both painters
+    /// `continue` past it with no diagnostic (P4). [`Atlas::new`] refuses the
+    /// same id on an [`AtlasGlyph`]; between them the two sides of the lookup
+    /// now agree on the domain, where before only the atlas side did.
+    ///
+    /// It refuses **an id no font can express**, not "an id this atlas has no
+    /// row for". The `continue` those painters take stays reachable and stays
+    /// correct: an empty outline such as a space has no atlas row by design,
+    /// and a codepoint outside the atlas charset is a build-time coverage gap
+    /// the closure owns rather than a per-frame decision. Only the
+    /// unrepresentable id is refused here.
+    ///
     /// Also panics if the flat array would exceed `u32::MAX` quads.
+    ///
+    /// # What this seam does not cover
+    ///
+    /// [`GlyphRun::size`] is the third operand of the expression the other two
+    /// are guarded for — every painter computes `px_range = distance_range_px *
+    /// size / px_per_em` — and no seam in this crate refuses it. On the
+    /// document path it is refused upstream: `dashscene-validator`'s
+    /// `text.style-size-out-of-range` rejects a `TextStyle.size` that is not
+    /// finite and greater than zero, which is the value `dashscene-engine`
+    /// copies into this field. What is left uncovered is the producer that
+    /// stages a text style directly and never runs that gate — the same
+    /// residual gap every public field on these rows has.
     pub fn push_run(&mut self, mut run: GlyphRun, quads: &[GlyphQuad]) {
         assert_eq!(
             run.glyphs,
@@ -2787,6 +2910,32 @@ impl GlyphRunTable {
             "push_run assigns a run's quad range; a staged run must carry \
              GlyphRange::UNASSIGNED, not offsets into some other array"
         );
+        // An `if` around a `panic!` rather than an `assert!`; the record
+        // `docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md`
+        // gives the reason, which is that an `if` has no debug-only spelling a
+        // later edit could weaken it to.
+        //
+        // The test is a bitwise OR rather than the obvious `any()` because this
+        // runs once per run per commit, on the frame path: the OR has no early
+        // exit and no per-quad counter, so it vectorizes and folds into the
+        // memory traffic `extend_from_slice` below already pays, where a search
+        // over a 12-byte stride does not. An id above `u16::MAX` is exactly an
+        // id with a bit above bit 15 set, so OR-ing every id and testing that
+        // once is the same predicate over the slice. The search still runs, but
+        // only on the failing path, where it recovers the quad's index.
+        if quads.iter().fold(0u32, |seen, quad| seen | quad.glyph_id) > u32::from(u16::MAX) {
+            let (at, quad) = quads
+                .iter()
+                .enumerate()
+                .find(|(_, quad)| quad.glyph_id > u32::from(u16::MAX))
+                .expect("the fold found a bit set that no id below u16::MAX can set");
+            panic!(
+                "glyph quad {at} names id {}, above u16::MAX: no OpenType font can produce it, so \
+                 no atlas has a row for it and every painter would skip the quad without a \
+                 diagnostic (P4)",
+                quad.glyph_id
+            );
+        }
         let offset =
             u32::try_from(self.quads.len()).expect("glyph-run table exceeds u32::MAX quads");
         let count = u32::try_from(quads.len()).expect("a glyph run exceeds u32::MAX quads");
