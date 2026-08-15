@@ -150,6 +150,29 @@ impl Frames for ShowcaseFrames {
         live.tick(dt, &mut self.arena);
         let tick_took = before_tick.elapsed();
 
+        // The renumbering gate, read here for the same reason the three
+        // published hosts read it (issue #945): this is a **fourth** loop that
+        // drives a `LiveScene` against a `SurfaceRenderer` it owns, and it
+        // reaches neither `dashscene-desktop` nor `dashscene-ffi` on this path
+        // — `DocumentFrames` goes through the ABI, this does not.
+        //
+        // Nothing can raise a renumbering here today: a showcase scene is built
+        // in code and never names a shown root, so `renumbered` is always
+        // false. It is read anyway so that "every loop that ticks a `LiveScene`
+        // reports its renumbering" is true of the workspace rather than true of
+        // the crates that happen to be published, which is what the records
+        // claim.
+        //
+        // Before `advanced()`, because a renumbering with no other change would
+        // otherwise take the early return below and never be reported.
+        //
+        // No renderer check, unlike the three published hosts: this function
+        // has already returned above if there is none, so the report cannot be
+        // stamped against a renderer that is not there.
+        if live.take_renumbering(&self.arena) {
+            renderer.document_replaced();
+        }
+
         if !live.advanced() && !forced {
             return Step::Continue;
         }

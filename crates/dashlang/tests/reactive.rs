@@ -1625,3 +1625,85 @@ fn a_paint_only_tick_still_publishes_the_atlas_set() {
          ({before} before, {after} after)"
     );
 }
+
+/// **A renumbering is reported once, and not again on every later frame — and
+/// the next one is still reported.**
+///
+/// `CommittedScene::renumbered` describes **one commit**, and an idle tick
+/// returns without committing — so the last commit's answer is still what
+/// `arena.committed()` gives back on every frame after it. A host reading it as
+/// a level calls `document_replaced` forever on a settled scene, and
+/// `Renderer::forget_uploaded` drops every resident texture as well as the
+/// uploaded instance rows.
+///
+/// Each host held its own `renumber_reported: Option<u64>` and the same six
+/// lines to compare it, and the C ABI held none at all. This is that rule with
+/// one statement (issue #945), the way story #810 moved the frame clamp and the
+/// shown-generation gate.
+///
+/// **The second renumbering is the half that pins the comparison.** Without it
+/// an implementation that reports at most one renumbering for the life of the
+/// scene — `self.renumber_reported.is_none() && ...` — passes every assertion
+/// above it, while losing every later change of shown root.
+#[test]
+fn a_renumbering_is_reported_once_and_not_on_every_later_frame() {
+    let mut arena = Arena::new();
+    let (mut live, (first_root, second_root), _) = two_bound_roots(&mut arena);
+
+    // **The helper already changed the shown root** — `None` to `Some` — and
+    // that commit renumbered. What clears it before this line is `attach_live`,
+    // which commits once more through the solver to seed the scene, and that
+    // commit's `previous_shown_root` already equals the arena's. So a load
+    // leaves nothing for the tick-side gate to report, on every host.
+    live.tick(0.016, &mut arena);
+    assert!(
+        !live.take_renumbering(&arena),
+        "attach_live's own seed commit cleared the load's renumbering"
+    );
+
+    // A scope rather than `drop`: `Txn` implements no `Drop`, which is what
+    // lets a staged shown root survive to the next tick.
+    {
+        let mut txn = arena.open();
+        txn.show_root(Some(second_root));
+    }
+    live.tick(0.016, &mut arena);
+    assert!(arena.committed().renumbered(), "that tick renumbered");
+    assert!(
+        live.take_renumbering(&arena),
+        "the gate must report it, and stamp it in the same call"
+    );
+    assert!(
+        !live.take_renumbering(&arena),
+        "and must not report the same commit twice"
+    );
+
+    // The frame a level-read would re-report on: nothing committed, so
+    // `committed()` still answers the renumbering commit.
+    live.tick(0.016, &mut arena);
+    assert!(
+        arena.committed().renumbered(),
+        "the last commit is still the renumbering one, which is the trap"
+    );
+    assert!(
+        !live.take_renumbering(&arena),
+        "a settled scene must not re-report: forget_uploaded drops every resident texture"
+    );
+
+    // Back to the first root: a **new** generation renumbers again, and that
+    // one must be reported. This is what fails if the stamp is read as "have I
+    // ever reported" rather than "have I reported this generation".
+    {
+        let mut txn = arena.open();
+        txn.show_root(Some(first_root));
+    }
+    live.tick(0.016, &mut arena);
+    assert!(
+        arena.committed().renumbered(),
+        "showing the first root renumbered too"
+    );
+    assert!(
+        live.take_renumbering(&arena),
+        "a later renumbering is a different generation and must be reported"
+    );
+}

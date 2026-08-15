@@ -48,11 +48,18 @@
 //! loop and not only the load.
 //!
 //! **The root is named once, at load.** There is no symbol here for changing it
-//! afterwards, which is why nothing in this crate reads
-//! `CommittedScene::renumbered`: a renumbering can only be raised by the load's
-//! own commit, and `load_into` and `load_mapped_into` both report
-//! `document_replaced` immediately after it. Issue #945 covers the day that
-//! stops being true.
+//! afterwards, so a renumbering can only be raised by the load's own commit,
+//! and `load_into` and `load_mapped_into` both report `document_replaced`
+//! immediately after it.
+//!
+//! [`ds_runtime_tick`] reads the renumbering gate anyway, through
+//! `LiveScene::take_renumbering` (issue #945). That is the rule rather
+//! than a fix for a defect reachable today: the gate is the same one
+//! `dashscene-desktop` and `dashscene-web` read, stated once in `dashlang`
+//! instead of copied into each host, and this crate held no copy at all while
+//! AGENTS.md listed three integration surfaces. It is correct here and
+//! unreachable, deliberately — so the day a root-switching symbol lands, this
+//! host is already right rather than quietly wrong.
 //!
 //! # What a host supplies for text
 //!
@@ -856,6 +863,27 @@ pub unsafe extern "C" fn ds_runtime_tick(
             return DsStatus::NoDocument;
         };
         scene.tick(dt, &mut runtime.arena);
+
+        // A commit that renumbered the rect table is the one case where the
+        // painter's per-document state goes stale **without** the arena being
+        // replaced: the same rect index names a different node afterwards
+        // (story #838). The load path reports the arena case; this reports the
+        // other, through the same call.
+        //
+        // The gate is `LiveScene`'s, so this host reads the rule the other two
+        // read rather than holding a third copy of it (issue #945). It is the
+        // rule, not a fix for a defect reachable today: this ABI names the
+        // shown root once, inside the load, and offers no symbol to change it
+        // afterwards — so nothing here can raise a renumbering that the load's
+        // own `document_replaced` has not already covered. It is here so that
+        // the day a root-switching symbol lands, the host is already right
+        // rather than quietly wrong.
+        if let Some(surface) = runtime.surface.as_mut()
+            && scene.take_renumbering(&runtime.arena)
+        {
+            surface.document_replaced();
+        }
+
         if !out_advanced.is_null() {
             unsafe { *out_advanced = scene.advanced() };
         }

@@ -28,8 +28,11 @@ they do not implement one.
 
 Piece 3 is **delegated rather than held**: story #810 moved the rule onto
 `dashlang::LiveScene`, so both crates call it and neither restates it.
-`dashlang::MAX_FRAME_DELTA` moved with it. That is the whole of what the two
-crates share as code; everything else in the table differs in mechanism.
+`dashlang::MAX_FRAME_DELTA` moved with it. Issue #945 moved a second gate the
+same way — `LiveScene::take_renumbering`, which `dashscene-ffi` reads too. Those
+two gates, `MAX_FRAME_DELTA`, and `dashscene_core::show_appended_root` (which
+every mapped loader calls) are what the hosts share as code; everything else in
+the table differs in mechanism.
 
 ## The web half
 
@@ -425,13 +428,17 @@ Both targets now get the same thing out of the ordinal:
   `a_shown_root_ordinal_selects_which_payload_the_layout_fetches` is that
   assertion, and it is the one story #837 recorded that it could not make.
 
-**A change of shown root is a renumbering event**, and both loops report it.
+**A change of shown root is a renumbering event**, and every host reports it.
 `CommittedScene::renumbered` says this commit's rect indices mean something
-other than the last one's, and each loop turns that into
-`Present::document_replaced` / `SurfaceRenderer::document_replaced` once — held
-against the generation it reported, because `renumbered` describes one commit
-and an idle tick commits nothing, so a loop reading it every frame would drop
-every resident texture on every frame of a settled scene.
+other than the last one's, and each host turns that into
+`Present::document_replaced` / `SurfaceRenderer::document_replaced` **once** —
+held against the generation it reported, because `renumbered` describes one
+commit and an idle tick commits nothing, so a host reading it every frame would
+drop every resident texture on every frame of a settled scene.
+
+Since issue #945 the gate itself is `LiveScene::take_renumbering` rather than
+six lines in each loop. It had been written twice and, once `dashscene-ffi`
+gained a mapped load, was missing from the third host entirely.
 
 ## Known gaps, named
 
@@ -463,8 +470,11 @@ every resident texture on every frame of a settled scene.
   selection to bound until story #838 made the traversal, solve and paint follow
   the shown root.
 
-  **The root is named once, at load.** No symbol changes it afterwards, which is
-  why `dashscene-ffi` reads `CommittedScene::renumbered` nowhere: a renumbering
-  can only come from the load's own commit, and both loaders report
-  `document_replaced` immediately after it. Issue #945 covers the day that stops
-  being true.
+  **The root is named once, at load.** No symbol changes it afterwards, so a
+  renumbering can only come from the load's own commit, and both loaders report
+  `document_replaced` immediately after it.
+
+  `ds_runtime_tick` reads the renumbering gate anyway, since issue #945 — the
+  same `LiveScene::take_renumbering` the other two hosts read. Correct here and
+  unreachable, deliberately, so that a root-switching symbol would find the host
+  already right.

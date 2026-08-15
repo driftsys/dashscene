@@ -358,7 +358,10 @@ through this per-prop smoothing.
                                        MAX_FRAME_DELTA and the clamp tick
                                        applies, plus LiveScene::advanced
                                        and mark_shown, the generation gate
-                                       both hosts used to hold privately
+                                       both hosts used to hold privately;
+                                       the renumbering gate (#945),
+                                       take_renumbering, read by every loop
+                                       that ticks a LiveScene
     crates/dashlang/tests/builder.rs   acceptance (issues #5, #118, #46):
                                        DSL output == hand-built output;
                                        repeater children; multi-root;
@@ -398,7 +401,14 @@ through this per-prop smoothing.
                                        one becomes zero rather than
                                        reaching dashcue's finite assert,
                                        and the generation gate, including
-                                       that a rebuilt scene starts unshown
+                                       that a rebuilt scene starts unshown.
+                                       The **renumbering** gate's test
+                                       (#945) is not here: it needs two
+                                       bound roots to switch between, so
+                                       it sits beside that fixture in
+                                       reactive.rs as
+                                       a_renumbering_is_reported_once_and_
+                                       not_on_every_later_frame
     crates/dashlang/tests/paint.rs     acceptance for the paint
                                        vocabulary: each mirror reaches the
                                        arena, DSL output == hand-built
