@@ -253,15 +253,46 @@ Two claims made when this landed were wrong, and both are corrected here:
   original claim was reaching for and stated too broadly.
 
 The coupling that _is_ new is neither of those. It is **six field names as
-strings**, and nothing in this repository checks them against `DsFace.java`.
-Rename a field there and every gate stays green — `host.rs` is behind
+strings**. Nothing in this repository checked them against `DsFace.java` until
+issue #1089: renaming a field there left every gate green — `host.rs` is behind
 `cfg(target_os = "android")` so no test links it, no gate runs clippy for that
 triple (issue #1086), and `just android-apk` compiles both halves without
-comparing them. The failure arrives as `NoSuchFieldError` at the first
-`surfaceChanged`, and the harness then falls back to the no-text call and draws
-no glyphs — the same "no picture" shape the array-length agreement had. The C
-header has `just c-abi` for exactly this class of problem; the JNI half has no
-equivalent, and issue #1089 carries it.
+comparing them. The failure arrived as `NoSuchFieldError` at the first
+`surfaceChanged`, and the harness then fell back to the no-text call and drew no
+glyphs — the same "no picture" shape the array-length agreement had.
+
+**`crates/dashscene-android/src/face.rs` is the JNI half's `just c-abi`.** It
+holds the six names, as `&CStr` so that a host test can reach them — `jni` is an
+Android-only dependency of this crate — paired with the JNI descriptor each one
+is looked up with, because `GetFieldID` resolves a field by name _and_
+descriptor and a widened `int` fails exactly as a rename does. Its own test
+asks, of each entry, whether `DsFace.java` still declares it with that type — so
+a rename, a removal or a type change fails the sanity tier on every platform,
+which is the only **automated** place it is caught; the emulator run below is
+where the original `NoSuchFieldError` was seen. `host.rs` converts each name in
+a `const`, so one that could not cross JNI is a compile error rather than a
+panic inside an entry point, and reads its diagnostics off the same value.
+
+Two things it deliberately does not do, both recorded in the module rather than
+left to be discovered:
+
+- **It does not ask what else `DsFace.java` declares**, so a seventh field fails
+  nothing. That field is one the native half ignores — `read_face` reads these
+  six and builds a `DsFontFace` from them — so nothing reads it and nothing
+  fails at run time. Asking the reverse question needs a Java parser, and two
+  rounds of review found ten shapes that escaped one, each round closing what it
+  found and the next finding more. Asking whether a known declaration is present
+  needs no grammar.
+- **It does not read `host.rs`**, which is behind the platform `cfg` and links
+  into no test binary. That `read_face` reads those six and only those, and that
+  each descriptor matches the `jni_sig!` literal beside it, are held by review —
+  issue #1096 carries what a gate for the second would look like, and it
+  matters: a type changed in `DsFace.java` and `face.rs` but not in `host.rs`
+  passes this check and still fails on the device.
+
+`DsFontFace` carries those six Java fields as **nine** C members: each of the
+three byte arrays crosses as a pointer plus a length. "Field for field" is true
+of what the descriptor means, not of how many members it has.
 
 The JNI symbol name already binds the library to
 `dev.driftsys.dashscene.DashsceneNative`, so requiring a second class in that
@@ -285,6 +316,7 @@ measurement issue #885 owes, so #969 stays open for that half.
 | `demo/src/document.rs`                                | a loaded document drawing no text on either load path, and a text node collapsing to an empty leaf                                                                                                            |
 | `crates/dashscene-web/src/shown.rs`                   | a load that reads more than the shown root when nothing else draws (its own tests)                                                                                                                            |
 | `crates/dashscene-android/src/machine.rs`             | the Android frame loop's rebuild bound going unreachable again, a refused resize being believed, `forced` outliving the frame that acts on it, or a recovery that stops the loop it recovered (its own tests) |
+| `crates/dashscene-android/src/face.rs`                | a `DsFace` field the JNI half reads being renamed, retyped or removed in `DsFace.java` — the JNI half's `just c-abi` (its own tests)                                                                          |
 | `crates/dashlang/tests/frame_policy.rs`               | the clamp changing shape — including `clamp` for `max`/`min`, which NaN distinguishes                                                                                                                         |
 | `crates/dashscene-desktop/tests/adapter_accessors.rs` | an adapter accessor going back to a `String`, losing its `pub`, or ceasing to return the painter's own type                                                                                                   |
 | `crates/dashscene-web/tests/adapter_accessors.rs`     | the same, for `Surface` — compiled for wasm32 only, so run by no test binary                                                                                                                                  |
