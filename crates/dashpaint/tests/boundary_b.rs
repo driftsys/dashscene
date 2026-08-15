@@ -1502,6 +1502,86 @@ fn an_atlas_accepts_the_smallest_non_zero_px_per_em() {
     assert_eq!(atlas.px_per_em(), 1);
 }
 
+/// An atlas refuses a zero extent on either axis, in every build profile
+/// (issue #1001).
+///
+/// The third divisor this type owns, and the last of its fields to be refused
+/// at the constructor rather than trusted. `dashscene-gpu`'s `gpu_glyph_run`
+/// maps a source-atlas texel into the residency texture by dividing `uv` by
+/// both, so a zero on either axis is a division by zero on the live path — and
+/// the painter carried its own guard for it, which is exactly the shape issues
+/// #724 and #964 removed for the other two.
+///
+/// **Both axes, separately.** They are independent divisors, and a check
+/// written against the pair — `(width, height) != (0, 0)` — passes a 64 x 0
+/// atlas, which divides by zero on one axis just as surely. The refusal tests
+/// in `dashscene-gpu` use that same `!= (0, 0)` shape as a *precondition* and
+/// say so at each site; here it is the thing under test.
+#[test]
+fn an_atlas_refuses_a_zero_extent_on_either_axis() {
+    for (width, height, axis) in [(0, 64, "width"), (64, 0, "height"), (0, 0, "both")] {
+        let refused = Atlas::new(
+            ImageAsset {
+                format: ImageFormat::Png,
+                bytes: Vec::new(),
+            },
+            width,
+            height,
+            16,
+            2.0,
+            Vec::new(),
+        );
+        assert_eq!(
+            refused,
+            Err(dashpaint::AtlasBuildError::ZeroExtent),
+            "a zero {axis} must be refused: every painter mapping a source texel into the \
+             residency texture divides by both",
+        );
+    }
+}
+
+/// A non-zero extent is accepted, so the check above refuses zero rather than
+/// refusing a small atlas — and the two accessors report their own axis.
+///
+/// **Not a square fixture.** `64 x 32` rather than `1 x 1` because the point of
+/// the pair is that they are two values: a `width()` written as `self.height`
+/// passes any square test, and every other atlas in this repository's unit
+/// tests is square or one texel. The only fixtures that would catch it are the
+/// non-square goldens, which is the tier most likely to be skipped locally.
+#[test]
+fn an_atlas_accepts_a_non_zero_extent_and_reports_each_axis() {
+    let atlas = Atlas::new(
+        ImageAsset {
+            format: ImageFormat::Png,
+            bytes: Vec::new(),
+        },
+        64,
+        32,
+        16,
+        2.0,
+        Vec::new(),
+    )
+    .expect("a 64 x 32 atlas is a valid extent");
+    assert_eq!(atlas.width(), 64, "width() must report the width");
+    assert_eq!(atlas.height(), 32, "height() must report the height");
+
+    // And one texel on each axis is legal, which is what says the refusal above
+    // is of zero rather than of a small atlas.
+    let smallest = Atlas::new(
+        ImageAsset {
+            format: ImageFormat::Png,
+            bytes: Vec::new(),
+        },
+        1,
+        1,
+        16,
+        2.0,
+        Vec::new(),
+    )
+    .expect("a one-texel atlas is a valid extent");
+    assert_eq!((smallest.width(), smallest.height()), (1, 1));
+}
+
 /// An atlas refuses a zero distance range (issue #964).
 ///
 /// The other operand of the expression `px_per_em` was guarded in, and the one

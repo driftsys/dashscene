@@ -225,7 +225,7 @@ fn pack_run(
 ) {
     let run: &GlyphRun = &glyphs.runs()[row as usize];
     let atlas = glyphs.atlas(run.atlas);
-    let height = atlas.height as f32;
+    let height = atlas.height() as f32;
     for quad in glyphs.quads(run) {
         let Some(glyph) = atlas.glyph(quad.glyph_id) else {
             continue;

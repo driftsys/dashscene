@@ -1012,7 +1012,7 @@ fn draw_glyph_quad(
     );
     let [al, ab, ar, at] = glyph.atlas_px;
     // atlas_px is bottom-left origin; skia images are top-left, so flip y.
-    let height = atlas.height as f32;
+    let height = atlas.height() as f32;
     let (src_left, src_top, src_right, src_bottom) = (al, height - at, ar, height - ab);
 
     let (src_w, src_h) = (src_right - src_left, src_bottom - src_top);

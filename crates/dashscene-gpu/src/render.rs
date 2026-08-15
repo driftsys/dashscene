@@ -2453,20 +2453,13 @@ impl Renderer {
                 }
                 let run = &runs[row];
                 let atlas = glyphs.atlas(run.atlas);
-                // An atlas with no extent has no texels to sample, and every
-                // mapping below divides by it. The same case, and the same
-                // treatment, as a zero-extent image payload.
-                // The one `undrawn` site no test reaches. The other three are
-                // covered end to end — a refused image fill, a refused glyph
-                // atlas, a degenerate coverage field — and this one needs an
-                // `Atlas` of no extent, which `Atlas::new` accepts only because
-                // `width` and `height` are `pub` and unchecked. Issue #1001 is
-                // that, and closing it makes this arm unreachable rather than
-                // untested.
-                if atlas.width == 0 || atlas.height == 0 {
-                    out.undrawn = true;
-                    continue;
-                }
+                // **No extent guard here** (issue #1001). `Atlas::new` refuses
+                // a zero width or height and both fields are private, so an
+                // atlas of no texels does not exist to reach this arm — the
+                // same posture `px_per_em` and `distance_range_px` have had
+                // since issues #724 and #964. Every mapping below divides by
+                // the extent, and what makes that safe is the seam rather than
+                // a check the reference painter does not carry either.
                 let resident = self.residency.resident(
                     &self.device,
                     &self.queue,
@@ -2478,8 +2471,8 @@ impl Renderer {
                     dashpaint::ImageRef {
                         format: atlas.image.format,
                         bytes: &atlas.image.bytes,
-                        width: atlas.width,
-                        height: atlas.height,
+                        width: atlas.width(),
+                        height: atlas.height(),
                     },
                 );
                 let slot = match resident {
@@ -2512,9 +2505,10 @@ impl Renderer {
             "a coverage-mask row is resolved exactly when it landed in an atlas",
         );
         // And the same for a glyph run, which since issue #993 carries the same
-        // flag for the same reason. Its arm has three ways out — a zero-extent
-        // atlas, a refusal, and the memo that skips a row already resolved —
-        // and only the last of them leaves the row written.
+        // flag for the same reason. Its arm has two ways out — a refusal, and
+        // the memo that skips a row already resolved — and only the second
+        // leaves the row written. It had a third until issue #1001 closed
+        // `Atlas`'s extent at the constructor and the guard here went with it.
         debug_assert!(
             out.atlas_of_run
                 .iter()
@@ -2536,12 +2530,12 @@ impl Renderer {
         );
         // And the flag `draw_runs` reads agrees with the rows it stands for.
         //
-        // `undrawn` is set at four arms above rather than derived here, because
-        // deriving it is a second walk over the instances on a path R-T4 bounds
-        // and the answer is false for every frame this repository draws. Four
-        // sites is four places to drift, so the derivation runs anyway — in
-        // debug, where it is the whole guard against that, and compiled out of
-        // the frames the bound is about.
+        // `undrawn` is set at three arms above rather than derived here,
+        // because deriving it is a second walk over the instances on a path
+        // R-T4 bounds and the answer is false for every frame this repository
+        // draws. Three sites is three places to drift, so the derivation runs
+        // anyway — in debug, where it is the whole guard against that, and
+        // compiled out of the frames the bound is about.
         debug_assert_eq!(
             out.undrawn,
             buffer
@@ -2729,9 +2723,10 @@ struct Resolved {
     /// resolved rather than re-derived by a second walk over the instances.
     /// [`Renderer::resolve_frame`] is already visiting each one.
     ///
-    /// Set at each arm that leaves a row unresolved, which is four places; the
-    /// assertion at the foot of that function is what says the four agree with
-    /// [`Resolved::draws`], and it costs nothing in release.
+    /// Set at each arm that leaves a row unresolved, which is three places —
+    /// four until issue #1001 closed `Atlas`'s extent at its constructor. The
+    /// assertion at the foot of that function is what says they agree with
+    /// [`Resolved::sampled_row`], and it costs nothing in release.
     undrawn: bool,
 }
 
@@ -2809,7 +2804,7 @@ impl Resolved {
 /// texture, so the atlas's own extent is folded in here — once per run, rather
 /// than once per fragment.
 fn gpu_glyph_run(run: &dashpaint::GlyphRun, atlas: &dashpaint::Atlas, uv: [f32; 4]) -> GpuGlyphRun {
-    let scale = [uv[2] / atlas.width as f32, uv[3] / atlas.height as f32];
+    let scale = [uv[2] / atlas.width() as f32, uv[3] / atlas.height() as f32];
     GpuGlyphRun {
         color: [run.color.r, run.color.g, run.color.b, run.color.a],
         msdf: GpuMsdfRow {
