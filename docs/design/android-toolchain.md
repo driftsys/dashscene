@@ -105,11 +105,16 @@ painter-capable adapter there is a CPU rasteriser.
   a debug build took 1.15 s. Neither crashed, and re-attach built a fresh render
   thread each time. That block is a whole runtime teardown rather than just a
   surface drop, which is issue #872.
-- **Split-screen was not exercised.** That image declares no multi-window,
+- **Split-screen was not exercised on this image.** It declares no multi-window,
   freeform or split-screen feature at all — `pm list features` returns none and
   `ro.build.characteristics` is `automotive` — so the third of D4's three cases
-  needs different hardware. The v0.19 driver prompt asserted the emulator could
-  exercise all three; for this AVD that is false.
+  needs a different emulator image. It does not need different hardware, which
+  this record claimed until 2026-08-15: the case was run on 2026-08-14 against a
+  handheld image, and the harness entered the destroy handshake and never
+  returned (issue #960, open). The recipe that runs it is `android-splitscreen`,
+  and it asserts on the two markers `HarnessActivity` logs. The v0.19 driver
+  prompt asserted the emulator could exercise all three; for this AVD that is
+  false.
 
 A static document draws once and then stops, which is the idle skip working: the
 generation does not advance, so no frame is worth drawing. Nothing about frame

@@ -941,6 +941,135 @@ android-probe:
     "${adb}" shell chmod 755 /data/local/tmp/adapter_report
     "${adb}" shell /data/local/tmp/adapter_report
 
+# Exercise D4's split-screen case against an emulator, end to end, and assert
+# the handshake completed.
+#
+# `docs/decisions/host-integration-in-three-layers.md` D4 names three cases that
+# get the surface handshake wrong: rotation, backgrounding and split-screen. The
+# first two have been exercised; the third had not, and
+# `crates/dashscene-android/src/handshake.rs` carries six host-side unit tests
+# and no instrumented one (issue #874).
+#
+# **This needs no target hardware and no hand gesture**, both of which #874
+# assumed. Measured on 2026-08-14 against a `medium_tablet` API 35 emulator:
+# `am start --windowingMode 6` is accepted and the activity lands in
+# `multi-window`, which is what the issue reports as removed in Android 12. The
+# catch is that it only takes effect on a **cold** launch — against a running
+# activity the request is swallowed as `onActivityRestartAttempt` and the
+# activity is merely brought forward, which is what makes the path look dead.
+# So this force-stops first.
+#
+# The assertion is `HarnessActivity`'s own two markers. `surfaceDestroyed —
+# entering the handshake` says the callback was reached; `surfaceDestroyed —
+# handshake complete, returning` is logged only after it has blocked for the
+# frame loop to stop and the surface to be dropped. Reaching the first without
+# the second is precisely the use-after-free D4 exists to prevent, so both are
+# required. Both are checked for presence, not for order.
+#
+# A tablet profile rather than a phone: split-screen is most reliable on a large
+# screen, and a panel form factor is closer to this project's target anyway.
+android-splitscreen:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sdk="${ANDROID_HOME:-${HOME}/Library/Android/sdk}"
+    img="system-images;android-35;google_apis_playstore;arm64-v8a"
+    pkg=dev.driftsys.dashscene.harness
+    act="${pkg}/dev.driftsys.dashscene.HarnessActivity"
+    if command -v adb >/dev/null 2>&1; then adb=adb; else adb="${sdk}/platform-tools/adb"; fi
+    if ! command -v adb >/dev/null 2>&1 && [ ! -x "${adb}" ]; then
+      echo "android-splitscreen: no adb on PATH and none at ${adb}" >&2
+      echo "android-splitscreen:   sdkmanager --install platform-tools" >&2
+      exit 1
+    fi
+    # **Build before requiring a device.** A cold `just android` is a
+    # multi-minute cross-compile and needs no emulator; checking for a device
+    # first and using it minutes later only widens the window in which it can
+    # go away. build.sh reports a missing libdashscene_android.so by name, so
+    # without `just android` this stops one step short.
+    just android
+    ./crates/dashscene-android/harness/build.sh
+    apk="target/android-harness/harness.apk"
+    if [ -z "$("${adb}" devices | sed '1d' | grep -w device || true)" ]; then
+      echo "android-splitscreen: the APK is built at ${apk}, but no device is attached." >&2
+      echo "android-splitscreen: create the emulator once —" >&2
+      echo "android-splitscreen:   avdmanager create avd -n dashscene-splitscreen \\" >&2
+      echo "android-splitscreen:     -k '${img}' -d medium_tablet" >&2
+      echo "android-splitscreen: then start it and re-run —" >&2
+      echo "android-splitscreen:   ${sdk}/emulator/emulator -avd dashscene-splitscreen &" >&2
+      echo "android-splitscreen: the automotive image does not offer split-screen." >&2
+      exit 1
+    fi
+    # Uninstall rather than `install -r`. A signing key that changed makes the
+    # latter fail with INSTALL_FAILED_UPDATE_INCOMPATIBLE while the device goes
+    # on running the previous build — build.sh's own comment calls that the
+    # worst failure it could have, and this makes it unreachable.
+    "${adb}" uninstall "${pkg}" >/dev/null 2>&1 || true
+    "${adb}" install "${apk}" >/dev/null
+    "${adb}" shell am force-stop "${pkg}" || true
+    "${adb}" logcat -c
+    # **Assert it draws before asserting anything else.** The harness logs
+    # surfaceCreated, surfaceChanged and a runtime handle whether or not the
+    # painter obtained a device, and logs nothing when it did not (issue #960),
+    # so every log-only check passes against a black screen. That is how a black
+    # frame survived a full run here on 2026-08-14 and was found by a human
+    # looking at the emulator. The screenshot is the only witness.
+    echo "android-splitscreen: launching, then checking it actually drew"
+    "${adb}" shell am start -W -n "${act}" >/dev/null
+    sleep 8
+    shot="target/android-harness/screen.png"
+    "${adb}" exec-out screencap -p > "${shot}"
+    if ! python3 crates/dashscene-android/harness/assert-drew.py "${shot}"; then
+      echo "android-splitscreen: stopping here. A handshake result is meaningless" >&2
+      echo "android-splitscreen: while nothing is being drawn: surfaceDestroyed" >&2
+      echo "android-splitscreen: blocks for the frame loop to stop, and a loop" >&2
+      echo "android-splitscreen: that never started may never signal." >&2
+      "${adb}" logcat -d | grep -E "Failed to open rendernode|I dashscene:" | tail -8 >&2 || true
+      exit 1
+    fi
+    # Only now is the split transition worth measuring.
+    "${adb}" shell am force-stop "${pkg}" || true
+    "${adb}" logcat -c
+    echo "android-splitscreen: relaunching cold into multi-window"
+    "${adb}" shell am start -W -n "${act}" --windowingMode 6 >/dev/null
+    sleep 5
+    mode=$("${adb}" shell dumpsys activity activities 2>/dev/null \
+      | grep -A12 "A=[0-9]*:${pkg}" | grep -oE "mWindowingMode=[a-z-]+" | head -1 || true)
+    if [ "${mode}" != "mWindowingMode=multi-window" ]; then
+      echo "android-splitscreen: expected multi-window, got '${mode:-nothing}'" >&2
+      echo "android-splitscreen: a warm start swallows --windowingMode as" >&2
+      echo "android-splitscreen: onActivityRestartAttempt — force-stop first." >&2
+      exit 1
+    fi
+    echo "android-splitscreen: ${mode}; putting a second app in the other half"
+    "${adb}" shell am start -n com.android.settings/.Settings --windowingMode 6 >/dev/null 2>&1 || true
+    for _ in $(seq 1 30); do
+      # Captured and matched in bash rather than piped into `grep -q`. Under
+      # `pipefail`, `grep -q` exits at its first match and closes the pipe,
+      # logcat dies on SIGPIPE, and the pipeline reports that failure — so the
+      # break would never fire and this loop would always run its full 30 s.
+      if [[ "$("${adb}" logcat -d 2>/dev/null || true)" == *"handshake complete, returning"* ]]; then break; fi
+      sleep 1
+    done
+    log=$("${adb}" logcat -d 2>/dev/null | grep -E "I dashscene: harness:" || true)
+    echo "${log}"
+    # Matched in bash for the reason the wait loop above gives: a `printf |
+    # grep -q` pipeline reports SIGPIPE under `pipefail` once the log exceeds
+    # the pipe buffer, which here would invert into a FAIL on a log that
+    # carries the marker.
+    if [[ "${log}" != *"entering the handshake"* ]]; then
+      echo "android-splitscreen: FAIL — the surface was never destroyed, so D4's" >&2
+      echo "android-splitscreen: split-screen case did not run." >&2
+      exit 1
+    fi
+    if [[ "${log}" != *"handshake complete, returning"* ]]; then
+      echo "android-splitscreen: FAIL — entered the handshake and never returned." >&2
+      echo "android-splitscreen: That is the use-after-free window D4 names: the" >&2
+      echo "android-splitscreen: callback must block until the surface is dropped" >&2
+      echo "android-splitscreen: and then return." >&2
+      exit 1
+    fi
+    echo "android-splitscreen: PASS — drew a frame, surface destroyed, handshake completed"
+
 # Assemble the browser host into `target/web`, ready to serve.
 #
 # `wasm-bindgen` post-processes the module cargo produced into the JS glue a
