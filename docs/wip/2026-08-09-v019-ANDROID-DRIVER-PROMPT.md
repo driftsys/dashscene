@@ -1,52 +1,70 @@
 # v0.19 driver prompt — the Android half
 
-    status  written 2026-08-09 at the close of the C ABI work, and rewritten
-            2026-08-13 when everything it was written to carry except #842 had
-            landed and one of its environment traps had stopped being true.
-            Archived to `docs/archive/` at v0.19's close. **A driver prompt has
-            no row in `docs/wip/README.md`** — captures have the table, prompts
-            have that file's prose — so the same commit updates the four
-            paragraphs describing this one.
-    scope   stories **#842** (demo-android on a device, which waits for
-            hardware) and **#947** (the C ABI's text gap, which does not).
-            #834 to #841 have all landed.
+    status  written 2026-08-09 at the close of the C ABI work, rewritten
+            2026-08-13, and corrected 2026-08-14 when **#947 landed** and left
+            it carrying #842 alone. Archived to `docs/archive/` at v0.19's
+            close, unchanged — the "a prompt leaves when its stories do" rule
+            would say #842, but #843 is the records story and would want this
+            file, so the condition stays where it was rather than being
+            narrowed in a correction pass. **A driver prompt has no row in
+            `docs/wip/README.md`** — captures have the table, prompts have that
+            file's prose — so the same commit updates the paragraphs describing
+            this one.
+    scope   story **#842** (demo-android on a device), which waits for
+            hardware. #834 to #841 and #947 have all landed.
     epic    #833
 
-## What can be done now, because #842 cannot start
+## What can be done now, because **no story** can start
 
-**Two of the slice's three open stories wait on a device.** #842's deliverable
-is a frame-rate number, and #885 — which is `debt`, not a story — is the D3a
-Vulkan measurement; both need hardware that was expected roughly 2026-08-23.
-#843 (the records) depends on them.
+**Every remaining story waits on a device.** #842's deliverable is a frame-rate
+number, and #885 — which is `debt`, not a story — is the D3a Vulkan measurement;
+both need hardware that was expected roughly 2026-08-23. #843 (the records)
+depends on them.
 
-**#947 does not wait**, and it is the one story a session can pick up today. The
-rest of the available work is debt.
+**#947 has landed** (2026-08-14, pull request #978), so the sentence this
+paragraph carried until then — that it was the one story a session could pick up
+today — is spent. There is now no pickable story at all, and the whole of the
+available work is debt.
 
 Re-derive the list rather than trusting this snapshot, which was taken
-2026-08-13:
+2026-08-14. Every count below came from this command rather than from editing
+the previous numbers, which is the only way they have ever been right:
 
     gh issue list --milestone "v0.19 — Android, the C ABI, and layer 0" \
       --state open --json number,title,labels
 
-That command returns eighteen rows. **Three carry `story`** — #842 and #843,
-both of which wait as above, and:
+That command returns sixteen rows. **Two carry `story`** — #842 and #843, both
+of which wait as above.
 
-- **#947** — the C ABI has no way to receive fonts, so a `.dsb` with text draws
-  nothing on Android. The two candidate shapes are in the issue; the atlas is
-  the harder half of either. This is the one story that is pickable now.
-
-**Thirteen carry `debt`**, and two of those are not pickable either: **#885** is
+**Twelve carry `debt`**, and two of those are not pickable either: **#885** is
 the hardware measurement itself, and **#828** (a portable conformance suite) is
-held by the slice because no second painter has landed. The other eleven:
+held by the slice because no second painter has landed. The other ten:
 
 - **#950** — `ShowcaseSolver` rebuilds Taffy's retained tree per solve, which
-  `TaffySolver::owning` made unnecessary. Six sites, three files.
-- **#943** — `ShownRoot`'s ordinal is a _document_ ordinal and `Txn::show_root`
-  uses it to index `Arena::roots()`. An API change (`Option<NodeId>`).
-- **#944, #945, #946** — the shown-root story's remainder.
-- **#922, #925, #929, #930, #931, #932** — older slice debt.
+  `TaffySolver::owning` made unnecessary. Six sites, three files. **Check its
+  premise first**: #968 landed on 2026-08-14 and changed `with_text` to take
+  anything that becomes an `Arc<Vec<Atlas>>`, so what this issue describes has
+  moved under it.
+- **#925** — the C ABI has no mapped document path. The natural successor to
+  #947, and the ABI's own module documentation now argues for it. It also
+  unblocks half of **#945**, whose stale-upload defect stays latent only because
+  the ABI names no shown root.
+- **#944, #945, #946** — the shown-root story's remainder. #946 was four
+  findings and is now three: its `rect_of_slot` half moved to v0.20 as **#980**,
+  being the only correctness defect of the four, and **#980 has since been
+  fixed** (pull request #990, 2026-08-15). What is left here is not correctness.
+- **#922, #929, #930, #931, #932** — older slice debt. #931 is the cheapest and
+  is about this repository's own bookkeeping: `test-tiers.md`'s tier table is
+  hundreds of tests stale, and #947 moved the count again.
 
-The eighteenth row is **#767** (`madvise` the prefetch ranges), which carries no
+**#943 is no longer on this milestone, and is fixed.** It moved to v0.20 on
+2026-08-14, on the rule that slice states — no correctness defect waits behind a
+feature slice — because a `ShownRoot` ordinal indexed against `Arena::roots()`
+paints the wrong artboard with no diagnostic. That is the same rule #878 sits
+under. It closed the next day, with #980, in pull request #990: the shown root
+is a node, and an unresolved slot is no longer row 0.
+
+The sixteenth row is **#767** (`madvise` the prefetch ranges), which carries no
 label at all and so appears in neither count. Epic #833 holds it with a reason —
 Android is the first target where a cold page cache is ordinary rather than
 contrived, and it needs on-device measurement infrastructure — so it is not
@@ -61,7 +79,9 @@ pickable before hardware either.
 - [`../design/android-toolchain.md`](../design/android-toolchain.md) — the
   toolchain, what the probe found, and what is **not** measured.
 - `crates/dashscene-ffi/src/lib.rs` — the ABI's contract, its three rules, and
-  the text gap under "Text is absent from the document load".
+  what an embedder must hand over, under "What a host supplies for text". That
+  section was called "Text is absent from the document load" until #947 closed
+  it.
 
 ## What is already built, so it is not rebuilt
 
@@ -97,22 +117,38 @@ pickable before hardware either.
   rather than through it — #834 landed hours before that merge, #835 to #838 and
   #863 after it — and #842 should too.
 
-## The text gap, which is new since this file was written
+## The text gap, which is closed
 
-**A `.dsb` containing text draws no glyphs on Android, and lays its text nodes
-out as empty leaves.** Story #863 (2026-08-13) fixed that on desktop and on the
-web by giving their loaders a `dashscene_engine::TextResources` — a `Typesetter`
-and the atlases its cascade samples — that the host supplies, because the
-document cannot carry either. Neither value crosses a C boundary, so
-`ds_runtime_load_document` still builds the bare `TaffySolver` and
-`dashscene-android`, which loads through it, still draws no text. That is
-**#947**, and it is undesigned rather than blocked: the ABI's versioning rule
-makes a second entry point free.
+**It is no longer a gap.** This section described one until 2026-08-14, when
+#947 landed: a `.dsb` containing text drew no glyphs on Android and laid its
+text nodes out as empty leaves, because story #863 had fixed desktop and web by
+giving their loaders a `dashscene_engine::TextResources` and neither a
+`Typesetter` nor an `Atlas` crosses a C boundary.
 
-**#842 does not hit it**, because the showcase's scenes are built in code and
-bring their own solver — which is the whole reason its text has ever drawn. A
-session that uses the document load path will hit it, so it is named here rather
-than left to be discovered.
+What crosses now is their **inputs**. `ds_runtime_load_document_with_text` takes
+an array of `DsFontFace`, each pairing one face — its font file's bytes, family
+and CSS weight — with the committed sheet its glyphs sample, and
+`TextResources::from_faces` assembles them on the far side.
+`ds_runtime_load_document` is unchanged and is that call with no faces, so
+`DS_ABI_VERSION` stayed 1. `dashscene-android` exposes it as a second JNI entry
+point, `nativeSurfaceCreatedWithText`.
+
+**What a session still has to know**, because it is a constraint rather than a
+gap that closed:
+
+- **Nothing bakes an atlas at run time.** The MSDF generator is an external
+  pinned binary that reads its font from a path, so a host arrives with a
+  committed PNG and its metrics blob or its text is measured and never drawn.
+- **Nothing in this repository calls the new JNI entry point yet**, including
+  the harness a device would run — it still calls `nativeSurfaceCreated`. That
+  is **#969**, and it matters for #842: a device trip that does not wire it
+  measures the no-text path.
+- **The JNI half has been compiled and never run.** There is no device. Nothing
+  here describes Android as working; that measurement is #885.
+
+**#842 did not hit the old gap** either, because the showcase's scenes are built
+in code and bring their own solver — which is the whole reason its text has ever
+drawn.
 
 ## What the emulator can and cannot tell you
 
