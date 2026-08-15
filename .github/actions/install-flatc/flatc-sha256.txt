@@ -1,0 +1,36 @@
+# flatc release-asset checksums, one row per version, keyed by the version
+# `action.yml` beside this file derives from the workspace manifest's exact
+# `flatbuffers` requirement.
+#
+# These are checksums of the one release asset CI fetches. **The asset name is
+# not written here** — it lives once, in `action.yml`'s `asset=` line, because
+# it changes on its own schedule: it encodes the libstdc++ the binary was built
+# against, so a future `g++-14` build renames it. The derive command below reads
+# it from there rather than repeating it, so a rename cannot leave this file
+# hashing an asset CI does not fetch.
+#
+# A version with no row fails the install rather than fetching bytes nothing
+# checks, so bumping `flatbuffers` in Cargo.toml means adding a row in the same
+# commit. That is the point: the failure is loud and names the missing version,
+# where a hardcoded sum would have gone stale silently.
+#
+# Derive a row, reading both the version and the asset the way the action does.
+# The last line prints the row itself, in this file's column order — do not
+# paste `sha256sum` output directly, which is the other order and would key the
+# row on the checksum:
+#
+#   v=$(awk -F'"' '/^flatbuffers = "=/{print $2}' Cargo.toml | tr -d '=')
+#   a=$(awk -F"'" '/^ *asset=/{print $2}' \
+#         .github/actions/install-flatc/action.yml)
+#   gh release download "v${v}" --repo google/flatbuffers --pattern "${a}" \
+#     --clobber
+#   printf '%s    %s\n' "${v}" "$(sha256sum "${a}" | awk '{print $1}')"
+#
+# The `tr` is load-bearing: the awk half alone yields `=25.12.19`, which matches
+# no row and fails closed on every run.
+#
+# Rows are `version<space>sha256`. Comment lines cannot collide with a version,
+# so the lookup ignores them without a rule of its own.
+#
+# version   sha256
+25.12.19    9f87066dc5dfa7fe02090b55bab5f3e55df03e32c9b0cdf229004ade7d091039

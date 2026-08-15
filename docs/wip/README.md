@@ -129,7 +129,8 @@ landed with the stories and the original stayed here for a few hours, which the
 **Eleven, since the v0.19 debt prompt landed** (2026-08-15). Nine are design
 captures, described below, and **two driver prompts are held**: v0.19's Android
 half, and `2026-08-15-v019-REMAINING-DEBT-DRIVER-PROMPT.md`, which carries the
-eight issues in that slice needing no hardware. It replaced
+issues in that slice needing no hardware — eight when it landed, seven since
+#922 was settled on 2026-08-15. It replaced
 `2026-08-15-v019-DEBT-DRIVER-PROMPT.md` on the same day, when #925, #945 and
 #946 landed and left that one describing work that was done; the count did not
 move, because one prompt was archived as the other was added.
@@ -443,8 +444,9 @@ Two driver prompts are held here now, both v0.19's, as the section above says.
 landed, and `integration/v0.19-android` merged into `main` on 2026-08-09 and is
 history — and leaves at the slice's close.
 `2026-08-15-v019-REMAINING-DEBT-DRIVER-PROMPT.md` carries the debt that does not
-wait on hardware — #944, #950, #932, #930, #929, #922, #828 and #767 — and
-leaves when that work lands or moves to another milestone. It supersedes
+wait on hardware — #944, #950, #932, #930, #929, #828 and #767, with #922
+settled on 2026-08-15 and struck in the prompt itself — and leaves when that
+work lands or moves to another milestone. It supersedes
 `2026-08-15-v019-DEBT-DRIVER-PROMPT.md`, archived 2026-08-15.
 
 `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md` was archived on 2026-08-13, when

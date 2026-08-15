@@ -25,9 +25,21 @@ description: >-
 # A local action rather than a published one: referenced as
 # `./.github/actions/install-flatc`, it resolves from the checkout, so the
 # *reference* needs no release, no version tag and no third-party trust. The
-# *payload* is a release asset fetched over the network with no checksum, unlike
-# the gitleaks install in the workflow — a checksum cannot be pinned here while
-# the version is derived, and issue #922 carries that tension.
+# *payload* is a release asset fetched over the network, and it is verified
+# against `flatc-sha256.txt` beside this file — a table keyed by the derived
+# version, so the version keeps its one home in the manifest and a version with
+# no row fails closed rather than installing bytes nothing checks. That is what
+# issue #922 asked for: a hardcoded sum could not survive the derived version,
+# but a table keyed on it can.
+#
+# The checksum is committed rather than read from the release, following the
+# gitleaks and prim installs in the workflow: a checksum fetched from the server
+# that serves the artifact proves the transfer was not corrupted and nothing
+# more, where a committed one also has to match a byte this repository already
+# agreed to. GitHub's releases API does expose a per-asset `digest`, and it is
+# that same server, so it buys nothing beyond what the transfer already had.
+# flatbuffers itself publishes no signature, no checksum and no SLSA provenance
+# — all three measured against v25.12.19 and recorded on issue #922.
 #
 # `linux/amd64` only, like every job that calls it. The asset name encodes both
 # the platform and the libstdc++ it was built against.
@@ -38,14 +50,67 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
+        asset='Linux.flatc.binary.g++-13.zip'
+        table="${GITHUB_ACTION_PATH}/flatc-sha256.txt"
         version=$(awk -F'"' '/^flatbuffers = "=/{print $2}' Cargo.toml | tr -d '=')
         if [ -z "${version}" ]; then
           echo "install-flatc: no exact flatbuffers requirement found in Cargo.toml" >&2
           echo "install-flatc: expected a line of the form: flatbuffers = \"=X.Y.Z\"" >&2
           exit 1
         fi
+        # Every failure below names itself, because the causes are different
+        # repairs: a missing table is a broken checkout, a missing row is a bump
+        # that forgot one, a duplicate row is a bad merge, and a malformed row is
+        # a typo. Collapsing them would send a maintainer to google/flatbuffers
+        # for a defect in a file two directories away.
+        if [ ! -f "${table}" ]; then
+          echo "install-flatc: no checksum table at ${table}" >&2
+          echo "install-flatc: flatc-sha256.txt must travel with this action" >&2
+          exit 1
+        fi
+        # `$1 "" == v ""` forces a string compare. A bare `$1 == v` is numeric
+        # whenever both sides parse as numbers, so a row keyed `25.1` would
+        # answer a derived version of `25.10` with the wrong checksum. Three-part
+        # versions never parse as numbers, so this is a guard on the table's
+        # stated contract rather than on today's rows.
+        #
+        # Rows are counted by key rather than by the checksum they yield, so a
+        # row whose second column is missing is reported as malformed rather than
+        # as absent — otherwise the message tells a maintainer to add a row that
+        # is already there.
+        count=$(awk -v v="${version}" '$1 "" == v "" { n++ } END { print n + 0 }' "${table}")
+        if [ "${count}" -eq 0 ]; then
+          echo "install-flatc: no checksum recorded for flatc ${version}" >&2
+          echo "install-flatc: add a row to .github/actions/install-flatc/flatc-sha256.txt" >&2
+          echo "install-flatc: its header carries the command that derives one" >&2
+          exit 1
+        fi
+        # Refused rather than resolved: with two rows `sha256sum -c` reads the
+        # first as a malformed line, and without --strict that is a warning and
+        # an exit code of 0 — the gate would silently check whichever row came
+        # last. --strict below is the backstop; this names the cause.
+        if [ "${count}" -ne 1 ]; then
+          echo "install-flatc: ${count} checksum rows recorded for flatc ${version}" >&2
+          echo "install-flatc: .github/actions/install-flatc/flatc-sha256.txt must hold one row per version" >&2
+          exit 1
+        fi
+        sha=$(awk -v v="${version}" '$1 "" == v "" { print $2 }' "${table}")
+        if ! printf '%s' "${sha}" | grep -qE '^[0-9a-f]{64}$'; then
+          echo "install-flatc: malformed checksum row for flatc ${version}" >&2
+          echo "install-flatc:   read '${sha}', wanted 64 lowercase hex characters" >&2
+          echo "install-flatc: fix the row in .github/actions/install-flatc/flatc-sha256.txt" >&2
+          exit 1
+        fi
         curl -fsSL -o flatc.zip \
-          "https://github.com/google/flatbuffers/releases/download/v${version}/Linux.flatc.binary.g++-13.zip"
+          "https://github.com/google/flatbuffers/releases/download/v${version}/${asset}"
+        if ! echo "${sha}  flatc.zip" | sha256sum -c --strict - >/dev/null; then
+          echo "install-flatc: checksum mismatch for flatc ${version}" >&2
+          echo "install-flatc:   expected ${sha}" >&2
+          echo "install-flatc:   got      $(sha256sum flatc.zip | awk '{print $1}')" >&2
+          echo "install-flatc: asset ${asset}, table .github/actions/install-flatc/flatc-sha256.txt" >&2
+          rm -f flatc.zip
+          exit 1
+        fi
         unzip -o flatc.zip flatc -d /usr/local/bin
         chmod +x /usr/local/bin/flatc
         rm -f flatc.zip
@@ -54,4 +119,4 @@ runs:
           echo "install-flatc: installed flatc ${installed}, but the workspace pins ${version}" >&2
           exit 1
         fi
-        echo "install-flatc: flatc ${installed}, matching the flatbuffers crate"
+        echo "install-flatc: flatc ${installed}, checksum verified, matching the flatbuffers crate"

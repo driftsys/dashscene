@@ -17,6 +17,8 @@
             today.** #828 wants a second painter that does not exist and
             #767 wants a cold-cache harness, so both are listed to be
             *decided* rather than started — see their own section.
+            **#922 has since landed** and is struck from its section
+            below; seven remain, five of them startable.
     epic    #833
 
 ## Re-derive before trusting any of this
@@ -26,7 +28,9 @@
 
 At 2026-08-15 that returned **twelve rows**: one `epic` (#833), two `story`
 (#842, #843), eight `debt`, and #767 unlabelled. The milestone stood at 28
-closed of 40.
+closed of 40. **#922 then closed later the same day**, so the same command now
+returns eleven rows and seven `debt` — which is why the scope line above says
+seven remain. Re-run it rather than reading either figure here.
 
 **The list decays under v0.20's work, which is running in parallel and is
 loud.** On 2026-08-15 v0.20 took **53 new issues**, of which **20 were closed
@@ -88,7 +92,10 @@ scope above is ordinary debt that gates nothing.
   Whichever way the vectors are fixed, the change needs a third term — an
   allocation count or a bytes-touched count — or it is unfalsifiable.
 
-## The five that are ordinary, with what is stale in each
+## The four that are ordinary, with what is stale in each
+
+This section held five until #922 landed; its bullet is kept below, struck,
+because the reasoning in the ones around it refers to the count.
 
 - **#950 — `ShowcaseSolver` rebuilds Taffy's retained tree per solve.**
   **Premise verified and its site list is correct**, which is worth saying
@@ -194,29 +201,26 @@ scope above is ordinary debt that gates nothing.
   `just calibrate` for a change that cannot move a table. That is the whole
   reason it was not folded into PR #928.
 
-- **#922 — the flatc install has no integrity check.** **The issue's one
-  unchecked input is now checked, and the answer removes an option.**
+- **#922 — the flatc install has no integrity check. LANDED, do not start it.**
+  The committed-table option was taken.
+  `.github/actions/install-flatc/flatc-sha256.txt` maps the derived version to
+  the sha256 of the release asset it fetches — named once, in `action.yml`,
+  deliberately not repeated here — the action verifies the download against it,
+  and a version with no row fails the install by name rather than fetching bytes
+  nothing checks. So **bumping `flatbuffers` in `Cargo.toml` now means adding a
+  row in the same commit** — that is the cost the option was chosen with, not an
+  oversight.
 
-  `.github/actions/install-flatc/action.yml` derives the version with
+  Two things a later reader will otherwise rediscover:
 
-      awk -F'"' '/^flatbuffers = "=/{print $2}' Cargo.toml | tr -d '='
-
-  — **the `tr` matters**: the awk half alone yields `=25.12.19`, and a checksum
-  table keyed on that fails closed on every run. It then fetches
-  `Linux.flatc.binary.g++-13.zip` over `curl` into `/usr/local/bin`.
-
-  **flatbuffers publishes no signature and no checksum.** Measured against
-  `v25.12.19`, the version the manifest pins today: the release carries five zip
-  assets and nothing else — no `.sig`, no `.asc`, no `SHA256SUMS` — its body
-  mentions no checksum, signature or GPG key, and `gh attestation verify`
-  against the asset's real digest returns HTTP 404, so there is no SLSA
-  provenance either. The full evidence is a comment on the issue.
-
-  So the decision is between three options, not four: a committed
-  version-to-checksum table that fails closed on an unknown version, vendoring
-  flatc (which this repository already declines for size), or accepting it and
-  writing that down. The first entry for a table, if that is the choice, is on
-  the issue.
+  - **GitHub's releases API exposes a per-asset `digest` field**, which the
+    issue's evidence comment does not mention and which looks like a fourth
+    option. It is not one. That digest comes from the same server as the asset,
+    and `.github/workflows/ci.yml` already records why that buys nothing: a
+    checksum fetched from the server that serves the artifact proves the
+    transfer was not corrupted and nothing more.
+  - **The nine-fetches/no-retry/no-cache half of the issue was not fixed** and
+    is now its own issue — see the note under "Suggested order".
 
 ## The two that are not really pickable either, and why they are listed anyway
 
@@ -247,8 +251,12 @@ scope above is ordinary debt that gates nothing.
 
 ## Suggested order, and why
 
-1. **#922** — the decision is now a decision, because the input that blocked it
-   is answered. Cheapest thing here that closes an issue.
+1. ~~**#922**~~ — **done.** The committed-table option was taken. Its second
+   property, the nine unretried and uncached fetches, was **not** fixed and is
+   now issue #1078 on `v0.23 — rolling quick debt`, so it is out of this
+   prompt's scope rather than lost. Note for whoever picks that up: the
+   committed checksum has already closed the trust axis that made caching
+   awkward, which its parent issue could not assume.
 2. **#929** then **#932** — same directory, and #929's consolidation changes
    what #932 is choosing between. Both need `just calibrate` awareness.
 3. **#930** — after #932, because if #932 splits the module the caching question
