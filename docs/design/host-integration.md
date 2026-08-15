@@ -217,16 +217,17 @@ so what a device would run today is the path that draws no glyphs.
 
 ## What holds it
 
-| check                                                 | what it fails on                                                                                            |
-| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `demo/tests/integration_surface.rs`                   | any of the five pieces missing from an integration crate, or present in its demo                            |
-| `demo/tests/host_policy_invariant.rs`                 | a host holding its own clamp or its own shown generation                                                    |
-| `demo/tests/clock_invariant.rs`                       | a clock read by any crate at or below `LiveScene`, which R4 rests on                                        |
-| `demo/src/document.rs`                                | a loaded document drawing no text on either load path, and a text node collapsing to an empty leaf          |
-| `crates/dashscene-web/src/shown.rs`                   | a load that reads more than the shown root when nothing else draws (its own tests)                          |
-| `crates/dashlang/tests/frame_policy.rs`               | the clamp changing shape — including `clamp` for `max`/`min`, which NaN distinguishes                       |
-| `crates/dashscene-desktop/tests/adapter_accessors.rs` | an adapter accessor going back to a `String`, losing its `pub`, or ceasing to return the painter's own type |
-| `crates/dashscene-web/tests/adapter_accessors.rs`     | the same, for `Surface` — compiled for wasm32 only, so run by no test binary                                |
+| check                                                 | what it fails on                                                                                                                                                                                              |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `demo/tests/integration_surface.rs`                   | any of the five pieces missing from an integration crate, or present in its demo                                                                                                                              |
+| `demo/tests/host_policy_invariant.rs`                 | a host holding its own clamp or its own shown generation                                                                                                                                                      |
+| `demo/tests/clock_invariant.rs`                       | a clock read by any crate at or below `LiveScene`, which R4 rests on                                                                                                                                          |
+| `demo/src/document.rs`                                | a loaded document drawing no text on either load path, and a text node collapsing to an empty leaf                                                                                                            |
+| `crates/dashscene-web/src/shown.rs`                   | a load that reads more than the shown root when nothing else draws (its own tests)                                                                                                                            |
+| `crates/dashscene-android/src/machine.rs`             | the Android frame loop's rebuild bound going unreachable again, a refused resize being believed, `forced` outliving the frame that acts on it, or a recovery that stops the loop it recovered (its own tests) |
+| `crates/dashlang/tests/frame_policy.rs`               | the clamp changing shape — including `clamp` for `max`/`min`, which NaN distinguishes                                                                                                                         |
+| `crates/dashscene-desktop/tests/adapter_accessors.rs` | an adapter accessor going back to a `String`, losing its `pub`, or ceasing to return the painter's own type                                                                                                   |
+| `crates/dashscene-web/tests/adapter_accessors.rs`     | the same, for `Surface` — compiled for wasm32 only, so run by no test binary                                                                                                                                  |
 
 `integration_surface.rs` is a **source scan** and matches one spelling per
 piece. A demonstration that reimplemented the frame loop through a differently

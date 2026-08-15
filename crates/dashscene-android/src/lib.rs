@@ -82,30 +82,34 @@
 //! `wgpu::Limits::downlevel_defaults` allows exactly four, so a device without
 //! Vulkan meets the same wall that makes WebGL2 unbuildable for this painter.
 //! Until that measurement exists on hardware, **nothing here describes Android
-//! as working**: this crate compiles, its handshake is tested, and what it does
-//! on a device is a question the device has to answer.
+//! as working**: this crate compiles, its handshake and its frame-loop state
+//! machine are tested on the host, and what it does on a device is a question
+//! the device has to answer. Those tests bound what a frame *decides*; no test
+//! here draws a pixel.
 //!
 //! [`ds_runtime_load_document_with_text`]: dashscene_ffi::ds_runtime_load_document_with_text
 
 mod frames;
 mod handshake;
+mod logging;
+mod machine;
 
 pub use frames::{AttachError, Frames, Step};
 pub use handshake::Handshake;
 
+// Public, so a host implementing `Frames` writes one line rather than a fourth
+// copy of the same `__android_log_write` call with the same tag. Off Android it
+// discards, so that `machine` — which is not gated, and logs — has one call
+// shape on every target.
+pub use logging::log;
+
 // The platform half. Behind the `cfg` because every symbol in it binds an NDK or
-// JNI function that exists on no other target — which is also why the handshake
-// and the `Frames` seam are *not* in here.
+// JNI function that exists on no other target — which is also why the handshake,
+// the `Frames` seam and the frame loop's state machine are *not* in here.
 #[cfg(target_os = "android")]
 mod host;
 #[cfg(target_os = "android")]
-mod logging;
-#[cfg(target_os = "android")]
 pub mod loop_;
 
-// Public, so a host implementing `Frames` writes one line rather than a fourth
-// copy of the same `__android_log_write` call with the same tag.
-#[cfg(target_os = "android")]
-pub use logging::log;
 #[cfg(target_os = "android")]
 pub use loop_::AndroidHost;

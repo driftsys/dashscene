@@ -16,11 +16,17 @@
 //!
 //! # Why it is a type of its own, on no Android API
 //!
-//! Because it is the part that can be wrong without a device. Everything else in
+//! Because it is a part that can be wrong without a device. The platform half of
 //! this crate is `#[cfg(target_os = "android")]` and compiles nowhere else, so no
 //! `cargo test` can reach it — the same problem `dashscene-web` has with its
 //! `requestAnimationFrame` loop, answered the same way: keep the decidable part
 //! outside the platform gate.
+//!
+//! **This was the only such part until issue #888.** The frame loop's state
+//! machine is now a second one, in [`crate::machine`], lifted out for this exact
+//! reason after three consecutive repairs to its recovery path shipped broken.
+//! A decision that binds no NDK symbol belongs beside these two, not inside
+//! `loop_`.
 //!
 //! A lifetime bug here does not need a fast GPU to reproduce, and it does not
 //! need Android either. Two threads and a flag are enough to express the
