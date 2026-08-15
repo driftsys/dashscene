@@ -651,6 +651,7 @@ dependencies = [
 name = "dashscene-ffi"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "dashbuf",
  "dashlang",
  "dashpaint",
@@ -658,6 +659,8 @@ dependencies = [
  "dashscene-engine",
  "dashscene-gpu",
  "dashscene-validator",
+ "flatbuffers",
+ "tempfile",
 ]
 
 [[package]]

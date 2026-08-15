@@ -171,6 +171,52 @@ int main(void) {
                                            2) == DS_ATLAS,
         "one face with a sheet and one without is DS_ATLAS from C");
 
+  /* The mapped load (issue #925). No .dsb is written here — this file is
+   * compiled and run to check that the header and the library agree, not to
+   * re-test the loader, which the Rust tests cover over a two-root fixture.
+   * What C is uniquely able to check is that the declaration binds: a
+   * const char * path and a uint32_t ordinal, in that order, reaching the same
+   * argument slots the library reads. A wrong declaration would show up here
+   * as a wrong status rather than as a link error. */
+  check(ds_runtime_load_document_mapped(runtime, NULL, 0, NULL, 0) ==
+            DS_NULL_ARGUMENT,
+        "a NULL path is DS_NULL_ARGUMENT from C");
+  check(ds_runtime_load_document_mapped(NULL, "/nonexistent/no-such.dsb", 0,
+                                        NULL, 0) == DS_NULL_ARGUMENT,
+        "a NULL runtime is DS_NULL_ARGUMENT from C");
+  check(ds_runtime_load_document_mapped(runtime, "/nonexistent/no-such.dsb", 0,
+                                        NULL, 0) == DS_MAP,
+        "a path nothing is at is DS_MAP from C");
+  /* The ordinal is read as an ordinal and not as something else: the path
+   * fails first whatever it is, so this only confirms the call survives a
+   * large value in that slot rather than treating it as a pointer. */
+  check(ds_runtime_load_document_mapped(runtime, "/nonexistent/no-such.dsb",
+                                        4294967295u, NULL, 0) == DS_MAP,
+        "a large ordinal still reports the path failure from C");
+  /* faces NULL with a non-zero count is refused before the path is touched,
+   * the same ordering ds_runtime_load_document_with_text keeps. */
+  check(ds_runtime_load_document_mapped(runtime, "/nonexistent/no-such.dsb", 0,
+                                        NULL, 1) == DS_NULL_ARGUMENT,
+        "NULL faces with a non-zero count is DS_NULL_ARGUMENT from C");
+
+  /* The three statuses this file cannot reach without writing a .dsb, pinned
+   * by value instead.
+   *
+   * Reaching a status from C is the stronger check and is what the tests above
+   * do wherever it is cheap. These three need a real two-root document with a
+   * corrupted payload, which is 95 lines of flatbuffer assembly in the Rust
+   * tests and does not belong here. But leaving them unchecked would leave the
+   * one gate that compares the two halves blind to exactly the mistake it
+   * exists to catch: a discriminant typed wrong in this hand-written header.
+   *
+   * These four literals and the four in the Rust test the_abi_version_did_not_move
+   * are two independent statements of the same numbers. A header typo makes one
+   * of the pair disagree with the library, and this file is what fails. */
+  check(DS_MAP == 11, "DS_MAP is 11 in the header");
+  check(DS_NO_SUCH_ROOT == 12, "DS_NO_SUCH_ROOT is 12 in the header");
+  check(DS_DERIVED == 13, "DS_DERIVED is 13 in the header");
+  check(DS_PAYLOAD == 14, "DS_PAYLOAD is 14 in the header");
+
   ds_runtime_free(runtime);
   ds_runtime_free(NULL); /* free(NULL) semantics */
   check(1, "freeing the runtime and NULL both return");

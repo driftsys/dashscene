@@ -154,11 +154,12 @@ impl Document {
         // reads no header at all, by design, so nothing downstream would catch
         // it. This crate ships no profile and has no way to name a rung, so the
         // honest answer is to refuse the file rather than draw the wrong thing.
-        let entries = document.assets().unwrap_or_default();
-        for (want, entry) in wanted.iter().zip(entries.iter()) {
-            if want.hash != entry.hash().bytes() {
-                return Err(DesktopError::Derived { path: name });
-            }
+        //
+        // The comparison itself is `dashscene-core`'s, because `dashscene-web`
+        // and `dashscene-ffi` make the same one and each names its own source
+        // in its own error type.
+        if dashscene_core::first_derived_payload(&document, &wanted).is_some() {
+            return Err(DesktopError::Derived { path: name });
         }
 
         // The prefetch, and the whole of what this reads out of the file's cold
@@ -229,60 +230,17 @@ impl Document {
         // unshown — and this confines what is solved, committed and painted to
         // the one being shown (story #838, issue #822).
         //
-        // Named by node: `Txn::show_root` takes the arena's own vocabulary, and
-        // this is the one place holding both the document and the arena it was
-        // appended to. Passing the ordinal straight through would confine the
-        // traversal to the *first* document's root while the prefetch above read
-        // this one's — the wrong artboard, solved and painted, with nothing to
-        // report it (issue #943).
-        //
-        // A commit of its own rather than a parameter on the loader: the load
-        // has already committed by the time this runs, and this is the cheaper
-        // of the two ways to say it — one extra commit per load, against a
-        // signature change on three public loaders and every call site.
-        //
-        // **A named panic rather than a typed error**, and this reverses a review
-        // finding on the first cut deliberately. That finding read `.expect`
-        // here as the one abort on a path where every other failure is a
-        // `Result`; it is not. `Txn::use_mapped_pool` already panics by name
-        // when this same function is handed an arena whose image table holds
-        // rows, so a broken precondition aborting here is the established
-        // behaviour of this loader rather than a new one.
-        //
-        // The deciding evidence is that the error cannot be built honestly.
-        // `NoSuchRoot::roots` is documented as "how many the document does
-        // carry", and this arm is reached only after `resolve` proved the
-        // document carries more roots than the ordinal — so the true value
-        // renders "carries 2 roots, and root 1 was asked for", an in-range ask
-        // reported as a failure, and any value that reads correctly is a false
-        // claim about the file. A variant that cannot state what happened is the
-        // wrong shape for it.
-        //
-        // What it is instead: `dashscene-core` promising one arena root per
-        // document root and not delivering. That is an invariant of another
-        // crate, which is why it is checked rather than assumed, and P4's answer
-        // to a broken invariant is a diagnostic that names it.
-        let shown = *arena
-            .roots()
-            .get(roots_before + shown_root.ordinal() as usize)
-            .unwrap_or_else(|| {
-                // Inside the closure: nothing here runs on the ordinary path,
-                // and `saturating_sub` so a shrunken root list cannot replace
-                // this diagnostic with a bare subtraction overflow.
-                let appended = arena.roots().len().saturating_sub(roots_before);
-                panic!(
-                    "{} declares {} root(s) and this load appended {appended} to the arena, so \
-                     ordinal {} names no node: `load_document_mapped` appends one arena root per \
-                     document root, and the prefetch above already resolved this ordinal against \
-                     the same document",
-                    self.path.display(),
-                    dashbuf::prefetch::root_count(&document),
-                    shown_root.ordinal(),
-                )
-            });
-        let mut txn = arena.open();
-        txn.show_root(Some(shown));
-        txn.commit();
+        // The ordinal correction, the commit, and the argument for a named
+        // panic over a typed error are all `show_appended_root`'s own
+        // documentation now — `dashscene-web` and `dashscene-ffi` make this
+        // same call, and the reasoning belongs where all three can read it.
+        dashscene_core::show_appended_root(
+            &document,
+            shown_root,
+            roots_before,
+            &self.path.display(),
+            arena,
+        );
         Ok(dashlang::attach_live(
             arena,
             dashscene_engine::TaffySolver::boxed(text),

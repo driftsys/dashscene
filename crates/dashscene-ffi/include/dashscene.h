@@ -64,7 +64,23 @@ typedef enum DsStatus {
    * PNG header carrying the extent those metrics declare, a glyph in those
    * metrics is described by exactly one of its two quads, or the set is
    * mixed — some faces carrying a sheet and some not. */
-  DS_ATLAS = 10
+  DS_ATLAS = 10,
+  /* The path could not be used: nothing is there, it cannot be read, it is
+   * empty, or it is not UTF-8. Only ds_runtime_load_document_mapped reports
+   * it, because it is the only call that takes a path. */
+  DS_MAP = 11,
+  /* The ordinal names no root in this document. The message from
+   * ds_last_error_message carries the ordinal asked for and the count the
+   * document does carry, which is what tells an out-of-range ask apart from a
+   * document with no roots at all. */
+  DS_NO_SUCH_ROOT = 12,
+  /* The file's payloads are derivations rather than the document's own
+   * canonical bytes. A mapped load reads no payload header, so binding these
+   * would tag one format as another with nothing downstream to catch it; the
+   * file is refused instead. */
+  DS_DERIVED = 13,
+  /* An asset the shown root draws did not hash to what its entry names. */
+  DS_PAYLOAD = 14
 } DsStatus;
 
 /* Which platform handle ds_runtime_attach_surface's pointers carry. */
@@ -129,7 +145,10 @@ void ds_runtime_free(DsRuntime *runtime);
  *
  * This is the owning path: every payload is copied, so the cost tracks the file
  * rather than the shown root. That is the honest shape for a caller that handed
- * over bytes. A mapped load belongs with the platform host that has the file.
+ * over bytes it already holds.
+ *
+ * If you have the file rather than its bytes, ds_runtime_load_document_mapped
+ * is the bounded path and costs less.
  */
 DsStatus ds_runtime_load_document(DsRuntime *runtime, const uint8_t *bytes,
                                   size_t len);
@@ -158,6 +177,42 @@ DsStatus ds_runtime_load_document_with_text(DsRuntime *runtime,
                                             const uint8_t *bytes, size_t len,
                                             const DsFontFace *faces,
                                             size_t face_count);
+
+/*
+ * Loads a .dsb by MAPPING it from path, bounded by the root that is shown.
+ *
+ * The bounded counterpart of ds_runtime_load_document. The file is mapped
+ * rather than read and no payload is copied; the only bytes touched out of the
+ * file's cold half are the assets the shown root's subtree draws. So the cost
+ * of opening tracks the artboard you are showing rather than the size of the
+ * file, which is what the other two hosts already did and this one did not.
+ *
+ * path is NUL-terminated UTF-8.
+ *
+ * shown_root is a document ordinal and is REQUIRED. There is no value meaning
+ * "every root": a caller that wants every root has ds_runtime_load_document
+ * and pays the owning cost knowingly. An ordinal past the last root is
+ * DS_NO_SUCH_ROOT rather than a silent clamp.
+ *
+ * faces carries the same rule as ds_runtime_load_document_with_text: a NULL
+ * faces, or a zero face_count, loads without text, and text nodes then lay out
+ * as empty leaves and draw no glyphs.
+ *
+ * THE MAPPING IS THE RUNTIME'S. You keep no lifetime rule and you must not
+ * unlink or rewrite the file while it is loaded: the arena holds the mapping,
+ * and each load installs a fresh arena, so the previous mapping is released
+ * when the next load or ds_runtime_free happens.
+ *
+ * THE ROOT IS NAMED ONCE, at load. There is no call for changing it
+ * afterwards; load again to show a different artboard.
+ *
+ * Adding this symbol did not move DS_ABI_VERSION, and neither did the four
+ * statuses it reports: they are appended at the tail of DsStatus.
+ */
+DsStatus ds_runtime_load_document_mapped(DsRuntime *runtime, const char *path,
+                                         uint32_t shown_root,
+                                         const DsFontFace *faces,
+                                         size_t face_count);
 
 /*
  * Hands a platform surface to the painter. width and height are device pixels.

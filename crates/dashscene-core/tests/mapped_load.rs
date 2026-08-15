@@ -360,3 +360,79 @@ fn the_helper_refuses_a_corrupted_payload() {
 
     plan_over(&file);
 }
+
+/// The canonical fixture reports no derivation; the hifi one names the entry
+/// whose payload the document has no name for.
+///
+/// The check exists because a mapped load reads no payload header, so a derived
+/// payload bound as canonical would be tagged with the document's own format
+/// and nothing downstream would catch it (issue #640). `v03-paint-hifi.dsb`
+/// carries exactly that shape behind a manifest section, which is why
+/// `RAW_WITH_ASSETS` excludes it.
+#[test]
+fn a_derived_payload_is_named_by_its_entry_index() {
+    let raw = MappedFile::open(fixture("v03-paint.dsb")).expect("the fixture maps");
+    let (document, wanted) = dashbuf::open(raw.bytes()).expect("the fixture opens");
+    assert!(!wanted.is_empty(), "v03-paint.dsb carries an asset");
+    assert_eq!(
+        dashscene_core::first_derived_payload(&document, &wanted),
+        None,
+        "every payload in v03-paint.dsb is the document's own canonical bytes"
+    );
+
+    let hifi = MappedFile::open(fixture("v03-paint-hifi.dsb")).expect("the fixture maps");
+    let (document, wanted) = dashbuf::open(hifi.bytes()).expect("the fixture opens");
+    assert_eq!(
+        dashscene_core::first_derived_payload(&document, &wanted),
+        Some(0),
+        "v03-paint-hifi.dsb resolves entry 0 through its derivation manifest, so the bytes a \
+         host would bind are not the ones the entry names"
+    );
+}
+
+/// The ordinal a host names is a *document* ordinal, and the load appends to
+/// whatever the arena already holds — so the two agree only when it held
+/// nothing. Issue #943 is that correction, and this is the test that keeps it.
+///
+/// Ordinal 0 over an arena that already holds a root is the whole case: read as
+/// an arena index it names the pre-existing node, and read correctly it names
+/// the one this load appended.
+#[test]
+fn the_shown_root_is_the_appended_one_not_the_arenas_first() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    // No fill, so the image table stays empty and the mapped pool below is
+    // still available: a table is owned or mapped and never both.
+    let existing = txn.add_node(None, Some("already here"));
+    txn.commit();
+    let roots_before = arena.roots().len();
+    assert_eq!(roots_before, 1, "the arena holds one root before the load");
+
+    let mapped = Arc::new(MappedFile::open(fixture("v03-paint.dsb")).expect("the fixture maps"));
+    let (document, payloads) = plan_over(mapped.bytes());
+    let region: Arc<dyn Region> = mapped.clone();
+    load_document_mapped(&document, region, &payloads, &mut arena);
+
+    dashscene_core::show_appended_root(
+        &document,
+        dashbuf::prefetch::ShownRoot::nth(0),
+        roots_before,
+        &"v03-paint.dsb",
+        &mut arena,
+    );
+
+    let shown = arena
+        .committed()
+        .shown_root()
+        .expect("the commit named a shown root");
+    assert_ne!(
+        shown, existing,
+        "ordinal 0 was read as an arena index and named the pre-existing root, so the wrong \
+         artboard would be solved and painted (issue #943)"
+    );
+    assert_eq!(
+        shown,
+        arena.roots()[roots_before],
+        "ordinal 0 names the first root this load appended"
+    );
+}

@@ -526,15 +526,19 @@ absence of any mobile target in the workspace.
       which is what established that it was sufficient for layer 0 — and what
       established that it was not quite: `ds_runtime_detach_surface` was added
       there, because the destroy handshake needs a call that drops the surface
-      and keeps the document. No iOS or Unity host exists. Root selection is
-      absent, and since story #837 the reason is no longer that nothing can name
-      a root: both integration crates take a `ShownRoot`, and both of this ABI's
-      document loads hand the whole file to the owning loader, which copies
-      every payload whatever is shown — so there is nothing on that path for a
-      selection to bound (issue #925). **A scene built in code cannot be
-      expressed through it at all** — there is no builder entry point, that
-      being layer 2 (D8), so a host wanting one links the crates directly as
-      `demo` and `demo-web` do.
+      and keeps the document. No iOS or Unity host exists. **Root selection is
+      on the mapped load and on no other** (issue #925):
+      `ds_runtime_load_document_mapped` takes a path and a required ordinal,
+      maps the file, and reads only the assets the named root's subtree draws,
+      which is R5 on this path. The two byte-taking loads keep no selection
+      deliberately — they use the owning loader, which copies every payload
+      whatever is shown, so an ordinal on them would bound nothing while reading
+      as though it did. The root is named once, at load; no entry point changes
+      it afterwards. **No host calls the mapped load yet**: `dashscene-android`
+      still hands over a `byte[]`, which is issue #1035. **A scene built in code
+      cannot be expressed through it at all** — there is no builder entry point,
+      that being layer 2 (D8), so a host wanting one links the crates directly
+      as `demo` and `demo-web` do.
 - [ ] **Android and iOS** — **Android part built; iOS nothing.** The
       `aarch64-linux-android` target, an NDK toolchain and a CI job exist (story
       #839), the painter cross-compiles for it, and the C ABI above builds for

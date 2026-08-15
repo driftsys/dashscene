@@ -53,9 +53,10 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use dashbuf::cost::LoadCost;
+use dashbuf::prefetch::ShownRoot;
 use dashbuf::{
     BindingTransform, Document, Fill, NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE,
-    VariantPropValue,
+    VariantPropValue, Wanted,
 };
 use dashpaint::Region;
 
@@ -314,6 +315,108 @@ pub fn load_document_mapped(
         arena,
         &LoadCost::new(),
     )
+}
+
+/// The first asset entry whose bound payload is **not** the document's own.
+///
+/// A `.dsb` records the **canonical** payload's hash and never carries a
+/// derivation, so a host binding `dashpack`'s output is binding bytes the
+/// document has no name for. [`load_document_bound`] finds that out by parsing
+/// the payload's header; a mapped load reads no payload header by design, so
+/// nothing downstream would catch a KTX2 tagged as a `Png` — the mistake issue
+/// #640 exists to prevent. A host that cannot name a rung refuses the file
+/// instead, and this is the comparison it refuses on.
+///
+/// Returns the **index** rather than an error so that each host names its own
+/// source in its own error type: `dashscene-desktop` reports a path,
+/// `dashscene-web` a URL, and `dashscene-ffi` a path again. Three error types,
+/// one comparison — which is the point, because the comparison was written
+/// twice before this existed.
+///
+/// `wanted` is what `dashbuf::open` or `dashbuf::prefix::Plan` resolved, one
+/// per asset entry in entry order. A `wanted` shorter than the document's asset
+/// table reports only over the pairs that exist; the length disagreement itself
+/// is [`load_document_mapped`]'s to refuse, and it does.
+pub fn first_derived_payload(doc: &Document<'_>, wanted: &[Wanted]) -> Option<u32> {
+    let entries = doc.assets().unwrap_or_default();
+    wanted
+        .iter()
+        .zip(entries.iter())
+        .position(|(want, entry)| want.hash != entry.hash().bytes())
+        .map(|index| index as u32)
+}
+
+/// Confines the traversal to the root `shown_root` names, correcting the
+/// document ordinal into the arena node it actually named.
+///
+/// `roots_before` is how many roots the arena held **before** this load. The
+/// loader appends — a document is every artboard it carries, and dropping one
+/// at load would make the file unreadable rather than unshown — so a document
+/// ordinal and an arena index agree only when the arena held nothing. Passing
+/// the ordinal straight through would confine the traversal to the *first*
+/// document's root while the prefetch read this one's: the wrong artboard,
+/// solved and painted, with nothing to report it (issue #943).
+///
+/// Named by node, because [`crate::Txn::show_root`] takes the arena's own
+/// vocabulary and this is the one place holding both the document and the arena
+/// it was appended to.
+///
+/// A commit of its own rather than a parameter on the loader: the load has
+/// already committed by the time this runs, and one extra commit per load is
+/// the cheaper of the two ways to say it — the other being a signature change
+/// on three public loaders and every call site.
+///
+/// `source` is what the diagnostic below names — a path, a URL, whatever the
+/// caller loaded from.
+///
+/// # Panics
+///
+/// If the ordinal names no appended root.
+///
+/// **A named panic rather than a typed error, deliberately.** Every caller has
+/// already proved the document carries that root, through
+/// `dashbuf::prefetch::resolve`, so no honest error value can describe this
+/// arm: a count of the roots the document carries would render "carries 2
+/// roots, and root 1 was asked for" — an in-range ask reported as a failure.
+///
+/// What it is instead is this crate promising one arena root per document root
+/// and not delivering. That is an invariant of `dashscene-core` rather than an
+/// embedder error, and P4's answer to a broken invariant is a diagnostic that
+/// names it. [`crate::Txn::use_mapped_pool`] already panics by name on this
+/// same path, so an abort here is the established behaviour of this loader
+/// rather than a new one.
+///
+/// That reversed a review finding on `dashscene-desktop`'s first cut, which
+/// read the abort as the one panic on a path where every other failure is a
+/// `Result`. It is not, for the reason above, and the finding is recorded here
+/// so the next reader does not re-raise it.
+pub fn show_appended_root(
+    doc: &Document<'_>,
+    shown_root: ShownRoot,
+    roots_before: usize,
+    source: &dyn std::fmt::Display,
+    arena: &mut Arena,
+) {
+    let shown = *arena
+        .roots()
+        .get(roots_before + shown_root.ordinal() as usize)
+        .unwrap_or_else(|| {
+            // Inside the closure: nothing here runs on the ordinary path, and
+            // `saturating_sub` so a shrunken root list cannot replace this
+            // diagnostic with a bare subtraction overflow.
+            let appended = arena.roots().len().saturating_sub(roots_before);
+            panic!(
+                "{source} declares {} root(s) and this load appended {appended} to the arena, so \
+                 ordinal {} names no node: `load_document_mapped` appends one arena root per \
+                 document root, and `dashbuf::prefetch::resolve` already proved this document \
+                 carries that root",
+                dashbuf::prefetch::root_count(doc),
+                shown_root.ordinal(),
+            )
+        });
+    let mut txn = arena.open();
+    txn.show_root(Some(shown));
+    txn.commit();
 }
 
 /// How the caller bound this document's asset payloads: by value, or by range
