@@ -180,6 +180,27 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
                 ),
             ));
         }
+        // Not an index this time but the scalar beside it, and it is here
+        // rather than at the shape because the loader reads it here: every
+        // `VectorField` a shape resolves to takes its `distance_range` from
+        // the atlas it names (issue #1002). `dashpaint`'s `PaintTable::push_with`
+        // refuses the same predicate as a panic, which for a value arriving
+        // from a document is the second line of defence and not the first
+        // (P4) — the same relationship `Atlas::new` records against
+        // `AtlasMetrics::from_bytes` for the glyph side.
+        let distance_range = atlas.distance_range();
+        if !(distance_range.is_finite() && distance_range > 0.0) {
+            report.push(error(
+                rule::VECTOR_ATLAS_DISTANCE_RANGE_OUT_OF_DOMAIN,
+                &Location::VectorAtlas(i as u32),
+                format!(
+                    "vector atlas states a distance range of {distance_range}, which is not \
+                     finite and greater than zero: every painter scales it into the screen-pixel \
+                     range it samples coverage over, and each way out of that domain paints a \
+                     plausible wrong picture"
+                ),
+            ));
+        }
     }
 
     // The `(node, channel)` pairs a binding row already drives. A motion
