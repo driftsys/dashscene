@@ -95,8 +95,9 @@ struct Blur {
     // A baked-vector node's blur follows the field's outline rather than a box.
     // `dashscene-skia`'s `draw_backdrop_blur_field` is the same case, and the
     // hero's frosted panel is exactly that node: a Figma VECTOR carrying
-    // `BACKGROUND_BLUR`. All four are `render::GpuShape`'s members, which is
-    // where they are derived and documented; they arrive on this uniform rather
+    // `BACKGROUND_BLUR`. `plane` is `render::GpuShape`'s and the other three are
+    // `render::GpuMsdfRow`'s (issue #1027), which is where they are derived and
+    // documented; they arrive on this uniform rather
     // than through a table because a backdrop is one draw, so a table would be
     // a binding to read one row of.
     plane: vec4f,
