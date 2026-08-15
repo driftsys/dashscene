@@ -147,13 +147,16 @@ never a draft. The sequence is:
   unchanged: both must be complete.
 
 - **Capture every finding** as a checklist in the PR description. Fix critical
-  findings. File one `debt`-labeled issue per minor finding, **against a
-  milestone** — the current slice, the next one, or `v1` for work not scheduled
-  to a slice. Debt filed with no milestone is invisible at every slice close,
-  and that is the largest population there is: measured 2026-08-12, 52 open
-  `debt` issues carry no milestone against 42 in `v1`, the largest that does.
-  Re-derive rather than trusting those two numbers —
-  `gh issue list --label debt --state open --limit 300
+  findings. A minor finding is then fixed or filed by where it sits, in the
+  three cases `sibling-sites-are-swept-not-filed.md` sets out: a finding in the
+  fix's own additions is fixed, a second site of the invariant this fix
+  established is fixed, and only a finding independent of the fix is filed as a
+  `debt` issue, **against a milestone** — the current slice, the next one, or
+  `v1` for work not scheduled to a slice. Debt filed with no milestone is
+  invisible at every slice close, and that is the largest population there is:
+  measured 2026-08-12, 52 open `debt` issues carry no milestone against 42 in
+  `v1`, the largest that does. Re-derive rather than trusting those two numbers
+  — `gh issue list --label debt --state open --limit 300
   --json milestone` is
   the whole derivation.
 

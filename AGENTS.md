@@ -360,12 +360,16 @@ Story workflow — the definition of done for every story:
   PR body says which one each finding fell in:
   - **In the fix's own additions**, or created by it — fix it. That is not debt,
     it is the fix unfinished.
-  - **A second site of the invariant this fix just established**, in the same
-    file or its sibling types and reachable by one grep — fix it in this branch.
-    Filing instead is what made `Atlas` take the same fix four times, at issues
-    #724, #983, #1001 and #1074, each round's review finding the next public
-    field. The boundary is deliberate: the same invariant nearby, never a
-    workspace-wide sweep of everything of that shape.
+  - **A second site of the invariant this fix just established**, at the sites
+    one grep for that invariant's identifier reaches — fix it in this branch,
+    and say in the PR body how many sites the sweep reached. The boundary is the
+    grep, never a workspace-wide sweep of everything of that shape.
+
+    Filing instead is what made `Atlas` take the same fix four times — issue
+    #724, then #964 and #966, then #1001, and #1074 still open. Round three is
+    the instructive one: a sweep had **already found** #1001 before
+    `/code-review` ran, and filing its result rather than fixing it cost a whole
+    extra PR, review and merge two days later.
   - **Independent of the fix** — file one `debt`-labeled issue (linked to the
     story), **and put it on a milestone**: the current slice, the next one, or
     `v1` for anything not scheduled to a slice. Debt with no milestone is
@@ -430,8 +434,11 @@ Story workflow — the definition of done for every story:
   the start would have found nothing, and checking before the merge button would
   have saved the rename a whole extra PR cost. A slice's other sessions file
   against the work in flight, not against the work that is finished.
-- Merge only when the review pass is complete, every critical finding is
-  resolved, and CI is green on the commit being merged. A green run earlier is
+- Merge only when the review pass is complete, **every finding that is not
+  filed** is resolved, and CI is green on the commit being merged. "Not filed"
+  is the three cases above: a critical finding, a finding in the fix's own
+  additions, and a sibling site of the invariant this fix established. Only a
+  finding filed as `debt` leaves the branch unresolved. A green run earlier is
   not a promise: a later push, or a rebase onto a moved `main`, can turn it red
   again, so check the commit you are about to merge.
 
