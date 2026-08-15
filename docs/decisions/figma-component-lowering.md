@@ -300,14 +300,17 @@ difference and make every rect-differing set unlowerable.
 Three rules, and the split is what each one costs:
 
 - `figma.prototype.unsupported-interaction` — a trigger, action or navigation
-  with no lowering. Nothing about it reaches the document, so it follows the
-  emit policy exactly as `figma.unsupported` does: an error under `Strict` (R6),
-  a warning under `Partial`. Unlike `figma.unsupported` it does **not** skip the
-  node — what has no lowering is the behaviour, not the box.
-- `figma.prototype.unsupported-motion` — an easing with no `dashcue` spelling,
-  or a difference on a channel no transition can animate. Always a warning: the
-  switch ships and lands in one frame, which is what a member with no transition
-  has always meant.
+  with no lowering, and a `CHANGE_TO` naming a destination no component set in
+  the file carries, which lowers no switch at all. Nothing about either reaches
+  the document, so it follows the emit policy exactly as `figma.unsupported`
+  does: an error under `Strict` (R6), a warning under `Partial`. Unlike
+  `figma.unsupported` it does **not** skip the node — what has no lowering is
+  the behaviour, not the box.
+- `figma.prototype.unsupported-motion` — an easing with no `dashcue` spelling, a
+  difference on a channel no transition can animate, or a second member
+  declaring a different transition to a destination one already claimed. Always
+  a warning: the switch ships and lands in one frame, or with the transition
+  that won, which is what a member with no transition has always meant.
 - `figma.variants.unlowerable-set` — always a warning, for the sharper reason:
   before this story _every_ Figma import emitted no variant table, so a set this
   pass cannot express leaves the document exactly as it was. Making it an error

@@ -85,7 +85,28 @@ a drop the designer cannot see in the output.
 - **Paint `opacity` multiplies the color's alpha.** Ignoring it is a silent
   drop; honoring it is two lines.
 - **`rotation` is omitted entirely when it is zero.** `None` and `Some(0.0)`
-  both mean unrotated.
+  both mean unrotated. What no capture pins is the converse — that a node whose
+  `relativeTransform` carries a turn always carries `rotation` too. No committed
+  capture holds that shape, but none could: the corpus holds exactly one rotated
+  node, `node-fx.json`'s `rotated-15deg`, and it carries both encodings. The
+  lowering therefore reads both, through `rest::Node::turn`: `rotation` first,
+  and the matrix where `rotation` is absent or zero (issue #878).
+- **A matrix turns when its determinant is positive.** That is what separates a
+  mirror from a half-turn, which the off-diagonal alone cannot:
+  `[[-1, 0], [0, 1]]` and `[[-1, 0], [0, -1]]` both have zero off-diagonals, and
+  only the second is a rotation. A negative determinant is a mirror and reads as
+  unrotated, because the document has no mirror and drawing one at 180° would be
+  a new wrong picture rather than a repair. A derived turn below 1e-6 rad reads
+  as zero: `relativeTransform` is written for every node whether it turns or
+  not, so an unrotated one is an identity matrix a round trip could leave a
+  residue in, and reading that residue as a turn refuses the node.
+- **`relativeTransform` is row-major `[[m00, m01, tx], [m10, m11, ty]]`**, the
+  same six components as `imageTransform` below, and `rotation` is
+  `atan2(m10, m00)`. `node-fx.json`'s `rotated-15deg` carries
+  `rotation: -0.26179940325453416` beside an `m10` of `-0.2588190734386444` and
+  an `m00` of `0.9659258723258972`. Only the turn is read: a node's position
+  comes from `absoluteBoundingBox`, and the document has no vocabulary for the
+  scale.
 - **`layoutMode` is written as `NONE` on a frame with auto-layout off**, and
   omitted on a node that cannot have one. The newer `GRID` value exists, so the
   field is read as an open string rather than a closed enum.

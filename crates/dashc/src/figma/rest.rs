@@ -260,8 +260,26 @@ pub struct Node {
     /// `[[cos, +sin, tx], [−sin, cos, ty]]` for this field's negation, which
     /// is the same matrix as this repository's y-down, clockwise-positive
     /// convention evaluated at the field's own value.
+    ///
+    /// **Read through [`Node::turn`], never directly.** A turn can also
+    /// arrive in `relative_transform`, and the two blockers and the origin
+    /// derivation must read the same source (issue #878).
     #[serde(default)]
     pub rotation: Option<f32>,
+    /// The top two rows of the node's 2D transform relative to its parent,
+    /// row-major `[[m00, m01, tx], [m10, m11, ty]]` — the same six components
+    /// as `Paint::image_transform` and as `dashpaint::Mat23`. Absent means
+    /// identity.
+    ///
+    /// Parsed for one thing only: the turn its linear part carries, read
+    /// through [`Node::turn`]. Its `tx`/`ty` are not read — a node's position
+    /// comes from `absolute_bounding_box` — and its scale is read only for
+    /// the sign of the determinant, never for a magnitude, because the
+    /// document has no vocabulary for a scale
+    /// (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`,
+    /// "Scale and skew are not in this slice").
+    #[serde(default)]
+    pub relative_transform: Option<[[f32; 3]; 2]>,
     /// The node's own width and height, **before** any rotation — what
     /// `absolute_bounding_box` stops reporting the moment a node turns
     /// (story #770).
@@ -335,6 +353,80 @@ pub struct Node {
     /// there is no transition the triple invents one.
     #[serde(default)]
     pub interactions: Vec<Interaction>,
+}
+
+impl Node {
+    /// This node's turn in **radians**, from whichever field carries it —
+    /// the one value every rotated-node rule reads (issue #878).
+    ///
+    /// `rotation` is the ordinary source and lowers unconverted. It is read
+    /// first, and `relative_transform`'s off-diagonal only where `rotation`
+    /// is absent or zero. No capture pins that Figma always populates
+    /// `rotation` for a node whose matrix carries a turn, and none could:
+    /// `corpus/figma-fixtures/` holds one rotated node, and it carries both
+    /// encodings. Reading both is the defensive posture, because a turn read
+    /// as zero is not only a missed refusal — `rotated_bounds_offset` derives
+    /// the node's own origin from this value, so the node would also lower at
+    /// the wrong position and the wrong extent (P4).
+    ///
+    /// What the matrix is read for is `matrix_turn` below, which states the
+    /// two shapes it declines to read as a turn and why.
+    pub fn turn(&self) -> f32 {
+        match self.rotation {
+            Some(rotation) if rotation != 0.0 => rotation,
+            _ => self.relative_transform.map_or(0.0, matrix_turn),
+        }
+    }
+}
+
+/// Below this many radians a derived turn is float residue rather than
+/// authored intent, and reads as zero.
+///
+/// It exists only on the matrix path. `rotation` needs no tolerance: Figma
+/// omits it entirely when it is zero, so an unrotated node carries no value
+/// to be residue. A `relativeTransform` is written for every node whether it
+/// turns or not, so an unrotated one is an identity matrix that a round trip
+/// through Figma's own arithmetic could leave a residue in — and the
+/// consequence of reading that residue as a turn is a refused node, which
+/// under `EmitPolicy::Strict` withholds the whole document.
+///
+/// The threshold is derived rather than picked: at 1e-6 rad the far corner of
+/// a 4096 px node moves 0.004 px, so no turn this rule discards can reach a
+/// pixel on any surface this runtime targets. Every unrotated node across the
+/// committed captures carries an exact zero, so nothing in the corpus is
+/// within orders of magnitude of it either way.
+const TURN_EPSILON: f32 = 1e-6;
+
+/// The turn a `relativeTransform` carries, in radians, or `0.0` where it
+/// carries none this document can express.
+///
+/// The **determinant** decides whether the matrix turns at all. A positive
+/// determinant is a rotation, with or without a positive scale, and its angle
+/// is `atan2(m10, m00)` — the same derivation, and the same sign, that
+/// `rotation` itself reports.
+/// `corpus/figma-fixtures/node-fx.json`'s `rotated-15deg` carries
+/// `-0.26179940325453416` beside an `m10` of `-0.2588190734386444` and an
+/// `m00` of `0.9659258723258972`, whose `atan2` is that angle to every digit
+/// an `f32` holds.
+///
+/// A **negative** determinant is a mirror, and reads as `0.0`. The document
+/// has no vocabulary for a mirror, so reporting one as the angle `atan2`
+/// gives it — a half-turn for a horizontal flip — would draw a new wrong
+/// picture rather than repair one. A zero determinant is a collapsed matrix
+/// and carries no angle at all.
+///
+/// The determinant is what separates a mirror from a **half-turn**, which the
+/// off-diagonal alone cannot: both `[[-1, 0], [0, 1]]` and `[[-1, 0],
+/// [0, -1]]` have zero off-diagonals, and only the second is a rotation. An
+/// off-diagonal test would have let a frame turned 180° lower upright, which
+/// is the exact silent wrong picture issue #878 is about.
+fn matrix_turn(m: [[f32; 3]; 2]) -> f32 {
+    let [[m00, m01, _], [m10, m11, _]] = m;
+    if m00 * m11 - m01 * m10 <= 0.0 {
+        return 0.0;
+    }
+    let turn = m10.atan2(m00);
+    if turn.abs() < TURN_EPSILON { 0.0 } else { turn }
 }
 
 /// One prototype interaction: what starts it, and what it does (story #773).
