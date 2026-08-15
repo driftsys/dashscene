@@ -13,9 +13,9 @@ categories = ["api-bindings", "rendering"]
 name = "dashscene_android"
 # `cdylib` because a Kotlin host reaches this through `System.loadLibrary`, and
 # that is the only way in — the same reason `dashscene-ffi` carries one. `rlib`
-# so the destroy handshake can be linked as a Rust crate and tested on the host
-# platform, which is where the one part of this crate that can be wrong without
-# a device lives.
+# so the destroy handshake and the frame loop's state machine can be linked as a
+# Rust crate and tested on the host platform, which is where the parts of this
+# crate that can be wrong without a device live.
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]

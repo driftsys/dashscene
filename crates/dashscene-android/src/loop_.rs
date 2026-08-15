@@ -34,18 +34,8 @@ use std::ffi::c_void;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Packs a physical-pixel extent into one word, so it is published and read
-/// atomically as a pair.
-fn pack(width: u32, height: u32) -> u64 {
-    (u64::from(width) << 32) | u64::from(height)
-}
-
-/// The inverse of [`pack`].
-fn unpack(value: u64) -> (u32, u32) {
-    ((value >> 32) as u32, value as u32)
-}
-
-use crate::frames::{Frames, Step};
+use crate::frames::Frames;
+use crate::machine::{Action, LoopState, pack, unpack};
 use crate::{Handshake, log};
 
 /// One live view, as the UI thread holds it.
@@ -70,40 +60,6 @@ pub struct AndroidHost {
     /// completes.
     window: usize,
 }
-
-/// The render thread's own state, reachable from the vsync callback.
-struct Loop {
-    frames: Box<dyn Frames>,
-    /// The window, kept so a lost surface can be rebuilt from it. Live for the
-    /// whole loop: the destroy handshake is what makes that true.
-    window: usize,
-    extent: Arc<AtomicU64>,
-    /// The extent the surface is currently configured for.
-    configured: (u32, u32),
-    /// The previous vsync's timestamp, for the frame delta.
-    previous: Option<i64>,
-    /// Why the next frame must draw whatever the generation says. Consumed by
-    /// the frame that acts on it.
-    forced: bool,
-    /// Cleared when the loop should stop rescheduling.
-    running: bool,
-    /// Vsync callbacks seen and frames handed to [`Frames::frame`]. Reported
-    /// periodically, because "the surface attached" and "the loop is running"
-    /// are different claims and only the second is what a picture depends on.
-    vsyncs: u64,
-    frames_run: u64,
-    /// Consecutive surface rebuilds with no frame between them. See
-    /// [`MAX_CONSECUTIVE_REBUILDS`].
-    rebuilds: u32,
-}
-
-/// How many consecutive surface rebuilds the loop will attempt before giving up.
-///
-/// A rebuild that works is followed by a frame, and a frame resets the count —
-/// so this bounds a surface that is being lost *repeatedly*, which is what a
-/// removed device or an unrecoverable driver reset looks like. The same bound,
-/// for the same reason, that `dashscene-web` and `dashscene-desktop` carry.
-const MAX_CONSECUTIVE_REBUILDS: u32 = 3;
 
 /// Releases the handshake however this thread leaves.
 ///
@@ -281,19 +237,12 @@ fn render_thread<F>(
     // surface cycle, and on Android a surface cycle is every rotation. The
     // struct itself is tens of bytes; what an implementation leaves in it is
     // not bounded by anything this crate can enforce.
-    let state: &'static mut Loop = Box::leak(Box::new(Loop {
+    let state: &'static mut LoopState = Box::leak(Box::new(LoopState::new(
         frames,
         window,
-        extent: extent_cell,
-        configured: extent,
-        previous: None,
-        // The first frame is one of the cases the generation cannot report.
-        forced: true,
-        running: true,
-        vsyncs: 0,
-        frames_run: 0,
-        rebuilds: 0,
-    }));
+        extent_cell,
+        extent,
+    )));
 
     // SAFETY: this thread prepared a looper, which is what `getInstance` needs.
     let choreographer = unsafe { ndk_sys::AChoreographer_getInstance() };
@@ -308,7 +257,7 @@ fn render_thread<F>(
         // which draws and re-posts. The teardown check sits between polls rather
         // than inside the callback, so a request never waits on a frame that is
         // mid-flight.
-        while state.running && !handshake.teardown_requested() {
+        while state.is_running() && !handshake.teardown_requested() {
             // A 100 ms timeout rather than an indefinite wait, so the teardown
             // check runs even if vsync stops arriving — which is what a surface
             // that has gone away looks like from here.
@@ -324,19 +273,18 @@ fn render_thread<F>(
         }
     }
 
-    // Told first, and before anything is dropped: a callback the choreographer
-    // still holds reads this and returns without touching the implementation.
-    state.running = false;
-
-    // D4's ordering, and the only one that is correct: stop drawing, drop the
-    // surface, and only then let the UI thread release the window. The release
-    // happens as `_release` drops, immediately after this returns.
-    state.frames.detach();
+    // D4's ordering, and the only one that is correct: tell a callback the
+    // choreographer may still hold that there is nothing left to do, drop the
+    // surface, and only then let the UI thread release the window. The first two
+    // are `shut_down`'s, which holds them together where they can be read as one
+    // rule; the release happens as `_release` drops, immediately after this
+    // returns.
+    state.shut_down();
     log("surface detached");
 }
 
 /// Posts the next vsync callback.
-fn post_vsync(choreographer: *mut ndk_sys::AChoreographer, state: *mut Loop) {
+fn post_vsync(choreographer: *mut ndk_sys::AChoreographer, state: *mut LoopState) {
     // SAFETY: `choreographer` is this thread's instance, and `state` points at a
     // leaked allocation, so it outlives every callback including one still
     // posted after the loop has ended. A posted vsync cannot be cancelled, so
@@ -356,121 +304,35 @@ unsafe extern "C" fn on_vsync(
     data: *const ndk_sys::AChoreographerFrameCallbackData,
     user: *mut c_void,
 ) {
-    let state = user.cast::<Loop>();
+    let state = user.cast::<LoopState>();
     if state.is_null() {
         return;
     }
-    // SAFETY: `user` is the `*mut Loop` handed to `post_vsync`, which points at a
-    // leaked allocation — readable even after the loop has ended and the thread
-    // has gone, which is a state this callback can legitimately arrive in.
+    // SAFETY: `user` is the `*mut LoopState` handed to `post_vsync`, which points
+    // at a leaked allocation — readable even after the loop has ended and the
+    // thread has gone, which is a state this callback can legitimately arrive in.
     let state = unsafe { &mut *state };
 
-    // The loop has ended. Nothing to draw into, and nothing to reschedule.
-    if !state.running {
-        return;
-    }
-
-    state.vsyncs += 1;
-    if state.vsyncs == 1 {
-        log("first vsync callback");
-    }
-
+    // **Read before the stopped-loop check, which is the other way round from
+    // how this used to be written.** That check moved inside `step`, so a
+    // callback arriving after the loop stopped now makes this one NDK read
+    // before returning. Deliberate: `data` is the callback's own argument and is
+    // valid for the call whatever the loop is doing, and keeping the guard in
+    // one place is worth more than saving one read on a path that runs at most
+    // once per surface. Do not "restore" the early return here — it would put
+    // the rule back in two places, which is how the recovery below was broken
+    // three times.
+    //
     // SAFETY: `data` is the callback's own argument, valid for this call.
     let now = unsafe { ndk_sys::AChoreographerFrameCallbackData_getFrameTimeNanos(data) };
-    let dt = match state.previous {
-        // Nanoseconds to seconds. Raw from here: `LiveScene::tick` applies both
-        // the ceiling and the floor, so the rule has one statement rather than
-        // one per host (story #810).
-        Some(previous) => (now - previous) as f32 / 1_000_000_000.0,
-        None => 0.0,
-    };
-    state.previous = Some(now);
 
-    // The extent the UI thread last reported. Checked every frame rather than
-    // through a message, because `surfaceChanged` and this loop are on different
-    // threads and a message would need a channel for one `u32` pair.
-    let wanted = unpack(state.extent.load(Ordering::Acquire));
-    if wanted != state.configured && wanted.0 > 0 && wanted.1 > 0 {
-        // Recorded only when it was taken up. A refused extent — one past the
-        // adapter maximum (issue #714) — is offered again next frame rather
-        // than believed, which is what stops one refusal leaving the scene laid
-        // out for the old size for the rest of the surface's life.
-        if state.frames.resize(wanted.0, wanted.1) {
-            state.configured = wanted;
-            // A reconfigured swapchain has drawn nothing, and the generation
-            // cannot report that.
-            state.forced = true;
-        }
+    // Everything the frame decides. Held outside this file — and outside the
+    // platform `cfg` — because nothing in it binds an NDK symbol, and because
+    // three consecutive repairs to the recovery path below were shipped broken
+    // while every test tier passed (issues #888, #940).
+    if state.step(now) == Action::Stop {
+        return;
     }
-
-    let forced = state.forced;
-    state.forced = false;
-    match state.frames.frame(dt, forced) {
-        Step::Continue => {
-            state.frames_run += 1;
-            if state.frames_run == 1 {
-                log("first frame");
-            } else if state.frames_run % 240 == 0 {
-                // The only continuous evidence a device gives that the loop is
-                // still alive. Without it, a loop that stopped and a loop that
-                // is idle look identical in logcat.
-                log(&format!(
-                    "{} frames over {} vsyncs",
-                    state.frames_run, state.vsyncs
-                ));
-            }
-        }
-        Step::Rebuild => {
-            // The remedy `dashscene_gpu::FrameError::is_recoverable` names, and
-            // the reason the seam has this variant: a host that could only say
-            // `Stop` would have no way to honour a rule every other host does.
-            //
-            // The scene and the clock are untouched; only the device is new.
-            log("the surface was lost — rebuilding");
-            state.frames.detach();
-            let (width, height) = state.configured;
-            // SAFETY: the window outlives the loop — the destroy handshake is
-            // what makes that true — so it is as live now as it was at attach.
-            match unsafe {
-                state
-                    .frames
-                    .attach(state.window as *mut c_void, width, height)
-            } {
-                Ok(()) => {
-                    // The new device has drawn nothing and the scene has not
-                    // changed, so the generation cannot ask for this frame.
-                    state.forced = true;
-                    state.rebuilds += 1;
-                    if state.rebuilds > MAX_CONSECUTIVE_REBUILDS {
-                        log("the surface was lost again after every rebuild — giving up");
-                        state.running = false;
-                        return;
-                    }
-                    // **Falls through to the re-post below.** Returning here
-                    // instead is what a first cut did, and it left a recovered
-                    // surface with no pending callback and no way to acquire
-                    // one: the loop stayed `running`, the poll loop spun on its
-                    // 100 ms timeout, `is_running` kept answering true, and the
-                    // window was frozen until `surfaceDestroyed`. A recovery
-                    // that stops the thing it recovered is worse than no
-                    // recovery, because it reports success.
-                }
-                Err(error) => {
-                    log(&format!("could not rebuild the surface: {error}"));
-                    state.running = false;
-                    return;
-                }
-            }
-        }
-        Step::Stop => {
-            log("the frame source asked the loop to stop");
-            state.running = false;
-            return;
-        }
-    }
-    // A frame that reached the window means whatever was recovered from is
-    // behind us.
-    state.rebuilds = 0;
 
     // SAFETY: this thread prepared the looper, so it has an instance.
     let choreographer = unsafe { ndk_sys::AChoreographer_getInstance() };
