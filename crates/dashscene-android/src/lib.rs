@@ -95,7 +95,11 @@ mod logging;
 mod machine;
 
 pub use frames::{AttachError, Frames, Step};
-pub use handshake::Handshake;
+// `REPORT_EVERY` beside the type: `Handshake::request_teardown` takes the
+// reporting interval as an argument so the rule is testable in milliseconds,
+// and a caller outside this crate has no other way to reach the value the host
+// itself passes.
+pub use handshake::{Handshake, REPORT_EVERY};
 
 // Public, so a host implementing `Frames` writes one line rather than a fourth
 // copy of the same `__android_log_write` call with the same tag. Off Android it

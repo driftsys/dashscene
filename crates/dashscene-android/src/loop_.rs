@@ -67,8 +67,20 @@ pub struct AndroidHost {
 /// whole set: a panic anywhere unwinds past every explicit `released()`, and the
 /// UI thread is parked in `request_teardown` waiting for one. That wait has no
 /// timeout — deliberately, since a timeout means returning from
-/// `surfaceDestroyed` with a live surface — so a missed release is an
-/// application-not-responding kill rather than a bad frame.
+/// `surfaceDestroyed` with a live surface.
+///
+/// **So a missed release is a silent freeze, not a kill.** This comment used to
+/// say an application-not-responding kill would end it; that was measured on
+/// 2026-08-15 and is not what happens. `surfaceDestroyed` blocked for 128 s in
+/// #960's reproducer and no `am_anr` was raised at all. The wait reports itself
+/// for that reason, which is the only thing that ends up in logcat.
+///
+/// **Scoped to that case, and not a claim that a blocked main thread is never
+/// killed.** An application-not-responding kill needs something to time out —
+/// input dispatch, a broadcast, a service — and #960's transition delivers
+/// none of them: the window is going away and nothing is being dispatched to
+/// it. [`start`]'s note about `surfaceCreated` is a different moment, at
+/// launch, where input can well be pending, and nothing here measured it.
 struct ReleaseOnExit(Arc<Handshake>);
 
 impl Drop for ReleaseOnExit {
@@ -173,7 +185,27 @@ pub unsafe fn destroy(host: *mut AndroidHost) {
     let mut host = unsafe { Box::from_raw(host) };
 
     // Blocks. This is the whole point of the call.
-    host.handshake.request_teardown();
+    //
+    // The reporter is what makes a wait that will not end visible: it does not
+    // shorten the wait — returning here with a live surface is the
+    // use-after-free — it says the UI thread is still parked. Nothing else
+    // does: no application-not-responding kill fired in any run of #960's
+    // reproducer, including a 128 s block.
+    host.handshake
+        .request_teardown(crate::handshake::REPORT_EVERY, |elapsed| {
+            // **The observation, not the diagnosis.** An earlier wording said
+            // the loop was "still inside a call that cannot be interrupted",
+            // which this line cannot know: a debug teardown measured at 1.15 s
+            // can pass two seconds while progressing normally through `detach`,
+            // `ds_runtime_free` and the wgpu device drop, and that wording
+            // would have sent the next reader looking at `Frames::attach`. What
+            // is true is only that the loop has not released yet.
+            log(&format!(
+                "surfaceDestroyed has been waiting {} s for the frame loop to \
+                 release the surface",
+                elapsed.as_secs()
+            ));
+        });
     // Joining as well as waiting on the acknowledgement: the thread's own stack,
     // and anything still on it, is gone before the window is released.
     if let Some(render) = host.render.take()
@@ -212,14 +244,53 @@ fn render_thread<F>(
     let mut frames = frames();
 
     let extent = unpack(extent_cell.load(Ordering::Acquire));
+
+    // **Asked before the acquisition, not after it** — the same rule the
+    // rebuild bound follows in [`crate::machine`], and for the same reason: an
+    // attach acquires an adapter, a device and the whole pipeline set, and a
+    // surface that has already been asked to go away has no use for any of it.
+    // `surfaceDestroyed` is parked in `request_teardown` for however long this
+    // takes, so the cost of asking afterwards is paid by the UI thread.
+    //
+    // It closes the window before the attach and **not the one inside it**:
+    // once the call below is entered nothing here runs again until it returns,
+    // which is the whole of issue #960.
+    if handshake.teardown_requested() {
+        log("teardown was requested before the surface was taken up — not attaching");
+        return;
+    }
+
+    // **Logged before the call, which is the half that was missing.** The two
+    // lines below report an attach that ended; nothing reported one that
+    // started, so an attach still in flight and a thread that never reached
+    // this point were the same picture in logcat — no line either way. That is
+    // what left #960 reading as "draws nothing and reports nothing", and what
+    // made a wedged acquisition take a person watching an emulator to find.
+    //
+    // Not free: it costs one logcat line per surface cycle, so once per
+    // rotation. That is the same order as the two it joins.
+    log(&format!("attaching a {}x{} surface", extent.0, extent.1));
     // SAFETY: `window` is live — this crate holds the reference
     // `ANativeWindow_fromSurface` returned, released only after the handshake
     // completes, which is exactly the lifetime `Frames::attach` is promised.
     let attached = unsafe { frames.attach(window as *mut c_void, extent.0, extent.1) };
     if let Err(error) = attached {
         log(&format!("attach failed: {error}"));
-        // `detach` is not called: `attach` failed, so there is nothing to drop,
-        // and calling it would ask an implementation to undo what it never did.
+        // **`detach` IS called, and this comment used to say the opposite.** It
+        // said there was nothing to drop because the attach had failed — but an
+        // attach fails *partway*, and what it built before failing is exactly
+        // what leaks. `DocumentFrames::attach` creates the runtime first and
+        // stores it before anything else can fail, precisely so this call has
+        // the pointer to free; that field's own comment already said the loop
+        // calls `detach` even on `Err`, and the two disagreed. On a device
+        // where the attach keeps failing — #960's emulator is one — the leak is
+        // a whole runtime, and on the surface path a wgpu device with it, once
+        // per surface cycle and so once per rotation.
+        //
+        // `Frames::detach` is required to tolerate this: it is the same call
+        // the rebuild path makes before re-attaching, and `DocumentFrames`
+        // returns immediately on a null runtime.
+        frames.detach();
         return;
     }
     log(&format!("attached a {}x{} surface", extent.0, extent.1));
@@ -242,6 +313,7 @@ fn render_thread<F>(
         window,
         extent_cell,
         extent,
+        Arc::clone(&handshake),
     )));
 
     // SAFETY: this thread prepared a looper, which is what `getInstance` needs.

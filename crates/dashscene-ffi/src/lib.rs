@@ -213,6 +213,43 @@ pub enum DsStatus {
     Derived = 13,
     /// An asset the shown root draws did not hash to what its entry names.
     Payload = 14,
+    /// The frame failed because the surface was **lost**, and rebuilding the
+    /// presenter is the remedy (issue #884).
+    ///
+    /// Only [`ds_runtime_draw`] reports it, and only for the one case
+    /// `dashscene_gpu::FrameError::is_recoverable` names. Every other surface
+    /// failure stays [`DsStatus::Surface`], including a swapchain still out of
+    /// date after being reconfigured and a validation error raised inside the
+    /// acquire: rebuilding for either is a loop rebuilding a device to meet the
+    /// same failure.
+    ///
+    /// **This is the rule story #834 put in one place, reaching the ABI.**
+    /// `dashscene-web`, `dashscene-desktop` and `demo-android` all branch on
+    /// `is_recoverable` directly; a host on this ABI could not, so
+    /// `dashscene-android` treated every `Surface` as recoverable and relied on
+    /// its own bound on consecutive rebuilds to stop an unrecoverable one
+    /// spinning. That was a guess, and this is the answer.
+    ///
+    /// **Additive, so [`DS_ABI_VERSION`] does not move** — but read the next
+    /// paragraph before relying on that, because this variant is not purely
+    /// additive in effect.
+    ///
+    /// A lost swapchain used to arrive as [`DsStatus::Surface`] and now arrives
+    /// here, so an existing condition changed which discriminant it reports. A
+    /// host built against a header that predates this sees a value it does not
+    /// recognise and stops. That **loses a recovery it did have** — the host in
+    /// this repository is the proof, since it rebuilt on every
+    /// `DsStatus::Surface` — so it is not the free change the module's
+    /// versioning rule describes, which covers adding a variant rather than
+    /// re-routing a condition onto one.
+    ///
+    /// It is taken anyway, and deliberately: the failure direction is a loop
+    /// that stops rather than one that acts on a value it cannot interpret,
+    /// there is exactly one host on this ABI and it is updated in the same
+    /// change, and issue #884 specifies the version not moving. What the rule
+    /// does not yet say is what a re-routed condition costs; that is a gap in
+    /// the rule rather than in this variant.
+    SurfaceLost = 15,
 }
 
 /// Which platform handle the pointers in [`ds_runtime_attach_surface`] carry.
@@ -1011,7 +1048,19 @@ pub unsafe extern "C" fn ds_runtime_draw(
             }
             Err(error) => {
                 set_last_error(format!("{error:?}"));
-                DsStatus::Surface
+                // **The one place this ABI can classify a surface failure**, and
+                // the reason issue #884 was about `ds_runtime_draw` rather than
+                // about `DsStatus` generally: `present` fails with a
+                // `FrameError`, which carries the rule, and the other two
+                // surface failures — `resize` and the attach — fail with a
+                // `RendererError`, which does not describe a lost swapchain at
+                // all. Reporting a lost surface there would be inventing a
+                // classification rather than forwarding one.
+                if error.is_recoverable() {
+                    DsStatus::SurfaceLost
+                } else {
+                    DsStatus::Surface
+                }
             }
         }
     })
@@ -1905,6 +1954,10 @@ mod tests {
         assert_eq!(DsStatus::NoSuchRoot as i32, 12);
         assert_eq!(DsStatus::Derived as i32, 13);
         assert_eq!(DsStatus::Payload as i32, 14);
+        // The one issue #884 appended, so a host on this ABI can honour the
+        // rule `FrameError::is_recoverable` states and every other host reads
+        // directly. Appended, so the version did not move for it either.
+        assert_eq!(DsStatus::SurfaceLost as i32, 15);
     }
 
     /// A two-root `.dsb`, RAW, with `corrupt`'s payload one byte wrong.

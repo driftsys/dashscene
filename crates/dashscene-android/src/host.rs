@@ -192,13 +192,19 @@ impl Frames for DocumentFrames {
         let drawn = unsafe { dashscene_ffi::ds_runtime_draw(self.runtime, std::ptr::null_mut()) };
         if drawn != DsStatus::Ok {
             log(&format!("draw: {drawn:?} {}", last_error()));
-            // `DsStatus::Surface` is every surface failure flattened into one
-            // status — the ABI cannot say which, because `FrameError` does not
-            // cross it. Rebuilding is the remedy for the recoverable half and
-            // is harmless for the rest, which the loop's own bound on
-            // consecutive rebuilds is what makes true. Issue #884 carries
-            // giving the ABI the distinction.
-            return if drawn == DsStatus::Surface {
+            // **`DsStatus::SurfaceLost` and nothing else** (issue #884). Until
+            // it existed the ABI flattened every surface failure into
+            // `DsStatus::Surface`, so this host rebuilt on all of them and
+            // relied on the loop's bound on consecutive rebuilds to stop an
+            // unrecoverable one spinning — a guess, and the only host that had
+            // to make one. `DsStatus::Surface` now means the presenter cannot
+            // be recovered by rebuilding it, which is what `FrameError::Lost`
+            // being the sole recoverable case says.
+            //
+            // The bound stays, and is not made redundant by this: a surface
+            // genuinely lost on every frame is a device that has gone away, and
+            // the rebuild is then a remedy that keeps not working.
+            return if drawn == DsStatus::SurfaceLost {
                 Step::Rebuild
             } else {
                 Step::Stop
@@ -248,8 +254,18 @@ impl Frames for DocumentFrames {
 ///
 /// Returns an opaque handle, or 0 if the window or the thread could not be
 /// obtained. **A non-zero handle does not mean the runtime started** — see
-/// [`crate::loop_::start`] for why that is deliberate — and `nativeIsRunning`
-/// is what answers it.
+/// [`crate::loop_::start`] for why that is deliberate.
+///
+/// `nativeIsRunning` answers whether the loop has **ended**, and not whether
+/// it has come up: it reports [`Handshake::is_running`], which is true for
+/// `Starting` as well as `Running`, and the render thread reports `started()`
+/// only once its attach has returned. So a thread still inside an attach — up
+/// to 218 s on an unoptimized build (issue #960) — answers `true`, which is
+/// the same answer a drawing loop gives. What separates them is the pair of
+/// log lines around the attach: `attaching a WxH surface` with no
+/// `attached a WxH surface` after it.
+///
+/// [`Handshake::is_running`]: crate::Handshake::is_running
 fn start_document_host(
     env: &mut Env<'_>,
     surface: &JObject<'_>,
@@ -303,8 +319,9 @@ fn start_document_host(
 ///
 /// Returns an opaque handle, or 0 if the window or the thread could not be
 /// obtained. **A non-zero handle does not mean the runtime started** — see
-/// [`crate::loop_::start`] for why that is deliberate — and `nativeIsRunning` is
-/// what answers it.
+/// [`crate::loop_::start`] for why that is deliberate, and
+/// [`start_document_host`] for what `nativeIsRunning` does and does not
+/// answer.
 ///
 /// # Safety
 ///

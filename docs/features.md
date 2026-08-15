@@ -563,8 +563,8 @@ absence of any mobile target in the workspace.
       it too. `crates/dashscene-android` (story #841) is the host: an
       `android.view.Surface` reaches the painter, an `AChoreographer` loop on
       its own thread ticks and draws, and `surfaceDestroyed` blocks until that
-      loop has stopped and the surface has been dropped — which rotation and
-      backgrounding both confirmed, and split-screen did not.
+      loop has stopped and the surface has been dropped — which rotation,
+      backgrounding and split-screen have each confirmed.
 
       **It has run on an emulator and not on a device**, and the distinction is
       the whole of what is unresolved. A compiled `.dsb` draws, rotation and
@@ -574,8 +574,15 @@ absence of any mobile target in the workspace.
       been exercised, and it did not pass**: the automotive image declares no
       multi-window, freeform or split-screen feature at all, so D4's third case
       was run on 2026-08-14 against a handheld emulator image instead, where
-      the harness entered the destroy handshake and never returned (issue #960,
-      open). `just android-splitscreen` is that run. The D3a measurement that
+      the harness entered the destroy handshake and never returned (issue
+      #960). **On 2026-08-15 that was re-derived and explained**: the render
+      thread never returned from its attach, and the cause is the build rather
+      than the transition — 0.74 s from cold launch to first frame for a
+      release build against over 218 s for a debug one, on the same emulator,
+      and `just android` builds debug. With a release library the split-screen
+      case passes end to end and the handshake completes in 27 ms.
+      `just android-splitscreen` is that run, and it packages what
+      `just android` built. The D3a measurement that
       says the painter's four fragment-stage storage buffers fit a target
       device **has not been taken** — see `docs/design/android-toolchain.md`,
       which records why an emulator cannot take it. Nothing here says Android
@@ -601,14 +608,17 @@ absence of any mobile target in the workspace.
       `nativeSurfaceCreatedWithText`. **Nothing bakes a sheet at run time** —
       the MSDF generator is an external pinned binary reading its font from a
       path — so a host arrives with a committed PNG and its metrics blob or its
-      text is measured and never drawn. The JNI half was compiled and never
-      executed, and the reason is issue #969 rather than the missing device:
-      the harness still calls the no-text entry point, so nothing runs it even
-      on the emulator this platform has otherwise been exercised on. The
-      device measurement issue #885 still owes is a separate debt. So a
-      document loaded through `nativeSurfaceCreated`, which is every one this
-      repository loads on Android, still draws no glyphs **and lays its text
-      nodes out as empty leaves**, which moves their siblings too.
+      text is measured and never drawn. **The harness runs it, on an emulator**
+      — it stages a committed cascade (Inter at weight 400, its font file and
+      the `corpus/atlas/inter-ascii` sheet) beside a text-carrying document and
+      calls `nativeSurfaceCreatedWithText`, and the glyphs are drawn. That was
+      not true until 2026-08-15: the JNI half had been compiled and never
+      executed, which is what issue #969 records. **No device has run it**, so
+      the measurement issue #885 owes is unchanged, and #969 stays open for
+      that half. A document loaded through `nativeSurfaceCreated` — the
+      no-faces call, which is what an embedder supplying no cascade gets —
+      still draws no glyphs **and lays its text nodes out as empty leaves**,
+      which moves their siblings too.
 
       **On an emulator, and the frame rate is not a device measurement.** The
       instrument reports in the desktop host's units — one sample read

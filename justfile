@@ -898,8 +898,11 @@ android:
 # all, so its two files are the ones no one had compiled.
 #
 # **No device and no emulator.** Both scripts package an APK from a cross-built
-# `.so` and committed inputs: the harness stages `goldens/dsb/v03-paint.dsb`,
-# and the showcase ships no `.dsb` at all because its scenes are built in code.
+# `.so` and committed inputs: the harness stages
+# `goldens/dsb/v07-text-hug-in-fill.dsb` together with the cascade its text
+# needs — a font file from `corpus/fonts/` and the committed MSDF sheet and
+# metrics from `corpus/atlas/` (issue #969) — and the showcase ships no `.dsb`
+# at all because its scenes are built in code.
 # Nothing here is generated at build time, which is what makes it a runner-safe
 # gate rather than a second place for the corpus to be rebuilt.
 #
