@@ -688,6 +688,7 @@ dependencies = [
 name = "dashscene-typeset"
 version = "0.0.0"
 dependencies = [
+ "lru",
  "png",
  "postcard",
  "rustybuzz",

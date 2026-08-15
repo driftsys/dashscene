@@ -121,3 +121,66 @@ component is part of the cascade design:
 pinned by `tests/typeset_weight.rs::each_weight_gets_its_own_cache_entry` and
 `::the_same_string_at_two_weights_shapes_differently`; that the default path is
 unchanged is pinned by `::with_fonts_is_the_all_regular_cascade`.
+
+## Revision (issue #975, 2026-08-15) — the revisit condition was met
+
+The first Consequences bullet made the no-eviction choice conditional and named
+the condition to revisit it: "Revisit if a producer's text set turns out to be
+large or unbounded." That condition is now met, so the bullet is superseded
+rather than merely dated.
+
+What met it is issue #621, not a new producer. Its fix made `stage_text` a
+per-frame call rather than a per-solve one, so a text node whose string differs
+every frame — a clock, a formatted numeric readout, a counter — presents a key
+that has never been seen before at frame rate, for the process lifetime. That is
+the headline case issue #621 existed to fix, so the growth is a property of the
+supported feature set rather than of a hypothetical producer.
+
+Both text-keyed caches are now bounded at `text::CACHE_CAPACITY` paragraphs and
+evict the least recently used entry. The bidi cache added by issue #225 is
+included: it carries the same key and grew for the same reason.
+
+Three points the original reasoning did not settle:
+
+- **Recency rather than insertion order.** A real scene lays out its fixed
+  labels every frame alongside the one changing readout. Evicting by insertion
+  order would drop the labels, which are the entries worth keeping, and retain
+  the readout strings, which are never asked for again. Pinned by
+  `tests/typeset_cache_bound.rs::a_paragraph_used_every_frame_survives_a_flood_of_new_ones`.
+- **The capacity is a working-set bound, not a memory budget.** No memory budget
+  exists in this project to size a cache against — that is issue #462, which
+  `dashscene-skia`'s `ImageCache` also waits on. The constraint that does exist
+  is that the capacity must exceed the distinct paragraphs one frame lays out,
+  or eviction moves shaping into the frame loop. Pinned from both sides by
+  `::a_changing_string_cannot_grow_the_caches_without_bound` and
+  `::a_working_set_under_the_capacity_is_never_evicted`.
+- **The bound is per posture for shaped runs, and global for bidi.** Each
+  posture's map bounds itself independently, because a posture is a distinct
+  shaping result; the bidi resolution has no posture, so one bounded map serves
+  every posture.
+
+The second Consequences bullet is also stale as written. `CacheStats` has not
+carried only `{ hits, misses }` since issue #225, and this change adds
+`shaped_entries`, `bidi_entries` and `evictions` to it. The first two are what
+make the bound assertable: every field the struct carried before this change was
+a monotone event counter, so `misses` keeps climbing across an eviction and none
+of them could observe how much the cache actually holds. `evictions` separates
+the two states the others cannot tell apart — a working set inside the capacity
+and one far past it both show the entry count pinned and `misses` climbing, and
+only the second is reshaping paragraphs it just dropped.
+
+**`clear` is deliberately not added, and issue #975 asked for it.** The issue
+names three absences — "no eviction, no clear and no capacity bound" — and this
+change closes the first and third. A `Typesetter` outliving the document it was
+built for keeps up to `postures * CACHE_CAPACITY` paragraphs of the old
+document's text, so a host loading a second `.dsb` carries the first one's
+labels until something displaces them.
+
+That is bounded staleness rather than a leak, which is what makes deferring it
+defensible: the entries cost a fixed ceiling, they are displaced by the new
+document's own text as it lays out, and no caller in this workspace holds a
+`Typesetter` across two document loads today. Adding a public `clear` with no
+caller would be building the API before the case for its shape exists — in
+particular whether a host wants to drop everything or only the postures the new
+document does not use, which the second document's cascade decides. It is issue
+#1004, on the v0.20 milestone, rather than left implicit.

@@ -154,6 +154,32 @@ brotli figure is not. So the figures in this record and in issue #825 are
 different runs rather than one of them being wrong, and no cause is asserted
 here beyond that.
 
+**Re-measured 2026-08-15 (issue #975), and the table above is stale by more than
+this change costs.** Adding `lru` to `dashscene-typeset` links into
+`web-minimal` through `dashscene-web`, so the branch that bounded the shaping
+caches had to answer what it cost. Measured on the same machine with the same
+three tool versions, at the branch's merge-base and at its head:
+
+    artifact          raw base    raw head    brotli base   brotli head
+    web-minimal        1993878     2002674         532243        535350
+    demo-web           3846063     3852333        1366127       1368977
+
+So `lru` costs **8 796 raw and 3 107 brotli bytes**, about 0.58 % of the
+compressed artifact.
+
+The larger number in that comparison is the one this record did not predict: its
+own base column reads 1 993 878, not the 1 878 181 in the table above. About 116
+kB raw and 23 kB brotli accumulated between this record's measurement and
+2026-08-15 from slices that had nothing to do with it, which is roughly thirteen
+times what the change measuring it added. The headline "497 KiB brotli" is
+therefore superseded as a current figure — 523 KiB is what the same artifact
+weighs today — and is left in place above as what was measured then.
+
+The lesson is the one issue #825 already implies: nothing re-derives this
+number, so it drifts silently, and a reading taken today cannot be differenced
+against a reading taken in v0.17 without measuring both ends. Both columns above
+were measured in the same session for exactly that reason.
+
 What follows for issue #825 is concrete: **a gate cannot compare raw bytes for
 equality.** It needs a tolerance, or it needs the artifact made deterministic
 first, and either is work the gate's own story has to do rather than assume.

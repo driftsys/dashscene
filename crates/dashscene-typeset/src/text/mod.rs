@@ -21,7 +21,8 @@ pub(crate) use shape::{arabic_indic_digit, is_arabic_strong};
 use bidi::{Bidi, Reorder};
 use shape::ShapedText;
 
-use std::collections::HashMap;
+use lru::LruCache;
+use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -139,6 +140,62 @@ fn half_leading(shape: &TextShape, intrinsic: f32) -> f32 {
         .map_or(0.0, |line_height| (line_height - intrinsic) / 2.0)
 }
 
+/// How many distinct paragraphs each text-keyed cache holds before the
+/// least recently used one is dropped (issue #975).
+///
+/// **This is a working-set bound, not a memory budget.** There is no memory
+/// budget anywhere in this project to size a cache against — issue #462 is
+/// where one would be set, and `dashscene-skia`'s `ImageCache` is the
+/// sibling waiting on the same number. What this capacity is chosen against
+/// is the other constraint, which does exist: it must exceed the distinct
+/// paragraphs one frame lays out, or the cache evicts entries the next frame
+/// asks for again and shaping moves into the frame loop. Every scene in
+/// `corpus/showcase/` put together carries fewer than 200 distinct strings,
+/// so 512 clears a dense single screen with room to spare.
+///
+/// Bounding by entry count rather than by bytes is the deliberate half of
+/// that: a long paragraph and a short one take one slot each. The byte ceiling
+/// this implies is `(postures + 1) * CACHE_CAPACITY * longest paragraph`, not
+/// `CACHE_CAPACITY * longest paragraph` — each posture bounds its own map and
+/// the bidi cache is one more — so the figure grows with the cascade's weight
+/// count rather than being named by this constant. Sizing by bytes is what
+/// issue #462 unlocks, and it is a change to this one constant's type when it
+/// lands.
+///
+/// `doc(hidden)` for exactly that reason. It is `pub` only because this
+/// crate's integration tests reach it through the public path, and the
+/// paragraph above commits to changing its type — so publishing it as a
+/// promise would plant a known breaking change in a publishable crate for a
+/// constant no embedder has asked for.
+#[doc(hidden)]
+pub const CACHE_CAPACITY: usize = 512;
+
+/// [`CACHE_CAPACITY`] in the form [`LruCache::resize`] takes. Evaluated in a
+/// `const` item, so a capacity edited to zero is a build failure rather than a
+/// runtime panic.
+const CAPACITY: NonZeroUsize = NonZeroUsize::new(CACHE_CAPACITY).expect("capacity is non-zero");
+
+/// A fresh text-keyed cache at [`CACHE_CAPACITY`]. Both caches and every
+/// posture added later go through this, so one constant sets all of them.
+///
+/// `unbounded` then `resize` rather than [`LruCache::new`], which is
+/// `HashMap::with_capacity(cap)` and so reserves the whole table up front:
+/// measured against lru 0.18.2, `new(512)` allocates 17 512 bytes where this
+/// pair allocates 96 and grows as entries arrive. A `Typesetter` holds one of
+/// these per posture plus the bidi cache, and most hold a handful of
+/// paragraphs, so reserving for 512 would cost more than the growth this
+/// capacity exists to bound.
+///
+/// `dashscene-gpu`'s residency set also constructs with `unbounded`, but for
+/// an unrelated reason and it never resizes: a bound on that recency order
+/// would let it drop a key whose payload stayed resident. It is not a
+/// precedent for this construction.
+fn text_cache<V>() -> LruCache<Box<str>, V> {
+    let mut cache = LruCache::unbounded();
+    cache.resize(CAPACITY);
+    cache
+}
+
 /// Cache observability for tests and the measure callback's caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CacheStats {
@@ -147,13 +204,37 @@ pub struct CacheStats {
     /// Shaped-run cache misses — each one shaped a paragraph.
     pub misses: u64,
     /// How many times the full UAX #9 resolution actually ran (issue
-    /// #225). One per distinct paragraph text this typesetter has ever
-    /// been given, however many times it lays that paragraph out.
+    /// #225) — one per lookup that did **not** find its paragraph in the
+    /// cache. A paragraph held at lookup time costs nothing however many
+    /// times it lays out; a paragraph evicted under [`CACHE_CAPACITY`] and
+    /// asked for again resolves again, so this is a miss count rather than
+    /// a count of distinct paragraphs seen.
     pub bidi_resolutions: u64,
     /// How many embedding levels the per-line display reorder has copied
     /// (issue #226). Each line copies its own bytes' levels; before the
     /// fix each line copied the whole paragraph's.
     pub reorder_levels_copied: u64,
+    /// Shaped runs currently held, summed across every posture (issue
+    /// #975). Each posture's map bounds itself at [`CACHE_CAPACITY`]
+    /// independently, so this reaches `postures * CACHE_CAPACITY` and the
+    /// single-posture default path reaches `CACHE_CAPACITY`.
+    pub shaped_entries: usize,
+    /// Resolved paragraphs currently held in the bidi cache, bounded by
+    /// [`CACHE_CAPACITY`] (issue #975). One map serves every posture, since
+    /// the resolution has none, so unlike
+    /// [`shaped_entries`](Self::shaped_entries) this never exceeds
+    /// `CACHE_CAPACITY` however many postures the cascade interns.
+    pub bidi_entries: usize,
+    /// Shaped runs dropped to make room, across every posture (issue #975).
+    ///
+    /// This is the number that separates the two states the other fields
+    /// cannot tell apart. A working set inside [`CACHE_CAPACITY`] and a
+    /// working set far past it both show `shaped_entries` pinned at the
+    /// capacity with `misses` climbing; only in the second is the cache
+    /// reshaping paragraphs it just dropped, which is the degradation the
+    /// capacity is chosen to avoid. A host or a scaling test reads a
+    /// per-frame rate here rather than inferring it.
+    pub evictions: u64,
 }
 
 /// The named diagnostic `text.weight-substituted` (story #368): a layout
@@ -245,9 +326,20 @@ fn shaped_any(layout: &TextLayout, slot: u16) -> bool {
 /// each codepoint resolves to — is a pure function of the text; the
 /// key stays the text alone, exactly as in the single-font case (the
 /// design record explains how this refines DESIGN §7.2's "string+style"
-/// key). It is unbounded: cockpit UI text is a bounded set, and an
-/// eviction policy before a real producer shows growth would be
-/// speculative.
+/// key). It holds [`CACHE_CAPACITY`] paragraphs and drops the least
+/// recently used one to make room.
+///
+/// That bound replaces an unbounded map, and the reasoning it replaces was
+/// sound when it was written: cockpit UI text is a bounded set, so the map
+/// stopped growing once every label had been seen once, and an eviction
+/// policy before a real producer showed growth would have been speculative.
+/// Issue #621 produced one. Making `stage_text` a per-frame call rather than
+/// a per-solve one means a node whose string differs every frame — a clock,
+/// a formatted readout — presents a key never seen before at frame rate, for
+/// the process lifetime. Evicting by recency is what keeps that case bounded
+/// while leaving the fixed-label case it was written for untouched: the
+/// labels are laid out every frame and never reach the cold end of the
+/// order (issue #975).
 ///
 /// Neither `ligatures_off` (story #341) nor the requested weight (story
 /// #368) is a property of the text, and both change shaping output — a
@@ -264,10 +356,22 @@ fn shaped_any(layout: &TextLayout, slot: u16) -> bool {
 /// beside the shaped runs, because it has no posture: neither the
 /// ligature setting nor the resolved slot set reaches it, so the same
 /// paragraph rendered at two weights resolves its levels once (issue
-/// #225). It is unbounded on the same reasoning as the shaped-run
-/// caches, and holds two bytes per byte of paragraph text plus the
-/// paragraph boundaries — a fraction of the shaped runs already kept for
-/// the same key.
+/// #225). It is bounded at [`CACHE_CAPACITY`] on the same reasoning as the
+/// shaped-run caches, and holds two bytes per byte of paragraph text plus
+/// the paragraph boundaries — a fraction of the shaped runs already kept
+/// for the same key. Its own capacity rather than a share of one, because
+/// it has no posture: one bidi map serves every posture, so a cascade using
+/// several of them keeps one resolution per paragraph against several
+/// shaped runs.
+///
+/// That holds when the postures share their text, which is the common shape —
+/// the same labels rendered at two weights. It does **not** hold when their
+/// text is disjoint: N postures with disjoint paragraph sets present the bidi
+/// map with the union, so the shaped caches can each sit comfortably inside
+/// [`CACHE_CAPACITY`] while the bidi map cycles through N times that many keys
+/// and misses on most lookups. The bound is therefore tightest on the one map
+/// that is shared, and a cascade that drives many postures over disjoint text
+/// is the shape to measure first if resolution cost ever shows up in a frame.
 #[derive(Debug)]
 pub struct Typesetter {
     /// The flat slot list, primary family first — what
@@ -282,12 +386,14 @@ pub struct Typesetter {
     /// Empty for every cascade built by an unnamed constructor.
     family_names: Vec<String>,
     /// One shaped-run cache per posture; `caches[i]` is keyed by paragraph
-    /// text and holds the entries shaped under `slot_sets[i]`.
-    caches: Vec<HashMap<Box<str>, Arc<ShapedText>>>,
+    /// text and holds the entries shaped under `slot_sets[i]`. Each bounds
+    /// itself at [`CACHE_CAPACITY`] by recency (issue #975).
+    caches: Vec<LruCache<Box<str>, Arc<ShapedText>>>,
     /// Resolved UAX #9 state per paragraph text (issue #225). Keyed by
     /// the text alone and shared by every posture — see
-    /// [`bidi::BASE_LEVEL`] for why the text is the whole key.
-    bidi_cache: HashMap<Box<str>, Arc<bidi::Resolved>>,
+    /// [`bidi::BASE_LEVEL`] for why the text is the whole key. Bounded at
+    /// [`CACHE_CAPACITY`] by recency (issue #975).
+    bidi_cache: LruCache<Box<str>, Arc<bidi::Resolved>>,
     /// The per-line display-reorder buffer (issue #226), reused across
     /// every line of every call.
     reorder: Reorder,
@@ -303,6 +409,8 @@ pub struct Typesetter {
     misses: u64,
     /// Bidi-cache misses: how many times [`bidi::Resolved::new`] ran.
     bidi_resolutions: u64,
+    /// Shaped runs dropped to make room, across every posture (issue #975).
+    evictions: u64,
 }
 
 impl Typesetter {
@@ -445,8 +553,8 @@ impl Typesetter {
             weights,
             families: ranges,
             family_names: names,
-            caches: vec![HashMap::new()],
-            bidi_cache: HashMap::new(),
+            caches: vec![text_cache()],
+            bidi_cache: text_cache(),
             reorder: Reorder::default(),
             slot_sets: vec![(default_slots, false)],
             substitutions: Vec::new(),
@@ -454,6 +562,7 @@ impl Typesetter {
             hits: 0,
             misses: 0,
             bidi_resolutions: 0,
+            evictions: 0,
         }
     }
 
@@ -519,6 +628,9 @@ impl Typesetter {
             misses: self.misses,
             bidi_resolutions: self.bidi_resolutions,
             reorder_levels_copied: self.reorder.copied,
+            evictions: self.evictions,
+            shaped_entries: self.caches.iter().map(|c| c.len()).sum(),
+            bidi_entries: self.bidi_cache.len(),
         }
     }
 
@@ -941,7 +1053,7 @@ impl Typesetter {
         }
         self.bidi_resolutions += 1;
         let resolved = Arc::new(bidi::Resolved::new(paragraph));
-        self.bidi_cache.insert(paragraph.into(), resolved.clone());
+        self.bidi_cache.put(paragraph.into(), resolved.clone());
         resolved
     }
 
@@ -980,7 +1092,15 @@ impl Typesetter {
             bidi,
             ligatures_off,
         ));
-        self.caches[posture].insert(paragraph.into(), shaped.clone());
+        let before = self.caches[posture].len();
+        self.caches[posture].put(paragraph.into(), shaped.clone());
+        // `put` returns the displaced value for a *replaced* key, not for an
+        // evicted one, so the eviction is only visible as a length that did
+        // not grow. This site is reached on a miss, so the key was absent and
+        // the length grows by one unless the cache was full.
+        if self.caches[posture].len() == before {
+            self.evictions += 1;
+        }
         shaped
     }
 
@@ -999,7 +1119,7 @@ impl Typesetter {
             return i;
         }
         self.slot_sets.push((slots.to_vec(), ligatures_off));
-        self.caches.push(HashMap::new());
+        self.caches.push(text_cache());
         self.slot_sets.len() - 1
     }
 }

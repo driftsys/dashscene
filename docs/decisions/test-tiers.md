@@ -64,6 +64,7 @@ slowest individual tests measured during the design session were:
 | `goldens::v010_bake_oracle a_sub_texel_barcode_is_refused_at_the_ceiling`     | 26.7      |
 | `goldens::profile_preview_oracle every_scene_renders_within_its_profile_band` | 25.8      |
 | 13 × `dashscene-typeset::atlas_pipeline`                                      | 7–20 each |
+| 3 × `dashscene-typeset::typeset_cache_bound` (issue #975)                     | 3–33 each |
 
 These times are per-test, run alone; nextest runs tests across binaries
 concurrently, so a tier's wall clock is well under the sum of the times of the
@@ -238,6 +239,27 @@ to a ten-fold improvement over the original 325 s and it gives up only the two
 packer re-derivations. Choosing `sanity` for the gate would save a further 28 s
 and drop twenty-four tests, including every assertion that renders through the
 painter stack or exercises the atlas and asset pipelines.
+
+### `typeset_cache_bound` sits outside `sanity` for time (issue #975)
+
+The three tests that pin the shaping and bidi cache bound
+(`crates/dashscene-typeset/tests/typeset_cache_bound.rs`) each drive at least
+`CACHE_CAPACITY` distinct paragraphs through real rustybuzz shaping, because
+what they assert is that the cache evicted and reshaped rather than refused to
+store. A cheaper fixture cannot make that assertion: shaping is the work whose
+repetition the bound is being tested against.
+
+Measured on the branch that added them, run alone: 3.7 s, 16.5 s and 32.9 s.
+That is the same magnitude as `binary(=startup_scaling)`, which this record's
+Mechanism section already excludes from `sanity` for time and not for redness,
+and it is several times the whole tier's budget — `sanity` is the loop run
+between every edit and before every commit, and the `justfile` documents it at
+about five seconds.
+
+So the binary is excluded from `sanity` by `binary(=typeset_cache_bound)` and
+stays in `regression`, which is what `just build` and the CI `test` job run. The
+bound is a property that cannot regress between two edits without the code
+changing, so the tier that runs on every push is the right one for it.
 
 ### `scaling` was a fourth profile, on purpose and temporarily
 
