@@ -734,6 +734,27 @@ jobs:
       # issue #658, a membership check that had never passed in CI reaching
       # `main`.
       - run: just c-abi
+      # And the Java, which before this step no job in this workflow compiled.
+      #
+      # `just android` cross-compiles the Rust members and stops. The harness
+      # script was reachable only through `android-splitscreen`, which nothing
+      # schedules, and `demo-android`'s script had no caller at all — so its two
+      # Java files had been compiled by no one (issue #1030).
+      #
+      # This needs no device: both scripts package an APK from the `.so` the
+      # first step built plus committed inputs. It is in this job rather than a
+      # new one because this is the job that already produces that `.so`.
+      #
+      # **Last, deliberately.** It is the newest step and the one depending on
+      # the runner's SDK, so a failure here must not mask `c-abi` above — the
+      # only check that `include/dashscene.h` matches what the library exports.
+      #
+      # The runner image ships the Android SDK and a JDK, so nothing is
+      # installed here — the same reasoning as the NDK note above, and the same
+      # exposure: an image that stopped shipping them would fail here rather
+      # than silently skip, which is the correct direction. The JDK is taken
+      # from the image rather than pinned, which issue #1058 carries.
+      - run: just android-apk
 
   atlas-repro:
     # Compile-heavy: skipped when the diff is documentation only

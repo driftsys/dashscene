@@ -191,6 +191,16 @@ total, nineteen of them the crates above.
                       compile gate, and the only one the last two have: their
                       JNI halves compile on no other target. Needs an NDK,
                       which bootstrap does not install
+    just android-apk  package both Android hosts into APKs. Before it, no gate
+                      compiled any Java here: demo-android's two files had been
+                      compiled by no one, and the harness pair only by whoever
+                      ran android-splitscreen by hand (issue #1030). CodeQL's
+                      java-kotlin analysis does run per PR, but without a full
+                      compile and without failing on an unresolved symbol.
+                      Needs no device: both scripts package from the
+                      cross-built .so and committed inputs. Needs the SDK
+                      build-tools, a JDK and zip, none of which bootstrap
+                      installs. Runs last in CI's android-build job
     just android-probe  cross-compile the D3a probe, push it to an attached
                       device and run it: what the painter's own device request
                       reports on that adapter (docs/design/android-toolchain.md)

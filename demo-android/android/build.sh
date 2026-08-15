@@ -96,8 +96,18 @@ echo "demo-android: build-tools ${tools}, ${platform}"
 # status, and `|| true` would swallow it — leaving a partial dex, an APK that
 # signs and installs, and a `ClassNotFoundException` at launch. That is the same
 # silent-wrong-build failure the keystore note above exists to prevent.
-javac --release 17 -nowarn -classpath "${jar}" -d "${out}/classes" \
-  "${here}"/java/dev/driftsys/dashscene/demo/*.java
+# Every .java under java/, not a one-level glob, and the count checked first —
+# see the same change in the harness script for both reasons: a file added in a
+# subpackage was compiled by nothing while the APK still built and signed, and
+# `find -exec ... +` over an empty tree runs the command zero times and exits 0
+# (issue #1030).
+sources="$(find "${here}/java" -name '*.java' | wc -l | tr -d ' ')"
+if [ "${sources}" -eq 0 ]; then
+  echo "demo-android: no .java under ${here}/java — nothing to compile." >&2
+  exit 1
+fi
+find "${here}/java" -name '*.java' -exec \
+  javac --release 17 -nowarn -classpath "${jar}" -d "${out}/classes" {} +
 
 # `-exec` rather than an unquoted `$(find ...)`: word splitting breaks the
 # moment any path component contains a space, and this script already assumes a
