@@ -484,3 +484,23 @@ that renders the pre-fix behaviour and asserts it moves far more than the
 budget, and `v013-text-in-group` additionally pins the property exactly and
 machine-independently: no pixel may carry the run's full-strength colour,
 because every text pixel went through the group's 0.5 layer.
+
+## Revision (issue #975, 2026-08-15) — the cache that analysis measured is now bounded
+
+"What the per-frame question actually costs", above, records the shaped-run
+cache as "unbounded and never evicted". That was accurate when it was measured
+and is left as written, because the section is a dated measurement rather than a
+description of the current code.
+
+It is no longer true. Per-frame staging is exactly what turned an unbounded map
+into growth once per frame for a changing string, so this record's own analysis
+is where issue #975 came from. Both text-keyed caches — the per-posture shaped
+runs and the bidi resolution the paragraph above notes runs "before the cache
+lookup and outside it" — are now bounded at `text::CACHE_CAPACITY` and evict the
+least recently used entry. The reasoning, the capacity, and what the capacity is
+and is not chosen against are in
+`docs/decisions/shaped-run-cache-font-units.md`.
+
+Nothing at boundary B changed: the bound sits inside `dashscene-typeset`, and
+neither `dashpaint`'s types nor what a stager passes across the boundary is
+affected.

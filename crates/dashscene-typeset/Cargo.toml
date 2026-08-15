@@ -19,6 +19,10 @@ name = "dashscene_typeset"
 png.workspace = true
 
 [dependencies]
+# Bounds the two text-keyed caches (issue #975). Already the workspace's
+# eviction crate, chosen for `dashscene-gpu`'s residency set for the same
+# reason: a recency order to pick a victim by is an intrusive linked list.
+lru.workspace = true
 ttf-parser.workspace = true
 rustybuzz.workspace = true
 unicode-bidi.workspace = true

@@ -95,6 +95,7 @@ not (
   + binary(=atlas_pipeline)
   + test(=an_out_of_range_grid_anchor_does_not_panic)
   + binary(=v010_bake_oracle)
+  + binary(=typeset_cache_bound)
 )
 """
 

@@ -310,8 +310,8 @@ and Bold, and Arabic Regular.
 
     pub struct Typesetter { fonts: Vec<Font>, weights: Vec<u16>,
                             families: Vec<Range<usize>>,
-                            caches: Vec<HashMap<Box<str>, Arc<ShapedText>>>,
-                            bidi_cache: HashMap<Box<str>, Arc<bidi::Resolved>>,
+                            caches: Vec<LruCache<Box<str>, Arc<ShapedText>>>,
+                            bidi_cache: LruCache<Box<str>, Arc<bidi::Resolved>>,
                             reorder: bidi::Reorder,
                             slot_sets: Vec<(Vec<u16>, bool)>,
                             substitutions: Vec<WeightSubstitution>,
@@ -329,7 +329,12 @@ and Bold, and Arabic Regular.
             max_width: Option<f32>, shape: TextShape, weight: u16) -> TextLayout;
         pub fn cache_stats(&self) -> CacheStats;
     }
-    pub struct CacheStats { pub hits: u64, pub misses: u64 }
+    pub const CACHE_CAPACITY: usize;                    // #975
+    pub struct CacheStats { pub hits: u64, pub misses: u64,
+                            pub bidi_resolutions: u64,
+                            pub reorder_levels_copied: u64,
+                            pub shaped_entries: usize,   // #975
+                            pub bidi_entries: usize }    // #975
     pub struct WeightedFont { pub font: Font, pub weight: u16 }   // #368
     pub struct WeightSubstitution { pub family: usize,            // #368
                                    pub requested: u16, pub resolved: u16 }
@@ -438,11 +443,15 @@ glyph order; the display reorder is `position_line`'s. `max_width: Option<f32>`:
 
 ## Cache semantics
 
-The caches live on `Typesetter` — one `HashMap<Box<str>, Arc<ShapedText>>` per
-posture for the shaped runs, one `HashMap<Box<str>,
+The caches live on `Typesetter` — one `LruCache<Box<str>, Arc<ShapedText>>` per
+posture for the shaped runs, one `LruCache<Box<str>,
 Arc<bidi::Resolved>>` for
 the UAX #9 resolution, plus the counters. They are not separate types; each is
-too small to warrant its own module.
+too small to warrant its own module. Each is built by `text_cache`, which uses
+`LruCache::unbounded` then `resize` rather than `LruCache::new`: `new` is
+`HashMap::with_capacity(cap)` and reserves the whole table up front, which for a
+typesetter holding a handful of paragraphs would cost more than the growth the
+capacity exists to bound.
 
 - Stores font-unit, unpositioned `ShapedText` — shaping output (glyph ids,
   advances, offsets in font units) is size-independent, so the px scale is
@@ -485,13 +494,26 @@ too small to warrant its own module.
   `text/bidi.rs` re-implements the two rules over a refreshed slice, and pins
   the re-implementation against `unicode_bidi`'s own output for every line split
   of a direction corpus.
-- Unbounded: cockpit UI text is a bounded set; an eviction policy is speculative
-  until a real producer shows growth. The resolution cache adds two bytes per
-  byte of chunk text plus the paragraph boundaries — a fraction of the shaped
-  runs held under the same key.
+- Bounded at `text::CACHE_CAPACITY` paragraphs per map, evicting the least
+  recently used entry (issue #975). The earlier reasoning — cockpit UI text is a
+  bounded set, so an eviction policy is speculative until a real producer shows
+  growth — held until issue #621 made `stage_text` a per-frame call rather than
+  a per-solve one. A node whose string differs every frame then presents an
+  unseen key at frame rate, which is the growth that reasoning waited for. The
+  resolution cache adds two bytes per byte of chunk text plus the paragraph
+  boundaries — a fraction of the shaped runs held under the same key.
+- Evicting by recency rather than by insertion order is what keeps the
+  fixed-label case behaving as it did: labels laid out every frame never reach
+  the cold end of the order, while the changing readout's strings do. The
+  capacity is a working-set bound rather than a memory budget — no memory budget
+  exists to size one against (issue #462) — so it is chosen to exceed the
+  distinct paragraphs one frame lays out, below which eviction would move
+  shaping into the frame loop.
 - `Typesetter::cache_stats() -> CacheStats { hits, misses,
-  bidi_resolutions, reorder_levels_copied }`
-  makes the counts observable for tests and for #29's caller.
+  bidi_resolutions, reorder_levels_copied, shaped_entries, bidi_entries }`
+  makes the counts observable for tests and for #29's caller. The last two are
+  entry counts rather than event counters, which is what lets a test pin the
+  bound: `misses` keeps climbing across an eviction.
 
 ## Error handling
 
@@ -541,7 +563,10 @@ this crate does not look the glyph id up in an atlas at all.
   shaped-run cache each frame; the optimisation couples to the v0.4
   incremental-commit path and is tracked as debt from story #33, not built
   speculatively.
-- **Cache eviction.** The cache never shrinks (see Cache semantics above).
+- **A byte-sized cache bound.** Eviction is built (see Cache semantics above),
+  but the caches bound an entry count, not a byte total, so a long paragraph and
+  a short one cost one slot each. Sizing by bytes needs the memory budget issue
+  #462 would set.
 - **Arena wiring.** No dependency on `dashscene-core`; `Arena::text`/
   `Arena::text_style` reach this pipeline through #29, not through this crate.
 
@@ -692,8 +717,9 @@ Family substitution, Arabic bold, the `wght` axis, italic and optical sizing
 (Font weight, above), cross-font line-metric unification and script-aware
 neutral itemization (Font fallback, above), the measure callback (#29 —
 `docs/design/dashscene-engine.md`), painting and atlas lookup (#30),
-hyphenation/UAX #14, vertical text, letter-spacing and other style axes, cache
-eviction, the pre-shaped-numerals fast path (debt from #33).
+hyphenation/UAX #14, vertical text, letter-spacing and other style axes, a
+byte-sized cache bound (issue #462), the pre-shaped-numerals fast path (debt
+from #33).
 
 ## Trace
 
