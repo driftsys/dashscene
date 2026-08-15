@@ -3,8 +3,8 @@
 #
 # No Gradle, and that is a deliberate trade rather than a shortcut. Gradle would
 # be a second build system in a repository that has one, plus a Kotlin
-# toolchain, to produce an APK whose whole content is one manifest, two Java
-# files and a shared library. The Android SDK's own build tools do it directly:
+# toolchain, to produce an APK whose whole content is one manifest, a handful of
+# Java files and a shared library. The Android SDK's own build tools do it directly:
 # aapt2 links the manifest, javac and d8 produce the dex, and apksigner signs
 # it. That is the same trade `docs/design/android-toolchain.md` records for
 # using plain `cargo build --target` rather than `cargo-ndk`.

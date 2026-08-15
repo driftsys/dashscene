@@ -74,24 +74,7 @@ public final class HarnessActivity extends Activity implements SurfaceHolder.Cal
      * do is claim the text path ran, which is why the marker below names which
      * of the two it took.
      */
-    private Cascade cascade = null;
-
-    /** One face and the two values that describe it. */
-    private static final class Cascade {
-        final String family;
-        final int weight;
-        final byte[] font;
-        final byte[] atlasPng;
-        final byte[] atlasMetrics;
-
-        Cascade(String family, int weight, byte[] font, byte[] atlasPng, byte[] atlasMetrics) {
-            this.family = family;
-            this.weight = weight;
-            this.font = font;
-            this.atlasPng = atlasPng;
-            this.atlasMetrics = atlasMetrics;
-        }
-    }
+    private DsFace cascade = null;
 
     @Override
     protected void onCreate(Bundle state) {
@@ -140,11 +123,7 @@ public final class HarnessActivity extends Activity implements SurfaceHolder.Cal
                 handle = DashsceneNative.nativeSurfaceCreatedWithText(
                         holder.getSurface(),
                         document,
-                        new String[] {cascade.family},
-                        new int[] {cascade.weight},
-                        new byte[][] {cascade.font},
-                        new byte[][] {cascade.atlasPng},
-                        new byte[][] {cascade.atlasMetrics},
+                        new DsFace[] {cascade},
                         width,
                         height);
                 Log.i(TAG, "harness: runtime handle " + handle + " (with text: "
@@ -225,7 +204,7 @@ public final class HarnessActivity extends Activity implements SurfaceHolder.Cal
      * staging mistake into a load failure at the surface, which is much further
      * from its cause.
      */
-    private Cascade readCascade() {
+    private DsFace readCascade() {
         try {
             String[] fields = new String(readAsset(CASCADE), "UTF-8").trim().split("\t");
             if (fields.length != 2) {
@@ -237,9 +216,14 @@ public final class HarnessActivity extends Activity implements SurfaceHolder.Cal
             // give different answers to the same input, which is the divergence
             // story #947's review removed from the JNI layer.
             int weight = Integer.parseInt(fields[1].trim());
-            Cascade read = new Cascade(
+            // faceIndex 0, written down rather than defaulted: the harness
+            // stages an .otf rather than a .ttc, so there is no second face to
+            // name. The index this entry point gained in issue #981 is
+            // exercised by a collection, and no committed corpus font is one.
+            DsFace read = new DsFace(
                     fields[0].trim(),
                     weight,
+                    0,
                     readAsset(FONT),
                     readAsset(ATLAS_PNG),
                     readAsset(ATLAS_METRICS));

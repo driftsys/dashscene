@@ -41,14 +41,10 @@ public final class DashsceneNative {
      * Hands over a Surface, the document to draw, and the fonts its text needs,
      * and starts the frame loop on its own thread.
      *
-     * <p>The five arrays are parallel and must be the same length: one entry per
-     * face. A length disagreement returns 0 and logs, rather than assembling a
-     * cascade from entries that do not belong together.
-     *
-     * <p>There is no array for a face's index within a font collection: every
-     * face is declared at index 0, so a .ttc reaches only its first face
-     * through this method. The C ABI underneath carries the index; this
-     * method is a subset of it.
+     * <p>One {@link DsFace} per face, in cascade order. This took five parallel
+     * arrays until issue #981, which could not carry {@code DsFontFace}'s
+     * {@code face_index} at all. {@code docs/design/host-integration.md}
+     * carries why the shape changed and what it costs.
      *
      * <p>An atlas is a committed MSDF sheet — a PNG and the metrics blob beside
      * it. <b>Nothing bakes one at run time</b>, so read them from your own
@@ -56,29 +52,28 @@ public final class DashsceneNative {
      * document loaded that way lays its text nodes out as empty leaves.
      *
      * <p>The sheets are optional, and either every face carries one or none
-     * does. Pass an empty array for both of a face's sheets to declare a
+     * does. Give both of a face's sheets an empty array to declare a
      * measure-only cascade: its text is shaped and measured, and no glyph is
      * drawn. One of the two empty and the other filled is a face that
      * half-described its atlas, and the load fails rather than quietly
      * dropping that face's glyphs.
      *
-     * @param families one family name per face; faces sharing a name become one
-     *     family however they are ordered, matched after trimming and ignoring
-     *     ASCII case, and a name that is empty or only spaces fails the load
-     * @param weights CSS weight per face, parallel to families; must be in
-     *     1..1000, and a value outside that range fails the load rather than
-     *     being repaired — including 0, which no CSS weight can be
-     * @param fonts the font file's bytes per face
-     * @param atlasPngs the sheet per face, or an empty array for none
-     * @param atlasMetrics the metrics blob per face, or an empty array for none
+     * <p>Every value is checked by the ABI rather than here, so a Kotlin host
+     * and a C host get the same answer to the same input: a family that is
+     * empty or only spaces, a weight outside 1..1000, or font bytes that do not
+     * parse all fail the load rather than being repaired. What this method
+     * refuses on its own is only what cannot cross to the descriptor at all — a
+     * null face, a null field, a negative {@code faceIndex}, a weight a
+     * {@code uint16_t} cannot hold, or a family carrying a NUL.
+     *
+     * @param faces one entry per face, in cascade order; an empty array is
+     *     {@link #nativeSurfaceCreated}
      * @return an opaque handle, or 0. The same caveat as
      *     {@link #nativeSurfaceCreated}: a non-zero handle does not mean the
      *     runtime started.
      */
     public static native long nativeSurfaceCreatedWithText(
-            Surface surface, byte[] document, String[] families, int[] weights,
-            byte[][] fonts, byte[][] atlasPngs, byte[][] atlasMetrics,
-            int width, int height);
+            Surface surface, byte[] document, DsFace[] faces, int width, int height);
 
     /** Reports a new physical-pixel extent. Picked up by the next frame. */
     public static native void nativeSurfaceChanged(long handle, int width, int height);

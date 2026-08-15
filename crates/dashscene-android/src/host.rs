@@ -23,9 +23,9 @@ use std::ffi::c_void;
 
 use dashscene_ffi::{DsRuntime, DsStatus, DsSurfaceKind};
 use jni::errors::LogErrorAndDefault;
-use jni::objects::{JByteArray, JClass, JIntArray, JObject, JObjectArray, JString};
+use jni::objects::{JByteArray, JClass, JObject, JObjectArray, JString};
 use jni::sys::{jboolean, jint, jlong};
-use jni::{Env, EnvUnowned};
+use jni::{Env, EnvUnowned, jni_sig, jni_str};
 
 use crate::frames::{AttachError, Frames, Step};
 use crate::log;
@@ -57,6 +57,7 @@ fn last_error() -> String {
 struct OwnedFace {
     family: std::ffi::CString,
     weight: u16,
+    face_index: u32,
     font: Vec<u8>,
     atlas_png: Vec<u8>,
     atlas_metrics: Vec<u8>,
@@ -122,7 +123,7 @@ impl Frames for DocumentFrames {
             .map(|face| dashscene_ffi::DsFontFace {
                 family: face.family.as_ptr(),
                 weight: face.weight,
-                face_index: 0,
+                face_index: face.face_index,
                 font_bytes: face.font.as_ptr(),
                 font_len: face.font.len(),
                 atlas_png: sheet(&face.atlas_png),
@@ -346,30 +347,37 @@ pub extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_nativeSurface
 /// Creates a host that draws a compiled `.dsb` with the fonts its text
 /// needs, and starts its frame loop.
 ///
-/// The five arrays are parallel and must be the same length: one entry per
-/// face — a family name, a CSS weight, a font file's bytes, and the
-/// committed MSDF sheet the face's glyphs sample. A length disagreement is a
-/// 0 handle and a log line rather than a cascade assembled from entries that
-/// do not belong together.
+/// One `DsFace` per face, in cascade order — a family name, a CSS weight, the
+/// face's index inside a collection, a font file's bytes, and the committed
+/// MSDF sheet the face's glyphs sample.
 ///
-/// **This is a subset of what `DsFontFace` carries.** There is no array for
-/// the face's index within a collection: every face is declared at index 0,
-/// so a `.ttc` reaches only its first face through this entry point. Issue
-/// #981 carries the rest.
+/// # Why a descriptor class and not six parallel arrays
 ///
-/// The weight is checked by the ABI, in `1..=1000`, and by nothing here —
-/// what this rejects is only a value a `u16` cannot carry.
+/// `docs/design/host-integration.md` carries the argument, and this does not
+/// restate it. It was written out here, in `DsFace.java`, in
+/// `DashsceneNative.java` and in the record, and two of its claims were wrong
+/// in all four copies at once — which is the case for keeping it in one place
+/// rather than an aesthetic preference.
 ///
-/// **Nothing bakes an atlas at run time**, so a host reads these from its
-/// own assets. `nativeSurfaceCreated` is this call with no faces.
+/// The short of it: five parallel arrays could not carry
+/// `DsFontFace::face_index`, and a sixth would have widened a length agreement
+/// that nothing checks. One array of descriptors makes that disagreement
+/// unrepresentable.
+///
+/// # What is checked here, and what is not
+///
+/// The ABI judges the values — a family that is empty or only whitespace, a
+/// weight outside `1..=1000`, font bytes that do not parse — so that a Kotlin
+/// host and a C host get the same answer to the same input. This rejects only
+/// what cannot cross to the descriptor at all: a null face or field, a negative
+/// `faceIndex`, a weight a `u16` cannot hold, or a family carrying a NUL.
+///
+/// **Nothing bakes an atlas at run time**, so a host reads these from its own
+/// assets. `nativeSurfaceCreated` is this call with no faces.
 ///
 /// # Safety
 ///
 /// Called by the JVM with a valid environment and a live `Surface`.
-///
-/// One parameter per JNI argument is the only shape a native method binds
-/// to, so this stays over clippy's default threshold.
-#[allow(clippy::too_many_arguments)]
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_nativeSurfaceCreatedWithText<
     'local,
@@ -378,11 +386,7 @@ pub extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_nativeSurface
     _class: JClass<'local>,
     surface: JObject<'local>,
     document: JByteArray<'local>,
-    families: JObjectArray<'local, JString<'local>>,
-    weights: JIntArray<'local>,
-    fonts: JObjectArray<'local, JByteArray<'local>>,
-    atlas_pngs: JObjectArray<'local, JByteArray<'local>>,
-    atlas_metrics: JObjectArray<'local, JByteArray<'local>>,
+    faces: JObjectArray<'local, JObject<'local>>,
     width: jint,
     height: jint,
 ) -> jlong {
@@ -390,84 +394,129 @@ pub extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_nativeSurface
         .with_env(|env| -> jni::errors::Result<jlong> {
             let bytes = env.convert_byte_array(&document)?;
 
-            // Every array must agree with `families`. `weights` is checked
-            // apart from the other three because it is a primitive array and
-            // they are object arrays, so the two cannot share one list.
-            let count = families.len(env)?;
-            let mismatched = if weights.len(env)? != count {
-                Some("weights")
-            } else if fonts.len(env)? != count {
-                Some("fonts")
-            } else if atlas_pngs.len(env)? != count {
-                Some("atlasPngs")
-            } else if atlas_metrics.len(env)? != count {
-                Some("atlasMetrics")
-            } else {
-                None
-            };
-            if let Some(what) = mismatched {
-                log(&format!(
-                    "nativeSurfaceCreatedWithText: {what} has a different length from families"
-                ));
-                return Ok(0);
-            }
-
-            let mut faces = Vec::with_capacity(count);
+            let count = faces.len(env)?;
+            let mut owned = Vec::with_capacity(count);
             for index in 0..count {
-                let mut weight = [0_i32; 1];
-                weights.get_region(env, index as jint, &mut weight)?;
-                // **The CSS range is not checked here.** `DsFontFace::weight`
-                // is where a weight is judged, and one rule in one place is
-                // why: this clamped as well until story #947's review, so a
-                // Kotlin host and a C host got different answers to the same
-                // question. What is refused here is only what a `u16` cannot
-                // carry to the ABI at all — a truncating cast would turn
-                // 65 936 into 400 and the ABI would accept it.
-                let Ok(weight) = u16::try_from(weight[0]) else {
-                    log(&format!(
-                        "nativeSurfaceCreatedWithText: face {index} declares weight {}, \
-                         which does not fit the descriptor; the accepted range is 1..=1000",
-                        weight[0]
-                    ));
+                // A frame per face. Each element and each object field is a
+                // local reference, and JNI guarantees only 16 slots without
+                // asking; five per face means a four-face cascade exhausts the
+                // frame the JVM gave this call. Everything that leaves the
+                // frame is owned, so nothing here outlives it.
+                let face =
+                    env.with_local_frame(8, |env| -> jni::errors::Result<Option<OwnedFace>> {
+                        read_face(env, &faces, index)
+                    })?;
+                let Some(face) = face else {
+                    // `read_face` has already said which face and why.
                     return Ok(0);
                 };
-
-                // A frame per face, because each `get_element` below returns a
-                // local reference and JNI guarantees only 16 slots without
-                // asking for more. Four per face means a five-face cascade
-                // exhausts the frame the JVM gave this call. Everything that
-                // leaves the frame is owned, so nothing here outlives it.
-                let (name, font, atlas_png, atlas_metrics_bytes) = env.with_local_frame(
-                    8,
-                    |env| -> jni::errors::Result<(String, Vec<u8>, Vec<u8>, Vec<u8>)> {
-                        let name = families.get_element(env, index)?.try_to_string(env)?;
-                        let font: JByteArray = fonts.get_element(env, index)?;
-                        let font = env.convert_byte_array(&font)?;
-                        let atlas_png: JByteArray = atlas_pngs.get_element(env, index)?;
-                        let atlas_png = env.convert_byte_array(&atlas_png)?;
-                        let atlas_metrics_bytes: JByteArray =
-                            atlas_metrics.get_element(env, index)?;
-                        let atlas_metrics_bytes = env.convert_byte_array(&atlas_metrics_bytes)?;
-                        Ok((name, font, atlas_png, atlas_metrics_bytes))
-                    },
-                )?;
-
-                let Ok(family) = std::ffi::CString::new(name) else {
-                    log("nativeSurfaceCreatedWithText: a family name contains a NUL");
-                    return Ok(0);
-                };
-                faces.push(OwnedFace {
-                    family,
-                    weight,
-                    font,
-                    atlas_png,
-                    atlas_metrics: atlas_metrics_bytes,
-                });
+                owned.push(face);
             }
 
-            start_document_host(env, &surface, bytes, faces, width, height)
+            start_document_host(env, &surface, bytes, owned, width, height)
         })
         .resolve::<LogErrorAndDefault>()
+}
+
+/// Reads one `DsFace` out of `faces`, or `None` after logging why it could not.
+///
+/// Split out because the entry point above is the JNI signature and this is the
+/// descriptor, and because a `?` here would report a JNI error where the caller
+/// wants a zero handle. `None` is this side's refusal; a `jni::errors::Error` is
+/// the JVM's.
+fn read_face<'frame, 'array>(
+    env: &mut Env<'frame>,
+    faces: &JObjectArray<'array, JObject<'array>>,
+    index: usize,
+) -> jni::errors::Result<Option<OwnedFace>> {
+    let face = faces.get_element(env, index)?;
+    if face.is_null() {
+        log(&format!(
+            "nativeSurfaceCreatedWithText: face {index} is null"
+        ));
+        return Ok(None);
+    }
+
+    let family = env.get_field(&face, jni_str!("family"), jni_sig!("Ljava/lang/String;"))?;
+    let family: JString = env.cast_local::<JString>(family.l()?)?;
+    if family.is_null() {
+        log(&format!(
+            "nativeSurfaceCreatedWithText: face {index} has no family"
+        ));
+        return Ok(None);
+    }
+    let family = family.try_to_string(env)?;
+    // The CSS range is **not** checked here. `DsFontFace::weight` is where a
+    // weight is judged, and one rule in one place is why: this clamped as well
+    // until story #947's review, so a Kotlin host and a C host got different
+    // answers to the same question. What is refused is only what a `u16` cannot
+    // carry to the ABI at all — a truncating cast would turn 65 936 into 400
+    // and the ABI would accept it.
+    let weight = env
+        .get_field(&face, jni_str!("weight"), jni_sig!("I"))?
+        .i()?;
+    let Ok(weight) = u16::try_from(weight) else {
+        log(&format!(
+            "nativeSurfaceCreatedWithText: face {index} declares weight {weight}, which does \
+             not fit the descriptor; the accepted range is 1..=1000"
+        ));
+        return Ok(None);
+    };
+    // `face_index` is a `u32` in the descriptor and a signed `int` in Java, so
+    // the only value that cannot cross is a negative one. Refused rather than
+    // clamped: a negative index is a caller's mistake, and 0 is a real face.
+    let face_index = env
+        .get_field(&face, jni_str!("faceIndex"), jni_sig!("I"))?
+        .i()?;
+    let Ok(face_index) = u32::try_from(face_index) else {
+        log(&format!(
+            "nativeSurfaceCreatedWithText: face {index} declares faceIndex {face_index}, which \
+             is not an index"
+        ));
+        return Ok(None);
+    };
+
+    let mut bytes_field = |name, what| -> jni::errors::Result<Option<Vec<u8>>> {
+        let array = env.get_field(&face, name, jni_sig!("[B"))?.l()?;
+        let array: JByteArray = env.cast_local::<JByteArray>(array)?;
+        if array.is_null() {
+            log(&format!(
+                "nativeSurfaceCreatedWithText: face {index} has no {what}"
+            ));
+            return Ok(None);
+        }
+        Ok(Some(env.convert_byte_array(&array)?))
+    };
+    // Three bindings rather than one tuple, so a face refused on its first
+    // field stops there. A tuple evaluates all three whatever the first
+    // answers: it would copy the remaining arrays out of the JVM for a face
+    // already refused — 63 940 B of PNG and 4 448 B of metrics on the
+    // harness's own cascade — and log three lines for one bad face, which
+    // reads as three problems.
+    let Some(font) = bytes_field(jni_str!("font"), "font")? else {
+        return Ok(None);
+    };
+    let Some(atlas_png) = bytes_field(jni_str!("atlasPng"), "atlasPng")? else {
+        return Ok(None);
+    };
+    let Some(atlas_metrics) = bytes_field(jni_str!("atlasMetrics"), "atlasMetrics")? else {
+        return Ok(None);
+    };
+
+    let Ok(family) = std::ffi::CString::new(family) else {
+        log(&format!(
+            "nativeSurfaceCreatedWithText: face {index} has a family name containing a NUL"
+        ));
+        return Ok(None);
+    };
+    Ok(Some(OwnedFace {
+        family,
+        weight,
+        face_index,
+        font,
+        atlas_png,
+        atlas_metrics,
+    }))
 }
 
 /// Reports a new **physical**-pixel extent. Picked up by the next frame.

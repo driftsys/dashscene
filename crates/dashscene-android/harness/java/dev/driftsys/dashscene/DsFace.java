@@ -1,0 +1,86 @@
+package dev.driftsys.dashscene;
+
+/**
+ * One font face, as {@link DashsceneNative#nativeSurfaceCreatedWithText} takes
+ * it.
+ *
+ * <p>This is the Java half of the C ABI's {@code DsFontFace}, field for field.
+ * It replaced five parallel arrays, which could not carry {@code face_index} at
+ * all (issue #981).
+ *
+ * <p><b>The argument for this shape lives in
+ * {@code docs/design/host-integration.md}</b>, under "the same descriptor
+ * rather than a subset of it", and is not restated here. It was written out
+ * four times when it landed and two of its claims were wrong in all four
+ * copies.
+ *
+ * <p>Public final fields and no accessors on purpose: the native side reads
+ * them by name, so a getter would be a second name for the same value and only
+ * the field name is load-bearing. <b>Nothing checks these names against the
+ * native side</b> — renaming one compiles, packages and installs, and fails as
+ * {@code NoSuchFieldError} on the first frame (issue #1089).
+ */
+public final class DsFace {
+    /** Family name. Faces sharing one become a family however they are ordered. */
+    public final String family;
+
+    /** CSS weight, 1..=1000. Checked by the ABI and by nothing here. */
+    public final int weight;
+
+    /**
+     * The face's index inside a font collection; 0 for a single-face file.
+     *
+     * <p>The field this class exists for. Out of range for the descriptor —
+     * negative — fails the load rather than being repaired.
+     */
+    public final int faceIndex;
+
+    /** The font file's bytes. */
+    public final byte[] font;
+
+    /**
+     * The committed MSDF sheet, or an empty array for none.
+     *
+     * <p>Either both of a face's sheets are empty or both are filled. Both
+     * empty is the measure-only cascade: text is shaped and measured and no
+     * glyph is drawn. One empty and the other filled is a half-described face,
+     * which the ABI refuses on purpose rather than quietly dropping that
+     * face's glyphs.
+     *
+     * <p><b>And the rule runs across the whole cascade, not only within a
+     * face: either every face carries a sheet or none does.</b> The atlas list
+     * is indexed by the font slot of the face that shaped a glyph, so a
+     * cascade where one face has a sheet and another does not leaves the sheet
+     * at a lower index than the face that owns it — and the glyphs sample the
+     * wrong face rather than failing.
+     */
+    public final byte[] atlasPng;
+
+    /** The sheet's metrics blob, under the same rule as {@link #atlasPng}. */
+    public final byte[] atlasMetrics;
+
+    /**
+     * The only constructor, and deliberately so.
+     *
+     * <p>A five-argument overload defaulting {@code faceIndex} to 0 was
+     * written first and removed: it is the shorter and more discoverable of
+     * the two, and a host holding a {@code .ttc} that reached for it would get
+     * silently back the exact behaviour this class exists to remove — the
+     * collection's first face and no diagnostic. Writing 0 down is cheap;
+     * having it chosen for you is what went wrong before.
+     */
+    public DsFace(
+            String family,
+            int weight,
+            int faceIndex,
+            byte[] font,
+            byte[] atlasPng,
+            byte[] atlasMetrics) {
+        this.family = family;
+        this.weight = weight;
+        this.faceIndex = faceIndex;
+        this.font = font;
+        this.atlasPng = atlasPng;
+        this.atlasMetrics = atlasMetrics;
+    }
+}

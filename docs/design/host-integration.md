@@ -205,13 +205,67 @@ and the metrics blob beside it, or its text is measured and never drawn. That is
 a property of the generator rather than of this ABI's shape.
 
 `dashscene-android` reaches the same entry point through a second JNI one,
-`nativeSurfaceCreatedWithText`, but carries a **subset** of the descriptor: five
-parallel arrays for the family, the weight, the font bytes and the sheet's two
-files, and no array for the face's index within a collection. `host.rs` writes
-`face_index: 0` for every face, so a Kotlin host with a `.ttc` reaches only its
-first face where a C host on the same ABI reaches any of them. A sixth parallel
-array is deliberately not the fix — five already have to agree in length — and
-issue #981 carries the alternatives.
+`nativeSurfaceCreatedWithText`, and since 2026-08-15 it carries **the same
+descriptor rather than a subset of it**: one array of `DsFace`, the Java class
+that mirrors `DsFontFace` field for field, including `faceIndex` (issue #981).
+
+It took five parallel arrays until then, with no array for the face's index
+within a collection — `host.rs` wrote `face_index: 0` for every face, so a
+Kotlin host with a `.ttc` reached only its first face where a C host on the same
+ABI reached any of them.
+
+**A sixth array was the repair that was refused.** Five already had to agree in
+length, and the check for that was a log line and a zero handle — a failure a
+caller meets as "no picture" rather than as a compiler error. One array of
+descriptors makes the disagreement unrepresentable: a face's six values travel
+together because they are one object, and the length check is gone rather than
+widened. The alternative weighed against it was a byte-packed block the native
+side would parse; it needs a wire format defined, documented, versioned and
+validated, makes each added field a format change, turns a malformed block into
+a new class of failure, puts the packing in hand-written Java, and moves the JNI
+surface further from the C ABI it mirrors.
+
+**This record is the only home for that argument.** It was written out four
+times — here, in `host.rs`, in `DsFace.java` and in `DashsceneNative.java` — and
+the two paragraphs below were wrong in all four copies at once. The code now
+cites this section instead, which is what `lib.rs` and `frames.rs` already do
+for D2, D4 and D8.
+
+### What it costs, measured against the source rather than assumed
+
+Two claims made when this landed were wrong, and both are corrected here:
+
+- **Not "six lookups once per surface".** `jni::Env::get_field` calls
+  `GetObjectClass` and then looks the field id up, on **every call**, and
+  nothing memoizes either. Per _face_ that is six `GetObjectClass`, six
+  `GetFieldID` and four `IsInstanceOf` — so a four-face cascade issues 24, 24
+  and 16 of them, not six of anything. The class is the same for every field of
+  every element, so hoisting one `get_object_class` and six field ids out of the
+  loop would make the original claim true; that is the shape to reach for if a
+  cascade ever gets long enough to matter, and issue #1088 carries it.
+- **`FindClass` _is_ involved**, through the four `cast_local` calls per face.
+  `cast_local` resolves its target class by name — `Class.forName` against the
+  thread context class loader, then the candidate's own loader, then
+  `FindClass`. It resolves `java/lang/String` and `[B`, which are JDK classes
+  that every loader has, so the coupling this creates is to the JDK rather than
+  to an app class. **`DsFace` itself is never looked up by name**: its fields
+  are read through `GetObjectClass` on the array element, which is what the
+  original claim was reaching for and stated too broadly.
+
+The coupling that _is_ new is neither of those. It is **six field names as
+strings**, and nothing in this repository checks them against `DsFace.java`.
+Rename a field there and every gate stays green — `host.rs` is behind
+`cfg(target_os = "android")` so no test links it, no gate runs clippy for that
+triple (issue #1086), and `just android-apk` compiles both halves without
+comparing them. The failure arrives as `NoSuchFieldError` at the first
+`surfaceChanged`, and the harness then falls back to the no-text call and draws
+no glyphs — the same "no picture" shape the array-length agreement had. The C
+header has `just c-abi` for exactly this class of problem; the JNI half has no
+equivalent, and issue #1089 carries it.
+
+The JNI symbol name already binds the library to
+`dev.driftsys.dashscene.DashsceneNative`, so requiring a second class in that
+package costs an embedder nothing new.
 
 **It runs on an emulator, and on no device.** Since 2026-08-15 the harness
 stages a committed cascade — Inter at weight 400, its font file and the
