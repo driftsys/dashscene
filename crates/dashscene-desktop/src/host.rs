@@ -829,6 +829,22 @@ impl<A: App> Host<A> {
         // the outgoing one, and the incoming arena's generations start again,
         // so nothing in the frames themselves says so
         // (`Present::document_replaced`).
+        //
+        // **This call is not redundant with the renumber-driven one in `tick`,
+        // and issue #946 read it as such.** `CommittedScene::renumbered` is set
+        // by `arena.shown_root != previous_shown_root` and by nothing else, so
+        // a rebuild whose scene never names a shown root — every showcase scene
+        // built in code — never reports one, and this is the only notification
+        // the presenter gets. Removing it would leave the painter holding a
+        // description of the outgoing arena on exactly the path `demo` takes by
+        // default.
+        //
+        // On the `--dsb` path both do fire, because `Document::load` flips
+        // `shown_root` from `None` and that commit renumbers. The second is a
+        // no-op rather than a defect: nothing is uploaded between them, and the
+        // alternative — suppressing it by carrying `renumber_reported` across
+        // the arena swap — is what the line below deliberately refuses, because
+        // it would skip a genuine renumbering.
         if let Some(presenter) = self.presenter.as_mut() {
             presenter.document_replaced();
         }

@@ -46,12 +46,14 @@ markdown gate was never what made `just build` slow.
 
 Two properties of the test phase decide the shape of the fix.
 
-**`cargo test` never overlaps two test binaries.** The workspace has 108 test
-binaries. `libtest` threads the tests inside one binary, but cargo runs the
-binaries one after another, so the wall clock is close to the sum. Running the
-same tests under `cargo nextest`, which uses one process per test across all
-binaries, takes 222 s instead of 320 s and changes no test content. The whole
-suite passes under it, so the suite is already safe to run this way.
+**`cargo test` never overlaps two test binaries.** The workspace had 108 test
+binaries at that commit — like every count this record once carried, it has
+moved since, and the property below is what does not. `libtest` threads the
+tests inside one binary, but cargo runs the binaries one after another, so the
+wall clock is close to the sum. Running the same tests under `cargo nextest`,
+which uses one process per test across all binaries, takes 222 s instead of 320
+s and changes no test content. The whole suite passes under it, so the suite is
+already safe to run this way.
 
 **A handful of tests cost most of the remaining 222 s.** Under nextest, the
 slowest individual tests measured during the design session were:
@@ -133,40 +135,51 @@ have to find this record to see why `profile_preview_oracle` is not in
 
 ## Decision
 
-Three tiers, nested, each a nextest profile. Re-measured on an idle 8-core
-machine after issue #660 split the perceptual walk per fixture:
+Three tiers, nested, each a nextest profile. The wall clocks were re-measured on
+an idle 8-core machine after issue #660 split the perceptual walk per fixture:
 
-| tier          | tests | wall clock | contents                                                                                                                                 |
-| ------------- | ----- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `sanity`      | 1287  | **5 s**    | everything an ordinary edit can break, minus the six categories below                                                                    |
-| `regression`  | 1312  | **33 s**   | `sanity` plus the profile-preview oracle, the atlas pipeline, the bake oracle, the grid-anchor saturation test, and the scaling criteria |
-| `calibration` | 10    | **54 s**   | the tests that re-derive a committed table from the packer alone: one per calibration fixture, plus the band contract                    |
+| tier          | wall clock | contents                                                                                                                                 |
+| ------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `sanity`      | **5 s**    | everything an ordinary edit can break, minus the six categories below                                                                    |
+| `regression`  | **33 s**   | `sanity` plus the profile-preview oracle, the atlas pipeline, the bake oracle, the grid-anchor saturation test, and the scaling criteria |
+| `calibration` | **54 s**   | the tests that re-derive a committed table from the packer alone: one per calibration fixture, plus the band contract                    |
 
-`regression` is a superset of `sanity`; `regression` and `calibration` together
-are the whole suite (1312 + 10 = 1322 runnable tests, plus 3 doctests nextest
-does not run). All three tiers ran green at the measured times. Story #598 later
-added a fourth profile, `scaling`, held outside all three while its criterion
-was knowingly red, and removed it again when the criterion passed; the section
-below says why it was a profile rather than a tier, and what to copy if one is
-ever needed again.
+`regression` is a superset of `sanity`, and `regression` and `calibration`
+together are the whole suite apart from the doctests nextest does not run. All
+three tiers ran green at the measured times. Story #598 later added a fourth
+profile, `scaling`, held outside all three while its criterion was knowingly
+red, and removed it again when the criterion passed; the section below says why
+it was a profile rather than a tier, and what to copy if one is ever needed
+again.
 
-Those counts are a measurement taken on 2026-08-01, not a property of the
-design, and they move whenever anyone adds a test — they moved by three between
-this branch being written and being rebased. The wall clocks were taken on an
+**This table carried a test count per tier until 2026-08-15, and it is gone on
+purpose** (issue #931). The counts were a measurement taken on 2026-08-01 and
+they move whenever anyone adds a test: they had drifted by roughly 490 by the
+time the issue was filed, and the arithmetic that reconciled the tiers —
+`1312 + 10 = 1322` — reconciled nothing that existed. The record already
+disclaimed them, which is exactly why they were never bumped: adding three to a
+figure 490 out asserts a precision it has not had since August. A disclaimed
+wrong number is still the thing a reader reaches for, so the honest fix is not
+to carry one.
+
+What does not move, and what the other documents state instead of a number, is
+the shape: **the gate runs every test except the calibration re-derivations**,
+and the sanity tier additionally drops six slower binaries. To get a count, run
+the tier and read its own `Summary` line, which is right by construction.
+
+The wall clocks stay because they answer a different question — is this tier
+seconds or minutes — and they carry their own caveat. They were taken on an
 otherwise-idle 8-core machine and vary materially with load: the same
 `just test-all` measured 185 s idle and 280 s with two formatter runs competing
-for cores. Treat every figure here as the idle case. What does not move, and
-what the other documents state instead of a number, is the shape: **the gate
-runs every test except the two calibration re-derivations**, and the sanity tier
-additionally drops six slower binaries. A count repeated outside this record
-would be wrong within a slice, which is the same drift that put a stale copy of
-the path filter in three files.
+for cores. Treat every figure here as the idle case. They are deliberately not
+re-measured on a different machine, because a number taken on other hardware
+would not be comparable with the ones beside it.
 
-`just build` — the gate — runs the regression tier plus lint plus audit: 1289
-tests, 40 s warm and 59 s after a change that invalidates the clippy cache.
-`just test-all` runs every tier in one nextest invocation: 1291 tests, 185 s;
-close to `calibration` alone because nextest runs everything concurrently and
-the two calibration tests are the longest individual tests in the suite.
+`just build` — the gate — runs the regression tier plus lint plus audit: 40 s
+warm and 59 s after a change that invalidates the clippy cache. `just test-all`
+runs every tier in one nextest invocation, 185 s; close to `calibration` alone
+because nextest runs everything concurrently and the two calibration tests are
+the longest individual tests in the suite.
 
 The six categories `sanity` drops beyond the calibration tier — the
 profile-preview oracle, the glyph atlas pipeline, the bake oracle, the

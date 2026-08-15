@@ -110,11 +110,18 @@ impl ShownRoot {
 /// this.
 ///
 /// This yields **node** indices, which [`ShownRoot`] exists so an embedder never
-/// has to handle. It is here for a consumer that walks every root — the
-/// browser's widened bound is the one in the tree — rather than for one choosing
-/// between them. A caller that only wants how many there are calls
+/// has to handle. It is for a consumer that walks every root rather than one
+/// choosing between them. A caller that only wants how many there are calls
 /// [`root_count`], which says so at the call site; both are one pass over the
 /// node table and neither allocates.
+///
+/// **No consumer outside this crate walks it today.** Its in-tree caller was
+/// `dashscene_web::shown::assets_of_every_root`, and story #838 deleted that
+/// along with the browser's widened bound — a host now names one root and the
+/// load follows it. What remains inside `dashbuf` is [`root_count`] and
+/// [`resolve`], which both scan through here. This paragraph replaces one that
+/// still cited the browser as the reason (issue #946): the function is kept for
+/// an embedder that wants every root, not for a caller that exists.
 pub fn roots<'d>(document: &'d Document<'_>) -> impl Iterator<Item = u32> + 'd {
     let nodes = document.nodes().unwrap_or_default();
     (0..nodes.len())

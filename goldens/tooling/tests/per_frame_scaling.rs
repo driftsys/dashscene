@@ -308,11 +308,22 @@ fn frame(loaded: &mut Loaded, solver: &mut TaffySolver<'_>, prop: Prop) -> Frame
 /// discarded, and its own cost is returned so that discarding it is visible
 /// rather than silent.
 ///
-/// **Every measurement in this file starts here, including the guards.** The
-/// assertion below is the anchor: if a fresh solver ever stopped rebuilding,
-/// every count taken after it would be about something other than the steady
-/// state, and a guard that had its own copy of this prologue could keep passing
-/// while the criterion failed.
+/// **Every measurement in this file starts here, including the guards**, so
+/// what the prologue produced is worth asserting rather than assuming: a guard
+/// with its own copy of it could otherwise keep passing while the criterion
+/// failed.
+///
+/// **What the anchor can and cannot tell you, since story #838** (issue #946).
+/// It checked `solves == 1` and said a fresh solver that stopped rebuilding
+/// would be caught. It would not be. A structural rebuild and an ordinary
+/// incremental layout frame both run exactly one Taffy computation now that
+/// only the shown root is computed, so the counter cannot tell them apart, and
+/// the old message's "a zero here means no tree was built" named an outcome
+/// `rebuild` cannot produce while `shown_roots()` is non-empty.
+///
+/// What is checked instead is the readback: the commit produced a rect table.
+/// That is the term that goes to zero if no tree was built, and it is honest
+/// about being a floor rather than a discriminator.
 ///
 /// A solver with no typesetter, because the fixture carries no text: a
 /// text-measuring solver would add the typesetter's own per-frame work to a
@@ -326,11 +337,17 @@ fn warm_up(loaded: &mut Loaded) -> (TaffySolver<'static>, f32, FrameCost) {
     let first = frame(loaded, &mut solver, Prop::X(x));
     assert_eq!(
         first.solves, 1,
-        "the first commit through a fresh solver must build the retained tree and solve the shown \
-         root. It solved `loaded.roots` of them until story #838 — the tree is still built over \
-         every root, because that is what makes a later change of shown root cheap, and only the \
-         shown one is computed. A zero here means no tree was built and every count after it is \
-         about something other than the steady state"
+        "the first commit through a fresh solver must solve the shown root. It solved \
+         `loaded.roots` of them until story #838 — the tree is still built over every root, \
+         because that is what makes a later change of shown root cheap, and only the shown one is \
+         computed"
+    );
+    assert!(
+        first.rect_rows > 0,
+        "and it must produce a rect table: this is the term that goes to zero if no tree was \
+         built, which the solve counter cannot report now that a rebuild and an incremental frame \
+         both run one computation (issue #946). Zero here means every count after it is about \
+         something other than the steady state"
     );
 
     (solver, x, first)
