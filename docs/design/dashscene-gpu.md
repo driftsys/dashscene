@@ -289,6 +289,42 @@ are not this: widening the painter's return type, and refusing the document at
 load, which is the only shape that would give `Painter::samples` a caller and
 make `baked-texel-payloads-cross-boundary-b.md` D6 true rather than decorative.
 
+**A row that did not resolve keeps its instance out of every draw range** (issue
+#1024). The flags below make the fragment stage discard, which is what makes the
+picture right; they do not stop the quad being submitted. Until this change
+`draw_runs` emitted ranges covering the whole buffer and dropped none, so a text
+node whose atlas was refused still cost one instance per glyph — the vertex
+stage, the rasterizer, `rounded_box_sdf`, the gate, `clip_coverage` and a
+`discard`, per fragment — on every frame it was drawn, and `Residency` memoizes
+the refusal so it never recovered. The likeliest refusal is a CJK coverage set,
+one sheet for a whole script at a whole weight, which is also the run with the
+most glyphs.
+
+So the ranges are now an ordered, disjoint **subsequence** of the buffer rather
+than a partition of it, and `Resolved::sampled_row` is the one place that says
+which instances belong to it — three answers where `Resolved::atlas_of` gives
+two, and both of `draw_runs`'s questions read it rather than dispatching on the
+kind themselves. Order and disjointness are what draw order rests on and both
+survive; the cover does not. Two consequences are stated rather than hidden. A
+gap between two drawn stretches **splits one range into two**, so the frame
+encodes one more `pass.draw` than it did — **one more per gap, not per frame**.
+A document whose CJK sheet was refused has every text stretch unresolved, so a
+screen interleaving fifty text nodes with fifty rects goes from one draw to
+about fifty. That is still the trade this is for, fifty draws against the glyph
+quads of fifty runs, but it is a trade rather than a saving, and it is why
+`Renderer::draw` binds a run's atlas only when it differs from the last: a gap
+splits a range without changing what either half samples, and before the gap
+existed two consecutive runs always differed. And the whole-buffer answers
+`draw_runs` takes when a frame's payloads all landed in one atlas need to know
+there is no gap, which `Resolved::undrawn` carries out of `resolve_frame` rather
+than costing a second walk over the instances on the path R-T4 bounds. That flag
+is set at the four arms that leave a row unresolved — and those include a
+_degenerate_ coverage field, which is authored content rather than a residency
+failure, so the population taking the walk is wider than a refusal. A debug
+assertion derives the flag independently at the foot of `resolve_frame` — four
+sites is four places to drift, and the derivation is what catches it, compiled
+out of the frames the bound is about.
+
 **All three resolved tables state the flag** (issues #972, #993 and #1023).
 `GpuShape::resolved`, `GpuGlyphRun::resolved` and `GpuImage::resolved` each say
 whether the row's other members describe a payload this frame made resident, and
@@ -487,10 +523,11 @@ Dropping the quad half of `field_draws` changes the picture. Dropping the
 atlas-rectangle half changes no texel either consumer draws, measured — the row
 goes out with a NaN `half_uv` and an infinite `px_range`, and both arms come
 back at zero coverage and discard. What catches that one is the draw count: a
-field that resolves plans the backdrop, so the frame encodes the blur's two
-passes and the base blit on top of its instance runs, and
-`Renderer::last_draw_runs` goes from 2 to 5. The picture is not the only
-observable, which is the reason that accessor is public.
+field that resolves plans the backdrop **and** brings the masked fill naming it
+back into a range of its own, so the frame encodes that instance, the blur's two
+passes and the base blit on top of the halves, and `Renderer::last_draw_runs`
+goes from 1 to 5. The picture is not the only observable, which is the reason
+that accessor is public.
 
 ## Two targets, one device
 

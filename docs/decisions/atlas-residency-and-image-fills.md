@@ -95,12 +95,25 @@ alone without looking at an instance. Segmenting the buffer happens only when a
 frame genuinely mixes texel formats, which a document does when a host binds
 derivations for some assets and not others.
 
+**Amended by issue #1024**: the whole-buffer answer also requires that every
+instance draws. One naming a row the frame could not resolve is left out of
+every run, and a range over the buffer would put it back — so such a frame walks
+whatever its atlases say. `Resolved::undrawn` is what carries that question out
+of `Renderer::resolve_frame`, which is already visiting each instance, so a
+frame without a gap still pays nothing to ask it.
+
 That is a claim about the _segmenting_ pass and not about the frame as a whole:
 D3a below walks the instance rows once in any frame that has an image fill, so a
 frame with images costs one pass whatever its formats are, and a frame without
 them costs none.
 
-The runs partition the buffer in order, so slice order is still draw order.
+The runs are ordered and disjoint, so slice order is still draw order.
+
+**Ordered and disjoint, not a partition** (issue #1024). An instance naming a
+row this frame could not resolve is left out of every run, so its quad is never
+submitted — the shader gate on the row makes such a quad paint nothing, and this
+is what keeps it from being drawn at all. Draw order rests on the order and the
+disjointness; it never rested on the cover.
 
 **D3a, and the defect that produced it.** The first shape of this resolved every
 row of the fill table, which reads as a harmless over-approximation and is not
@@ -222,7 +235,10 @@ frames, eviction taking the least recently used and never the current frame's
 own, and both refusals by name.
 
 `draw_runs` is a pure function and is tested as one, including that the runs
-partition the buffer in order.
+partition the buffer in order **for a frame every instance of which draws**
+(`the_runs_partition_the_buffer_in_order_when_every_instance_draws`) and that
+they stay ordered and disjoint when one does not
+(`a_gap_is_ordered_and_disjoint_like_a_partition`).
 
 **The whole chain is tested once, in `goldens`**: `dashpack` encodes a corpus
 image to ASTC 6x6, `preview::blocks` unwraps it, boundary B carries it, and the
