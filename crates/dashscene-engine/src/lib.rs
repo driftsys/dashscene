@@ -371,12 +371,22 @@ fn atlas_from_bytes(sheet: AtlasBytes, index: usize) -> Result<Atlas, TextResour
             }
         }
     }
-    // `Atlas::new` is fallible since issue #724, and refuses three values: a
+    // `Atlas::new` is fallible since issue #724, and refuses four values: a
     // zero `px_per_em`, a `distance_range_px` that is not finite and positive
-    // (issue #964), and a glyph id above `u16::MAX` (issue #966). All three come
-    // from the metrics blob a host supplied, so each is a host-data error on this
-    // path rather than a broken contract between crates, and is reported as one
-    // instead of being unwrapped.
+    // (issue #964), a glyph id above `u16::MAX` (issue #966), and a zero width
+    // or height (issue #1001). All four come from the metrics blob a host
+    // supplied, so each is a host-data error on this path rather than a broken
+    // contract between crates, and is reported as one instead of being
+    // unwrapped.
+    //
+    // **The extent is a behaviour change on this path, and a deliberate one.**
+    // `identify_png` does not refuse a zero IHDR extent, so a sheet declaring
+    // 0 x 0 in both its header and its metrics passes the agreement check above
+    // and used to build an atlas: `dashscene-gpu` then skipped every run naming
+    // it and the document rendered with no text at all, silently. Now the load
+    // fails here and the host is told which blob is wrong. P4 is the rule that
+    // makes that the right way round — a named diagnostic rather than a silent
+    // drop — and it is the same argument the three refusals above already made.
     Atlas::new(
         ImageAsset {
             format: ImageFormat::Png,

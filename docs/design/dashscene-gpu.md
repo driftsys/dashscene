@@ -330,12 +330,13 @@ existed two consecutive runs always differed. And the whole-buffer answers
 `draw_runs` takes when a frame's payloads all landed in one atlas need to know
 there is no gap, which `Resolved::undrawn` carries out of `resolve_frame` rather
 than costing a second walk over the instances on the path R-T4 bounds. That flag
-is set at the four arms that leave a row unresolved — and those include a
-_degenerate_ coverage field, which is authored content rather than a residency
-failure, so the population taking the walk is wider than a refusal. A debug
-assertion derives the flag independently at the foot of `resolve_frame` — four
-sites is four places to drift, and the derivation is what catches it, compiled
-out of the frames the bound is about.
+is set at the three arms that leave a row unresolved — four until issue #1001
+closed `Atlas`'s extent at its constructor and the painter's own guard went with
+it — and those include a _degenerate_ coverage field, which is authored content
+rather than a residency failure, so the population taking the walk is wider than
+a refusal. A debug assertion derives the flag independently at the foot of
+`resolve_frame`: three sites is three places to drift, and the derivation is
+what catches it, compiled out of the frames the bound is about.
 
 **All three resolved tables state the flag** (issues #972, #993 and #1023).
 `GpuMsdfRow::resolved` — the tail `GpuShape` and `GpuGlyphRun` share since issue

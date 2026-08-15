@@ -84,6 +84,17 @@ check be bypassed by assignment, and the fix was to make it private.
 leaving the fields assignable, so it reproduces that defect rather than avoiding
 it.
 
+**Issue #1001 is the same finding a third time, and it closes the type.**
+`Atlas::width` and `Atlas::height` stayed `pub` and unchecked while `Atlas::new`
+took both without looking at either, and `dashscene-gpu`'s `gpu_glyph_run`
+divides by both to map a source texel into the residency texture. The painter
+carried the guard — `resolve_frame` skipped the run before residency — which is
+exactly the shape `Atlas::new`'s own doc rejects: "refused where the values
+enter boundary B, which fixes both painters at once and is why neither of them
+carries a guard". `AtlasBuildError::ZeroExtent` refuses it, the two fields are
+private behind accessors, and the painter's guard is gone rather than kept as a
+second line. Every divisor this type owns is now checked at its one constructor.
+
 ## Why not a `Result`
 
 Issue #985 proposed one. It cannot be handled where it would be raised:

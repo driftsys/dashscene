@@ -2571,8 +2571,16 @@ pub struct Atlas {
     /// The MSDF atlas image (RGB distance channels), an encoded asset.
     pub image: ImageAsset,
     /// Atlas image size in texels.
-    pub width: u32,
-    pub height: u32,
+    ///
+    /// Private for the reason [`px_per_em`](Self::px_per_em) is, and it is the
+    /// third divisor on this type (issue #1001): `dashscene-gpu`'s
+    /// `gpu_glyph_run` divides by both to map a source texel into the residency
+    /// texture. `pub` here would let any holder write `atlas.width = 0` after
+    /// construction and reach that divide exactly as before [`Atlas::new`]'s
+    /// check existed. Read them through [`width`](Self::width) and
+    /// [`height`](Self::height).
+    width: u32,
+    height: u32,
     /// The size, in texels per em, the atlas was rendered at.
     ///
     /// Private, and that is what makes [`Atlas::new`]'s refusal of zero an
@@ -2600,14 +2608,17 @@ pub struct Atlas {
 
 /// Why an [`Atlas`] could not be built.
 ///
-/// It is an enum rather than a unit struct because the sibling degenerate cases
-/// these join — a zero extent, a payload with no bytes — are each named
-/// separately at their own seams, and a further reason to refuse an atlas
-/// belongs beside the existing ones rather than in a new type.
+/// It is an enum rather than a unit struct because a further reason to refuse an
+/// atlas belongs beside the existing ones rather than in a new type — which is
+/// what issue #1001 then did, twice over: [`ZeroExtent`](Self::ZeroExtent) is a
+/// variant here rather than a check at some other seam, where the sibling
+/// degenerate case it used to be grouped with — a payload with no bytes — is
+/// still named at its own.
 ///
 /// The first two are the two operands of one expression, `distance_range_px *
 /// size / px_per_em`, and between them they fix its domain. The third is about
-/// a single glyph rather than the whole run.
+/// a single glyph rather than the whole run. The fourth is a second expression's
+/// only operand: the atlas extent a painter normalises a source texel by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AtlasBuildError {
@@ -2621,6 +2632,10 @@ pub enum AtlasBuildError {
     /// A glyph id exceeded `u16::MAX`, which no OpenType font can produce
     /// (issue #966).
     GlyphIdAboveU16Max,
+    /// `width` or `height` was zero: the atlas states an image with no texels
+    /// to sample, and a painter mapping a source texel into it divides by both
+    /// (issue #1001).
+    ZeroExtent,
 }
 
 impl std::fmt::Display for AtlasBuildError {
@@ -2640,6 +2655,11 @@ impl std::fmt::Display for AtlasBuildError {
                 f,
                 "a glyph id above u16::MAX cannot come from a font: OpenType ids are 16-bit"
             ),
+            Self::ZeroExtent => write!(
+                f,
+                "an atlas with no texels on an axis has nothing to sample; a painter mapping a \
+                 source texel into it divides by both"
+            ),
         }
     }
 }
@@ -2658,6 +2678,15 @@ impl Atlas {
     ///   `distance_range_px` is not finite and greater than zero (issue #964).
     /// - [`AtlasBuildError::GlyphIdAboveU16Max`] when any glyph id exceeds
     ///   `u16::MAX` (issue #966).
+    /// - [`AtlasBuildError::ZeroExtent`] when `width` or `height` is zero
+    ///   (issue #1001).
+    ///
+    /// The **extent** is the simplest of the four and the last to arrive: it is
+    /// a third divisor, on a second expression. `dashscene-gpu`'s
+    /// `gpu_glyph_run` maps a source-atlas texel into the residency texture by
+    /// dividing its `uv` by both axes, so a zero on either is a division by
+    /// zero. Both axes separately, because they are independent divisors and a
+    /// check written against the pair would admit a 64 x 0 atlas.
     ///
     /// The first two are the two operands of one expression, and every painter
     /// computes it: `px_range = distance_range_px * size / px_per_em`. Between
@@ -2718,8 +2747,18 @@ impl Atlas {
     /// once and is why neither of them carries a guard. `px_per_em` and
     /// `distance_range_px` are both private, so this is the only way to set
     /// either and the checks hold for every atlas that exists — neither a struct
-    /// literal nor a later assignment can reach them. The type's other fields
-    /// stay public: none of them feeds that expression.
+    /// literal nor a later assignment can reach them. Since issue #1001 the
+    /// extent is private for the same reason, so every value this type feeds a
+    /// painter's arithmetic is checked here.
+    ///
+    /// **[`image`](Self::image) is the one field still public**, and it is not
+    /// a divisor — but the argument above does reach it: a holder replacing the
+    /// payload after construction leaves `width` and `height` describing the old
+    /// one, and `dashscene-engine`'s own doc records what that costs
+    /// (`TexelPayload::of` takes the extent from the decode while
+    /// `gpu_glyph_run` normalises with the metrics extent, so a disagreement
+    /// samples the wrong texels rather than failing). That is issue #1074's
+    /// shape rather than this one's, and it is filed.
     ///
     /// This is a statement about *this* type, not about boundary B.
     /// [`VectorField::distance_range`] is the same operand on the coverage-mask
@@ -2747,6 +2786,9 @@ impl Atlas {
     ) -> Result<Self, AtlasBuildError> {
         if px_per_em == 0 {
             return Err(AtlasBuildError::ZeroPxPerEm);
+        }
+        if width == 0 || height == 0 {
+            return Err(AtlasBuildError::ZeroExtent);
         }
         // `is_finite` rejects both NaN and the infinities; `> 0.0` is false for
         // NaN as well, so the pair is not redundant only because of the
@@ -2783,6 +2825,19 @@ impl Atlas {
     /// nothing can reintroduce it (issue #964).
     pub fn distance_range_px(&self) -> f32 {
         self.distance_range_px
+    }
+
+    /// The atlas image's width in texels. Never zero — [`Atlas::new`] refuses
+    /// that, and the field is private so nothing can reintroduce it
+    /// (issue #1001).
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    /// The atlas image's height in texels. Never zero, for the reason
+    /// [`width`](Self::width) gives.
+    pub fn height(&self) -> u32 {
+        self.height
     }
 
     /// The placement for `glyph_id`, or `None` when the atlas has no quad
