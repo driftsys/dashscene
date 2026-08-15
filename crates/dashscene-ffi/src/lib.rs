@@ -15,39 +15,44 @@
 //! ABI is affordable because scenes are built outside the frame loop — so
 //! nothing here has to pre-empt that shape.
 //!
-//! **Root selection is absent on purpose, and the reason changed at story
-//! #837.** It used to be that no host could name a root at all. That is settled:
-//! `dashbuf::prefetch::ShownRoot` is the vocabulary, both integration crates
-//! take one, and
+//! **Root selection is on the mapped entry point and on no other, and that
+//! asymmetry is the design rather than an omission** (issue #925).
+//! `dashbuf::prefetch::ShownRoot` is the vocabulary, `dashscene-desktop` and
+//! `dashscene-web` both take one, and
 //! `docs/decisions/the-shown-root-is-named-by-ordinal.md` records why it is an
-//! ordinal.
+//! ordinal. **`dashscene-android` does not**, and no host calls the symbol
+//! below yet: its JNI entry points still take a `JByteArray` and reach
+//! [`ds_runtime_load_document_with_text`]. That is issue #1035.
 //!
-//! What was missing was something for it to bound.
+//! [`ds_runtime_load_document_mapped`] takes a path, maps it, and reads out of
+//! the file's cold half only the assets the named root's subtree draws. That is
+//! R5 on this ABI, and it is the whole reason the symbol exists.
+//!
 //! [`ds_runtime_load_document`] takes the whole file as `(ptr, len)` and hands
 //! every payload to `dashscene_core::load_document` — the **owning** loader,
 //! which copies every payload into an owned `ImageAsset` and so needs bytes for
-//! every asset entry whether or not anything draws them. A `ShownRoot`
-//! parameter on that call would have been accepted and changed nothing
-//! measurable, which is worse than its absence: it would read as a bound that
-//! is not one.
+//! every asset entry whether or not anything draws them. **A `ShownRoot`
+//! parameter on that call was rejected rather than deferred**: it would have
+//! been accepted and changed nothing measurable, which is worse than its
+//! absence, because it would read as a bound that is not one. It would also
+//! have been a changed signature on a shipped symbol, which bumps
+//! [`DS_ABI_VERSION`], where a new symbol is free.
 //!
-//! **Story #838 ended that half, and it is why this paragraph is no longer a
-//! reason to leave the selection out.** The traversal, the solve and the paint
-//! follow the root a host names, so a `ShownRoot` reaching this ABI would bound
-//! the **per-frame** cost of a many-artboard document here exactly as it does on
-//! the other two targets — one Taffy layout computation and one root's rect table
-//! per frame rather than the document's — while the **load** stayed whole-file.
-//! That is a real bound and a partial one, and both halves have to be said
-//! together: a caller told only the first would read it as R5 on this path,
-//! which it is not.
+//! So the two loads differ in what they can promise, and a caller chooses by
+//! what it holds. Bytes it already read: [`ds_runtime_load_document`], whole
+//! file, no bound, and the cost is the file's. A file on disk:
+//! [`ds_runtime_load_document_mapped`], and the cost is the artboard's.
 //!
-//! It is not built here because that is a signature change on a shipped symbol.
-//! **Issue #925** is the other half — this ABI has no mapped entry point, and
-//! the story its documentation deferred that to closed without giving it an
-//! owner — and adding one is a **new symbol**, which the versioning rule below
-//! makes free, where a parameter on this one is a changed signature and bumps
-//! [`DS_ABI_VERSION`]. So the shape that costs nothing is the shape that also
-//! bounds the load, and doing them together is why neither is here yet.
+//! Story #838 is what made the second worth building — the traversal, the solve
+//! and the paint follow the root a host names, so the bound reaches the frame
+//! loop and not only the load.
+//!
+//! **The root is named once, at load.** There is no symbol here for changing it
+//! afterwards, which is why nothing in this crate reads
+//! `CommittedScene::renumbered`: a renumbering can only be raised by the load's
+//! own commit, and `load_into` and `load_mapped_into` both report
+//! `document_replaced` immediately after it. Issue #945 covers the day that
+//! stops being true.
 //!
 //! # What a host supplies for text
 //!
@@ -116,12 +121,16 @@
 //! a corrupted argument.
 
 use std::cell::RefCell;
-use std::ffi::c_char;
+use std::ffi::{CStr, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 
+use dashbuf::map::MappedFile;
+use dashbuf::prefetch::ShownRoot;
+use dashbuf::residency::BlobResidency;
 use dashlang::LiveScene;
 use dashpaint::Painter;
-use dashscene_core::Arena;
+use dashscene_core::{Arena, MappedPayload, Region};
 use dashscene_engine::{TaffySolver, TextResources, TextResourcesError};
 use dashscene_gpu::{Changes, Drawn, GpuPainter, SurfaceRenderer};
 
@@ -177,6 +186,26 @@ pub enum DsStatus {
     /// not. The atlas list is indexed by font slot, so a short one resolves
     /// past its end.
     Atlas = 10,
+    /// The path could not be used: nothing is there, it cannot be read, it is
+    /// empty, or it is not UTF-8. Only [`ds_runtime_load_document_mapped`]
+    /// reports it, because it is the only entry point that takes a path.
+    Map = 11,
+    /// The ordinal names no root in this document.
+    ///
+    /// The message from [`ds_last_error_message`] carries the ordinal that was
+    /// asked for and the count the document does carry, which is what tells an
+    /// out-of-range ask apart from a document with no roots at all.
+    NoSuchRoot = 12,
+    /// The file's payloads are derivations rather than the document's own
+    /// canonical bytes.
+    ///
+    /// A mapped load reads no payload header by design, so binding these would
+    /// tag one format as another with nothing downstream to catch it (issue
+    /// #640). This library ships no profile and cannot name a rung, so it
+    /// refuses the file rather than drawing the wrong thing.
+    Derived = 13,
+    /// An asset the shown root draws did not hash to what its entry names.
+    Payload = 14,
 }
 
 /// Which platform handle the pointers in [`ds_runtime_attach_surface`] carry.
@@ -285,9 +314,14 @@ pub unsafe extern "C" fn ds_runtime_free(runtime: *mut DsRuntime) {
 ///
 /// This is the **owning** path: `dashscene_core::load_document` copies every
 /// payload, so the cost tracks the file rather than the shown root. That is the
-/// honest shape for an ABI whose caller handed over bytes — it has no file to
-/// map and no path to open. A mapped path, which is what R5 is stated over,
-/// belongs with the platform host that has the file (story #841).
+/// honest shape for a caller that handed over bytes it already holds — there is
+/// no file here to map and no root to bound by.
+///
+/// **A caller holding the file rather than its bytes wants
+/// [`ds_runtime_load_document_mapped`] instead**, which maps it and reads only
+/// what the shown root draws. This doc comment deferred that path to story
+/// #841 until issue #925; the story closed without doing it, and the deferral
+/// outlived it by pointing at an owner that never took it.
 ///
 /// # Safety
 ///
@@ -345,6 +379,205 @@ fn load_into(runtime: &mut DsRuntime, bytes: &[u8], text: Option<TextResources>)
     DsStatus::Ok
 }
 
+/// The mapped load, bounded by `shown_root`.
+///
+/// Every failure this returns is raised **before** the runtime's arena is
+/// replaced, so a refused load leaves a previously loaded document drawable.
+/// That is why the arena assignment sits below all of the fallible steps rather
+/// than beside the rest of the setup.
+fn load_mapped_into(
+    runtime: &mut DsRuntime,
+    path: &str,
+    shown_root: ShownRoot,
+    text: Option<TextResources>,
+) -> DsStatus {
+    let file = match MappedFile::open(path) {
+        Ok(file) => Arc::new(file),
+        Err(error) => {
+            set_last_error(format!("{path}: {error}"));
+            return DsStatus::Map;
+        }
+    };
+    let bytes = file.bytes();
+
+    // Reads the envelope, every structured section and the binding, and stops
+    // at where each payload lies. No blob page is faulted in by this call —
+    // `dashbuf::open` rather than `open_verified`, which is the whole
+    // difference between this entry point and the owning one.
+    let (document, wanted) = match dashbuf::open(bytes) {
+        Ok(opened) => opened,
+        Err(error) => {
+            // Named, unlike `load_into`'s copy of this arm. That one was handed
+            // anonymous bytes and has nothing to name; this one was given a
+            // path, and these two statuses are the likeliest to fire on a bad
+            // file — a host retrying a second document must be able to tell the
+            // two failures apart.
+            set_last_error(format!("{path}: {error:?}"));
+            return DsStatus::Open;
+        }
+    };
+
+    let report = dashscene_validator::validate_document(&document);
+    if report.has_errors() {
+        set_last_error(format!("{path}: {report:?}"));
+        return DsStatus::Gate;
+    }
+
+    // Bound as canonical, and refused when that would be a lie. This path reads
+    // no payload header, so a derivation bound here would be tagged with the
+    // format the entry names and nothing downstream would catch it (issue
+    // #640). This crate ships no profile and cannot name a rung.
+    if let Some(index) = dashscene_core::first_derived_payload(&document, &wanted) {
+        set_last_error(format!(
+            "{path}: asset entry {index} resolves to a derived payload, and a mapped load reads \
+             no payload header, so binding it would tag one format as another"
+        ));
+        return DsStatus::Derived;
+    }
+
+    let root = match dashbuf::prefetch::resolve(&document, shown_root) {
+        Some(root) => root,
+        None => {
+            set_last_error(format!(
+                "{path}: ordinal {} names no root, and the document carries {}",
+                shown_root.ordinal(),
+                dashbuf::prefetch::root_count(&document),
+            ));
+            return DsStatus::NoSuchRoot;
+        }
+    };
+
+    // The prefetch, and the whole of what this reads out of the file's cold
+    // half: the assets the shown root's subtree draws, proven one at a time.
+    // Everything else stays cold, which is what makes cold start track the root
+    // being drawn rather than the file's size (R5).
+    //
+    // A row bound below whose payload was not touched is not proven, and that
+    // is safe only because the traversal is confined to the same root: story
+    // #838 made the solve, the committed table and the paint follow it, so a
+    // row no rect references is a row no painter resolves.
+    let residency = BlobResidency::new();
+    for index in dashbuf::prefetch::assets_of_root(&document, root) {
+        let want = &wanted[index as usize];
+        let payload = &bytes[want.range.start as usize..want.range.end as usize];
+        if let Err(error) = residency.touch(want, payload) {
+            set_last_error(format!("{path}: {error:?}"));
+            return DsStatus::Payload;
+        }
+    }
+
+    // One `MappedPayload` per asset entry, in entry order — exactly the order
+    // `dashbuf::open` returns its `Wanted`s in, undeduplicated, so nothing here
+    // reorders or expands.
+    let payloads: Vec<MappedPayload> = wanted
+        .iter()
+        .map(|want| MappedPayload::canonical(want.range.clone()))
+        .collect();
+
+    // A fresh arena per load, so a second load does not stack a second document
+    // on the first. `Txn::use_mapped_pool` refuses an arena whose image table
+    // already holds rows, whatever put them there, and this is what keeps that
+    // condition out of reach.
+    //
+    // **The scene is dropped in the same breath as the arena it indexes.** A
+    // `LiveScene` holds `NodeId`s of the arena it was attached to; leaving the
+    // previous one in place across this assignment would pair it with an arena
+    // those ids do not name. Nothing below returns, but three calls between
+    // here and the reassignment can **panic** — `load_document_mapped` on a
+    // payload past 4 GiB, `show_appended_root` by design — and `guard` turns an
+    // unwind into `DsStatus::Panic` with the runtime still alive. Without this
+    // line the next `ds_runtime_tick` would drive the old scene against the new
+    // arena; with it, that tick reports `DsStatus::NoDocument`, which is true.
+    runtime.scene = None;
+    runtime.arena = Arena::new();
+    // Zero, and stated as a literal rather than measured, because the arena on
+    // the line above is new and a measurement here could only ever return 0 —
+    // reading it back would suggest this path can see a non-empty arena, which
+    // is exactly the confusion `show_appended_root`'s parameter exists to
+    // resolve. The two hosts that pass a real value take a caller-supplied
+    // `&mut Arena`; this entry point owns its arena, so the answer is a
+    // property of the code rather than of the caller.
+    let roots_before = 0;
+    // The region the table points into is this same mapping, shared rather than
+    // opened again: the arena holds its own reference, so the mapping outlives
+    // this function and unmaps when the arena it fed is replaced. That is why
+    // no field on `DsRuntime` holds it and why the C caller keeps no lifetime
+    // rule.
+    let region: Arc<dyn Region> = file.clone();
+    dashscene_core::load_document_mapped(&document, region, &payloads, &mut runtime.arena);
+    // The runtime's half of the bound the prefetch above took (story #838,
+    // issue #822). The correction from the document ordinal to the arena node,
+    // and the argument for its panic, are `show_appended_root`'s own
+    // documentation.
+    dashscene_core::show_appended_root(
+        &document,
+        shown_root,
+        roots_before,
+        &path,
+        &mut runtime.arena,
+    );
+
+    runtime.scene = Some(dashlang::attach_live(
+        &mut runtime.arena,
+        TaffySolver::boxed(text),
+    ));
+    if let Some(surface) = runtime.surface.as_mut() {
+        // The arena is new, so its generations restart and nothing in the
+        // frames themselves says so.
+        surface.document_replaced();
+    }
+    DsStatus::Ok
+}
+
+/// The faces a caller supplied, assembled — or the status that says why they
+/// could not be. `Ok(None)` is the measure-only cascade: no faces were offered.
+///
+/// Both loading entry points read faces the same way, and the assembly happens
+/// **before** the document is opened so that a bad cascade is reported as
+/// itself rather than as whatever the document turned out to be.
+/// `tests/abi.c` depends on that ordering.
+///
+/// # Safety
+///
+/// `faces` must point to `face_count` readable [`DsFontFace`] whose own
+/// pointers are valid for the lengths beside them.
+unsafe fn text_from_c(
+    faces: *const DsFontFace,
+    face_count: usize,
+) -> Result<Option<TextResources>, DsStatus> {
+    if face_count == 0 {
+        return Ok(None);
+    }
+    let described = unsafe { faces_from_c(faces, face_count) }?;
+    match TextResources::from_faces(described) {
+        Ok(text) => Ok(Some(text)),
+        Err(error) => {
+            // `{error}` rather than `{error:?}`: this string reaches a host
+            // through `ds_last_error_message`, where every other message is
+            // prose, and nested `Debug` would put escaped quotes in front of
+            // it.
+            set_last_error(format!("{error}"));
+            // Every variant that exists is named rather than swept into the
+            // wildcard. `TextResourcesError` is `#[non_exhaustive]` and lives
+            // in another crate, so an arm for the unknown is still required —
+            // but a future atlas-shaped variant landing there would report as a
+            // font-face failure and send a host branching on the discriminant
+            // to the wrong half of its own descriptor. Naming them is what
+            // makes the compiler's requirement the only thing the wildcard
+            // carries.
+            Err(match error {
+                TextResourcesError::Atlas { .. } | TextResourcesError::MixedAtlases => {
+                    DsStatus::Atlas
+                }
+                TextResourcesError::NoFaces
+                | TextResourcesError::EmptyFamily { .. }
+                | TextResourcesError::Font { .. } => DsStatus::FontFace,
+                _ => DsStatus::FontFace,
+            })
+        }
+    }
+}
+
 /// One face a host hands [`ds_runtime_load_document_with_text`], with the
 /// atlas its shaped glyphs sample.
 ///
@@ -400,10 +633,13 @@ unsafe fn faces_from_c(
     let mut out = Vec::with_capacity(count);
     for (index, face) in faces.iter().enumerate() {
         if face.family.is_null() || face.font_bytes.is_null() {
-            set_last_error(format!(
-                "ds_runtime_load_document_with_text: face {index} has a null family or \
-                 font_bytes"
-            ));
+            // No entry-point prefix: this helper is shared by
+            // `ds_runtime_load_document_with_text` and
+            // `ds_runtime_load_document_mapped` since the latter landed, so
+            // naming one of them here would send a reader of the other's log to
+            // a symbol it never called. The sibling messages below already
+            // prefix with `face {index}` and nothing else.
+            set_last_error(format!("face {index} has a null family or font_bytes"));
             return Err(DsStatus::NullArgument);
         }
         let family = match unsafe { std::ffi::CStr::from_ptr(face.family) }.to_str() {
@@ -509,43 +745,88 @@ pub unsafe extern "C" fn ds_runtime_load_document_with_text(
         // The faces are read and assembled BEFORE the document is opened, so
         // a bad cascade is reported as itself rather than as whatever the
         // document turned out to be. `tests/abi.c` depends on that ordering.
-        let text = if face_count == 0 {
-            None
-        } else {
-            let described = match unsafe { faces_from_c(faces, face_count) } {
-                Ok(described) => described,
-                Err(status) => return status,
-            };
-            match TextResources::from_faces(described) {
-                Ok(text) => Some(text),
-                Err(error) => {
-                    // `{error}` rather than `{error:?}`: this string reaches
-                    // a host through `ds_last_error_message`, where every
-                    // other message is prose, and nested `Debug` would put
-                    // escaped quotes in front of it.
-                    set_last_error(format!("{error}"));
-                    // Every variant that exists is named rather than swept
-                    // into the wildcard. `TextResourcesError` is
-                    // `#[non_exhaustive]` and lives in another crate, so an
-                    // arm for the unknown is still required — but a future
-                    // atlas-shaped variant landing there would report as a
-                    // font-face failure and send a host branching on the
-                    // discriminant to the wrong half of its own descriptor.
-                    // Naming them is what makes the compiler's requirement
-                    // the only thing the wildcard carries.
-                    return match error {
-                        TextResourcesError::Atlas { .. } | TextResourcesError::MixedAtlases => {
-                            DsStatus::Atlas
-                        }
-                        TextResourcesError::NoFaces
-                        | TextResourcesError::EmptyFamily { .. }
-                        | TextResourcesError::Font { .. } => DsStatus::FontFace,
-                        _ => DsStatus::FontFace,
-                    };
-                }
-            }
+        let text = match unsafe { text_from_c(faces, face_count) } {
+            Ok(text) => text,
+            Err(status) => return status,
         };
         load_into(runtime, bytes, text)
+    })
+}
+
+/// Loads a `.dsb` by **mapping** it from `path`, bounded by the root that
+/// `shown_root` names.
+///
+/// The bounded counterpart of [`ds_runtime_load_document`], and the C ABI's
+/// first expression of R5. The file is mapped rather than read, no payload is
+/// copied, and the only bytes touched out of the file's cold half are the
+/// assets the shown root's subtree draws — so the cost of opening a file tracks
+/// the artboard being shown rather than the file's size. Issue #925 is what
+/// this closes, and until it there was no mapped path here at all.
+///
+/// `shown_root` is a document ordinal and is **required**. There is no sentinel
+/// for "every root": a caller that wants every root has
+/// [`ds_runtime_load_document`] and pays the owning cost knowingly, and a bound
+/// that can be switched off reads as a bound when it is not one.
+///
+/// `faces` and `face_count` carry the same rule as
+/// [`ds_runtime_load_document_with_text`]: a null `faces`, or a zero
+/// `face_count`, loads without text, and text nodes then lay out as **empty
+/// leaves** and draw no glyphs.
+///
+/// **The mapping is the runtime's, and the caller has no lifetime rule to
+/// keep.** The arena holds a reference to it and each load installs a fresh
+/// arena, so the previous mapping unmaps when the previous arena drops. That
+/// property is why this takes a path rather than a caller-supplied region,
+/// where "keep this mapping alive until the document is replaced" would have
+/// been a contract enforced only by prose across this boundary.
+///
+/// **What it does not do:** it names the shown root once, at load, and there is
+/// no symbol here for changing it afterwards. A host that wants a different
+/// artboard loads again.
+///
+/// Adding this symbol did not move [`DS_ABI_VERSION`], and neither did the four
+/// [`DsStatus`] variants it reports — they are appended at the tail.
+///
+/// # Safety
+///
+/// `path` must be a NUL-terminated string, `runtime` must be a live pointer
+/// from [`ds_runtime_new`], and `faces` must point to `face_count` readable
+/// [`DsFontFace`] whose own pointers are valid for the lengths beside them.
+/// Nothing about the faces is retained: every byte is copied before this
+/// returns. The file itself is mapped and **is** retained, by the arena.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ds_runtime_load_document_mapped(
+    runtime: *mut DsRuntime,
+    path: *const c_char,
+    shown_root: u32,
+    faces: *const DsFontFace,
+    face_count: usize,
+) -> DsStatus {
+    guard(|| {
+        if runtime.is_null() || path.is_null() {
+            set_last_error("ds_runtime_load_document_mapped: runtime or path is null");
+            return DsStatus::NullArgument;
+        }
+        if faces.is_null() && face_count != 0 {
+            set_last_error(
+                "ds_runtime_load_document_mapped: faces is null but face_count is not 0",
+            );
+            return DsStatus::NullArgument;
+        }
+        let runtime = unsafe { &mut *runtime };
+        let path = match unsafe { CStr::from_ptr(path) }.to_str() {
+            Ok(path) => path,
+            Err(_) => {
+                set_last_error("ds_runtime_load_document_mapped: path is not UTF-8");
+                return DsStatus::Map;
+            }
+        };
+
+        let text = match unsafe { text_from_c(faces, face_count) } {
+            Ok(text) => text,
+            Err(status) => return status,
+        };
+        load_mapped_into(runtime, path, ShownRoot::nth(shown_root), text)
     })
 }
 
@@ -1584,10 +1865,373 @@ mod tests {
     fn the_abi_version_did_not_move() {
         assert_eq!(DS_ABI_VERSION, 1);
         assert_eq!(DsStatus::Panic as i32, 8);
-        // The two this story appended. A discriminant is the contract, and
+        // The two story #947 appended. A discriminant is the contract, and
         // these are the ones a later variant would renumber by being
         // inserted rather than appended.
         assert_eq!(DsStatus::FontFace as i32, 9);
         assert_eq!(DsStatus::Atlas as i32, 10);
+        // The four the mapped load appended (issue #925). The version did not
+        // move for them either, which is the rule this test exists to hold:
+        // appending is free, inserting is not.
+        assert_eq!(DsStatus::Map as i32, 11);
+        assert_eq!(DsStatus::NoSuchRoot as i32, 12);
+        assert_eq!(DsStatus::Derived as i32, 13);
+        assert_eq!(DsStatus::Payload as i32, 14);
+    }
+
+    /// A two-root `.dsb`, RAW, with `corrupt`'s payload one byte wrong.
+    ///
+    /// Copied from `dashscene-desktop`'s own test module rather than shared.
+    /// No committed fixture is this shape: every `goldens/dsb` document has one
+    /// root, and over a one-root document "the shown root's assets" and "every
+    /// asset in the file" are the same set — so nothing built from one can tell
+    /// a load bounded by the shown root from a load of the whole table. Two
+    /// roots, one payload each, is the smallest document that can.
+    ///
+    /// Each root's paint is an image fill naming its own asset, so root 0's
+    /// subtree reaches asset 0 and nothing else. That disjointness is what
+    /// makes the corrupted payload a proof rather than a coincidence.
+    fn two_root_document(corrupt: usize) -> Vec<u8> {
+        use dashbuf::{
+            AssetEntry, AssetEntryArgs, AssetKind, Document as Doc, DocumentArgs, Fill, ImageFill,
+            ImageFillArgs, ImageFormat, NO_PARENT, Node, NodeArgs, Paint, PaintArgs,
+        };
+        use flatbuffers::FlatBufferBuilder;
+
+        // Distinct bytes and distinct lengths, so a swapped pair is visible.
+        let payloads = [vec![0xA1u8; 64], vec![0xB2u8; 96]];
+        let mut builder = FlatBufferBuilder::new();
+
+        let entries: Vec<_> = payloads
+            .iter()
+            .map(|payload| {
+                let hash = builder.create_vector(blake3::hash(payload).as_bytes());
+                AssetEntry::create(
+                    &mut builder,
+                    &AssetEntryArgs {
+                        hash: Some(hash),
+                        format: ImageFormat::Png,
+                        kind: AssetKind::Image,
+                        width: 8,
+                        height: 8,
+                    },
+                )
+            })
+            .collect();
+        let assets = builder.create_vector(&entries);
+
+        let paints: Vec<_> = [0u32, 1]
+            .into_iter()
+            .map(|image| {
+                let fill = ImageFill::create(
+                    &mut builder,
+                    &ImageFillArgs {
+                        image,
+                        ..Default::default()
+                    },
+                );
+                Paint::create(
+                    &mut builder,
+                    &PaintArgs {
+                        fill_type: Fill::ImageFill,
+                        fill: Some(fill.as_union_value()),
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let paints = builder.create_vector(&paints);
+
+        let nodes: Vec<_> = [0u32, 1]
+            .into_iter()
+            .map(|paint_entry| {
+                Node::create(
+                    &mut builder,
+                    &NodeArgs {
+                        parent: NO_PARENT,
+                        paint_entry,
+                        ..Default::default()
+                    },
+                )
+            })
+            .collect();
+        let nodes = builder.create_vector(&nodes);
+
+        let document = Doc::create(
+            &mut builder,
+            &DocumentArgs {
+                nodes: Some(nodes),
+                paints: Some(paints),
+                assets: Some(assets),
+                ..Default::default()
+            },
+        );
+        builder.finish(document, None);
+
+        let bank = dashbuf::bank::ColdBank::raw(payloads.iter().map(Vec::as_slice));
+        let mut file =
+            dashbuf::bank::assemble(builder.finished_data(), &bank).expect("the fixture assembles");
+
+        // The blob sections are in asset-entry order for a RAW assembly, and
+        // the section table is left untouched — so the file still records what
+        // each payload should hash to, and only a read of the bytes can notice.
+        let container = dashbuf::container::Container::parse(&file).expect("the fixture parses");
+        let blobs: Vec<_> = container
+            .sections()
+            .filter(|entry| entry.kind == dashbuf::container::SectionKind::Blob as u16)
+            .collect();
+        assert_eq!(blobs.len(), payloads.len(), "one blob per payload");
+        let at = blobs[corrupt].offset as usize;
+        file[at] ^= 0xFF;
+        file
+    }
+
+    /// Writes `bytes` to a file in `dir` and returns the C string for its path.
+    ///
+    /// The path has to outlive the call, and a `CString` built inline in an
+    /// argument list would be dropped at the end of the statement.
+    fn written(dir: &tempfile::TempDir, name: &str, bytes: Vec<u8>) -> std::ffi::CString {
+        let path = dir.path().join(name);
+        std::fs::write(&path, bytes).expect("the fixture writes");
+        std::ffi::CString::new(path.to_str().expect("the temp path is UTF-8"))
+            .expect("a temp path holds no interior NUL")
+    }
+
+    /// Loading bounded to the healthy root succeeds **because** the other
+    /// root's payload is never touched.
+    ///
+    /// The fixture's unshown root carries a payload one byte wrong, so a load
+    /// that read the whole asset table could not return `Ok`: `BlobResidency`
+    /// would refuse it. This is the positive half of the bound — R5 on this
+    /// path — and it is an assertion about what was *not* read, which no
+    /// counter on this path could make, because a mapped load reads no payload
+    /// byte and a counter here could only ever report zero.
+    #[test]
+    fn a_mapped_load_reads_only_the_shown_root() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = written(&dir, "two-root.dsb", two_root_document(1));
+
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped(runtime, path.as_ptr(), 0, std::ptr::null(), 0)
+            },
+            DsStatus::Ok,
+            "root 1's payload is one byte wrong, and a load bounded to root 0 must never read it"
+        );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// And the other direction: the residency check is reached at all.
+    ///
+    /// Without this, the test above would pass just as well over a load that
+    /// verified nothing. The pair is what makes the bound falsifiable rather
+    /// than merely green.
+    #[test]
+    fn a_corrupt_payload_in_the_shown_root_is_refused() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = written(&dir, "corrupt.dsb", two_root_document(0));
+
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped(runtime, path.as_ptr(), 0, std::ptr::null(), 0)
+            },
+            DsStatus::Payload,
+            "root 0's own payload is corrupted, so bounding the load to it must refuse the file"
+        );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// An ordinal past the last root is refused, and the message says what the
+    /// document does carry — which is what tells an out-of-range ask apart
+    /// from a document with no roots at all.
+    #[test]
+    fn an_ordinal_past_the_last_root_is_refused() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = written(&dir, "two-root.dsb", two_root_document(0));
+
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped(runtime, path.as_ptr(), 7, std::ptr::null(), 0)
+            },
+            DsStatus::NoSuchRoot
+        );
+
+        let message = last_error();
+        assert!(
+            message.contains("carries 2"),
+            "the message must name the count the document carries, and said: {message}"
+        );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// The last error, read the way `ds_last_error_message` documents.
+    ///
+    /// **The return value is the size *needed*, including the terminator — not
+    /// the number of bytes written.** Slicing a fixed buffer by it both keeps
+    /// the trailing NUL and indexes past the end as soon as the message is
+    /// longer than the buffer, which for these tests is a message carrying a
+    /// `tempfile` path and so depends on `TMPDIR`. Query with `(null, 0)`,
+    /// allocate what it asks for, then drop the terminator — the same sequence
+    /// `dashscene_android::host::last_error` uses.
+    fn last_error() -> String {
+        let needed = unsafe { ds_last_error_message(std::ptr::null_mut(), 0) };
+        if needed <= 1 {
+            return String::new();
+        }
+        let mut buffer = vec![0u8; needed];
+        let again = unsafe { ds_last_error_message(buffer.as_mut_ptr().cast(), buffer.len()) };
+        assert_eq!(
+            again, needed,
+            "the size must not change when a buffer is passed"
+        );
+        buffer.pop();
+        String::from_utf8(buffer).expect("the message is UTF-8")
+    }
+
+    /// The mirror image of `a_mapped_load_reads_only_the_shown_root`, with the
+    /// corruption and the ordinal both moved.
+    ///
+    /// **This pair is what says the ordinal is read rather than accepted and
+    /// ignored.** With only the ordinal-0 case, bounding the prefetch to root 0
+    /// unconditionally would pass every test in this file. `dashscene-desktop`
+    /// carries the same pair over the same fixture and says so at its own call
+    /// site; the first cut of this crate's tests kept only half of it.
+    #[test]
+    fn showing_the_second_root_leaves_the_first_roots_payload_cold() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        // Root 0's payload is the corrupt one this time, and root 1 is shown.
+        let path = written(&dir, "two-root.dsb", two_root_document(0));
+
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped(runtime, path.as_ptr(), 1, std::ptr::null(), 0)
+            },
+            DsStatus::Ok,
+            "root 0's payload is one byte wrong, and a load bounded to root 1 must never read it"
+        );
+
+        // And the root that ended up shown is the one asked for, not the
+        // document's first. A prefetch bounded correctly while the traversal is
+        // confined to the wrong root would draw the wrong artboard with nothing
+        // to report it, which is the conflation issue #943 records.
+        let arena = &unsafe { &*runtime }.arena;
+        let shown = arena
+            .committed()
+            .shown_root()
+            .expect("the load named a shown root");
+        assert_eq!(
+            shown,
+            arena.roots()[1],
+            "ordinal 1 must name the document's second root in the arena"
+        );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// And the second root's own corruption is still refused when it is the one
+    /// shown — the other half of the swap.
+    #[test]
+    fn showing_the_second_root_refuses_its_own_corrupted_payload() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let path = written(&dir, "corrupt.dsb", two_root_document(1));
+
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped(runtime, path.as_ptr(), 1, std::ptr::null(), 0)
+            },
+            DsStatus::Payload,
+            "root 1's own payload is corrupted, so bounding the load to it must refuse the file"
+        );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// A **refused** load leaves the document already loaded still drawable.
+    ///
+    /// That is what `load_mapped_into` promises in prose — "every failure this
+    /// returns is raised before the runtime's arena is replaced" — and it is
+    /// worth an assertion rather than a reading, because the order of the
+    /// fallible steps against the arena assignment is the whole of it. Move the
+    /// residency walk below `runtime.arena = Arena::new()` and this fails.
+    ///
+    /// It says nothing about the **panic** path, which is the reason
+    /// `runtime.scene` is cleared beside the arena rather than left until the
+    /// end: an unwind between the two would otherwise leave a new arena paired
+    /// with the previous scene's `NodeId`s. `guard` makes that state reachable
+    /// and no test here can force it, so the clearing is argued at the call
+    /// site rather than covered.
+    #[test]
+    fn a_refused_mapped_load_leaves_the_loaded_document_drawable() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let good = written(&dir, "good.dsb", two_root_document(1));
+        let bad = written(&dir, "bad.dsb", two_root_document(0));
+
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped(runtime, good.as_ptr(), 0, std::ptr::null(), 0)
+            },
+            DsStatus::Ok
+        );
+        let mut advanced = false;
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, &mut advanced) },
+            DsStatus::Ok,
+            "the first load left a scene to tick"
+        );
+
+        // A load refused at the residency walk, which sits above the arena
+        // assignment.
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped(runtime, bad.as_ptr(), 0, std::ptr::null(), 0)
+            },
+            DsStatus::Payload
+        );
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, &mut advanced) },
+            DsStatus::Ok,
+            "a refused load must leave the previously loaded document drawable, not discard it"
+        );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// A null path is a status, not a dereference.
+    #[test]
+    fn a_null_path_is_a_status_and_not_a_dereference() {
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped(runtime, std::ptr::null(), 0, std::ptr::null(), 0)
+            },
+            DsStatus::NullArgument
+        );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// A path nothing is at reports `Map` rather than opening an empty
+    /// document and failing later as something else.
+    #[test]
+    fn a_path_that_does_not_exist_reports_map() {
+        let path = std::ffi::CString::new("/nonexistent/no-such.dsb").expect("no interior NUL");
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped(runtime, path.as_ptr(), 0, std::ptr::null(), 0)
+            },
+            DsStatus::Map
+        );
+        unsafe { ds_runtime_free(runtime) };
     }
 }

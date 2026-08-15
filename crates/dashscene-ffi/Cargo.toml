@@ -33,3 +33,18 @@ dashscene-validator.workspace = true
 # for the canvas case: the wrapping happens in the painter so a host names no
 # `wgpu` type.
 dashscene-gpu.workspace = true
+
+[dev-dependencies]
+# The mapped-load tests need a file to map, and a mapping is of a path — so the
+# one thing they cannot do is work from bytes in memory. The same reason
+# `dashscene-desktop` and `dashbuf` carry it.
+tempfile.workspace = true
+# Those tests build a two-root document, which no committed fixture is: every
+# `goldens/dsb` fixture has one root, and over a one-root document "the shown
+# root's assets" and "every asset in the file" are the same set, so nothing
+# built from one can tell a bounded load from an unbounded one.
+flatbuffers.workspace = true
+# An `AssetEntry` names its payload's canonical BLAKE3, so building a document
+# by hand means computing one. `dashbuf` uses it for the same reason and does
+# not re-export it.
+blake3.workspace = true

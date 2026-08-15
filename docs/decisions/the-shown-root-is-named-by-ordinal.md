@@ -121,19 +121,31 @@ different name. Every call site now names a `ShownRoot`, and the ones that mean
 the first root say `ShownRoot::FIRST` — which is a statement rather than a
 default.
 
-**D8 — the C ABI does not take a root yet, and the reason is not this story.**
-`dashscene-ffi`'s own documentation said root selection was absent because the
-concept did not exist and "It joins when #837 lands". The concept exists now and
-the ABI still does not carry it, so that sentence is replaced rather than
-satisfied. `ds_runtime_load_document` takes the whole file as `(ptr, len)` and
-hands every payload to `dashscene_core::load_document`, the **owning** loader,
-which copies every payload into an owned `ImageAsset` — so on that path there is
-nothing for a root selection to bound. A parameter added today would be accepted
-and would change nothing measurable, which is worse than its absence. What
-unblocks it is issue #925 (the ABI has no mapped path and no owner), or the
-traversal change tracked as issue #838 (the paint follows the shown root),
-whichever lands first; the ABI versioning rule says a new symbol is free and a
-changed signature bumps `DS_ABI_VERSION`, so the cost is known either way.
+**D8 — the C ABI takes a root on its mapped load, and on no other. Settled by
+issue #925; this paragraph records both states because the reason changed
+twice.**
+
+It began absent because the concept did not exist, and `dashscene-ffi`'s
+documentation said "It joins when #837 lands". The concept then existed and the
+ABI still did not carry it, for a second reason: `ds_runtime_load_document`
+takes the whole file as `(ptr, len)` and hands every payload to
+`dashscene_core::load_document`, the **owning** loader, which copies every
+payload into an owned `ImageAsset` — so on that path there was nothing for a
+root selection to bound, and a parameter added there would have been accepted
+while changing nothing measurable, which is worse than its absence.
+
+`ds_runtime_load_document_mapped` is what settled it: a path, a **required**
+ordinal, and a load that reads only the assets the named root's subtree draws.
+It is a **new symbol**, which the ABI versioning rule makes free, so
+`DS_ABI_VERSION` stayed 1 — where the parameter-on-a-shipped-symbol shape would
+have bumped it for no measurable gain. That is why the selection sits there and
+nowhere else: the two byte-taking loads keep none **deliberately**, and their
+absence is now a decision rather than a gap.
+
+Two limits are part of the decision. The root is named once, at load, and no
+symbol changes it afterwards — a host showing a different artboard loads again.
+And no host calls the mapped symbol yet: `dashscene-android` still hands over a
+`JByteArray`, which is issue #1035.
 
 ## Consequences
 

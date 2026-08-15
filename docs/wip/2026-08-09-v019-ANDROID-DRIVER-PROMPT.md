@@ -45,10 +45,12 @@ held by the slice because no second painter has landed. The other ten:
   premise first**: #968 landed on 2026-08-14 and changed `with_text` to take
   anything that becomes an `Arc<Vec<Atlas>>`, so what this issue describes has
   moved under it.
-- **#925** — the C ABI has no mapped document path. The natural successor to
-  #947, and the ABI's own module documentation now argues for it. It also
-  unblocks half of **#945**, whose stale-upload defect stays latent only because
-  the ABI names no shown root.
+- **#925** — **LANDED.** `ds_runtime_load_document_mapped` takes a path and a
+  required `ShownRoot`. The claim below that it "unblocks half of #945" turned
+  out to be wrong and #945 is amended with why: the mapped load names the shown
+  root once, at load, and adds no symbol to change it afterwards, so the defect
+  stays latent. What this prompt said before: the natural successor to #947, and
+  the ABI's own module documentation argued for it.
 - **#944, #945, #946** — the shown-root story's remainder. #946 was four
   findings and is now three: its `rect_of_slot` half moved to v0.20 as **#980**,
   being the only correctness defect of the four, and **#980 has since been

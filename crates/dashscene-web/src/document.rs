@@ -215,11 +215,8 @@ pub async fn load_document(
     // not take. It is also what keeps `ImageTable::push_mapped`'s baked-length
     // assertion out of reach of the empty ranges `shown::layout` writes for the
     // frames this load does not read.
-    let entries = document.assets().unwrap_or_default();
-    for (want, entry) in plan.wanted().iter().zip(entries.iter()) {
-        if want.hash != entry.hash().bytes() {
-            return Err(WebError::Derived(url.to_owned()));
-        }
+    if dashscene_core::first_derived_payload(&document, plan.wanted()).is_some() {
+        return Err(WebError::Derived(url.to_owned()));
     }
 
     // What to read, and where each payload will sit once it has been read —
@@ -303,44 +300,13 @@ pub async fn load_document(
     // The runtime's half of the bound `shown::layout` took above. The load
     // replays every root — a document is every artboard it carries — and this
     // confines what is solved, committed and painted to the one being shown
-    // (story #838, issue #822). A commit of its own rather than a parameter on
-    // the loader: the load has already committed, and one extra commit per load
-    // is cheaper than a signature change on three public loaders.
+    // (story #838, issue #822).
     //
-    // Named by node: `Txn::show_root` takes the arena's own vocabulary, and this
-    // is the one place holding both the document and the arena it was appended
-    // to. Passing the ordinal straight through would confine the traversal to
-    // the *first* document's root while the fetch above read this one's — the
-    // wrong artboard, solved and painted, with nothing to report it (issue
-    // #943).
-    //
-    // **A named panic rather than a typed error**, and the desktop loader's copy
-    // carries the argument in full: this same function already panics by name
-    // through `Txn::use_mapped_pool`, and `NoSuchRoot::roots` is documented as
-    // what the *document* carries — a number that cannot describe this arm,
-    // since `prefetch::resolve` above already proved the document carries more
-    // roots than the ordinal. A broken `dashscene-core` invariant is a
-    // diagnostic that names it (P4), not an embedder error.
-    let shown = *arena
-        .roots()
-        .get(roots_before + shown_root.ordinal() as usize)
-        .unwrap_or_else(|| {
-            // Inside the closure: nothing here runs on the ordinary path, and
-            // `saturating_sub` so a shrunken root list cannot replace this
-            // diagnostic with a bare subtraction overflow.
-            let appended = arena.roots().len().saturating_sub(roots_before);
-            panic!(
-                "{url} declares {} root(s) and this load appended {appended} to the arena, so \
-                 ordinal {} names no node: `load_document_mapped` appends one arena root per \
-                 document root, and `dashbuf::prefetch::resolve` above already proved this \
-                 document has that root",
-                dashbuf::prefetch::root_count(&document),
-                shown_root.ordinal(),
-            )
-        });
-    let mut txn = arena.open();
-    txn.show_root(Some(shown));
-    txn.commit();
+    // The ordinal correction, the commit, and the argument for a named panic
+    // over a typed error are all `show_appended_root`'s own documentation now —
+    // `dashscene-desktop` and `dashscene-ffi` make this same call, and the
+    // reasoning belongs where all three can read it.
+    dashscene_core::show_appended_root(&document, shown_root, roots_before, &url, arena);
     Ok(dashlang::attach_live(
         arena,
         dashscene_engine::TaffySolver::boxed(text),

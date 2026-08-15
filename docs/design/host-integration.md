@@ -444,11 +444,27 @@ every resident texture on every frame of a settled scene.
   `Txn::show_root` and in
   [the-runtime-paints-the-shown-root.md](../decisions/the-runtime-paints-the-shown-root.md)
   D7. Nothing has asked for the switch, so nothing has been built for it.
-- **The C ABI carries no root selection**, and the reason has changed twice. It
-  was that no vocabulary existed, until story #837. It was then that there was
-  nothing on that path for a selection to bound — `ds_runtime_load_document`
-  takes the whole file and uses the owning loader, which needs bytes for every
-  asset entry — and story #838 ended that half: a root selection would now bound
-  the **paint** on this path even while the load stays whole-file. What is
-  missing is the mapped entry point, which is issue #925;
-  `crates/dashscene-ffi/src/lib.rs` states which shape costs what.
+- **The C ABI carries root selection on its mapped entry point and on no
+  other**, since issue #925. `ds_runtime_load_document_mapped` takes a path and
+  a required ordinal, maps the file, and reads out of its cold half only the
+  assets the named root's subtree draws — the same bound `Document::load` gives
+  the desktop, reached through the same `dashscene-core` calls.
+
+  `ds_runtime_load_document` and `ds_runtime_load_document_with_text` keep no
+  selection, and that asymmetry is the decision rather than an omission. They
+  take bytes a caller already holds and use the owning loader, which copies
+  every payload whatever is shown, so an ordinal on them would be accepted and
+  change nothing measurable — a bound that is not one. It would also be a
+  changed signature on a shipped symbol, which moves `DS_ABI_VERSION`, where the
+  new symbol was free.
+
+  The reason had changed twice before that and both are now history: no
+  vocabulary existed until story #837, and there was nothing on the path for a
+  selection to bound until story #838 made the traversal, solve and paint follow
+  the shown root.
+
+  **The root is named once, at load.** No symbol changes it afterwards, which is
+  why `dashscene-ffi` reads `CommittedScene::renumbered` nowhere: a renumbering
+  can only come from the load's own commit, and both loaders report
+  `document_replaced` immediately after it. Issue #945 covers the day that stops
+  being true.

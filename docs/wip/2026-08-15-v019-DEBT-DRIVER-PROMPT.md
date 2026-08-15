@@ -9,9 +9,10 @@
             `docs/wip/README.md`** — captures have the table, prompts have
             that file's prose — so the commit adding this one updates those
             paragraphs and the tracked count with it.
-    scope   the v0.19 debt that is pickable without hardware: **#925** and
-            **#944**, which are stories wearing a `debt` label, and
-            **#922**, **#930**, **#945**, plus the tail of **#946**.
+    scope   the v0.19 debt that is pickable without hardware. **#925 and
+            #946 have since landed** and are struck from this list below;
+            what remains is **#944**, a story wearing a `debt` label, and
+            **#922**, **#930**, **#945**.
     epic    #833
 
 ## Re-derive before trusting any of this
@@ -45,6 +46,10 @@ Check whether it merged before touching those files.
 
 ## #946 cannot be closed as written, and this is the first thing to do
 
+**DONE.** The issue was amended to record item 3 as investigated and rejected,
+and closed on items 2 and 4. The section below is what said so, kept because the
+argument is the record.
+
 Its third finding — that every rebuild issues two `document_replaced` calls and
 one is redundant — **is wrong**, and #1011 records why at the call site.
 
@@ -63,13 +68,20 @@ amendment — not silently as "fixed".
 
 Both are worth their own spec and plan rather than a sweep commit.
 
-- **#925 — the C ABI has no mapped document path.** The natural successor to
-  #947 and the piece that makes R5 true there: today's load is whole-file and
-  owning, so `dashscene_core::load_document` copies every payload whether or not
-  anything draws it. The ABI's own module documentation now argues for it, and
-  the versioning rule prices it — a new symbol is free where a parameter on the
-  shipped one is not. Take the `ShownRoot` with it; the module docs explain why
-  doing them together is what makes the bound real rather than nominal.
+- **#925 — LANDED.** `ds_runtime_load_document_mapped` takes a path and a
+  required `ShownRoot` ordinal and reads only the assets that root's subtree
+  draws. `first_derived_payload` and `show_appended_root` moved to
+  `dashscene-core` with it, so the recipe is stated once instead of three times.
+  Do not re-do it. The paragraph below is what the prompt said before, kept
+  because the reasoning it gives for the shape is what was built:
+
+  > The natural successor to #947 and the piece that makes R5 true there:
+  > today's load is whole-file and owning, so `dashscene_core::load_document`
+  > copies every payload whether or not anything draws it. The ABI's own module
+  > documentation now argues for it, and the versioning rule prices it — a new
+  > symbol is free where a parameter on the shipped one is not. Take the
+  > `ShownRoot` with it; the module docs explain why doing them together is what
+  > makes the bound real rather than nominal.
 - **#944 — the commit's per-node scratch vectors scale with the document.** Its
   own body says it: "That is a story, not a fix inside another story." Eight
   vectors sized at `arena.nodes.len()` and a carry-forward loop over every node,
@@ -81,9 +93,13 @@ Both are worth their own spec and plan rather than a sweep commit.
 ## The three smaller ones, each with a question to settle first
 
 - **#945 — the renumbering report is written twice and absent from the C ABI.**
-  Entangled with #925: its stale-upload defect stays latent only because the ABI
-  names no shown root, so the moment #925 lands it becomes real on Android. **Do
-  #925 first, or do them together.** The shape #945 suggests is a
+  **The sequencing this prompt asserted was wrong, and #925 landing proved it.**
+  It said the stale-upload defect becomes real on Android the moment #925 lands.
+  It did not: the mapped load names the shown root once, at load, and adds no
+  symbol to change it afterwards, so `renumbered` can fire only on the load's
+  own commit — which `load_into` and `load_mapped_into` both report
+  `document_replaced` after. The issue itself is amended with this. It is a
+  de-duplication, orderable freely. The shape #945 suggests is a
   `LiveScene::renumbered_since_shown()`, so the rule has one statement rather
   than a copy in each host — the same move story #810 made for the frame clamp.
 - **#930 — the many-root document is rebuilt on every call.** Read the saving

@@ -56,6 +56,6 @@ pub use committed::{
     VectorField,
 };
 pub use load::{
-    BoundPayload, MappedPayload, load_document, load_document_bound, load_document_bound_with_cost,
-    load_document_mapped,
+    BoundPayload, MappedPayload, first_derived_payload, load_document, load_document_bound,
+    load_document_bound_with_cost, load_document_mapped, show_appended_root,
 };
