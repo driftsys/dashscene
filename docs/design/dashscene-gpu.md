@@ -338,15 +338,16 @@ sites is four places to drift, and the derivation is what catches it, compiled
 out of the frames the bound is about.
 
 **All three resolved tables state the flag** (issues #972, #993 and #1023).
-`GpuShape::resolved`, `GpuGlyphRun::resolved` and `GpuImage::resolved` each say
-whether the row's other members describe a payload this frame made resident, and
-each of the three shader arms that reads such a row gates on it. The image row
-was the last to get one, and until it did what emptied a refused fill's picture
-was `image_colour` returning transparent black on `size.x <= 0.0` — a guard
-written for `dashscene-validator`'s `asset.image-no-bytes` case, where boundary
-B stores a payload whose binding supplied no bytes at 0 x 0 rather than refusing
-it. The two coincided only because `resolve_frame` writes the row on the success
-path alone, and the asset's extent is in hand two lines from the refusal.
+`GpuMsdfRow::resolved` — the tail `GpuShape` and `GpuGlyphRun` share since issue
+#1027 — and `GpuImage::resolved` each say whether the row's other members
+describe a payload this frame made resident, and each of the three shader arms
+that reads such a row gates on it. The image row was the last to get one, and
+until it did what emptied a refused fill's picture was `image_colour` returning
+transparent black on `size.x <= 0.0` — a guard written for
+`dashscene-validator`'s `asset.image-no-bytes` case, where boundary B stores a
+payload whose binding supplied no bytes at 0 x 0 rather than refusing it. The
+two coincided only because `resolve_frame` writes the row on the success path
+alone, and the asset's extent is in hand two lines from the refusal.
 
 That guard is now **unreachable from the fragment stage**, and it is worth
 saying so rather than leaving it reading as a second case still covered. A 0 x 0
@@ -372,7 +373,7 @@ quiet one, and no fixture in this crate tiles.
 **"The row draws nothing" is a property of the resolved row, not of the
 instance.** A coverage mask reaching this painter is resolved, degenerate — no
 quad or no atlas rectangle, which `field_draws` rejects before residency — or
-refused. `GpuShape::resolved` is what distinguishes the first from the other
+refused. `GpuMsdfRow::resolved` is what distinguishes the first from the other
 two, and both consumers read it rather than inferring the mask from
 `Instance::shape`. Inferring it is what made a refused field draw: an unresolved
 row carries a zero `px_range`, and `msdf_coverage(sample, 0)` is `0.5` for every
@@ -504,16 +505,16 @@ loading a texture nothing cleared, and
 sees it — the offscreen texture is held across `render` calls, so the frame
 comes back carrying the previous one.
 
-The third consumer, a glyph run, states the same thing in
-`GpuGlyphRun::resolved` (issue #993). It did not until then: the row kept
-`GpuGlyphRun::default()`, whose zero alpha the text arm carried into a colour it
-never discards on, so an empty picture was two defaults agreeing across two
-files. The vertex stage now carries the flag into `params2.w` — the component
-the masked path already uses for exactly this — and the `KIND_TEXT` arm leaves
-the coverage at zero without it, so the fragment is discarded before any colour
-is read. **Deleting that gate changes no rendered texel**, measured, which is
-why `both_msdf_arms_gate_on_the_row_the_frame_resolved` reads the shader source:
-it is the only thing that can fail on it.
+The third consumer, a glyph run, states the same thing in the same word (issue
+#993) — the two share one `GpuMsdfRow` since #1027. It did not until then: the
+row kept `GpuGlyphRun::default()`, whose zero alpha the text arm carried into a
+colour it never discards on, so an empty picture was two defaults agreeing
+across two files. The vertex stage now carries the flag into `params2.w` — the
+component the masked path already uses for exactly this — and the `KIND_TEXT`
+arm leaves the coverage at zero without it, so the fragment is discarded before
+any colour is read. **Deleting that gate changes no rendered texel**, measured,
+which is why `both_msdf_arms_gate_on_the_row_the_frame_resolved` reads the
+shader source: it is the only thing that can fail on it.
 `the_image_arm_gates_on_the_row_the_frame_resolved` is the same instrument on
 the third table, for the same reason.
 

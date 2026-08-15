@@ -35,18 +35,13 @@ use dashpaint::{
     GlyphRange, GlyphRun, GlyphRunTable, ImageAsset, ImageFill, ImageFormat, ImageTable, Mat23,
     PaintEntry, PaintTable, Painter, RectEntry, ScaleMode, Vec2, VectorField,
 };
-use dashscene_gpu::{GpuPainter, Renderer, ResidencyError};
+use dashscene_gpu::{GpuPainter, ResidencyError};
 
-const W: u32 = 64;
-const H: u32 = 48;
+mod common;
+use common::{H, JPEG_FIXTURE, W, renderer, texel};
 
 /// The atlas is eight texels square and its glyphs are four.
 const ATLAS: u32 = 8;
-
-/// A renderer, or a named failure — the reason `layer3_render_smoke` gives.
-fn renderer() -> Renderer {
-    Renderer::new().expect("layer 3 needs a device")
-}
 
 // Both fixtures carry the same value in all three colour channels, so `median3`
 // is that value and a fixture states a coverage rather than a channel
@@ -195,11 +190,6 @@ fn one_glyph(
         },
         vec![GlyphQuad { glyph_id, x, y }],
     )
-}
-
-fn texel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
-    let at = ((y * W + x) * 4) as usize;
-    [pixels[at], pixels[at + 1], pixels[at + 2], pixels[at + 3]]
 }
 
 /// A glyph draws the run's colour where its own field is inside, and nothing
@@ -760,16 +750,6 @@ fn a_masked_gradient_takes_its_frame_from_the_node_box_and_its_coverage_from_the
     assert_eq!(texel(&pixels, 2, 24)[3], 0, "x 2 is outside both");
 }
 
-/// The corpus payload this painter links no decoder for — the same JPEG
-/// `layer3_image_fills` refuses on the image-fill path.
-///
-/// The bytes are a real JPEG whose header parses, so the extent is stated and
-/// the no-extent arm cannot answer first. The point is that the *decode* never
-/// happens, so a valid picture would prove less rather than more.
-const JPEG_FIXTURE: &[u8] = include_bytes!(
-    "../../../corpus/figma-fixtures/jpeg-fill.images/4045fd0419fbcbbd03505d2d258c6dbbeb2da1fe.jpg"
-);
-
 /// **A refused glyph atlas draws nothing and names itself** (issue #973).
 ///
 /// The refusal path had one end-to-end test and it was over an image fill, which
@@ -779,7 +759,7 @@ const JPEG_FIXTURE: &[u8] = include_bytes!(
 /// where an oversized photograph has to be authored deliberately.
 ///
 /// What the whole-canvas sweep pins is that the run does not paint. **Since
-/// issue #993 that is a mechanism**: `GpuGlyphRun::resolved` is zero on the
+/// issue #993 that is a mechanism**: `GpuMsdfRow::resolved` is zero on the
 /// row a refusal leaves, the vertex stage carries it into `params2.w`, and the
 /// `KIND_TEXT` arm leaves the coverage at zero without it — so the fragment is
 /// discarded before any colour is read.
@@ -1055,7 +1035,7 @@ fn a_refused_coverage_field_draws_no_masked_fill() {
 /// **A refused glyph run is submitted as no instances at all** (issue #1024),
 /// and that is visible from outside the crate as a split draw.
 ///
-/// The correctness fix for a refused atlas was `GpuGlyphRun::resolved` (issue
+/// The correctness fix for a refused atlas was `GpuMsdfRow::resolved` (issue
 /// #993), which makes the fragment stage discard. The quads were still drawn:
 /// `draw_runs` emitted ranges covering the whole buffer and dropped none, so a
 /// text node whose atlas was refused still submitted one instance per glyph —

@@ -23,17 +23,13 @@ use dashpaint::{
     GroupComposite, ImageAsset, ImageFormat, ImageTable, PaintEntry, PaintTable, Painter,
     RectEntry, Vec2, VectorField,
 };
-use dashscene_gpu::{GpuPainter, Renderer, ResidencyError};
+use dashscene_gpu::{GpuPainter, ResidencyError};
 
-const W: u32 = 64;
-const H: u32 = 48;
+mod common;
+use common::{H, JPEG_FIXTURE, W, renderer, texel};
 
 /// Where the red half ends and the blue half begins.
 const SEAM: u32 = 32;
-
-fn renderer() -> Renderer {
-    Renderer::new().expect("layer 3 needs a device")
-}
 
 fn rgba(r: f32, g: f32, b: f32, a: f32) -> Color {
     Color { r, g, b, a }
@@ -70,12 +66,6 @@ fn rect(x: f32, y: f32, w: f32, h: f32, paint: dashpaint::PaintIndex) -> RectEnt
         rotation: 0.0,
         rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }
-}
-
-/// The unpremultiplied RGBA texel at (x, y).
-fn texel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
-    let i = ((y * W + x) * 4) as usize;
-    [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
 }
 
 /// A paint entry that draws no ink of its own and carries the given blurs.
@@ -658,14 +648,6 @@ fn a_masked_backdrop_follows_the_fields_outline_rather_than_its_box() {
     );
 }
 
-/// The corpus payload this painter links no decoder for — the same JPEG
-/// `layer3_image_fills` refuses on the image-fill path, reused here because a
-/// coverage field and an image fill reach residency through the same call and
-/// the refusal is what the two have in common.
-const JPEG_FIXTURE: &[u8] = include_bytes!(
-    "../../../corpus/figma-fixtures/jpeg-fill.images/4045fd0419fbcbbd03505d2d258c6dbbeb2da1fe.jpg"
-);
-
 /// **A refused backdrop does not renumber the one behind it** (issues #972 and
 /// #994).
 ///
@@ -1109,7 +1091,7 @@ fn a_refused_backdrops_blur_row_is_still_checked_against_its_table() {
 ///   goes out with a NaN `half_uv` and an infinite `px_range`, and both arms
 ///   come back at zero coverage and discard. The guard stays because that is a
 ///   coincidence of how one adapter resolves a NaN sampler coordinate and not
-///   a decision the shader states — the same argument `GpuShape::resolved`
+///   a decision the shader states — the same argument `GpuMsdfRow::resolved`
 ///   makes against inferring absence from a value.
 ///
 /// **The picture is not the only observable**, which is why that case is guarded

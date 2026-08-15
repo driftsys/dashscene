@@ -20,22 +20,10 @@ use dashpaint::{
     ClipBox, ClipIndex, ClipTable, Color, CornerRadii, EntryParts, GlyphRunTable, ImageTable,
     PaintEntry, PaintTable, Painter, RectEntry, Stroke, StrokeAlign, Vec2,
 };
-use dashscene_gpu::{GpuPainter, Renderer, RendererError};
+use dashscene_gpu::{GpuPainter, RendererError};
 
-const W: u32 = 64;
-const H: u32 = 48;
-
-/// A renderer, or a named failure. Panics rather than skipping: a layer-3
-/// suite that quietly passes with no device is a green result that establishes
-/// nothing.
-///
-/// Panics through `Display` rather than `expect`, which prints `Debug`:
-/// `RendererError::NoAdapter` carries the sentence naming the environment —
-/// that a runner needs a software device installed — and `Debug` renders it as
-/// the bare word `NoAdapter`, losing exactly the part a reader needs.
-fn renderer() -> Renderer {
-    Renderer::new().unwrap_or_else(|e| panic!("layer 3 needs a device: {e}"))
-}
+mod common;
+use common::{H, W, renderer, texel};
 
 fn rect(
     x: f32,
@@ -56,12 +44,6 @@ fn rect(
         rotation: 0.0,
         rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
     }
-}
-
-/// The unpremultiplied RGBA texel at (x, y).
-fn texel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
-    let i = ((y * W + x) * 4) as usize;
-    [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
 }
 
 /// Packs one scene through the painter and renders it.

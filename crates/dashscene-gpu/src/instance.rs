@@ -323,7 +323,7 @@ pub struct Instance {
     /// WGSL aligns a `vec2f` to eight bytes, so the other order would put this
     /// at offset 72 in the shader while Rust packed it at 68, and every row
     /// after the first would be read from the wrong offset. The same trap
-    /// `GpuGlyphRun` documents against its own `half_uv`.
+    /// `GpuMsdfRow` documents against its own `half_uv`.
     pub rotation_pivot: [f32; 2],
     /// This instance's rotation in radians, about
     /// [`rotation_pivot`](Self::rotation_pivot). `0.0` is unrotated, which is

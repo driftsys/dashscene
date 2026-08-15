@@ -48,7 +48,7 @@ from the wrong offset.
 **`rotation_pivot` sits before `rotation`, and the order is load-bearing.** WGSL
 aligns a `vec2f` to eight bytes. At offset 64 the two languages agree; behind
 `rotation` it would sit at 72 in the shader and 68 in Rust, which is the trap
-`GpuGlyphRun` already documents against its own `half_uv`.
+`GpuMsdfRow` already documents against its own `half_uv`.
 
 **The stride was 64 until story #832, and the trailing word has been padding
 twice.** It was padding until story #584 gave it to `outset`, and story #832's

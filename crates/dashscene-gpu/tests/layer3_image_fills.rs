@@ -23,20 +23,8 @@ use dashpaint::{
 };
 use dashscene_gpu::{GpuPainter, Renderer};
 
-const W: u32 = 64;
-const H: u32 = 48;
-
-/// The corpus JPEG the issue names, so the payload is a real one whose header
-/// parses — `ImageTable::push` derives an encoded asset's extent from it. What
-/// the test below is about is that the *decode* never happens.
-const JPEG_FIXTURE: &[u8] = include_bytes!(
-    "../../../corpus/figma-fixtures/jpeg-fill.images/4045fd0419fbcbbd03505d2d258c6dbbeb2da1fe.jpg"
-);
-
-/// A renderer, or a named failure — the reason `layer3_render_smoke` gives.
-fn renderer() -> Renderer {
-    Renderer::new().expect("layer 3 needs a device")
-}
+mod common;
+use common::{H, JPEG_FIXTURE, SAMPLE_PNG, W, renderer, texel};
 
 /// A baked RGBA payload whose texel at `(x, y)` is `colour(x, y)`.
 ///
@@ -132,12 +120,6 @@ fn extent_of(asset: &ImageAsset, width: u32, height: u32) -> (u32, u32) {
         "the fixture's bytes and its stated extent disagree"
     );
     (width, height)
-}
-
-/// The unpremultiplied RGBA texel at (x, y).
-fn texel(pixels: &[u8], x: u32, y: u32) -> [u8; 4] {
-    let i = ((y * W + x) * 4) as usize;
-    [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
 }
 
 /// A channel comparison that tolerates the rounding of the round trip through a
@@ -442,7 +424,6 @@ fn crop_maps_the_box_through_the_fills_transform() {
 /// is the one the header states rather than one this test chose.
 #[test]
 fn a_png_payload_is_decoded_and_drawn() {
-    const SAMPLE_PNG: &[u8] = include_bytes!("fixtures/image_id/sample.png");
     let mut images = ImageTable::new();
     let index = images.push(ImageAsset {
         format: ImageFormat::Png,
@@ -771,7 +752,6 @@ fn a_replaced_document_does_not_draw_the_previous_documents_image() {
 /// residency path that still decodes every frame delivers none of it.
 #[test]
 fn a_resident_png_is_decoded_once_and_not_once_a_frame() {
-    const SAMPLE_PNG: &[u8] = include_bytes!("fixtures/image_id/sample.png");
     let mut images = ImageTable::new();
     let index = images.push(ImageAsset {
         format: ImageFormat::Png,

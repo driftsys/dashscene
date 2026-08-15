@@ -1270,7 +1270,7 @@ fn the_instance_is_eighty_bytes_in_declaration_order() {
     // `rotation_pivot` is a `vec2f` in the shader, which WGSL aligns to eight
     // bytes. At offset 64 the two sides agree; one byte earlier and WGSL would
     // pad it to 72 while Rust kept it at 68, and every row after the first
-    // would be read from the wrong offset. This is the trap `GpuGlyphRun`
+    // would be read from the wrong offset. This is the trap `GpuMsdfRow`
     // documents against its own `half_uv`, asserted here rather than trusted.
     assert_eq!(offset_of!(Instance, rotation_pivot) % 8, 0);
     // A shader's array stride is the struct's size rounded up to its alignment,

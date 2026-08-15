@@ -172,8 +172,8 @@ struct GpuImage {
     /// made resident (issue #1023).
     ///
     /// The third flag of the three tables residency resolves, arriving after
-    /// [`GpuShape::resolved`] (issue #972) and [`GpuGlyphRun::resolved`]
-    /// (issue #993) and read the same way. A refused image fill leaves this row
+    /// [`GpuMsdfRow::resolved`], which [`GpuShape`] got at issue #972 and
+    /// [`GpuGlyphRun`] at #993, and read the same way. A refused image fill leaves this row
     /// at [`Default`], and until this existed what emptied its picture was
     /// `image_colour` returning transparent black on `size.x <= 0.0` — a guard
     /// written for a *different* case, `dashscene-validator`'s
@@ -185,7 +185,7 @@ struct GpuImage {
     /// the refusal, so an edit that filled the row before residency succeeded
     /// would give a refused fill a real `size`, a fully shaded box, and whatever
     /// texels the bound atlas happened to hold at the default `uv`. Stated
-    /// rather than inferred, for the reason [`GpuShape::resolved`] gives against
+    /// rather than inferred, for the reason [`GpuMsdfRow::resolved`] gives against
     /// its own: inferring absence from a value a real payload could take is how
     /// a sentinel goes wrong.
     ///
@@ -472,61 +472,92 @@ fn paint_heap(paints: &PaintTable) -> PaintHeap {
     }
 }
 
+/// The tail [`GpuShape`] and [`GpuGlyphRun`] share, byte for byte from offset
+/// 16 (issue #1027).
+///
+/// The two rows differ only in their first sixteen bytes — a coverage mask's
+/// padded plane quad against a glyph run's fill colour — and agreed on the four
+/// members after it. Agreed, and were hand-copied: the Rust struct twice, the
+/// WGSL struct twice, the vertex stage's carry twice, and five `offset_of!`
+/// assertions each. Issue #1023 would have made it three of everything.
+///
+/// # What the ordering is holding up
+///
+/// [`half_uv`](Self::half_uv) sits before [`px_range`](Self::px_range), and that
+/// is load-bearing rather than tidy. WGSL aligns a `vec2f` to eight bytes, and
+/// this struct's own alignment is 16 because of the `vec4f`, so the other order
+/// — `uv, px_range, half_uv, resolved` — puts `half_uv` at 24, ends at 36 and
+/// **rounds this struct to 48**. Rust packs the same order at 20 and 28 and
+/// stays at 32. Every row after the first is then read from the wrong offset.
+///
+/// Swapping `px_range` and `resolved` is the quieter one, and it is why the
+/// assertions below are per member rather than a size: either order keeps this
+/// struct at 32 bytes, and the shader would read the flag out of the range slot
+/// — non-zero for any real field or run, so the gate opens — and the range out
+/// of the flag slot, where `1u32`'s bit pattern is 1.4e-45.
+/// `msdf_coverage(sample, ~0)` is `0.5`, which is exactly the defect issues #972
+/// and #993 removed, restored for every masked fill and every glyph in the
+/// frame.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, Pod, Zeroable)]
+struct GpuMsdfRow {
+    /// Where the payload sits in the residency texture.
+    ///
+    /// The two consumers read it differently, which is why it is one member and
+    /// not two. [`GpuShape`] carries the field's own sub-rect, composed from the
+    /// payload's rectangle and the field's `atlas_rect`. [`GpuGlyphRun`] carries
+    /// a map from a *source*-atlas texel into the residency texture: texel `t`
+    /// sits at `uv.xy + t * uv.zw`, two mappings composed on the CPU rather than
+    /// two in the shader, since both are constant per run.
+    uv: [f32; 4],
+    /// Half a source texel, in residency-atlas normalised units — what a sample
+    /// is held inside its own rectangle by. Before `px_range` for the alignment
+    /// reason the struct's own doc gives.
+    half_uv: [f32; 2],
+    /// The field's range in **screen** pixels.
+    ///
+    /// A glyph run takes `dashscene-skia`'s own formula,
+    /// `distance_range_px * size / px_per_em`; a coverage mask has no
+    /// `px_per_em`, because the field's quad over its atlas rectangle already is
+    /// that ratio.
+    px_range: f32,
+    /// Non-zero when the three members above describe a payload this frame
+    /// actually made resident (issues #972 and #993).
+    ///
+    /// **The third state a payload has**, and the one that was missing. A row is
+    /// zeroed both when a coverage field is degenerate — no quad, or no atlas
+    /// rectangle, which [`field_draws`] rejects before residency — and when the
+    /// payload was *refused*, and neither draws. What made that a defect rather
+    /// than a saving is that both consumers inferred "this instance is masked"
+    /// from [`Instance::shape`] alone: a zeroed row then means `px_range = 0`,
+    /// and `msdf_coverage(sample, 0)` is `0.5` for every sample there is. Half
+    /// coverage over the antialiasing margin, on both pipelines.
+    ///
+    /// Stated rather than inferred, for the reason `blur.wgsl` gives against its
+    /// own `masked`: a zero `px_range` is a degenerate field and not an absent
+    /// one, and inferring absence from a value a real field could take is how a
+    /// sentinel goes wrong.
+    resolved: u32,
+}
+
 /// One glyph run, in the shader's own layout, with its atlas's residency slot
 /// resolved into it.
 ///
-/// Per run rather than per glyph: the colour, the screen-pixel range and the
-/// atlas mapping are constant across a run, and the one thing that is not — the
-/// glyph's own rectangle — rides on [`Instance::corners`], which a glyph has no
-/// other use for.
+/// Per run rather than per glyph: the colour and everything on [`GpuMsdfRow`]
+/// are constant across a run, and the one thing that is not — the glyph's own
+/// rectangle — rides on [`Instance::corners`], which a glyph has no other use
+/// for.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, Pod, Zeroable)]
 struct GpuGlyphRun {
     /// The run's fill colour, with its free-path alpha still on
     /// [`Instance::opacity`]. The MSDF coverage modulates it.
     color: [f32; 4],
-    /// Source-atlas texels to residency-atlas normalised coordinates:
-    /// `[origin_u, origin_v, scale_u, scale_v]`, so texel `t` of the run's own
-    /// atlas sits at `origin + t * scale`.
-    ///
-    /// Two mappings composed on the CPU rather than two in the shader: the
-    /// atlas's own extent normalises the texel, and the residency slot places
-    /// that normalised point inside the atlas texture. Both are constant per
-    /// run.
-    uv: [f32; 4],
-    /// Half a source texel, in residency-atlas normalised units — what a sample
-    /// is held inside the glyph's own rectangle by.
-    ///
-    /// Before [`px_range`](Self::px_range), not after it. WGSL aligns a `vec2f`
-    /// to eight bytes, so the other order puts it at offset 40 with a hole at
-    /// 36 and rounds the struct to 64 — while Rust packs it at 36 and makes the
-    /// struct 48. Every row after the first would then be read from the wrong
-    /// offset. The `size_of` assertion at the foot of this file is what holds
-    /// the Rust half of that; this ordering is the WGSL half.
-    half_uv: [f32; 2],
-    /// The field's range in **screen** pixels:
-    /// `distance_range_px * size / px_per_em`, which is `dashscene-skia`'s own
-    /// formula. The painter draws at unit scale, so the run's size in document
-    /// units is its size in pixels.
-    px_range: f32,
-    /// Non-zero when the four members above describe an atlas this frame
-    /// actually made resident (issue #993).
-    ///
-    /// The same third state [`GpuShape::resolved`] carries, for the same
-    /// reason and read the same way. A refused glyph atlas leaves this row at
-    /// [`Default`], and the row's own values then say nothing true: `px_range`
-    /// is zero, and `msdf_coverage(sample, 0)` is `0.5` for every sample there
-    /// is, so the fragment stage shaded the glyph's quad at half coverage and
-    /// reached the colour arm.
-    ///
-    /// **It painted nothing anyway, and that was the defect.** The colour it
-    /// took there is `Instance::opacity` times this row's own zero alpha, so
-    /// the outcome rested on two defaults agreeing across two files with
-    /// nothing stating the connection — measured on PR #989's branch, writing
-    /// `color = [1.0; 4]` beside the refusal painted the predicted
-    /// `[255, 255, 255, 128]`. Stated here, the coverage is zero and the
-    /// fragment is discarded before any colour is read.
-    resolved: u32,
+    /// The tail this shares with [`GpuShape`]. A refused glyph atlas leaves it
+    /// at [`Default`], and `msdf` is then not an atlas — see
+    /// [`GpuMsdfRow::resolved`], which is what says so rather than leaving it to
+    /// the row's own zero alpha, two defaults agreeing across two files.
+    msdf: GpuMsdfRow,
 }
 
 /// One baked-vector coverage mask, in the shader's own layout, with its atlas's
@@ -539,34 +570,8 @@ struct GpuShape {
     /// `dashpaint::VectorField::plane_bounds`. The device quad is the node's
     /// origin plus this, at unit scale.
     plane: [f32; 4],
-    /// The shape's sub-rect in its residency atlas, normalised:
-    /// `[u0, v0, du, dv]`.
-    uv: [f32; 4],
-    /// Half an atlas texel, in residency-atlas normalised units. Before
-    /// `px_range` for the alignment reason [`GpuGlyphRun::half_uv`] gives.
-    half_uv: [f32; 2],
-    /// The field's range in screen pixels: `distance_range` scaled by the
-    /// device pixels one atlas texel covers. That scale is the field's own
-    /// quad over its atlas rectangle — a vector field carries no `px_per_em`,
-    /// because that ratio already is the scale.
-    px_range: f32,
-    /// Non-zero when the four members above describe a field this frame
-    /// actually made resident (issue #972).
-    ///
-    /// **The third state a coverage mask has**, and the one that was missing.
-    /// A row is zeroed both when a field is degenerate — no quad, or no atlas
-    /// rectangle, which [`field_draws`] rejects before residency — and when its
-    /// payload was *refused*, and neither draws. What made that a defect rather
-    /// than a saving is that both consumers inferred "this instance is masked"
-    /// from [`Instance::shape`] alone: a zeroed row then means `px_range = 0`,
-    /// and `msdf_coverage(sample, 0)` is `0.5` for every sample there is. Half
-    /// coverage over the antialiasing margin, on both pipelines.
-    ///
-    /// Stated rather than inferred, for the reason `blur.wgsl` gives against
-    /// its own `masked`: a zero `px_range` is a degenerate field and not an
-    /// absent one, and inferring absence from a value a real field could take
-    /// is how a sentinel goes wrong.
-    resolved: u32,
+    /// The tail this shares with [`GpuGlyphRun`].
+    msdf: GpuMsdfRow,
 }
 
 /// One clip box, in the shader's own layout.
@@ -2176,15 +2181,15 @@ impl Renderer {
             corners: instance.corners,
             quad: axis_quad,
             plane: mask.map_or([0.0; 4], |shape| shape.plane),
-            uv: mask.map_or([0.0; 4], |shape| shape.uv),
+            uv: mask.map_or([0.0; 4], |shape| shape.msdf.uv),
             size,
             step: [1.0, 0.0],
-            half_uv: mask.map_or([0.0; 2], |shape| shape.half_uv),
+            half_uv: mask.map_or([0.0; 2], |shape| shape.msdf.half_uv),
             sigma,
             support,
             opacity: instance.opacity,
             aa: AA_WIDTH,
-            px_range: mask.map_or(0.0, |shape| shape.px_range),
+            px_range: mask.map_or(0.0, |shape| shape.msdf.px_range),
             masked: u32::from(mask.is_some()),
             clip_offset: instance.clip_offset,
             clip_count: instance.clip_count,
@@ -2494,7 +2499,7 @@ impl Renderer {
             }
         }
         // The two records of one fact agree. `atlas_of_shape` is what this side
-        // segments draw runs and picks bind groups by, and `GpuShape::resolved`
+        // segments draw runs and picks bind groups by, and `GpuMsdfRow::resolved`
         // is what the shaders read, because a shader cannot see the map. Both
         // are written in the one arm above, two lines apart — this is what says
         // a later arm cannot write one without the other and leave the backdrop
@@ -2503,7 +2508,7 @@ impl Renderer {
             out.atlas_of_shape
                 .iter()
                 .zip(&out.shapes)
-                .all(|(atlas, shape)| atlas.is_some() == (shape.resolved != 0)),
+                .all(|(atlas, shape)| atlas.is_some() == (shape.msdf.resolved != 0)),
             "a coverage-mask row is resolved exactly when it landed in an atlas",
         );
         // And the same for a glyph run, which since issue #993 carries the same
@@ -2514,7 +2519,7 @@ impl Renderer {
             out.atlas_of_run
                 .iter()
                 .zip(&out.runs)
-                .all(|(atlas, run)| atlas.is_some() == (run.resolved != 0)),
+                .all(|(atlas, run)| atlas.is_some() == (run.msdf.resolved != 0)),
             "a glyph-run row is resolved exactly when its atlas landed in one",
         );
         // And the third table, which since issue #1023 carries the flag the
@@ -2742,8 +2747,9 @@ impl Resolved {
     /// **The middle answer is the one this exists for** (issue #1024).
     /// [`Resolved::atlas_of`] folds it into the first, which is right for
     /// "which atlas do I bind" and wrong for "does this instance draw": a row
-    /// that did not resolve has its shader gate shut — `GpuShape::resolved`,
-    /// `GpuGlyphRun::resolved`, `GpuImage::resolved` — so the quad is
+    /// that did not resolve has its shader gate shut — [`GpuMsdfRow::resolved`]
+    /// for the two MSDF tables, [`GpuImage::resolved`] for the third — so the
+    /// quad is
     /// rasterized and every fragment discarded, where an instance that samples
     /// nothing draws normally.
     ///
@@ -2806,17 +2812,19 @@ fn gpu_glyph_run(run: &dashpaint::GlyphRun, atlas: &dashpaint::Atlas, uv: [f32; 
     let scale = [uv[2] / atlas.width as f32, uv[3] / atlas.height as f32];
     GpuGlyphRun {
         color: [run.color.r, run.color.g, run.color.b, run.color.a],
-        uv: [uv[0], uv[1], scale[0], scale[1]],
-        half_uv: [0.5 * scale[0], 0.5 * scale[1]],
-        // `dashscene-skia`'s own formula. `plane_em` and `atlas_px` bake the
-        // range into the bounds, so this scales the sharpness of the edge and
-        // not the size.
-        px_range: atlas.distance_range_px() * run.size / f32::from(atlas.px_per_em()),
-        // This function is reached only from the arm that made the atlas
-        // resident, so building a row *is* resolving one — the same property
-        // `gpu_shape` states. Every other row keeps `GpuGlyphRun::default()`'s
-        // zero.
-        resolved: 1,
+        msdf: GpuMsdfRow {
+            uv: [uv[0], uv[1], scale[0], scale[1]],
+            half_uv: [0.5 * scale[0], 0.5 * scale[1]],
+            // `dashscene-skia`'s own formula. `plane_em` and `atlas_px` bake the
+            // range into the bounds, so this scales the sharpness of the edge and
+            // not the size.
+            px_range: atlas.distance_range_px() * run.size / f32::from(atlas.px_per_em()),
+            // This function is reached only from the arm that made the atlas
+            // resident, so building a row *is* resolving one — the same
+            // property `gpu_shape` states. Every other row keeps
+            // `GpuGlyphRun::default()`'s zero.
+            resolved: 1,
+        },
     }
 }
 
@@ -2842,15 +2850,18 @@ fn gpu_shape(
     let [left, _, right, _] = field.plane_bounds;
     GpuShape {
         plane: field.plane_bounds,
-        uv: sub,
-        half_uv: [0.5 * sub[2] / aw as f32, 0.5 * sub[3] / ah as f32],
-        // Device pixels per atlas texel, at unit scale. `dashscene-skia` takes
-        // the x ratio alone, and this matches it rather than re-deriving it.
-        px_range: field.distance_range * (right - left) / aw as f32,
-        // This function is reached only from the arm that made the payload
-        // resident, so building a row *is* resolving one. Every other row keeps
-        // `GpuShape::default()`'s zero.
-        resolved: 1,
+        msdf: GpuMsdfRow {
+            uv: sub,
+            half_uv: [0.5 * sub[2] / aw as f32, 0.5 * sub[3] / ah as f32],
+            // Device pixels per atlas texel, at unit scale. `dashscene-skia`
+            // takes the x ratio alone, and this matches it rather than
+            // re-deriving it.
+            px_range: field.distance_range * (right - left) / aw as f32,
+            // This function is reached only from the arm that made the payload
+            // resident, so building a row *is* resolving one. Every other row
+            // keeps `GpuShape::default()`'s zero.
+            resolved: 1,
+        },
     }
 }
 
@@ -3020,7 +3031,7 @@ fn backdrop_mask(instance: &Instance, resolved: &Resolved) -> Option<Option<GpuS
         Instance::NONE => Some(None),
         row => {
             let shape = resolved.shapes[row as usize - 1];
-            (shape.resolved != 0).then_some(Some(shape))
+            (shape.msdf.resolved != 0).then_some(Some(shape))
         }
     }
 }
@@ -3605,17 +3616,17 @@ struct GpuBlur {
     quad: [f32; 4],
     /// [`GpuShape::plane`], for a backdrop confined to a coverage mask.
     plane: [f32; 4],
-    /// [`GpuShape::uv`].
+    /// [`GpuMsdfRow::uv`].
     uv: [f32; 4],
     size: [f32; 2],
     step: [f32; 2],
-    /// [`GpuShape::half_uv`].
+    /// [`GpuMsdfRow::half_uv`].
     half_uv: [f32; 2],
     sigma: f32,
     support: f32,
     opacity: f32,
     aa: f32,
-    /// [`GpuShape::px_range`].
+    /// [`GpuMsdfRow::px_range`].
     px_range: f32,
     /// Non-zero when the four mask members describe one. Carried rather than
     /// inferred from `px_range` or `uv`, because a degenerate field is not an
@@ -4796,30 +4807,35 @@ const _: () = assert!(std::mem::offset_of!(GpuImage, resolved) == 56);
 const _: () = assert!(size_of::<GpuGlyphRun>() == 48);
 const _: () = assert!(size_of::<GpuShape>() == 48);
 
-/// And both types' offsets, because their last word carries meaning rather
-/// than padding — [`GpuShape`]'s since issue #972, [`GpuGlyphRun`]'s since
-/// #993.
+/// The tail's own offsets, and where each type carries it (issue #1027).
 ///
 /// A size assertion alone does not pin a layout — [`GpuBlur`]'s own block says
 /// so and calls itself the proof, having been reordered on one side at an
-/// unchanged size. These two are now the case that reasoning was written for:
-/// swapping `px_range` and `resolved` on one side alone keeps either at 48
-/// bytes, and the shader would then read `resolved` out of the range slot —
-/// non-zero for any real field or run, so the gate opens — and the range out of
-/// the flag slot, where `1u32`'s bit pattern is 1.4e-45.
-/// `msdf_coverage(sample, ~0)` is `0.5`, which is exactly the defect those two
-/// issues removed, restored for every masked fill and every glyph in the frame
-/// and caught by nothing.
+/// unchanged size. [`GpuMsdfRow`] is the case that reasoning was written for:
+/// swapping `px_range` and `resolved` on one side alone keeps it at 32 bytes and
+/// either outer type at 48, and the shader would then read `resolved` out of the
+/// range slot — non-zero for any real field or run, so the gate opens — and the
+/// range out of the flag slot, where `1u32`'s bit pattern is 1.4e-45.
+/// `msdf_coverage(sample, ~0)` is `0.5`, which is exactly the defect issues #972
+/// and #993 removed, restored for every masked fill and every glyph in the
+/// frame and caught by nothing.
+///
+/// **Four `offset_of!` on the tail, where it was eight**, plus two per outer
+/// type locating it. That is the arithmetic issue #1027 is about, and it is
+/// worth being exact: the block goes from ten `offset_of!` to eight, and what
+/// halves is the part that matters — the tail's *order*, which had two places
+/// to be wrong and now has one. #1023's third table would have made it three.
+/// The outer types' two each say only where the tail begins, and the `size_of`
+/// assertions above still pin that nothing follows it.
+const _: () = assert!(size_of::<GpuMsdfRow>() == 32);
+const _: () = assert!(std::mem::offset_of!(GpuMsdfRow, uv) == 0);
+const _: () = assert!(std::mem::offset_of!(GpuMsdfRow, half_uv) == 16);
+const _: () = assert!(std::mem::offset_of!(GpuMsdfRow, px_range) == 24);
+const _: () = assert!(std::mem::offset_of!(GpuMsdfRow, resolved) == 28);
 const _: () = assert!(std::mem::offset_of!(GpuShape, plane) == 0);
-const _: () = assert!(std::mem::offset_of!(GpuShape, uv) == 16);
-const _: () = assert!(std::mem::offset_of!(GpuShape, half_uv) == 32);
-const _: () = assert!(std::mem::offset_of!(GpuShape, px_range) == 40);
-const _: () = assert!(std::mem::offset_of!(GpuShape, resolved) == 44);
+const _: () = assert!(std::mem::offset_of!(GpuShape, msdf) == 16);
 const _: () = assert!(std::mem::offset_of!(GpuGlyphRun, color) == 0);
-const _: () = assert!(std::mem::offset_of!(GpuGlyphRun, uv) == 16);
-const _: () = assert!(std::mem::offset_of!(GpuGlyphRun, half_uv) == 32);
-const _: () = assert!(std::mem::offset_of!(GpuGlyphRun, px_range) == 40);
-const _: () = assert!(std::mem::offset_of!(GpuGlyphRun, resolved) == 44);
+const _: () = assert!(std::mem::offset_of!(GpuGlyphRun, msdf) == 16);
 
 /// The per-frame uniform. **Thirty-two bytes on both sides since story #584**,
 /// where it was sixteen: five scalars is twenty bytes, and a uniform's size
@@ -5265,7 +5281,7 @@ mod tests {
     #[test]
     fn a_glyph_run_row_is_resolved_only_when_it_was_built_from_an_atlas() {
         assert_eq!(
-            GpuGlyphRun::default().resolved,
+            GpuGlyphRun::default().msdf.resolved,
             0,
             "the row a refusal leaves must not claim to describe an atlas — this is the default \
              `resolve_frame` writes and never touches again",
@@ -5294,7 +5310,9 @@ mod tests {
             glyphs: dashpaint::GlyphRange::UNASSIGNED,
         };
         assert_ne!(
-            gpu_glyph_run(&run, &atlas, [0.0, 0.0, 1.0, 1.0]).resolved,
+            gpu_glyph_run(&run, &atlas, [0.0, 0.0, 1.0, 1.0])
+                .msdf
+                .resolved,
             0,
             "a row built from an atlas is resolved: this function is reached only from the arm \
              that made one resident",
@@ -5326,10 +5344,18 @@ mod tests {
     /// two with the gate deleted and its comment left behind.
     ///
     /// **The carry is matched as a whole statement**, not as the substring
-    /// `f32(run.resolved)`. Reordering it to
-    /// `vec4f(f32(run.resolved), run.half_uv, run.px_range)` keeps any
-    /// `contains` green while `params2.w` carries `px_range` — non-zero for
-    /// every real run, so the gate is permanently open.
+    /// `f32(run.msdf.resolved)`. Reordering it to
+    /// `vec4f(f32(run.msdf.resolved), run.msdf.half_uv, run.msdf.px_range)`
+    /// keeps any `contains` green while `params2.w` carries `px_range` —
+    /// non-zero for every real run, so the gate is permanently open.
+    ///
+    /// **And the three struct declarations**, which are the WGSL half of the
+    /// layout that the `offset_of!` block cannot reach (issue #1049). Swapping
+    /// `px_range` and `resolved` in `MsdfRow` alone leaves every one of those
+    /// assertions true and leaves the carries above matching — a declaration
+    /// reorder does not change their text — while the vertex stage carries a
+    /// range out of the flag word. One shared tail since issue #1027 means one
+    /// declaration to pin, plus where each type carries it.
     ///
     /// **The gates are counted against the `msdf_coverage` calls**, not against
     /// the literal two. One arm passing says nothing about the other —
@@ -5341,15 +5367,58 @@ mod tests {
     #[test]
     fn both_msdf_arms_gate_on_the_row_the_frame_resolved() {
         let code = stripped_paint_wgsl();
+        // Collapsed, because since issue #1027 one of the two carries below is
+        // long enough that rustfmt's counterpart for WGSL — a human — wrapped
+        // it. Matching structure rather than layout, the way the image arm's
+        // own assertion does.
+        // A wrapped call collapses to `vec4f( a, b, c, )` where a one-line one
+        // is `vec4f(a, b, c)` — a space after the paren and a trailing comma
+        // before it. Nothing formats `.wgsl`, so the two arms below can legally
+        // differ in exactly those two characters. Normalised away, so a literal
+        // does not have to pick a wrap and then fail a reformat with a message
+        // about member order.
+        let flat = code
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .replace(", )", ")")
+            .replace("( ", "(");
+        // **The tail is one struct now** (issue #1027), so these two carries are
+        // the last place the four members are still named twice. They are also
+        // where the order that matters is visible: the flag has to be the fourth
+        // component, which is the one the fragment stage's gate reads.
         for carried in [
-            "vec4f(field.half_uv, field.px_range, f32(field.resolved))",
-            "vec4f(run.half_uv, run.px_range, f32(run.resolved))",
+            "vec4f(field.msdf.half_uv, field.msdf.px_range, f32(field.msdf.resolved))",
+            "vec4f(run.msdf.half_uv, run.msdf.px_range, f32(run.msdf.resolved))",
         ] {
             assert!(
-                code.contains(carried),
+                flat.contains(carried),
                 "the vertex stage must write `{carried}` — the flag in the **fourth** component, \
                  which is the one the fragment stage's gate reads. Any other order leaves the \
                  gate reading a component that carries something else",
+            );
+        }
+        // **The WGSL member order, which the `offset_of!` block cannot reach**
+        // (issue #1049). Those assertions constrain the Rust structs; a swap
+        // here alone leaves every one of them true, leaves the carries above
+        // matching — a declaration reorder does not change their text — and
+        // has the vertex stage carry a `px_range` read out of the flag word.
+        // That is the `msdf_coverage(sample, ~0) == 0.5` defect issues #972 and
+        // #993 removed, restored across the whole frame.
+        //
+        // One tail means one declaration to pin, plus where each type carries
+        // it. Before issue #1027 this was three assertions over two structs
+        // that had to agree by hand.
+        for declared in [
+            "struct MsdfRow { uv: vec4f, half_uv: vec2f, px_range: f32, resolved: u32, }",
+            "struct GlyphRun { color: vec4f, msdf: MsdfRow, }",
+            "struct Shape { plane: vec4f, msdf: MsdfRow, }",
+        ] {
+            assert!(
+                flat.contains(declared),
+                "paint.wgsl must declare exactly \n\n    {declared}\n\nwhich is the Rust type's \
+                 own order. `half_uv` before `px_range` is the alignment rule `GpuMsdfRow` states; \
+                 `px_range` before `resolved` is what keeps the gate reading the flag",
             );
         }
         let gates = code.matches("in.params2.w != 0.0").count();

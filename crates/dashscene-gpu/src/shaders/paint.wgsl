@@ -29,7 +29,7 @@ struct Instance {
     // `rotation_pivot` before `rotation`, and the order is load-bearing: WGSL
     // aligns a `vec2f` to eight bytes, so the other order would place it at 72
     // here while the Rust type packs it at 68, and every row after the first
-    // would be read from the wrong offset. The trap `GlyphRun` above documents
+    // would be read from the wrong offset. The trap `MsdfRow` documents
     // against its own `half_uv`.
     rotation_pivot: vec2f,
     rotation: f32,
@@ -176,43 +176,49 @@ const GRADIENT_WORDS: u32 = 12u;
 // drift on a measured number.
 const SHADOW_WORDS: u32 = 2u;
 
-// Mirrors `dashscene_gpu::render::GpuGlyphRun` — one positioned run's shared
-// parameters, with its atlas's residency slot resolved into them. `uv` maps a
-// texel of the run's *source* atlas into the residency texture: texel `t` sits
-// at `uv.xy + t * uv.zw`.
+// The tail `Shape` and `GlyphRun` share, byte for byte from offset 16 (issue
+// #1027). Mirrors `dashscene_gpu::render::GpuMsdfRow`.
 //
 // `half_uv` before `px_range`, not after: WGSL aligns a `vec2f` to eight bytes,
-// so the other order would put `half_uv` at offset 40 and round this struct to
-// 64, while the Rust type packs it at 36 and is 48. Every row after the first
-// would then be read from the wrong offset.
+// so the other order would put `half_uv` at offset 24 of this struct and round
+// it to 40, while the Rust type packs it at 16 and is 32. Every row after the
+// first would then be read from the wrong offset. Stating it once is the point
+// of the struct — it was hand-copied in four places and the two `offset_of!`
+// blocks that pinned it were two more.
+struct MsdfRow {
+    // Where the payload sits in the residency texture. `Shape` reads it as the
+    // field's own sub-rect; `GlyphRun` reads it as a map from a source-atlas
+    // texel, `uv.xy + t * uv.zw`.
+    uv: vec4f,
+    // Half a source texel, in residency-atlas normalised units — what a sample
+    // is held inside its own rectangle by.
+    half_uv: vec2f,
+    // The field's range in screen pixels.
+    px_range: f32,
+    // Non-zero when the members above describe a payload this frame made
+    // resident. `render::GpuMsdfRow::resolved` is where that is derived and what
+    // it is for; the short version is that a zeroed row is not a payload, and
+    // reading one as though it were produces exactly half coverage rather than
+    // none (issues #972 and #993).
+    resolved: u32,
+}
+
+// Mirrors `dashscene_gpu::render::GpuGlyphRun` — one positioned run's shared
+// parameters, with its atlas's residency slot resolved into them. Per run rather
+// than per glyph: everything here is constant across a run, and the one thing
+// that is not — the glyph's own rectangle — rides on `Instance::corners`.
 struct GlyphRun {
     color: vec4f,
-    uv: vec4f,
-    half_uv: vec2f,
-    px_range: f32,
-    // Non-zero when the four members above describe an atlas this frame made
-    // resident. `render::GpuGlyphRun::resolved` is where that is derived and
-    // what it is for; the short version is the one `Shape::resolved` gives —
-    // a zeroed row is not an atlas, and reading one as though it were produces
-    // exactly half coverage rather than none.
-    resolved: u32,
+    msdf: MsdfRow,
 }
 
 // Mirrors `dashscene_gpu::render::GpuShape` — one baked-vector coverage mask.
 // `plane` is the padded field quad in shape space, node-box-relative and
-// y-down: `[left, top, right, bottom]`. `uv` is the field's own sub-rect in the
-// residency texture. Member order for the reason `GlyphRun` gives.
+// y-down: `[left, top, right, bottom]`. Everything else is on `MsdfRow`, which
+// is where the member order and its reason are.
 struct Shape {
     plane: vec4f,
-    uv: vec4f,
-    half_uv: vec2f,
-    px_range: f32,
-    // Non-zero when the four members above describe a field this frame made
-    // resident. `render::GpuShape::resolved` is where that is derived and what
-    // it is for; the short version is that a zeroed row is not a field, and
-    // reading one as though it were produces exactly half coverage rather than
-    // none.
-    resolved: u32,
+    msdf: MsdfRow,
 }
 
 @group(0) @binding(0) var<storage, read> instances: array<Instance>;
@@ -373,13 +379,13 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
     // scale, which is what `docs/decisions/baked-vector-msdf-field.md` fixes.
     //
     // A masked instance whose field could not be resolved has a zeroed row, and
-    // `field.resolved` is what says so — carried into `params2.w` for the
+    // `field.msdf.resolved` is what says so — carried into `params2.w` for the
     // fragment stage, which is where it draws nothing (issue #972). **The
     // zeroed quad does not do that on its own**: it has no area, but the margin
     // below then grows it into a square two antialiasing widths across, and the
     // fragment stage was shading that square at exactly half coverage.
     //
-    // A glyph whose atlas could not be resolved carries `run.resolved` through
+    // A glyph whose atlas could not be resolved carries `run.msdf.resolved` through
     // the same component for the same reason (issue #993). Its quad is the
     // glyph's own rectangle and is not zeroed at all, so there was never
     // anything geometric to rely on: the fragment stage is the whole of it.
@@ -390,8 +396,8 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
         let hi = inst.bounds.xy + field.plane.zw;
         quad = vec4f(lo, hi - lo);
         out.params0 = quad;
-        out.params1 = field.uv;
-        out.params2 = vec4f(field.half_uv, field.px_range, f32(field.resolved));
+        out.params1 = field.msdf.uv;
+        out.params2 = vec4f(field.msdf.half_uv, field.msdf.px_range, f32(field.msdf.resolved));
     } else if inst.kind == KIND_TEXT {
         let run = glyph_runs[inst.row];
         out.params0 = run.color;
@@ -399,10 +405,10 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
         // `corners` carries it in source texels because the packer has no
         // device and cannot know where residency put the atlas.
         out.params1 = vec4f(
-            run.uv.xy + inst.corners.xy * run.uv.zw,
-            inst.corners.zw * run.uv.zw,
+            run.msdf.uv.xy + inst.corners.xy * run.msdf.uv.zw,
+            inst.corners.zw * run.msdf.uv.zw,
         );
-        out.params2 = vec4f(run.half_uv, run.px_range, f32(run.resolved));
+        out.params2 = vec4f(run.msdf.half_uv, run.msdf.px_range, f32(run.msdf.resolved));
     }
 
     // Grown by the antialiasing width so the ramp is not clipped by the
