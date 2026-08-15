@@ -560,6 +560,13 @@ their parent rather than apart from it:
   private fields would mean rewriting every literal in eight packages. Panics
   written to resist being weakened, with what the pair still does not cover
   named operand by operand (issues #985 and #986).
+- [sibling-sites-are-swept-not-filed.md](sibling-sites-are-swept-not-filed.md) —
+  a `/code-review` finding that is a second site of the invariant the fix just
+  established is fixed in that branch rather than filed as `debt`, bounded to
+  the same file and its sibling types. Measured over slice v0.20's Wave 2: 8 of
+  18 findings were such siblings, and `Atlas` had taken the same fix four times
+  across issues #724, #983, #1001 and #1074 because each round filed rather than
+  swept.
 - [shader-library-and-layer-2.md](shader-library-and-layer-2.md) — the lean
   painter's SDF math is one WGSL file included textually by every consumer, and
   layer 2 evaluates it by compute shader against independently derived

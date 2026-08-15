@@ -354,15 +354,27 @@ Story workflow — the definition of done for every story:
   of the two to the wall clock. The merge gate is unchanged: both must be
   complete. Capture every finding as a checklist in the PR description — never
   drop a finding silently.
-- Fix all critical findings before merging. For minor findings, file one
-  `debt`-labeled issue each (linked to the story) instead of fixing them inline,
-  **and put it on a milestone** — the current slice, the next one, or `v1` for
-  anything not scheduled to a slice. Debt with no milestone is invisible at
-  every slice close, and it is the largest population of the four: 52 open
-  `debt` issues carry none, against 42 in `v1`, measured 2026-08-12. Re-derive
-  with `gh issue list --label debt --state open
-  --limit 300 --json milestone`
-  rather than trusting those two numbers.
+- Fix all critical findings before merging. **A minor finding is fixed in the
+  branch or filed as `debt` according to where it sits**
+  (`docs/decisions/sibling-sites-are-swept-not-filed.md`) — three cases, and the
+  PR body says which one each finding fell in:
+  - **In the fix's own additions**, or created by it — fix it. That is not debt,
+    it is the fix unfinished.
+  - **A second site of the invariant this fix just established**, in the same
+    file or its sibling types and reachable by one grep — fix it in this branch.
+    Filing instead is what made `Atlas` take the same fix four times, at issues
+    #724, #983, #1001 and #1074, each round's review finding the next public
+    field. The boundary is deliberate: the same invariant nearby, never a
+    workspace-wide sweep of everything of that shape.
+  - **Independent of the fix** — file one `debt`-labeled issue (linked to the
+    story), **and put it on a milestone**: the current slice, the next one, or
+    `v1` for anything not scheduled to a slice. Debt with no milestone is
+    invisible at every slice close, and it is the largest population of the
+    four: 52 open `debt` issues carry none, against 42 in `v1`, measured
+    2026-08-12. Re-derive with
+    `gh issue list --label debt --state open
+    --limit 300 --json milestone`
+    rather than trusting those two numbers.
 - **When a critical finding changes the implementation, review the fix too** — a
   pass over what changed, not a second full pass. The fix is written under more
   time pressure than the original and lands after the pass that would have
