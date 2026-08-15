@@ -300,17 +300,75 @@ difference and make every rect-differing set unlowerable.
 Three rules, and the split is what each one costs:
 
 - `figma.prototype.unsupported-interaction` — a trigger, action or navigation
-  with no lowering, and a `CHANGE_TO` naming a destination no component set in
-  the file carries, which lowers no switch at all. Nothing about either reaches
-  the document, so it follows the emit policy exactly as `figma.unsupported`
-  does: an error under `Strict` (R6), a warning under `Partial`. Unlike
-  `figma.unsupported` it does **not** skip the node — what has no lowering is
-  the behaviour, not the box.
+  with no lowering, and a `CHANGE_TO` that lowers no switch at all. Nothing
+  about either reaches the document, so it follows the emit policy exactly as
+  `figma.unsupported` does: an error under `Strict` (R6), a warning under
+  `Partial`. Unlike `figma.unsupported` it does **not** skip the node — what has
+  no lowering is the behaviour, not the box.
+
+  **One population under this rule is a warning in both policies** (issue
+  #1016): a `CHANGE_TO` on a node whose own component set the file does not
+  carry at all. The two cases are separable at the point of resolution and cost
+  different things:
+
+  - the file **carries** the set and the destination is not one of its members —
+    a `destinationId` the export closure trimmed. The file is broken, and
+    shipping it ships a button whose click does nothing. This is the population
+    issue #976 argued from, and it follows the policy.
+  - the node's `componentId` names a component **the file does not contain** —
+    the ordinary shape of an instance of a published-library component set.
+    Nothing is broken; the export simply did not include the library.
+
+  Only the second is the exemption, and it is keyed on the component being
+  absent rather than on no set being found. A node that belongs to no set while
+  the file is present in full — a plain frame, or an instance of a standalone
+  local `COMPONENT` — has a `CHANGE_TO` that resolves nowhere and never could,
+  which is the broken case and not the un-exported one.
+
+  The second is a degrade by this record's own test — "a degrade leaves the
+  picture exactly as it is" — and by the neighbouring severity: **a set that is
+  absent cannot earn a harsher answer than one that is present and
+  unlowerable.** `figma.variants.unlowerable-set` is a warning in both policies
+  for a set the file carries and this pass cannot express, on the ground that
+  refusing would withhold a document that renders correctly. An instance whose
+  set the export never included loses exactly the same thing — the variant table
+  — and its baked subtree paints identically. Making the absent set the error
+  and the present-but-unlowerable one the warning inverts the two.
+
+  What it costs to get this wrong is not hypothetical: prototyping on an
+  instance of a library component is ordinary Figma practice, so an error here
+  refuses a large share of real files under `Strict` for a switch their author
+  never removed.
+
+  The closure reaches the same answer for the same population one layer up,
+  which is corroboration rather than authority: §4 of "Choice" above makes an
+  unplaceable master a `figma.closure.local-master-unplaceable` /
+  `remote-master-unplaceable` **warning** rather than a block, because a baked
+  instance renders without its master and "omits only the master's own
+  validation and variant table". That paragraph closes by stating that
+  `EmitPolicy` never reaches the closure and that its severity change is
+  therefore "a separate closure/import-path severity change rather than a reuse
+  of it" — so it settles the closure's own gate and not this one. It is cited
+  here for the fact it establishes, that the missing master costs the picture
+  nothing and the variant table everything, which is the fact this ruling turns
+  on.
+
+  A refused trigger, action or navigation on that same instance stays at the
+  policy's severity. It has no lowering whatever file carries the set, so it is
+  a vocabulary gap rather than an export that left a library out.
 - `figma.prototype.unsupported-motion` — an easing with no `dashcue` spelling, a
   difference on a channel no transition can animate, or a second member
   declaring a different transition to a destination one already claimed. Always
-  a warning: the switch ships and lands in one frame, or with the transition
-  that won, which is what a member with no transition has always meant.
+  a warning, which is the property this rule carries: usually because the switch
+  ships and lands in one frame, or with the transition that won, which is what a
+  member with no transition has always meant.
+
+  One population wears it with no switch behind it (issue #1017): a refused
+  curve on a switch into a set that lowers no variant table. `unlowerable-set`
+  names that switch's loss and this names the curve's, at the same severity —
+  dropping it would be a silent drop, and it would then surface for the first
+  time on the compile after the set is repaired. Its message says the switch
+  carries nothing rather than that it lands in one frame.
 - `figma.variants.unlowerable-set` — always a warning, for the sharper reason:
   before this story _every_ Figma import emitted no variant table, so a set this
   pass cannot express leaves the document exactly as it was. Making it an error

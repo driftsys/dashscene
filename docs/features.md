@@ -418,13 +418,31 @@ Checked against `importers/figma/src/`, `crates/dashc/src/`,
       other two never do.** Limit 1 folds two behaviours together, and they
       differ: a refused trigger, action or navigation is an omission and is an
       error under strict, while a refused **easing** — Figma's spring presets
-      and its custom bezier — is always a warning, because the switch still
-      ships and lands in one frame. An unlowerable set and an unanimated
-      difference each leave a correct picture, so refusing the file would
-      withhold something that renders properly. A dropped interaction is
+      and its custom bezier — is a warning wherever the switch it animates
+      still ships, because that switch lands in one frame and the picture is
+      unchanged. Where the switch itself is dropped, the refused easing is part
+      of that omission and carries its severity instead — there is no state
+      change left for it to degrade. The same applies wherever the switch reaches
+      no variant table — a component set that lowers none, an instance whose
+      own table was refused, or a layer whose switch the table never carries.
+      In each the easing is still reported, as a warning that says the switch
+      reached nothing rather than that it lands in one frame, and none of them
+      refuses the file. An unlowerable set and an
+      unanimated difference each leave a correct picture, so refusing the file
+      would withhold something that renders properly. A dropped interaction is
       authored intent going missing, which strict mode exists to catch —
       so a prototype built on hover or timeout triggers will fail a strict
       build rather than import silently.
+
+      **A variant switch on an instance of a component the file does not
+      contain is a warning, not a refusal.** That is what every instance of a
+      published library component looks like when the export did not include
+      the library, and it loses the same thing an unlowerable set loses — the
+      variant table — while the instance still paints exactly what the
+      designer sees. The switch is what this covers, and not the rest of the
+      interaction: a trigger, action or navigation outside the vocabulary is
+      refused on such an instance exactly as it is anywhere else, because it
+      has no lowering whichever file carries the component.
 - [x] **Design tokens and designer intent** — Figma Variables reach the running
       application both as values and by name, without a plugin. A companion
       plugin lets a designer mark scaffolding that should not ship. Which
