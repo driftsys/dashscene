@@ -121,13 +121,27 @@ composited over itself is darker than the original.
 ## Consequences
 
 The planner's `Pass` gains one field and the renderer gains two pipelines, three
-full-target textures and a per-backdrop uniform. The textures are released for
-any frame that draws no backdrop, because three drawable-sized textures are the
+full-target textures and a per-backdrop uniform. The textures are released for a
+scene that draws no backdrop, because three drawable-sized textures are the
 largest allocation this painter makes and holding them for a scene that stopped
-having a frosted panel would keep them alive for nothing. Under D4's amendment
-that includes a frame whose backdrops were all refused, so a refusal that
-changes from frame to frame releases and rebuilds them on each change — issue
-#1020.
+having a frosted panel would keep them alive for nothing.
+
+**Not on the first such frame** — that was the shape until issue #1020, and D4's
+amendment is what made it wrong. Under D4 a frame whose backdrops were all
+refused takes the same branch as one that plans none, and
+`ResidencyError::FrameExceedsAtlas` is decided per frame and is not memoized, so
+a backdrop can be refused on one frame and drawn on the next indefinitely.
+Releasing on the first such frame therefore rebuilt all twelve objects on every
+one of those changes.
+
+The release is now in two steps, and `BlurTargets::prepare` is where the split
+is written. The per-backdrop uniforms and bind groups go on the first frame that
+draws no backdrop, because one of them can name a coverage atlas view that frame
+did not name. The frame-wide textures and the base blit survive
+`BLUR_TARGET_GRACE_FRAMES` — one — consecutive such frames, so a gap of one
+frame costs four objects to come back from and a gap of two or more costs
+twelve. A scene that has genuinely stopped frosting still releases, one frame
+later than it did.
 
 R-T4's per-frame budget grows for a frame with a backdrop by one full-target
 copy, two blur passes and one composite. That is stated rather than hidden, and
