@@ -369,11 +369,46 @@ is written down. All of it is what a frame with no backdrop planned at all
 already did, and `a_frame_whose_only_backdrop_is_refused_allocates_nothing`
 measures the difference between the two.
 
-The saving has a cost in the other direction, and it is filed rather than
-hidden: `prepare` releases the three textures for any frame it is prepared for
-no backdrop at all, which now includes a refused-only frame. A refusal that
-changes from frame to frame therefore releases and rebuilds those twelve objects
-on each change, where before the targets were held across it. Issue #1020.
+That saving had a cost in the other direction, and issue #1020 is where it was
+paid. `prepare` released the three textures for any frame it was prepared for no
+backdrop at all, which since #994 includes a refused-only frame — so a refusal
+that changed from frame to frame rebuilt all twelve objects on each change.
+`ResidencyError::FrameExceedsAtlas` makes that reachable rather than
+hypothetical: it is returned as a bare `Err` and is deliberately not memoized,
+so it is decided per frame from what else that frame made resident and can
+differ on every frame indefinitely.
+
+**The release is now in two steps.** The per-backdrop uniforms and bind groups —
+four objects each, the line of `prepare`'s inventory that scales — go on the
+first frame prepared for none, because each names one backdrop's coverage atlas
+view and that frame named no mask. The frame-wide base, snapshot, scratch and
+blit survive `BLUR_TARGET_GRACE_FRAMES` of them.
+
+That constant is **one**, and what it buys is exact: a gap of one frame costs
+the per-backdrop objects to come back from, and a gap of two or more costs those
+and the frame-wide ones underneath them — four against twelve, for one backdrop.
+No fixed number covers every pattern, and this one is chosen for the
+pathological case: a refusal that flickers frame to frame and never settles,
+which `FrameExceedsAtlas` can do indefinitely. A refusal lasting two consecutive
+frames still releases, and that is the intended answer rather than a shortfall —
+three drawable-sized textures are about 24 MiB at 1920 x 1080, and a scene that
+has not frosted for two frames is asking for them back.
+
+The per-backdrop half is dropped on the first such frame because a bind group
+there **can** name a coverage atlas view the frame did not name. Not all of them
+do: a backdrop with no coverage mask binds the renderer-lifetime placeholder and
+`bound_atlases` records `None` for it, so holding those would be sound and would
+make an unmasked alternating backdrop free rather than four objects per change —
+the showcase's own frosted panel is one. That saving is not taken: it needs a
+second condition on the branch and a second claim about which bindings are safe
+to keep, where dropping the lot needs neither.
+
+`an_alternating_refusal_does_not_rebuild_the_frame_wide_targets` straddles the
+boundary, and its two inequalities pin one half each. That returning from one
+refused frame costs **less** than returning from two is what says the frame-wide
+half was held — with the grace removed both cost twelve. That it costs **more
+than nothing** is what says the per-backdrop half was not, which is what keeps
+the grace clear of issue #1050.
 
 **The filter and the slot come from one list**, and that is the whole of why
 this is safe. `BlurTargets` builds one bind-group pair per entry of

@@ -3501,8 +3501,15 @@ const _: () = assert!(std::mem::offset_of!(GpuBlur, rotation_pivot) % 8 == 0);
 /// instead, which is already a texture this painter owns — so the base is only
 /// ever the frame's own target.
 ///
-/// Held across frames for the reason [`LayerTargets`] is, and rebuilt when the
-/// extent or the number of backdrops changes. The parameters are written every
+/// Held across frames for the reason [`LayerTargets`] is. The two halves are
+/// rebuilt on different conditions since issue #1020, and
+/// [`BlurTargets::prepare`] is where that is written: the per-backdrop uniforms
+/// and bind groups on any change of extent, buffer or bound atlas, and the
+/// frame-wide targets only on a change of extent or once more than
+/// [`BLUR_TARGET_GRACE_FRAMES`] consecutive frames have held no backdrop — so
+/// at the current value, on the second such frame and not the first. A scene
+/// going one backdrop, none, one at a fixed extent therefore rebuilds nothing
+/// frame-wide. The parameters are written every
 /// frame regardless: a blur radius animates without changing how many backdrops
 /// there are, and a stale uniform would blur at the previous frame's sigma.
 #[derive(Default)]
@@ -3548,10 +3555,50 @@ struct BlurTargets {
     /// a steady scene off the allocation path. Its length is also the count the
     /// buffers were built for.
     bound_atlases: Vec<Option<u32>>,
+    /// How many consecutive frames have been prepared for no backdrop, capped
+    /// at one past [`BLUR_TARGET_GRACE_FRAMES`].
+    ///
+    /// Capped rather than counted, because the only question asked of it is
+    /// whether the grace has run out — and stopping there is what keeps a scene
+    /// that holds no backdrop at all from re-running the release on every frame
+    /// for the life of the scene.
+    idle: u32,
     /// Device objects allocated here, counted beside the others — see
     /// [`Renderer::allocations`].
     allocations: u64,
 }
+
+/// How many consecutive frames needing no backdrop the **frame-wide** targets
+/// survive before they are released.
+///
+/// One, and what that buys is exact: **a gap of one frame costs the
+/// per-backdrop objects, and a gap of two or more costs those and the
+/// frame-wide ones underneath them** — four against twelve, for one backdrop
+/// (issue #1020). No fixed number covers every pattern, and this one is chosen
+/// for the pathological case rather than for all of them.
+///
+/// The pathological case is a refusal that flickers frame to frame and never
+/// settles. [`ResidencyError::FrameExceedsAtlas`] is decided per frame from what
+/// else that frame made resident, and it is deliberately not put in the
+/// permanent refusal memo — so a backdrop can be refused on one frame and drawn
+/// on the next, indefinitely. Releasing on the first frame that needs none paid
+/// three drawable-sized textures and their views back on every one of those
+/// changes, forever.
+///
+/// A refusal that lasts two consecutive frames still releases, and that is the
+/// intended answer rather than a gap in this one: at 1920 x 1080 `Rgba8Unorm`
+/// the three textures are about 8 MiB each, and a scene that has not frosted for
+/// two frames is asking for them back. Raising this trades that commitment
+/// against a rebuild for a scene that is not frosting.
+///
+/// **It bounds only the frame-wide objects.** The per-backdrop uniforms and
+/// bind groups are dropped on the first such frame whatever this says, because
+/// each names a coverage atlas view — see [`BlurTargets::prepare`]. That split
+/// is also what keeps this grace from widening issue #1050, where
+/// [`Renderer::forget_uploaded`] leaves [`BlurTargets::bound_atlases`] naming
+/// atlas indices a document replacement has shifted: the groups that could go
+/// stale are the ones this does not hold.
+const BLUR_TARGET_GRACE_FRAMES: u32 = 1;
 
 impl BlurTargets {
     /// Makes one backdrop's worth of targets and parameters available per entry
@@ -3573,19 +3620,35 @@ impl BlurTargets {
     /// Only the last line scales; the first two are the frame's, however many
     /// backdrops it holds.
     ///
-    /// # A frame prepared for no backdrop releases everything
-    ///
-    /// The three full-target textures are the largest allocation this painter
-    /// makes per frame, and holding them for a scene that stopped having a
-    /// frosted panel would keep three drawable-sized textures alive for
-    /// nothing.
+    /// # A frame prepared for no backdrop releases in two steps
     ///
     /// **Prepared for, not planned.** Since issue #994 `masks` holds the
-    /// backdrops that draw, so a frame that plans one and refuses it takes this
-    /// path too. That is what makes a refused-only frame cost what a frame with
-    /// no backdrop costs; it also means a refusal that changes between frames
-    /// releases and rebuilds those twelve objects on each change, which issue
-    /// #1020 is about.
+    /// backdrops that *draw*, so a frame that plans one and refuses it reaches
+    /// this branch too. That is what makes a refused-only frame cost what a
+    /// frame with no backdrop costs — and it is also why the branch cannot
+    /// simply release, which is issue #1020.
+    /// [`ResidencyError::FrameExceedsAtlas`] is decided per frame and is not
+    /// memoized, so a backdrop can be refused on one frame and drawn on the
+    /// next indefinitely, and releasing on the first such frame paid all twelve
+    /// objects back on every change.
+    ///
+    /// So the two halves are released on different schedules:
+    ///
+    /// - The **per-backdrop** uniforms and bind groups go on the first such
+    ///   frame. Each names one backdrop's coverage atlas view, and this frame
+    ///   named no mask — holding a binding across that is how a group outlives
+    ///   what it was built for. Four objects per backdrop, the line the
+    ///   inventory above says is the one that scales, and the next frame that
+    ///   draws rebuilds them.
+    /// - The **frame-wide** base, snapshot, scratch and blit survive
+    ///   [`BLUR_TARGET_GRACE_FRAMES`] of them. These are the eight that do not
+    ///   scale, and three of them are drawable-sized textures — the largest
+    ///   allocation this painter makes.
+    ///
+    /// So for a one-backdrop scene, a gap of one frame costs four objects to
+    /// come back from where it used to cost twelve, and a gap of two or more
+    /// still costs twelve. `BLUR_TARGET_GRACE_FRAMES` says why that is the
+    /// intended split rather than a shortfall.
     #[allow(clippy::too_many_arguments)]
     fn prepare(
         &mut self,
@@ -3602,12 +3665,46 @@ impl BlurTargets {
     ) {
         let count = masks.len();
         if count == 0 {
-            *self = Self {
-                allocations: self.allocations,
-                ..Self::default()
-            };
+            // **Nothing at all once the release has happened.** `idle` stops at
+            // one past the grace, so a scene that simply holds no backdrop —
+            // two of the three showcase scenes — does not re-run the clears and
+            // the struct overwrite on every frame of its life. That is the
+            // steady path R-T4 bounds, and this branch is on it.
+            if self.idle <= BLUR_TARGET_GRACE_FRAMES {
+                self.idle += 1;
+                if self.idle > BLUR_TARGET_GRACE_FRAMES {
+                    // The grace has run out and everything goes. The clears
+                    // below are not repeated here: this discards the vectors
+                    // they would empty.
+                    *self = Self {
+                        allocations: self.allocations,
+                        idle: self.idle,
+                        ..Self::default()
+                    };
+                } else {
+                    // **The per-backdrop half goes even inside the grace.** A
+                    // bind group here can name one backdrop's coverage atlas
+                    // view, and this frame named no mask at all — holding a
+                    // binding across a frame that named none is how a group
+                    // outlives what it was built for.
+                    //
+                    // *Can*, not does: a backdrop with no coverage mask binds
+                    // `Renderer::placeholder`, which outlives every frame, and
+                    // `bound_atlases` records `None` for it. Holding those
+                    // would be sound and would make an unmasked alternating
+                    // backdrop — the showcase's frosted panel is one — free
+                    // rather than four objects per change. It is a saving not
+                    // taken here: it needs a second condition on this branch
+                    // and a second claim about which bindings are safe to keep,
+                    // where dropping the lot needs neither.
+                    self.uniforms.clear();
+                    self.bind_groups.clear();
+                    self.bound_atlases.clear();
+                }
+            }
             return;
         }
+        self.idle = 0;
         let resized = self.width != width || self.height != height;
         if resized || self.base.is_none() {
             self.base = Some(Owned::new(
@@ -3664,8 +3761,25 @@ impl BlurTargets {
         // The bind groups name the clip buffer and one atlas view each, so a
         // frame that reallocated the buffer or moved a mask has to rebuild them
         // — the same reason `Frame::rebind` exists, one pipeline over.
-        let atlases: Vec<Option<u32>> = masks.iter().map(|(atlas, _)| *atlas).collect();
-        if resized || rebind || self.bound_atlases != atlases {
+        //
+        // Compared without materialising the list (issue #1028). The steady
+        // path does not take the branch, so a `collect()` here was one
+        // allocation and one free on every frame that draws a backdrop, for a
+        // comparison that needs neither. `Iterator::eq` answers `false` on a
+        // length difference too, so nothing is lost.
+        //
+        // Inside the condition rather than bound above it, so the `||` still
+        // short-circuits: a resize or a reallocated buffer has already decided
+        // to rebuild, and walking both lists to produce a value that decision
+        // discards is the same shape of wasted work this issue is about.
+        if resized
+            || rebind
+            || !self
+                .bound_atlases
+                .iter()
+                .copied()
+                .eq(masks.iter().map(|(atlas, _)| *atlas))
+        {
             self.uniforms.clear();
             self.bind_groups.clear();
             let snapshot = &self.snapshot.as_ref().expect("allocated above").view;
@@ -3716,7 +3830,14 @@ impl BlurTargets {
                     self.allocations += 2;
                 }
             }
-            self.bound_atlases = atlases;
+            // Refilled rather than replaced, so the allocation the idle branch's
+            // `clear` kept is the one this reuses. Assigning a fresh `collect()`
+            // here would drop it, and the return from an idle frame is the path
+            // this change exists to make cheap — the same Vec churn issue #1028
+            // removed nine lines above.
+            self.bound_atlases.clear();
+            self.bound_atlases
+                .extend(masks.iter().map(|(atlas, _)| *atlas));
         }
     }
 
@@ -3724,13 +3845,33 @@ impl BlurTargets {
     ///
     /// # Panics
     ///
-    /// Panics when the frame draws none. **Which is not the same as planning
-    /// none** since issue #994: a frame that plans one backdrop and refuses it
-    /// releases the base along with everything else, so a caller that guards
-    /// this on `plan.iter().any(|pass| pass.backdrop.is_some())` rather than on
-    /// the count `BlurTargets::prepare` was given panics on exactly that
-    /// frame.
+    /// Panics when no base has been prepared. **The one correct guard is the
+    /// count [`BlurTargets::prepare`] was given** — `backdrops` in
+    /// [`Renderer::draw`] — and that has been true since issue #994 made a
+    /// planned backdrop and a drawn one different questions.
+    ///
+    /// A caller guarding on `plan.iter().any(|pass| pass.backdrop.is_some())`
+    /// instead is wrong on exactly the frame that plans one backdrop and refuses
+    /// it, and **since issue #1020 it is wrong quietly**. It used to panic here,
+    /// because that frame released the base along with everything else; now the
+    /// base survives [`BLUR_TARGET_GRACE_FRAMES`] of such frames, so the caller
+    /// draws the whole frame into a retained base and the blit that would put it
+    /// back is skipped — it is gated on the same count — and the caller's view
+    /// comes back empty. The panic arrives only once the grace has run out.
+    ///
+    /// The debug assertion below is what puts that failure back where the
+    /// release used to leave it: `idle` is zero exactly when the last
+    /// [`BlurTargets::prepare`] was given a non-zero count, so it answers the
+    /// question the `Option` used to answer and answers it on the first frame
+    /// rather than the second.
     fn base(&self) -> &Owned {
+        debug_assert_eq!(
+            self.idle, 0,
+            "`base` was read on a frame prepared for no backdrop. Since issue #1020 the texture \
+             survives that frame, so this reads a target nothing will blit back — the caller's \
+             view comes back unwritten rather than panicking. Guard on the count `prepare` was \
+             given, never on what the plan holds",
+        );
         self.base
             .as_ref()
             .expect("a frame with no backdrop draws into the caller's view")

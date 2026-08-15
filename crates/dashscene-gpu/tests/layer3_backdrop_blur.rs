@@ -1404,6 +1404,210 @@ fn a_frame_whose_only_backdrop_is_refused_allocates_nothing() {
     );
 }
 
+/// **A refusal that changes from frame to frame does not rebuild the blur
+/// targets** (issue #1020).
+///
+/// Issue #994 filtered a refused backdrop out before `BlurTargets::prepare`,
+/// which is the saving `a_frame_whose_only_backdrop_is_refused_allocates_nothing`
+/// measures. Its cost is in the other direction: a frame that plans one backdrop
+/// and refuses it now reaches the branch that released everything, so a refusal
+/// that is not stable across frames paid three drawable-sized textures and their
+/// views back on every change.
+///
+/// **This is reachable rather than hypothetical.**
+/// `ResidencyError::FrameExceedsAtlas` is returned as a bare `Err` and is
+/// deliberately not put in the permanent refusal memo, so it is decided per
+/// frame from what else that frame made resident — a backdrop can therefore be
+/// refused on one frame and drawn on the next, indefinitely. It is the **only**
+/// arm of `ResidencyError` that escapes the memo: `NoDecoder`,
+/// `UnsupportedFormat` and `TooLarge` all go through `Residency::refuse`, which
+/// records them, so those three are stable and cannot oscillate. This fixture
+/// uses `NoDecoder` because it is the one a test can produce deterministically,
+/// and the branch of `prepare` it exercises is the same one.
+///
+/// # What is compared, and why one alternation is not enough
+///
+/// A single refused frame proves nothing: the targets survive
+/// `BLUR_TARGET_GRACE_FRAMES` of them, so the measurement has to straddle that
+/// boundary. Coming back from **one** idle frame rebuilds only the per-backdrop
+/// uniforms and bind groups; coming back from **two** rebuilds those and the
+/// frame-wide targets underneath them. So the claim is that the first is
+/// strictly cheaper than the second, which is false both when the grace is
+/// removed — the two become equal — and when it is measured wrong.
+///
+/// Stated as an inequality rather than as two counts, because the counts are
+/// `BlurTargets::prepare`'s own inventory and a test restating it would be the
+/// second copy that record exists to avoid.
+///
+/// Every scene is drawn before anything is measured, for the reason its siblings
+/// give: a cold frame's own buffers growing satisfies "allocated more" whatever
+/// the blur targets do.
+#[test]
+fn an_alternating_refusal_does_not_rebuild_the_frame_wide_targets() {
+    let mut images = ImageTable::new();
+    let field = images.push(ImageAsset {
+        format: ImageFormat::Jpeg,
+        bytes: JPEG_FIXTURE.to_vec(),
+    });
+    let extent = images.resolve(field);
+    assert!(
+        extent.width != 0 && extent.height != 0,
+        "the fixture must have an extent on both axes, or `resident_image` answers with the \
+         no-bytes case before it ever reaches a decoder and nothing is refused — got {} x {}",
+        extent.width,
+        extent.height,
+    );
+
+    // The live backdrop carries a **real coverage mask**, unlike the one in
+    // `a_frame_whose_only_backdrop_is_refused_allocates_nothing`. That test
+    // keeps the JPEG as the only payload so residency is identical across its
+    // scenes; here the atlas is the point. `BlurTargets::bound_atlases` would
+    // hold `[None]` on every frame of an unmasked fixture, so the interaction
+    // this test is about — a bind group naming a real atlas view dropped on the
+    // idle frame and rebuilt on return — would never be driven, and a change
+    // that held the per-backdrop half across the grace would keep it green.
+    //
+    // Residency's own allocation is kept out of the measurement by drawing both
+    // scenes in the warm-up below, which is what every allocation test in this
+    // file does for `Frame`'s buffers.
+    let atlas = images.push_baked(mask_field(), MASK_ATLAS, MASK_ATLAS);
+
+    // Two scenes over one image table.
+    let refused = {
+        let mut paints = PaintTable::new();
+        let mut rects = halves(&mut paints);
+        let panel = paints.push_with(
+            PaintEntry::default(),
+            EntryParts {
+                blurs: &[backdrop(24.0)],
+                shape: Some(VectorField {
+                    image: field,
+                    atlas_rect: MASK_RECT,
+                    plane_bounds: [0.0, 0.0, 20.0, 32.0],
+                    distance_range: 0.5,
+                }),
+                ..EntryParts::default()
+            },
+        );
+        rects.push(rect(24.0, 8.0, 36.0, 32.0, panel));
+        (rects, paints)
+    };
+    let live = {
+        let mut paints = PaintTable::new();
+        let mut rects = halves(&mut paints);
+        let panel = paints.push_with(
+            PaintEntry::default(),
+            EntryParts {
+                blurs: &[backdrop(24.0)],
+                shape: Some(VectorField {
+                    image: atlas,
+                    atlas_rect: MASK_RECT,
+                    plane_bounds: [0.0, 0.0, 20.0, 32.0],
+                    distance_range: 0.5,
+                }),
+                ..EntryParts::default()
+            },
+        );
+        rects.push(rect(24.0, 8.0, 36.0, 32.0, panel));
+        (rects, paints)
+    };
+
+    let clips = ClipTable::new();
+    let mut renderer = renderer();
+    let mut draw_once = |rects: &[RectEntry], paints: &PaintTable| {
+        let mut painter = GpuPainter::new();
+        painter.paint(
+            rects,
+            paints,
+            &images,
+            &clips,
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        renderer
+            .render(
+                painter.instances(),
+                paints,
+                &images,
+                &clips,
+                &GlyphRunTable::new(),
+                W,
+                H,
+            )
+            .expect("the fixture extent is within any device's maximum");
+        // The refusals with the count, because `resolve_frame` clears them at
+        // the head of every frame: read after a later draw they would be that
+        // frame's. The sibling test says the same.
+        (renderer.allocations(), renderer.refusals().len())
+    };
+
+    // Warm both, and leave the renderer on a frame that drew. This is also what
+    // takes the mask atlas out of the measurement: it is made resident on the
+    // first live frame and stays touched by every later one.
+    draw_once(&live.0, &live.1);
+    draw_once(&refused.0, &refused.1);
+    draw_once(&live.0, &live.1);
+    draw_once(&refused.0, &refused.1);
+    let (warm, live_refusals) = draw_once(&live.0, &live.1);
+    assert_eq!(
+        live_refusals, 0,
+        "the live scene's mask must be resident, or both scenes are refused and the alternation \
+         this measures never happens",
+    );
+
+    // One refused frame, then back. Inside the grace period.
+    let (idle_once, refusals) = draw_once(&refused.0, &refused.1);
+    assert_eq!(
+        refusals, 1,
+        "the refused scene must actually be refused, or it is a second live frame",
+    );
+    assert_eq!(
+        idle_once, warm,
+        "a refused frame allocates nothing itself — {warm} then {idle_once}",
+    );
+    let after_one = draw_once(&live.0, &live.1).0 - idle_once;
+
+    // Two refused frames, then back. The second crosses the grace period, so
+    // this rebuild includes the frame-wide targets the one above reused.
+    let (before_two, _) = draw_once(&refused.0, &refused.1);
+    let (released, _) = draw_once(&refused.0, &refused.1);
+    assert_eq!(
+        released, before_two,
+        "releasing the targets frees rather than allocates — {before_two} then {released}",
+    );
+    let after_two = draw_once(&live.0, &live.1).0 - released;
+
+    // The two halves, and each inequality pins one of them.
+    //
+    // **The frame-wide half is held**: coming back from one refused frame costs
+    // less than coming back from two. Equal means it was released on the first
+    // refused frame after all, which is the rebuild-on-every-change issue #1020
+    // is about — and `FrameExceedsAtlas` can alternate on every frame
+    // indefinitely.
+    assert!(
+        after_one < after_two,
+        "coming back from one refused frame must cost less than coming back from two: {after_one} \
+         against {after_two}.\n\n\
+         **This test assumes `BLUR_TARGET_GRACE_FRAMES` is 1**, which it cannot read — the \
+         constant is private to the crate. If it was raised, both returns above are inside the \
+         grace, both cost the same, and this fails saying nothing about the fix: add refused \
+         frames to the second run until it straddles the new boundary. If it was removed, both \
+         cost twelve, and that is the defect issue #1020 is about",
+    );
+    // **The per-backdrop half is not.** Each of those bind groups names this
+    // scene's coverage atlas view, and the refused frame named no mask at all,
+    // so they go on it and the return frame rebuilds them. Zero here means they
+    // were held across a frame that named nothing they could be built from —
+    // which is what keeps the grace clear of issue #1050, and which the
+    // inequality above would accept.
+    assert!(
+        after_one > 0,
+        "returning from a refused frame must rebuild the per-backdrop uniforms and bind groups: \
+         {after_one}",
+    );
+}
+
 /// **A frame whose backdrop is refused still clears its target** (issue #994).
 ///
 /// A pass that resolves a backdrop clears the target itself, before the blur
@@ -1625,10 +1829,15 @@ fn a_frame_with_a_backdrop_allocates_and_a_steady_one_does_not() {
         "a warm frame that holds a backdrop reallocates nothing",
     );
 
-    // A frame with no backdrop releases the three drawable-sized targets, and
-    // the next frosted frame has to build them again. Both scenes have been
-    // drawn already, so every other allocator is warm and this delta is the
-    // blur targets and nothing else.
+    // A frame with no backdrop releases the per-backdrop uniforms and bind
+    // groups, and the next frosted frame has to build them again. **Not the
+    // three drawable-sized targets**, which survive `BLUR_TARGET_GRACE_FRAMES`
+    // of such frames since issue #1020 — one plain frame is inside that, so
+    // what `rebuilt` counts here is four objects and not twelve.
+    // `an_alternating_refusal_does_not_rebuild_the_frame_wide_targets` is what
+    // straddles the boundary; this test only needs the delta to be non-zero.
+    // Both scenes have been drawn already, so every other allocator is warm and
+    // this delta is the blur targets and nothing else.
     let released = draw_once(&plain_rects, &plain_paints);
     assert_eq!(
         released, steady,
