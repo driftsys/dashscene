@@ -144,36 +144,21 @@ did not have.
   upper bound on its own copy of this operand.
 - **`VectorField::atlas_rect`'s extent is deliberately not refused.**
   `dashscene-gpu`'s `field_draws` treats a zero width or height as a field that
-  draws nothing, so it is a legal state, and this is still not a seam check.
-  Issue #1000 closed the painter half instead: `dashscene-skia`'s
-  `field_coverage` now takes `field_draws`' predicate before its own device-quad
-  guard, so both painters answer the same way. The measurement that issue was
-  filed on turned out to be in the wrong place — the masked-fill path already
-  drew nothing, by way of a shader that answered zero coverage for an infinite
-  scale, while the **backdrop-blur** path erased the backdrop under the node.
-  The residual is in the predicate itself rather than in either painter: it
-  rejects a NaN, because every comparison against one is false, and **admits an
-  infinity**, which both painters then turn into an infinite `px_range`. That is
-  issue #1034.
-- **`push_with` is atomic on its own refusals** (issue #1012, which closed the
-  gap this bullet used to record). Every refusal runs before the first of the
-  five arrays is extended, so a caught unwind leaves the table as it was. It
-  does not follow that a commit is atomic: the production caller interns the
-  entry's own fill and every stacked layer into the same table before it calls
-  in, so a refusal here leaves those interned rows behind. They are inert — an
-  interned fill is deduplicated by content, so the next commit staging the same
-  fill reuses the row — and `compact_paints` rebuilds the table from the entries
-  that survived.
-- **A `.dsb` now reaches `push_with` through a validator that does look at
-  `distance_range`** (issue #1002): `vector.atlas-distance-range-out-of-domain`
-  fires over the same `vector_atlases` loop `vector.atlas-image-out-of-range`
-  does, so the panic is the second check rather than the only one. `Atlas::new`
-  records the same shape for the glyph side, where `AtlasMetrics::from_bytes`
-  refuses a bad blob at the parse boundary and the constructor check comes after
-  it. The rule went into `validate_document`, which `dashc`, `dashscene-desktop`
-  and `dashscene-ffi` all call, and **not** into `validate_scene` — the gate
-  whose stated job is to turn these panics into named diagnostics, and which has
-  no production caller at all. That remains true and remains the larger problem.
+  draws nothing, so it is a legal state. That `dashscene-skia` divides by it
+  instead of taking the same skip is a painter divergence, issue #1000, which
+  also covers a non-finite `plane_bounds` — `field_draws` rejects that and
+  skia's own degenerate guard does not.
+- **`push_with` is not atomic on its other panics** (issue #1012). Only this
+  check runs before the five arrays are extended; `push_entry`'s panics do not,
+  and the production caller interns the entry's fills into the same table before
+  calling in.
+- **A `.dsb` reaches `push_with` through a validator that does not look at
+  `distance_range`** (issue #1002), so for a document the panic is currently the
+  only check rather than the second one. `Atlas::new` records the shape the pair
+  should have: `AtlasMetrics::from_bytes` refuses a bad blob at the parse
+  boundary, and the constructor check comes after it. Closing #1002 is more than
+  adding a rule: `validate_scene`, the gate whose stated job is to turn these
+  panics into named diagnostics, has no production caller at all.
 - **`Atlas::width` and `Atlas::height` are still `pub` and unchecked, and one
   painter divides by both** (issue #1001).
 
@@ -184,12 +169,6 @@ operand of `px_range = distance_range_px * size / px_per_em`, and no seam in
 `TextStyle.size` that `dashscene-engine` copies into the field. The residual is
 the producer that stages a text style directly and never runs the gate, which is
 the same residual every public field on these rows has, and is the reason
-`GlyphRun::opacity` was examined and rejected. #999 is closed as not a finding.
-
-`distance_range` was the one that differed, because at the time it had no rule
-on any path. That is what made #986 and #1002 real, and both have now landed. So
-the two operands are covered the same way on the document path: a validator rule
-refuses the value, and past that gate a producer that stages directly is
-unchecked. They still differ in one respect. `distance_range` also has the seam
-panic this record decides, which runs whether or not the gate did; `size` has no
-equivalent.
+`GlyphRun::opacity` was examined and rejected. #999 is closed as not a finding;
+`distance_range` differs from both because it has no rule on any path, which is
+what made #986 and #1002 real.

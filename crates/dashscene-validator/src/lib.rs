@@ -263,21 +263,6 @@ pub mod rule {
     pub const SHAPE_FIELD_OUT_OF_RANGE: &str = "paint.shape-field-out-of-range";
     pub const VECTOR_SHAPE_ATLAS_OUT_OF_RANGE: &str = "vector.shape-atlas-out-of-range";
     pub const VECTOR_ATLAS_IMAGE_OUT_OF_RANGE: &str = "vector.atlas-image-out-of-range";
-    /// A `VectorAtlas.distance_range` that is not finite and greater than
-    /// zero. `dashscene-core`'s loader folds this value into every
-    /// `VectorField` the atlas covers, and `dashpaint`'s `PaintTable::push_with`
-    /// panics on it there (issue #986) — so without this rule a document that
-    /// validates clean loads and then panics at the seam. Every way out of the
-    /// domain paints a plausible wrong picture rather than nothing: zero gives
-    /// uniform half coverage, a negative value inverts it, and a NaN or an
-    /// infinity reaches the implementation-defined WGSL `clamp`.
-    ///
-    /// The omitted-field case is not exotic: a flatbuffers table scalar with no
-    /// `(required)` decodes to its default, so an atlas written by a producer
-    /// that does not know this field reads back `0.0` and is byte-identical on
-    /// the wire to one that wrote `0.0` deliberately (issue #1002).
-    pub const VECTOR_ATLAS_DISTANCE_RANGE_OUT_OF_DOMAIN: &str =
-        "vector.atlas-distance-range-out-of-domain";
 
     // Image assets — the painter decodes them behind an `expect` documented
     // as "validated upstream (P4)". This is that upstream. `IMAGE_NO_BYTES`
@@ -463,28 +448,6 @@ pub mod rule {
         GRADIENT_STOP_ORDER,
         STROKE_INVALID_WIDTH,
         IMAGE_OUT_OF_RANGE,
-        // The story-B1 baked-vector family. All four, not one: the three index
-        // rules had been absent since B1 landed, and registering only the
-        // fourth would split a family across the answer `is_known` gives.
-        //
-        // Registering a rule is not cosmetic. `waiver::strict` takes `continue`
-        // on `!is_known` **before** it looks for matches, so an unregistered
-        // rule makes every waiver naming it `waiver.unknown-rule`, which is an
-        // error and blocks a strict build. Registered, a waiver naming one that
-        // matched nothing collects `waiver.unused` instead, which is a warning
-        // and does not block. So this changes a strict verdict for a clean
-        // document carrying such a waiver, from fail to pass — which is the
-        // correct answer, because the rule is real and the waiver is merely
-        // dead.
-        //
-        // `the_rule_registry_is_unique_and_covers_every_construct` cannot catch
-        // an omission here: it walks `Construct::ALL`, and every load-gate and
-        // index-chain rule is outside that vocabulary. Issue #1042 carries the
-        // test that would.
-        SHAPE_FIELD_OUT_OF_RANGE,
-        VECTOR_SHAPE_ATLAS_OUT_OF_RANGE,
-        VECTOR_ATLAS_IMAGE_OUT_OF_RANGE,
-        VECTOR_ATLAS_DISTANCE_RANGE_OUT_OF_DOMAIN,
         IMAGE_NO_BYTES,
         ASSET_HASH_LENGTH,
         ASSET_ZERO_EXTENT,

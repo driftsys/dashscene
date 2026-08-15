@@ -289,6 +289,38 @@ are not this: widening the painter's return type, and refusing the document at
 load, which is the only shape that would give `Painter::samples` a caller and
 make `baked-texel-payloads-cross-boundary-b.md` D6 true rather than decorative.
 
+**All three resolved tables state the flag** (issues #972, #993 and #1023).
+`GpuShape::resolved`, `GpuGlyphRun::resolved` and `GpuImage::resolved` each say
+whether the row's other members describe a payload this frame made resident, and
+each of the three shader arms that reads such a row gates on it. The image row
+was the last to get one, and until it did what emptied a refused fill's picture
+was `image_colour` returning transparent black on `size.x <= 0.0` — a guard
+written for `dashscene-validator`'s `asset.image-no-bytes` case, where boundary
+B stores a payload whose binding supplied no bytes at 0 x 0 rather than refusing
+it. The two coincided only because `resolve_frame` writes the row on the success
+path alone, and the asset's extent is in hand two lines from the refusal.
+
+That guard is now **unreachable from the fragment stage**, and it is worth
+saying so rather than leaving it reading as a second case still covered. A 0 x 0
+row is always an _unwritten_ row — `resident_image` answers `None` for a payload
+with no extent, so the no-bytes payload leaves the row at `Default` exactly as a
+refusal does — and the flag turns both away one call earlier. The guard stays as
+`image_colour`'s own precondition, because every branch inside it divides by
+`fill.size`.
+
+The flag costs no bytes: `GpuImage` already carried two pad words and now
+carries one, pinned by its own `offset_of!` block for the reason `GpuShape`'s
+is. Those assertions constrain the Rust side; the WGSL side is pinned by
+`the_image_arm_gates_on_the_row_the_frame_resolved`, which asserts `Image`'s
+member order over the shader source. Both halves are needed, and neither swap
+they admit is the obvious one — a refused row is `GpuImage::default()`, every
+word zero, so no reordering can leave the gate _open_ on one. Swapping
+`resolved` with `_pad` closes it permanently and no image fill in the document
+draws at all, which any fixture sees; swapping it with `tile_scale` leaves the
+gate working by accident and gives `tile_scale` the bit pattern of `1u32`,
+1.4e-45, destroying every `SCALE_TILE` fill and nothing else. The second is the
+quiet one, and no fixture in this crate tiles.
+
 **"The row draws nothing" is a property of the resolved row, not of the
 instance.** A coverage mask reaching this painter is resolved, degenerate — no
 quad or no atlas rectangle, which `field_draws` rejects before residency — or
@@ -315,18 +347,8 @@ Issue #986 did that work: `PaintTable::push_with` now refuses a `distance_range`
 that is not finite and greater than zero, and `PaintTable::shapes` is private
 with `push_with` its only writer, so no such field reaches either painter. The
 paragraph above therefore describes a route that is closed at the seam rather
-than here. `atlas_rect` and `plane_bounds` were the rest of it, and issue #1000
-closed the painter half without changing anything here: `dashscene-skia`'s
-`field_coverage` now takes `field_draws`' predicate verbatim before its own
-device-quad guard, so the two painters answer the same way for every field that
-predicate decides.
-
-What is still open is the predicate. `right > left && bottom > top` rejects a
-NaN, because every comparison against one is false, and **admits an infinity**:
-`gpu_shape` then derives `px_range = distance_range * (right - left) / aw` from
-an infinite bound, and the reference painter, which now takes the same answer,
-erases the backdrop under a frosted node carrying one. Neither painter refuses
-it and no seam does either — issue #1034.
+than here. What is still open on this path is `atlas_rect` and `plane_bounds`,
+where `field_draws` skips and `dashscene-skia` divides — issue #1000.
 
 **An unresolved mask makes the backdrop encode nothing at all**, which is not
 the same as encoding it unmasked. Unmasked means the parametric rounded box, so
@@ -396,6 +418,44 @@ the coverage at zero without it, so the fragment is discarded before any colour
 is read. **Deleting that gate changes no rendered texel**, measured, which is
 why `both_msdf_arms_gate_on_the_row_the_frame_resolved` reads the shader source:
 it is the only thing that can fail on it.
+`the_image_arm_gates_on_the_row_the_frame_resolved` is the same instrument on
+the third table, for the same reason.
+
+**The packer-contract checks run over every _planned_ backdrop**, not over the
+ones that draw (issue #1022). `backdrop_blur_radius` is where they live and it
+is called above the filter that drops a refused one, so a residency outcome
+cannot decide whether a mismatch is named. They opened
+`Renderer::resolve_backdrop` until issue #994 moved the refusal up past them and
+left them covering only half the population.
+
+The two are not the same guard, and only one of them is there in release. The
+**row** check is a `panic!` — the mistake it names, a caller packing against one
+`PaintTable` and drawing against another, draws a plausible wrong picture rather
+than an absent one, which is why it is a release panic and why half a population
+was the wrong half. The **kind** check is a `debug_assert_eq!`, because the plan
+it reads is built inside this crate where the blur table crosses boundary B. An
+embedded release build therefore runs one of the two. `PlannedBackdrop::radius`
+carries the validated row's value to the backdrops that do draw, which is what
+lets `resolve_backdrop` read it without looking the row up a second time.
+
+**A degenerate coverage field is still named by no diagnostic** (issue #1021).
+`field_draws` rejects it before residency, so `Renderer::refuse` is never
+reached and the drop reaches no seam at all — where a _refused_ payload is
+recorded and named. The diagnostic half belongs at the validator, which already
+names `asset.image-no-bytes` for the sibling case and would settle both painters
+at once where a check here names it for this one alone. Issue #1000 is the
+divergence that has to be settled with it.
+
+`a_degenerate_coverage_field_draws_nothing` pins the painter's half over both
+consumers, and **the two rejections are not guarded by the same observable**.
+Dropping the quad half of `field_draws` changes the picture. Dropping the
+atlas-rectangle half changes no texel either consumer draws, measured — the row
+goes out with a NaN `half_uv` and an infinite `px_range`, and both arms come
+back at zero coverage and discard. What catches that one is the draw count: a
+field that resolves plans the backdrop, so the frame encodes the blur's two
+passes and the base blit on top of its instance runs, and
+`Renderer::last_draw_runs` goes from 2 to 5. The picture is not the only
+observable, which is the reason that accessor is public.
 
 ## Two targets, one device
 
