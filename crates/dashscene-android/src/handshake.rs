@@ -55,10 +55,11 @@ use std::time::{Duration, Instant};
 /// clears it with room and still catches a wait that will not end inside the
 /// first few seconds of it.
 ///
-/// **`Duration::ZERO` is not a valid interval.** `Condvar::wait_timeout` would
-/// return immediately every pass and `report_due` would always hold, so the
-/// wait becomes a busy spin on the UI thread emitting one report per iteration.
-/// Nothing rejects it; pass this, or something of the same order.
+/// **It is not a caller's to choose** (issue #1082).
+/// [`Handshake::request_teardown`] reads this; the interval is an argument only
+/// on the crate-private `request_teardown_every`, which is what the tests
+/// drive. Exported all the same, because it is the cadence an embedder reads in
+/// logcat and there is nowhere else to read it from.
 pub const REPORT_EVERY: Duration = Duration::from_secs(2);
 
 /// Whether a wait that has run for `elapsed`, and last reported at `reported`,
@@ -145,8 +146,8 @@ impl Handshake {
     ///
     /// # What `waiting` is for
     ///
-    /// It is called with the elapsed time once every `report_every` for as
-    /// long as the wait continues; [`REPORT_EVERY`] is what the host passes.
+    /// It is called with the elapsed time once every [`REPORT_EVERY`] for as
+    /// long as the wait continues.
     /// **This does not shorten the wait** — a timeout means returning from
     /// `surfaceDestroyed` with a live surface, which is exactly the
     /// use-after-free this type exists to prevent, and the release-build
@@ -157,11 +158,45 @@ impl Handshake {
     /// raised in any run of #960's reproducer, including a 128 s block. It
     /// took a person watching an emulator to notice.
     ///
-    /// The interval is an argument rather than the constant read directly so
-    /// that the rule is testable in milliseconds. A test that had to wait
-    /// [`REPORT_EVERY`] to see one report would cost more wall time than the
-    /// whole sanity tier.
-    pub fn request_teardown(&self, report_every: Duration, waiting: impl Fn(Duration)) {
+    /// The cadence is [`REPORT_EVERY`] and is not an argument here. The
+    /// crate-private `request_teardown_every` is what names it, and it is
+    /// crate-private for the reason issue #1082 gives.
+    pub fn request_teardown(&self, waiting: impl Fn(Duration)) {
+        self.request_teardown_every(REPORT_EVERY, waiting);
+    }
+
+    /// [`Handshake::request_teardown`] with the reporting interval named.
+    ///
+    /// The interval exists so the rule is testable in milliseconds: a test that
+    /// had to wait [`REPORT_EVERY`] to see one report would cost more wall time
+    /// than the whole sanity tier.
+    ///
+    /// **`pub(crate)`, and that is the whole of issue #1082.** It used to be
+    /// public, and `Duration::ZERO` with it: `wait_timeout` returns at once
+    /// every pass and `report_due(elapsed, reported, ZERO)` reduces to
+    /// `elapsed >= reported`, which always holds — so the wait became a busy
+    /// spin on the **UI thread** emitting one report per iteration, for the
+    /// whole of a teardown that is already the thing being complained about.
+    ///
+    /// A floor would have bounded that spin rather than removed it: one report
+    /// per millisecond, across the 218 s attach this module measures, is still
+    /// tens of thousands of writes from inside `surfaceDestroyed`. Not being
+    /// reachable from outside this crate is what removes it.
+    ///
+    /// `report_every` must be non-zero. A `debug_assert!` is a real gate for
+    /// that now and would not have been before: every caller is in this crate,
+    /// and every tier that runs this crate's tests runs them in debug — so
+    /// there is no build on which a violation reaches a device unannounced.
+    pub(crate) fn request_teardown_every(
+        &self,
+        report_every: Duration,
+        waiting: impl Fn(Duration),
+    ) {
+        debug_assert!(
+            !report_every.is_zero(),
+            "a zero reporting interval makes every pass due, so the wait spins \
+             on the UI thread emitting one report per iteration"
+        );
         let started = Instant::now();
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         // `Starting` as well as `Running`: a surface destroyed before the first
@@ -335,7 +370,7 @@ mod tests {
             })
         };
 
-        handshake.request_teardown(Duration::from_millis(50), silent);
+        handshake.request_teardown_every(Duration::from_millis(50), silent);
         assert!(
             !surface_alive.load(Ordering::SeqCst),
             "request_teardown returned while the surface was still alive — this is the \
@@ -368,7 +403,7 @@ mod tests {
             })
         };
 
-        handshake.request_teardown(Duration::from_millis(50), silent);
+        handshake.request_teardown_every(Duration::from_millis(50), silent);
         render.join().unwrap();
     }
 
@@ -396,7 +431,7 @@ mod tests {
                     handshake.released();
                 })
             };
-            handshake.request_teardown(Duration::from_millis(50), silent);
+            handshake.request_teardown_every(Duration::from_millis(50), silent);
             assert!(
                 !surface_alive.load(Ordering::SeqCst),
                 "round {round} returned with the surface still alive"
@@ -438,7 +473,7 @@ mod tests {
         // nothing. A second is far above any scheduling noise and far below the
         // interval it would have waited.
         let started = std::time::Instant::now();
-        handshake.request_teardown(Duration::from_secs(1), silent);
+        handshake.request_teardown_every(Duration::from_secs(1), silent);
         assert!(
             started.elapsed() < Duration::from_millis(500),
             "a handshake already released must not wait — took {:?}",
@@ -464,7 +499,7 @@ mod tests {
                 handshake.released();
             })
         };
-        handshake.request_teardown(Duration::from_millis(50), silent);
+        handshake.request_teardown_every(Duration::from_millis(50), silent);
         render.join().unwrap();
     }
 
@@ -528,7 +563,7 @@ mod tests {
         // guard — so this call site is the regression test for that as much
         // as it is for the counting.
         let asked = Arc::clone(&handshake);
-        handshake.request_teardown(Duration::from_millis(5), move |_| {
+        handshake.request_teardown_every(Duration::from_millis(5), move |_| {
             assert!(
                 asked.teardown_requested(),
                 "the wait is reporting, so the request it is waiting on is in"
@@ -584,6 +619,27 @@ mod tests {
             report_due(Duration::from_secs(4), every, every),
             "a full interval after a report is the next one"
         );
+
+        // **Why the interval is not a caller's to choose** (issue #1082), as
+        // arithmetic. With no interval at all every pass is due, including one
+        // a microsecond after the last report — so the wait emits one report
+        // per loop iteration, on the UI thread, for the whole of the teardown.
+        // Nothing in this function can refuse that; what removes it is
+        // `request_teardown_every` being crate-private, so `Duration::ZERO`
+        // cannot arrive from outside.
+        assert!(
+            report_due(Duration::from_micros(1), Duration::ZERO, Duration::ZERO),
+            "a zero interval makes the very first pass due"
+        );
+        assert!(
+            report_due(
+                Duration::from_micros(2),
+                Duration::from_micros(1),
+                Duration::ZERO
+            ),
+            "and it is still due one microsecond after the last report, which is \
+             the spin"
+        );
     }
 
     /// The ordinary teardown says nothing at all.
@@ -609,7 +665,7 @@ mod tests {
         };
 
         let counter = Arc::clone(&reports);
-        handshake.request_teardown(Duration::from_secs(30), move |_| {
+        handshake.request_teardown_every(Duration::from_secs(30), move |_| {
             counter.fetch_add(1, Ordering::SeqCst);
         });
 

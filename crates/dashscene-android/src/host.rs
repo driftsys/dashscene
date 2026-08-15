@@ -217,9 +217,10 @@ impl Frames for DocumentFrames {
     fn detach(&mut self) {
         // The document is **not** dropped here: `detach` is also the first half
         // of a rebuild, and the `attach` that follows needs it. It goes when
-        // this object does, which the loop's leaked state makes the end of the
-        // process — the cost of a second copy of the file, recorded rather than
-        // hidden.
+        // this object does, which is `LoopState::shut_down` — the loop drops
+        // the implementation there rather than retaining it inside its leaked
+        // state (issue #1085), so the second copy of the file costs the surface
+        // cycle it was kept for rather than the life of the process.
         //
         // Tolerates being called after a failed `attach`, which the loop does.
         if self.runtime.is_null() {

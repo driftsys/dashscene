@@ -95,10 +95,12 @@ mod logging;
 mod machine;
 
 pub use frames::{AttachError, Frames, Step};
-// `REPORT_EVERY` beside the type: `Handshake::request_teardown` takes the
-// reporting interval as an argument so the rule is testable in milliseconds,
-// and a caller outside this crate has no other way to reach the value the host
-// itself passes.
+// `REPORT_EVERY` beside the type, and as a value to read rather than one to
+// pass: `Handshake::request_teardown` reads it, and the interval is an argument
+// only on the crate-private `request_teardown_every`, so that the rule stays
+// testable in milliseconds without `Duration::ZERO` being reachable from
+// outside (issue #1082). Exported because it is the cadence an embedder sees in
+// logcat and there is nowhere else to read it from.
 pub use handshake::{Handshake, REPORT_EVERY};
 
 // Public, so a host implementing `Frames` writes one line rather than a fourth

@@ -76,7 +76,10 @@ pub enum Step {
 /// Every method runs on the **render thread**, and never concurrently.
 ///
 /// The order is `attach`, then `resize` and `frame` any number of times, then
-/// `detach`. **`attach` and `detach` may each run more than once**, because
+/// `detach` — **except that `detach` alone may run with no `attach` before
+/// it**, which the loop does when a teardown is requested before the surface
+/// was ever taken up. See [`Frames::detach`].
+/// **`attach` and `detach` may each run more than once**, because
 /// [`Step::Rebuild`] is `detach` followed by a fresh `attach` on the same
 /// value — so an implementation must be reusable rather than single-shot, and
 /// must not consume in `attach` anything the next `attach` will need. That
@@ -141,7 +144,8 @@ pub trait Frames: 'static {
     /// empty window until something else moved.
     fn frame(&mut self, dt: f32, forced: bool) -> Step;
 
-    /// Drops the surface, **and everything else this holds**.
+    /// Drops the surface, **and everything else this holds that the next
+    /// [`Frames::attach`] will not need**.
     ///
     /// **This is the call the destroy handshake waits on.** When it returns, the
     /// `wgpu::Surface` built from the window must be gone; the loop then
@@ -149,14 +153,28 @@ pub trait Frames: 'static {
     /// anything still holds that window is the use-after-free D4 exists to
     /// prevent.
     ///
-    /// **It must also release whatever else the implementation owns** — the
-    /// arena, the scene, any packing buffers. The loop's state is deliberately
-    /// leaked, because a vsync callback that cannot be cancelled may still hold
-    /// a pointer to it, and the implementation is inside that state. So
-    /// anything not released here is retained for the life of the process, once
-    /// per surface cycle — and on Android a surface cycle is every rotation.
+    /// **It should also release whatever else the implementation owns** — the
+    /// arena, the scene, any packing buffers — except what the next
+    /// [`Frames::attach`] will need, because this is also the first half of a
+    /// rebuild.
     ///
-    /// It may be called after [`Frames::attach`] failed, so it must tolerate
-    /// having nothing to release.
+    /// **What it no longer carries is the leak.** The loop's state is
+    /// deliberately leaked, because a vsync callback that cannot be cancelled
+    /// may still hold a pointer to it, and this object used to be retained
+    /// inside that state for the life of the process — once per surface cycle,
+    /// and on Android a surface cycle is every rotation. The loop now drops the
+    /// implementation as it shuts down, which is **after the last of these
+    /// calls and not after each one**: a rebuild's `detach` is followed by
+    /// another `attach` on this same object, which is why the paragraph above
+    /// asks an implementation to keep what that next attach needs. So what it
+    /// keeps costs the surface cycle it was kept for and nothing beyond it
+    /// (issue #1085).
+    ///
+    /// **It may be called with no attach behind it at all**, so it must
+    /// tolerate having nothing to release. Two paths reach it that way: an
+    /// [`Frames::attach`] that failed partway, and a teardown requested before
+    /// the surface was ever taken up — a rotation during startup produces the
+    /// second, and the loop stops there rather than acquiring a device for a
+    /// surface that is going away.
     fn detach(&mut self);
 }
