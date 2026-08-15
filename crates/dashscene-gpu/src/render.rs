@@ -1160,76 +1160,80 @@ impl Renderer {
                 format!("{}\n{}", crate::shader::SDF_WGSL, BLUR_WGSL).into(),
             ),
         });
+        // The length is the type, so a seventh entry is a compile error rather
+        // than an assertion — see `BLUR_BINDINGS` and
+        // `BlurTargets::bound_atlases` for what that count is holding up.
+        let blur_entries: [wgpu::BindGroupLayoutEntry; BLUR_BINDINGS] = [
+            // The taps' source, and the sharp original. Both unfilterable,
+            // because nothing filters them: every read is a `textureLoad`
+            // at an integer texel, which is what makes the kernel a pixel
+            // kernel rather than a resampling one.
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            // Visible to both stages: the vertex stage builds the pass's
+            // quad from it, and the fragment stage reads everything else.
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // The coverage mask's atlas, and the sampler a distance field
+            // is read through. Filterable here where the two above are not:
+            // an MSDF edge ramp sampled nearest becomes a staircase, which
+            // is the reason `msdf_sampler` exists at all.
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ];
         let blur_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("dashscene-gpu blur"),
-            entries: &[
-                // The taps' source, and the sharp original. Both unfilterable,
-                // because nothing filters them: every read is a `textureLoad`
-                // at an integer texel, which is what makes the kernel a pixel
-                // kernel rather than a resampling one.
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                // Visible to both stages: the vertex stage builds the pass's
-                // quad from it, and the fragment stage reads everything else.
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                // The coverage mask's atlas, and the sampler a distance field
-                // is read through. Filterable here where the two above are not:
-                // an MSDF edge ramp sampled nearest becomes a staircase, which
-                // is the reason `msdf_sampler` exists at all.
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
+            entries: &blur_entries,
         });
         let blur_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("dashscene-gpu blur"),
@@ -3734,15 +3738,54 @@ struct BlurTargets {
     bind_groups: Vec<wgpu::BindGroup>,
     width: u32,
     height: u32,
-    /// The atlas each drawn backdrop's bind groups were built naming, in the
-    /// order they will be drawn, with `None` for a backdrop that carries no
-    /// coverage mask.
+    /// The atlas each **slot** of this frame's bind groups was built naming, in
+    /// the order they will be drawn, with `None` for a slot whose backdrop
+    /// carries no coverage mask.
     ///
-    /// A bind group names one texture view, so a backdrop whose mask moved to a
-    /// different atlas — or that gained or lost a mask — needs its groups
-    /// rebuilt. Recorded rather than rebuilt every frame, which is what keeps
-    /// a steady scene off the allocation path. Its length is also the count the
-    /// buffers were built for.
+    /// A bind group names one texture view, so a slot whose atlas changed needs
+    /// its groups rebuilt. Recorded rather than rebuilt every frame, which is
+    /// what keeps a steady scene off the allocation path. Its length is also the
+    /// count the buffers were built for.
+    ///
+    /// # Per slot, not per backdrop — and why that is enough (issue #1026)
+    ///
+    /// Since issue #994 this list holds only the backdrops that **draw**, so
+    /// equal atlas lists no longer imply that the same backdrops occupy those
+    /// slots. Two frames of
+    ///
+    /// ```text
+    /// frame 1:  [A masked in atlas 0 (draws), B refused]
+    /// frame 2:  [A refused, B masked in atlas 0 (draws)]
+    /// ```
+    ///
+    /// both produce `[Some(0)]`, nothing is rebuilt, and slot 0's group — built
+    /// for A — is reused for B.
+    ///
+    /// **That is correct against a slot swap, and for one reason only**: the
+    /// atlas texture view is the only entry in the layout that varies with
+    /// *which* backdrop occupies the slot. The snapshot, the scratch, the clip
+    /// buffer and the sampler are frame-wide; the [`GpuBlur`] uniform is a
+    /// distinct buffer per slot, but its contents are rewritten from that
+    /// frame's own instance in [`Renderer::resolve_backdrop`], so it carries
+    /// nothing across. Reusing A's group for B therefore binds exactly the right
+    /// things.
+    ///
+    /// **It is not correct against everything.** This is an atlas *index*, and
+    /// issue #1050 is the case where an index outlives what it named: a document
+    /// replacement drops a dedicated atlas, every index after it shifts down,
+    /// and two frames both reading `[Some(1)]` name different textures. That one
+    /// is open, and it is why this list is cleared on the first frame prepared
+    /// for no backdrop rather than held across
+    /// [`BLUR_TARGET_GRACE_FRAMES`].
+    ///
+    /// The hazard is the **next** entry. Any further per-backdrop binding added
+    /// to this layout would bind the previous frame's backdrop's value with no
+    /// rebuild triggered, and the symptom would be one backdrop drawn with
+    /// another's parameter — a plausible wrong picture, on the pipeline where
+    /// issue #972 already produced one. [`BLUR_BINDINGS`] is what makes that
+    /// fail rather than drift: a seventh entry does not compile past the
+    /// assertions that count it, and whoever adds one has to decide what the
+    /// rebuild is keyed on before it does.
     bound_atlases: Vec<Option<u32>>,
     /// How many consecutive frames have been prepared for no backdrop, capped
     /// at one past [`BLUR_TARGET_GRACE_FRAMES`].
@@ -3788,6 +3831,27 @@ struct BlurTargets {
 /// atlas indices a document replacement has shifted: the groups that could go
 /// stale are the ones this does not hold.
 const BLUR_TARGET_GRACE_FRAMES: u32 = 1;
+
+/// How many entries the blur bind-group layout has, and the number
+/// [`BlurTargets::bound_atlases`]'s invariant is counted against (issue #1026).
+///
+/// Six: the taps' source, the sharp original, the [`GpuBlur`] uniform, the clip
+/// buffer, the coverage atlas and the MSDF sampler. **Exactly one of them is per
+/// backdrop** — the atlas view. Two of the six are per *slot*, since the
+/// [`GpuBlur`] uniform is a distinct buffer each, but its contents are rewritten
+/// from that frame's own instance, so only the view carries anything across a
+/// frame. That is what makes keying the rebuild on the atlas list sufficient
+/// even though two frames can put different backdrops in the same slot.
+///
+/// Both entry arrays are **declared at this length**, so the length is the type
+/// and a seventh entry is a compile error rather than a runtime one.
+///
+/// **It is a tripwire, not a gate**, and worth being plain about: the one-token
+/// answer to that error is to bump this constant, and nothing stops it. What it
+/// buys is that the error lands on the line whose doc is this paragraph, so the
+/// argument [`BlurTargets::bound_atlases`] makes is in front of whoever is
+/// adding the entry rather than sixty lines away.
+const BLUR_BINDINGS: usize = 6;
 
 impl BlurTargets {
     /// Makes one backdrop's worth of targets and parameters available per entry
@@ -3984,36 +4048,45 @@ impl BlurTargets {
                         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                         mapped_at_creation: false,
                     });
+                    // Same length, same reason. Two of these six are per slot —
+                    // the uniform at binding 2 is a distinct buffer each — but
+                    // only the mask view at binding 4 carries anything across a
+                    // frame, since the uniform is rewritten from that frame's
+                    // own instance in `Renderer::resolve_backdrop`. That is what
+                    // lets `BlurTargets::bound_atlases` key the rebuild on the
+                    // atlas alone, and a seventh entry that is *not* rewritten
+                    // would break it.
+                    let entries: [wgpu::BindGroupEntry; BLUR_BINDINGS] = [
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(source),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(snapshot),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: uniform.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: clips.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::TextureView(mask),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: wgpu::BindingResource::Sampler(msdf_sampler),
+                        },
+                    ];
                     self.bind_groups
                         .push(device.create_bind_group(&wgpu::BindGroupDescriptor {
                             label: Some("dashscene-gpu backdrop"),
                             layout: blur_layout,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: wgpu::BindingResource::TextureView(source),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: wgpu::BindingResource::TextureView(snapshot),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 2,
-                                    resource: uniform.as_entire_binding(),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 3,
-                                    resource: clips.as_entire_binding(),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 4,
-                                    resource: wgpu::BindingResource::TextureView(mask),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 5,
-                                    resource: wgpu::BindingResource::Sampler(msdf_sampler),
-                                },
-                            ],
+                            entries: &entries,
                         }));
                     self.uniforms.push(uniform);
                     self.allocations += 2;
@@ -4764,14 +4837,15 @@ const _: () = assert!(size_of::<GpuComposite>() == 16);
 #[cfg(test)]
 mod tests {
     use super::{
-        DrawRun, GRADIENT_WORDS, GpuGlyphRun, GpuImage, GpuShape, MINIMUM_CAPACITY, PAINT_WGSL,
-        PaintHeap, Resolved, SHADOW_WORDS, dirty_ranges, draw_runs, gpu_glyph_run, gradient_kind,
-        grown, paint_heap, scale_mode,
+        BLUR_BINDINGS, BLUR_WGSL, DrawRun, GRADIENT_WORDS, GpuGlyphRun, GpuImage, GpuShape,
+        MINIMUM_CAPACITY, Offscreen, PAINT_WGSL, PaintHeap, Renderer, Resolved, SHADOW_WORDS,
+        dirty_ranges, draw_runs, gpu_glyph_run, gradient_kind, grown, paint_heap, scale_mode,
     };
     use crate::instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
     use dashpaint::{
-        Color, EntryParts, FillSpec, Gradient, GradientKind, GradientStop, PaintEntry, PaintTable,
-        ScaleMode, Shadow, ShadowKind, StopRange, Vec2,
+        ClipTable, Color, EntryParts, FillSpec, GlyphRunTable, Gradient, GradientKind,
+        GradientStop, ImageTable, PaintEntry, PaintTable, ScaleMode, Shadow, ShadowKind, StopRange,
+        Vec2,
     };
 
     /// A resolved frame whose image rows landed in `images`, whose glyph runs
@@ -5412,6 +5486,156 @@ mod tests {
              {coloured}. A second is fine and this test admits it, but it must arrive with its \
              own gate and with this number updated deliberately rather than to make the \
              assertion above pass",
+        );
+    }
+
+    /// **An empty frame clears the target it is given** (issue #1025).
+    ///
+    /// The renderer half of the fix `a_frame_with_no_instances_plans_one_clearing_pass`
+    /// pins the planner half of. `composite::plan` returning one stepless pass
+    /// only matters if `Renderer::draw` turns it into a `LoadOp::Clear`, and
+    /// nothing else in the suite says so: an "an empty pass costs a render pass"
+    /// optimisation that skipped a pass with no steps would leave every other
+    /// test green and reinstate the defect exactly.
+    ///
+    /// # Why this test is here rather than in `tests/`
+    ///
+    /// Because `Renderer::draw` is `pub(crate)`, and reaching it with an empty
+    /// buffer is the whole point: `Renderer::render` asserts a non-empty one by
+    /// decision, and the surface path needs a window. This module is inside
+    /// `render`, so `draw`, `Offscreen` and the private `format` are all in
+    /// scope.
+    ///
+    /// It needs a device, which no other test in this module does. That costs
+    /// nothing the suite was not already paying — the sanity tier runs every
+    /// layer-3 binary, so it needs one anyway, and CI installs Lavapipe for
+    /// exactly that.
+    ///
+    /// The target is filled with opaque red first. Over a fresh texture the
+    /// assertion would pass whether or not anything cleared, since an allocator
+    /// may well hand over zeroes — the same trap
+    /// `a_refused_backdrop_does_not_leave_the_previous_frame_on_the_target`
+    /// records one file over.
+    #[test]
+    fn an_empty_frame_clears_the_target() {
+        let mut renderer = Renderer::new().expect("this test needs a device");
+        let (width, height) = (8u32, 4u32);
+        let off = Offscreen::new(renderer.device(), renderer.format, width, height);
+
+        // Opaque red, so "cleared" is falsifiable.
+        let mut encoder = renderer
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("fill"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &off.view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::RED),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        renderer.queue().submit([encoder.finish()]);
+
+        renderer.draw(
+            &off.view,
+            &InstanceBuffer::new(),
+            &PaintTable::new(),
+            &ImageTable::new(),
+            &ClipTable::new(),
+            &GlyphRunTable::new(),
+            None,
+            width,
+            height,
+        );
+
+        let mut encoder = renderer
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &off.target,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &off.readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(off.padded as u32),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        renderer.queue().submit([encoder.finish()]);
+        let slice = off.readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |r| r.expect("the readback maps"));
+        renderer
+            .device()
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("the device completes the frame");
+        let data = slice.get_mapped_range().expect("the range is readable");
+        let painted: Vec<[u8; 4]> = (0..height as usize)
+            .flat_map(|row| {
+                data[row * off.padded..row * off.padded + off.unpadded]
+                    .chunks_exact(4)
+                    .map(|t| [t[0], t[1], t[2], t[3]])
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        drop(data);
+        off.readback.unmap();
+
+        assert!(
+            painted.iter().all(|t| *t == [0, 0, 0, 0]),
+            "a frame with no instances must clear the view it is given — the red beneath it is \
+             still there, so `draw` encoded no render pass at all and the surface path would \
+             present whatever the compositor last had",
+        );
+    }
+
+    /// **`blur.wgsl` declares exactly [`BLUR_BINDINGS`] bindings** (issue
+    /// #1026).
+    ///
+    /// The Rust half is pinned by the type: both entry arrays are declared at
+    /// that length, so a seventh is a compile error. The shader half is pinned
+    /// by nothing, and it is where a per-backdrop binding is naturally added
+    /// first — `@group(0) @binding(6) var lut: texture_2d<f32>;` builds, lints
+    /// and passes every CPU-only test, and surfaces only at
+    /// `create_render_pipeline` on a run that reaches a device.
+    ///
+    /// So the count is asserted over the source, the way
+    /// `the_image_arm_gates_on_the_row_the_frame_resolved` asserts a fact about
+    /// `paint.wgsl`. Comments are stripped first for the reason
+    /// [`stripped_paint_wgsl`] gives, and against a hazard that is real here
+    /// rather than hypothetical: `blur.wgsl`'s prose does quote a binding.
+    #[test]
+    fn blur_wgsl_declares_the_bindings_the_rebuild_key_is_counted_against() {
+        let code: String = BLUR_WGSL
+            .lines()
+            .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let declared = code.matches("@group(0) @binding(").count();
+        assert_eq!(
+            declared, BLUR_BINDINGS,
+            "blur.wgsl declares {declared} bindings against `BLUR_BINDINGS`'s {BLUR_BINDINGS}. \
+             That constant is what `BlurTargets::bound_atlases`'s rebuild key is argued from — a \
+             binding added here and not there is one the key does not see, and the symptom is one \
+             backdrop drawn with another's parameter",
         );
     }
 

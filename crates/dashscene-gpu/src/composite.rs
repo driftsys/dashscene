@@ -120,6 +120,11 @@ pub struct Pass {
 /// A frame with no layers and no backdrop is one pass over the whole buffer,
 /// which is what every frame before story #583 was.
 ///
+/// **Never empty.** A frame with no instances plans one pass over the frame's
+/// own target with no steps, so it clears and draws nothing (issue #1025). The
+/// alternative was no pass at all, which on the surface path presented a
+/// drawable nothing had written.
+///
 /// # Panics
 ///
 /// Panics when an instance names a layer the buffer does not hold, or when the
@@ -212,6 +217,23 @@ pub fn plan(buffer: &InstanceBuffer) -> Vec<Pass> {
             target_of(&stack),
             Step::Composite(closed),
         );
+    }
+    // **A frame with no ink still clears** (issue #1025). The loop above ran no
+    // iterations, the final `emit` was dropped by its own empty-range guard, and
+    // the plan was `[]` — so `Renderer::draw` began no render pass, encoded an
+    // empty command buffer and submitted it. On the surface path that presents a
+    // drawable nothing wrote: whatever the compositor last had, or undefined
+    // contents on the first frame.
+    //
+    // One pass over the frame's own target with no steps. It is emitted here
+    // rather than special-cased in the renderer because **the planner is what
+    // decides who clears** — that is the whole of what `Pass::clear` is, and a
+    // renderer clearing on its own initiative would be a second such decision.
+    // `emit` cannot do it: dropping an empty range is exactly right everywhere
+    // else, since recording one would start a pass, and therefore a clear, on a
+    // target with nothing to draw.
+    if passes.is_empty() {
+        passes.push(new_pass(&mut written, Instance::NONE, None, Vec::new()));
     }
     passes
 }
@@ -307,6 +329,65 @@ fn new_pass(written: &mut [bool], target: u32, backdrop: Option<u32>, steps: Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A frame with no instances plans one clearing pass** (issue #1025).
+    ///
+    /// It used to plan none: the loop ran no iterations and the final `emit` was
+    /// dropped by its own empty-range guard, so `Renderer::draw` began no render
+    /// pass at all and submitted an empty command buffer. `Renderer::render`
+    /// asserts a non-empty buffer, so no offscreen caller could reach it — but
+    /// `SurfaceRenderer::present` hands `draw` the swapchain view and presents
+    /// immediately after, so a document with no ink presented whatever the
+    /// compositor last had, or undefined contents on the first frame.
+    ///
+    /// The pass carries **no steps**, which is what says the clear is the whole
+    /// of it. A step here would draw a range of a buffer that has none.
+    #[test]
+    fn a_frame_with_no_instances_plans_one_clearing_pass() {
+        let plan = plan(&InstanceBuffer::new());
+        assert_eq!(
+            plan,
+            vec![Pass {
+                target: Instance::NONE,
+                clear: true,
+                backdrop: None,
+                steps: Vec::new(),
+            }],
+            "an empty frame must plan one pass over the frame's own target that clears and draws \
+             nothing — an empty plan encodes no render pass, and the surface path then presents a \
+             drawable nothing wrote",
+        );
+    }
+
+    /// The same, for a frame whose layer table is **not** empty.
+    ///
+    /// `written` is sized `layers.len() + 1`, and the fallback indexes it at
+    /// `Instance::NONE`. One layer and no instances is the shape a group whose
+    /// members all pack nothing takes, and it is a different length of that
+    /// table from the case above — which is the only one the branch had.
+    #[test]
+    fn an_empty_frame_with_a_layer_still_plans_one_clearing_pass() {
+        let mut buffer = InstanceBuffer::new();
+        buffer.push_layer(
+            0,
+            Layer {
+                parent: Instance::NONE,
+                alpha: 1.0,
+            },
+        );
+        assert!(buffer.instances().is_empty());
+        assert_eq!(buffer.layers().len(), 1);
+        assert_eq!(
+            plan(&buffer),
+            vec![Pass {
+                target: Instance::NONE,
+                clear: true,
+                backdrop: None,
+                steps: Vec::new(),
+            }],
+            "a layer nothing draws into does not change what an empty frame plans",
+        );
+    }
 
     /// A buffer of one instance per rect, each carrying the given layer slot,
     /// over a layer table of the given parents.
