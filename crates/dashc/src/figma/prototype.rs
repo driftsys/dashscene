@@ -41,8 +41,20 @@ pub(super) struct Switch {
     /// the switch lands in one frame, which is what every document written
     /// before v0.18 says — either because the interaction carries no
     /// transition, or because the one it carries has no `dashcue` spelling
-    /// and was named in `motion` below rather than approximated.
+    /// and was named in `refused_motion` below rather than approximated.
     pub(super) tween: Option<(f32, Easing)>,
+    /// The transition this switch declared and the vocabulary has no spelling
+    /// for, named but not yet classified.
+    ///
+    /// It rides on the switch rather than being filed as a finding here
+    /// because **this module cannot tell a degrade from an omission** (issue
+    /// #1017): whether the curve's loss leaves a state change behind depends
+    /// on whether `destination` resolves to a member of a set the file
+    /// carries, and that is not known until `variants::apply` has walked the
+    /// file. Deciding it here from the mere presence of a `destinationId`
+    /// filed a refused curve as "the switch lands in one frame" for a switch
+    /// that landed nowhere.
+    pub(super) refused_motion: Option<String>,
 }
 
 /// What one node's interactions lower to.
@@ -53,14 +65,22 @@ pub(super) struct Interactions {
     /// Interactions with no lowering at all — a trigger, action, navigation
     /// or transition kind outside the vocabulary. Nothing about them reaches
     /// the document.
+    ///
+    /// A refused *transition* reaches this list only where no switch was
+    /// built at all: a refused trigger, a navigation other than `CHANGE_TO`,
+    /// or a `CHANGE_TO` with no `destinationId`. Where a switch exists the
+    /// curve rides on it, in [`Switch::refused_motion`], because only the
+    /// caller knows whether that switch lands.
     pub(super) unsupported: Vec<String>,
-    /// Switches that lower with their motion dropped: the state change is
-    /// carried, the curve is not.
-    pub(super) motion: Vec<String>,
 }
 
-/// Reads one node's `interactions`, sorting them into switches, refusals and
-/// motion degrades.
+/// Reads one node's `interactions`, sorting them into candidate switches and
+/// refusals.
+///
+/// It classifies nothing that depends on resolution: a `CHANGE_TO`'s
+/// destination is an id this module cannot look up, so a switch it returns is
+/// a candidate and a curve it could not lower rides on that candidate
+/// unclassified (issue #1017).
 ///
 /// Reactions are read off the node being walked and are never resolved back
 /// through the component set: REST reports a component's interaction on an
@@ -110,8 +130,14 @@ pub(super) fn read(node: &Node) -> Interactions {
 ///
 /// `trigger_lowers` is whether the interaction's trigger survived. It decides
 /// nothing about which gaps are *named* — every finding survives one pass
-/// either way (debt #149) — only whether a switch reaches the document and
-/// therefore whether a refused curve is a degrade or part of an omission.
+/// either way (debt #149) — only whether a switch is **built** at all, and so
+/// whether a refused curve travels on that switch or is part of an omission
+/// this module can already see.
+///
+/// A switch built here is a *candidate*, never a promise: this module reads
+/// one node and cannot resolve a `destinationId` against the file's component
+/// sets, so whether the candidate reaches the document is `variants::apply`'s
+/// answer and not this one (issue #1017).
 fn read_action(action: &Action, trigger_lowers: bool, found: &mut Interactions) {
     // `CONDITIONAL` nests `Action[]` inside `conditionalBlocks` recursively;
     // the branches are deliberately not descended into. The document has no
@@ -150,27 +176,26 @@ fn read_action(action: &Action, trigger_lowers: bool, found: &mut Interactions) 
         }
     };
 
-    // The transition is read whether or not the switch lowers, because a
+    // The transition is read whether or not a switch is built, because a
     // transition kind outside the vocabulary is a gap under *any* navigation
     // and every finding must survive one pass (debt #149) — otherwise a
     // designer who changed NAVIGATE to CHANGE_TO would meet the second
     // refusal only on the next compile.
     //
-    // Which list it lands in is decided by whether anything survived to
-    // animate. A refused curve under a switch that lowers is a degrade: the
-    // state change ships and lands in one frame. The same curve under a
-    // trigger or navigation with no lowering is part of an omission, and
-    // calling it a degrade would claim a switch the document does not carry.
-    let lowers = trigger_lowers && destination.is_some();
+    // Where a switch is built the refusal travels **on** it, unclassified.
+    // Where none is built there is nothing for it to travel on and no
+    // resolution left to wait for: the trigger or the navigation has already
+    // refused the whole interaction, so the curve is part of that omission
+    // here.
+    let builds_switch = trigger_lowers && destination.is_some();
+    let mut refused_motion = None;
     let tween = match &action.transition {
         None => None,
         Some(transition) => {
             let (tween, refused) = read_transition(transition);
             if let Some(what) = refused {
-                if lowers {
-                    found
-                        .motion
-                        .push(format!("{what}; the switch lands in one frame"));
+                if builds_switch {
+                    refused_motion = Some(what);
                 } else {
                     found.unsupported.push(what);
                 }
@@ -179,8 +204,12 @@ fn read_action(action: &Action, trigger_lowers: bool, found: &mut Interactions) 
         }
     };
 
-    if let Some(destination) = destination.filter(|_| lowers) {
-        found.switches.push(Switch { destination, tween });
+    if let Some(destination) = destination.filter(|_| builds_switch) {
+        found.switches.push(Switch {
+            destination,
+            tween,
+            refused_motion,
+        });
     }
 }
 
@@ -274,10 +303,10 @@ mod tests {
             vec![Switch {
                 destination: "6:183".to_string(),
                 tween: Some((0.3, Easing::EaseOut)),
+                refused_motion: None,
             }],
         );
         assert!(read.unsupported.is_empty(), "{:?}", read.unsupported);
-        assert!(read.motion.is_empty(), "{:?}", read.motion);
     }
 
     #[test]
@@ -312,16 +341,17 @@ mod tests {
             let read = read(find(&f, name));
             assert_eq!(read.switches.len(), 1, "{name} carries one switch");
             assert_eq!(read.switches[0].tween, expected, "{name}");
-            // The switch lowers either way: only its motion is at risk, so a
-            // refused easing must never reach `unsupported`, which withholds
-            // the document under Strict.
+            // A switch was built either way, so a refused easing must never
+            // reach `unsupported`, which withholds the document under Strict.
+            // It rides on the switch instead, and `variants::apply` decides
+            // whether that is a degrade or part of an omission (issue #1017).
             assert!(
                 read.unsupported.is_empty(),
                 "{name}: {:?}",
                 read.unsupported
             );
             assert_eq!(
-                read.motion.is_empty(),
+                read.switches[0].refused_motion.is_none(),
                 expected.is_some(),
                 "{name} names its dropped curve exactly when it has one",
             );
@@ -355,7 +385,15 @@ mod tests {
             ("refused-conditional", "CONDITIONAL"),
         ] {
             let read = read(find(&f, node));
-            let named: Vec<&String> = read.unsupported.iter().chain(read.motion.iter()).collect();
+            let named: Vec<&String> = read
+                .unsupported
+                .iter()
+                .chain(
+                    read.switches
+                        .iter()
+                        .filter_map(|s| s.refused_motion.as_ref()),
+                )
+                .collect();
             assert!(
                 named.iter().any(|m| m.contains(expected)),
                 "{node} must name {expected}, got {named:?}",
@@ -446,9 +484,10 @@ mod tests {
 
     #[test]
     fn a_refused_curve_under_a_refused_trigger_is_an_omission_not_a_degrade() {
-        // The bucket matters: `motion` says "the switch lands in one frame",
-        // which claims a switch. With no switch, the same curve is part of the
-        // omission and belongs in `unsupported`.
+        // The bucket matters: a degrade says "the switch lands in one frame",
+        // which claims a switch. With no switch built at all there is nothing
+        // for the curve to ride on and no resolution left to wait for, so it
+        // is part of the omission here rather than deferred (issue #1017).
         let node: Node = serde_json::from_value(serde_json::json!({
             "name": "timed-spring",
             "type": "INSTANCE",
@@ -469,7 +508,7 @@ mod tests {
         .unwrap();
 
         let read = read(&node);
-        assert!(read.motion.is_empty(), "{:?}", read.motion);
+        assert!(read.switches.is_empty(), "{:?}", read.switches);
         assert!(
             read.unsupported.iter().any(|m| m.contains("GENTLE")),
             "{:?}",
@@ -493,7 +532,6 @@ mod tests {
             let read = read(find(&f, name));
             assert!(read.switches.is_empty(), "{name}");
             assert!(read.unsupported.is_empty(), "{name}");
-            assert!(read.motion.is_empty(), "{name}");
         }
     }
 }

@@ -398,8 +398,8 @@ Verified by `crates/dashc/tests/prototype_lowering.rs` and the unit tests in
     bytes under `EmitPolicy::Strict` (R6), a warning under
     `EmitPolicy::Partial`. Unlike `figma.unsupported` it shall **not** skip the
     node: what has no lowering is the behaviour, not the box. A `CHANGE_TO`
-    naming a destination no component set in the file carries is one of these:
-    it lowers no switch at all.
+    naming a destination that is not a member of the component set the node
+    shows is one of these: it lowers no switch at all.
     (`the_refused_capture_withholds_the_bytes_and_names_every_construct`,
     `the_partial_policy_downgrades_an_interaction_refusal`,
     `a_change_to_naming_no_member_of_the_set_is_named`)
@@ -408,16 +408,128 @@ Verified by `crates/dashc/tests/prototype_lowering.rs` and the unit tests in
     spelling (`figma.prototype.unsupported-motion`) and a component set no
     override can express (`figma.variants.unlowerable-set`) shall be warnings in
     both policies, because the picture is unchanged and a switch that lands in
-    one frame is what a member with no transition has always meant. A second
-    member declaring a different transition to a destination one already claimed
-    is a degrade for the same reason: the switch still ships, with the
-    transition that won.
+    one frame is what a member with no transition has always meant.
+    `figma.prototype.unsupported-motion` shall be a warning in both policies
+    wherever it is used, including the one case where the switch it names does
+    not ship (rule 14's second paragraph). What it shall never do is **claim**
+    the switch lands: where the switch reaches no document, the message shall
+    say so. A second member declaring a different transition to a destination
+    one already claimed is a degrade for the same reason: the switch still
+    ships, with the transition that won.
     (`a_spring_preset_is_named_and_its_switch_lands_in_one_frame`,
     `the_variant_topology_fixture_compiles_and_names_its_topology_change`,
     `two_members_declaring_a_different_transition_to_one_destination_are_named`)
 
 12. **A component set with fewer than two members shall name nothing.** There is
     no alternative state, so there is no switch to lose.
+
+    That silence is the set's own. A `CHANGE_TO` naming its single member is
+    still an omission under rule 10, and this is the one case where no set-level
+    finding speaks for it.
+    (`a_change_to_into_a_single_member_set_is_an_omission_nothing_else_reports`)
+
+13. **A `CHANGE_TO` on a node whose component set the file does not carry shall
+    be a warning in both policies** (issue #1016) — the ordinary shape of an
+    instance of a published-library set. It loses the same variant table as a
+    set that is present and unlowerable, and paints the same baked subtree, so
+    it shall not carry a harsher severity than rule 11 gives that case. A
+    refused trigger, action or navigation on the same instance shall keep
+    following the policy under rule 10: it has no lowering whatever file carries
+    the set. See `docs/decisions/figma-component-lowering.md` ("Severity").
+    (`a_change_to_on_an_instance_of_a_set_the_file_does_not_carry_is_a_warning`)
+
+    **The exemption shall be keyed on a `componentId` naming a component the
+    file does not contain**, never on failing to find a set. A node belonging to
+    no set while the file is present in full — a plain frame, or an instance of
+    a standalone local `COMPONENT` — has a switch that resolves nowhere and
+    never could, and shall keep rule 10's severity.
+    (`a_change_to_on_an_instance_of_a_standalone_local_component_is_not_the_library_case`)
+
+    **Whether the file carries a set shall be answered from the file**, never
+    from whether this pass could plan one. A set present but unlowerable shall
+    keep rule 10's severity for a destination that is not one of its members,
+    and shall report no absence.
+    (`an_instance_of_a_set_the_file_carries_but_cannot_lower_is_not_reported_as_absent`)
+
+14. **A refused transition on a switch that lowers nowhere shall not be reported
+    as a motion degrade** (issue #1017). `figma.prototype.unsupported-motion`
+    states that the switch lands in one frame, which claims a state change;
+    where no switch reaches the document the refused curve is part of the
+    omission and shall carry its rule and its severity. Both shall still be
+    named, because every finding survives one pass.
+    (`a_refused_curve_on_a_switch_that_lands_nowhere_is_never_called_a_degrade`)
+
+    **A refused curve shall be called a degrade only where the switch it
+    animates reaches a variant table**, which is narrower than the set having a
+    plan. Exactly two kinds of node carry a switch into a table: an `INSTANCE`
+    whose own table `emit` accepted, and a **member root** of a set that lowers,
+    whose reaction becomes that set's default transition. A switch anywhere else
+    — a baked child, a layer inside a master, an instance whose table `emit`
+    refused, a member of a set that lowers nothing — reaches no table, and its
+    refused curve shall be named as a warning saying so rather than as a degrade
+    claiming the switch lands.
+
+    It shall still be named. Dropping it would be a silent drop (P4) and would
+    surface for the first time on the compile after the file is repaired.
+    (`a_switch_into_a_set_that_lowers_no_table_is_not_called_a_degrade`,
+    `a_switch_on_an_instance_whose_own_table_is_refused_is_not_called_a_degrade`,
+    `a_switch_on_a_baked_child_of_a_refused_instance_is_not_called_a_degrade`,
+    `a_refused_curve_on_a_member_no_instance_echoes_is_still_a_degrade`)
+
+15. **Nothing a definition holds that no instance shows shall be named for its
+    own interactions, or emitted, at any depth** (issue #1018). An `INSTANCE`
+    nested inside a definition shall not count as showing the member its
+    `componentId` names, and its own interactions shall not be named: the walk
+    skips that subtree whole, so nothing in it paints.
+
+    A **component set** is exempt from this, deliberately: it is planned and
+    names its own loss wherever it sits, because an instance elsewhere in the
+    file can show one of its members and would otherwise lose its variant table
+    in silence. A set with no instance at all still names what it could not
+    lower, which is the case every real Figma file hits.
+
+    The scope is what an instance shows, not the node's depth. A node inside a
+    definition shall be named exactly where a switch could bring it on screen
+    and nothing else will: inside a **member no instance echoes, of a set that
+    something instantiates and that lowers a variant table**, at any depth under
+    that member. An echoed member's contents are named on the baked copy the
+    instance carries; a master nothing instantiates — including one nested
+    inside a member — is named nowhere; and a set that lowers no table can
+    switch to nothing, so nothing inside it reaches the screen either.
+
+    Every such node shall be resolved the way any other node is: against the set
+    its own `componentId` names where it has one, and otherwise against the set
+    of the nearest `INSTANCE` or definition that shows it. Both halves are
+    required, because Figma echoes a component's reaction onto its instance
+    verbatim — so an inner layer driving the enclosing instance's variant
+    arrives both on the master, under a definition, and on the instance's baked
+    child, under neither.
+    (`an_instance_inside_a_master_nothing_instantiates_shows_nothing`,
+    `a_reaction_on_a_child_of_a_member_no_instance_echoes_is_still_named`,
+    `a_switch_inside_a_member_is_judged_against_the_set_that_owns_it`,
+    `a_reaction_echoed_onto_a_baked_child_resolves_through_its_instance`,
+    `a_member_reaction_is_not_named_where_the_set_lowers_no_table`)
+
+16. **Where either member's `relativeTransform` carries no angle of its own, two
+    members facing different ways shall make the set unlowerable** (issue
+    #1019). The matrix reaches the overridable props through `Node::turn` alone,
+    and `turn` reports `0.0` both for a mirror and for a matrix enclosing no
+    area — so for either of those neither the handedness nor the angle is
+    carried, and their combination, the orientation, is what shall be compared.
+
+    Two things shall **not** be the test. A single handedness bit is too little:
+    a flip about x and a flip about y are both mirrors and differ by a
+    half-turn. The raw linear part is too much: a mirrored member scaled against
+    another mirrored member differs there, and a scale moves
+    `absoluteBoundingBox` with it, so it already lowers as `Width`/`Height`
+    overrides. Where **both** matrices carry their angle the matrix shall not be
+    compared at all — `turn` carries the angle, and the box carries the scale.
+
+    The refusal shall name the difference that is present: a pair differing in
+    whether their transform encloses any area shall not be reported as differing
+    in mirroring, because neither of them mirrors.
+    (`members_differing_only_in_which_way_their_matrix_faces_are_refused`,
+    `members_differing_in_whether_their_transform_has_area_are_refused_by_that_name`)
 
 ## Verification corpus
 

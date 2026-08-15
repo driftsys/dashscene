@@ -1597,6 +1597,42 @@ fn an_explicit_rotation_is_read_ahead_of_the_matrix() {
 }
 
 #[test]
+fn a_turn_at_a_small_scale_is_still_a_turn() {
+    // The determinant is an **area** scale, so any tolerance around zero is a
+    // band of real matrices rather than a band of float residue. A 1e-6
+    // threshold was tried while closing issue #1019 and reverted here: a
+    // uniform scale of 0.001 puts a plain 60-degree rotation exactly on it, so
+    // the node lowered unrotated, at the wrong origin and the wrong extent,
+    // and the rotated-node blocker never fired — the silent wrong picture
+    // issue #878 exists to prevent.
+    //
+    // 0.001 * [[cos 60, -sin 60], [sin 60, cos 60]], whose determinant is
+    // 0.001^2 = 1e-6.
+    let file = document(serde_json::json!({
+        "name": "tiny-turned-frame",
+        "type": "FRAME",
+        "relativeTransform": [[0.0005, -0.000_866_025_4, 30.0], [0.000_866_025_4, 0.0005, 40.0]],
+        "absoluteBoundingBox": { "x": 30.0, "y": 40.0, "width": 50.0, "height": 60.0 },
+        "size": { "x": 50.0, "y": 60.0 },
+        "children": [{
+            "name": "inner",
+            "type": "RECTANGLE",
+            "absoluteBoundingBox": { "x": 30.0, "y": 40.0, "width": 4.0, "height": 4.0 },
+        }],
+    }));
+
+    let (_, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("the refusal is a diagnostic, not a compile error");
+    assert!(
+        diagnostics.iter().any(|d| d
+            .message
+            .contains("rotation does not compose down the tree")),
+        "a turn at 0.001 scale is a turn, and a turned node with children is \
+         refused by name: {diagnostics:?}",
+    );
+}
+
+#[test]
 fn a_mirror_in_relative_transform_is_not_read_as_a_turn() {
     // The other side of the determinant test. A single mirror's determinant
     // is negative, and `atan2(m10, m00)` would report it as a half-turn — a

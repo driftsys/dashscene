@@ -1099,3 +1099,1060 @@ fn two_members_declaring_a_different_transition_to_one_destination_are_named() {
          order decides what ships",
     );
 }
+
+// ---------------------------------------------------------------------------
+// The PR #1010 review inflow: issues #1016, #1017, #1018 and #1019. Each is a
+// population no capture carries, and each is built from the field shapes the
+// captures pin — `corpus/figma-fixtures/xfile-consumer.json` for the
+// cross-file instance below, `prototype-refused.json` for the refused curves.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_change_to_on_an_instance_of_a_set_the_file_does_not_carry_is_a_warning() {
+    // Issue #1016. The instance shape is `xfile-consumer.json`'s: a
+    // `componentId` naming no node in the file, which is what every instance
+    // of a published-library component set looks like. That capture carries no
+    // reaction, so this adds one.
+    //
+    // A warning in **both** policies, which is where this differs from the
+    // dangling destination below. The argument is the neighbouring severity:
+    // `figma.variants.unlowerable-set` is a warning in both policies for a set
+    // the file *carries* and cannot express, because refusing would withhold a
+    // document that renders correctly — so a set the export never included,
+    // which loses the same variant table and paints the same baked subtree,
+    // cannot earn the harsher answer. `figma-component-lowering.md`
+    // ("Severity") carries it in full. Between PR #1010 and this, prototyping
+    // on a library instance refused the file under `Strict`.
+    let mut instance = boxed("1:6", "xfile-chip", "INSTANCE", 0.0, 0.0, 100.0, 50.0);
+    instance["componentId"] = serde_json::json!("1:4");
+    instance["interactions"] = serde_json::json!([{
+        "trigger": { "type": "ON_CLICK" },
+        "actions": [{
+            "type": "NODE",
+            "destinationId": "1:5",
+            "navigation": "CHANGE_TO",
+            "transition": {
+                "type": "SMART_ANIMATE",
+                "easing": { "type": "EASE_OUT" },
+                "duration": 0.3,
+            },
+        }],
+    }]);
+    let doc_json = document_with(serde_json::json!([instance]));
+
+    for policy in [EmitPolicy::Strict, EmitPolicy::Partial] {
+        let (_, diagnostics) = lower_json_with_policy(doc_json.clone(), policy);
+        let named = diagnostics
+            .iter()
+            .find(|d| d.message.contains("1:5"))
+            .unwrap_or_else(|| panic!("{policy:?}: the switch is named: {diagnostics:?}"));
+        assert_eq!(named.rule, "figma.prototype.unsupported-interaction");
+        assert_eq!(
+            named.severity,
+            Severity::Warning,
+            "{policy:?}: a set the file never carried is a degrade, not an omission \
+             that withholds the bytes: {named:?}",
+        );
+    }
+}
+
+#[test]
+fn a_refused_curve_on_a_switch_that_lands_nowhere_is_never_called_a_degrade() {
+    // Issue #1017. `read_action` classified a `CHANGE_TO` from the presence of
+    // its `destinationId`, and the destination is not resolved until
+    // `variants::apply` has walked the file — so one action produced two
+    // findings that contradicted each other: a warning saying "the switch
+    // lands in one frame" beside the omission saying it lowers nowhere.
+    //
+    // The switch here lands nowhere and its DISSOLVE has no `dashcue`
+    // spelling, which is the pair that collided.
+    let mut doc_json = set_with(
+        vec![boxed("1:3", "bar", "FRAME", 10.0, 10.0, 20.0, 20.0)],
+        vec![boxed("1:7", "bar", "FRAME", 40.0, 10.0, 20.0, 20.0)],
+        vec![boxed("I1:14;1:3", "bar", "FRAME", 10.0, 210.0, 20.0, 20.0)],
+    );
+    doc_json["document"]["children"][0]["children"][1]["interactions"] = serde_json::json!([{
+        "trigger": { "type": "ON_CLICK" },
+        "actions": [{
+            "type": "NODE",
+            "destinationId": "9:99",
+            "navigation": "CHANGE_TO",
+            "transition": {
+                "type": "DISSOLVE",
+                "easing": { "type": "EASE_OUT" },
+                "duration": 0.3,
+            },
+        }],
+    }]);
+
+    // Both policies, because "carries the omission's rule and its severity" is
+    // a claim about both ends of the policy and a curve pinned to either one
+    // would satisfy a Strict-only assertion.
+    for (policy, expected) in [
+        (EmitPolicy::Strict, Severity::Error),
+        (EmitPolicy::Partial, Severity::Warning),
+    ] {
+        let (_, diagnostics) = lower_json_with_policy(doc_json.clone(), policy);
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.message.contains("lands in one frame")),
+            "{policy:?}: no finding may claim a state change the document does not carry: \
+             {diagnostics:?}",
+        );
+        // Both halves survive one pass (debt #149): the destination and the
+        // curve are two independent gaps, and both are part of one omission.
+        let curve = diagnostics
+            .iter()
+            .find(|d| d.message.contains("DISSOLVE"))
+            .unwrap_or_else(|| {
+                panic!("{policy:?}: the refused curve is still named: {diagnostics:?}")
+            });
+        assert_eq!(curve.rule, "figma.prototype.unsupported-interaction");
+        assert_eq!(
+            curve.severity, expected,
+            "{policy:?}: the curve carries the omission's severity, not a degrade's fixed warning",
+        );
+        assert!(
+            diagnostics.iter().any(|d| d.message.contains("9:99")),
+            "{policy:?}: the dangling destination is named too: {diagnostics:?}",
+        );
+    }
+}
+
+#[test]
+fn an_instance_inside_a_master_nothing_instantiates_shows_nothing() {
+    // Issue #1018, and it needs two levels: an `INSTANCE` of the set, nested
+    // inside a `COMPONENT` master that is itself never instantiated. A test
+    // with a single definition proves nothing, because `is_definition` already
+    // matches that node.
+    //
+    // `shown` collected `component_id` from every `INSTANCE` `paths` returned,
+    // and `paths` includes definitions and everything under them — so the
+    // nested instance made the set read as instantiated, and its other
+    // member's refused reaction became a finding. The walk skips that whole
+    // subtree: measured on this fixture, the document lowers **one** node, the
+    // painting frame, and the three errors this used to raise were all about
+    // layers that never reach it.
+    let member = |id: &str, name: &str, refused: bool| {
+        let mut node = boxed(id, name, "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+        node["children"] = serde_json::json!([boxed(
+            &format!("{id}c"),
+            "bar",
+            "FRAME",
+            10.0,
+            10.0,
+            20.0,
+            20.0
+        )]);
+        if refused {
+            node["interactions"] = serde_json::json!([{
+                "trigger": { "type": "ON_HOVER" },
+                "actions": [{ "type": "NODE", "destinationId": "1:2", "navigation": "CHANGE_TO" }],
+            }]);
+        }
+        node
+    };
+    let mut nested = boxed("2:2", "chip", "INSTANCE", 0.0, 400.0, 100.0, 50.0);
+    nested["componentId"] = serde_json::json!("1:2");
+    nested["children"] =
+        serde_json::json!([boxed("I2:2;1:2c", "bar", "FRAME", 10.0, 410.0, 20.0, 20.0)]);
+    // The nested instance's own reaction is refused too — the neighbouring
+    // half of the same gap. `is_definition` matches the master and not its
+    // descendants, so this was named for the same wrong reason.
+    nested["interactions"] = serde_json::json!([{
+        "trigger": { "type": "ON_KEY_DOWN" },
+        "actions": [{ "type": "URL", "url": "https://example.com" }],
+    }]);
+    let mut master = boxed("2:1", "master", "COMPONENT", 0.0, 400.0, 100.0, 50.0);
+    master["children"] = serde_json::json!([nested]);
+
+    let (doc, diagnostics) = lower_json(document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "set",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [member("1:2", "state=rest", false), member("1:6", "state=active", true)],
+        },
+        master,
+        // A definition paints nothing, so the document needs a painting
+        // sibling or `figma.no-content` fires ahead of everything this pins.
+        boxed("3:1", "canvas-frame", "FRAME", 0.0, 600.0, 100.0, 50.0),
+    ])));
+
+    assert_eq!(
+        doc.nodes.len(),
+        1,
+        "only the painting frame lowers; both definitions and the whole subtree \
+         under the master resolve without painting",
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "nothing under a master no instance shows may be named, at either level: \
+         {diagnostics:?}",
+    );
+}
+
+#[test]
+fn members_differing_only_in_which_way_their_matrix_faces_are_refused() {
+    // Issue #1019. `relative_transform` reaches `Props` through `Node::turn`
+    // alone, so five of its six components were classified as an overridable
+    // input while being read by nothing.
+    //
+    // Only one of the five is actually lost, and which one is measured rather
+    // than argued. A **scale** moves `absoluteBoundingBox` with it — that is
+    // what Figma sends — so it already lowers as `Width`/`Height` overrides
+    // and comparing it here would refuse a set that renders. The
+    // **handedness** is carried by nothing at all: `matrix_turn` reads a
+    // negative determinant as `0.0` on purpose, and a flip leaves an
+    // axis-aligned box unchanged, so a mirrored member lowered as identical to
+    // an upright one.
+    let with_matrix = |id: &str, m: serde_json::Value, w: f64, h: f64| {
+        let mut node = boxed(id, "bar", "FRAME", 10.0, 10.0, w, h);
+        node["relativeTransform"] = m;
+        node
+    };
+    let upright = || serde_json::json!([[1.0, 0.0, 10.0], [0.0, 1.0, 10.0]]);
+
+    // A mirror: the determinant is negative, and nothing else differs.
+    let (_, diagnostics) = lower_json(set_with(
+        vec![with_matrix("1:3", upright(), 20.0, 20.0)],
+        vec![with_matrix(
+            "1:7",
+            serde_json::json!([[-1.0, 0.0, 10.0], [0.0, 1.0, 10.0]]),
+            20.0,
+            20.0,
+        )],
+        vec![with_matrix("I1:14;1:3", upright(), 20.0, 20.0)],
+    ));
+    let named = diagnostics
+        .iter()
+        .find(|d| d.message.contains("mirroring"))
+        .unwrap_or_else(|| panic!("a mirror difference is named: {diagnostics:?}"));
+    assert_eq!(named.rule, "figma.variants.unlowerable-set");
+    assert_eq!(
+        named.severity,
+        Severity::Warning,
+        "an unlowerable set is a degrade in both policies: the instance's baked \
+         subtree still paints",
+    );
+
+    // Two mirrors about **different axes** are both mirrors, so a single
+    // handedness bit calls them equal — and the half-turn between them (a flip
+    // about x composed with a flip about y) ships in silence. A mirror also
+    // makes `matrix_turn` return `0.0`, so a mirrored member's angle is not
+    // carried either: where either matrix mirrors, the whole linear part is
+    // uncarried and must match exactly.
+    let (_, diagnostics) = lower_json(set_with(
+        vec![with_matrix(
+            "1:3",
+            serde_json::json!([[-1.0, 0.0, 10.0], [0.0, 1.0, 10.0]]),
+            20.0,
+            20.0,
+        )],
+        vec![with_matrix(
+            "1:7",
+            serde_json::json!([[1.0, 0.0, 10.0], [0.0, -1.0, 10.0]]),
+            20.0,
+            20.0,
+        )],
+        vec![with_matrix("I1:14;1:3", upright(), 20.0, 20.0)],
+    ));
+    assert!(
+        diagnostics.iter().any(|d| d.message.contains("mirroring")),
+        "a flip about x and a flip about y differ by a half-turn: {diagnostics:?}",
+    );
+
+    // A **half-turn** is not a mirror, and the off-diagonal cannot tell them
+    // apart: `[[-1, 0], [0, 1]]` and `[[-1, 0], [0, -1]]` both have zero
+    // off-diagonals and only the second is a rotation. That confusion is what
+    // issue #878 was about, so the boundary is asserted from the other side
+    // too: a member turned 180 degrees is not refused.
+    //
+    // What that guards is the naive fix — comparing the matrices themselves,
+    // or their off-diagonals, would refuse this pair. That a rotation
+    // difference then lowers as a `Rotation` override is
+    // `a_rotation_difference_lowers_as_an_override_and_is_named_when_a_switch_animates`'s
+    // claim, and it computes the rotated bounding box that needs — not
+    // repeated here, where the box would be measuring the fixture.
+    let (_, diagnostics) = lower_json(set_with(
+        vec![with_matrix("1:3", upright(), 20.0, 20.0)],
+        vec![with_matrix(
+            "1:7",
+            serde_json::json!([[-1.0, 0.0, 10.0], [0.0, -1.0, 10.0]]),
+            20.0,
+            20.0,
+        )],
+        vec![with_matrix("I1:14;1:3", upright(), 20.0, 20.0)],
+    ));
+    assert!(
+        !diagnostics.iter().any(|d| d.message.contains("mirroring")),
+        "a half-turn has a positive determinant and is a rotation: {diagnostics:?}",
+    );
+
+    // Two members mirrored the **same** way but scaled differently still
+    // lower: the scale bakes into the bounding box for a mirrored member
+    // exactly as it does for an upright one, so it is carried, and comparing
+    // the raw linear part would refuse a set that renders. What the comparison
+    // keeps is the orientation, with the magnitude divided out.
+    let (doc, diagnostics) = lower_json(set_with(
+        vec![with_matrix(
+            "1:3",
+            serde_json::json!([[-1.0, 0.0, 10.0], [0.0, 1.0, 10.0]]),
+            20.0,
+            20.0,
+        )],
+        vec![with_matrix(
+            "1:7",
+            serde_json::json!([[-2.0, 0.0, 10.0], [0.0, 2.0, 10.0]]),
+            40.0,
+            40.0,
+        )],
+        vec![with_matrix(
+            "I1:14;1:3",
+            serde_json::json!([[-1.0, 0.0, 10.0], [0.0, 1.0, 10.0]]),
+            20.0,
+            20.0,
+        )],
+    ));
+    assert!(
+        !diagnostics.iter().any(|d| d.message.contains("mirroring")),
+        "both mirror the same way; only the scale differs, and the box carries it: \
+         {diagnostics:?}",
+    );
+    assert_eq!(
+        set_of(&doc, 0).members[1]
+            .overrides
+            .iter()
+            .map(|o| o.value)
+            .collect::<Vec<_>>(),
+        vec![VariantValue::Width(40.0), VariantValue::Height(40.0)],
+        "and it lowers as the overrides that carry it",
+    );
+
+    // And the scale a bounding box carries still lowers, rather than being
+    // refused by a comparison that cannot tell the two apart. This is the
+    // regression the narrower rule exists to avoid.
+    let (doc, diagnostics) = lower_json(set_with(
+        vec![with_matrix("1:3", upright(), 20.0, 20.0)],
+        vec![with_matrix(
+            "1:7",
+            serde_json::json!([[2.0, 0.0, 10.0], [0.0, 2.0, 10.0]]),
+            40.0,
+            40.0,
+        )],
+        vec![with_matrix("I1:14;1:3", upright(), 20.0, 20.0)],
+    ));
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    assert_eq!(
+        set_of(&doc, 0).members[1]
+            .overrides
+            .iter()
+            .map(|o| o.value)
+            .collect::<Vec<_>>(),
+        vec![VariantValue::Width(40.0), VariantValue::Height(40.0)],
+        "the scale is carried by the box the walk already lowers",
+    );
+}
+
+// --- The review round on PR #1039: three regressions the first fix introduced.
+
+#[test]
+fn an_instance_of_a_set_the_file_carries_but_cannot_lower_is_not_reported_as_absent() {
+    // Resolving "does this file carry a set for this node" off the *plans*
+    // conflated two different answers: no set here, and a set no plan could be
+    // built for. A set whose members differ in corner radius is unlowerable,
+    // so no plan is pushed — and an instance of it then reported that the file
+    // carried no component set for it, on the line below the finding that
+    // named that very set, and took the published-library warning with it.
+    //
+    // Resolution is a question about the file, so it is answered from the node
+    // tree. The switch's loss is `UNLOWERABLE_SET`'s to name in full: reporting
+    // it twice would have one set say both that a switch lowers and that none
+    // does, which is what `a_contended_destination_is_not_named_where_the_set_animates_nothing`
+    // guards on the neighbouring path.
+    let member = |id: &str, name: &str, radius: f64| {
+        let mut node = boxed(id, name, "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+        node["cornerRadius"] = serde_json::json!(radius);
+        node
+    };
+    let mut instance = boxed("1:14", "card", "INSTANCE", 0.0, 200.0, 100.0, 50.0);
+    instance["componentId"] = serde_json::json!("1:2");
+    instance["interactions"] = serde_json::json!([{
+        "trigger": { "type": "ON_CLICK" },
+        // A real member of the set, not a dangling id.
+        "actions": [{ "type": "NODE", "destinationId": "1:6", "navigation": "CHANGE_TO" }],
+    }]);
+
+    let (_, diagnostics) = lower_json(document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "set",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [member("1:2", "state=rest", 4.0), member("1:6", "state=active", 12.0)],
+        },
+        instance,
+    ])));
+
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.message.contains("carries no component set")),
+        "the file plainly carries the set; only the plan failed: {diagnostics:?}",
+    );
+    assert_eq!(
+        diagnostics.iter().map(|d| d.rule).collect::<Vec<_>>(),
+        vec!["figma.variants.unlowerable-set"],
+        "the set's own finding names the whole loss: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn a_reaction_on_a_child_of_a_member_no_instance_echoes_is_still_named() {
+    // Skipping definition subtrees for issue #1018 removed the only pass that
+    // reached a member's *children*, and `Plan::diagnostics` compensated at the
+    // member root alone — so a refused reaction one layer inside a member no
+    // instance echoes was named nowhere. It paints the moment a switch to that
+    // member fires, which is the whole reason non-echoed members are named at
+    // all.
+    let member = |id: &str, name: &str, refused: bool| {
+        let mut child = boxed(&format!("{id}c"), "bar", "FRAME", 10.0, 10.0, 20.0, 20.0);
+        if refused {
+            child["interactions"] = serde_json::json!([{
+                "trigger": { "type": "AFTER_TIMEOUT", "timeout": 1.5 },
+                "actions": [{ "type": "URL", "url": "https://example.com" }],
+            }]);
+        }
+        let mut node = boxed(id, name, "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+        node["children"] = serde_json::json!([child]);
+        node
+    };
+    let mut instance = boxed("1:14", "card", "INSTANCE", 0.0, 200.0, 100.0, 50.0);
+    instance["componentId"] = serde_json::json!("1:2");
+    instance["children"] =
+        serde_json::json!([boxed("I1:14;1:2c", "bar", "FRAME", 10.0, 210.0, 20.0, 20.0)]);
+
+    let (_, diagnostics) = lower_json(document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "set",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [member("1:2", "state=rest", false), member("1:6", "state=active", true)],
+        },
+        instance,
+    ])));
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.message.contains("AFTER_TIMEOUT")),
+        "a refusal inside a non-echoed member is named at that node: {diagnostics:?}",
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.message.contains("URL")),
+        "and every finding survives one pass: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn a_switch_inside_a_member_is_judged_against_the_set_that_owns_it() {
+    // Naming a non-echoed member's subtree has to resolve each node the way
+    // the rest of the file does. Judging the whole subtree against the
+    // *enclosing* set reported a nested instance of another set as naming a
+    // destination that is not a member — an Error under Strict for a switch
+    // that is perfectly valid. And descending into a nested master named
+    // reactions inside a definition nothing instantiates, which is the case
+    // issue #1018 removed everywhere else.
+    // Both members carry the same two children by name, or the set is a
+    // topology change, no plan is built, and the subtree this is about is
+    // never reached at all.
+    let chip = |id: &str, y: f64, reaction: bool| {
+        let mut node = boxed(id, "chip", "INSTANCE", 10.0, y, 20.0, 20.0);
+        node["componentId"] = serde_json::json!("2:2");
+        if reaction {
+            node["interactions"] = serde_json::json!([{
+                "trigger": { "type": "ON_CLICK" },
+                // A real member of the *other* set, 2:10.
+                "actions": [{ "type": "NODE", "destinationId": "2:6", "navigation": "CHANGE_TO" }],
+            }]);
+        }
+        node
+    };
+    let buried = |id: &str, inner_id: &str, y: f64, reaction: bool| {
+        let mut inner = boxed(inner_id, "inner", "FRAME", 10.0, y, 20.0, 20.0);
+        if reaction {
+            inner["interactions"] = serde_json::json!([{
+                "trigger": { "type": "ON_KEY_DOWN" },
+                "actions": [{ "type": "URL", "url": "https://example.com" }],
+            }]);
+        }
+        let mut master = boxed(id, "buried", "COMPONENT", 10.0, y, 20.0, 20.0);
+        master["children"] = serde_json::json!([inner]);
+        master
+    };
+
+    let mut echoed = boxed("1:2", "state=rest", "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+    echoed["children"] =
+        serde_json::json!([chip("1:20", 10.0, false), buried("3:1", "3:2", 40.0, false)]);
+    let mut not_echoed = boxed("1:6", "state=active", "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+    not_echoed["children"] =
+        serde_json::json!([chip("1:60", 10.0, true), buried("3:3", "3:4", 40.0, true)]);
+
+    let mut instance = boxed("1:14", "card", "INSTANCE", 0.0, 200.0, 100.0, 50.0);
+    instance["componentId"] = serde_json::json!("1:2");
+    instance["children"] = serde_json::json!([
+        chip("I1:14;1:20", 210.0, false),
+        buried("I1:14;3:1", "I1:14;3:2", 240.0, false),
+    ]);
+
+    let other_set = serde_json::json!({
+        "id": "2:10",
+        "name": "chips",
+        "type": "COMPONENT_SET",
+        "absoluteBoundingBox": { "x": 0.0, "y": 400.0, "width": 100.0, "height": 50.0 },
+        "children": [
+            boxed("2:2", "chip=off", "COMPONENT", 0.0, 400.0, 100.0, 50.0),
+            boxed("2:6", "chip=on", "COMPONENT", 0.0, 400.0, 100.0, 50.0),
+        ],
+    });
+
+    let (_, diagnostics) = lower_json(document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "set",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [echoed, not_echoed],
+        },
+        other_set,
+        instance,
+    ])));
+
+    assert!(
+        !diagnostics.iter().any(|d| d.message.contains("2:6")),
+        "the nested instance switches within its own set, which the file carries: {diagnostics:?}",
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.message.contains("ON_KEY_DOWN")),
+        "a master buried inside a member is still a definition nothing instantiates: \
+         {diagnostics:?}",
+    );
+}
+
+#[test]
+fn a_switch_into_a_set_that_lowers_no_table_is_not_called_a_degrade() {
+    // The set is carried and the destination is one of its members, so the
+    // switch reads as expressible — but the members differ in corner radius,
+    // no plan is built, and no variant table is emitted. Calling the refused
+    // curve a degrade there claims a state change nothing carries, which is
+    // the same defect reached through the other path. `UNLOWERABLE_SET` has
+    // already named the whole loss.
+    let member = |id: &str, name: &str, radius: f64| {
+        let mut node = boxed(id, name, "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+        node["cornerRadius"] = serde_json::json!(radius);
+        node
+    };
+    let mut instance = boxed("1:14", "card", "INSTANCE", 0.0, 200.0, 100.0, 50.0);
+    instance["componentId"] = serde_json::json!("1:2");
+    instance["interactions"] = serde_json::json!([{
+        "trigger": { "type": "ON_CLICK" },
+        "actions": [{
+            "type": "NODE",
+            "destinationId": "1:6",
+            "navigation": "CHANGE_TO",
+            "transition": { "type": "DISSOLVE", "easing": { "type": "EASE_OUT" }, "duration": 0.3 },
+        }],
+    }]);
+
+    let (doc, diagnostics) = lower_json(document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "set",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [member("1:2", "state=rest", 4.0), member("1:6", "state=active", 12.0)],
+        },
+        instance,
+    ])));
+
+    assert!(
+        doc.variant_sets.is_empty(),
+        "the set lowers no table at all, so no switch ships",
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.message.contains("lands in one frame")),
+        "nothing may claim a switch the document does not carry: {diagnostics:?}",
+    );
+    // The curve is still named, at the same degrade severity the set's own
+    // finding carries. Dropping it would be a silent drop (P4) and would
+    // surface for the first time on the compile after the corner radius is
+    // fixed, which is the second-compile failure debt #149 exists to prevent.
+    let curve = diagnostics
+        .iter()
+        .find(|d| d.message.contains("DISSOLVE"))
+        .unwrap_or_else(|| panic!("the refused curve is named: {diagnostics:?}"));
+    assert_eq!(curve.rule, "figma.prototype.unsupported-motion");
+    assert_eq!(
+        curve.severity,
+        Severity::Warning,
+        "an unlowerable set stays a degrade end to end: {curve:?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.rule == "figma.variants.unlowerable-set"),
+        "and the set names its own loss: {diagnostics:?}",
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.severity == Severity::Error),
+        "none of it withholds the document: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn a_change_to_on_an_instance_of_a_standalone_local_component_is_not_the_library_case() {
+    // The library exemption is for a `componentId` naming a component the file
+    // does **not** contain. A standalone local `COMPONENT` is present in full:
+    // there is simply no set, so the switch can never resolve and the file is
+    // broken rather than under-exported. Keying the exemption on "no set
+    // found" swallowed this and let it compile clean under Strict.
+    let mut instance = boxed("1:14", "card", "INSTANCE", 0.0, 200.0, 100.0, 50.0);
+    instance["componentId"] = serde_json::json!("1:2");
+    instance["interactions"] = serde_json::json!([{
+        "trigger": { "type": "ON_CLICK" },
+        "actions": [{ "type": "NODE", "destinationId": "1:6", "navigation": "CHANGE_TO" }],
+    }]);
+
+    let (_, diagnostics) = lower_json(document_with(serde_json::json!([
+        boxed("1:2", "card", "COMPONENT", 0.0, 0.0, 100.0, 50.0),
+        instance,
+    ])));
+
+    let named = diagnostics
+        .iter()
+        .find(|d| d.message.contains("1:6"))
+        .unwrap_or_else(|| panic!("the switch is named: {diagnostics:?}"));
+    assert_eq!(named.rule, "figma.prototype.unsupported-interaction");
+    assert_eq!(
+        named.severity,
+        Severity::Error,
+        "the component is right there; no library is missing: {named:?}",
+    );
+}
+
+#[test]
+fn a_reaction_echoed_onto_a_baked_child_resolves_through_its_instance() {
+    // The everyday authoring shape: an inner layer drives the enclosing
+    // instance's variant. REST reports a component's interaction on the
+    // instance verbatim, so the same `CHANGE_TO` arrives twice — once on the
+    // master's `knob`, which resolves through the definition above it, and
+    // once on the instance's baked `knob`, which has no `componentId` and no
+    // definition above it at all.
+    //
+    // Resolving only through definitions classified the baked copy as
+    // belonging to no component set, which made an ordinary file an error
+    // under Strict while the identical reaction on the master stayed silent.
+    let knob = |id: &str, y: f64| {
+        let mut node = boxed(id, "knob", "FRAME", 10.0, y, 20.0, 20.0);
+        node["interactions"] = serde_json::json!([{
+            "trigger": { "type": "ON_CLICK" },
+            "actions": [{ "type": "NODE", "destinationId": "1:6", "navigation": "CHANGE_TO" }],
+        }]);
+        node
+    };
+    let member = |id: &str, name: &str, child: serde_json::Value| {
+        let mut node = boxed(id, name, "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+        node["children"] = serde_json::json!([child]);
+        node
+    };
+    let mut instance = boxed("1:14", "card", "INSTANCE", 0.0, 200.0, 100.0, 50.0);
+    instance["componentId"] = serde_json::json!("1:2");
+    instance["children"] = serde_json::json!([knob("I1:14;1:3", 210.0)]);
+
+    let (_, diagnostics) = lower_json(document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "set",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [
+                member("1:2", "state=rest", knob("1:3", 10.0)),
+                member("1:6", "state=active", knob("1:7", 10.0)),
+            ],
+        },
+        instance,
+    ])));
+
+    assert!(
+        diagnostics.is_empty(),
+        "the switch names a member of the set the instance shows, from both copies \
+         of the layer that declares it: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn a_member_reaction_is_not_named_where_the_set_lowers_no_table() {
+    // A set that lowers no variant table can switch to nothing, so a member no
+    // instance echoes never reaches the screen and its refused reaction costs
+    // the picture exactly what a master nothing instantiates costs it. Naming
+    // it made an ordinary hover-driven set — the most common interactive
+    // component shape there is — refuse the file under Strict.
+    let member = |id: &str, name: &str, radius: f64, refused: bool| {
+        let mut node = boxed(id, name, "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+        node["cornerRadius"] = serde_json::json!(radius);
+        if refused {
+            node["interactions"] = serde_json::json!([{
+                "trigger": { "type": "ON_HOVER" },
+                "actions": [{ "type": "NODE", "destinationId": "1:2", "navigation": "CHANGE_TO" }],
+            }]);
+        }
+        node
+    };
+    let mut instance = boxed("1:14", "card", "INSTANCE", 0.0, 200.0, 100.0, 50.0);
+    instance["componentId"] = serde_json::json!("1:2");
+
+    let (_, diagnostics) = lower_json(document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "set",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [
+                member("1:2", "state=rest", 4.0, false),
+                member("1:6", "state=active", 12.0, true),
+            ],
+        },
+        instance,
+    ])));
+
+    assert!(
+        !diagnostics.iter().any(|d| d.message.contains("ON_HOVER")),
+        "no switch can reach that member, so its reaction ships nowhere: {diagnostics:?}",
+    );
+    assert_eq!(
+        diagnostics.iter().map(|d| d.rule).collect::<Vec<_>>(),
+        vec!["figma.variants.unlowerable-set"],
+        "only the set's own loss is named: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn an_instance_inside_a_member_still_shows_the_set_it_names() {
+    // What is shown and what a switch can reach define each other. An instance
+    // sitting inside a *member* reaches the screen exactly when a switch to
+    // that member does, and it then shows its own set — whose members become
+    // reachable in turn.
+    //
+    // Answering the two in sequence stops one level short: excluding every
+    // instance inside a definition from `shown`, while naming a non-echoed
+    // member's whole subtree, left the inner set reading as instantiated by
+    // nothing, and its own members' refusals named nowhere (P4).
+    let chip = |id: &str, y: f64| {
+        let mut node = boxed(id, "chip", "INSTANCE", 10.0, y, 20.0, 20.0);
+        node["componentId"] = serde_json::json!("2:2");
+        node
+    };
+    let outer = |id: &str, name: &str, child: serde_json::Value| {
+        let mut node = boxed(id, name, "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+        node["children"] = serde_json::json!([child]);
+        node
+    };
+    let inner = |id: &str, name: &str, refused: bool| {
+        let mut node = boxed(id, name, "COMPONENT", 0.0, 400.0, 20.0, 20.0);
+        if refused {
+            node["interactions"] = serde_json::json!([{
+                "trigger": { "type": "ON_KEY_DOWN" },
+                "actions": [{ "type": "URL", "url": "https://example.com" }],
+            }]);
+        }
+        node
+    };
+    // The instance bakes **no** chip of its own. That is what isolates the
+    // question: the only instances of the inner set are the two sitting inside
+    // the outer set's members, so if neither counts as showing it, nothing
+    // does. (A baked chip here would reach `shown` directly, through the
+    // instance rather than through a member, and the fixture would pass
+    // without ever asking the question.) The missing child costs an
+    // `unlowerable-set` warning, which is not what this asserts on.
+    let mut instance = boxed("1:14", "card", "INSTANCE", 0.0, 200.0, 100.0, 50.0);
+    instance["componentId"] = serde_json::json!("1:2");
+
+    let (_, diagnostics) = lower_json(document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "outer",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [
+                outer("1:2", "state=rest", chip("1:20", 10.0)),
+                outer("1:6", "state=active", chip("1:60", 10.0)),
+            ],
+        },
+        {
+            "id": "2:10",
+            "name": "inner",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 400.0, "width": 20.0, "height": 20.0 },
+            "children": [inner("2:2", "chip=off", false), inner("2:6", "chip=on", true)],
+        },
+        instance,
+    ])));
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.message.contains("ON_KEY_DOWN")),
+        "the inner set is instantiated by a chip one member deep, so the member no \
+         chip echoes is named: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn a_change_to_on_a_node_belonging_to_no_component_set_follows_the_policy() {
+    // The third arm of the resolution, and the one with no instance in it: a
+    // plain frame carrying a `CHANGE_TO`. There is no variant to switch to and
+    // no library missing, so it takes the policy's severity rather than the
+    // exemption's fixed warning — and it is pinned here because nothing else
+    // asserts which of the two a hostless node lands in.
+    let mut frame = boxed("1:2", "loose", "FRAME", 0.0, 0.0, 100.0, 50.0);
+    frame["interactions"] = serde_json::json!([{
+        "trigger": { "type": "ON_CLICK" },
+        "actions": [{ "type": "NODE", "destinationId": "9:99", "navigation": "CHANGE_TO" }],
+    }]);
+    let doc_json = document_with(serde_json::json!([frame]));
+
+    for (policy, expected) in [
+        (EmitPolicy::Strict, Severity::Error),
+        (EmitPolicy::Partial, Severity::Warning),
+    ] {
+        let (_, diagnostics) = lower_json_with_policy(doc_json.clone(), policy);
+        let named = diagnostics
+            .iter()
+            .find(|d| d.message.contains("9:99"))
+            .unwrap_or_else(|| panic!("{policy:?}: the switch is named: {diagnostics:?}"));
+        assert_eq!(named.rule, "figma.prototype.unsupported-interaction");
+        assert_eq!(named.severity, expected, "{policy:?}: {named:?}");
+    }
+}
+
+#[test]
+fn a_change_to_into_a_single_member_set_is_an_omission_nothing_else_reports() {
+    // The third state a set can be in. A set of one member has no alternative
+    // to switch to, so rule 12 has it name nothing at all — which means no
+    // other diagnostic speaks for a `CHANGE_TO` into it, and this arm is the
+    // only place that reports the loss. It is pinned here because the arm is
+    // reachable from any layer, not only from an instance root, and nothing
+    // else asserts which severity it takes.
+    let mut instance = boxed("1:14", "card", "INSTANCE", 0.0, 200.0, 100.0, 50.0);
+    instance["componentId"] = serde_json::json!("1:2");
+    instance["interactions"] = serde_json::json!([{
+        "trigger": { "type": "ON_CLICK" },
+        "actions": [{ "type": "NODE", "destinationId": "1:2", "navigation": "CHANGE_TO" }],
+    }]);
+    let doc_json = document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "set",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [boxed("1:2", "state=rest", "COMPONENT", 0.0, 0.0, 100.0, 50.0)],
+        },
+        instance,
+    ]));
+
+    for (policy, expected) in [
+        (EmitPolicy::Strict, Severity::Error),
+        (EmitPolicy::Partial, Severity::Warning),
+    ] {
+        let (_, diagnostics) = lower_json_with_policy(doc_json.clone(), policy);
+        let named = diagnostics
+            .iter()
+            .find(|d| d.message.contains("no second member"))
+            .unwrap_or_else(|| panic!("{policy:?}: the switch is named: {diagnostics:?}"));
+        assert_eq!(named.rule, "figma.prototype.unsupported-interaction");
+        assert_eq!(named.severity, expected, "{policy:?}: {named:?}");
+    }
+}
+
+#[test]
+fn a_switch_on_an_instance_whose_own_table_is_refused_is_not_called_a_degrade() {
+    // A set can plan and still ship no table for a *particular* instance:
+    // `emit` refuses one whose own geometry disagrees with the member it
+    // shows. Judging the switch before that answer is known put "the switch
+    // lands in one frame" beside "this instance lowers no variant table" —
+    // the same contradiction one scope down from the set.
+    let mut turned = boxed("1:7", "bar", "FRAME", 40.0, 10.0, 20.0, 20.0);
+    turned["fills"] = solid(0.1, 0.2, 0.3);
+    let mut doc_json = set_with(
+        vec![boxed("1:3", "bar", "FRAME", 10.0, 10.0, 20.0, 20.0)],
+        vec![turned],
+        // The instance's own bar sits where the member it shows does not,
+        // which is the instance-level override `emit` refuses.
+        vec![boxed("I1:14;1:3", "bar", "FRAME", 33.0, 210.0, 20.0, 20.0)],
+    );
+    doc_json["document"]["children"][0]["children"][1]["interactions"] = serde_json::json!([{
+        "trigger": { "type": "ON_CLICK" },
+        "actions": [{
+            "type": "NODE",
+            "destinationId": "1:6",
+            "navigation": "CHANGE_TO",
+            "transition": { "type": "DISSOLVE", "easing": { "type": "EASE_OUT" }, "duration": 0.3 },
+        }],
+    }]);
+
+    let (doc, diagnostics) = lower_json(doc_json);
+    assert!(
+        doc.variant_sets.is_empty(),
+        "the instance's own table is refused, so no switch ships: {diagnostics:?}",
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.message.contains("lands in one frame")),
+        "nothing may claim a switch this instance does not carry: {diagnostics:?}",
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.message.contains("DISSOLVE")),
+        "and the curve is still named: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn a_switch_on_a_baked_child_of_a_refused_instance_is_not_called_a_degrade() {
+    // The same claim as the test above, from the node that first got it
+    // wrong. Whether a switch ships was tracked per *node* and defaulted to
+    // true, so every layer other than the instance root whose table was
+    // emitted still reported "the switch lands in one frame" — including a
+    // baked child, whose switches reach no table at all (debt #1064).
+    let knob = |id: &str, x: f64, y: f64| {
+        let mut node = boxed(id, "bar", "FRAME", x, y, 20.0, 20.0);
+        node["interactions"] = serde_json::json!([{
+            "trigger": { "type": "ON_CLICK" },
+            "actions": [{
+                "type": "NODE",
+                "destinationId": "1:6",
+                "navigation": "CHANGE_TO",
+                "transition": {
+                    "type": "DISSOLVE",
+                    "easing": { "type": "EASE_OUT" },
+                    "duration": 0.3,
+                },
+            }],
+        }]);
+        node
+    };
+    let (doc, diagnostics) = lower_json(set_with(
+        vec![boxed("1:3", "bar", "FRAME", 10.0, 10.0, 20.0, 20.0)],
+        vec![boxed("1:7", "bar", "FRAME", 40.0, 10.0, 20.0, 20.0)],
+        // At x 33 where the member it shows authors 10 — the instance-level
+        // override `emit` refuses, so this instance ships no table.
+        vec![knob("I1:14;1:3", 33.0, 210.0)],
+    ));
+
+    assert!(doc.variant_sets.is_empty(), "{diagnostics:?}");
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.message.contains("lands in one frame")),
+        "a baked child carries no transition into any table: {diagnostics:?}",
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.message.contains("DISSOLVE")),
+        "and the curve is still named: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn a_refused_curve_on_a_member_no_instance_echoes_is_still_a_degrade() {
+    // The reverse arm of a two-variant set, and the one shape no other test
+    // covered: a member no instance shows, of a set that lowers, declaring a
+    // `CHANGE_TO` whose curve the vocabulary refuses.
+    //
+    // Its switch **does** ship — `Plan::of` folds a member's own reaction into
+    // the set's default tween table and `emit` copies that table into every
+    // instance's `VariantSet` — so the loss is the curve alone, which is the
+    // definition of a degrade. Keying "does this switch ship" on "is this node
+    // an instance" took that away and reported the switch as reaching nothing.
+    let mut member = boxed("1:6", "state=active", "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+    member["children"] = serde_json::json!([boxed("1:7", "bar", "FRAME", 40.0, 10.0, 20.0, 20.0)]);
+    member["interactions"] = serde_json::json!([{
+        "trigger": { "type": "ON_CLICK" },
+        "actions": [{
+            "type": "NODE",
+            "destinationId": "1:2",
+            "navigation": "CHANGE_TO",
+            "transition": { "type": "DISSOLVE", "easing": { "type": "EASE_OUT" }, "duration": 0.3 },
+        }],
+    }]);
+    let mut rest = boxed("1:2", "state=rest", "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+    rest["children"] = serde_json::json!([boxed("1:3", "bar", "FRAME", 10.0, 10.0, 20.0, 20.0)]);
+    let mut instance = boxed("1:14", "card", "INSTANCE", 0.0, 200.0, 100.0, 50.0);
+    instance["componentId"] = serde_json::json!("1:2");
+    instance["children"] =
+        serde_json::json!([boxed("I1:14;1:3", "bar", "FRAME", 10.0, 210.0, 20.0, 20.0)]);
+
+    let (doc, diagnostics) = lower_json(document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "set",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [rest, member],
+        },
+        instance,
+    ])));
+
+    assert_eq!(doc.variant_sets.len(), 1, "the set lowers: {diagnostics:?}");
+    let curve = diagnostics
+        .iter()
+        .find(|d| d.message.contains("DISSOLVE"))
+        .unwrap_or_else(|| panic!("the refused curve is named: {diagnostics:?}"));
+    assert_eq!(curve.rule, "figma.prototype.unsupported-motion");
+    assert!(
+        curve.message.contains("lands in one frame"),
+        "the switch ships through the set's default table, so only the curve \
+         was lost: {curve:?}",
+    );
+}
+
+#[test]
+fn members_differing_in_whether_their_transform_has_area_are_refused_by_that_name() {
+    // A collapsed matrix is neither upright nor mirrored, and `matrix_turn`
+    // reports `0.0` for it too — so its orientation is uncarried for the same
+    // reason a mirror's is, and the set is refused. What it must not say is
+    // that the two differ in mirroring, because neither mirrors.
+    let with_matrix = |id: &str, m: serde_json::Value| {
+        let mut node = boxed(id, "bar", "FRAME", 10.0, 10.0, 20.0, 20.0);
+        node["relativeTransform"] = m;
+        node
+    };
+    let (_, diagnostics) = lower_json(set_with(
+        vec![with_matrix(
+            "1:3",
+            serde_json::json!([[1.0, 0.0, 10.0], [0.0, 1.0, 10.0]]),
+        )],
+        vec![with_matrix(
+            "1:7",
+            serde_json::json!([[0.0, 0.0, 10.0], [0.0, 0.0, 10.0]]),
+        )],
+        vec![with_matrix(
+            "I1:14;1:3",
+            serde_json::json!([[1.0, 0.0, 10.0], [0.0, 1.0, 10.0]]),
+        )],
+    ));
+    let named = diagnostics
+        .iter()
+        .find(|d| d.rule == "figma.variants.unlowerable-set")
+        .unwrap_or_else(|| panic!("the collapsed matrix is named: {diagnostics:?}"));
+    assert!(
+        named.message.contains("any area at all"),
+        "and it names the difference that is there, not a mirror: {named:?}",
+    );
+}

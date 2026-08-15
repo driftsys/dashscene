@@ -421,12 +421,104 @@ const TURN_EPSILON: f32 = 1e-6;
 /// off-diagonal test would have let a frame turned 180° lower upright, which
 /// is the exact silent wrong picture issue #878 is about.
 fn matrix_turn(m: [[f32; 3]; 2]) -> f32 {
-    let [[m00, m01, _], [m10, m11, _]] = m;
-    if m00 * m11 - m01 * m10 <= 0.0 {
+    let [[m00, _, _], [m10, _, _]] = m;
+    if handedness(m) != Handedness::Upright {
         return 0.0;
     }
     let turn = m10.atan2(m00);
     if turn.abs() < TURN_EPSILON { 0.0 } else { turn }
+}
+
+/// Which way a `relativeTransform` faces, as its determinant reports it.
+///
+/// One classification, and `matrix_turn` reads it too, because the two are
+/// halves of one answer: `matrix_turn` reports an angle only for `Upright`, so
+/// anything else leaves the whole orientation uncarried and a caller that must
+/// not drop it in silence (P4) needs to see which case it is.
+///
+/// **The boundary is exact zero, deliberately.** A tolerance here was tried
+/// and reverted: the determinant is an *area* scale, so any band around zero
+/// is a band of real matrices, and a 1e-6 threshold discarded the rotation of
+/// a node at uniform scale 0.001 — reporting no turn for a node that plainly
+/// turns, which is the silent wrong picture issue #878 exists to prevent. The
+/// residue argument that motivated it has no population behind it either:
+/// every matrix in `corpus/figma-fixtures/` is a pure rotation, whose
+/// determinant is 1.0 to every digit an `f32` holds.
+#[derive(PartialEq)]
+enum Handedness {
+    /// A rotation, with or without a positive scale. Its angle is the one
+    /// `matrix_turn` reports.
+    Upright,
+    /// A mirror. The document has no vocabulary for one, so no angle is
+    /// reported and the whole orientation is uncarried.
+    Mirrored,
+    /// No area at all, so no handedness and no angle. The node's own zero
+    /// extent is what names it.
+    Collapsed,
+}
+
+fn handedness(m: [[f32; 3]; 2]) -> Handedness {
+    let [[m00, m01, _], [m10, m11, _]] = m;
+    let determinant = m00 * m11 - m01 * m10;
+    if determinant > 0.0 {
+        Handedness::Upright
+    } else if determinant < 0.0 {
+        Handedness::Mirrored
+    } else {
+        Handedness::Collapsed
+    }
+}
+
+/// Whether a matrix encloses any area — false only for a collapsed one, which
+/// is neither upright nor mirrored and whose real difference from a member
+/// that does is its extent, not its handedness.
+pub(super) fn has_area(m: Option<[[f32; 3]; 2]>) -> bool {
+    m.is_none_or(|m| handedness(m) != Handedness::Collapsed)
+}
+
+/// Whether a matrix carries an angle `Node::turn` reports. Only an upright one
+/// does, so this is the test a caller uses to ask whether the *rest* of the
+/// linear part reached anything.
+pub(super) fn carries_its_angle(m: Option<[[f32; 3]; 2]>) -> bool {
+    m.is_none_or(|m| handedness(m) == Handedness::Upright)
+}
+
+/// Whether two `relativeTransform`s face the same way — the same handedness
+/// and the same angle, with the scale each carries divided out.
+///
+/// Each column of the linear part is scaled to unit length, which is exactly
+/// the magnitude `absoluteBoundingBox` already carries and `Props` already
+/// compares. What survives is the orientation, which nothing else can see once
+/// a mirror makes [`matrix_turn`] report `0.0` — so this is the third reading
+/// of the same six numbers, and it lives beside the other two because the row
+/// and column convention they share is what all three encode.
+///
+/// An absent matrix is the identity. A column with no length at all is a
+/// collapsed matrix, which has no orientation to compare: it matches only
+/// another collapsed one, and the node's own zero extent is what names it.
+pub(super) fn same_orientation(a: Option<[[f32; 3]; 2]>, b: Option<[[f32; 3]; 2]>) -> bool {
+    const IDENTITY: [[f32; 3]; 2] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    // `handedness` decides degeneracy here too. Testing the column lengths
+    // instead would disagree with `has_area` on a matrix whose columns are
+    // long but parallel — zero area, two usable columns — and the diagnostic
+    // would then name the one property such a pair agrees on.
+    let oriented = |m: [[f32; 3]; 2]| {
+        let [[m00, m01, _], [m10, m11, _]] = m;
+        let (x, y) = (m00.hypot(m10), m01.hypot(m11));
+        (handedness(m) != Handedness::Collapsed).then(|| [m00 / x, m10 / x, m01 / y, m11 / y])
+    };
+    match (
+        oriented(a.unwrap_or(IDENTITY)),
+        oriented(b.unwrap_or(IDENTITY)),
+    ) {
+        // `TURN_EPSILON` itself, not a second copy of it: for a small
+        // angle the difference between two unit-length components *is* that
+        // angle in radians, so the two are one quantity and a refit of its
+        // derivation has to move both.
+        (Some(a), Some(b)) => a.iter().zip(&b).all(|(x, y)| (x - y).abs() <= TURN_EPSILON),
+        // Two collapsed matrices agree; a collapsed one and a real one do not.
+        (a, b) => a.is_none() && b.is_none(),
+    }
 }
 
 /// One prototype interaction: what starts it, and what it does (story #773).

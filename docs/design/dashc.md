@@ -332,14 +332,38 @@ default member by member rather than replacing the table
 
 Anything a `VariantValue` cannot express makes the set unlowerable and named: a
 member with a child the others do not have, a differing corner radius, a
-differing auto-layout mode. The comparison destructures `rest::Node`, so a field
-added to the REST subset fails to compile until it is classified. Three rule
-ids, and their severities differ by what is lost —
+differing auto-layout mode, a member whose matrix faces a different way from
+another's — mirrored, or enclosing no area, both of which leave the orientation
+carried by nothing. The comparison destructures `rest::Node`, so a field added
+to the REST subset fails to compile until it is classified — and
+`relative_transform` is the one field split across both halves. Its turn is an
+overridable prop; its translation and scale magnitude are left to the bounding
+box that already carries them; and its **orientation** — handedness together
+with angle — is compared exactly where the matrix stops carrying an angle of its
+own, which is a mirror or a collapsed matrix, both of which `matrix_turn`
+reports as `0.0` (issue #1019). A node whose `rotation` field is non-zero takes
+its turn from that field instead, which is why the test is on the matrix's
+handedness rather than on what `Node::turn` returns.
+
+Three rule ids, and their severities differ by what is lost.
 `figma.prototype.unsupported-interaction` follows the emit policy (an error
 under `Strict`, R6) because nothing about the interaction reaches the document,
 while `figma.prototype.unsupported-motion` and `figma.variants.unlowerable-set`
-are always warnings because the picture is unchanged. The full reasoning is
-`docs/decisions/figma-component-lowering.md` ("Amendment, 2026-08-11").
+are always warnings because the picture is unchanged. One population under the
+first is a warning in both policies: a `CHANGE_TO` on a node whose component set
+the file does not carry at all, which is what every instance of a
+published-library set looks like and what the closure has already ruled a
+warning rather than a block (issue #1016). The full reasoning is
+`docs/decisions/figma-component-lowering.md` ("Severity", and "Amendment,
+2026-08-11").
+
+Which switches land is resolved **before** any interaction is named, because
+`figma/prototype.rs` reads one node and cannot look a `destinationId` up. A
+switch it returns is a candidate, and a curve it could not lower rides on that
+candidate unclassified until `variants::apply` says whether the switch reaches
+the document — otherwise a refused curve on a switch that lands nowhere is filed
+as "the switch lands in one frame", claiming a state change beside the finding
+that says it lowers nowhere (issue #1017).
 
 ## Bindings (v0.7, story #167)
 

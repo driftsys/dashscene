@@ -58,7 +58,12 @@
 //!
 //! - An **interaction with no lowering** is an omission. Nothing about it
 //!   reaches the document, and under `Strict` the contract is that no bytes
-//!   are handed over while authored intent is being dropped (R6).
+//!   are handed over while authored intent is being dropped (R6). One
+//!   population under that rule is a warning in both policies: a `CHANGE_TO`
+//!   on a node whose own component set the file does not carry at all, which
+//!   is the ordinary shape of an instance of a published-library set and
+//!   which loses exactly what an unlowerable set below loses (issue #1016).
+//!   `interaction_diagnostics` states that argument where the split is made.
 //! - A **motion degrade** and an **unlowerable set** leave the picture
 //!   exactly as it is. A switch that lands in one frame is what every
 //!   document written before v0.18 says, and a set that emits no variant
@@ -79,25 +84,40 @@ use crate::document::{
 };
 use crate::figma::bindings::IndexOfId;
 use crate::figma::prototype::{self, Interactions, Switch};
-use crate::figma::rest::{FigmaFile, Node, Paint};
+use crate::figma::rest::{FigmaFile, Node, Paint, carries_its_angle, has_area, same_orientation};
 
 /// The diagnostic rules this producer assembles for the variant table and the
 /// prototype interactions that animate it.
 pub mod rule {
     /// A prototype interaction the document has no construct for at all — a
     /// trigger, action or navigation outside the vocabulary, **or** a
-    /// `CHANGE_TO` naming a destination no set in the file carries, which
-    /// lowers no switch at all (issue #976). Nothing about either reaches the
-    /// document, so the severity follows the emit policy: an error that
-    /// withholds the bytes under `EmitPolicy::Strict` (R6), a warning under
-    /// `EmitPolicy::Partial`.
+    /// `CHANGE_TO` naming a destination that is not a member of the component
+    /// set the node shows, which lowers no switch at all (issue #976). Nothing
+    /// about either reaches the document, so the severity follows the emit
+    /// policy: an error that withholds the bytes under `EmitPolicy::Strict`
+    /// (R6), a warning under `EmitPolicy::Partial`.
+    ///
+    /// **One population under this rule is a fixed warning in both policies**
+    /// (issue #1016): a `CHANGE_TO` on a node whose own component set the file
+    /// carries nowhere, which is the ordinary shape of an instance of a
+    /// published-library set. `interaction_diagnostics` states the argument
+    /// where the split is made.
     pub const UNSUPPORTED_INTERACTION: &str = "figma.prototype.unsupported-interaction";
-    /// A variant switch lowers, but the motion Figma declared for it does
-    /// not: an easing with no `dashcue` spelling, a difference on a channel no
+    /// The motion Figma declared for a variant switch does not lower: an
+    /// easing with no `dashcue` spelling, a difference on a channel no
     /// transition can animate, or a second member declaring a different
-    /// transition to a destination one already claimed. Always a warning — the
-    /// state change ships and lands in one frame, or with the transition that
-    /// won, which is what a member with no transition has always meant.
+    /// transition to a destination one already claimed. **Always a warning**,
+    /// which is the property this rule carries and the reason the split
+    /// matters — the picture is never at stake here.
+    ///
+    /// Usually the state change ships and lands in one frame, or with the
+    /// transition that won, which is what a member with no transition has
+    /// always meant. One population is a warning without a switch behind it:
+    /// a curve on a switch into a set that lowers no variant table at all,
+    /// where `UNLOWERABLE_SET` names the switch's own loss and this names the
+    /// curve's, at the same severity, rather than dropping it (P4, debt #149).
+    /// It never claims the switch lands, and `interaction_diagnostics` writes
+    /// a message that says so.
     pub const UNSUPPORTED_MOTION: &str = "figma.prototype.unsupported-motion";
     /// A component set whose members differ in a way no `VariantOverride` can
     /// express, so no `VariantSet` is emitted for it. Always a warning: the
@@ -123,125 +143,369 @@ pub(super) fn apply(
     let mut diagnostics = Vec::new();
     let nodes = paths(file);
 
-    // Which members something instantiates. A definition paints nothing, so a
-    // reaction on a master no instance shows costs the picture nothing and is
-    // named nowhere — the same reasoning `Walk::visit` uses when it fires no
-    // finding at all inside a definition.
-    let shown: BTreeSet<&str> = nodes
+    // Every component this file contains, and the member ids of every set it
+    // contains — both read off the file, never off what planning achieved.
+    //
+    // Reading resolution off `plans` conflated "no set here" with "a set I
+    // could not plan", so an instance of a set refused for a corner-radius
+    // difference reported that the file carried no set for it, on the line
+    // below the finding that named that very set.
+    let components: BTreeSet<&str> = nodes
         .iter()
-        .filter(|(node, _)| node.kind == "INSTANCE")
-        .filter_map(|(node, _)| node.component_id.as_deref())
+        .filter(|walked| walked.node.kind == "COMPONENT")
+        .filter_map(|walked| walked.node.id.as_deref())
         .collect();
-
-    // Every painting node's interactions, named here and only here.
-    // Definitions are skipped for the reason above; a member's own reactions
-    // are read again in `Plan::of`, where they become the set's defaults, and
-    // named there only when no instance echoes them.
-    for (node, path) in &nodes {
-        if is_definition(node) {
-            continue;
-        }
-        diagnostics.extend(interaction_diagnostics(
-            &prototype::read(node),
-            &Location::Node(NodePath::new(index_of(index_of_id, node), path.clone())),
-            policy,
-        ));
-    }
 
     // The component sets, planned once each: the member trees, what differs
     // between them, and the transitions their own reactions declare. None of
     // that depends on an instance, which is what lets a set with no instance
     // still name what it could not lower — `refused-fill-diff` has no
-    // instance and is the case every real Figma file hits.
+    // instance and is the case every real Figma file hits, and it is why this
+    // is not gated on the set's own depth either: an instance elsewhere can
+    // show a member of a set that sits inside a definition, and gating the
+    // naming would drop that instance's lost table in silence.
+    //
+    // Planned **before** any interaction is named, because a switch's motion
+    // is only a degrade where the switch reaches the document, and naming it
+    // first is what had the reader decide from a `destinationId`'s presence
+    // instead (issue #1017).
+    //
+    // The member ids travel **with** each set's state rather than beside it:
+    // two parallel vectors filled by two loops over the same filter is an
+    // alignment nothing checks, and `landing` indexes one with a position
+    // found in the other.
     let mut plans: Vec<Plan<'_>> = Vec::new();
-    for (node, path) in &nodes {
-        if node.kind != "COMPONENT_SET" {
+    let mut sets: Vec<Set<'_>> = Vec::new();
+    for walked in &nodes {
+        if walked.node.kind != "COMPONENT_SET" {
             continue;
         }
-        let at = Location::Node(NodePath::new(index_of(index_of_id, node), path.clone()));
-        match Plan::of(node, path) {
+        let members = members_of(walked.node)
+            .into_iter()
+            .filter_map(|member| member.id.as_deref())
+            .collect();
+        let at = Location::Node(NodePath::new(
+            index_of(index_of_id, walked.node),
+            walked.path.clone(),
+        ));
+        let state = match Plan::of(walked.node, &walked.path) {
             Ok(plan) => {
-                diagnostics.extend(plan.diagnostics(&shown, &at, policy));
+                diagnostics.extend(plan.diagnostics(&at));
                 plans.push(plan);
+                SetState::Lowers(plans.len() - 1)
             }
-            Err(Some(why)) => diagnostics.push(Diagnostic {
-                rule: rule::UNLOWERABLE_SET,
-                severity: Severity::Warning,
-                at,
-                message: format!(
-                    "{why}, so this component set lowers no variant table; its instances still \
-                     paint the member they show",
-                ),
-            }),
-            // A set with nothing to lose names nothing.
-            Err(None) => {}
-        }
-    }
-
-    for (node, path) in &nodes {
-        if node.kind != "INSTANCE" {
-            continue;
-        }
-        let at = || Location::Node(NodePath::new(index_of(index_of_id, node), path.clone()));
-        let own = prototype::read(node).switches;
-
-        // An instance of a standalone `COMPONENT`, or of a set this file does
-        // not carry, has no alternative to switch to. That costs the picture
-        // nothing — but a `CHANGE_TO` on it does not lower, and dropping one
-        // in silence is what P4 forbids, so the switches are named below
-        // whether or not a plan was found.
-        let found = node.component_id.as_deref().and_then(|component| {
-            plans
-                .iter()
-                .find_map(|plan| plan.member_of(component).map(|active| (plan, active)))
-        });
-
-        for switch in &own {
-            let lands =
-                found.is_some_and(|(plan, _)| plan.member_of(&switch.destination).is_some());
-            if !lands {
-                // An omission, not a degrade: no switch reaches the document
-                // at all, so this follows the emit policy like every other
-                // interaction with no lowering. Under `Strict` a file whose
-                // export closure trimmed a `destinationId` used to compile
-                // clean and ship a button whose click does nothing (issue
-                // #976).
+            // A set with fewer than two members has nothing to lose and names
+            // nothing, so no other diagnostic will report a switch into it.
+            Err(None) => SetState::Silent,
+            Err(Some(why)) => {
                 diagnostics.push(Diagnostic {
-                    rule: rule::UNSUPPORTED_INTERACTION,
-                    severity: omission_severity(policy),
-                    at: at(),
+                    rule: rule::UNLOWERABLE_SET,
+                    severity: Severity::Warning,
+                    at,
                     message: format!(
-                        "a CHANGE_TO names destination {}, which is not a member of a component \
-                         set this file carries, so the switch lowers nowhere",
-                        switch.destination,
+                        "{why}, so this component set lowers no variant table; its instances \
+                         still paint the member they show",
                     ),
                 });
+                SetState::NamedItsLoss
+            }
+        };
+        sets.push(Set { members, state });
+    }
+
+    // Member id to set, so resolving a switch is a lookup rather than a scan
+    // over every set's member list for every node in the file.
+    let set_of: BTreeMap<&str, usize> = sets
+        .iter()
+        .enumerate()
+        .flat_map(|(index, set)| set.members.iter().map(move |id| (*id, index)))
+        .collect();
+
+    // Which members something instantiates, and which layers a switch can put
+    // on screen.
+    //
+    // A definition paints nothing, so a reaction on a master no instance shows
+    // costs the picture nothing and is named nowhere — the same reasoning
+    // `Walk::visit` uses when it fires no finding at all inside a definition.
+    // An `INSTANCE` inside such a master does not count as showing anything
+    // either (issue #1018): the walk skips that subtree whole.
+    //
+    // But the two answers define each other, so neither is a single pass. An
+    // instance sitting inside a **member** is reachable exactly when a switch
+    // to that member is, and it then shows its own set, whose members become
+    // reachable in turn. Answering "what is shown" first and "what is
+    // reachable" second stops one level short, and a set whose only instance
+    // sits one member deep loses its members' findings in silence. So this is
+    // the least fixed point: start from the instances that paint directly and
+    // grow until nothing new is reachable. It terminates because `shown` only
+    // ever grows — `reaches_screen` is monotone in `switchable`, `switchable`
+    // is monotone in `shown` — so every round either adds a component id or is
+    // the one that ends the loop, and the ids come from a finite file.
+    let mut shown = BTreeSet::new();
+    let mut switchable = BTreeSet::new();
+    loop {
+        let grown: BTreeSet<&str> = nodes
+            .iter()
+            .filter(|walked| walked.node.kind == "INSTANCE" && walked.reaches_screen(&switchable))
+            .filter_map(|walked| walked.node.component_id.as_deref())
+            .collect();
+        if grown == shown {
+            break;
+        }
+        shown = grown;
+        // Every member of a set that something instantiates **and that lowers
+        // a variant table**: a set whose table never lowers can switch to
+        // nothing, so its members cost the picture what a master no instance
+        // shows costs it — nothing.
+        //
+        // Two review rounds argued that second clause in opposite directions,
+        // so the ruling is written down rather than left to the next one.
+        // Against it: a refusal on such a member is named nowhere today and
+        // appears for the first time once the set is repaired, which resembles
+        // the second-compile failure debt #149 forbids. For it: debt #149 is
+        // about one finding hiding behind another **on a construct that
+        // ships**, and nothing here ships — no switch can reach that member
+        // while its set lowers no table, so its subtree never paints. Naming
+        // it would be an error under `Strict` withholding a document over a
+        // layer that cannot appear, which is the cost issue #1018 exists to
+        // remove. The refused-curve branch in `interaction_diagnostics` reads
+        // the other way for the same reason, not against it: that curve sits
+        // on a node that does paint.
+        switchable = sets
+            .iter()
+            .filter(|set| {
+                matches!(set.state, SetState::Lowers(_))
+                    && set.members.iter().any(|id| shown.contains(id))
+            })
+            .flat_map(|set| set.members.iter().copied())
+            .collect();
+    }
+
+    // Every node's interactions, named here and only here — the switches
+    // included, now that the sets above say where each one lands — and every
+    // instance's variant table, emitted from the same read.
+    for walked in &nodes {
+        // What reaches the screen, and so what is worth naming. A node outside
+        // every definition paints. A node inside one reaches the screen only
+        // through an instance, so it is named exactly where a switch could
+        // bring it there and nothing else will: a member of an instantiated
+        // set that no instance echoes. An echoed member is named on the baked
+        // copy the instance carries, and a definition nothing instantiates
+        // paints nowhere at all (issue #1018) — including a nested master
+        // inside a member, whose own `owner` is that master and not the
+        // member.
+        let names_here = walked.reaches_screen(&switchable)
+            && match walked.owner() {
+                None => true,
+                // An echoed member is named on the baked copy every instance
+                // showing it carries, so naming it here as well would report
+                // one authored reaction twice.
+                //
+                // **The captures pin that echo at a member root and nowhere
+                // deeper.** Every interaction in `corpus/figma-fixtures/` sits
+                // on a member `COMPONENT` root or on an `INSTANCE` root, so
+                // that REST also echoes a reaction from a layer *inside* a
+                // master onto the instance's copy of that layer is inference
+                // from the baked subtree being the resolved content, not a
+                // measured fact. If it turned out false, a refusal on such a
+                // layer would be named nowhere — which is why it is written
+                // here rather than left implied.
+                Some(definition) => definition
+                    .id
+                    .as_deref()
+                    .is_some_and(|id| !shown.contains(id)),
+            };
+        if !names_here {
+            continue;
+        }
+        let node = walked.node;
+        let read = prototype::read(node);
+        let at = || {
+            Location::Node(NodePath::new(
+                index_of(index_of_id, node),
+                walked.path.clone(),
+            ))
+        };
+        // The variant table **before** the switches are judged, because a set
+        // that plans is not yet a table that ships: `emit` refuses an instance
+        // whose own geometry disagrees with the member it shows, and a switch
+        // called a degrade before that answer is known would say "the switch
+        // lands in one frame" beside "this instance lowers no variant table"
+        // — the contradiction this pass exists to remove, one scope down from
+        // the set (issue #1017).
+        //
+        // An instance inside a definition lowers to no document node, so it
+        // can carry no table at all: `emit` would fail to find an index for
+        // every baked child and name the instance unlowerable, which is a
+        // finding about a layer that never ships (issue #1018). An instance of
+        // a standalone `COMPONENT`, of a set this file does not carry, or of
+        // one no plan could be built for has no table to emit either; its
+        // switches are judged below and the set's own loss is named above.
+        // Whether **this node's own** switches reach a variant table, which is
+        // what separates a curve that degrades a shipped state change from one
+        // that names a loss. Two nodes earn it, and the rest do not:
+        //
+        // - an `INSTANCE` whose table `emit` accepted, because `emit` applies
+        //   that instance's own switches over the set's defaults;
+        // - a **member root** of a set that lowers, because `Plan::of` folds a
+        //   member's own reaction into the set's default tween table, which
+        //   `emit` then copies into every instance's `VariantSet`. This is the
+        //   reverse arm of a two-variant set — the ordinary authoring shape —
+        //   and an earlier draft keyed the flag on "is an instance" alone and
+        //   took its degrade away.
+        //
+        // Everything else carries no transition anywhere: `emit` applies only
+        // the instance root's switches (debt #1064), and a node inside a
+        // definition lowers to no document node at all.
+        let mut carries_a_switch = false;
+        if node.kind == "INSTANCE"
+            && walked.definition.is_none()
+            && let Some((plan, active)) = plan_of(&plans, &sets, &set_of, node)
+        {
+            match plan.emit(doc, node, active, &read.switches, index_of_id) {
+                Ok(()) => carries_a_switch = true,
+                Err(why) => diagnostics.push(Diagnostic {
+                    rule: rule::UNLOWERABLE_SET,
+                    severity: Severity::Warning,
+                    at: at(),
+                    message: format!(
+                        "{why}, so this instance lowers no variant table; its baked subtree still \
+                         paints",
+                    ),
+                }),
             }
         }
+        if is_definition(node)
+            && let Some(id) = node.id.as_deref()
+            && let Some(index) = set_of.get(id)
+            && matches!(sets[*index].state, SetState::Lowers(_))
+        {
+            carries_a_switch = true;
+        }
 
-        let Some((plan, active)) = found else {
-            continue;
-        };
-        if let Err(why) = plan.emit(doc, node, active, &own, index_of_id) {
-            diagnostics.push(Diagnostic {
-                rule: rule::UNLOWERABLE_SET,
-                severity: Severity::Warning,
-                at: at(),
-                message: format!(
-                    "{why}, so this instance lowers no variant table; its baked subtree still \
-                     paints",
-                ),
-            });
+        if !read.switches.is_empty() || !read.unsupported.is_empty() {
+            diagnostics.extend(interaction_diagnostics(
+                &read,
+                landing(&sets, &set_of, &components, walked),
+                carries_a_switch,
+                &at(),
+                policy,
+            ));
         }
     }
 
     diagnostics
 }
 
+/// Where a node's `CHANGE_TO` switches can land, as the **file** answers it.
+enum Landing<'a> {
+    /// The set those switches travel within.
+    Set(&'a Set<'a>),
+    /// The node shows a component this file does not contain — the ordinary
+    /// shape of an instance of a published-library set the export left out.
+    LibraryAbsent,
+    /// No set, and no missing library either: a plain frame, or an instance of
+    /// a standalone local `COMPONENT`. A `CHANGE_TO` here resolves nowhere and
+    /// never could.
+    NoSet,
+}
+
+/// One component set the file carries, as resolution needs it.
+struct Set<'a> {
+    members: Vec<&'a str>,
+    state: SetState,
+}
+
+/// What a set does with a switch that reaches it, and which diagnostic reports
+/// the loss where it does nothing.
+enum SetState {
+    /// A plan was built, so a variant table lowers and a switch into it ships.
+    /// Carries that plan's index, which is what keeps `plans` from being a
+    /// second collection to be kept in step with this one.
+    Lowers(usize),
+    /// No plan, and the set named that loss itself under `UNLOWERABLE_SET`.
+    NamedItsLoss,
+    /// No plan and nothing named it: fewer than two members, so the set has no
+    /// alternative state and never reports one.
+    Silent,
+}
+
+/// Which set a node's switches are judged against.
+///
+/// The node's own `componentId` decides where it has one. Otherwise the switch
+/// belongs to whatever shows the node — the nearest enclosing `INSTANCE` or
+/// definition — because a `CHANGE_TO` on a layer inside a component switches
+/// the variant of the instance that layer is part of. Both halves are needed:
+/// the master's copy of that layer resolves through the definition, and the
+/// instance's baked copy of the same layer, which REST echoes the reaction
+/// onto verbatim, resolves through the instance.
+fn landing<'s>(
+    sets: &'s [Set<'s>],
+    set_of: &BTreeMap<&str, usize>,
+    components: &BTreeSet<&str>,
+    walked: &Walked<'_>,
+) -> Landing<'s> {
+    let host = walked.switch_host();
+    let shows = host.and_then(|host| host.component_id.as_deref());
+    let component = shows.or_else(|| {
+        host.filter(|host| is_definition(host))
+            .and_then(|host| host.id.as_deref())
+    });
+    if let Some(index) = component.and_then(|component| set_of.get(component)) {
+        return Landing::Set(&sets[*index]);
+    }
+    // Only a `componentId` naming a component the file does not contain is the
+    // missing-library case. An instance of a standalone local `COMPONENT` is
+    // not: the file carries the component, there is simply no set, so a
+    // `CHANGE_TO` on it is broken rather than un-exported.
+    match shows {
+        Some(component) if !components.contains(component) => Landing::LibraryAbsent,
+        _ => Landing::NoSet,
+    }
+}
+
+/// The *plan* for the set `node` instantiates, and the member it shows — what
+/// emitting a variant table needs, and `None` for a set no plan could be built
+/// for. Deliberately separate from [`landing`]: whether the file carries a set
+/// and whether this pass could lower it are different questions, and answering
+/// the first with the second is what made an unlowerable set report itself as
+/// absent.
+///
+/// It reaches the plan through the same `set_of` index [`landing`] uses, so
+/// neither the lookup nor the member list is derived twice.
+fn plan_of<'p, 'a>(
+    plans: &'p [Plan<'a>],
+    sets: &[Set<'_>],
+    set_of: &BTreeMap<&str, usize>,
+    node: &Node,
+) -> Option<(&'p Plan<'a>, usize)> {
+    let component = node.component_id.as_deref()?;
+    let set = &sets[*set_of.get(component)?];
+    let SetState::Lowers(plan) = set.state else {
+        return None;
+    };
+    let plan = &plans[plan];
+    plan.member_of(component).map(|active| (plan, active))
+}
+
 /// Whether this node is a component definition — resolved by the walk, never
 /// painted, and therefore never diagnosed (story #242).
 fn is_definition(node: &Node) -> bool {
     node.kind == "COMPONENT" || node.kind == "COMPONENT_SET"
+}
+
+/// A component set's members, in declaration order — the order `active_member`
+/// and every `set_variant` index count in.
+///
+/// One definition, because two callers ask: `apply` resolves a switch against
+/// it and `Plan::of` builds the member trees from it. Two copies of the rule
+/// would let a switch be classified as landing while `emit` finds no member of
+/// that name, with neither path naming the loss.
+fn members_of(set: &Node) -> Vec<&Node> {
+    set.children
+        .iter()
+        .filter(|child| child.kind == "COMPONENT")
+        .collect()
 }
 
 /// The severity an **omission** carries under `policy`: nothing about the
@@ -255,27 +519,196 @@ fn omission_severity(policy: crate::EmitPolicy) -> Severity {
 }
 
 /// One node's read interactions, as diagnostics at `at`.
+///
+/// `landing` is where this node's switches can reach, as the file answers it.
+/// It is what `prototype::read` cannot work out on its own, and it decides two
+/// things the reader used to guess from a `destinationId`'s presence: whether
+/// a refused curve is a degrade or part of an omission (issue #1017), and
+/// which of the two omissions a switch that lands nowhere earns (issue #1016).
+/// `carries_a_switch` is whether **this node's own** switches reached a
+/// variant table in the document. A set that plans does not guarantee it —
+/// `emit` refuses an instance whose geometry disagrees with the member it
+/// shows — and neither does being inside one, because only an instance root's
+/// switches are applied to the table at all (debt #1064). It is what separates
+/// a curve that degrades a shipped state change from one that names a loss.
 fn interaction_diagnostics(
     read: &Interactions,
+    landing: Landing<'_>,
+    carries_a_switch: bool,
     at: &Location,
     policy: crate::EmitPolicy,
 ) -> Vec<Diagnostic> {
-    let severity = omission_severity(policy);
-    read.unsupported
+    let by_policy = omission_severity(policy);
+    let mut out: Vec<Diagnostic> = read
+        .unsupported
         .iter()
         .map(|what| Diagnostic {
             rule: rule::UNSUPPORTED_INTERACTION,
-            severity,
+            severity: by_policy,
             at: at.clone(),
             message: format!("{what} is not in the document vocabulary"),
         })
-        .chain(read.motion.iter().map(|what| Diagnostic {
-            rule: rule::UNSUPPORTED_MOTION,
-            severity: Severity::Warning,
-            at: at.clone(),
-            message: what.clone(),
-        }))
-        .collect()
+        .collect();
+
+    for switch in &read.switches {
+        let omission = match landing {
+            // The destination is a member of the set this node shows, so the
+            // switch is expressible — but only a set that lowers a table
+            // actually ships it.
+            Landing::Set(set) if set.members.contains(&switch.destination.as_str()) => {
+                match set.state {
+                    // It ships, so only its curve was ever at risk — unless
+                    // this node is not the one that shipped it.
+                    SetState::Lowers(_) if carries_a_switch => None,
+                    // No switch reaches the document from here, and something
+                    // else has already named why: `UNLOWERABLE_SET`, on the
+                    // set or on this instance. The curve must not be called a
+                    // degrade — "the switch lands in one frame" would claim a
+                    // state change no table carries, which is issue #1017's
+                    // defect on the neighbouring path — but it must still be
+                    // named, because every finding survives one pass (debt
+                    // #149) and a curve dropped here would surface for the
+                    // first time on the compile after the set is repaired. It
+                    // takes the warning that neighbour carries, so the whole
+                    // loss stays a degrade end to end.
+                    SetState::Lowers(_) | SetState::NamedItsLoss => {
+                        if let Some(what) = &switch.refused_motion {
+                            // The message names no vehicle. This branch fires
+                            // for a set that lowers nothing and for a layer
+                            // whose switches reach no table, and an earlier
+                            // draft that picked between "this instance" and
+                            // "this component set" put the wrong noun on both
+                            // — on a member root, which is no instance, and on
+                            // a baked child of an instance whose table shipped
+                            // perfectly well. What is true in every case is
+                            // the thing worth saying.
+                            out.push(Diagnostic {
+                                rule: rule::UNSUPPORTED_MOTION,
+                                severity: Severity::Warning,
+                                at: at.clone(),
+                                message: format!(
+                                    "{what}, and no variant table carries the switch it would \
+                                     animate, so nothing is left for it to degrade",
+                                ),
+                            });
+                        }
+                        continue;
+                    }
+                    // Nothing named it: a set of fewer than two members has no
+                    // alternative state, so a `CHANGE_TO` into it is an
+                    // omission like any other and this is the only place that
+                    // will say so.
+                    SetState::Silent => Some((
+                        by_policy,
+                        format!(
+                            "a CHANGE_TO names destination {}, whose component set has no second \
+                             member to switch to, so the switch lowers nowhere",
+                            switch.destination,
+                        ),
+                    )),
+                }
+            }
+            // The file carries the set this node shows and the destination is
+            // not one of its members: a `destinationId` the export closure
+            // trimmed, or one naming a member of a different set. That is a
+            // broken file, and under `Strict` handing over its bytes ships a
+            // button whose click does nothing (issue #976).
+            Landing::Set(_) => Some((
+                by_policy,
+                format!(
+                    "a CHANGE_TO names destination {}, which is not a member of the component set \
+                     this layer belongs to, so the switch lowers nowhere",
+                    switch.destination,
+                ),
+            )),
+            // No set, and no missing library either — a plain frame, or an
+            // instance of a standalone local `COMPONENT`. There is no variant
+            // to switch to and the file is present in full, so this is a
+            // broken switch rather than an export that left a library out, and
+            // it takes the same severity as one.
+            Landing::NoSet => Some((
+                by_policy,
+                format!(
+                    "a CHANGE_TO names destination {}, and this layer belongs to no component set, \
+                     so the switch lowers nowhere",
+                    switch.destination,
+                ),
+            )),
+            // The node shows a component the file does not contain — the
+            // ordinary shape of an instance of a published-library component
+            // set, which every real Figma file is full of. A **warning in
+            // both policies**
+            // (issue #1016), on the neighbouring severity rather than on a new
+            // judgement: `UNLOWERABLE_SET` is a warning in both policies for a
+            // set the file *carries* and this pass cannot express, because
+            // refusing would withhold a document that renders correctly. A set
+            // the export never included loses the same variant table and its
+            // baked subtree paints the same, so making the absent set the error
+            // and the present-but-unlowerable one the warning inverts the two.
+            // `figma-component-lowering.md` ("Severity") carries the argument
+            // in full, including what the closure independently decided about
+            // the same population.
+            //
+            // What stays at the policy's severity is a construct with no
+            // lowering **anywhere** — a refused trigger, action or navigation
+            // above. Those are vocabulary gaps whatever file carries the set;
+            // this one is a set the export did not include.
+            Landing::LibraryAbsent => Some((
+                Severity::Warning,
+                format!(
+                    "a CHANGE_TO names destination {}, and this file does not contain the component \
+                     whose instance this layer belongs to, so the switch lowers nowhere",
+                    switch.destination,
+                ),
+            )),
+        };
+
+        match omission {
+            None => {
+                if let Some(what) = &switch.refused_motion {
+                    out.push(Diagnostic {
+                        rule: rule::UNSUPPORTED_MOTION,
+                        severity: Severity::Warning,
+                        at: at.clone(),
+                        message: format!("{what}; the switch lands in one frame"),
+                    });
+                }
+            }
+            Some((earned, message)) => {
+                out.push(Diagnostic {
+                    rule: rule::UNSUPPORTED_INTERACTION,
+                    severity: earned,
+                    at: at.clone(),
+                    message,
+                });
+                // The curve is part of that omission rather than a degrade:
+                // "the switch lands in one frame" claims a state change the
+                // document does not carry (issue #1017). It is still named,
+                // because every finding survives one pass (debt #149).
+                //
+                // It takes the omission's severity rather than the policy's,
+                // and the reading that says otherwise is worth answering: a
+                // `DISSOLVE` has no `dashcue` spelling whatever file carries
+                // the set, so it looks like a vocabulary gap that should be an
+                // error under `Strict`. What makes it not one here is that
+                // there is no switch for it to animate — the curve's loss
+                // costs nothing beyond the omission already named. Giving it
+                // the policy's severity would also make a library instance
+                // withhold the document again whenever its switch declared a
+                // curve, which is the whole of what issue #1016 is about.
+                if let Some(what) = &switch.refused_motion {
+                    out.push(Diagnostic {
+                        rule: rule::UNSUPPORTED_INTERACTION,
+                        severity: earned,
+                        at: at.clone(),
+                        message: format!("{what}, and the switch it would animate lowers nowhere"),
+                    });
+                }
+            }
+        }
+    }
+
+    out
 }
 
 /// The document index a Figma node lowered to, or `0` when it lowered to none
@@ -289,27 +722,114 @@ fn index_of(index_of_id: &IndexOfId, node: &Node) -> u32 {
         .map_or(0, |lowered| lowered.index)
 }
 
+/// One node of the file, as this pass sees it.
+struct Walked<'a> {
+    node: &'a Node,
+    /// The diagnostic path the walk would give it.
+    path: String,
+    /// The nearest **ancestor** that is a component definition, if any — not
+    /// this node itself, which `is_definition` answers and [`Walked::owner`]
+    /// folds in.
+    ///
+    /// Carried because `is_definition` alone matches a definition node and
+    /// none of its descendants, so everything one layer inside a master was
+    /// treated as if it shipped (issue #1018). It is the node rather than a
+    /// flag because whether a definition's contents can ever reach the screen
+    /// is a question about *that* definition — whether an instance shows it —
+    /// and a bool cannot say which one to ask about.
+    definition: Option<&'a Node>,
+    /// The nearest ancestor that is an `INSTANCE` **or** a definition —
+    /// whichever comes first.
+    ///
+    /// Separate from `definition` because the two answer different questions
+    /// and an `INSTANCE` splits them. Its baked children paint, so it is not a
+    /// definition for `definition`'s purpose; but a `CHANGE_TO` on one of
+    /// those children switches *its* variant, so it is what a switch resolves
+    /// against. Figma echoes a component's reaction onto the instance
+    /// verbatim, so an inner layer driving the enclosing instance's variant —
+    /// an everyday authoring shape — arrives as exactly that: a reaction on a
+    /// baked child with no `componentId` and no definition above it.
+    host: Option<&'a Node>,
+}
+
+impl<'a> Walked<'a> {
+    /// The definition this node's contents belong to: itself when it is one,
+    /// otherwise the nearest ancestor that is.
+    ///
+    /// `None` means the node paints directly. `Some(d)` means it reaches the
+    /// screen only through an instance of `d`.
+    fn owner(&self) -> Option<&'a Node> {
+        if is_definition(self.node) {
+            Some(self.node)
+        } else {
+            self.definition
+        }
+    }
+
+    /// Whether this node can reach the screen at all, given the members a
+    /// switch can put there.
+    ///
+    /// Outside every definition it paints directly. Inside one it paints only
+    /// where a switch reaches the definition holding it — which is what makes
+    /// this and `switchable` mutually recursive, and why `apply` solves them
+    /// together rather than in sequence.
+    fn reaches_screen(&self, switchable: &BTreeSet<&str>) -> bool {
+        match self.owner() {
+            None => true,
+            Some(definition) => definition
+                .id
+                .as_deref()
+                .is_some_and(|id| switchable.contains(id)),
+        }
+    }
+
+    /// The node whose component set this node's `CHANGE_TO` switches travel
+    /// within: itself when it is an instance or a definition, otherwise the
+    /// nearest ancestor that is either.
+    fn switch_host(&self) -> Option<&'a Node> {
+        if self.node.kind == "INSTANCE" || is_definition(self.node) {
+            Some(self.node)
+        } else {
+            self.host
+        }
+    }
+}
+
 /// Every node of the file in the walk's own order, each with the diagnostic
-/// path the walk would give it.
+/// path the walk would give it and whether it sits inside a definition.
 ///
 /// Definitions are included, unlike the walk's traversal: a component set is
-/// exactly what this module is here to read.
-fn paths(file: &FigmaFile) -> Vec<(&Node, String)> {
+/// exactly what this module is here to read. What their descendants cost is
+/// the flag above rather than their absence, because the three loops that read
+/// this want different answers — the sets themselves are planned, and nothing
+/// under one is named or emitted.
+fn paths(file: &FigmaFile) -> Vec<Walked<'_>> {
     let roots = super::top_level_nodes(&file.document).unwrap_or_default();
     let mut out = Vec::new();
-    let mut stack: Vec<(&Node, String)> = super::disambiguated_segments(&roots)
+    let mut stack: Vec<Walked<'_>> = super::disambiguated_segments(&roots)
         .into_iter()
         .zip(roots)
-        .map(|(segment, root)| (root, format!("/{segment}")))
+        .map(|(segment, root)| Walked {
+            node: root,
+            path: format!("/{segment}"),
+            definition: None,
+            host: None,
+        })
         .rev()
         .collect();
-    while let Some((node, path)) = stack.pop() {
-        let children: Vec<&Node> = node.children.iter().collect();
+    while let Some(walked) = stack.pop() {
+        let children: Vec<&Node> = walked.node.children.iter().collect();
         let segments = super::disambiguated_segments(&children);
-        for (child, segment) in node.children.iter().zip(segments).rev() {
-            stack.push((child, format!("{path}/{segment}")));
+        let (definition, host) = (walked.owner(), walked.switch_host());
+        for (child, segment) in walked.node.children.iter().zip(segments).rev() {
+            stack.push(Walked {
+                node: child,
+                path: format!("{}/{segment}", walked.path),
+                definition,
+                host,
+            });
         }
-        out.push((node, path));
+        out.push(walked);
     }
     out
 }
@@ -563,9 +1083,6 @@ struct Plan<'a> {
     /// transitions that disagree, by name — the transitions `tween` above
     /// could not all carry (issue #976).
     collisions: Vec<String>,
-    /// What each member's own reactions could not lower, kept per member so a
-    /// finding can be named only when no instance echoes it.
-    reactions: Vec<Interactions>,
 }
 
 impl<'a> Plan<'a> {
@@ -573,11 +1090,7 @@ impl<'a> Plan<'a> {
     /// where there is nothing to say, because nothing was lost.
     fn of(set: &'a Node, path: &str) -> Result<Self, Option<String>> {
         let _ = path;
-        let members: Vec<&Node> = set
-            .children
-            .iter()
-            .filter(|child| child.kind == "COMPONENT")
-            .collect();
+        let members = members_of(set);
         // A set with one member has no alternative state, so it emits no
         // variant table and names nothing: there is no switch to lose, which
         // is the same reason an instance of a standalone `COMPONENT` is
@@ -705,7 +1218,6 @@ impl<'a> Plan<'a> {
             differing,
             tween,
             collisions,
-            reactions,
         })
     }
 
@@ -720,40 +1232,21 @@ impl<'a> Plan<'a> {
         self.tween.iter().any(Option::is_some)
     }
 
-    /// Everything this set is responsible for naming: the props that differ
-    /// on a channel no transition can animate, and its members' own reaction
-    /// findings where no instance echoes them.
-    fn diagnostics(
-        &self,
-        shown: &BTreeSet<&str>,
-        at: &Location,
-        policy: crate::EmitPolicy,
-    ) -> Vec<Diagnostic> {
+    /// What this set is responsible for naming: the props that differ on a
+    /// channel no transition can animate, and a destination two members
+    /// declared different transitions to.
+    ///
+    /// **Its members' own reactions are not named here.** `apply` names every
+    /// node of the file against one rule — a node inside a definition is named
+    /// where a switch could bring it on screen and nothing else will — and
+    /// that rule covers a member root and every layer under it alike. Naming
+    /// them here as well needed this method to re-walk the member subtrees
+    /// with resolution rules of its own, which is a second derivation of facts
+    /// `apply` already has: it judged a nested instance of *another* set
+    /// against this one's members, descended into nested masters `apply`
+    /// skips, and located every finding at the set rather than at the node.
+    fn diagnostics(&self, at: &Location) -> Vec<Diagnostic> {
         let mut out = Vec::new();
-
-        // A member's reaction is echoed verbatim onto every instance showing
-        // it, and those instances name it themselves. What no instance shows
-        // is named here instead — the reverse arm of a two-variant set is the
-        // ordinary case, since an instance echoes only the member it is on.
-        //
-        // The question is per-set, not per-file (issue #976): a set nothing
-        // instantiates paints nothing, so its members' refused reactions cost
-        // the picture nothing and are named nowhere. Asking whether the *file*
-        // holds any instance let an unrelated one — which every real Figma
-        // file has — turn those reactions into findings, and under `Strict`
-        // withhold the whole document over a layer that never ships.
-        let instantiated = self
-            .members
-            .iter()
-            .any(|member| member.id.as_deref().is_some_and(|id| shown.contains(id)));
-        if instantiated {
-            for (member, read) in self.members.iter().zip(&self.reactions) {
-                let echoed = member.id.as_deref().is_some_and(|id| shown.contains(id));
-                if !echoed {
-                    out.extend(interaction_diagnostics(read, at, policy));
-                }
-            }
-        }
 
         if !self.animates() {
             return out;
@@ -1018,7 +1511,7 @@ fn tree_of(root: &Node) -> Result<BTreeMap<String, Entry<'_>>, String> {
 /// `serde_json::Map` are not cheap, and this runs once per node per member
 /// pair.
 fn differs_beyond_overrides(a: &Node, b: &Node) -> Option<&'static str> {
-    // The eleven fields deliberately not compared, and why:
+    // The ten fields deliberately not compared, and why:
     //
     // `id` and `name` are identity — the members are joined *by* name, and
     // their ids differ by construction. `children` are compared through the
@@ -1026,14 +1519,38 @@ fn differs_beyond_overrides(a: &Node, b: &Node) -> Option<&'static str> {
     // here, or a child's overridable prop would count as a structural
     // difference. `absolute_bounding_box`, `size`, `fills`, `visible` and
     // `rotation` are exactly the inputs to `Props`, which is the overridable
-    // half. `relative_transform` is not compared for a narrower reason: the
-    // only thing read off it is the turn `Node::turn` derives, which is a
-    // `Props` input, and its other five components are read by nothing at
-    // all. So two members differing only in the scale or translation their
-    // matrices carry compare equal here — unchanged from before the field was
-    // parsed, and a gap rather than a classification (issue #1019).
-    // `interactions` and `component_id` are the prototype layer, which
+    // half. `interactions` and `component_id` are the prototype layer, which
     // differs between members by design.
+    //
+    // `relative_transform` is the one field split across both halves, and
+    // issue #1019 is why it is compared below for one component only:
+    //
+    // - its **turn** is a `Props` input, through `Node::turn`;
+    // - its **translation** and its **scale magnitude** reach `Props` through
+    //   `absolute_bounding_box`, which `Props::of` derives `x`/`y`/`width`/
+    //   `height` from and which `Props::diff` then compares. Not the field
+    //   itself — it is bound `_` here — and not on every axis: an in-flow
+    //   child's `x`/`y` are zero because the solver owns them, and an extent
+    //   is zero on any axis that is not `Fixed`, which is exactly where a
+    //   translation or a scale would not be authored intent to begin with
+    //   (P1). Measured rather than assumed: two members whose matrices scale
+    //   by 1 and by 2 with the bounding box following — the payload Figma
+    //   actually sends, because a scale bakes into the box — lower today as
+    //   `Width`/`Height` overrides and draw correctly. Comparing the magnitude
+    //   here would refuse a set that renders, which is the capability
+    //   regression `figma-component-lowering.md` declines to trade a working
+    //   file for;
+    // - a **mirrored** matrix is carried by nothing at all. `matrix_turn`
+    //   reads a negative determinant as `0.0` deliberately, a flip leaves an
+    //   axis-aligned bounding box unchanged, and no `VariantValue` spells a
+    //   mirror — so two members differing by a flip lowered as identical and
+    //   the flip went out in silence, which is what P4 forbids. Because that
+    //   `0.0` also discards the mirrored node's *angle*, a mirror makes the
+    //   whole linear part uncarried rather than one bit of it.
+    //
+    // Skew is the remaining component and is unreachable from this producer:
+    // Figma cannot author one
+    // (`rotation-is-paint-only-and-anchored-explicitly.md`).
     let Node {
         id: _,
         name: _,
@@ -1086,7 +1603,7 @@ fn differs_beyond_overrides(a: &Node, b: &Node) -> Option<&'static str> {
         item_reverse_z_index,
         absolute_bounding_box: _,
         rotation: _,
-        relative_transform: _,
+        relative_transform,
         size: _,
         is_mask,
         mask_type,
@@ -1107,6 +1624,41 @@ fn differs_beyond_overrides(a: &Node, b: &Node) -> Option<&'static str> {
     }
 
     differs!("node type", kind, b.kind);
+    // The part of the matrix nothing downstream can see.
+    //
+    // Where **both** matrices carry their angle, nothing here needs
+    // comparing: the angle reaches `Props` through `Node::turn`, and the scale
+    // reaches it through the box. Where either does not — a mirror, or a
+    // collapsed matrix — `matrix_turn` returns `0.0` for it, so not even the
+    // angle survives and the *orientation*, the handedness together with the
+    // angle, is carried by nothing.
+    //
+    // A single handedness bit is not enough: a flip about x and a flip about y
+    // are both mirrors, and the half-turn between them would ship in silence.
+    // The whole linear part is too much: a mirrored member scaled against
+    // another mirrored member differs there, and that difference *is* carried,
+    // because the scale bakes into the bounding box exactly as it does for an
+    // unmirrored pair. So the comparison divides the magnitude out and keeps
+    // what is left.
+    //
+    // An absent matrix is the identity, which does not mirror, so the two
+    // spellings of "upright" compare equal rather than making a set
+    // unlowerable over a field Figma omits.
+    if !(carries_its_angle(*relative_transform) && carries_its_angle(b.relative_transform))
+        && !same_orientation(*relative_transform, b.relative_transform)
+    {
+        // A matrix with no area is not a mirror, and saying so would name the
+        // wrong difference. `Handedness` already tells the two apart.
+        return Some(
+            match (
+                has_area(*relative_transform),
+                has_area(b.relative_transform),
+            ) {
+                (true, true) => "their mirroring",
+                _ => "whether their transform has any area at all",
+            },
+        );
+    }
     differs!("their strokes", strokes, b.strokes);
     // Geometry counts only on a `VECTOR`, which is the only kind the walk
     // reads it for. On a frame Figma emits the rendered outline of the node's
