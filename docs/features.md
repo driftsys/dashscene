@@ -541,19 +541,23 @@ absence of any mobile target in the workspace.
       it too. `crates/dashscene-android` (story #841) is the host: an
       `android.view.Surface` reaches the painter, an `AChoreographer` loop on
       its own thread ticks and draws, and `surfaceDestroyed` blocks until that
-      loop has stopped and the surface has been dropped.
+      loop has stopped and the surface has been dropped — which rotation and
+      backgrounding both confirmed, and split-screen did not.
 
       **It has run on an emulator and not on a device**, and the distinction is
       the whole of what is unresolved. A compiled `.dsb` draws, rotation and
       backgrounding each run the destroy handshake without a crash, and both
       were observed on the automotive emulator — which is interim evidence and
-      is labelled as such, not the D3a measurement. **Split-screen was not
-      exercised**: that image declares no multi-window, freeform or
-      split-screen feature at all, so the third of D4's three cases needs
-      different hardware. The D3a measurement that says the painter's four
-      fragment-stage storage buffers fit a target device **has not been
-      taken** — see `docs/design/android-toolchain.md`, which records why an
-      emulator cannot take it. Nothing here says Android works.
+      is labelled as such, not the D3a measurement. **Split-screen has since
+      been exercised, and it did not pass**: the automotive image declares no
+      multi-window, freeform or split-screen feature at all, so D4's third case
+      was run on 2026-08-14 against a handheld emulator image instead, where
+      the harness entered the destroy handshake and never returned (issue #960,
+      open). `just android-splitscreen` is that run. The D3a measurement that
+      says the painter's four fragment-stage storage buffers fit a target
+      device **has not been taken** — see `docs/design/android-toolchain.md`,
+      which records why an emulator cannot take it. Nothing here says Android
+      works.
 
       **The showcase runs on Android** (story #842). `demo-android` is a third
       demonstration host beside `demo` and `demo-web`: `typography` draws MSDF

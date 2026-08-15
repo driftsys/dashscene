@@ -194,6 +194,18 @@ total, nineteen of them the crates above.
     just android-probe  cross-compile the D3a probe, push it to an attached
                       device and run it: what the painter's own device request
                       reports on that adapter (docs/design/android-toolchain.md)
+    just android-splitscreen  build, install and cold-launch the lifecycle
+                      harness in split-screen, screenshot it to check the
+                      painter drew at all, then assert from logcat that the
+                      surface-destroy handshake completed — D4's third case
+                      (issue #874). Needs a handheld or tablet emulator image,
+                      not target hardware: the automotive image declares no
+                      split-screen feature. Needs the SDK build-tools and
+                      python3 as well, neither of which bootstrap installs, on
+                      top of the NDK that android needs. No hand gesture is
+                      needed — am start --windowingMode 6 is accepted — but it
+                      takes effect only on a cold launch, so the recipe
+                      force-stops first
     just web-build    assemble the browser host into target/web (needs
                       wasm-bindgen-cli, which bootstrap does not install)
     just web          serve target/web on 127.0.0.1, byte ranges honoured
