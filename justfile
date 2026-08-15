@@ -884,6 +884,49 @@ android:
     # nowhere — the same shape as the crate above, one story along (story #842).
     cargo build -p demo-android --target aarch64-linux-android
 
+# Package both Android hosts into APKs — the gate that compiles their Java.
+#
+# `android` above cross-compiles the four Android **Rust** members and stops
+# there, so until this recipe existed **no gate compiled any Java in this
+# repository**. That is issue #1030, and it is how the false handshake marker
+# PR #1032 corrected could sit in `HarnessActivity` unnoticed.
+#
+# "No gate" rather than "no compiler": `android-splitscreen` runs the harness
+# script before its device check, deliberately — see its own "Build before
+# requiring a device" note — so anyone who ran that recipe did compile the two
+# harness files. Nothing scheduled it. `demo-android`'s script had no caller at
+# all, so its two files are the ones no one had compiled.
+#
+# **No device and no emulator.** Both scripts package an APK from a cross-built
+# `.so` and committed inputs: the harness stages `goldens/dsb/v03-paint.dsb`,
+# and the showcase ships no `.dsb` at all because its scenes are built in code.
+# Nothing here is generated at build time, which is what makes it a runner-safe
+# gate rather than a second place for the corpus to be rebuilt.
+#
+# It depends on `android` so a clean checkout has the libraries the scripts
+# need. It does **not** guarantee they package what that dependency just built:
+# both scripts prefer a `release` library over a `debug` one when both exist,
+# and `android` builds debug, so a machine that has ever built `--release` for
+# this target packages the older artifact and says so ("using the release
+# library"). Issue #1057 carries it.
+#
+# What keeps that off CI is **the step list, not the checkout**: `android-build`
+# restores `target/` from `Swatinem/rust-cache`, so it is not clean, and no step
+# in it builds `--release` for this triple. Adding one — folding in
+# `android-probe`, say, which does — would carry a release tree forward in the
+# cache and make #1057 reachable there.
+#
+# The prerequisites are the SDK's build-tools and platform — aapt2, d8,
+# zipalign, apksigner — a JDK for javac and keytool, and `zip`, which comes
+# from neither: it is a system utility, and a slim image without it gets
+# through aapt2, javac and d8 before failing. `bootstrap` installs none of the
+# three, the same trade `android` makes for the NDK.
+android-apk: android
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ./crates/dashscene-android/harness/build.sh
+    ./demo-android/android/build.sh
+
 # Build the D3a probe, push it to an attached device and run it.
 #
 # D3a of `docs/decisions/host-integration-in-three-layers.md` is recorded as **a

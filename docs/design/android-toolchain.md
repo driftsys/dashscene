@@ -62,9 +62,20 @@ host draws through. It compiled without a source change, pulling in `ndk-sys`,
 `jni-sys`, `gpu-allocator` and `wgpu-core-deps-windows-linux-android`, so wgpu's
 Android backend support needed nothing from this repository.
 
-The CI job `android-build` runs exactly that and no more. A runner has no device
-and no GPU, so nothing there can measure D3a; a job that appeared to would be
-the `t2-check-has-no-teeth` failure the v0.13 tiering exists to remove.
+The CI job `android-build` runs that, the C ABI's conformance check, and
+`just android-apk`, which packages both hosts' APKs and is the only **gate**
+that compiles any Java in this repository. Before that recipe, nothing scheduled
+a Java compile: the harness `build.sh` was reachable only through
+`android-splitscreen`, which runs it before its device check but which nothing
+runs automatically, and `demo-android`'s script had no caller at all, so its two
+files had been compiled by no one (issue #1030). CodeQL's `java-kotlin` analysis
+does run on every pull request, but it analyses without a full compile and does
+not fail on an unresolved symbol.
+
+It still measures nothing about a device. A runner has no device and no GPU, so
+nothing there can measure D3a; a job that appeared to would be the
+`t2-check-has-no-teeth` failure the v0.13 tiering exists to remove. Packaging an
+APK is a compile check and is not a claim that it runs.
 
 ## The host, added at story #841
 

@@ -100,8 +100,24 @@ echo "harness: build-tools ${tools}, ${platform}"
 # status, and `|| true` would swallow it — leaving a partial dex, an APK that
 # signs and installs, and a `ClassNotFoundException` at launch. That is the same
 # silent-wrong-build failure the keystore note above exists to prevent.
-javac --release 17 -nowarn -classpath "${jar}" -d "${out}/classes" \
-  "${here}"/java/dev/driftsys/dashscene/*.java
+# Every .java under java/, not a one-level glob. The glob was
+# `java/dev/driftsys/dashscene/*.java`, so a file added in any subpackage was
+# compiled by nothing and the APK still built and signed — which would have
+# reinstated the gap issue #1030 exists to close, underneath a gate claiming to
+# have closed it.
+#
+# The count is checked first because `find -exec ... +` runs the command zero
+# times when nothing matches, and exits 0: an empty `java/` would compile
+# nothing, dex nothing, and fail later at the `cp` of a dex that was never
+# produced. The replaced glob failed loudly at javac instead, and this keeps
+# that property.
+sources="$(find "${here}/java" -name '*.java' | wc -l | tr -d ' ')"
+if [ "${sources}" -eq 0 ]; then
+  echo "harness: no .java under ${here}/java — nothing to compile." >&2
+  exit 1
+fi
+find "${here}/java" -name '*.java' -exec \
+  javac --release 17 -nowarn -classpath "${jar}" -d "${out}/classes" {} +
 
 # `-exec` rather than an unquoted `$(find ...)`: word splitting breaks the
 # moment any path component contains a space, and this script already assumes a
