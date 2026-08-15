@@ -1,14 +1,15 @@
 # The runtime paints the shown root, and only when one is named
 
     status   accepted (2026-08-12), **as built** in story #838 (epic #833,
-             slice v0.19)
+             slice v0.19); D4 and D6 amended 2026-08-15 by issues #980 and
+             #943 (slice v0.20)
     scope    `Arena::dfs_order`, `dashscene-engine`'s solve, its glyph
              staging and its #322 baseline pass, `dashlang`'s per-commit
              caches, what each painter is handed, the browser's load
              bound, and R5's status. The default when no root is named.
     issue    #838, building #822 on D2 of
              `the-shown-root-bounds-the-load-not-the-paint.md`
-    refs     #779, #798, #822, #836, #837, #937,
+    refs     #779, #798, #822, #836, #837, #937, #943, #980,
              `the-shown-root-bounds-the-load-not-the-paint.md`,
              `the-shown-root-is-named-by-ordinal.md`
 
@@ -166,6 +167,60 @@ the answer it already gave for a node added after the commit and for the same
 reason: this scene resolved no rect for it. The zero default it replaces would
 have answered "row 0" — the shown root's own rect — for every unshown node.
 
+**Amended 2026-08-15 (issue #980): the same holds for the transient slot table
+the commit builds, which kept the zero default this decision removed.**
+`Txn::commit_with` builds a `rect_of_slot` spanning every arena slot but writes
+it only for the slots the shown roots' DFS reaches, and it was allocated
+`vec![0; n]` — so the reasoning above applied to it word for word and had not
+been applied. `LayoutSolver` is a **public trait** and `stage_text` is handed
+the whole arena, so a stager walking `Arena::roots()` rather than
+`Arena::shown_roots()` reached an unwritten slot, and its run was stamped
+`rect = 0` and drawn anchored on the shown root's own box — a wrong picture with
+no diagnostic, which is what P4 forbids. The table is now allocated with
+`NO_RECT` and `rect_of_slot_checked` refuses the untouched entry by name, at
+both of the stager's call sites.
+
+**The rule is narrower than "every slot-keyed table".** What earns a sentinel is
+not the key. It is the pair of questions **which slots does the walk write, and
+which slots does the read reach** — a table whose reads stay inside what the
+walk wrote needs no sentinel, whatever it is keyed by, and `Txn::commit_with`
+holds several of both kinds.
+
+`rect_of_slot` is the one that changed answer. It has three reads: two for a
+node a stager named, through `rect_of_slot_checked`, and one raw index by a
+node's **parent** in the `subtree_end` pass. Before story #838 the walk wrote
+every slot, so no read of any kind could reach an unwritten one and a plain
+default was never a lie. Confining the walk to the shown roots' subtrees
+separated the two sets for the stager-facing reads, and the default did not move
+with the walk. **That is the whole defect, and it is a defect of the pair rather
+than of either half** — which is why no rule stated over the key alone would
+have caught it, and why the check to apply when confining any walk is to re-ask
+the second question of every table the walk fills.
+
+The parent read stayed safe across that change, and for a reason that belongs to
+the walk rather than to the table: every non-root node the walk visits has its
+parent in the same walk. That rests on **two** guarantees, and both are load
+bearing. `Txn::add_node` pushes to `Arena::roots` only when the parent is
+`None`, and nothing reparents — so a root has no parent. And `Txn::commit_with`
+refuses a shown root that is not a member of `Arena::roots`, so the walk cannot
+be seeded at an interior node whose parent lies outside it.
+
+**The second is the one a later change would remove.** "Confine the traversal to
+a subtree" — showing an interior node rather than a root — is the natural next
+step from this record, and it is exactly what turns the parent read into a read
+of an unwritten slot: the group-opacity pass would take the sentinel for a row
+index and panic with a bare out-of-bounds message naming nothing. Whoever
+relaxes that assertion owes that read a sentinel check, and the paragraph above
+is the rule that says so. The bindings are deliberately not named here — they
+are locals in a private function, and this record has already been wrong twice
+by describing that function's internals rather than its behaviour.
+
+This record deliberately does not enumerate the other tables. Two attempts to do
+so during review were both wrong, in different ways, about which of them carry
+`Option` and which are read only for a parent — an inventory in a normative
+record is a claim that goes stale silently and was already false when written.
+Read the function.
+
 **D5 — the engine keeps the whole tree and computes part of it.** The retained
 Taffy tree is built over every root; only the shown ones are computed and read
 back. Building it is a load-time cost, and keeping it whole is what makes a
@@ -180,6 +235,20 @@ loader.** Both integration crates call `show_root` after `load_document_mapped`
 returns. One extra commit per load, against a signature change on three public
 loaders and every call site; the load has already committed by then, so there is
 no ordering to get wrong.
+
+**Amended 2026-08-15 (issue #943): that commit names the root by `NodeId`, and
+the loader is what converts.** `Txn::show_root` took the `ShownRoot` the host
+passed and `Arena::shown_roots` indexed `Arena::roots()` with it, which reads a
+_document_ ordinal as an _arena_ ordinal. Those agree only when the arena was
+empty before the load, and `dashscene_core::load_document` documents the
+opposite as supported — the document's nodes are appended to whatever the arena
+already holds. An embedder loading into a populated arena therefore had the
+prefetch read one artboard's payloads while the traversal followed another. Each
+loader now takes the arena's root count before the load and resolves its own
+ordinal against the roots that load appended, which is correct because the
+loader is the one place holding both the document and the arena. See
+`the-shown-root-is-named-by-ordinal.md` D4 for what this does and does not
+change about the type itself.
 
 **D7 — the browser's widening is deleted, not made rare, and `Bound` goes with
 it.** `shown::layout` returns the shown root's own set for every document, and

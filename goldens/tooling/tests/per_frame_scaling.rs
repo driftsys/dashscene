@@ -161,7 +161,7 @@ use std::time::Instant;
 
 use dashbuf::map::MappedFile;
 use dashpaint::Color;
-use dashscene_core::{Arena, MappedPayload, NodeId, Prop, Region, ShownRoot, load_document_mapped};
+use dashscene_core::{Arena, MappedPayload, NodeId, Prop, Region, load_document_mapped};
 use dashscene_engine::TaffySolver;
 
 mod common;
@@ -255,8 +255,17 @@ fn load(extra: usize) -> Loaded {
     // follow it. Before that story there was nothing to name and this line did
     // not exist; the numbers in the module documentation above are the two
     // sides of adding it.
+    //
+    // The load was into a fresh arena, so the document's first root is the
+    // arena's; a host loading into a populated one converts its own ordinal
+    // (issue #943).
+    //
+    // One binding, used for the confinement and returned as the fixture's
+    // `shown`, so the root this harness names and the root its frames mutate
+    // cannot drift apart.
+    let shown = arena.roots()[0];
     let mut txn = arena.open();
-    txn.show_root(Some(ShownRoot::FIRST));
+    txn.show_root(Some(shown));
     txn.commit();
 
     let roots = arena.roots().len();
@@ -267,7 +276,6 @@ fn load(extra: usize) -> Loaded {
          {} roots; a loader that nested them would make every count below a different quantity",
         extra + 1
     );
-    let shown = arena.roots()[0];
 
     Loaded {
         arena,

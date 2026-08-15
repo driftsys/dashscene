@@ -482,12 +482,13 @@ fn the_baseline_pass_solves_the_shown_root_and_not_the_document() {
     // text sizes, so the two rows want different floors and an unshown one
     // cannot be mistaken for the shown one's.
     let mut txn = arena.open();
-    let (_, _) = hug_baseline_row(&mut txn, None, 60.0, 18.0);
+    // A row added with no parent is a root, so this is the shown root itself —
+    // `Txn::show_root` names it by node (issue #943).
+    let (first_row, _) = hug_baseline_row(&mut txn, None, 60.0, 18.0);
     let (_, _) = hug_baseline_row(&mut txn, None, 60.0, 34.0);
-    txn.show_root(Some(dashscene_core::ShownRoot::FIRST));
+    txn.show_root(Some(first_row));
     txn.commit_with(&mut TaffySolver::with_typesetter(&mut ts));
 
-    let first_row = arena.roots()[0];
     let mut solver = TaffySolver::with_typesetter(&mut ts);
     let mut txn = arena.open();
     txn.set_prop(first_row, Prop::X(1.0));

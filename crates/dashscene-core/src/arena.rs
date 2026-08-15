@@ -12,7 +12,6 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 
-use dashbuf::prefetch::ShownRoot;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::bindings::{Binding, Channel, ScalarTransform, SignalDecl, SignalId};
@@ -90,8 +89,22 @@ pub trait LayoutSolver {
         Arc::new(Vec::new())
     }
 
-    /// Stage the glyph runs for every text node of `arena` — one or more
-    /// runs per node — placed against `geometry`.
+    /// Stage the glyph runs for every text node **under
+    /// [`Arena::shown_roots`]** — one or more runs per node — placed against
+    /// `geometry`.
+    ///
+    /// **Walk [`Arena::shown_roots`], not [`Arena::roots`].** A commit resolves
+    /// a rect only for the nodes the shown roots' subtrees cover, so a node
+    /// outside them has no geometry for this commit to place a run against and
+    /// no row for one to be anchored on. Both asking `geometry` for such a node
+    /// and returning a [`StagedRun`] for one are refused by name — see
+    /// **Panics** below. The two are the same rule stated at the two points a
+    /// stager can reach it, and the in-tree `dashscene-engine` stager satisfies
+    /// it by iterating `shown_roots` directly.
+    ///
+    /// When no root is named this is every root, so a stager written against
+    /// `shown_roots` is correct for both cases and one written against `roots`
+    /// is correct only for the unconfined one (issue #980).
     ///
     /// This is the text half of the geometry seam, and it exists for the
     /// same reason (P2 — one typesetter): commit asks exactly one stager
@@ -124,6 +137,13 @@ pub trait LayoutSolver {
     /// [`Txn::commit_with`] panics if a returned id is not a node of this
     /// arena — the same index-integrity contract [`solve`](Self::solve)
     /// carries (P4).
+    ///
+    /// It panics for the same reason if `geometry` is asked for, or a
+    /// [`StagedRun`] returned for, a node this commit resolved no rect for —
+    /// a node outside [`Arena::shown_roots`]. Refused rather than defaulted,
+    /// because the only default available is rect row 0, which is the shown
+    /// root's own box: the run would draw at a position no design specified
+    /// and nothing would report it (issue #980, P4).
     fn stage_text(
         &mut self,
         arena: &Arena,
@@ -840,7 +860,13 @@ pub struct Arena {
     /// document's host names one — both integration crates do — and from then on
     /// the DFS order the rect table is built in, the solve and the paint all
     /// follow it.
-    shown_root: Option<ShownRoot>,
+    ///
+    /// A [`NodeId`] rather than an ordinal, because an ordinal here would have to
+    /// be an ordinal over *this arena's* roots, and the only thing that names one
+    /// is a loader holding a *document* ordinal. The two coincide only when the
+    /// arena was empty before the load, and an arena composing two documents is
+    /// exactly what [`crate::load_document`] documents as supported (issue #943).
+    shown_root: Option<NodeId>,
     /// Declared by [`Txn::add_variant_set`], in creation order — the
     /// order a later set's override wins ties in
     /// (`docs/decisions/variant-set-flat-index.md`).
@@ -1130,7 +1156,7 @@ impl Arena {
     /// has no artboards to choose between, and its roots are as often several
     /// independent nodes as they are separate pictures. A host that loaded a
     /// document names one (story #838).
-    pub fn shown_root(&self) -> Option<ShownRoot> {
+    pub fn shown_root(&self) -> Option<NodeId> {
         self.shown_root
     }
 
@@ -1140,21 +1166,32 @@ impl Arena {
     /// The one place the two cases meet, so `dfs_order`, the engine's solve and
     /// its glyph staging cannot disagree about what "shown" covers.
     ///
-    /// **An ordinal naming no root yields nothing**, rather than falling back
-    /// to the first root: an empty answer is a scene that draws nothing, which
-    /// is visible, where the first root is another artboard drawn in its place,
-    /// which is not. [`Txn::commit_with`] refuses such a commit by name, so no
-    /// *committed* scene can hold one — but [`Txn::show_root`] writes the value
-    /// eagerly and this method is `pub`, so reading it between the two returns
-    /// the empty slice. That window is the reason for the answer rather than
-    /// something the refusal removes.
+    /// **A node that is not a root of this arena yields nothing**, rather than
+    /// falling back to the first root: an empty answer is a scene that draws
+    /// nothing, which is visible, where the first root is another artboard drawn
+    /// in its place, which is not. [`Txn::commit_with`] refuses such a commit by
+    /// name, so no *committed* scene can hold one — but [`Txn::show_root`] writes
+    /// the value eagerly and this method is `pub`, so reading it between the two
+    /// returns the empty slice. That window is the reason for the answer rather
+    /// than something the refusal removes.
+    ///
+    /// **This is a scan, and it is not called once per commit.** Resolving the
+    /// node to its position costs one pass over `roots` — over the roots, not
+    /// the nodes — and a commit reaches it several times: `dfs_order` here,
+    /// twice on a plain [`Txn::commit`] because `FixedSolver::solve` calls
+    /// `dfs_order` again, and `dashscene-engine` again in its solve, its
+    /// readback and its baseline pass. Against the sixty-five-root document
+    /// story #836's per-frame band is stated over that is a few hundred
+    /// pointer-sized comparisons a frame, which is why it is written the simple
+    /// way rather than cached — but the band counts solves and rect rows, not
+    /// comparisons, so nothing here would notice if it grew.
     pub fn shown_roots(&self) -> &[NodeId] {
         match self.shown_root {
             None => &self.roots,
-            Some(shown) => {
-                let at = shown.ordinal() as usize;
-                self.roots.get(at..=at).unwrap_or(&[])
-            }
+            Some(shown) => match self.roots.iter().position(|&root| root == shown) {
+                Some(at) => &self.roots[at..=at],
+                None => &[],
+            },
         }
     }
 
@@ -1617,13 +1654,21 @@ impl Txn<'_> {
     /// which no host offers yet — `crates/dashscene-web/src/shown.rs` records
     /// the target-by-target detail.
     ///
+    /// **The root is named by [`NodeId`], not by ordinal.** A loader chooses its
+    /// root by *document* ordinal, and the load appends that document's nodes to
+    /// whatever the arena already holds, so the two ordinals agree only for a
+    /// load into an empty arena. Converting at the loader — where both the
+    /// document and the arena are in hand — is what keeps an embedder composing
+    /// two documents into one arena from confining the traversal to the first
+    /// document's root while the prefetch read the second's (issue #943).
+    ///
     /// # Panics
     ///
-    /// Not here. An ordinal naming no root is refused by [`Txn::commit`] and
-    /// [`Txn::commit_with`], because roots may be added after this call in the
-    /// same transaction — a loader does exactly that — so this is the wrong
-    /// place to judge the ordinal.
-    pub fn show_root(&mut self, shown: Option<ShownRoot>) {
+    /// Not here. A node that is no root of this arena is refused by
+    /// [`Txn::commit`] and [`Txn::commit_with`], because roots may be added after
+    /// this call in the same transaction — a loader does exactly that — so this
+    /// is the wrong place to judge the node.
+    pub fn show_root(&mut self, shown: Option<NodeId>) {
         self.arena.shown_root = shown;
     }
 
@@ -2018,16 +2063,15 @@ impl Txn<'_> {
 
         // The shown root is judged here rather than where it was set: roots may
         // be added after the call, in the same transaction, which is what a
-        // loader does. An ordinal naming no root would otherwise commit an
-        // empty scene, which is a picture nobody asked for reported as success
-        // (P4).
+        // loader does. A node that is no root would otherwise commit an empty
+        // scene, which is a picture nobody asked for reported as success (P4).
         if let Some(shown) = arena.shown_root {
             assert!(
-                (shown.ordinal() as usize) < arena.roots.len(),
-                "the shown root is ordinal {} and this arena has {} root{}: a commit cannot \
-                 resolve it, and confining the traversal to nothing would draw an empty scene \
-                 rather than say so",
-                shown.ordinal(),
+                arena.roots.contains(&shown),
+                "the shown root is {:?}, which is no root of this arena — it has {} root{}: a \
+                 commit cannot resolve it, and confining the traversal to nothing would draw an \
+                 empty scene rather than say so",
+                shown,
                 arena.roots.len(),
                 if arena.roots.len() == 1 { "" } else { "s" },
             );
@@ -2138,7 +2182,15 @@ impl Txn<'_> {
         // (its box grown by any stroke outset) for the overlap test — `None`
         // when the rect paints nothing (M10). The exclusive subtree end is
         // filled post-order below.
-        let mut rect_of_slot: Vec<u32> = vec![0; n];
+        // `NO_RECT` rather than zero, for the reason D4 of
+        // `docs/decisions/the-runtime-paints-the-shown-root.md` gives for the
+        // committed `rect_index` one field over: a zero default is a *valid*
+        // rect index — row 0, the shown root's own rect — so every slot this
+        // walk does not reach would answer with the shown root's geometry
+        // instead of admitting it has none. The walk covers the shown roots'
+        // subtrees, and `n` is every slot the arena holds, so on a confined
+        // commit those are not the same set (issue #980).
+        let mut rect_of_slot: Vec<u32> = vec![NO_RECT; n];
         let mut painted_extent: Vec<Option<Extent>> = vec![None; order.len()];
 
         for (i, &id) in order.iter().enumerate() {
@@ -2622,15 +2674,30 @@ impl Txn<'_> {
 ///
 /// # Panics
 ///
-/// Panics if `id` is not a node of the arena being committed — the same
-/// index-integrity contract malformed [`LayoutSolver::solve`] output is
-/// held to (P4). `did` is the whole verb clause, so the message names
-/// which of the stager's two calls was wrong rather than reading as one
-/// generic failure.
+/// Panics if `id` is not a node of the arena being committed, and if it is
+/// a node this commit resolved no rect for — both the same index-integrity
+/// contract malformed [`LayoutSolver::solve`] output is held to (P4). `did`
+/// is the whole verb clause, so the message names which of the stager's two
+/// calls was wrong rather than reading as one generic failure.
+///
+/// The second case is a node outside the shown root's subtree.
+/// [`LayoutSolver`] is a public trait and `stage_text` is handed the whole
+/// arena, so a stager walking [`Arena::roots`] rather than
+/// [`Arena::shown_roots`] reaches one — and row 0, the shown root's own
+/// rect, is the answer it must not be given: the run would draw, anchored
+/// on another artboard's box, at a position no design specified and with
+/// nothing to report it (issue #980, P4).
 fn rect_of_slot_checked(rect_of_slot: &[u32], id: NodeId, did: &str) -> u32 {
-    *rect_of_slot
+    let index = *rect_of_slot
         .get(id.index())
-        .unwrap_or_else(|| panic!("the stager {did} {id:?}, which is not a node of this arena"))
+        .unwrap_or_else(|| panic!("the stager {did} {id:?}, which is not a node of this arena"));
+    assert!(
+        index != NO_RECT,
+        "the stager {did} {id:?}, which this commit resolved no rect for: it is outside the \
+         shown root's subtree, and anchoring it on row 0 — the shown root's own rect — would \
+         draw it at a position nothing asked for"
+    );
+    index
 }
 
 /// The anchors whose glyphs differ between two commits' tables — present

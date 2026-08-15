@@ -32,8 +32,8 @@ use std::sync::Arc;
 use dashpaint::image_id::identify;
 use dashscene_core::{
     Arena, Atlas, AtlasGlyph, AtlasIndex, AxisSizing, GlyphQuad, GlyphRange, GlyphRun, GridTrack,
-    ImageAsset, ImageFormat, Layout, LayoutMode, LayoutSolver, NodeId, ShownRoot, SolvedRect,
-    StagedRun, TextAlignV, TextStyle,
+    ImageAsset, ImageFormat, Layout, LayoutMode, LayoutSolver, NodeId, SolvedRect, StagedRun,
+    TextAlignV, TextStyle,
 };
 use dashscene_typeset::atlas::AtlasMetrics;
 use dashscene_typeset::text::{Font, FontFamily, TextShape, Typesetter, WeightedFont};
@@ -493,7 +493,7 @@ struct TreeState {
     /// The shown root this tree was last read back for. A mismatch means the
     /// newly shown root's subtree has never been reported, so the pruned
     /// readback below cannot be used for it (story #838).
-    shown: Option<ShownRoot>,
+    shown: Option<NodeId>,
 }
 
 impl<'a> TaffySolver<'a> {
@@ -1060,12 +1060,12 @@ fn incremental(
 
     let mut out = Vec::new();
     for (root_i, &root) in arena.roots().iter().enumerate() {
-        // Positional, like `shown_taffy_roots` above: "is this root shown" is
-        // an index question, and scanning the shown slice for a member of the
-        // list it was taken from answers it in O(n).
-        let shown = arena
-            .shown_root()
-            .is_none_or(|shown| shown.ordinal() as usize == root_i);
+        // By identity: the shown root is a node of this arena, so "is this root
+        // shown" is one comparison against the root in hand — no scan and no
+        // index (issue #943). `shown_taffy_roots` below answers a different
+        // question — *where* in the parallel Taffy list the shown root sits —
+        // and pays a scan for it, because only a position can index that list.
+        let shown = arena.shown_root().is_none_or(|shown| shown == root);
         if !shown {
             continue;
         }
@@ -1115,13 +1115,18 @@ fn incremental(
 /// one shape so the solve and the readback cannot disagree about it. A slice
 /// rather than a `Vec`: the answer is always a contiguous run of `taffy_roots`,
 /// either all of it or one element.
+///
+/// The shown root is a [`NodeId`], so its position is looked up in
+/// `arena.roots()` — the list `taffy_roots` is parallel to — rather than used as
+/// an index directly. A node that is no root of this arena selects nothing, the
+/// same answer `Arena::shown_roots` gives it (issue #943).
 fn shown_taffy_roots<'t>(arena: &Arena, taffy_roots: &'t [taffy::NodeId]) -> &'t [taffy::NodeId] {
     match arena.shown_root() {
         None => taffy_roots,
-        Some(shown) => {
-            let at = shown.ordinal() as usize;
-            taffy_roots.get(at..=at).unwrap_or(&[])
-        }
+        Some(shown) => match arena.roots().iter().position(|&root| root == shown) {
+            Some(at) => taffy_roots.get(at..=at).unwrap_or(&[]),
+            None => &[],
+        },
     }
 }
 

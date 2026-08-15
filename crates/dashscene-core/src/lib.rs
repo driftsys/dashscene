@@ -38,13 +38,6 @@ mod bindings;
 mod committed;
 mod load;
 
-/// Which root the runtime shows, re-exported from `dashbuf` so that the arena,
-/// the engine's solve and a host all name it through one type rather than three
-/// that have to agree (story #838). It is the format's vocabulary because it
-/// names a root of a *document*; `docs/decisions/the-shown-root-is-named-by-ordinal.md`
-/// is why it is an ordinal.
-pub use dashbuf::prefetch::ShownRoot;
-
 pub use arena::{
     Arena, AxisSizing, CrossAxisAlign, Easing, EdgeInsets, GridTrack, Keyframe, Layout, LayoutMode,
     LayoutSolver, LoopTrack, MainAxisAlign, NodeId, Prop, PropTransition, SolvedRect, StagedRun,

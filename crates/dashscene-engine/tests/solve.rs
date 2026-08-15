@@ -6,7 +6,6 @@
 
 use dashscene_core::{
     Arena, AxisSizing, CrossAxisAlign, GridTrack, LayoutMode, MainAxisAlign, NodeId, Prop,
-    ShownRoot,
 };
 use dashscene_engine::TaffySolver;
 
@@ -1441,8 +1440,9 @@ fn the_solve_runs_once_per_shown_root_and_not_once_per_root() {
 
     // One root shown: the tree is unchanged and one of the four is computed.
     let before = solver.solves();
+    let third = arena.roots()[2];
     let mut txn = arena.open();
-    txn.show_root(Some(ShownRoot::nth(2)));
+    txn.show_root(Some(third));
     txn.commit_with(&mut solver);
     assert_eq!(
         solver.solves() - before,
@@ -1475,7 +1475,7 @@ fn a_change_of_shown_root_reports_the_new_subtree_in_full() {
     let child = txn.add_node(Some(second), None);
     txn.set_prop(child, Prop::Width(20.0));
     txn.set_prop(child, Prop::Height(20.0));
-    txn.show_root(Some(ShownRoot::FIRST));
+    txn.show_root(Some(first));
     txn.commit_with(&mut TaffySolver::new());
 
     let mut solver = TaffySolver::new();
@@ -1489,7 +1489,7 @@ fn a_change_of_shown_root_reports_the_new_subtree_in_full() {
     );
 
     let mut txn = arena.open();
-    txn.show_root(Some(ShownRoot::nth(1)));
+    txn.show_root(Some(second));
     txn.commit_with(&mut solver);
 
     assert_eq!(
@@ -1507,5 +1507,153 @@ fn a_change_of_shown_root_reports_the_new_subtree_in_full() {
         arena.committed().rect_index_of(first),
         None,
         "and the root that is no longer shown has no row"
+    );
+}
+
+/// **The shown root is found by identity and by position, and neither is its
+/// `NodeId` index.**
+///
+/// Every other shown-root fixture in this file adds its roots before any
+/// children, so root *k* is node *k* and a positional read, an index read and an
+/// identity read all give the same answer — which makes all of them blind to the
+/// engine half of issue #943. Here each root is added together with its child,
+/// so the second root sits at **position 1** and is **node 2**.
+///
+/// The engine has two sites that must not confuse those, and this fixture is
+/// what separates them:
+///
+/// - `shown_taffy_roots` needs the shown root's *position*, because `taffy_roots`
+///   is one entry per arena root in arena root order — a list only a position
+///   can index.
+/// - the pruned readback needs *identity*, because it asks "is this root the
+///   shown one" while walking `Arena::roots()`.
+///
+/// `NodeId::index()` is public and returns a `usize`, so reading it at either
+/// site compiles, and each produces a **zeroed** shown subtree rather than a
+/// refusal — which is why this test asserts geometry rather than expecting a
+/// panic. At `shown_taffy_roots` the mutation selects `taffy_roots[2..=2]` on a
+/// two-root list, so nothing is computed; the readback still walks
+/// `Arena::shown_roots` — core's own lookup, which the mutation does not touch —
+/// and reports the untouched Taffy layouts, so `commit_with` accepts a commit in
+/// which the shown root measures 0x0. The identity site fails the same way,
+/// through a pruned readback that matches no root.
+///
+/// **Both engine sites are reached, and it takes two commits to do it.**
+/// `TaffySolver::solve` branches on `structural`, which is true for a solver
+/// that has never built a tree — so a single commit through a fresh solver
+/// exercises `rebuild` (and `shown_taffy_roots`) and never `incremental`, where
+/// the identity comparison lives. The second commit below is dirty but not
+/// structural, which is the only way in.
+#[test]
+fn the_shown_root_is_found_by_identity_and_position_not_by_its_node_index() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+
+    let first = txn.add_node(None, None);
+    txn.set_prop(first, Prop::Width(50.0));
+    txn.set_prop(first, Prop::Height(50.0));
+    let first_child = txn.add_node(Some(first), None);
+    txn.set_prop(first_child, Prop::Width(10.0));
+    txn.set_prop(first_child, Prop::Height(10.0));
+
+    let second = txn.add_node(None, None);
+    txn.set_prop(second, Prop::X(400.0));
+    txn.set_prop(second, Prop::Y(300.0));
+    txn.set_prop(second, Prop::Width(60.0));
+    txn.set_prop(second, Prop::Height(60.0));
+    let second_child = txn.add_node(Some(second), None);
+    txn.set_prop(second_child, Prop::Width(20.0));
+    txn.set_prop(second_child, Prop::Height(20.0));
+
+    txn.show_root(Some(second));
+
+    // One retained solver across both commits: `incremental` is only reachable
+    // through a solver that already built its tree.
+    let mut solver = TaffySolver::new();
+    txn.commit_with(&mut solver);
+
+    // The premise, asserted rather than assumed: the two differ here, which is
+    // what every other fixture in this file cannot say.
+    assert_eq!(
+        arena.roots(),
+        [first, second],
+        "two roots, in creation order"
+    );
+    assert_eq!(
+        arena.roots().iter().position(|&r| r == second),
+        Some(1),
+        "the shown root is at position 1 of the root list"
+    );
+    assert_eq!(
+        second.index(),
+        2,
+        "and is node 2, because its sibling's child was added between them — a fixture \
+         where these two numbers agree cannot fail this test"
+    );
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.rects().len(),
+        2,
+        "the second root and its child, and nothing of the first"
+    );
+    assert_eq!(rect_of(&arena, second), (400.0, 300.0, 60.0, 60.0));
+    assert_eq!(
+        rect_of(&arena, second_child),
+        (400.0, 300.0, 20.0, 20.0),
+        "the child is placed against its own root's origin, which says the shown subtree was \
+         really solved rather than left at a zeroed layout"
+    );
+    assert_eq!(
+        scene.rect_index_of(first),
+        None,
+        "and the unshown root has no row"
+    );
+
+    // The second commit: dirty, so it does real work, and non-structural — no
+    // node was added — so `TaffySolver::solve` takes `incremental` and reaches
+    // the identity comparison `rebuild` never runs.
+    //
+    // **The node count is pinned across it**, because that is what
+    // `TaffySolver::solve` branches on today: it takes `incremental` exactly when
+    // the count it recorded still matches the arena's. Without this a later edit
+    // adding a node inside this transaction would silently drop back to
+    // `rebuild`, every assertion below would still pass — a full readback reports
+    // the same rects — and the identity site would stop being covered with
+    // nothing to say so.
+    //
+    // It is a **proxy**, and the limit is worth stating rather than leaving for
+    // the next reader to find: the branch is private, so nothing here observes it
+    // directly, and a second trigger added to `structural` would leave this
+    // assertion passing while the coverage went away. Whoever adds one revisits
+    // this test.
+    let before = arena.node_count();
+    let mut txn = arena.open();
+    txn.set_prop(second_child, Prop::Width(30.0));
+    txn.commit_with(&mut solver);
+    assert_eq!(
+        arena.node_count(),
+        before,
+        "the second commit must be non-structural, or it takes `rebuild` and covers nothing the \
+         first commit did not"
+    );
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.rects().len(),
+        2,
+        "still the shown root and its child, through the incremental path"
+    );
+    assert_eq!(
+        rect_of(&arena, second_child),
+        (400.0, 300.0, 30.0, 20.0),
+        "the incremental readback reported the shown root's subtree — a positional or \
+         node-index read of the shown root here matches no root, and the child keeps its old \
+         width"
+    );
+    assert_eq!(
+        rect_of(&arena, second),
+        (400.0, 300.0, 60.0, 60.0),
+        "and the shown root itself is still solved rather than zeroed"
     );
 }

@@ -1,16 +1,17 @@
 # A host names the shown root by its ordinal, one at a time
 
     status   accepted (2026-08-12), **as built** in story #837 (epic #833,
-             slice v0.19)
+             slice v0.19); D4 amended 2026-08-15 by issue #943 (slice v0.20)
     scope    how a host says which root it shows: the type, where it lives,
              what both integration crates take, and what a root that is not
              there does. Not the traversal — the solve, the committed table
              and the paint still cover every root, which is story #838.
     issue    #837, on D3 of
              `the-shown-root-bounds-the-load-not-the-paint.md`
-    refs     #822, #838, #925, #792, #840,
+    refs     #822, #838, #925, #792, #840, #943,
              `the-shown-root-bounds-the-load-not-the-paint.md`,
-             `the-integration-surface-is-two-published-crates.md`
+             `the-integration-surface-is-two-published-crates.md`,
+             `the-runtime-paints-the-shown-root.md`
 
 ## Context
 
@@ -59,6 +60,43 @@ the same thing. Both integration crates **re-export** it, so an embedder naming
 a root does not have to declare a dependency on the format crate and keep its
 version in step — the same rule the `dashscene-gpu` re-exports in
 `dashscene-web` follow.
+
+**Amended 2026-08-15 (issue #943): the last clause was wrong, and the arena does
+not take this type.** "The same type rather than a second one meaning the same
+thing" assumed the two meant the same thing. They do not. A `ShownRoot` is an
+ordinal over the roots a **document** declares, which is what
+`prefetch::resolve` resolves it against; the arena's roots are a different list,
+because a load appends to whatever the arena already holds. Story #838 relied on
+the type meaning what its name says, and had `Txn::show_root` store a
+`ShownRoot` that `Arena::shown_roots` used to index `Arena::roots()` — so an
+embedder loading into a populated arena confined the traversal to the wrong
+artboard while the prefetch read the right one's payloads, silently.
+`dashscene-engine` inherited the same reading in two places.
+
+What survives, and what changes:
+
+- **The type still lives in `dashbuf` and is still an ordinal** — D2 and D3 are
+  untouched. It names a root of a _document_, which is exactly what it is for.
+- **Both integration crates still take it and still re-export it** — D5 is
+  untouched. A loader is document-facing, so an ordinal is the right argument.
+- **`dashscene-core` no longer takes it, re-exports it, or depends on
+  `dashbuf::prefetch` at all.** `Txn::show_root` takes an `Option<NodeId>` — the
+  arena's own vocabulary for a node of the arena.
+- **Each loader converts**, taking the arena's root count before the load and
+  resolving its ordinal against the roots that load appended. That is the one
+  place holding both the document and the arena it was appended to, which is why
+  the conversion belongs there and nowhere else.
+
+The rejected alternative "a node index — what `first_root` returned" below is
+**not** what this reinstates: that alternative was about the _embedder's_
+argument, and it stays rejected for the reasons given. This is about what the
+arena stores once a loader has resolved that argument against a real arena.
+
+D3's own reasoning is what should have caught it: "a row index is valid only in
+the table that assigned it" is the same sentence one level up, and a document
+ordinal indexing an arena's roots is the same mistake the newtype was introduced
+to prevent. The newtype made two `u32`s unmistakable and then the wrong one was
+carried across a boundary it did not name.
 
 **D5 — it is a parameter on the load call, not state on a handle.** Both
 `dashscene_desktop::Document::load` and `dashscene_web::load_document` take a
