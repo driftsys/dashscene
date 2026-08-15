@@ -11,7 +11,7 @@ convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports ten files
+## Why the WIP gate currently reports eleven files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
 ten and exits non-zero. All ten are deliberate, accepted exceptions rather than
@@ -126,8 +126,17 @@ archiving belong in one commit**, and in this case they were not: the records
 landed with the stories and the original stayed here for a few hours, which the
 `sdd-working-memory-lifecycle` rule calls a copy rather than a gardening.
 
-**Nine of the ten are design captures**, described below, and **one driver
-prompt is held**, v0.19's Android half.
+**Eleven, since the v0.19 debt prompt landed** (2026-08-15). Nine are design
+captures, described below, and **two driver prompts are held**: v0.19's Android
+half, and `2026-08-15-v019-DEBT-DRIVER-PROMPT.md`, which carries the slice's
+pickable debt after #947 closed and #931 and #946 were taken.
+
+**Two prompts for one slice has happened before and is not a supersession.**
+v0.19 held two in August when the Android and shown-root tracks ran on branches
+that shared nothing. These two split by kind rather than by track: one carries
+the story that waits on hardware, the other the debt that does not. The Android
+one archives at the slice's close; this one archives when its own work lands,
+which is the earlier of the two.
 
 Two were v0.18's, and **both left at that slice's close on 2026-08-11**:
 `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17 closed, and
@@ -426,10 +435,12 @@ z-interleave, and the as-built records now carry all of it
 decision record's two resolution sections). Both it and the driver prompt that
 carried out its design are archived verbatim in `docs/archive/`.
 
-One driver prompt is held here now, v0.19's Android half, as the section above
-says. `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md` carries story #842 — #841
+Two driver prompts are held here now, both v0.19's, as the section above says.
+`2026-08-09-v019-ANDROID-DRIVER-PROMPT.md` carries story #842 — #841 and #947
 landed, and `integration/v0.19-android` merged into `main` on 2026-08-09 and is
 history — and leaves at the slice's close.
+`2026-08-15-v019-DEBT-DRIVER-PROMPT.md` carries the debt that does not wait on
+hardware, and leaves when that work lands.
 
 `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md` was archived on 2026-08-13, when
 #838 and #863 both landed — the first just after local midnight, which is why
