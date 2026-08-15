@@ -315,8 +315,18 @@ Issue #986 did that work: `PaintTable::push_with` now refuses a `distance_range`
 that is not finite and greater than zero, and `PaintTable::shapes` is private
 with `push_with` its only writer, so no such field reaches either painter. The
 paragraph above therefore describes a route that is closed at the seam rather
-than here. What is still open on this path is `atlas_rect` and `plane_bounds`,
-where `field_draws` skips and `dashscene-skia` divides — issue #1000.
+than here. `atlas_rect` and `plane_bounds` were the rest of it, and issue #1000
+closed the painter half without changing anything here: `dashscene-skia`'s
+`field_coverage` now takes `field_draws`' predicate verbatim before its own
+device-quad guard, so the two painters answer the same way for every field that
+predicate decides.
+
+What is still open is the predicate. `right > left && bottom > top` rejects a
+NaN, because every comparison against one is false, and **admits an infinity**:
+`gpu_shape` then derives `px_range = distance_range * (right - left) / aw` from
+an infinite bound, and the reference painter, which now takes the same answer,
+erases the backdrop under a frosted node carrying one. Neither painter refuses
+it and no seam does either — issue #1034.
 
 **An unresolved mask makes the backdrop encode nothing at all**, which is not
 the same as encoding it unmasked. Unmasked means the parametric rounded box, so

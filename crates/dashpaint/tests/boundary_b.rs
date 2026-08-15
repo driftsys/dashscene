@@ -1679,9 +1679,11 @@ fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
 /// and the shape populated, moving the guard below the `extra_fills` extend
 /// passes.
 ///
-/// This is not a claim that `push_with` is atomic on any refusal: the extends
-/// happen before `push_entry`'s own panics, and the production caller interns
-/// the entry's fills into this same table first. Issue #1012 carries that.
+/// The whole method is now atomic on its own refusals, which
+/// `a_refused_fill_index_grows_no_flat_array` covers for the other one (issue
+/// #1012). This test stays scoped to the coverage-mask guard: it is the one
+/// that has to sit above the assignment of the five ranges as well as above the
+/// extends, since a shape it accepted would otherwise already be counted.
 #[test]
 fn a_refused_coverage_mask_grows_no_flat_array() {
     let mut table = PaintTable::new();
@@ -1724,6 +1726,99 @@ fn a_refused_coverage_mask_grows_no_flat_array() {
         panic_message(&refused.expect_err("the push must have panicked"))
             .contains("is not finite and greater than zero"),
         "the refusal must be the domain guard, not another panic in push_with"
+    );
+    assert_eq!(table.len(), 1, "the refused entry must not have landed");
+    assert_eq!(
+        (
+            table.all_extra_fills().len(),
+            table.all_strokes().len(),
+            table.all_shadows().len(),
+            table.all_blurs().len(),
+            table.all_shapes().len(),
+        ),
+        (0, 0, 0, 0, 1),
+        "no array push_with extends may have grown; only the accepted shape from the first push \
+         is present"
+    );
+}
+
+/// `push_with`'s *other* refusal grows none of the five flat arrays either
+/// (issue #1012).
+///
+/// The coverage-mask guard sits at the top of the method and always did. This
+/// one is `check_fills`, which ran inside `push_entry` after all five extends,
+/// so a caller that caught the unwind held a table carrying rows no entry
+/// named — one stroke, one shadow, one blur and one shape that nothing could
+/// reach and nothing would free until `dashscene-core`'s `compact_paints`
+/// rebuilt the table. `dashscene-ffi` turns the unwind into `DsStatus::Panic`
+/// and the host keeps the same runtime, so the observable was a later commit
+/// finding rows no entry names rather than a crash.
+///
+/// The fixture populates every one of the five for the reason
+/// `a_refused_coverage_mask_grows_no_flat_array` gives: they are extended in a
+/// fixed order, so leaving any of them empty could not tell a guard above all
+/// five from a guard between two of them.
+///
+/// **`extra_fills` is the sentinel that matters most here**, because the
+/// refusal reads that list: `check_fills` has to be given the slice the caller
+/// passed rather than resolve the entry's own range, which at that point names
+/// rows the array does not hold yet. Getting that wrong panics with the
+/// accessor's out-of-range message instead, which is what the message assertion
+/// below pins.
+#[test]
+fn a_refused_fill_index_grows_no_flat_array() {
+    let mut interned_in = PaintTable::new();
+    interned_in.push_solid(RED);
+    interned_in.push_solid(HALF_BLUE);
+    let stray = interned_in.resolve(PaintIndex(1)).fill;
+
+    let mut table = PaintTable::new();
+    let layer = table.intern_fill(&FillSpec::Solid { color: RED });
+    table.push_with(
+        PaintEntry::default(),
+        EntryParts {
+            shape: Some(field_with_distance_range(4.0)),
+            ..EntryParts::default()
+        },
+    );
+
+    let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        table.push_with(
+            PaintEntry {
+                // The table holds one solid; this names the second row of
+                // another table, so `check_fills` refuses it.
+                fill: stray,
+                ..PaintEntry::default()
+            },
+            EntryParts {
+                extra_fills: &[layer],
+                stroke: Some(Stroke {
+                    width: 3.0,
+                    align: StrokeAlign::Outside,
+                    color: RED,
+                }),
+                shadows: &[Shadow {
+                    kind: ShadowKind::Drop,
+                    offset: Vec2 { x: 1.0, y: 2.0 },
+                    blur: 3.0,
+                    spread: 0.0,
+                    color: RED,
+                }],
+                blurs: &[Blur {
+                    kind: BlurKind::Layer,
+                    radius: 4.0,
+                }],
+                shape: Some(field_with_distance_range(4.0)),
+            },
+        );
+    }));
+
+    let payload = refused.expect_err("the push must have panicked");
+    assert!(
+        panic_message(&payload).contains("a fill index belongs to the table that interned it"),
+        "the refusal must be the fill-index check, not the accessor reading a range whose rows \
+         are not written yet; got: {}",
+        panic_message(&payload)
     );
     assert_eq!(table.len(), 1, "the refused entry must not have landed");
     assert_eq!(

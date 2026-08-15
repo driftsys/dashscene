@@ -159,6 +159,118 @@ fn vector_atlas_image_out_of_range_is_named() {
     );
 }
 
+/// An atlas builder that varies only `distance_range`, so the three tests
+/// below differ in the value under test and nothing else.
+fn atlas_with_distance_range(
+    b: &mut FlatBufferBuilder<'static>,
+    distance_range: f32,
+) -> WIPOffset<VectorAtlas<'static>> {
+    VectorAtlas::create(
+        b,
+        &VectorAtlasArgs {
+            image: 0,
+            px_per_em: 48.0,
+            distance_range,
+        },
+    )
+}
+
+/// The atlas scalar the loader folds into every `VectorField` the atlas covers
+/// is named when it is out of the painters' domain (issue #1002).
+///
+/// Not an index like the two rules above it, and the reason it belongs beside
+/// them is where it is read: `dashscene-core`'s loader takes a shape's
+/// `distance_range` from the atlas the shape names, so a document with one bad
+/// atlas takes every shape over it out of domain. `dashpaint`'s
+/// `PaintTable::push_with` refuses the same predicate as a panic (issue #986),
+/// which is the second line of defence and not the first — without this rule a
+/// `.dsb` validates clean, loads, and panics at the seam.
+///
+/// One test over the array rather than one per value, and it asserts the
+/// message as well as the rule name: `-0.0` is in the list because the
+/// predicate is spelled `> 0.0` rather than against an explicit zero, and a
+/// NaN because `!(NaN > 0.0)` is what makes a comparison-based guard refuse it
+/// at all.
+#[test]
+fn vector_atlas_distance_range_out_of_domain_is_named() {
+    for range in [0.0, -0.0, -2.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let mut b = FlatBufferBuilder::new();
+        let image = png_asset(&mut b);
+        let atlas = atlas_with_distance_range(&mut b, range);
+        let bytes = finish(b, &[], &[image], &[atlas], &[]);
+        let doc = root_as_document(&bytes).expect("valid dashbuf document");
+
+        let report = validate_document(&doc);
+        let found = report
+            .find(rule::VECTOR_ATLAS_DISTANCE_RANGE_OUT_OF_DOMAIN)
+            .unwrap_or_else(|| panic!("a distance range of {range} must be named:\n{report}"));
+        assert!(report.has_errors());
+        assert_eq!(found.at, Location::VectorAtlas(0));
+        assert!(
+            found.message.contains("not finite and greater than zero"),
+            "the diagnostic must say which domain was left; got: {}",
+            found.message
+        );
+    }
+}
+
+/// An atlas written by a producer that does not know the field is named too.
+///
+/// A flatbuffers table scalar with no `(required)` decodes to its default, so
+/// an omitted `distance_range` reads back `0.0` and is byte-identical on the
+/// wire to one that wrote `0.0` deliberately. The omitted case is the one a
+/// producer reaches by accident rather than by authoring a bad number, which is
+/// why it is pinned separately from the value sweep above (issue #1002).
+#[test]
+fn a_vector_atlas_that_omits_its_distance_range_is_named() {
+    let mut b = FlatBufferBuilder::new();
+    let image = png_asset(&mut b);
+    let atlas = VectorAtlas::create(
+        &mut b,
+        &VectorAtlasArgs {
+            image: 0,
+            px_per_em: 48.0,
+            ..Default::default()
+        },
+    );
+    let bytes = finish(b, &[], &[image], &[atlas], &[]);
+    let doc = root_as_document(&bytes).expect("valid dashbuf document");
+
+    let report = validate_document(&doc);
+    assert!(
+        report.has(rule::VECTOR_ATLAS_DISTANCE_RANGE_OUT_OF_DOMAIN),
+        "{report}"
+    );
+}
+
+/// A distance range at the bottom of the accepted domain validates clean, so
+/// the rule refuses what is out of the domain rather than what is merely small.
+///
+/// The twin of `push_with_accepts_a_narrow_distance_range` in
+/// `dashpaint`'s boundary-B suite, and here for the same reason: without it the
+/// predicate could be tightened to `>= f32::MIN_POSITIVE` and the whole rest of
+/// this file would stay green. Neither value is a *useful* range — both drive
+/// the painters' `px_range` to zero — but the seam this rule stands in front of
+/// accepts them, and a validator that refused what the loader accepts would
+/// name a document the runtime would have drawn.
+#[test]
+fn a_narrow_vector_atlas_distance_range_is_clean() {
+    for range in [f32::MIN_POSITIVE, f32::from_bits(1)] {
+        let mut b = FlatBufferBuilder::new();
+        let image = png_asset(&mut b);
+        let atlas = atlas_with_distance_range(&mut b, range);
+        let bytes = finish(b, &[], &[image], &[atlas], &[]);
+        let doc = root_as_document(&bytes).expect("valid dashbuf document");
+
+        let report = validate_document(&doc);
+        assert!(
+            !report.has(rule::VECTOR_ATLAS_DISTANCE_RANGE_OUT_OF_DOMAIN),
+            "{range} is finite and greater than zero, so it is out of no domain this rule \
+             states:\n{report}"
+        );
+    }
+}
+
 #[test]
 fn a_consistent_vector_chain_is_clean() {
     let mut b = FlatBufferBuilder::new();

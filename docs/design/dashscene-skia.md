@@ -102,6 +102,22 @@ All in `crates/dashscene-skia/src/lib.rs`:
   save/restore. The clip applies to the rect's own fill and stroke, not to the
   rects after it in slice order. Masks arrive as clip regions too (story #44),
   so the painter needs no mask code.
+- A baked-vector coverage mask that names **no area** draws nothing, and the
+  answer is `dashscene-gpu`'s: `field_coverage` carries that painter's
+  `field_draws` predicate —
+  `right > left && bottom > top && atlas_rect[2] > 0 &&
+  atlas_rect[3] > 0` —
+  ahead of its own device-quad guard, so both painters skip the same fields
+  (issue #1000). Both draw paths take the answer, and the backdrop-blur one is
+  why it matters: before this, an infinity in the coverage shader's local matrix
+  let the layer composite over the backdrop and **erase** it, where
+  `dashscene-gpu` drew nothing at all. The masked-fill path already drew
+  nothing, but by way of a shader whose answer for an infinite scale nothing
+  states. The device-quad guard stays because it catches what the shared
+  predicate cannot see: `dest` is the plane bounds offset by the node origin, so
+  a large `rect.x` can cancel a positive `right - left` to a zero-width quad.
+  **The shared predicate rejects a NaN and admits an infinity**, and neither
+  painter refuses one — issue #1034.
 - Group opacity arrives resolved (story #44,
   `docs/decisions/masks-and-group-opacity.md`). The free path rides on
   `RectEntry.opacity`: each draw's paint alpha is multiplied by it
