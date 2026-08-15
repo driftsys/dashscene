@@ -1213,16 +1213,27 @@ fn the_builder_path_drives_a_loop_staged_on_its_arena() {
 // the caches first and naming the root afterwards hides every one of these.
 // ---------------------------------------------------------------------
 
-/// Two roots, each a fixed passthrough box with a width-bound child, with
-/// `shown` named before the scene is attached. Returns the live scene and the
-/// two bars, first root's then second's.
-fn two_bound_roots(
-    arena: &mut Arena,
-    shown: dashscene_core::ShownRoot,
-) -> (dashlang::LiveScene, NodeId, NodeId) {
+/// Two roots, each a fixed passthrough box with a width-bound child, with the
+/// first root named as shown before the scene is attached.
+///
+/// Returns the live scene, the two roots and the two bars — roots first, then
+/// bars, each pair in document order. **The roots are returned rather than an
+/// ordinal taken**, because `Txn::show_root` names a node and this fixture is
+/// the only thing that knows which nodes its roots are: a caller that had to say
+/// "root 1" would be reintroducing, in test code, the untyped ordinal issue #943
+/// is about.
+///
+/// **A test that needs the *second* root shown from the start adds a parameter
+/// here rather than calling `show_root` on the returned roots.** By the time
+/// this returns, the commit has happened and `attach_live` has built its caches
+/// — and naming the root afterwards is the ordering the section header above
+/// rules out, because it is what hides every defect these tests exist for. The
+/// returned roots are for staging a *change* of shown root, which is a different
+/// thing and what two of the three tests below do.
+fn two_bound_roots(arena: &mut Arena) -> (dashlang::LiveScene, (NodeId, NodeId), (NodeId, NodeId)) {
     use dashscene_core::{Channel as CoreChannel, Prop, ScalarTransform};
 
-    let (first_bar, second_bar) = {
+    let (roots, bars) = {
         let mut txn = arena.open();
         let width = txn.declare_signal(Some("bar/width"), 10.0);
         // **The two subtrees are deliberately different shapes**, so the bound
@@ -1247,19 +1258,19 @@ fn two_bound_roots(
             txn.set_prop(bar, Prop::Width(10.0));
             txn.set_prop(bar, Prop::Height(12.0));
             txn.bind(bar, CoreChannel::Width, width, ScalarTransform::Identity);
-            bar
+            (root, bar)
         };
-        let first = root_with_bar("first", 1);
-        let second = root_with_bar("second", 0);
+        let (first_root, first) = root_with_bar("first", 1);
+        let (second_root, second) = root_with_bar("second", 0);
         // Named in the same transaction that adds the roots, which is what a
-        // loader does and what makes the ordinal judgeable only at the commit.
-        txn.show_root(Some(shown));
+        // loader does and what makes the node judgeable only at the commit.
+        txn.show_root(Some(first_root));
         txn.commit();
-        (first, second)
+        ((first_root, second_root), (first, second))
     };
 
     let live = dashlang::attach_live(arena, Box::new(TaffySolver::new()));
-    (live, first_bar, second_bar)
+    (live, roots, bars)
 }
 
 /// **A bound node under an unshown root must not panic.**
@@ -1277,8 +1288,7 @@ fn two_bound_roots(
 #[test]
 fn a_bound_node_under_an_unshown_root_is_staged_and_not_patched() {
     let mut arena = Arena::new();
-    let (mut live, first_bar, second_bar) =
-        two_bound_roots(&mut arena, dashscene_core::ShownRoot::FIRST);
+    let (mut live, _, (first_bar, second_bar)) = two_bound_roots(&mut arena);
     assert_eq!(
         arena.committed().rect_index_of(second_bar),
         None,
@@ -1318,7 +1328,7 @@ fn a_bound_node_under_an_unshown_root_is_staged_and_not_patched() {
 #[test]
 fn a_change_of_shown_root_rebuilds_the_patch_cache() {
     let mut arena = Arena::new();
-    let (mut live, _, second_bar) = two_bound_roots(&mut arena, dashscene_core::ShownRoot::FIRST);
+    let (mut live, (_, second_root), (_, second_bar)) = two_bound_roots(&mut arena);
     let width = live.signal_named("bar/width").expect("declared above");
 
     live.set(width, 30.0);
@@ -1331,7 +1341,7 @@ fn a_change_of_shown_root_rebuilds_the_patch_cache() {
     // whole reason a staged shown root survives to the next tick.
     {
         let mut txn = arena.open();
-        txn.show_root(Some(dashscene_core::ShownRoot::nth(1)));
+        txn.show_root(Some(second_root));
     }
     live.tick(0.016, &mut arena);
     assert!(arena.committed().renumbered(), "that tick renumbered");
@@ -1374,7 +1384,7 @@ fn a_change_of_shown_root_rebuilds_the_patch_cache() {
 #[test]
 fn a_shown_root_staged_between_ticks_is_not_swallowed_by_the_idle_return() {
     let mut arena = Arena::new();
-    let (mut live, _, second_bar) = two_bound_roots(&mut arena, dashscene_core::ShownRoot::FIRST);
+    let (mut live, (_, second_root), (_, second_bar)) = two_bound_roots(&mut arena);
 
     // Settle: nothing is dirty and no track is live, so the next tick would
     // take the idle return if the staged root did not stop it.
@@ -1390,7 +1400,7 @@ fn a_shown_root_staged_between_ticks_is_not_swallowed_by_the_idle_return() {
     // whole reason a staged shown root survives to the next tick.
     {
         let mut txn = arena.open();
-        txn.show_root(Some(dashscene_core::ShownRoot::nth(1)));
+        txn.show_root(Some(second_root));
     }
 
     let after = live.tick(0.016, &mut arena);
@@ -1398,7 +1408,7 @@ fn a_shown_root_staged_between_ticks_is_not_swallowed_by_the_idle_return() {
     let scene = arena.committed();
     assert_eq!(
         scene.shown_root(),
-        Some(dashscene_core::ShownRoot::nth(1)),
+        Some(second_root),
         "and the commit is the one that carried it"
     );
     assert!(

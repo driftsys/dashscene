@@ -18,8 +18,6 @@ pub use dashpaint::{
 
 use std::sync::Arc;
 
-use dashbuf::prefetch::ShownRoot;
-
 use crate::arena::NodeId;
 
 /// One committed buffer: the resolved rect table, the deduplicated
@@ -70,8 +68,8 @@ pub struct CommittedScene {
     /// resolve — a node under a root that is not the shown one (story #838).
     pub(crate) rect_index: Arc<Vec<u32>>,
     /// Which root this commit's traversal was confined to, or [`None`] for
-    /// every root.
-    pub(crate) shown_root: Option<ShownRoot>,
+    /// every root. A [`NodeId`] rather than an ordinal (issue #943).
+    pub(crate) shown_root: Option<NodeId>,
     /// Whether this commit renumbered the rect table against the previous one.
     pub(crate) renumbered: bool,
 }
@@ -183,7 +181,7 @@ impl CommittedScene {
 
     /// Which root this commit's traversal was confined to, or [`None`] when it
     /// covered every root (story #838).
-    pub fn shown_root(&self) -> Option<ShownRoot> {
+    pub fn shown_root(&self) -> Option<NodeId> {
         self.shown_root
     }
 

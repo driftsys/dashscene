@@ -81,24 +81,41 @@ struct TextStager {
     glyphs: &'static [u32],
 }
 
+/// Every node of every root at its authored offset — what the three stagers
+/// here that report every node share, so a change to what a solve must carry
+/// lands in one place rather than three.
+///
+/// `ForeignStager` is the one of the file's four `LayoutSolver` implementations
+/// that deliberately does **not** use it. Its `solve` reports the roots only,
+/// which over its single-root arena is complete output — what its test is about
+/// is the foreign node its `stage_text` returns a run for, not its solve.
+///
+/// Deliberately **every** root, not `Arena::shown_roots`: a stager's `solve` is
+/// free to report nodes the commit will not resolve a rect for, and commit
+/// carries the unshown ones forward without complaint. It is `stage_text` that
+/// is confined, which is the distinction the refusals below exist to hold.
+fn solve_every_node(arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+    let mut out = Vec::new();
+    let mut stack: Vec<NodeId> = arena.roots().to_vec();
+    while let Some(id) = stack.pop() {
+        let layout = arena.layout(id);
+        out.push((
+            id,
+            SolvedRect {
+                x: layout.x,
+                y: layout.y,
+                w: layout.width,
+                h: layout.height,
+            },
+        ));
+        stack.extend(arena.children(id).iter().copied());
+    }
+    out
+}
+
 impl LayoutSolver for TextStager {
     fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
-        let mut out = Vec::new();
-        let mut stack: Vec<NodeId> = arena.roots().to_vec();
-        while let Some(id) = stack.pop() {
-            let layout = arena.layout(id);
-            out.push((
-                id,
-                SolvedRect {
-                    x: layout.x,
-                    y: layout.y,
-                    w: layout.width,
-                    h: layout.height,
-                },
-            ));
-            stack.extend(arena.children(id).iter().copied());
-        }
-        out
+        solve_every_node(arena)
     }
 
     fn atlases(&mut self) -> Arc<Vec<Atlas>> {
@@ -477,5 +494,171 @@ fn the_atlas_set_is_shared_rather_than_copied_per_commit() {
         arena.committed().glyphs().atlases().len(),
         1,
         "the committed table carries the stager's atlas set"
+    );
+}
+
+// ---------------------------------------------------------------------
+// A run staged for a node the commit resolved no rect for (issue #980).
+//
+// `LayoutSolver` is a public trait and `stage_text` is handed the whole
+// arena, not the shown root's subtree — `TextStager` above walks
+// `Arena::roots()`, which is exactly the shape that reaches this. The
+// transient slot table the commit builds spans every arena slot but is
+// written only for the nodes the DFS covered, so an unreached slot has to
+// carry a sentinel: row 0 is a valid rect index naming the shown root's own
+// rect, and stamping it would anchor the run on another artboard's box at a
+// position no design specified, with nothing to report it (P4).
+// ---------------------------------------------------------------------
+
+/// Two roots, each with one text child, and the **second** root shown.
+///
+/// Uncommitted: naming the shown root and committing is what the tests below
+/// do, because that commit is the thing under test.
+fn two_roots_second_shown() -> (Arena, NodeId, NodeId) {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let mut root_with_text = |label: &str| {
+        let root = txn.add_node(None, Some(label));
+        txn.set_prop(root, Prop::Width(100.0));
+        txn.set_prop(root, Prop::Height(100.0));
+        let text = txn.add_node(Some(root), Some("label"));
+        txn.set_prop(text, Prop::Width(50.0));
+        txn.set_prop(text, Prop::Height(10.0));
+        txn.set_prop(text, Prop::Text(format!("{label} text")));
+        (root, text)
+    };
+    let (_, first_text) = root_with_text("first");
+    let (second_root, _) = root_with_text("second");
+    txn.show_root(Some(second_root));
+    txn.commit();
+    (arena, first_text, second_root)
+}
+
+/// A stager that asks for the geometry of a node under an unshown root is
+/// refused, and the message names *that* call.
+///
+/// `TextStager` walks every root, so it reaches the unshown root's text node
+/// and calls `geometry` on it — the ordinary way a stager written against
+/// `Arena::roots()` arrives here.
+#[test]
+#[should_panic(expected = "the stager asked for the geometry of")]
+fn asking_for_the_geometry_of_a_node_under_an_unshown_root_is_refused() {
+    let (mut arena, _, _) = two_roots_second_shown();
+    arena.open().commit_with(&mut TextStager {
+        size: 12.0,
+        glyphs: &[1],
+    });
+}
+
+/// Staging a run for a node under an unshown root is refused even when the
+/// stager never asked for its geometry, and the message names *that* call.
+///
+/// The two call sites are separately reachable: a stager that placed its
+/// glyphs from something other than `geometry` — a cache, or its own
+/// measurement — skips the first check and arrives at the anchor stamping
+/// with a node the commit resolved nothing for. Without the sentinel this is
+/// the quieter half of the defect: no panic, `run.rect = 0`, and the run
+/// drawn against the shown root's rect.
+#[test]
+#[should_panic(expected = "the stager returned a run for")]
+fn staging_a_run_for_a_node_under_an_unshown_root_is_refused() {
+    /// Solves every node and stages exactly one run, for `node`, without
+    /// consulting `geometry` at all.
+    struct BlindStager(NodeId);
+
+    impl LayoutSolver for BlindStager {
+        fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+            solve_every_node(arena)
+        }
+
+        fn atlases(&mut self) -> Arc<Vec<Atlas>> {
+            Arc::new(vec![dummy_atlas()])
+        }
+
+        fn stage_text(
+            &mut self,
+            _arena: &Arena,
+            _geometry: &dyn Fn(NodeId) -> SolvedRect,
+        ) -> Vec<StagedRun> {
+            let (run, quads) = run_at((0.0, 0.0), 12.0, 1);
+            vec![StagedRun {
+                node: self.0,
+                run,
+                quads,
+            }]
+        }
+    }
+
+    let (mut arena, first_text, _) = two_roots_second_shown();
+    arena.open().commit_with(&mut BlindStager(first_text));
+}
+
+/// The refusals above are about the *unshown* subtree only: a stager staging
+/// runs for the shown root's own text still commits, and its anchor is that
+/// node's row.
+///
+/// Without this the two `should_panic` tests could both be satisfied by a
+/// commit that refused every staged run.
+#[test]
+fn a_run_staged_for_the_shown_roots_own_text_still_commits() {
+    let (mut arena, _, second_root) = two_roots_second_shown();
+
+    /// Stages one run for the shown root's text child, found through
+    /// `Arena::shown_roots` — what a stager written against the confinement
+    /// does, and the counterpart of `TextStager`'s walk over every root.
+    struct ShownOnlyStager;
+
+    impl LayoutSolver for ShownOnlyStager {
+        fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+            solve_every_node(arena)
+        }
+
+        fn atlases(&mut self) -> Arc<Vec<Atlas>> {
+            Arc::new(vec![dummy_atlas()])
+        }
+
+        fn stage_text(
+            &mut self,
+            arena: &Arena,
+            geometry: &dyn Fn(NodeId) -> SolvedRect,
+        ) -> Vec<StagedRun> {
+            let mut out = Vec::new();
+            for &root in arena.shown_roots() {
+                for &child in arena.children(root) {
+                    if arena.text(child).is_some() {
+                        let r = geometry(child);
+                        let (run, quads) = run_at((r.x, r.y), 12.0, 1);
+                        out.push(StagedRun {
+                            node: child,
+                            run,
+                            quads,
+                        });
+                    }
+                }
+            }
+            out
+        }
+    }
+
+    arena.open().commit_with(&mut ShownOnlyStager);
+
+    let scene = arena.committed();
+    let shown_text = arena.children(second_root)[0];
+    let row = scene
+        .rect_index_of(shown_text)
+        .expect("the shown root's text child has a row");
+    assert_eq!(
+        scene.glyphs().runs().len(),
+        1,
+        "one run staged, one run committed"
+    );
+    assert_eq!(
+        scene.glyphs().runs()[0].rect,
+        row,
+        "and it is anchored on its own node's row, not on row 0"
+    );
+    assert_ne!(
+        row, 0,
+        "row 0 is the shown root itself, so this says something"
     );
 }

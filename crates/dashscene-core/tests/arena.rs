@@ -5,7 +5,6 @@
 
 use std::mem::{align_of, size_of};
 
-use dashbuf::prefetch::ShownRoot;
 use dashpaint::{Vec2, VectorField};
 use dashscene_core::{
     Arena, ClipBox, ClipIndex, Color, CornerRadii, Fill, FillSpec, LayoutMode, PaintEntry,
@@ -3409,12 +3408,12 @@ fn naming_a_shown_root_confines_the_committed_table_to_its_subtree() {
     assert_eq!(arena.committed().shown_root(), None);
 
     let mut txn = arena.open();
-    txn.show_root(Some(ShownRoot::nth(1)));
+    txn.show_root(Some(second));
     txn.commit();
 
     let scene = arena.committed();
     assert_eq!(scene.rects().len(), 1, "one root, one node, one row");
-    assert_eq!(scene.shown_root(), Some(ShownRoot::nth(1)));
+    assert_eq!(scene.shown_root(), Some(second));
     assert_eq!(
         scene.rect_index_of(second),
         Some(0),
@@ -3467,10 +3466,10 @@ fn naming_a_shown_root_confines_the_committed_table_to_its_subtree() {
 /// [`CommittedScene::renumbered`]: dashscene_core::CommittedScene::renumbered
 #[test]
 fn a_change_of_shown_root_renumbers_and_reports_every_rect_dirty() {
-    let (mut arena, _, _) = two_identical_roots();
+    let (mut arena, first, second) = two_identical_roots();
 
     let mut txn = arena.open();
-    txn.show_root(Some(ShownRoot::FIRST));
+    txn.show_root(Some(first));
     txn.commit();
     assert!(
         arena.committed().renumbered(),
@@ -3479,7 +3478,7 @@ fn a_change_of_shown_root_renumbers_and_reports_every_rect_dirty() {
 
     // Settle, so the next commit's dirty set cannot be inherited from this one.
     let mut txn = arena.open();
-    txn.show_root(Some(ShownRoot::FIRST));
+    txn.show_root(Some(first));
     txn.commit();
     assert!(
         !arena.committed().renumbered(),
@@ -3494,7 +3493,7 @@ fn a_change_of_shown_root_renumbers_and_reports_every_rect_dirty() {
     let before = arena.committed().rects()[0];
 
     let mut txn = arena.open();
-    txn.show_root(Some(ShownRoot::nth(1)));
+    txn.show_root(Some(second));
     txn.commit();
 
     let scene = arena.committed();
@@ -3519,19 +3518,39 @@ fn a_change_of_shown_root_renumbers_and_reports_every_rect_dirty() {
     );
 }
 
-/// A shown ordinal naming no root is refused at the commit, by name and with
-/// both numbers.
+/// A shown node that is no root of the arena is refused at the commit, by name
+/// and with the root count.
 ///
 /// Not at `show_root`: a loader names the root it will show and then adds the
-/// nodes, in one transaction, so the ordinal cannot be judged where it is set.
+/// nodes, in one transaction, so the node cannot be judged where it is set.
 /// Refused rather than clamped, because confining the traversal to nothing
 /// would commit an empty scene and report success (P4).
+///
+/// A **child** is the case worth asserting since the shown root became a
+/// [`NodeId`] (issue #943): it is a real node of this arena, so nothing about it
+/// is out of range, and the only thing wrong with it is that it is not a root.
+/// An ordinal could not express this at all — every ordinal below the root count
+/// named a root by construction, which is exactly the property that made it the
+/// wrong type when two documents share an arena.
+///
+/// **The expected substring names the node as well as the count**, because the
+/// node is the half a reader looks at first when the assert fires. Asserting
+/// only the count would pass if the `{:?}` were dropped or the wrong variable
+/// substituted there — which is the half the ordinal version of this test
+/// ("the shown root is ordinal 4 and this arena has 2 roots") did cover.
 #[test]
-#[should_panic(expected = "the shown root is ordinal 4 and this arena has 2 roots")]
-fn a_shown_ordinal_naming_no_root_is_refused_at_the_commit() {
-    let (mut arena, _, _) = two_distinct_roots();
+#[should_panic(
+    expected = "the shown root is NodeId(2), which is no root of this arena — it has 2 \
+                           roots"
+)]
+fn a_shown_node_that_is_no_root_is_refused_at_the_commit() {
+    let (mut arena, first, _) = two_distinct_roots();
     let mut txn = arena.open();
-    txn.show_root(Some(ShownRoot::nth(4)));
+    // The two roots are `NodeId(0)` and `NodeId(1)`, so this child is
+    // `NodeId(2)` — deterministic, which is what lets the message be asserted
+    // whole.
+    let child = txn.add_node(Some(first), None);
+    txn.show_root(Some(child));
     txn.commit();
 }
 
@@ -3542,7 +3561,7 @@ fn clearing_the_shown_root_returns_to_every_root_and_renumbers() {
     let (mut arena, first, second) = two_distinct_roots();
 
     let mut txn = arena.open();
-    txn.show_root(Some(ShownRoot::nth(1)));
+    txn.show_root(Some(second));
     txn.commit();
     assert_eq!(arena.committed().rects().len(), 1);
 

@@ -122,6 +122,22 @@ impl Ranges {
 /// and `shown`'s module documentation carries the whole of that history and the
 /// one thing it left behind — a root this load did not read cannot be shown
 /// afterwards.
+///
+/// # Errors
+///
+/// Every error **this function returns** is raised before the document is
+/// replayed into `arena`, so a failed load leaves `arena` exactly as it was and
+/// an embedder may reuse it. That is not true of the panics below.
+///
+/// # Panics
+///
+/// This can panic rather than return, and the conditions belong to the crates
+/// under it rather than to this signature. The one an embedder meets is
+/// `Txn::use_mapped_pool`, which refuses an arena whose image table already holds
+/// rows, whatever put them there; passing a fresh [`Arena`] avoids it.
+///
+/// **On this target a panic aborts the wasm instance**, so unlike the native
+/// host there is no caught state to reason about.
 pub async fn load_document(
     url: &str,
     shown_root: ShownRoot,
@@ -273,6 +289,11 @@ pub async fn load_document(
         ranges.requests(),
     ));
 
+    // How many roots the arena held *before* this load, so the document ordinal
+    // can be turned into the arena node it actually named. The load appends to
+    // whatever the arena already holds, so the two ordinals agree only when it
+    // held nothing (issue #943).
+    let roots_before = arena.roots().len();
     // A `Vec<u8>` is a `Region`: `dashpaint` blanket-implements it for every
     // `AsRef<[u8]> + Send + Sync`. That is the whole of what this host was
     // missing to use the loader the native one uses — see `shown` for the
@@ -285,8 +306,40 @@ pub async fn load_document(
     // (story #838, issue #822). A commit of its own rather than a parameter on
     // the loader: the load has already committed, and one extra commit per load
     // is cheaper than a signature change on three public loaders.
+    //
+    // Named by node: `Txn::show_root` takes the arena's own vocabulary, and this
+    // is the one place holding both the document and the arena it was appended
+    // to. Passing the ordinal straight through would confine the traversal to
+    // the *first* document's root while the fetch above read this one's — the
+    // wrong artboard, solved and painted, with nothing to report it (issue
+    // #943).
+    //
+    // **A named panic rather than a typed error**, and the desktop loader's copy
+    // carries the argument in full: this same function already panics by name
+    // through `Txn::use_mapped_pool`, and `NoSuchRoot::roots` is documented as
+    // what the *document* carries — a number that cannot describe this arm,
+    // since `prefetch::resolve` above already proved the document carries more
+    // roots than the ordinal. A broken `dashscene-core` invariant is a
+    // diagnostic that names it (P4), not an embedder error.
+    let shown = *arena
+        .roots()
+        .get(roots_before + shown_root.ordinal() as usize)
+        .unwrap_or_else(|| {
+            // Inside the closure: nothing here runs on the ordinary path, and
+            // `saturating_sub` so a shrunken root list cannot replace this
+            // diagnostic with a bare subtraction overflow.
+            let appended = arena.roots().len().saturating_sub(roots_before);
+            panic!(
+                "{url} declares {} root(s) and this load appended {appended} to the arena, so \
+                 ordinal {} names no node: `load_document_mapped` appends one arena root per \
+                 document root, and `dashbuf::prefetch::resolve` above already proved this \
+                 document has that root",
+                dashbuf::prefetch::root_count(&document),
+                shown_root.ordinal(),
+            )
+        });
     let mut txn = arena.open();
-    txn.show_root(Some(shown_root));
+    txn.show_root(Some(shown));
     txn.commit();
     Ok(dashlang::attach_live(
         arena,

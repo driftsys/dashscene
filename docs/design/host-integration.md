@@ -397,7 +397,21 @@ falls back. The shape and the two rejected alternatives are in
 its root on the arena it loaded into — `Txn::show_root`, in a commit of its own
 after `load_document_mapped` returns — and from there `Arena::dfs_order`, the
 engine's solve and its glyph staging all cover that root's subtree and nothing
-else. Both targets now get the same thing out of the ordinal:
+else.
+
+**The ordinal stops at the loader.** `Txn::show_root` takes a `NodeId`, not a
+`ShownRoot`: the ordinal names a root of the _document_, and a load appends the
+document's nodes to whatever the arena already holds, so the two lists agree
+only for a load into an empty arena. Each loader takes the arena's root count
+before the load and resolves its own ordinal against the roots that load
+appended — which is the one place holding both the document and the arena it
+went into. Handing the ordinal straight through, which is what story #838 did,
+confined the traversal to a different artboard than the prefetch had read, with
+no diagnostic (issue #943;
+[the-shown-root-is-named-by-ordinal.md](../decisions/the-shown-root-is-named-by-ordinal.md)
+D4).
+
+Both targets now get the same thing out of the ordinal:
 
 - **Desktop** — a different ordinal makes a different root's payloads resident
   and leaves the rest of the file cold. Observable, and asserted: the two-root

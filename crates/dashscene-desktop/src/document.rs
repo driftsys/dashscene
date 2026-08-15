@@ -100,6 +100,33 @@ impl Document {
     /// drawable it is given. A resize therefore reloads the same picture rather
     /// than rescaling it, which is why [`crate::App::build`] is free to ignore
     /// the extent it is handed for this case.
+    ///
+    /// # Errors
+    ///
+    /// Every error **this function returns** is raised before the document is
+    /// replayed into `arena`, so a failed load leaves `arena` exactly as it was
+    /// and an embedder may reuse it. That is not true of the panics below.
+    ///
+    /// # Panics
+    ///
+    /// This can panic rather than return, and the conditions belong to the
+    /// crates under it rather than to this signature — no attempt is made here
+    /// to enumerate them, because the set is theirs to change. Two are worth
+    /// naming because an embedder meets them:
+    ///
+    /// - `Txn::use_mapped_pool` refuses an arena whose image table already holds
+    ///   rows, **whatever put them there** — an earlier mapped load, or images
+    ///   the embedder staged itself. A table is owned or mapped and never both
+    ///   (`docs/decisions/assets-borrow-from-the-mapping.md` D1). Passing a
+    ///   fresh [`Arena`] avoids it, which is what [`crate::App`] does on every
+    ///   rebuild.
+    /// - A mapped payload lying past 4 GiB into the file exceeds what an image
+    ///   row's `u32` offset can name.
+    ///
+    /// **A panic here unwinds on this target.** An embedder catching one holds
+    /// an arena in a state this function does not specify — how far the replay
+    /// reached depends on which condition fired — so discard it rather than draw
+    /// it.
     pub fn load(
         &self,
         shown_root: ShownRoot,
@@ -178,6 +205,17 @@ impl Document {
             .map(|want| MappedPayload::canonical(want.range.clone()))
             .collect();
 
+        // How many roots the arena held *before* this load, so the document
+        // ordinal can be turned into the arena node it actually named. The load
+        // appends to whatever the arena already holds, so the two ordinals agree
+        // only when it held nothing (issue #943).
+        //
+        // **Not two mapped documents**, whatever issue #943's text says: this
+        // path calls `Txn::use_mapped_pool`, which refuses an arena whose image
+        // table already holds rows. What reaches here is an arena holding nodes
+        // but no images — and on the *owned* `load_document` path, any two
+        // documents.
+        let roots_before = arena.roots().len();
         // The region the table points into is this same mapping, shared rather
         // than opened again: `MappedFile` is `Send + Sync` and satisfies
         // `Region` through its `AsRef<[u8]>`, so the handle costs one refcount
@@ -191,12 +229,59 @@ impl Document {
         // unshown — and this confines what is solved, committed and painted to
         // the one being shown (story #838, issue #822).
         //
+        // Named by node: `Txn::show_root` takes the arena's own vocabulary, and
+        // this is the one place holding both the document and the arena it was
+        // appended to. Passing the ordinal straight through would confine the
+        // traversal to the *first* document's root while the prefetch above read
+        // this one's — the wrong artboard, solved and painted, with nothing to
+        // report it (issue #943).
+        //
         // A commit of its own rather than a parameter on the loader: the load
         // has already committed by the time this runs, and this is the cheaper
         // of the two ways to say it — one extra commit per load, against a
         // signature change on three public loaders and every call site.
+        //
+        // **A named panic rather than a typed error**, and this reverses a review
+        // finding on the first cut deliberately. That finding read `.expect`
+        // here as the one abort on a path where every other failure is a
+        // `Result`; it is not. `Txn::use_mapped_pool` already panics by name
+        // when this same function is handed an arena whose image table holds
+        // rows, so a broken precondition aborting here is the established
+        // behaviour of this loader rather than a new one.
+        //
+        // The deciding evidence is that the error cannot be built honestly.
+        // `NoSuchRoot::roots` is documented as "how many the document does
+        // carry", and this arm is reached only after `resolve` proved the
+        // document carries more roots than the ordinal — so the true value
+        // renders "carries 2 roots, and root 1 was asked for", an in-range ask
+        // reported as a failure, and any value that reads correctly is a false
+        // claim about the file. A variant that cannot state what happened is the
+        // wrong shape for it.
+        //
+        // What it is instead: `dashscene-core` promising one arena root per
+        // document root and not delivering. That is an invariant of another
+        // crate, which is why it is checked rather than assumed, and P4's answer
+        // to a broken invariant is a diagnostic that names it.
+        let shown = *arena
+            .roots()
+            .get(roots_before + shown_root.ordinal() as usize)
+            .unwrap_or_else(|| {
+                // Inside the closure: nothing here runs on the ordinary path,
+                // and `saturating_sub` so a shrunken root list cannot replace
+                // this diagnostic with a bare subtraction overflow.
+                let appended = arena.roots().len().saturating_sub(roots_before);
+                panic!(
+                    "{} declares {} root(s) and this load appended {appended} to the arena, so \
+                     ordinal {} names no node: `load_document_mapped` appends one arena root per \
+                     document root, and the prefetch above already resolved this ordinal against \
+                     the same document",
+                    self.path.display(),
+                    dashbuf::prefetch::root_count(&document),
+                    shown_root.ordinal(),
+                )
+            });
         let mut txn = arena.open();
-        txn.show_root(Some(shown_root));
+        txn.show_root(Some(shown));
         txn.commit();
         Ok(dashlang::attach_live(
             arena,
@@ -391,6 +476,72 @@ mod tests {
     fn showing_the_second_root_leaves_the_first_roots_payload_cold() {
         load_bytes_showing(&two_root_document(0), ShownRoot::nth(1))
             .expect("the unshown first root's payload is never read");
+    }
+
+    /// **A [`ShownRoot`] is a document ordinal, and a load into an arena that
+    /// already holds roots is where that stops being the arena's ordinal too.**
+    ///
+    /// The load appends — "the document's nodes are appended to whatever the
+    /// arena already holds" is what `dashscene_core::load` promises — so with one
+    /// root already present, this document's root 1 is the arena's root **2**.
+    ///
+    /// Before issue #943 the ordinal was handed to `Txn::show_root` unchanged,
+    /// which indexed the *arena's* roots with it: the prefetch read this
+    /// document's second payload and the traversal then confined itself to the
+    /// arena's root 1 — this document's **first** root. The wrong artboard,
+    /// solved, committed and painted, with no diagnostic — the failure mode P4
+    /// forbids.
+    ///
+    /// **A node authored in code is the prefix, not a second `.dsb`.** Issue #943
+    /// describes composing two documents, and on the owned `load_document` path
+    /// that is exactly reachable; on *this* path it is not, because
+    /// `Txn::use_mapped_pool` refuses an arena whose image table already holds
+    /// rows — a table is owned or mapped and never both
+    /// (`docs/decisions/assets-borrow-from-the-mapping.md` D1). An authored
+    /// prefix adds no image rows, so it composes here, and it produces the same
+    /// non-zero root offset the conversion has to survive.
+    ///
+    /// The assertion is over which node holds a rect row rather than over
+    /// `shown_root()` alone, because the row is what a painter reads.
+    #[test]
+    fn a_load_into_an_arena_that_already_holds_roots_shows_the_documents_own_root() {
+        let mut arena = dashscene_core::Arena::new();
+        let mut txn = arena.open();
+        txn.add_node(None, Some("authored"));
+        txn.commit();
+
+        let directory = tempfile::tempdir().expect("a temporary directory");
+        let path = directory.path().join("fixture.dsb");
+        std::fs::write(&path, two_root_document(0)).expect("the fixture writes");
+        Document::map(&path)
+            .expect("the fixture maps")
+            .load(ShownRoot::nth(1), None, &mut arena)
+            .expect("the unshown first root's payload is never read");
+
+        let roots = arena.roots().to_vec();
+        assert_eq!(
+            roots.len(),
+            3,
+            "the authored root plus the document's two, which is the whole premise"
+        );
+
+        let scene = arena.committed();
+        assert_eq!(
+            scene.shown_root(),
+            Some(roots[2]),
+            "the load named its own document's root 1, which is the arena's root 2"
+        );
+        assert_eq!(
+            scene.rect_index_of(roots[2]),
+            Some(0),
+            "and that root is the one the commit resolved a rect for"
+        );
+        assert_eq!(
+            scene.rect_index_of(roots[1]),
+            None,
+            "the document's *first* root draws nothing: it is the artboard the ordinal \
+             conflation would have shown instead"
+        );
     }
 
     /// The same fixture with the **second** root's payload corrupted, shown, is
