@@ -72,7 +72,6 @@
 pub mod badge;
 pub mod layout;
 pub mod resources;
-pub mod solver;
 pub mod surfaces;
 pub mod typography;
 pub mod vocabulary;

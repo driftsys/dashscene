@@ -25,11 +25,11 @@ use dashscene_core::{Arena, CrossAxisAlign, LayoutMode, TextAlignV};
 
 use crate::badge;
 use crate::resources::{self, LATIN_FAMILY};
-use crate::solver::ShowcaseSolver;
 use crate::vocabulary::{
     Painting, diagonal_gradient, gradient, image_crop, image_fill, palette, rgba, shape_field,
     text_style,
 };
+use dashscene_engine::TaffySolver;
 
 /// The one signal, named so the pulse can find it in a scene it did not build.
 pub const SWEEP: &str = "surfaces.sweep";
@@ -371,13 +371,7 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
 
     let label = badge::badge(&mut scene, width, height);
     scene.roots([root, label]);
-    let live = scene.build_live(
-        arena,
-        Box::new(ShowcaseSolver::new(
-            resources::new_typesetter(),
-            resources::atlases(),
-        )),
-    );
+    let live = scene.build_live(arena, Box::new(TaffySolver::owning(resources::text())));
     paint(arena, star);
     live
 }
@@ -421,10 +415,7 @@ fn paint(arena: &mut Arena, star_size: f32) {
         // fill and rasterises no path.
         .set("vector-star", shape_field(star.field(field)));
 
-    painting.commit(&mut ShowcaseSolver::new(
-        resources::new_typesetter(),
-        resources::atlases(),
-    ));
+    painting.commit(&mut TaffySolver::owning(resources::text()));
 }
 
 /// The scripted phase: drive `sweep` to one end of its range, then the other.

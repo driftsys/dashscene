@@ -40,8 +40,8 @@ use dashscene_core::{Arena, CrossAxisAlign, LayoutMode, TextAlign, TextAlignV};
 
 use crate::badge;
 use crate::resources::{self, ARABIC_FAMILY, LATIN_FAMILY};
-use crate::solver::ShowcaseSolver;
 use crate::vocabulary::{palette, text_style};
+use dashscene_engine::TaffySolver;
 
 /// The one signal, named so the pulse can find it in a scene it did not build.
 ///
@@ -237,13 +237,7 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
 
     let label = badge::badge(&mut scene, width, height);
     scene.roots([root, label]);
-    scene.build_live(
-        arena,
-        Box::new(ShowcaseSolver::new(
-            resources::new_typesetter(),
-            resources::atlases(),
-        )),
-    )
+    scene.build_live(arena, Box::new(TaffySolver::owning(resources::text())))
 }
 
 /// The scripted phase: drive `level` between its two ends, so the bar reflows

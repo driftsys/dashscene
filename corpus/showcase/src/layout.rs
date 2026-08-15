@@ -43,9 +43,9 @@ use dashscene_core::{Arena, VariantMember, VariantSetId, VariantValue};
 
 use crate::badge;
 use crate::resources;
-use crate::solver::ShowcaseSolver;
 use crate::vocabulary::{Painting, palette};
 use dashpaint::{Stroke, StrokeAlign};
+use dashscene_engine::TaffySolver;
 
 /// The scalar signal, named so the pulse can find it.
 pub const SPREAD: &str = "layout.spread";
@@ -298,13 +298,7 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
 
     let label = badge::badge(&mut scene, width, height);
     scene.roots([root, label]);
-    let live = scene.build_live(
-        arena,
-        Box::new(ShowcaseSolver::new(
-            resources::new_typesetter(),
-            resources::atlases(),
-        )),
-    );
+    let live = scene.build_live(arena, Box::new(TaffySolver::owning(resources::text())));
     paint(arena, unit);
     live
 }
@@ -321,10 +315,7 @@ fn paint(arena: &mut Arena, unit: f32) {
 
     declare_chip_variants(&mut painting, unit);
 
-    painting.commit(&mut ShowcaseSolver::new(
-        resources::new_typesetter(),
-        resources::atlases(),
-    ));
+    painting.commit(&mut TaffySolver::owning(resources::text()));
 }
 
 /// Declares the three-member variant set on the reflow row's rightmost chip.
@@ -410,10 +401,7 @@ pub fn switch_variant(_live: &mut LiveScene, arena: &mut Arena) {
     let next = (arena.active_variant(set) + 1) % CHIP_MEMBERS;
     let mut txn = arena.open();
     txn.set_variant(set, next);
-    txn.commit_with(&mut ShowcaseSolver::new(
-        resources::new_typesetter(),
-        resources::atlases(),
-    ));
+    txn.commit_with(&mut TaffySolver::owning(resources::text()));
 }
 
 /// The scripted phase: widen the gap, then take the middle chip out of the

@@ -3,10 +3,10 @@
 //! # Why this is content and not host code
 //!
 //! The label is text, and text is staged as glyph runs by the solver the
-//! scene injects. Only `crate::solver::ShowcaseSolver` carries a
-//! typesetter and the atlas list, so a label authored by the host — which
-//! holds no solver handle — would commit through a text-incapable path
-//! and stage no glyph runs at all. It lives here for the same reason the
+//! scene injects. Only the solver built from [`crate::resources::text`]
+//! carries a typesetter and the atlas list, so a label authored by the host
+//! — which holds no solver handle — would commit through a text-incapable
+//! path and stage no glyph runs at all. It lives here for the same reason the
 //! variant switch does (`crate::lib`, "What a scene tells the host about
 //! input"): the crate that owns the arena owns the content.
 //!

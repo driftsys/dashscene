@@ -106,12 +106,13 @@ node grows taller as the text wraps. A known axis is returned unchanged.
   the test that holds on purpose,
   `an_owning_solver_measures_through_its_\
 typesetter_and_retains_its_tree`,
-  which exists to cover the held arm. What the held variant is _not_ is the
-  shape already in the tree: `corpus/showcase`'s `ShowcaseSolver` owns a
-  typesetter and builds a fresh `TaffySolver` inside every call, which starts
-  each solve with no retained tree and so rebuilds it per frame. That is
-  acceptable in a demonstration and is recorded there as a cost; on the product
-  path it would pay back issue #164's whole saving every frame.
+  which exists to cover the held arm. What the held variant is _not_ is a
+  wrapper that owns a typesetter and builds a fresh `TaffySolver` inside every
+  call, which starts each solve with no retained tree and so rebuilds it per
+  frame — on the product path that pays back issue #164's whole saving every
+  frame. `corpus/showcase` was the one such wrapper in the tree and was
+  acceptable as a demonstration; issue #950 moved it to
+  `TaffySolver::owning(resources::text())` and no wrapper of that shape remains.
 
   The reason for lending — one typesetter for the runtime, so layout and paint
   cannot disagree about a glyph's size — is satisfied by the held variant rather

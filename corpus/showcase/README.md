@@ -285,8 +285,16 @@ does say:
 - A debug build measures the same, within a few per cent. The cost is in Skia
   and in the per-frame image decode, neither of which is Rust the profile
   affects.
-- `crate::solver` rebuilds Taffy's retained tree on every solve, because
-  `LiveScene` holds a `'static` boxed solver and `TaffySolver` borrows its
-  typesetter. It is a bounded cost, unlike leaking one typesetter per window
-  resize, but it is a cost, and it is inside the tick rather than in the numbers
-  above.
+- The scenes no longer rebuild Taffy's retained tree on every solve. They used
+  to, because `LiveScene` holds a `'static` boxed solver and `TaffySolver`
+  borrows its typesetter, so this crate wrapped the pair in a type that built a
+  fresh solver per call — a bounded cost, unlike leaking one typesetter per
+  window resize, but a cost inside the tick rather than in the numbers above.
+  `TaffySolver::owning` removed the choice: `resources::text` hands it the pair,
+  it holds the typesetter itself, and the tree is retained across solves (issue
+  #950). The table above predates that change and is **not** re-taken for it. It
+  times `SkiaPainter::paint` alone, so a solve cost was never inside it — what
+  the removal moves is the tick, which this table does not measure at all.
+  `docs/technotes/frame-budget.md` is where a tick figure lives, and for the
+  reason given above it is a separate measurement rather than this one
+  continued.

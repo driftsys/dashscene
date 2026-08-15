@@ -83,7 +83,8 @@ pub const ARABIC_FAMILY: &str = "Noto Sans Arabic";
 /// free: its font is parsed again on every scene build, and its sheet is
 /// converted once and then held for the run of the program. It is no longer a
 /// per-frame copy of the payload, which is what the sentence here used to say
-/// — `ShowcaseSolver::stage_text` stopped deep-copying the set at issue #621.
+/// — the showcase's staging stopped deep-copying the set at issue #621, in
+/// the `ShowcaseSolver` that issue #950 has since removed.
 ///
 /// **The pairing is the contract.** Families flatten family-major, so a shaped
 /// glyph's font slot is `0` for Inter Regular, `1` for Inter SemiBold and `2`
@@ -175,6 +176,31 @@ pub fn atlases() -> Arc<Vec<Atlas>> {
             .atlases
     });
     Arc::clone(&ATLASES)
+}
+
+/// The typesetter and the atlases as one pair, ready for
+/// [`TaffySolver::owning`](dashscene_engine::TaffySolver::owning).
+///
+/// This is what every showcase scene injects into its live scene. `LiveScene`
+/// takes a `Box<dyn LayoutSolver>` and keeps it for the life of the scene, so
+/// the solver it holds is `'static`; `TaffySolver` otherwise borrows its
+/// typesetter, which no `'static` box can carry unless the typesetter is
+/// leaked — and the host rebuilds a scene on every resize step, so one leak
+/// per rebuild would be one leak per pixel of a window drag.
+///
+/// An owning solver answers that without leaking **and keeps Taffy's retained
+/// tree**, which is the part that used to be given up here. Until issue #950
+/// this crate wrapped the pair in a `ShowcaseSolver` that built a fresh
+/// `TaffySolver` inside every call, so every solve started with no retained
+/// tree and rebuilt it — a per-frame cost paid on `demo`, `demo-web` and
+/// `demo-android` alike. `TaffySolver::owning` is the same answer without
+/// that price, so the wrapper is gone and this is the one shape left.
+///
+/// A fresh [`new_typesetter`] per pair, because a scene's solver shapes with
+/// it exclusively; the shared [`atlases`] behind their `Arc`, because the set
+/// never changes.
+pub fn text() -> TextResources {
+    TextResources::new(new_typesetter(), atlases())
 }
 
 /// The corpus photograph, as the payload an image fill references.

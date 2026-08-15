@@ -357,10 +357,12 @@ character with the load reporting success.
 
 Holding it inside the solver rather than in a wrapper is what keeps the retained
 tree. A wrapper that owns the typesetter must build a `TaffySolver` inside every
-call — `corpus/showcase`'s `ShowcaseSolver`, and issue #950 — so every solve
-starts with no tree and rebuilds it, which is #164's saving paid back per frame.
-`docs/decisions/measure-callback-typesetter-seam.md` carries why lending remains
-the default and why the held arm satisfies its reason rather than waiving it.
+call, so every solve starts with no tree and rebuilds it, which is #164's saving
+paid back per frame. `corpus/showcase` carried the last such wrapper and issue
+#950 replaced it with `TaffySolver::owning(resources::text())`, so every solver
+in the tree now retains. `docs/decisions/measure-callback-typesetter-seam.md`
+carries why lending remains the default and why the held arm satisfies its
+reason rather than waiving it.
 
 The borrow is the single-source discipline: layout measures text against the
 same shaped-run cache the painter reads at paint time (#30), so the two cannot

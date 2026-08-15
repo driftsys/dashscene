@@ -43,7 +43,7 @@
 //! replayed, so a second commit through a solver with no typesetter would
 //! wipe out whatever text the scene already carries. This pass therefore
 //! always commits through the same text-capable solver the first pass used.
-//! See `crate::solver`.
+//! See [`crate::resources::text`], which is the pair every such solver holds.
 
 use std::collections::HashMap;
 
