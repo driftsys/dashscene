@@ -19,17 +19,34 @@
 //! [`Frames`] over `dashscene-gpu` and `dashlang` directly instead, and the two
 //! paths meet at the trait rather than at a second frame loop.
 
-use std::ffi::c_void;
+use std::ffi::{CStr, c_void};
 
 use dashscene_ffi::{DsRuntime, DsStatus, DsSurfaceKind};
 use jni::errors::LogErrorAndDefault;
 use jni::objects::{JByteArray, JClass, JObject, JObjectArray, JString};
+use jni::strings::JNIStr;
 use jni::sys::{jboolean, jint, jlong};
-use jni::{Env, EnvUnowned, jni_sig, jni_str};
+use jni::{Env, EnvUnowned, jni_sig};
 
+use crate::face;
 use crate::frames::{AttachError, Frames, Step};
 use crate::log;
 use crate::loop_::{self, AndroidHost};
+
+/// One [`crate::face`] name as JNI wants it.
+///
+/// A `const fn` so every call site below can bind the result to a `const`, and
+/// the conversion happens when this crate is compiled rather than on the UI
+/// thread inside a JNI entry point. `JNIStr::from_cstr` validates modified
+/// UTF-8; every name in `face` is ASCII and therefore cannot fail, so the
+/// `panic!` is a compile error that no build can reach — which is the point of
+/// doing it here rather than unwrapping at run time.
+const fn jni_name(name: &'static CStr) -> &'static JNIStr {
+    match JNIStr::from_cstr(name) {
+        Some(name) => name,
+        None => panic!("a DsFace field name is not valid modified UTF-8"),
+    }
+}
 
 /// Reads the ABI's last error, for a log line that says what actually failed.
 fn last_error() -> String {
@@ -430,6 +447,18 @@ fn read_face<'frame, 'array>(
     faces: &JObjectArray<'array, JObject<'array>>,
     index: usize,
 ) -> jni::errors::Result<Option<OwnedFace>> {
+    // **The six names, from the one list this crate holds** (issue #1089).
+    // Spelled in `crate::face` rather than here, because a host test can read
+    // that module and compare it against `DsFace.java`'s own declarations — and
+    // nothing else can: this file is behind the platform `cfg`, so no test
+    // binary links it and no gate lints it.
+    const FAMILY: &JNIStr = jni_name(face::FAMILY);
+    const WEIGHT: &JNIStr = jni_name(face::WEIGHT);
+    const FACE_INDEX: &JNIStr = jni_name(face::FACE_INDEX);
+    const FONT: &JNIStr = jni_name(face::FONT);
+    const ATLAS_PNG: &JNIStr = jni_name(face::ATLAS_PNG);
+    const ATLAS_METRICS: &JNIStr = jni_name(face::ATLAS_METRICS);
+
     let face = faces.get_element(env, index)?;
     if face.is_null() {
         log(&format!(
@@ -438,11 +467,12 @@ fn read_face<'frame, 'array>(
         return Ok(None);
     }
 
-    let family = env.get_field(&face, jni_str!("family"), jni_sig!("Ljava/lang/String;"))?;
+    let family = env.get_field(&face, FAMILY, jni_sig!("Ljava/lang/String;"))?;
     let family: JString = env.cast_local::<JString>(family.l()?)?;
     if family.is_null() {
         log(&format!(
-            "nativeSurfaceCreatedWithText: face {index} has no family"
+            "nativeSurfaceCreatedWithText: face {index} has no {}",
+            FAMILY.to_str()
         ));
         return Ok(None);
     }
@@ -453,9 +483,7 @@ fn read_face<'frame, 'array>(
     // answers to the same question. What is refused is only what a `u16` cannot
     // carry to the ABI at all — a truncating cast would turn 65 936 into 400
     // and the ABI would accept it.
-    let weight = env
-        .get_field(&face, jni_str!("weight"), jni_sig!("I"))?
-        .i()?;
+    let weight = env.get_field(&face, WEIGHT, jni_sig!("I"))?.i()?;
     let Ok(weight) = u16::try_from(weight) else {
         log(&format!(
             "nativeSurfaceCreatedWithText: face {index} declares weight {weight}, which does \
@@ -466,9 +494,7 @@ fn read_face<'frame, 'array>(
     // `face_index` is a `u32` in the descriptor and a signed `int` in Java, so
     // the only value that cannot cross is a negative one. Refused rather than
     // clamped: a negative index is a caller's mistake, and 0 is a real face.
-    let face_index = env
-        .get_field(&face, jni_str!("faceIndex"), jni_sig!("I"))?
-        .i()?;
+    let face_index = env.get_field(&face, FACE_INDEX, jni_sig!("I"))?.i()?;
     let Ok(face_index) = u32::try_from(face_index) else {
         log(&format!(
             "nativeSurfaceCreatedWithText: face {index} declares faceIndex {face_index}, which \
@@ -477,12 +503,17 @@ fn read_face<'frame, 'array>(
         return Ok(None);
     };
 
-    let mut bytes_field = |name, what| -> jni::errors::Result<Option<Vec<u8>>> {
+    // The diagnostic names the field by reading the same value the lookup uses,
+    // rather than repeating it as a literal. A second spelling here would
+    // survive a rename and name a field that no longer exists, on the exact
+    // path a reader consults when the load has failed.
+    let mut bytes_field = |name: &JNIStr| -> jni::errors::Result<Option<Vec<u8>>> {
         let array = env.get_field(&face, name, jni_sig!("[B"))?.l()?;
         let array: JByteArray = env.cast_local::<JByteArray>(array)?;
         if array.is_null() {
             log(&format!(
-                "nativeSurfaceCreatedWithText: face {index} has no {what}"
+                "nativeSurfaceCreatedWithText: face {index} has no {}",
+                name.to_str()
             ));
             return Ok(None);
         }
@@ -494,13 +525,13 @@ fn read_face<'frame, 'array>(
     // already refused — 63 940 B of PNG and 4 448 B of metrics on the
     // harness's own cascade — and log three lines for one bad face, which
     // reads as three problems.
-    let Some(font) = bytes_field(jni_str!("font"), "font")? else {
+    let Some(font) = bytes_field(FONT)? else {
         return Ok(None);
     };
-    let Some(atlas_png) = bytes_field(jni_str!("atlasPng"), "atlasPng")? else {
+    let Some(atlas_png) = bytes_field(ATLAS_PNG)? else {
         return Ok(None);
     };
-    let Some(atlas_metrics) = bytes_field(jni_str!("atlasMetrics"), "atlasMetrics")? else {
+    let Some(atlas_metrics) = bytes_field(ATLAS_METRICS)? else {
         return Ok(None);
     };
 

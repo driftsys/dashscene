@@ -16,9 +16,35 @@ package dev.driftsys.dashscene;
  *
  * <p>Public final fields and no accessors on purpose: the native side reads
  * them by name, so a getter would be a second name for the same value and only
- * the field name is load-bearing. <b>Nothing checks these names against the
- * native side</b> — renaming one compiles, packages and installs, and fails as
- * {@code NoSuchFieldError} on the first frame (issue #1089).
+ * the field name is load-bearing.
+ *
+ * <p><b>These names and types are checked against the native side</b> (issue
+ * #1089). {@code crates/dashscene-android/src/face.rs} holds the one list the
+ * JNI half reads, and its own test asserts that this file still declares every
+ * entry in it. That test runs in {@code just test} on every platform, because
+ * the JNI half compiles on none of them.
+ *
+ * <p>So renaming a field here, removing one, or changing its type fails the
+ * sanity tier rather than compiling, packaging, installing, and failing as
+ * {@code NoSuchFieldError} on the first frame with the handle coming back 0 and
+ * no glyph drawn. The type counts as much as the name: {@code GetFieldID}
+ * resolves a field by both.
+ *
+ * <p><b>Change it in {@code face.rs} too — and, for a type change, in
+ * {@code host.rs}'s {@code jni_sig!} literal for that field.</b> The test
+ * checks this file against {@code face.rs}; nothing yet checks {@code face.rs}
+ * against {@code host.rs}, so a type changed in two of the three places passes
+ * the gate and still fails on the device (issue #1096).
+ *
+ * <p>The check looks for each declaration it expects, with whitespace
+ * <i>between tokens</i> collapsed — so extra spaces and line breaks between
+ * words are fine, while {@code weight ;} or {@code byte [] font} are not found
+ * even though Java accepts them. That is a red test rather than a broken build,
+ * and the failure message says which it is.
+ *
+ * <p><b>It does not check the other direction</b>: adding a seventh field here
+ * fails nothing, because the native half reads these six and would simply
+ * ignore it.
  */
 public final class DsFace {
     /** Family name. Faces sharing one become a family however they are ordered. */

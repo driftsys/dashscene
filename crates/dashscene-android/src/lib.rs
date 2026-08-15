@@ -89,6 +89,7 @@
 //!
 //! [`ds_runtime_load_document_with_text`]: dashscene_ffi::ds_runtime_load_document_with_text
 
+mod face;
 mod frames;
 mod handshake;
 mod logging;
