@@ -959,12 +959,25 @@ android-probe:
 # activity is merely brought forward, which is what makes the path look dead.
 # So this force-stops first.
 #
-# The assertion is `HarnessActivity`'s own two markers. `surfaceDestroyed —
+# The assertion is `HarnessActivity`'s own markers. `surfaceDestroyed —
 # entering the handshake` says the callback was reached; `surfaceDestroyed —
 # handshake complete, returning` is logged only after it has blocked for the
 # frame loop to stop and the surface to be dropped. Reaching the first without
 # the second is precisely the use-after-free D4 exists to prevent, so both are
 # required. Both are checked for presence, not for order.
+#
+# A third marker, `no runtime handle, nothing to hand back`, is the case where
+# `nativeSurfaceCreated` could not obtain the window or spawn the thread. Until
+# 2026-08-15 the completion marker was logged outside its guard, so that case
+# emitted it having handed nothing back and this recipe reported a PASS for a
+# teardown that never happened (issue #1006).
+#
+# It is a narrow case, and deliberately not the one issue #960 describes: a GPU
+# device that cannot be obtained returns a NON-ZERO handle — #960's own log
+# records `runtime handle -5476376631205712496` — so it takes the handshake
+# branch. `nativeIsRunning` is the call that answers it, and `HarnessActivity`
+# does not make it. Until it does, this recipe cannot tell a hung handshake from
+# a loop that had already ended.
 #
 # A tablet profile rather than a phone: split-screen is most reliable on a large
 # screen, and a panel form factor is closer to this project's target anyway.
@@ -1042,16 +1055,47 @@ android-splitscreen:
     fi
     echo "android-splitscreen: ${mode}; putting a second app in the other half"
     "${adb}" shell am start -n com.android.settings/.Settings --windowingMode 6 >/dev/null 2>&1 || true
+    # Everything THIS instance logged, and nothing the previous one did. The
+    # force-stop above can leave the dying instance's teardown markers in the
+    # buffer: entries written in the millisecond window around a `logcat -c`
+    # are not removed, and a stale `entering`/`complete` pair is otherwise
+    # indistinguishable from this run's, which would report a PASS for a
+    # teardown the split transition never produced (issue #1006).
+    #
+    # The relaunch's own `surfaceCreated` is the boundary. A process being torn
+    # down logs no such line, so taking the log from the first one onward drops
+    # exactly the stale pair and keeps everything this run emitted. A timestamp
+    # cutoff was tried first and is worse: `adb shell` joins argv with spaces
+    # unescaped, so the format string needs a second level of quoting, and
+    # second-precision rounds the cutoff down into the very window it excludes.
+    this_run() {
+      "${adb}" logcat -d 2>/dev/null | grep -E "I dashscene: harness:" | awk '/surfaceCreated/{seen=1} seen'
+    }
     for _ in $(seq 1 30); do
       # Captured and matched in bash rather than piped into `grep -q`. Under
       # `pipefail`, `grep -q` exits at its first match and closes the pipe,
       # logcat dies on SIGPIPE, and the pipeline reports that failure — so the
       # break would never fire and this loop would always run its full 30 s.
-      if [[ "$("${adb}" logcat -d 2>/dev/null || true)" == *"handshake complete, returning"* ]]; then break; fi
+      if [[ "$(this_run || true)" == *"handshake complete, returning"* ]]; then break; fi
       sleep 1
     done
-    log=$("${adb}" logcat -d 2>/dev/null | grep -E "I dashscene: harness:" || true)
+    log="$(this_run || true)"
     echo "${log}"
+    # `handle == 0` means nativeSurfaceCreated could not obtain the window or
+    # spawn the thread. HarnessActivity logs that case distinctly rather than
+    # falling through to the completion marker, which is what let a callback
+    # that handed nothing back still claim a handshake.
+    #
+    # This is NOT the no-GPU-device case. That returns a non-zero handle, takes
+    # the handshake branch, and is answered by nativeIsRunning, which the
+    # harness does not call — issue #960.
+    if [[ "${log}" == *"no runtime handle, nothing to hand back"* ]]; then
+      echo "android-splitscreen: FAIL — reached surfaceDestroyed with no runtime" >&2
+      echo "android-splitscreen: handle, so no handshake ran. nativeSurfaceCreated" >&2
+      echo "android-splitscreen: could not get the window or spawn the thread;" >&2
+      echo "android-splitscreen: check logcat for E lines this filter drops." >&2
+      exit 1
+    fi
     # Matched in bash for the reason the wait loop above gives: a `printf |
     # grep -q` pipeline reports SIGPIPE under `pipefail` once the log exceeds
     # the pipe buffer, which here would invert into a FAIL on a log that

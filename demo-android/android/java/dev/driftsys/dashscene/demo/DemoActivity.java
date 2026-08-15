@@ -69,7 +69,13 @@ public final class DemoActivity extends Activity implements SurfaceHolder.Callba
         if (handle != 0) {
             DemoNative.nativeStop(handle);
             handle = 0;
+            // Inside the guard for the reason HarnessActivity gives: logged
+            // outside it, this marker claims a handshake for a callback that
+            // handed nothing back (issue #1006). The two hosts log the same
+            // lifecycle event and should not disagree about it.
+            Log.i(TAG, "demo: surfaceDestroyed — handshake complete");
+        } else {
+            Log.i(TAG, "demo: surfaceDestroyed — no runtime handle, nothing to hand back");
         }
-        Log.i(TAG, "demo: surfaceDestroyed — handshake complete");
     }
 }

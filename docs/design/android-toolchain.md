@@ -112,9 +112,13 @@ painter-capable adapter there is a CPU rasteriser.
   this record claimed until 2026-08-15: the case was run on 2026-08-14 against a
   handheld image, and the harness entered the destroy handshake and never
   returned (issue #960, open). The recipe that runs it is `android-splitscreen`,
-  and it asserts on the two markers `HarnessActivity` logs. The v0.19 driver
-  prompt asserted the emulator could exercise all three; for this AVD that is
-  false.
+  and it asserts on the markers `HarnessActivity` logs. Since 2026-08-15 the
+  completion marker is logged only inside the `handle != 0` guard, and a third
+  marker names the case where no runtime handle was obtained; a device that
+  could not be obtained is not that case, because it returns a non-zero handle
+  and is answered by `nativeIsRunning`, which the harness does not call. The
+  v0.19 driver prompt asserted the emulator could exercise all three; for this
+  AVD that is false.
 
 A static document draws once and then stops, which is the idle skip working: the
 generation does not advance, so no frame is worth drawing. Nothing about frame

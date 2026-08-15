@@ -95,8 +95,22 @@ public final class HarnessActivity extends Activity implements SurfaceHolder.Cal
             // purpose.
             DashsceneNative.nativeSurfaceDestroyed(handle);
             handle = 0;
+            // Logged inside the guard, because this marker is what
+            // `just android-splitscreen` reads as proof the handshake ran.
+            // Until 2026-08-15 it sat outside, so a callback that handed
+            // nothing back still claimed it had (issue #1006).
+            Log.i(TAG, "harness: surfaceDestroyed — handshake complete, returning");
+        } else {
+            // `handle` is zero only when nativeSurfaceCreated could not obtain
+            // the window or spawn the thread — see start_document_host. It is
+            // NOT the no-GPU-device case: that returns a non-zero handle and
+            // needs nativeIsRunning, which this activity does not call
+            // (issue #960).
+            //
+            // A distinct marker rather than silence, so the recipe can tell
+            // this apart from a handshake that entered and hung.
+            Log.i(TAG, "harness: surfaceDestroyed — no runtime handle, nothing to hand back");
         }
-        Log.i(TAG, "harness: surfaceDestroyed — handshake complete, returning");
     }
 
     private byte[] readAsset(String name) throws IOException {
