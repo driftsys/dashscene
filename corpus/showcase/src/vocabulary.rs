@@ -44,9 +44,13 @@
 //! geometry here would therefore leave the scene's own tree describing a scene
 //! that has moved, silently, whatever the rect cache did.
 //!
-//! `corpus/showcase/tests/retained_tree.rs` checks the consequence and states
-//! what it cannot see; `docs/decisions/one-solver-per-live-scene.md` is the
-//! record.
+//! Since issue #1104 that is checked rather than trusted: a solver that finds
+//! another producer consumed the arena's layout-dirty set rebuilds instead of
+//! patching and counts it, so staging geometry here would show up as a non-zero
+//! `LiveScene::forced_rebuilds` — which
+//! `corpus/showcase/tests/retained_tree.rs` asserts is zero for every scene,
+//! whether or not any scripted phase reaches the node.
+//! `docs/decisions/one-solver-per-live-scene.md` is the record.
 //!
 //! The one thing this pass has to protect is the text the first pass already
 //! staged: glyph runs are rebuilt from scratch at every commit rather than

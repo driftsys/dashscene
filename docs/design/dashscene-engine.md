@@ -62,8 +62,12 @@ node's layout and report it as another node's rect. There is no such bug: every
 arena node is reachable from a root. The point is that if one ever appears it
 stops rather than answers.
 
-`solve` dispatches on whether the tree is structurally current — a **grown**
-arena node count forces a full `rebuild` returning every node; otherwise
+`solve` dispatches on whether the tree is structurally current. Two independent
+things force a full `rebuild` returning every node: a **grown** arena node
+count, and a **missed commit** — `Arena::layout_commit_generation` standing
+ahead of the last generation `LayoutSolver::committed` reported to this solver,
+which means another producer drained a layout-dirty set this tree never saw
+(issue #1104, `docs/decisions/one-solver-per-live-scene.md`). Otherwise
 `incremental` runs. Incremental invalidates only the nodes
 `arena.layout_dirty()` names, through Taffy's `set_style` (which marks a node
 and its ancestor chain dirty) plus `set_node_context` for their measure inputs;

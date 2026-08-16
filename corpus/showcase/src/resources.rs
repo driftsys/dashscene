@@ -203,8 +203,12 @@ pub fn atlases() -> Arc<Vec<Atlas>> {
 /// until `build_live` has written them, so their staging cannot join that
 /// commit. What keeps those two safe is that they stage paint intent and arena
 /// metadata only — a dirty set they consume is empty of layout, so this solver
-/// misses nothing. A third such pass has to satisfy the same condition, and
-/// `crate::vocabulary` states it where such a pass would be written.
+/// misses nothing. A third such pass has to satisfy the same condition,
+/// `crate::vocabulary` states it where such a pass would be written, and since
+/// issue #1104 the runtime checks it rather than trusting it: a solver that
+/// finds another producer consumed the layout-dirty set rebuilds and counts it,
+/// and `corpus/showcase/tests/retained_tree.rs` asserts that count is zero for
+/// every scene.
 ///
 /// See `docs/decisions/one-solver-per-live-scene.md`.
 pub fn solver() -> TaffySolver<'static> {

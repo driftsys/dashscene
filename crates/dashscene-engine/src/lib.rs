@@ -473,6 +473,15 @@ pub struct TaffySolver<'a> {
     /// point of the retained tree (issue #164). Read via
     /// [`solves`](TaffySolver::solves).
     solves: u64,
+    /// The generation of the last commit this solver took part in, reported by
+    /// [`LayoutSolver::committed`]. 0 before the first.
+    ///
+    /// Compared against [`Arena::layout_commit_generation`] to answer "did
+    /// another producer consume a layout-dirty set I never saw" (issue #1104).
+    last_committed: u64,
+    /// How many solves rebuilt because that comparison said yes. Read via
+    /// [`forced_rebuilds`](TaffySolver::forced_rebuilds).
+    forced_rebuilds: u64,
 }
 
 /// The retained Taffy tree plus the maps that let an incremental solve
@@ -517,12 +526,10 @@ impl<'a> TaffySolver<'a> {
     /// sizing. A hug-sized text node solved this way is not measured
     /// (it has no font to shape with) and sizes as an empty leaf.
     pub fn new() -> Self {
-        Self {
-            typesetter: None,
-            atlases: Arc::new(Vec::new()),
-            state: None,
-            solves: 0,
-        }
+        // Only the two fields a constructor chooses are named; the retained
+        // tree, the counters and the commit mark are all zero-valued and come
+        // from `Default`, so a field added later costs no edit here.
+        Self::default()
     }
 
     /// A solver that measures text nodes against `typesetter`'s
@@ -537,9 +544,7 @@ impl<'a> TaffySolver<'a> {
     pub fn with_typesetter(typesetter: &'a mut Typesetter) -> Self {
         Self {
             typesetter: Some(Text::Lent(typesetter)),
-            atlases: Arc::new(Vec::new()),
-            state: None,
-            solves: 0,
+            ..Self::default()
         }
     }
 
@@ -565,8 +570,7 @@ impl<'a> TaffySolver<'a> {
         Self {
             typesetter: Some(Text::Lent(typesetter)),
             atlases: atlases.into(),
-            state: None,
-            solves: 0,
+            ..Self::default()
         }
     }
 
@@ -621,8 +625,7 @@ impl<'a> TaffySolver<'a> {
         TaffySolver {
             typesetter: Some(Text::Held(Box::new(text.typesetter))),
             atlases: text.atlases,
-            state: None,
-            solves: 0,
+            ..Default::default()
         }
     }
 
@@ -637,6 +640,32 @@ impl<'a> TaffySolver<'a> {
 
 impl LayoutSolver for TaffySolver<'_> {
     fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+        // Another producer consumed a layout-dirty set this solver never saw,
+        // so the nodes it named were never marked in this tree and patching
+        // would replay a scene that has moved (issue #1104). The dirty set is
+        // gone — it was drained by that commit — so there is nothing to patch
+        // *from*, and a rebuild is the only correct answer rather than the
+        // cautious one.
+        //
+        // `>` and not `>=`: this solver's own commit sets both sides equal,
+        // and rebuilding on that would rebuild every frame, which is the cost
+        // issue #164 exists to remove.
+        // `state.is_some()` first: with no tree there is nothing stale, and the
+        // solve below is a rebuild anyway — counting it would report a missed
+        // commit for every solver's first solve.
+        let missed = self.state.is_some() && arena.layout_commit_generation() > self.last_committed;
+        if missed {
+            self.forced_rebuilds += 1;
+            // Caught up here, and not left for `committed` to do. The rebuild
+            // below reads the arena as it stands, so the tree it produces
+            // accounts for that commit whether or not this solve is inside one
+            // — and only a solve inside a commit is ever told a generation.
+            // Without this a bare `solve` re-detects the same missed commit and
+            // rebuilds again on every call: `LiveScene::tick` performs one on
+            // every variant switch, and an embedder driving the public
+            // `LayoutSolver::solve` performs nothing else.
+            self.last_committed = arena.layout_commit_generation();
+        }
         let TaffySolver {
             typesetter,
             state,
@@ -645,9 +674,10 @@ impl LayoutSolver for TaffySolver<'_> {
         } = self;
         // A grown node count means the arena's DFS indices shifted under
         // the retained tree; rebuild rather than patch.
-        let structural = state
-            .as_ref()
-            .is_none_or(|s| s.node_count != arena.node_count());
+        let structural = missed
+            || state
+                .as_ref()
+                .is_none_or(|s| s.node_count != arena.node_count());
         if structural {
             let (new_state, out) = rebuild(typesetter.as_mut().map(Text::get_mut), arena, solves);
             *state = Some(new_state);
@@ -656,6 +686,24 @@ impl LayoutSolver for TaffySolver<'_> {
             let state = state.as_mut().expect("non-structural implies a built tree");
             incremental(state, typesetter.as_mut().map(Text::get_mut), arena, solves)
         }
+    }
+
+    fn committed(&mut self, generation: u64) {
+        self.last_committed = generation;
+    }
+
+    /// Non-zero means something else committed geometry into this arena. The
+    /// rebuild that follows is correct and the picture is right; what the count
+    /// says is that issue #164's saving is being paid back at whatever rate it
+    /// climbs. One at load is not one per frame, which is why it counts rather
+    /// than flags.
+    ///
+    /// A diagnostic and not a panic: every integration crate reaches this
+    /// solver through [`boxed`](TaffySolver::boxed), so an embedder can arrive
+    /// here, and taking a host down over something the runtime absorbs
+    /// correctly would be the wrong trade.
+    fn forced_rebuilds(&self) -> u64 {
+        self.forced_rebuilds
     }
 
     fn atlases(&mut self) -> Arc<Vec<Atlas>> {

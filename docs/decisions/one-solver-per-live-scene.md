@@ -1,9 +1,12 @@
 # One solver per live scene: a producer stages, the runtime commits
 
-    status   accepted (story #950, 2026-08-16)
-    scope    corpus/showcase and the LiveScene contract it demonstrates;
-             binds #164 (the retained Taffy tree), #771 (the staged-variant
-             seam) and #863 (TaffySolver::owning)
+    status   accepted (story #950, 2026-08-16; extended by #1104 and
+             #1118, same day)
+    scope    corpus/showcase and the LiveScene contract it demonstrates,
+             plus the detector in dashscene-core and dashscene-engine that
+             makes the contract checkable; binds #164 (the retained Taffy
+             tree), #771 (the staged-variant seam) and #863
+             (TaffySolver::owning)
 
 ## Context
 
@@ -73,9 +76,12 @@ next.
 
 ## Choice
 
-**Option 1.** `showcase::resources::solver` builds one `TaffySolver::owning` per
-scene, the wrapper is deleted, and `layout::switch_variant` stages without
-committing. The tick that follows publishes the switch.
+**Options 1 and 3.** Option 1 was this story's: `showcase::resources::solver`
+builds one `TaffySolver::owning` per scene, the wrapper is deleted, and
+`layout::switch_variant` stages without committing, so the tick that follows
+publishes the switch. Option 3 followed immediately as issues #1104 and #1118,
+and is what makes the rule checkable rather than merely stated; it is described
+under its own number below.
 
 Option 2 was probed and is correct — 35 of 35 `demo` tests green with no test
 changes and no change in behaviour — and it was rejected on what it publishes,
@@ -85,13 +91,22 @@ committed that way silently loses the transition its member declares. Story #771
 built the seam so that a host stages and the runtime animates; an API whose only
 use is to go around it is the wrong thing to add, in a crate that is published.
 
-Option 3 is the general form and is not this story's. It is sound — the two
-generations are enough to distinguish "another producer committed a layout
-change" from "a paint-only commit happened", which a naive commit counter is not
-— but it is a change to `dashscene-core` and `dashscene-engine` to tolerate a
-pattern the architecture already says not to use, and it costs a rebuild when it
-fires. Filed as issue #1104 rather than made here, carrying the detector's
-design.
+Option 3 is the general form. It was filed as issue #1104 rather than made in
+this story, and it **landed immediately after** — so this record's Choice is
+option 1 _and_ option 3, and the paragraphs below that describe the gap option 3
+closes are kept as the reasoning that produced it rather than as a current
+reading.
+
+What it turned out to need, beyond the sketch in the issue: the arena knowing a
+layout-consuming commit happened is only half. It cannot say **whose** commit it
+was, and a solver guessing "my answer lands in the next generation" is wrong for
+a solve that is not inside a commit — `LiveScene::tick` performs one of those on
+every variant switch. So `LayoutSolver` gained a defaulted
+`committed(generation)` that `Txn::commit_with` calls on the solver it was
+handed, and the comparison is between that and
+`Arena::layout_commit_generation`. A decorating solver has to forward it,
+exactly as it must forward `atlases` and `stage_text` (issue #621); `dashlang`'s
+two wrappers do.
 
 Option 4 was rejected on the tree rather than the clock: see **Consequences**.
 
@@ -145,15 +160,29 @@ write added out of band to `layout::paint` fails the test, and the same write in
 `surfaces::paint` passes it, because `layout`'s scripted phases reflow the row
 its node sits in and `surfaces`' phases never reach the tile.
 
-**And a scene-level test cannot close that gap.** The only lever it has is
+**And a scene-level test could not close that gap.** The only lever it has is
 marking nodes dirty, and `dashscene-engine`'s incremental path restyles every
 dirty node — and its children — from the arena before solving, so dirtying the
 tree to force a re-emit repairs it instead of exposing it. That was built on
-this branch and removed once mutation showed it changed no outcome. Comparing
-the retained tree against the arena directly needs the accessor option 2 above
-rejects. Issue #1118 carries the gap, and issue #1104's detector is what would
-actually close it — from inside the engine, at the moment the dirty set is
-consumed, rather than at whatever later commit happens to re-emit the node.
+this branch and removed once mutation showed it changed no outcome.
+
+**Option 3 closed it, and changed what the comparison is for.** Since #1104 a
+missed commit no longer produces a wrong picture at all: the solver detects it
+and rebuilds, so the published table is correct and only
+`LiveScene::forced_rebuilds` moves. Restoring `layout::switch_variant`'s
+out-of-band commit now fails the counter test alone, where before #1104 it
+failed the rect comparison at three nodes. Both tests are kept and they pin
+different things — the counter, that nothing but a scene's own solver commits
+geometry into its arena; the comparison, that the published table matches what
+the intent solves to, which would catch a defect in the incremental patch or
+readback that no counter would notice.
+
+**The counter is a diagnostic and not a panic.** Every integration crate reaches
+`TaffySolver` through `boxed`, so an embedder can arrive at a missed commit, and
+taking a host down over something the runtime absorbs correctly would be the
+wrong trade. `LiveScene` forwards the count read-only: it is the whole of what a
+scene exposes about its solver, because handing out the solver itself is what
+option 2 above rejects, and a counter cannot be misused that way.
 
 **The saving, which is not the reason.** Measured on the parked attempt
 (`debt/v019-showcase-solver`, commit `28c52227`) rather than re-taken here:

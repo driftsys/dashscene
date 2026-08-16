@@ -3708,3 +3708,136 @@ fn a_rect_for_a_root_added_since_the_map_was_built_is_skipped_too() {
          rejected as though it were not a node of this arena"
     );
 }
+
+/// A retained solver has to be able to tell its own commits from another
+/// producer's, and these two are what let it (issue #1104).
+///
+/// `Arena::layout_commit_generation` says a commit consumed a layout-dirty set;
+/// `LayoutSolver::committed` says which commits were a given solver's. Neither
+/// answers the question alone, which is why both exist.
+mod missed_commit_detection {
+    use super::*;
+    use dashscene_core::{LayoutSolver, NodeId, SolvedRect};
+
+    /// Reports every node at a fixed rect and records the generations
+    /// `commit_with` told it about.
+    #[derive(Default)]
+    struct RecordingSolver {
+        told: Vec<u64>,
+    }
+
+    impl LayoutSolver for RecordingSolver {
+        fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+            // Walked from the roots rather than read out of the committed
+            // table: the first commit's front buffer is still empty, so a
+            // solver that indexed it would panic before it ever solved.
+            fn walk(arena: &Arena, node: NodeId, out: &mut Vec<(NodeId, SolvedRect)>) {
+                out.push((
+                    node,
+                    SolvedRect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 10.0,
+                        h: 10.0,
+                    },
+                ));
+                for &child in arena.children(node) {
+                    walk(arena, child, out);
+                }
+            }
+            let mut out = Vec::new();
+            for &root in arena.roots() {
+                walk(arena, root, &mut out);
+            }
+            out
+        }
+
+        fn committed(&mut self, generation: u64) {
+            self.told.push(generation);
+        }
+    }
+
+    /// Builds a one-node arena and returns it with the node, committed once.
+    fn one_node(solver: &mut dyn LayoutSolver) -> (Arena, NodeId) {
+        let mut arena = Arena::new();
+        let mut txn = arena.open();
+        let root = txn.add_node(None, None);
+        txn.set_prop(root, Prop::Width(100.0));
+        txn.set_prop(root, Prop::Height(100.0));
+        txn.commit_with(solver);
+        (arena, root)
+    }
+
+    #[test]
+    fn a_layout_commit_records_its_generation_and_a_paint_only_one_does_not() {
+        let mut solver = RecordingSolver::default();
+        let (mut arena, root) = one_node(&mut solver);
+        let after_build = arena.layout_commit_generation();
+        assert_eq!(
+            after_build,
+            arena.committed().generation(),
+            "the build staged width and height, so its commit consumed a layout-dirty set"
+        );
+
+        // Paint only: the mark must not move, or every paint-only frame would
+        // read to a retained solver as a commit it had missed.
+        let mut txn = arena.open();
+        txn.set_prop(root, Prop::Fill(RED));
+        txn.commit_with(&mut solver);
+        assert!(
+            arena.committed().generation() > after_build,
+            "the paint commit published a new generation"
+        );
+        assert_eq!(
+            arena.layout_commit_generation(),
+            after_build,
+            "a paint-only commit consumes no layout-dirty set, so it must not move the mark"
+        );
+
+        // Layout again: it moves, and to this commit's own generation.
+        let mut txn = arena.open();
+        txn.set_prop(root, Prop::Width(140.0));
+        let generation = txn.commit_with(&mut solver);
+        assert_eq!(arena.layout_commit_generation(), generation);
+    }
+
+    #[test]
+    fn commit_with_tells_the_solver_it_was_handed_every_generation_it_published() {
+        let mut solver = RecordingSolver::default();
+        let (mut arena, root) = one_node(&mut solver);
+        let mut txn = arena.open();
+        txn.set_prop(root, Prop::Width(140.0));
+        let second = txn.commit_with(&mut solver);
+        assert_eq!(
+            solver.told,
+            vec![second - 1, second],
+            "both commits went through this solver, so it was told both generations"
+        );
+    }
+
+    #[test]
+    fn a_second_producers_commit_leaves_the_first_solver_behind() {
+        let mut mine = RecordingSolver::default();
+        let (mut arena, root) = one_node(&mut mine);
+        let mine_last = *mine.told.last().expect("told about its own commit");
+        assert_eq!(arena.layout_commit_generation(), mine_last);
+
+        // Someone else commits a layout change. My solver hears nothing.
+        let mut theirs = RecordingSolver::default();
+        let mut txn = arena.open();
+        txn.set_prop(root, Prop::Width(140.0));
+        txn.commit_with(&mut theirs);
+
+        assert_eq!(
+            *mine.told.last().expect("still only its own"),
+            mine_last,
+            "the other producer's commit was not reported to this solver"
+        );
+        assert!(
+            arena.layout_commit_generation() > mine_last,
+            "and the arena's mark moved past it, which is the whole signal: {} against {}",
+            arena.layout_commit_generation(),
+            mine_last,
+        );
+    }
+}

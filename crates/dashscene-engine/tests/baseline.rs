@@ -13,6 +13,7 @@ use dashscene_core::{
     Arena, AxisSizing, Color, CrossAxisAlign, LayoutMode, MainAxisAlign, NodeId, Prop, TextAlign,
     TextAlignV, TextStyle,
 };
+use dashscene_core::{LayoutSolver, SolvedRect};
 use dashscene_engine::TaffySolver;
 use dashscene_typeset::text::{Font, Typesetter};
 
@@ -593,5 +594,168 @@ fn an_owning_solver_measures_through_its_typesetter_and_retains_its_tree() {
         built,
         "a paint-only commit through a retained tree solves nothing; a solver that rebuilt \
          per call would report another computation here"
+    );
+}
+
+/// A commit through another solver forces the next solve to rebuild, and a
+/// paint-only commit through another solver does not (issue #1104).
+///
+/// The saving issue #164 bought is the incremental path, and this is the one
+/// condition under which taking it is wrong: the dirty set naming what moved
+/// was drained by a commit this solver never saw, so there is nothing left to
+/// patch from.
+///
+/// `forced_rebuilds` is the observable, and it is the only one available here.
+/// `solves` cannot stand in for it: it counts Taffy computations per shown root,
+/// this scene has one root, and a rebuild therefore costs exactly the one
+/// computation a patch costs — measured, 1 after the build and 3 after two more
+/// commits whichever path they took. A scene with several roots would separate
+/// them; that is not what this test is for.
+#[test]
+fn a_missed_layout_commit_forces_a_rebuild_and_a_missed_paint_only_one_does_not() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, None);
+    txn.set_prop(root, Prop::Width(200.0));
+    txn.set_prop(root, Prop::Height(100.0));
+    let child = txn.add_node(Some(root), None);
+    txn.set_prop(child, Prop::Width(50.0));
+    txn.set_prop(child, Prop::Height(50.0));
+
+    let mut mine = TaffySolver::new();
+    txn.commit_with(&mut mine);
+    assert_eq!(
+        mine.forced_rebuilds(),
+        0,
+        "its own commit is not a missed one"
+    );
+
+    // A paint-only commit through a different solver. It consumes no
+    // layout-dirty set, so it is not a missed commit and must not cost one.
+    let mut theirs = TaffySolver::new();
+    let mut txn = arena.open();
+    txn.set_prop(
+        child,
+        Prop::Fill(Color {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        }),
+    );
+    txn.commit_with(&mut theirs);
+    let mut txn = arena.open();
+    txn.set_prop(root, Prop::Width(201.0));
+    txn.commit_with(&mut mine);
+    assert_eq!(
+        mine.forced_rebuilds(),
+        0,
+        "a paint-only commit elsewhere drains no layout-dirty set, so nothing was missed"
+    );
+
+    // Now a layout commit through the other solver: this is the missed one.
+    let mut txn = arena.open();
+    txn.set_prop(child, Prop::Width(60.0));
+    txn.commit_with(&mut theirs);
+    let mut txn = arena.open();
+    txn.set_prop(root, Prop::Width(202.0));
+    txn.commit_with(&mut mine);
+    assert_eq!(
+        mine.forced_rebuilds(),
+        1,
+        "the other solver's layout commit drained the set this one patches from"
+    );
+
+    // And it is reported once, not on every solve after it.
+    let mut txn = arena.open();
+    txn.set_prop(root, Prop::Width(203.0));
+    txn.commit_with(&mut mine);
+    assert_eq!(
+        mine.forced_rebuilds(),
+        1,
+        "the rebuild caught this solver up, so the next solve patches again"
+    );
+}
+
+/// A solver never told about its own commits rebuilds on every solve that has
+/// a dirty set — the cost a wrapper that forgets to forward
+/// `LayoutSolver::committed` would silently impose (issue #1104).
+///
+/// This is the same shape as the `atlases`/`stage_text` forwarding issue #621
+/// fixed, and it is quiet in the same way: the picture stays correct, and only
+/// the saving disappears. Asserted here so that the forwarding in `dashlang`'s
+/// two wrappers has something that fails when it is removed.
+#[test]
+fn a_solver_that_is_never_told_about_its_commits_rebuilds_every_time() {
+    struct Forgetful<'a>(TaffySolver<'a>);
+
+    impl LayoutSolver for Forgetful<'_> {
+        fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+            self.0.solve(arena)
+        }
+        // `committed` deliberately not forwarded.
+        fn forced_rebuilds(&self) -> u64 {
+            self.0.forced_rebuilds()
+        }
+    }
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, None);
+    txn.set_prop(root, Prop::Width(200.0));
+    txn.set_prop(root, Prop::Height(100.0));
+
+    let mut solver = Forgetful(TaffySolver::new());
+    txn.commit_with(&mut solver);
+    for width in [201.0, 202.0, 203.0] {
+        let mut txn = arena.open();
+        txn.set_prop(root, Prop::Width(width));
+        txn.commit_with(&mut solver);
+    }
+    assert_eq!(
+        solver.forced_rebuilds(),
+        3,
+        "never having been told its own commits, every layout commit reads as another \
+         producer's and every solve rebuilds"
+    );
+}
+
+/// One missed commit costs one rebuild, however many bare solves follow it.
+///
+/// A solve outside `commit_with` is never told a generation, so unless the
+/// rebuild itself catches the solver up, the same missed commit compares
+/// greater on every later solve and rebuilds the whole tree again. That is not
+/// hypothetical: `LiveScene::tick` performs a bare solve on every variant
+/// switch, and an embedder driving the public `LayoutSolver::solve` performs
+/// nothing else. Measured before the fix: four bare solves after one out-of-band
+/// commit gave four rebuilds and four counts.
+#[test]
+fn one_missed_commit_costs_one_rebuild_however_many_bare_solves_follow() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, None);
+    txn.set_prop(root, Prop::Width(200.0));
+    txn.set_prop(root, Prop::Height(100.0));
+    let child = txn.add_node(Some(root), None);
+    txn.set_prop(child, Prop::Width(50.0));
+    txn.set_prop(child, Prop::Height(50.0));
+
+    let mut mine = TaffySolver::new();
+    txn.commit_with(&mut mine);
+
+    // Another producer commits a layout change.
+    let mut theirs = TaffySolver::new();
+    let mut txn = arena.open();
+    txn.set_prop(child, Prop::Width(60.0));
+    txn.commit_with(&mut theirs);
+
+    // Four bare solves, none of them inside a commit.
+    for _ in 0..4 {
+        mine.solve(&arena);
+    }
+    assert_eq!(
+        mine.forced_rebuilds(),
+        1,
+        "the first solve rebuilt and caught up; the other three had nothing to catch up to"
     );
 }

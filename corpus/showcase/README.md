@@ -225,14 +225,25 @@ one commit left in these scenes that does not go through the scene's own solver.
 against a from-scratch solve, at build time and after every scripted phase and
 every variant press.
 
-**It is a check and not a proof, and the file says which.** A stale tree reaches
-the committed table only once some later commit's readback descends to the
-affected node, so the test catches a second pass that stages layout intent on a
-node the scripted phases reflow, and misses one on a node they never touch —
-measured both ways, in `layout` and in `surfaces` respectively. Closing that gap
-needs the detector in issue #1104 rather than a scene-level test; issue #1118
-carries it. Until then, "stage paint intent and arena metadata, never geometry"
-is a rule this pass keeps rather than one the suite enforces.
+**A second test is what actually enforces the rule**, because the comparison on
+its own is positional: a stale tree reaches the committed table only once a
+readback descends to the affected node, so it caught a second pass staging
+layout intent on a node the scripted phases reflow and missed one on a node they
+never touch — measured both ways, in `layout` and in `surfaces` respectively.
+
+Issue #1104 closed that. A retained solver now notices that another producer
+consumed the arena's layout-dirty set and rebuilds rather than patching, and
+`LiveScene::forced_rebuilds` counts it;
+`no_scene_makes_its_solver_rebuild_from_a_missed_commit` asserts the count is
+zero for every scene. The condition is true at the solve that discovers it, so
+that test does not depend on any scene reaching any node. "Stage paint intent and
+arena metadata, never geometry" is now a rule the suite enforces.
+
+One consequence worth knowing when reading the older of the two tests: since
+#1104 a missed commit no longer produces a wrong picture, because the rebuild is
+correct. The rect comparison therefore no longer fails on a second producer at
+all — it guards what is left, a table out of step with what the intent solves
+to.
 
 ## What is reused from the corpus, and what is new
 

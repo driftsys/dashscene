@@ -73,6 +73,52 @@ pub trait LayoutSolver {
     /// unchanged frame costs no re-solve.
     fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)>;
 
+    /// Report that a commit this solver **took part in** has published, as
+    /// the generation it published (issue #1104).
+    ///
+    /// [`Txn::commit_with`] calls this once, at the end, on the solver it was
+    /// handed. A solver that retains nothing has nothing to do with it, which
+    /// is why the default is to ignore it.
+    ///
+    /// A solver that retains state across solves uses it to tell its own
+    /// commits from another producer's. Comparing
+    /// [`Arena::layout_commit_generation`] against the last generation reported
+    /// here answers "did a commit consume a layout-dirty set that I never
+    /// saw" — and a solver that patches a retained tree from that set is wrong
+    /// whenever the answer is yes. The two halves have to be a pair: the arena
+    /// knows a layout commit happened, and only this says whose it was.
+    ///
+    /// **A wrapper must forward it.** A decorating solver that implements
+    /// `solve` and leaves this defaulted silently stops the solver underneath
+    /// from ever learning its own commits, so that solver rebuilds on every
+    /// solve — the retained tree is correct and the saving is gone. That is the
+    /// same shape as the `atlases`/`stage_text` forwarding issue #621 fixed.
+    fn committed(&mut self, generation: u64) {
+        let _ = generation;
+    }
+
+    /// How many solves this solver has had to rebuild retained state from
+    /// scratch because it found that another producer had committed a layout
+    /// change it never saw (issue #1104). 0 for a solver that retains nothing.
+    ///
+    /// **Read-only, and deliberately the only thing a scene exposes about its
+    /// solver.** `dashlang::LiveScene` forwards it so a test can assert that
+    /// nothing commits geometry into a scene's arena but the scene's own
+    /// solver. Handing out the solver itself would publish a way to commit a
+    /// variant switch around the runtime's transition seam, which
+    /// `docs/decisions/one-solver-per-live-scene.md` rejects; a counter cannot
+    /// be misused that way.
+    ///
+    /// A wrapper that retains nothing should read through to whatever it wraps,
+    /// or a caller asking a decorated solver gets this method's default of 0 and
+    /// reads it as "nothing was missed". That is a weaker obligation than
+    /// [`committed`](Self::committed) carries: getting **that** one wrong is a
+    /// correctness defect, where getting this one wrong only loses a
+    /// diagnostic.
+    fn forced_rebuilds(&self) -> u64 {
+        0
+    }
+
     /// The atlases every run [`stage_text`](Self::stage_text) returns
     /// samples, in [`crate::AtlasIndex`] order — the set commit hands the painter
     /// alongside the runs, because a run's glyph ids mean nothing without
@@ -901,6 +947,22 @@ pub struct Arena {
     /// mark exactly those nodes dirty in its tree; drained each commit.
     /// May carry duplicates — consumers dedup.
     layout_dirty: Vec<NodeId>,
+    /// The generation of the most recent commit that drained a **non-empty**
+    /// [`layout_dirty`](Arena::layout_dirty), or 0 if none has.
+    ///
+    /// This is what makes a retained solver able to notice that it missed a
+    /// commit (issue #1104). A commit consumes the dirty set, and the next
+    /// solve through the solver that participated patches exactly the nodes
+    /// that set named — so a commit through a *different* solver silently
+    /// leaves the first solver's tree describing a scene that has moved.
+    /// Paired with [`LayoutSolver::committed`], which tells a solver which
+    /// generations were its own, that difference is a comparison rather than
+    /// an argument.
+    ///
+    /// Non-empty is the condition that matters, not "a commit happened": a
+    /// paint-only commit consumes nothing a solver would have patched, so it
+    /// must not read as a missed one.
+    layout_commit_generation: u64,
     /// Nodes whose paint intent (fill, stroke, corners) or clip flag
     /// changed since the last commit — what commit re-interns. Drained
     /// each commit; may carry duplicates.
@@ -1295,6 +1357,22 @@ impl Arena {
     /// paint-only frame skip the solve entirely.
     pub fn layout_dirty(&self) -> &[NodeId] {
         &self.layout_dirty
+    }
+
+    /// The generation of the most recent commit that consumed a non-empty
+    /// layout-dirty set, or 0 if none has (issue #1104).
+    ///
+    /// A retained solver compares this against the last generation
+    /// [`LayoutSolver::committed`] reported to it. If this is the larger, some
+    /// other producer committed a layout change through a solver that was not
+    /// this one, taking a dirty set this one will never see — and its retained
+    /// tree is stale. `dashscene-engine`'s `TaffySolver` reads it for exactly
+    /// that and rebuilds rather than patching.
+    ///
+    /// Reading it is not a substitute for the pairing: this alone cannot say
+    /// *whose* commit it was, which is the whole question.
+    pub fn layout_commit_generation(&self) -> u64 {
+        self.layout_commit_generation
     }
 
     /// A node's children in creation order (document DFS child
@@ -2733,6 +2811,11 @@ impl Txn<'_> {
         let back = 1 - arena.front;
         arena.buffers[back] = back_scene;
         arena.front = back;
+        // Recorded before the drain, because the drain is what makes the set
+        // unavailable to every solver but the one that just ran (issue #1104).
+        if !arena.layout_dirty.is_empty() {
+            arena.layout_commit_generation = generation;
+        }
         arena.layout_dirty.clear();
         arena.paint_dirty.clear();
         arena.clip_toggled.clear();
@@ -2742,6 +2825,11 @@ impl Txn<'_> {
         // every index the maps hold resolves. Until this point the guard
         // rolls those entries back on the way out (issue #196).
         guard.published = true;
+        // After publishing, so a solver told about a generation can rely on it
+        // being readable, and only on the path that published — a commit that
+        // unwound would otherwise leave a solver believing it owned a
+        // generation nothing carries (issue #1104).
+        solver.committed(generation);
         generation
     }
 }

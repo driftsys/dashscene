@@ -1707,3 +1707,96 @@ fn a_renumbering_is_reported_once_and_not_on_every_later_frame() {
         "a later renumbering is a different generation and must be reported"
     );
 }
+
+// ---------------------------------------------------------------------
+// A replaying tick must not report the commit as the retained solver's
+// (issue #1104).
+// ---------------------------------------------------------------------
+
+/// A paint-only tick between another producer's layout commit and the next
+/// reflow must not hide that commit from the scene's solver.
+///
+/// `LiveScene::tick` commits through a rect-replaying solver whenever no
+/// binding forced a re-solve. That solver replaces `solve`, so the scene's real
+/// solver takes no part in the commit — and if the replay reported the
+/// generation to it anyway, its mark would overtake
+/// `Arena::layout_commit_generation` and the earlier missed commit could never
+/// compare greater again. The detector would be silenced permanently and the
+/// scene would publish a stale rect, which is the whole failure issue #1104
+/// exists to catch.
+///
+/// Measured with the forwarding in place: `forced_rebuilds` stayed 0 and the
+/// committed width stayed at the pre-switch value while a fresh solve
+/// disagreed.
+#[test]
+fn a_replaying_tick_does_not_hide_another_producers_layout_commit() {
+    let mut arena = Arena::new();
+
+    let mut scene = Scene::new();
+    // Two signals on purpose: `alpha` drives a paint channel, so a tick that
+    // moves only it is replayed rather than solved, and `width` drives a
+    // layout one, so a tick that moves it runs the scene's real solver. The
+    // sequence below needs both.
+    let alpha = scene.signal(1.0f32);
+    let width = scene.signal(40.0f32);
+    scene.roots([node("row")
+        .mode(LayoutMode::Horizontal)
+        .size(400.0, 40.0)
+        .child(
+            node("chip-a")
+                .size(40.0, 20.0)
+                .bind(Channel::FillA, alpha)
+                .bind(Channel::Width, width),
+        )
+        .child(node("chip-b").size(40.0, 20.0))]);
+
+    let mut live = scene.build_live(&mut arena, TaffySolver::boxed(None));
+    assert_eq!(
+        live.forced_rebuilds(),
+        0,
+        "the build is not a missed commit"
+    );
+
+    let chip_b = {
+        let committed = arena.committed();
+        (0..committed.rects().len() as u32)
+            .map(|i| committed.node_of(i))
+            .find(|&n| arena.name(n) == Some("chip-b"))
+            .expect("chip-b is in the committed table")
+    };
+
+    // A second producer commits a layout change through a solver of its own.
+    let mut outsider = TaffySolver::new();
+    let mut txn = arena.open();
+    txn.set_prop(chip_b, dashscene_core::Prop::Width(120.0));
+    txn.commit_with(&mut outsider);
+
+    // A paint-only tick. `alpha` binds `Channel::FillA`, so nothing forces a
+    // re-solve and the commit goes through the replaying solver.
+    live.set(alpha, 0.5);
+    live.tick(1.0 / 60.0, &mut arena);
+
+    // Then a tick that does solve, through the scene's real solver.
+    live.set(width, 44.0);
+    live.tick(1.0 / 60.0, &mut arena);
+
+    assert_eq!(
+        live.forced_rebuilds(),
+        1,
+        "the outsider's layout commit has to be detected despite the replaying tick between"
+    );
+
+    // And the published table agrees with a solve of the arena as it stands.
+    let mut fresh = TaffySolver::new();
+    let committed = arena.committed();
+    for (node, rect) in fresh.solve(&arena) {
+        if let Some(i) = committed.rect_index_of(node) {
+            let entry = &committed.rects()[i as usize];
+            assert_eq!(
+                (entry.x, entry.y, entry.w, entry.h),
+                (rect.x, rect.y, rect.w, rect.h),
+                "{node:?} disagrees with a fresh solve"
+            );
+        }
+    }
+}

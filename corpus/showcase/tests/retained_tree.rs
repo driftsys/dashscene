@@ -16,36 +16,43 @@
 //! — solves the same arena, and every rect it reports has to match the one the
 //! scene committed.
 //!
-//! It is a whole-scene assertion and not a chip's width. The producer that
-//! existed when this was written is `layout::switch_variant`, which committed
-//! the variant switch through a solver of its own until this story moved it onto
-//! `LiveScene`'s staged-variant seam; `demo`'s
-//! `the_switch_survives_the_ticks_and_pulses_that_follow_it` is what caught it,
-//! and this is the same statement made where the scenes are. Restoring that
-//! commit fails this at three nodes.
+//! # Two tests, because the comparison cannot see the condition
 //!
-//! # What it does not catch, and why it cannot
+//! `no_scene_makes_its_solver_rebuild_from_a_missed_commit` asks the condition
+//! directly. `LiveScene::forced_rebuilds` counts the solves where the scene's
+//! solver found the arena's layout-commit generation ahead of the last one it
+//! took part in (issue #1104), which is true at the solve that discovers it,
+//! whatever any scene happens to draw. That is the test that holds for a second
+//! producer added later, on any node.
 //!
-//! **A stale tree is caught once the staleness reaches the committed table, and
-//! not before.** The incremental readback re-emits a node when it lies on the
-//! path to something dirty, so a node nothing has dirtied since keeps whatever
-//! the last commit published — which, for a second producer that committed
-//! through a full solve of its own, is the *correct* rect. The tree is wrong and
-//! the table is right, and this file compares the table.
+//! `every_scenes_retained_tree_agrees_with_a_fresh_solve` compares the published
+//! rects, and on its own it is **positional**. A stale tree reaches the
+//! committed table only once a readback descends to the affected node, so before
+//! issue #1104 a `Prop::Width` write committed out of band failed it in
+//! `layout::paint` and passed in `surfaces::paint` — the same defect, opposite
+//! verdicts, because `layout`'s scripted phases reflow the row its node sits in
+//! and `surfaces`' never reach the tile. Issue #1118 was that gap; the counter
+//! closes it.
 //!
-//! Measured rather than supposed: a `Prop::Width` write added to
-//! `surfaces::paint` and committed out of band passes every check here, while
-//! the same write in `layout::paint` fails, because `layout`'s scripted phases
-//! reflow the row that node sits in and `surfaces`' do not reach it.
-//!
-//! **A test cannot close that gap from outside the scene.** The only lever it
+//! A test cannot force the tree to give itself away either. The only lever it
 //! has is marking nodes dirty, and `dashscene_engine`'s incremental path
-//! restyles every dirty node — and its children — from the arena before it
-//! solves. So dirtying the tree to make it re-emit *repairs* it instead of
-//! exposing it; that was tried here and removed. Comparing the retained tree
-//! against the arena directly needs a handle on the scene's own solver, which is
-//! the accessor `docs/decisions/one-solver-per-live-scene.md` rejects on
-//! purpose. Issue #1118 carries the gap.
+//! restyles every dirty node — and its children — from the arena before solving,
+//! so dirtying the tree to force a re-emit *repairs* it instead of exposing it.
+//! That was tried here and removed.
+//!
+//! # What each one is worth now
+//!
+//! Since issue #1104 a missed commit **no longer produces a wrong picture**: the
+//! solver detects it and rebuilds, so the table is right and only the counter
+//! moves. Restoring `layout::switch_variant`'s out-of-band commit — the defect
+//! issue #950 removed — now fails the counter test alone, where before #1104 it
+//! failed this comparison at three nodes.
+//!
+//! So the comparison is no longer what guards against a second producer. What it
+//! still guards is everything else that could put the published table out of
+//! step with what the intent solves to — a defect in the incremental patch or in
+//! the readback itself, which no counter would notice and which would reach a
+//! screen.
 //!
 //! See `docs/decisions/one-solver-per-live-scene.md`.
 
@@ -173,7 +180,7 @@ fn run_phases(
 }
 
 #[test]
-fn every_scenes_retained_tree_agrees_with_a_fresh_solve() {
+fn no_scene_drifts_from_a_fresh_solve_or_makes_its_solver_rebuild() {
     // One cascade for the whole run, lent to every check. See `disagreements`.
     let mut typesetter = resources::new_typesetter();
 
@@ -260,5 +267,21 @@ fn every_scenes_retained_tree_agrees_with_a_fresh_solve() {
                 );
             }
         }
+
+        // The second assertion, over the same run. `forced_rebuilds` is
+        // cumulative, so one read here covers every solve above — including the
+        // build, whose out-of-band passes cost nothing until the first tick
+        // solves and so cannot be read for at the top.
+        //
+        // This is the half that does not depend on any scene reaching any node,
+        // and it is why the comparisons above are no longer the whole guard.
+        assert_eq!(
+            live.forced_rebuilds(),
+            0,
+            "`{}` made its solver rebuild after a missed commit: something other than the \
+             scene's own solver committed geometry into its arena \
+             (docs/decisions/one-solver-per-live-scene.md)",
+            scene.name,
+        );
     }
 }

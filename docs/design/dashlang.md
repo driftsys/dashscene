@@ -297,20 +297,24 @@ through passthrough non-hug parents) **and** the write moves no descendant
 (`write_is_single_rect`). A frame with only patchable writes patches the cached
 rects and replays them through a private `CachedSolver` fed to `commit_with`, so
 the real solver's **solve** is never invoked and the layout cost is independent
-of scene size. Since issue #621 the replay does forward the seam's other two
-methods to that solver — see below — so text staging is not. The "no solve"
-decision lives entirely in `dashlang`; core's `commit_with` is unchanged. A
-non-contained write, a `Visible` flip, or a variant switch sets `layout_dirty`
-and forces the real solve, after which the cache is refreshed from the committed
-buffer (DFS order is invariant for a static tree, so the node-to-index map does
-not change).
+of scene size. Since issue #621 the replay does forward the seam's text methods
+to that solver — see below — so text staging is not. The "no solve" decision
+lives entirely in `dashlang`; core's `commit_with` is unchanged. A non-contained
+write, a `Visible` flip, or a variant switch sets `layout_dirty` and forces the
+real solve, after which the cache is refreshed from the committed buffer (DFS
+order is invariant for a static tree, so the node-to-index map does not change).
 
 **The replay stages glyph runs, since issue #621.** `CachedSolver` borrows the
 solver `LiveScene` retains and forwards `atlases` and `stage_text` to it, while
-still answering `solve` from the patched cache. Commit rebuilds the glyph-run
-table from what the solver it was handed stages
-(`docs/decisions/glyph-runs-cross-boundary-b.md`), so forwarding is what keeps a
-paint-only commit's text.
+still answering `solve` from the patched cache. Since issue #1104 it also
+carries an `inner_solved` flag deciding whether `LayoutSolver::committed` is
+reported to that solver — true on the variant-switch arm, where the real solver
+already solved outside the commit, and false on the plain replay arm, where
+nothing did. Reporting it wrongly in either direction is a defect: too eager
+silences the missed-commit detector, too shy makes the next solve rebuild for a
+commit that was never missed. Commit rebuilds the glyph-run table from what the
+solver it was handed stages (`docs/decisions/glyph-runs-cross-boundary-b.md`),
+so forwarding is what keeps a paint-only commit's text.
 
 It used to take the trait's defaults for both, and a replaying commit then
 published a run table with **no runs in it at all** — every text node in the

@@ -804,10 +804,13 @@ fn apply_scalar_write(
 /// layout solve (A1). Core is unchanged: the "no solve" decision lives
 /// entirely in `dashlang`.
 ///
-/// # The text halves are forwarded, and only they (issue #621)
+/// # What is forwarded, and what is replaced (issues #621 and #1104)
 ///
-/// `solve` is replaced; [`LayoutSolver::atlases`] and
-/// [`LayoutSolver::stage_text`] are handed straight to `inner`. Taking
+/// `solve` is replaced. [`LayoutSolver::atlases`] and
+/// [`LayoutSolver::stage_text`] are handed straight to `inner`;
+/// [`LayoutSolver::committed`] is handed over only when `inner_solved` says
+/// this commit was one the inner solver's tree took part in, and
+/// [`LayoutSolver::forced_rebuilds`] reads through to it. Taking
 /// their defaults instead is what issue #621 was: both default to nothing,
 /// `Txn::commit_with` rebuilds the glyph-run table from whatever the solver
 /// stages and carries nothing forward, so **every glyph run disappeared on
@@ -827,9 +830,23 @@ struct CachedSolver<'a> {
     /// This tick's changed rects only, built fresh by `patched_rects` for
     /// one `commit_with` call.
     rects: Vec<(NodeId, SolvedRect)>,
-    /// The scene's real solver, for the two halves that are forwarded
-    /// rather than replaced.
+    /// The scene's real solver, for the halves that are forwarded rather
+    /// than replaced.
     inner: &'a mut dyn LayoutSolver,
+    /// Whether `inner` already solved this tick, outside this commit.
+    ///
+    /// It decides one thing: whether [`LayoutSolver::committed`] is reported to
+    /// `inner` (issue #1104). `inner` must be told about a commit its retained
+    /// tree took part in and must **not** be told about one it did not — being
+    /// told wrongly moves its mark past `Arena::layout_commit_generation` and
+    /// silences the missed-commit detector for good.
+    ///
+    /// Both answers occur, which is why this is a field and not a property of
+    /// the type. `LiveScene::tick` builds this solver on two arms: the
+    /// variant-switch arm, where `inner.solve` already ran to produce the
+    /// switch's rects and a `set_variant` has made the dirty set non-empty
+    /// (`true`), and the plain replay arm, where nothing solved (`false`).
+    inner_solved: bool,
 }
 
 impl LayoutSolver for CachedSolver<'_> {
@@ -837,6 +854,42 @@ impl LayoutSolver for CachedSolver<'_> {
         // Moved, not cloned: `self.rects` is already this call's answer,
         // built for exactly one `solve`.
         std::mem::take(&mut self.rects)
+    }
+
+    // Reported to `inner` only when `inner` actually solved this tick, which
+    // is what `inner_solved` records (issue #1104). The test is not "does this
+    // type forward `solve`" — it does not — but "did the inner solver's
+    // retained tree take part in the geometry this commit publishes".
+    //
+    // Getting it wrong in either direction is a real defect, and both were
+    // measured on this branch:
+    //
+    // - Reporting when it did not solve moves `inner`'s mark past
+    //   `Arena::layout_commit_generation`, so an earlier missed commit can
+    //   never compare greater again. One replaying tick between another
+    //   producer's commit and the next reflow silenced the detector for good
+    //   and published a stale rect. `dashlang`'s
+    //   `a_replaying_tick_does_not_hide_another_producers_layout_commit` pins
+    //   that direction.
+    // - Not reporting when it did solve leaves the mark behind after a
+    //   variant-switch tick — which commits through this type while
+    //   `Txn::set_variant` has made the dirty set non-empty — so the *next*
+    //   solve reports a missed commit that never happened and rebuilds the
+    //   whole tree. `corpus/showcase`'s `retained_tree` run caught that at the
+    //   second press of the variant key.
+    //
+    // A replaying commit is also not always free of layout intent: `Prop::Text`
+    // is `PropClass::Layout`, so a tick whose only write is a `bind_text`
+    // string change drains a dirty set through this path with nothing solved —
+    // exactly the case `inner_solved: false` must report as missed.
+    fn committed(&mut self, generation: u64) {
+        if self.inner_solved {
+            self.inner.committed(generation);
+        }
+    }
+
+    fn forced_rebuilds(&self) -> u64 {
+        self.inner.forced_rebuilds()
     }
 
     fn atlases(&mut self) -> Arc<Vec<Atlas>> {
@@ -887,6 +940,17 @@ struct FlipOverlay<'a> {
 }
 
 impl LayoutSolver for FlipOverlay<'_> {
+    // Forwarded for the reason `CachedSolver::committed` records: this wraps
+    // the scene's real solver, and that solver is the one whose retained tree
+    // has to know which commits were its own (issue #1104).
+    fn committed(&mut self, generation: u64) {
+        self.inner.committed(generation);
+    }
+
+    fn forced_rebuilds(&self) -> u64 {
+        self.inner.forced_rebuilds()
+    }
+
     fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
         let mut rects = self.inner.solve(arena);
 
@@ -1289,6 +1353,25 @@ impl LiveScene {
         self.generation
     }
 
+    /// How many times this scene's solver has had to rebuild its retained
+    /// state because something else committed geometry into the arena
+    /// (issue #1104).
+    ///
+    /// **Zero is the contract**, and a scene that reports otherwise has a
+    /// second producer in it: a commit consumes the arena's layout-dirty set,
+    /// so a commit through any other solver takes the set this scene's solver
+    /// would have patched from, and it must then rebuild instead
+    /// (`docs/decisions/one-solver-per-live-scene.md`). The picture stays
+    /// right — the rebuild is correct — so nothing else reports this.
+    ///
+    /// Read-only on purpose. It is the whole of what a scene exposes about its
+    /// solver, because handing out the solver itself would publish a way to
+    /// commit a variant switch around the staged-variant seam and lose the
+    /// transition the member declares, which that record rejects.
+    pub fn forced_rebuilds(&self) -> u64 {
+        self.solver.forced_rebuilds()
+    }
+
     /// Whether the committed generation has moved since the last
     /// [`mark_shown`](Self::mark_shown) — that is, whether this frame is worth
     /// drawing.
@@ -1653,12 +1736,24 @@ impl LiveScene {
             let mut cached = CachedSolver {
                 rects: changed.into_iter().map(|i| self.cached_solve[i]).collect(),
                 inner: &mut *self.solver,
+                // The switch arm: `self.solver.solve` ran above to produce
+                // `switch_moved`, so the retained tree is current and took part
+                // in this commit. `Txn::set_variant` also made the dirty set
+                // non-empty, so this commit moves the arena's layout-commit
+                // generation — and the solver has to be told, or its own next
+                // solve reads that as another producer's (issue #1104).
+                inner_solved: true,
             };
             txn.commit_with(&mut cached)
         } else {
             let mut cached = CachedSolver {
                 rects: patched_rects(&mut self.cached_solve, &patches),
                 inner: &mut *self.solver,
+                // The replay arm: nothing solved this tick. If this commit
+                // drains a layout-dirty set anyway — a `bind_text` write does,
+                // `Prop::Text` being layout-class — the retained tree genuinely
+                // missed it and must not be told otherwise (issue #1104).
+                inner_solved: false,
             };
             txn.commit_with(&mut cached)
         };
