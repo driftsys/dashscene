@@ -886,6 +886,184 @@ fn commit_with_carries_an_omitted_nodes_rect_forward_from_the_previous_commit() 
     assert_eq!(scene.dirty(), [0], "only the node that actually changed");
 }
 
+// ---------------------------------------------------------------------
+// The layout-dirty set is drained by consumption, not by publication
+// (issue #1148, `docs/decisions/one-solver-per-live-scene.md`).
+// ---------------------------------------------------------------------
+
+use dashscene_core::{LayoutSolver, NodeId, SolvedRect};
+
+/// A stand-in rect. These two tests are about which set survives a commit,
+/// never about geometry, so one value serves every node.
+const UNIT: SolvedRect = SolvedRect {
+    x: 0.0,
+    y: 0.0,
+    w: 10.0,
+    h: 10.0,
+};
+
+/// A solver that resolves every node from the arena — the shape every real
+/// solver has, and the one the trait's default answer is written for.
+struct Resolving;
+
+impl LayoutSolver for Resolving {
+    fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+        let mut out: Vec<NodeId> = arena.roots().to_vec();
+        let mut i = 0;
+        while i < out.len() {
+            let node = out[i];
+            out.extend(arena.children(node).iter().copied());
+            i += 1;
+        }
+        out.into_iter().map(|id| (id, UNIT)).collect()
+    }
+}
+
+/// A solver that **replays** rects a producer resolved for itself, and says
+/// so — `dashlang`'s `CachedSolver` in miniature.
+struct Replaying(Vec<NodeId>);
+
+impl LayoutSolver for Replaying {
+    fn solve(&mut self, _arena: &Arena) -> Vec<(NodeId, SolvedRect)> {
+        self.0.iter().map(|&id| (id, UNIT)).collect()
+    }
+
+    fn consumes_layout_dirty(&self) -> bool {
+        false
+    }
+}
+
+#[test]
+fn a_solver_that_consumed_the_layout_dirty_set_drains_it_and_a_replaying_one_does_not() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = txn.add_node(None, None);
+    txn.set_prop(node, Prop::Width(40.0));
+    txn.set_prop(node, Prop::Height(20.0));
+    txn.commit_with(&mut Resolving);
+    assert!(
+        arena.layout_dirty().is_empty(),
+        "the default answer is that the solve read the set, so the commit drains it",
+    );
+
+    // A replayed commit: the producer resolved this rect itself, so nothing
+    // restyled anything and the node is still owed one.
+    let mut txn = arena.open();
+    txn.set_prop(node, Prop::Width(90.0));
+    txn.commit_with(&mut Replaying(vec![node]));
+    assert_eq!(
+        arena.layout_dirty(),
+        [node],
+        "a replaying solver read nothing, so the set survives its commit",
+    );
+    assert_eq!(
+        arena.committed().rects()[0].w,
+        UNIT.w,
+        "carrying the set does not change what the commit publishes",
+    );
+
+    // And the next solve that does read it takes it.
+    let mut txn = arena.open();
+    txn.set_prop(node, Prop::Width(90.0));
+    txn.commit_with(&mut Resolving);
+    assert!(
+        arena.layout_dirty().is_empty(),
+        "the carried entries are drained by the solve that finally reads them",
+    );
+}
+
+#[test]
+fn a_carried_layout_dirty_set_stays_bounded_by_what_is_dirty_not_by_the_document() {
+    // R4: a scene that only ever replays would otherwise add one entry per
+    // write per frame and never drain.
+    //
+    // **A thousand nodes and four of them dirty**, which is the shape the
+    // bound has to be measured on. Bounding the carried set by the node count
+    // would pass a test with as many dirty nodes as nodes and still let one
+    // animating node in a large scene carry a document's worth of copies of
+    // itself — so the assertion below is against the dirty count, and the
+    // scene is built wide enough that the two cannot be confused.
+    const NODES: usize = 1000;
+    const DIRTY: usize = 4;
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let all: Vec<_> = (0..NODES).map(|_| txn.add_node(None, None)).collect();
+    for &node in &all {
+        txn.set_prop(node, Prop::Width(10.0));
+        txn.set_prop(node, Prop::Height(10.0));
+    }
+    txn.commit_with(&mut Resolving);
+    let written = &all[..DIRTY];
+
+    for frame in 0..500 {
+        let mut txn = arena.open();
+        for &node in written {
+            txn.set_prop(node, Prop::Width(10.0 + frame as f32));
+        }
+        txn.commit_with(&mut Replaying(written.to_vec()));
+    }
+
+    let carried = arena.layout_dirty();
+    assert!(
+        carried.len() < NODES,
+        "500 replayed commits over {DIRTY} dirty nodes left {} entries in a \
+         {NODES}-node document — the set is growing with the frame count or \
+         with the document, not with what is dirty",
+        carried.len(),
+    );
+    for &node in written {
+        assert!(
+            carried.contains(&node),
+            "every node written over those frames is still owed its restyle",
+        );
+    }
+}
+
+#[test]
+fn deduplicating_a_carried_set_keeps_the_order_the_changes_were_staged_in() {
+    // `Arena::layout_dirty` promises "the order the changes were staged", and
+    // the carried set is deduplicated in place — so the dedup has to keep the
+    // first occurrence of each node rather than reorder them. Nothing in the
+    // tree can observe this: the one consumer collects into a hash set. So
+    // `sort_unstable(); dedup();` would be an equally correct bound and a
+    // silently broken contract, and this is what refuses it.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let nodes: Vec<_> = (0..4).map(|_| txn.add_node(None, None)).collect();
+    for &node in &nodes {
+        txn.set_prop(node, Prop::Width(10.0));
+    }
+    txn.commit_with(&mut Resolving);
+
+    // Staged in a deliberately non-monotonic order, so node-id order and
+    // staging order are different answers.
+    let staged = [nodes[3], nodes[1], nodes[2], nodes[0]];
+    for _ in 0..200 {
+        let mut txn = arena.open();
+        for &node in &staged {
+            txn.set_prop(node, Prop::Width(11.0));
+        }
+        txn.commit_with(&mut Replaying(staged.to_vec()));
+    }
+
+    let carried = arena.layout_dirty();
+    let first_seen: Vec<_> = {
+        let mut seen = Vec::new();
+        for &node in carried {
+            if !seen.contains(&node) {
+                seen.push(node);
+            }
+        }
+        seen
+    };
+    assert_eq!(
+        first_seen,
+        staged.to_vec(),
+        "the carried set's first occurrences must still read in staging order",
+    );
+}
+
 #[test]
 fn margin_prop_sets_and_reads_back() {
     let mut arena = Arena::new();

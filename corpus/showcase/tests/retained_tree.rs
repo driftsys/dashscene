@@ -2,11 +2,19 @@
 //!
 //! Each scene hands its `LiveScene` one solver and that solver keeps Taffy's
 //! tree, patching it from each commit's layout-dirty set rather than rebuilding
-//! it (issue #950). A commit **consumes** that dirty set, so the tree is only
-//! correct while nothing else commits geometry into the same arena: a second
-//! solver's commit takes a dirty set the scene's solver never sees, and the
-//! scene's solver then patches nothing and replays a tree that no longer
-//! describes the scene.
+//! it (issue #950). A commit through a **solving** solver consumes that dirty
+//! set, so the tree is only correct while nothing else solves geometry into the
+//! same arena: a second solver's commit takes a dirty set the scene's solver
+//! never sees, and the scene's solver then patches nothing and replays a tree
+//! that no longer describes the scene.
+//!
+//! "Solving" is the load-bearing word since issue #1148, and it is what makes
+//! the paragraph above about a second producer and nothing else. A commit that
+//! *replays* geometry the producer resolved for itself — `dashlang`'s
+//! contained-write path — leaves the set in place
+//! (`LayoutSolver::consumes_layout_dirty`), so it can no longer take a restyle
+//! the scene's own solver was owed. What is left here is the case a second
+//! **real** solver causes, which is issue #1104's.
 //!
 //! That failure is silent. The commit succeeds, every rect has a value, and the
 //! only symptom is a rect holding the answer to a question nobody is asking any

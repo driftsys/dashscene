@@ -71,6 +71,22 @@ a clean subtree returns from Taffy's cache without re-descent. An empty dirty
 set is the paint-only fast path — `solve` returns no rects and never calls
 Taffy.
 
+The set spans every commit since the last one that **solved**, not since the
+last commit (issue #1148). A producer that publishes geometry it resolved itself
+— `dashlang`'s contained-write path, replaying its patched cache through
+`CachedSolver` — commits without running this solver, and such a commit leaves
+the set in place rather than draining it. So the nodes it dirtied are still here
+to be restyled at the next real solve, which is what keeps this tree describing
+the arena across a run of replayed frames.
+
+The cost is that the set this reads can carry entries already styled, and it is
+bounded rather than small: `commit_with` dedups a carried set once it passes
+twice its own live content, so what arrives here is at most about twice the
+distinct nodes dirtied since the last solve — bounded by **what changed**, not
+by the document. Restyling one is idempotent and the alternative is a rect
+resolved from a stale style, so the entries are paid for; the bound is what
+stops the count above from being read as unbounded.
+
 **Pruned readback** (`read_back_pruned`) is the only genuinely new layout logic.
 Taffy stores layouts relative to the parent; converting to absolute naively is
 an `O(n)` walk that would consume the win. Instead a node is emitted only when

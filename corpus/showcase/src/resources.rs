@@ -192,9 +192,14 @@ pub fn atlases() -> Arc<Vec<Atlas>> {
 /// rebuild (issue #950, story #863).
 ///
 /// A retained tree is only correct while **one** solver sees every commit into
-/// the arena, in order: a commit consumes the arena's layout-dirty set, so a
-/// second solver committing geometry takes a dirty set this one never sees and
-/// this one then patches a tree that no longer describes the scene.
+/// the arena that solves, in order: such a commit consumes the arena's
+/// layout-dirty set, so a second solver committing geometry takes a dirty set
+/// this one never sees and this one then patches a tree that no longer
+/// describes the scene. A commit that *replays* geometry leaves the set alone
+/// and is not that (`LayoutSolver::consumes_layout_dirty`, issue #1148) — which
+/// is what the scenes' own ticks do all day, through `dashlang`'s
+/// `CachedSolver`, with this solver as its inner. The two out-of-band commits
+/// below are the ones that solve.
 ///
 /// Each scene therefore builds one of these for `build_live` and commits **no
 /// geometry** through any other. It is not the stronger rule that nothing else

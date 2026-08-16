@@ -220,6 +220,11 @@ than a rect replay, so the text the first pass already staged is not wiped out.
 That safety matters more than it used to, because a retained Taffy tree is only
 correct while nothing else consumes the arena's layout-dirty set, and this is the
 one commit left in these scenes that does not go through the scene's own solver.
+Consuming is now the solver's own answer rather than something every commit does
+— `LayoutSolver::consumes_layout_dirty`, `true` by default and `false` for a
+replay (issue #1148) — which does not soften the sentence above: this pass
+commits through a real solver, so it answers `true` and drains, exactly as
+before.
 `tests/retained_tree.rs` builds each scene and compares its committed rects
 against a from-scratch solve, at build time and after every scripted phase and
 every variant press.

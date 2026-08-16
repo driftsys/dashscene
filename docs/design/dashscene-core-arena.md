@@ -306,7 +306,29 @@ with the change rather than the scene ("Incremental commit" below):
    sets that drive the incremental work.
 4. **Publish** — generation = previous generation + 1 (every commit increments,
    including a no-op commit); the new `CommittedScene` is written into the back
-   buffer and `front` flips.
+   buffer and `front` flips. The change-log sets are then drained — all but one.
+
+**`layout_dirty` is drained by consumption, not by publication** (issue #1148).
+Every other set is this commit's own input and it has just read them.
+`layout_dirty` is a **consumer's** input: it is what a retained solver restyles
+its tree from, so clearing it is a claim that the restyle happened, and only the
+solver knows whether it did. `LayoutSolver::consumes_layout_dirty` is that
+answer — `true` by default, so every solver resolving geometry from the arena
+(and every decorator forwarding `solve`) is covered without saying anything, and
+`false` for a solver that **replays** rects the producer resolved for itself.
+`dashlang`'s `CachedSolver` is the one in the tree: a contained scalar write
+patches one cached rect and commits without solving, while still staging a
+`Prop::Width` that `prop_class` calls layout intent. A commit answering `false`
+leaves the set in place, so the nodes it names stay owed a restyle until a solve
+performs one, and dedups it when it grows past twice what the previous dedup
+left. That predicate is `should_compact`'s, reused for the pooled tables' reason
+and with its amortization: a set more than twice its own live content holds at
+least as many duplicates as distinct entries, so each dedup at least halves it
+and costs a constant per staged write. It bounds the set by **what is dirty**
+rather than by the document (R4), which is the difference that matters — a bound
+at the node count would let one animating node in a large scene carry a
+document's worth of copies of itself, and hand `incremental` all of them to
+recover the one node that changed.
 
 ### Incremental commit (story #164)
 
