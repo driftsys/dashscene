@@ -3384,9 +3384,13 @@ impl Offscreen {
 /// and never says where their pixels live.
 ///
 /// Held across frames for the reason [`Offscreen`] is, and rebuilt when the
-/// extent or the layer count changes. The alphas are written every frame
-/// regardless: a group's alpha animates without changing how many layers there
-/// are, and a stale uniform would draw the previous frame's opacity.
+/// extent or the layer count changes — **except that a count of zero holds
+/// rather than releases**, for [`TARGET_GRACE_FRAMES`] frames (issue #1055), so
+/// a group that comes and goes on alternate frames rebuilds nothing. The alphas
+/// are written on every frame that prepares a layer: a group's alpha animates
+/// without changing how many layers there are, and a stale uniform would draw
+/// the previous frame's opacity. An idle frame writes none, having no layer to
+/// write for.
 #[derive(Default)]
 struct LayerTargets {
     /// One texture per layer, indexed by slot minus one.
@@ -3408,6 +3412,17 @@ struct LayerTargets {
     alphas: Vec<wgpu::Buffer>,
     width: u32,
     height: u32,
+    /// How many layers the **last** [`Self::prepare`] was given.
+    ///
+    /// Not `views.len()`, and since issue #1055 the two differ: the vectors are
+    /// held across a frame that named no layer, so their length is what is
+    /// *allocated* and this is what is *live*. [`Self::view`] guards on this
+    /// one, so a pass drawing into a layer the frame does not have still
+    /// panics rather than finding a held texture from an earlier frame.
+    live: usize,
+    /// How many consecutive frames have been prepared for no layer; see
+    /// [`Grace`], which [`BlurTargets`] keys on too.
+    grace: Grace,
     /// Device objects allocated here, counted beside the others — see
     /// [`Renderer::allocations`].
     allocations: u64,
@@ -3435,6 +3450,32 @@ impl LayerTargets {
         height: u32,
         layers: &[Layer],
     ) {
+        // **A frame with no layer holds what it has** (issue #1055), for
+        // `TARGET_GRACE_FRAMES` frames. A render-target group that comes and
+        // goes on alternate frames — a fading overlay, a group whose only node
+        // is toggled — otherwise released and rebuilt four objects per layer on
+        // every change, one of them a drawable-sized texture. Measured at four
+        // for one layer, on the round trip rather than on the frame that drops
+        // the group, which allocates nothing either way.
+        //
+        // Everything here may be held, which is the question issue #1055 asks
+        // and the reason this needs no two-step release: a layer's bind group
+        // names that layer's own view and its own alpha buffer, both allocated
+        // beside it, so nothing here names a resource this type does not own.
+        // `BlurTargets` releases in two steps because its per-backdrop groups
+        // name a coverage atlas view belonging to the residency set.
+        self.live = layers.len();
+        if layers.is_empty() {
+            if self.grace.idle_frame() == Idle::Expired {
+                *self = Self {
+                    allocations: self.allocations,
+                    grace: self.grace,
+                    ..Self::default()
+                };
+            }
+            return;
+        }
+        self.grace.used();
         if self.width != width || self.height != height || self.views.len() != layers.len() {
             self.textures.clear();
             self.views.clear();
@@ -3495,15 +3536,13 @@ impl LayerTargets {
     ///
     /// # Panics
     ///
-    /// Panics for a slot this frame holds no layer for, which is the same
-    /// broken contract [`crate::composite::plan`] panics on one step earlier.
+    /// Panics for a slot this frame prepared no layer for, which is the same
+    /// broken contract [`crate::composite::plan`] panics on one step earlier,
+    /// and for slot zero, which names no layer at all. **This frame prepared**,
+    /// not this struct holds: since issue #1055 the two differ, and
+    /// [`Self::slot`] says why.
     fn view(&self, slot: u32) -> &wgpu::TextureView {
-        self.views.get(slot as usize - 1).unwrap_or_else(|| {
-            panic!(
-                "a pass draws into layer {slot} of {} allocated",
-                self.views.len()
-            )
-        })
+        &self.views[self.slot("draws into", slot)]
     }
 
     /// The bind group that blends layer `slot` at its own alpha.
@@ -3512,12 +3551,7 @@ impl LayerTargets {
     ///
     /// As [`LayerTargets::view`].
     fn bind_group(&self, slot: u32) -> &wgpu::BindGroup {
-        self.bind_groups.get(slot as usize - 1).unwrap_or_else(|| {
-            panic!(
-                "a pass composites layer {slot} of {} allocated",
-                self.bind_groups.len()
-            )
-        })
+        &self.bind_groups[self.slot("composites", slot)]
     }
 
     /// The texture behind layer `slot`, which a backdrop inside that group
@@ -3527,12 +3561,36 @@ impl LayerTargets {
     ///
     /// As [`LayerTargets::view`].
     fn texture(&self, slot: u32) -> &wgpu::Texture {
-        self.textures.get(slot as usize - 1).unwrap_or_else(|| {
+        &self.textures[self.slot("snapshots", slot)]
+    }
+
+    /// The index of layer `slot`, or a panic naming what this frame has.
+    ///
+    /// **One lookup for all three accessors, guarded on
+    /// [`live`](Self::live) rather than on a vector's length** (issue #1055).
+    /// Since the vectors outlive the frame that filled them, a length admits a
+    /// slot this frame has no layer for and hands back an earlier frame's
+    /// object. Two of the three accessors guarded on a length and their docs
+    /// already claimed to guard as `view` does, so the guard is written once
+    /// here instead of three times — the asymmetry is what a reader of those
+    /// docs would not have found.
+    ///
+    /// The zero slot is refused before the subtraction. [`Instance::NONE`] is
+    /// zero and a slot is one-based, so `slot - 1` would underflow: in a debug
+    /// build that is an overflow panic rather than this message, and in a
+    /// release build it wraps to `usize::MAX` and prints a nonsense slot.
+    fn slot(&self, verb: &str, slot: u32) -> usize {
+        let index = (slot as usize).checked_sub(1).unwrap_or_else(|| {
+            panic!("a pass {verb} layer {slot}, but a layer slot is one-based and 0 means none")
+        });
+        if index >= self.live {
             panic!(
-                "a backdrop snapshots layer {slot} of {} allocated",
-                self.textures.len()
-            )
-        })
+                "a pass {verb} layer {slot} of {} this frame prepared ({} held)",
+                self.live,
+                self.views.len()
+            );
+        }
+        index
     }
 }
 
@@ -3784,7 +3842,7 @@ const _: () = assert!(std::mem::offset_of!(GpuBlur, rotation_pivot) % 8 == 0);
 /// [`BlurTargets::prepare`] is where that is written: the per-backdrop uniforms
 /// and bind groups on any change of extent, buffer or bound atlas, and the
 /// frame-wide targets only on a change of extent or once more than
-/// [`BLUR_TARGET_GRACE_FRAMES`] consecutive frames have held no backdrop — so
+/// [`TARGET_GRACE_FRAMES`] consecutive frames have held no backdrop — so
 /// at the current value, on the second such frame and not the first. A scene
 /// going one backdrop, none, one at a fixed extent therefore rebuilds nothing
 /// frame-wide. The parameters are written every
@@ -3863,7 +3921,7 @@ struct BlurTargets {
     /// [`Renderer::forget_uploaded`] drops this list through
     /// [`BlurTargets::forget_atlases`], so no list survives the call that moves
     /// the indices. This is also why it is cleared on the first frame prepared
-    /// for no backdrop rather than held across [`BLUR_TARGET_GRACE_FRAMES`].
+    /// for no backdrop rather than held across [`TARGET_GRACE_FRAMES`].
     ///
     /// The hazard is the **next** entry. Any further per-backdrop binding added
     /// to this layout would bind the previous frame's backdrop's value with no
@@ -3874,27 +3932,27 @@ struct BlurTargets {
     /// assertions that count it, and whoever adds one has to decide what the
     /// rebuild is keyed on before it does.
     bound_atlases: Vec<Option<u32>>,
-    /// How many consecutive frames have been prepared for no backdrop, capped
-    /// at one past [`BLUR_TARGET_GRACE_FRAMES`].
-    ///
-    /// Capped rather than counted, because the only question asked of it is
-    /// whether the grace has run out — and stopping there is what keeps a scene
-    /// that holds no backdrop at all from re-running the release on every frame
-    /// for the life of the scene.
-    idle: u32,
+    /// How many consecutive frames have been prepared for no backdrop; see
+    /// [`Grace`], which [`LayerTargets`] keys on too.
+    grace: Grace,
     /// Device objects allocated here, counted beside the others — see
     /// [`Renderer::allocations`].
     allocations: u64,
 }
 
-/// How many consecutive frames needing no backdrop the **frame-wide** targets
-/// survive before they are released.
+/// How many consecutive frames with nothing to draw into them a set of held
+/// frame targets survives before it is released.
+///
+/// Named for the property rather than for its first user (issue #1055).
+/// [`BlurTargets`] and [`LayerTargets`] both key their release on it through
+/// [`Grace`], and the argument below was written for the first of them.
 ///
 /// One, and what that buys is exact: **a gap of one frame costs the
 /// per-backdrop objects, and a gap of two or more costs those and the
 /// frame-wide ones underneath them** — four against twelve, for one backdrop
-/// (issue #1020). No fixed number covers every pattern, and this one is chosen
-/// for the pathological case rather than for all of them.
+/// (issue #1020). For a render-target group the same gap of one costs four per
+/// layer, all of which are now held. No fixed number covers every pattern, and
+/// this one is chosen for the pathological case rather than for all of them.
 ///
 /// The pathological case is a refusal that flickers frame to frame and never
 /// settles. [`ResidencyError::FrameExceedsAtlas`] is decided per frame from what
@@ -3910,15 +3968,77 @@ struct BlurTargets {
 /// two frames is asking for them back. Raising this trades that commitment
 /// against a rebuild for a scene that is not frosting.
 ///
-/// **It bounds only the frame-wide objects.** The per-backdrop uniforms and
-/// bind groups are dropped on the first such frame whatever this says, because
-/// each names a coverage atlas view — see [`BlurTargets::prepare`]. That split
-/// is what kept this grace from widening issue #1050 while it was open, and it
-/// is still why the two halves are released on different schedules: a document
-/// replacement now drops the atlas-naming half through
-/// [`BlurTargets::forget_atlases`], and the frame-wide half is held across it
-/// because nothing it names belongs to the residency set.
-const BLUR_TARGET_GRACE_FRAMES: u32 = 1;
+/// **For [`BlurTargets`] it bounds only the frame-wide objects.** The
+/// per-backdrop uniforms and bind groups are dropped on the first such frame
+/// whatever this says, because each names a coverage atlas view — see
+/// [`BlurTargets::prepare`]. That split is what kept this grace from widening
+/// issue #1050 while it was open, and it is still why the two halves are
+/// released on different schedules: a document replacement now drops the
+/// atlas-naming half through [`BlurTargets::forget_atlases`], and the frame-wide
+/// half is held across it because nothing it names belongs to the residency set.
+///
+/// **For [`LayerTargets`] it bounds everything**, and that asymmetry is the
+/// answer issue #1055 asks for rather than an oversight. Nothing that type holds
+/// names a resource it does not own: a layer's bind group names that layer's own
+/// view and its own alpha buffer, both allocated beside it. There is no
+/// per-something half to release early, so there is no two-step release to
+/// write.
+const TARGET_GRACE_FRAMES: u32 = 1;
+
+/// What a frame with nothing to draw into a held target set does about it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Idle {
+    /// Inside the grace — the holder keeps what it may safely keep.
+    Held,
+    /// The grace has just run out on this frame; release.
+    Expired,
+    /// Released on an earlier frame, and there is nothing left to do.
+    Settled,
+}
+
+/// The consecutive-idle-frame counter [`BlurTargets`] and [`LayerTargets`] both
+/// key their release on.
+///
+/// Capped rather than counted, because the only question asked of it is whether
+/// the grace has run out — and stopping there is what keeps a scene that holds
+/// no backdrop and no group at all from re-running the release on every frame
+/// for the life of the scene. Two of the three showcase scenes are that scene.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Grace {
+    /// Consecutive idle frames, capped at one past [`TARGET_GRACE_FRAMES`].
+    idle: u32,
+}
+
+impl Grace {
+    /// Records one frame that needs nothing of what the holder keeps, and says
+    /// what this frame does about it.
+    fn idle_frame(&mut self) -> Idle {
+        if self.idle > TARGET_GRACE_FRAMES {
+            return Idle::Settled;
+        }
+        self.idle += 1;
+        if self.idle > TARGET_GRACE_FRAMES {
+            Idle::Expired
+        } else {
+            Idle::Held
+        }
+    }
+
+    /// Records a frame that uses what the holder keeps.
+    fn used(&mut self) {
+        self.idle = 0;
+    }
+
+    /// Whether the last frame prepared was given something to draw.
+    ///
+    /// A named predicate rather than a comparison against
+    /// [`Grace::default`]: the question is about the counter, and comparing the
+    /// whole struct would start asking a different one the moment this type
+    /// gains a second field.
+    fn used_last_frame(&self) -> bool {
+        self.idle == 0
+    }
+}
 
 /// How many entries the blur bind-group layout has, and the number
 /// [`BlurTargets::bound_atlases`]'s invariant is counted against (issue #1026).
@@ -3956,7 +4076,7 @@ impl BlurTargets {
     /// The frame-wide targets are deliberately not dropped here. They name this
     /// painter's own textures, which a new document does not invalidate, and
     /// they are the three drawable-sized allocations
-    /// [`BLUR_TARGET_GRACE_FRAMES`] exists to hold on to.
+    /// [`TARGET_GRACE_FRAMES`] exists to hold on to.
     fn forget_atlases(&mut self) {
         self.uniforms.clear();
         self.bind_groups.clear();
@@ -4003,13 +4123,13 @@ impl BlurTargets {
     ///   inventory above says is the one that scales, and the next frame that
     ///   draws rebuilds them.
     /// - The **frame-wide** base, snapshot, scratch and blit survive
-    ///   [`BLUR_TARGET_GRACE_FRAMES`] of them. These are the eight that do not
+    ///   [`TARGET_GRACE_FRAMES`] of them. These are the eight that do not
     ///   scale, and three of them are drawable-sized textures — the largest
     ///   allocation this painter makes.
     ///
     /// So for a one-backdrop scene, a gap of one frame costs four objects to
     /// come back from where it used to cost twelve, and a gap of two or more
-    /// still costs twelve. `BLUR_TARGET_GRACE_FRAMES` says why that is the
+    /// still costs twelve. `TARGET_GRACE_FRAMES` says why that is the
     /// intended split rather than a shortfall.
     #[allow(clippy::too_many_arguments)]
     fn prepare(
@@ -4027,23 +4147,24 @@ impl BlurTargets {
     ) {
         let count = masks.len();
         if count == 0 {
-            // **Nothing at all once the release has happened.** `idle` stops at
-            // one past the grace, so a scene that simply holds no backdrop —
-            // two of the three showcase scenes — does not re-run the clears and
-            // the struct overwrite on every frame of its life. That is the
-            // steady path R-T4 bounds, and this branch is on it.
-            if self.idle <= BLUR_TARGET_GRACE_FRAMES {
-                self.idle += 1;
-                if self.idle > BLUR_TARGET_GRACE_FRAMES {
+            // **Nothing at all once the release has happened**, which is what
+            // `Idle::Settled` says: a scene that simply holds no backdrop — two
+            // of the three showcase scenes — does not re-run the clears and the
+            // struct overwrite on every frame of its life. That is the steady
+            // path R-T4 bounds, and this branch is on it.
+            match self.grace.idle_frame() {
+                Idle::Settled => {}
+                Idle::Expired => {
                     // The grace has run out and everything goes. The clears
                     // below are not repeated here: this discards the vectors
                     // they would empty.
                     *self = Self {
                         allocations: self.allocations,
-                        idle: self.idle,
+                        grace: self.grace,
                         ..Self::default()
                     };
-                } else {
+                }
+                Idle::Held => {
                     // **The per-backdrop half goes even inside the grace.** A
                     // bind group here can name one backdrop's coverage atlas
                     // view, and this frame named no mask at all — holding a
@@ -4064,7 +4185,7 @@ impl BlurTargets {
             }
             return;
         }
-        self.idle = 0;
+        self.grace.used();
         let resized = self.width != width || self.height != height;
         if resized || self.base.is_none() {
             self.base = Some(Owned::new(
@@ -4223,19 +4344,19 @@ impl BlurTargets {
     /// instead is wrong on exactly the frame that plans one backdrop and refuses
     /// it, and **since issue #1020 it is wrong quietly**. It used to panic here,
     /// because that frame released the base along with everything else; now the
-    /// base survives [`BLUR_TARGET_GRACE_FRAMES`] of such frames, so the caller
+    /// base survives [`TARGET_GRACE_FRAMES`] of such frames, so the caller
     /// draws the whole frame into a retained base and the blit that would put it
     /// back is skipped — it is gated on the same count — and the caller's view
     /// comes back empty. The panic arrives only once the grace has run out.
     ///
     /// The debug assertion below is what puts that failure back where the
-    /// release used to leave it: `idle` is zero exactly when the last
-    /// [`BlurTargets::prepare`] was given a non-zero count, so it answers the
-    /// question the `Option` used to answer and answers it on the first frame
-    /// rather than the second.
+    /// release used to leave it: the grace's counter is zero exactly when the
+    /// last [`BlurTargets::prepare`] was given a non-zero count, so it answers
+    /// the question the `Option` used to answer and answers it on the first
+    /// frame rather than the second.
     fn base(&self) -> &Owned {
-        debug_assert_eq!(
-            self.idle, 0,
+        debug_assert!(
+            self.grace.used_last_frame(),
             "`base` was read on a frame prepared for no backdrop. Since issue #1020 the texture \
              survives that frame, so this reads a target nothing will blit back — the caller's \
              view comes back unwritten rather than panicking. Guard on the count `prepare` was \

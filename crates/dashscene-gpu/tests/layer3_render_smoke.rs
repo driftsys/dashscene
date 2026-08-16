@@ -20,7 +20,7 @@ use dashpaint::{
     ClipBox, ClipIndex, ClipTable, Color, CornerRadii, EntryParts, GlyphRunTable, ImageTable,
     PaintEntry, PaintTable, Painter, RectEntry, Stroke, StrokeAlign, Vec2,
 };
-use dashscene_gpu::{GpuPainter, RendererError};
+use dashscene_gpu::{GpuPainter, Renderer, RendererError};
 
 mod common;
 use common::{H, W, renderer, texel};
@@ -1616,6 +1616,40 @@ fn a_clip_boxs_corner_radii_reach_their_own_corners() {
 /// from the sum reports no difference.
 #[test]
 fn a_groups_layer_objects_are_counted_and_then_reused() {
+    let group = one_group();
+    let mut renderer = self::renderer();
+    let mut render = layer_allocation_probe();
+
+    // The same scene with no group, twice, so everything a groupless frame
+    // needs is already allocated and settled before the group arrives.
+    render(&mut renderer, &[]);
+    let without = render(&mut renderer, &[]);
+
+    let with = render(&mut renderer, &group);
+    assert_eq!(
+        with - without,
+        4,
+        "a layer is a texture, a view, a uniform buffer and a bind group, and \
+         all four have to reach the counter"
+    );
+
+    // And they are reused: the extent and the layer count are unchanged, so the
+    // second grouped frame builds nothing.
+    assert_eq!(
+        render(&mut renderer, &group),
+        with,
+        "a repeated frame reallocated its layer"
+    );
+}
+
+/// The two-rect scene both layer-allocation tests measure, and a probe that
+/// renders it and reports [`Renderer::allocations`].
+///
+/// Shared because the two tests differ only in the sequence of frames they
+/// render; a second copy of the fixture would let them drift into measuring
+/// different scenes. **One renderer per probe**: the counter is cumulative, so a
+/// second renderer would start it again from its own construction.
+fn layer_allocation_probe() -> impl FnMut(&mut Renderer, &[dashpaint::GroupComposite]) -> u64 {
     let mut paints = PaintTable::new();
     let red = solid(&mut paints, 1.0, 0.0, 0.0);
     let blue = solid(&mut paints, 0.0, 0.0, 1.0);
@@ -1624,16 +1658,7 @@ fn a_groups_layer_objects_are_counted_and_then_reused() {
         rect(8.0, 8.0, 20.0, 20.0, red, ClipIndex::UNCLIPPED),
         rect(18.0, 8.0, 20.0, 20.0, blue, ClipIndex::UNCLIPPED),
     ];
-    let group = [dashpaint::GroupComposite {
-        start: 0,
-        end: 2,
-        alpha: 0.5,
-    }];
-
-    // One renderer for the whole test: the counter is cumulative, and a second
-    // renderer would start it again from its own construction.
-    let mut renderer = self::renderer();
-    let mut render = |groups: &[dashpaint::GroupComposite]| {
+    move |renderer: &mut Renderer, groups: &[dashpaint::GroupComposite]| {
         let mut painter = GpuPainter::new();
         painter.paint(
             &rects,
@@ -1656,27 +1681,103 @@ fn a_groups_layer_objects_are_counted_and_then_reused() {
             )
             .expect("the fixture extent is within any device's maximum");
         renderer.allocations()
-    };
+    }
+}
 
-    // The same scene with no group, twice, so everything a groupless frame
-    // needs is already allocated and settled before the group arrives.
-    render(&[]);
-    let without = render(&[]);
+/// The group both layer-allocation tests raise and drop.
+fn one_group() -> [dashpaint::GroupComposite; 1] {
+    [dashpaint::GroupComposite {
+        start: 0,
+        end: 2,
+        alpha: 0.5,
+    }]
+}
 
-    let with = render(&group);
+/// **A render-target group that comes and goes on alternate frames does not
+/// rebuild its layer, and two idle frames still release it** (issue #1055).
+///
+/// `BlurTargets` had this shape and issue #1020 closed it with a grace period.
+/// `LayerTargets` had the same release with no grace, so a fading overlay or a
+/// group whose only node is toggled released and rebuilt a drawable-sized
+/// texture, its view, a uniform buffer and a bind group **per layer, on every
+/// change**. Measured before the fix: four allocations for one layer, 31
+/// against 27.
+///
+/// # Both halves, because a hold that never releases would pass one of them
+///
+/// The grace has two edges and this straddles both, the way
+/// `an_alternating_refusal_does_not_rebuild_the_frame_wide_targets` does for
+/// the blur half:
+///
+/// - A gap of **one** frame costs nothing. That is the fix.
+/// - A gap of **two** releases, and the next group frame pays to rebuild. That
+///   is what keeps a scene that has genuinely stopped compositing from holding
+///   a drawable-sized texture per layer for the life of the renderer.
+///
+/// A test that stopped at one idle frame would pass with `Idle::Expired`
+/// deleted, or with `TARGET_GRACE_FRAMES` raised to any value at all.
+///
+/// **This test assumes `TARGET_GRACE_FRAMES` is 1**, which it cannot read — the
+/// constant is private to the crate. Raising it makes the second half fail, and
+/// the failure is this sentence.
+///
+/// # What may safely be held, which is the question #1055 asks
+///
+/// Everything here. `LayerTargets` holds a texture, its view, its own alpha
+/// uniform and a bind group naming those two — and **nothing it holds names a
+/// resource it does not own**. That is the difference from `BlurTargets`, whose
+/// per-backdrop bind groups name a coverage atlas view belonging to the
+/// residency set, which is why that type releases in two steps and this one does
+/// not need to. The alphas are rewritten every frame a layer is prepared, and
+/// each layer pass clears its attachment, so neither a stale opacity nor stale
+/// texels can survive the hold.
+#[test]
+fn a_group_that_comes_and_goes_does_not_rebuild_its_layer() {
+    let group = one_group();
+    let mut renderer = self::renderer();
+    let mut render = layer_allocation_probe();
+
+    // Warm both shapes, so that no later step is the first to allocate an
+    // offscreen, a frame buffer or the layer objects themselves.
+    render(&mut renderer, &[]);
+    render(&mut renderer, &group);
+    render(&mut renderer, &[]);
+    let settled = render(&mut renderer, &group);
+
+    // The premise: with the group held steady nothing moves, so any delta below
+    // is the alternation and not the frame.
     assert_eq!(
-        with - without,
-        4,
-        "a layer is a texture, a view, a uniform buffer and a bind group, and \
-         all four have to reach the counter"
+        render(&mut renderer, &group),
+        settled,
+        "a repeated grouped frame must reallocate nothing, or the round trip below measures          something other than the group coming and going",
     );
 
-    // And they are reused: the extent and the layer count are unchanged, so the
-    // second grouped frame builds nothing.
+    // **One idle frame: the hold.** `allocations` is cumulative, so equality
+    // here says only that nothing was built — which is the whole claim, since
+    // the frame that drops the group never allocated even before the fix. What
+    // makes it discriminating is the frame after it.
+    let held = render(&mut renderer, &[]);
     assert_eq!(
-        render(&group),
-        with,
-        "a repeated frame reallocated its layer"
+        held, settled,
+        "the frame that drops the group must build nothing",
+    );
+    assert_eq!(
+        render(&mut renderer, &group),
+        settled,
+        "a group returning after one idle frame must reuse the layer objects held for it: four          per layer — a drawable-sized texture, its view, a uniform buffer and a bind group —          rebuilt on every change is the cost issue #1020 removed for backdrops",
+    );
+
+    // **Two idle frames: the release.** Without this half the grace could hold
+    // forever and everything above would still pass.
+    render(&mut renderer, &[]);
+    let released = render(&mut renderer, &[]);
+    assert_eq!(
+        released, settled,
+        "releasing must free rather than allocate",
+    );
+    assert!(
+        render(&mut renderer, &group) > released,
+        "after two idle frames the layer objects must have been released, so the next grouped          frame rebuilds them. Equal means they are held past the grace — a drawable-sized          texture per layer kept for a scene that has stopped compositing",
     );
 }
 
