@@ -146,20 +146,56 @@ struct OwnedFace {
     atlas_metrics: Vec<u8>,
 }
 
+/// Where a [`DocumentFrames`] gets its document on every attach (issue #1035).
+///
+/// **Held rather than consumed, whichever this is.** A rebuild after a
+/// recoverable surface loss detaches — which frees the runtime and the document
+/// with it — and attaches again, and an attach needs the document. Taking it on
+/// the first attach left the rebuild failing with "no document bytes" every
+/// time, which turned the one remedy `Step::Rebuild` exists to provide into a
+/// guaranteed way to kill the loop.
+///
+/// **What is held differs, and so does what a rebuild depends on.** [`Owned`]
+/// holds the bytes, so a rebuild needs nothing outside this process.
+/// [`Mapped`] holds a path, so a rebuild re-reads the file: it must still
+/// exist, still be mappable, and still hold a document. A host that replaces or
+/// deletes the staged file while a handle is live turns the next recoverable
+/// surface loss into a stop. That is why the Java side is told to stage into
+/// app storage rather than a cache directory the system may clear.
+///
+/// [`Owned`]: Document::Owned
+/// [`Mapped`]: Document::Mapped
+enum Document {
+    /// Bytes the host already read, loaded whole.
+    ///
+    /// The ABI's owning path — `dashscene_core::load_document` copies every
+    /// payload — so this costs a second copy of the file, on top of the copy
+    /// the JVM made and the copy `convert_byte_array` made out of it. Every
+    /// artboard's payloads are copied, including those of artboards nothing
+    /// draws.
+    Owned(Vec<u8>),
+    /// A path the runtime maps, bounded by the root named here.
+    ///
+    /// `ds_runtime_load_document_mapped` reads out of the file's cold half only
+    /// the assets the named root's subtree draws, so the cost of opening a
+    /// document tracks the artboard being shown rather than the file's size.
+    /// That is R5 on this ABI, and until issue #1035 this crate was the one
+    /// that motivated the bounded path and the one still paying the unbounded
+    /// cost.
+    ///
+    /// **The mapping is the runtime's**, so nothing here has a lifetime rule to
+    /// keep: the arena holds it, and each load installs a fresh arena.
+    Mapped {
+        path: std::ffi::CString,
+        shown_root: u32,
+    },
+}
+
 /// A compiled `.dsb`, drawn through the C ABI.
 struct DocumentFrames {
     runtime: *mut DsRuntime,
-    /// The bytes, **kept for the life of this object**.
-    ///
-    /// The ABI's load is the owning path — `dashscene_core::load_document`
-    /// copies every payload — so holding them costs a second copy of the file.
-    /// They are held anyway, because a rebuild after a recoverable surface loss
-    /// detaches (which frees the runtime and the document with it) and attaches
-    /// again, and an attach needs bytes. Taking them on the first attach left
-    /// the rebuild failing with "no document bytes" every time, which turned the
-    /// one remedy `Step::Rebuild` exists to provide into a guaranteed way to
-    /// kill the loop.
-    document: Vec<u8>,
+    /// The document, **kept for the life of this object** — see [`Document`].
+    document: Document,
     /// The cascade and its sheets, **kept for the life of this object**, for
     /// the same reason `document` is: a rebuild after a recoverable surface
     /// loss detaches — which frees the runtime — and attaches again, and an
@@ -215,17 +251,29 @@ impl Frames for DocumentFrames {
                 atlas_metrics_len: face.atlas_metrics.len(),
             })
             .collect();
-        // SAFETY: `runtime` is live, `document` is a readable slice, and every
-        // pointer in `descriptors` borrows a field of `self.faces`, which
-        // outlives this call.
-        let loaded = unsafe {
-            dashscene_ffi::ds_runtime_load_document_with_text(
-                runtime,
-                self.document.as_ptr(),
-                self.document.len(),
-                descriptors.as_ptr(),
-                descriptors.len(),
-            )
+        let loaded = match &self.document {
+            // SAFETY: `runtime` is live, `bytes` is a readable slice, and every
+            // pointer in `descriptors` borrows a field of `self.faces`, which
+            // outlives this call.
+            Document::Owned(bytes) => unsafe {
+                dashscene_ffi::ds_runtime_load_document_with_text(
+                    runtime,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    descriptors.as_ptr(),
+                    descriptors.len(),
+                )
+            },
+            // SAFETY: the same, and `path` is NUL-terminated by `CString`.
+            Document::Mapped { path, shown_root } => unsafe {
+                dashscene_ffi::ds_runtime_load_document_mapped(
+                    runtime,
+                    path.as_ptr(),
+                    *shown_root,
+                    descriptors.as_ptr(),
+                    descriptors.len(),
+                )
+            },
         };
         if loaded != DsStatus::Ok {
             return Err(format!("load_document: {loaded:?} {}", last_error()));
@@ -326,8 +374,10 @@ impl Frames for DocumentFrames {
 /// Acquires the window from `surface`, builds a [`DocumentFrames`] from
 /// `document` and `faces`, and starts its frame loop.
 ///
-/// Shared by `nativeSurfaceCreated` and `nativeSurfaceCreatedWithText`, which
-/// differ only in what they put in `faces`. The three `unsafe` blocks here —
+/// Shared by all three entry points. `nativeSurfaceCreated` and
+/// `nativeSurfaceCreatedWithText` differ only in what they put in `faces`;
+/// `nativeSurfaceCreatedMapped` differs in `document`, which is where the
+/// bounded load is chosen (issue #1035). The three `unsafe` blocks here —
 /// acquiring the window, starting the frame loop, and releasing the window on
 /// a failed start — used to be duplicated between the two entry points; this
 /// crate's own history has an example of exactly that leak shape (see the
@@ -359,7 +409,7 @@ impl Frames for DocumentFrames {
 fn start_document_host(
     env: &mut Env<'_>,
     surface: &JObject<'_>,
-    document: Vec<u8>,
+    document: Document,
     faces: Vec<OwnedFace>,
     width: jint,
     height: jint,
@@ -428,7 +478,14 @@ pub extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_nativeSurface
     unowned
         .with_env(|env| -> jni::errors::Result<jlong> {
             let bytes = env.convert_byte_array(&document)?;
-            start_document_host(env, &surface, bytes, Vec::new(), width, height)
+            start_document_host(
+                env,
+                &surface,
+                Document::Owned(bytes),
+                Vec::new(),
+                width,
+                height,
+            )
         })
         .resolve::<LogErrorAndDefault>()
 }
@@ -479,32 +536,153 @@ pub extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_nativeSurface
     width: jint,
     height: jint,
 ) -> jlong {
+    const ENTRY: &str = "nativeSurfaceCreatedWithText";
     unowned
         .with_env(|env| -> jni::errors::Result<jlong> {
             let bytes = env.convert_byte_array(&document)?;
 
-            let count = faces.len(env)?;
-            let mut owned = Vec::with_capacity(count);
-            for index in 0..count {
-                // A frame per face. Each element and each object field is a
-                // local reference, and JNI guarantees only 16 slots without
-                // asking; five per face means a four-face cascade exhausts the
-                // frame the JVM gave this call. Everything that leaves the
-                // frame is owned, so nothing here outlives it.
-                let face =
-                    env.with_local_frame(8, |env| -> jni::errors::Result<Option<OwnedFace>> {
-                        read_face(env, &faces, index)
-                    })?;
-                let Some(face) = face else {
-                    // `read_face` has already said which face and why.
-                    return Ok(0);
-                };
-                owned.push(face);
-            }
+            let Some(owned) = read_faces(env, &faces, ENTRY)? else {
+                // `read_faces` has already said which face and why.
+                return Ok(0);
+            };
 
-            start_document_host(env, &surface, bytes, owned, width, height)
+            start_document_host(env, &surface, Document::Owned(bytes), owned, width, height)
         })
         .resolve::<LogErrorAndDefault>()
+}
+
+/// Starts a loop for a `.dsb` **mapped from a path**, bounded by one root
+/// (issue #1035).
+///
+/// The bounded counterpart of
+/// [`Java_dev_driftsys_dashscene_DashsceneNative_nativeSurfaceCreatedWithText`],
+/// and the first caller this crate gives `ds_runtime_load_document_mapped`. The
+/// byte-taking entry points read the whole file into the JVM heap, copy it
+/// again into a `Vec`, and then have every payload copied a third time by the
+/// owning loader — including the payloads of artboards nothing draws. This
+/// hands over a path instead and the runtime reads only what the named root's
+/// subtree needs.
+///
+/// **An APK asset is not a path**, which is the whole reason this takes one
+/// rather than an asset name. An asset compressed inside the APK cannot be
+/// mapped at all, and an uncompressed one is reachable only as a file
+/// descriptor plus an offset and a length, through `AAsset_openFileDescriptor`.
+/// So the host extracts the document to app storage once and passes that path
+/// — the option issue #1035 names first, and the one that needs no new ABI
+/// symbol. The alternative, a descriptor-taking ABI variant with a matching
+/// `dashbuf::map` constructor, stays deferred: it is free under the ABI's
+/// versioning rule, but it is a change to two crates this branch does not own.
+///
+/// `shown_root` is a document ordinal and is required, exactly as the ABI has
+/// it: there is no sentinel for "every root", because a bound that can be
+/// switched off reads as a bound when it is not one. A host wanting every root
+/// has the byte-taking entry points.
+///
+/// `faces` may be empty, which is the no-text case — the same rule the
+/// `WithText` entry point carries.
+///
+/// **Answers 0 only for what is decided here**: a null path, a path carrying a
+/// NUL, an ordinal that is not one, a face this crate refuses, and a window or
+/// thread that could not be obtained. Whether the document at that path loads
+/// at all is decided on the render thread, after this has returned — so a path
+/// that is not mappable, a derived payload, and a `shown_root` naming no root
+/// all give a **non-zero** handle and then stop the loop, reported as
+/// `attach failed:` with the ABI's own status and the path. That is
+/// [`crate::loop_::start`]'s standing contract — a non-null return does not
+/// mean the loop came up — and not a property this entry point weakens.
+///
+/// # Safety
+///
+/// Called by the JVM with a valid environment and a live `Surface`.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_nativeSurfaceCreatedMapped<
+    'local,
+>(
+    mut unowned: EnvUnowned<'local>,
+    _class: JClass<'local>,
+    surface: JObject<'local>,
+    path: JString<'local>,
+    shown_root: jint,
+    faces: JObjectArray<'local, JObject<'local>>,
+    width: jint,
+    height: jint,
+) -> jlong {
+    const ENTRY: &str = "nativeSurfaceCreatedMapped";
+    unowned
+        .with_env(|env| -> jni::errors::Result<jlong> {
+            if path.is_null() {
+                log("nativeSurfaceCreatedMapped: path is null");
+                return Ok(0);
+            }
+            let path = path.try_to_string(env)?;
+            // A NUL inside the path would truncate it at the ABI boundary, so
+            // it is refused here rather than turned into a different path.
+            let Ok(path) = std::ffi::CString::new(path) else {
+                log("nativeSurfaceCreatedMapped: the path contains a NUL");
+                return Ok(0);
+            };
+            // The ordinal is a `u32` in the ABI and a signed `int` in Java, so
+            // the only value that cannot cross is a negative one. Refused
+            // rather than clamped: 0 is a real root, and clamping would show a
+            // different artboard from the one asked for.
+            let Ok(shown_root) = u32::try_from(shown_root) else {
+                log(&format!(
+                    "nativeSurfaceCreatedMapped: shownRoot {shown_root} is not an ordinal"
+                ));
+                return Ok(0);
+            };
+
+            let Some(owned) = read_faces(env, &faces, ENTRY)? else {
+                // `read_faces` has already said which face and why.
+                return Ok(0);
+            };
+
+            start_document_host(
+                env,
+                &surface,
+                Document::Mapped { path, shown_root },
+                owned,
+                width,
+                height,
+            )
+        })
+        .resolve::<LogErrorAndDefault>()
+}
+
+/// Reads every `DsFace` out of `faces`, or `None` after logging why it could
+/// not.
+///
+/// **One copy for the entry points that need it.** This loop, the local-frame
+/// capacity and the refusal were written twice when the mapped entry point
+/// landed, which is the duplication `start_document_host`'s own doc argues
+/// against: this module compiles for one target no test in this repository can
+/// reach, so a rule written twice drifts once and fails only on a device.
+///
+/// `entry` names the caller, so a refusal in logcat attributes itself to the
+/// entry point that actually ran.
+fn read_faces<'frame, 'array>(
+    env: &mut Env<'frame>,
+    faces: &JObjectArray<'array, JObject<'array>>,
+    entry: &str,
+) -> jni::errors::Result<Option<Vec<OwnedFace>>> {
+    let count = faces.len(env)?;
+    let mut owned = Vec::with_capacity(count);
+    for index in 0..count {
+        // A frame per face. Each element and each object field is a local
+        // reference, and JNI guarantees only 16 slots without asking; five per
+        // face means a four-face cascade exhausts the frame the JVM gave this
+        // call. Everything that leaves the frame is owned, so nothing here
+        // outlives it.
+        let face = env.with_local_frame(8, |env| -> jni::errors::Result<Option<OwnedFace>> {
+            read_face(env, faces, index, entry)
+        })?;
+        let Some(face) = face else {
+            // `read_face` has already said which face and why.
+            return Ok(None);
+        };
+        owned.push(face);
+    }
+    Ok(Some(owned))
 }
 
 /// Reads one `DsFace` out of `faces`, or `None` after logging why it could not.
@@ -517,6 +695,7 @@ fn read_face<'frame, 'array>(
     env: &mut Env<'frame>,
     faces: &JObjectArray<'array, JObject<'array>>,
     index: usize,
+    entry: &str,
 ) -> jni::errors::Result<Option<OwnedFace>> {
     // **The six names and the six descriptors, from the one list this crate
     // holds** (issues #1089, #1096). Spelled in `crate::face` rather than here,
@@ -534,9 +713,7 @@ fn read_face<'frame, 'array>(
 
     let face = faces.get_element(env, index)?;
     if face.is_null() {
-        log(&format!(
-            "nativeSurfaceCreatedWithText: face {index} is null"
-        ));
+        log(&format!("{entry}: face {index} is null"));
         return Ok(None);
     }
 
@@ -544,7 +721,7 @@ fn read_face<'frame, 'array>(
     let family: JString = env.cast_local::<JString>(family.l()?)?;
     if family.is_null() {
         log(&format!(
-            "nativeSurfaceCreatedWithText: face {index} has no {}",
+            "{entry}: face {index} has no {}",
             face::FAMILY.name.to_string_lossy()
         ));
         return Ok(None);
@@ -559,7 +736,7 @@ fn read_face<'frame, 'array>(
     let weight = face_field!(face::WEIGHT, "I").get(env, &face)?.i()?;
     let Ok(weight) = u16::try_from(weight) else {
         log(&format!(
-            "nativeSurfaceCreatedWithText: face {index} declares weight {weight}, which does \
+            "{entry}: face {index} declares weight {weight}, which does \
              not fit the descriptor; the accepted range is 1..=1000"
         ));
         return Ok(None);
@@ -570,7 +747,7 @@ fn read_face<'frame, 'array>(
     let face_index = face_field!(face::FACE_INDEX, "I").get(env, &face)?.i()?;
     let Ok(face_index) = u32::try_from(face_index) else {
         log(&format!(
-            "nativeSurfaceCreatedWithText: face {index} declares faceIndex {face_index}, which \
+            "{entry}: face {index} declares faceIndex {face_index}, which \
              is not an index"
         ));
         return Ok(None);
@@ -585,7 +762,7 @@ fn read_face<'frame, 'array>(
         let array: JByteArray = env.cast_local::<JByteArray>(array)?;
         if array.is_null() {
             log(&format!(
-                "nativeSurfaceCreatedWithText: face {index} has no {}",
+                "{entry}: face {index} has no {}",
                 field.name.to_str()
             ));
             return Ok(None);
@@ -610,7 +787,7 @@ fn read_face<'frame, 'array>(
 
     let Ok(family) = std::ffi::CString::new(family) else {
         log(&format!(
-            "nativeSurfaceCreatedWithText: face {index} has a family name containing a NUL"
+            "{entry}: face {index} has a family name containing a NUL"
         ));
         return Ok(None);
     };

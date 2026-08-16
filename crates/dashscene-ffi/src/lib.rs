@@ -20,9 +20,20 @@
 //! `dashbuf::prefetch::ShownRoot` is the vocabulary, `dashscene-desktop` and
 //! `dashscene-web` both take one, and
 //! `docs/decisions/the-shown-root-is-named-by-ordinal.md` records why it is an
-//! ordinal. **`dashscene-android` does not**, and no host calls the symbol
-//! below yet: its JNI entry points still take a `JByteArray` and reach
-//! [`ds_runtime_load_document_with_text`]. That is issue #1035.
+//! ordinal. **`dashscene-android` takes one too since issue #1035**:
+//! `nativeSurfaceCreatedMapped` passes a path and an ordinal and reaches
+//! [`ds_runtime_load_document_mapped`], so the crate that motivated the bounded
+//! path is no longer the one paying the unbounded cost. Its byte-taking entry
+//! points remain, reaching [`ds_runtime_load_document_with_text`], for a host
+//! that holds bytes rather than a file.
+//!
+//! **An APK asset is not a path**, which is what made that host the last to
+//! arrive: an asset compressed inside the APK cannot be mapped, and an
+//! uncompressed one is reachable only as a descriptor plus an offset and a
+//! length. The host extracts the document to app storage once and passes that
+//! path, so no descriptor-taking variant was needed. That variant — and the
+//! `dashbuf::map` constructor over a range of an open descriptor that it needs
+//! — stays deferred, as it was when #925 landed.
 //!
 //! [`ds_runtime_load_document_mapped`] takes a path, maps it, and reads out of
 //! the file's cold half only the assets the named root's subtree draws. That is
@@ -95,9 +106,12 @@
 //! is now a choice a caller makes rather than one made for it, which is what
 //! story #947 changed.
 //!
-//! `dashscene_android::host` calls [`ds_runtime_load_document_with_text`],
-//! but that path has been compiled for its target and never run on device
-//! hardware — nothing here describes Android as working; that is issue #885.
+//! `dashscene_android::host` reaches both loads — [`ds_runtime_load_document_with_text`]
+//! from its byte-taking entry points and [`ds_runtime_load_document_mapped`]
+//! from `nativeSurfaceCreatedMapped`, which passes a path and an ordinal
+//! (issue #1035). Its lifecycle harness runs on an emulator; the showcase's
+//! frame-rate deliverable needs target hardware, which is issue #885, so
+//! nothing here describes Android as measured.
 //!
 //! # The three rules this ABI keeps
 //!

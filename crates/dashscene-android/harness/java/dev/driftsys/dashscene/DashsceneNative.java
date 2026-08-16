@@ -75,6 +75,58 @@ public final class DashsceneNative {
     public static native long nativeSurfaceCreatedWithText(
             Surface surface, byte[] document, DsFace[] faces, int width, int height);
 
+    /**
+     * As {@link #nativeSurfaceCreatedWithText}, but the document is
+     * <b>mapped from a path</b> and only one root's assets are read (issue
+     * #1035).
+     *
+     * <p>The byte-taking methods above read the whole file into the JVM heap,
+     * copy it again into native memory, and then have every payload copied a
+     * third time by the owning loader — including the payloads of artboards
+     * nothing draws. This hands over a path, and the runtime reads out of the
+     * file's cold half only what the named root's subtree needs. The cost of
+     * opening a document then tracks the artboard being shown rather than the
+     * file's size.
+     *
+     * <p><b>An APK asset is not a path.</b> An asset compressed inside the APK
+     * cannot be mapped at all, and an uncompressed one is reachable only as a
+     * file descriptor plus an offset and a length. So a host using this
+     * extracts the document to app storage once — see
+     * {@code HarnessActivity.documentPath} — and passes that. There is no
+     * descriptor-taking variant yet.
+     *
+     * <p>The mapping belongs to the runtime and lasts until the document is
+     * replaced or the runtime is freed, so the caller has no lifetime rule to
+     * keep. <b>But the file must stay where it is</b> for as long as the
+     * handle lives: app storage, not a cache directory the system may clear.
+     *
+     * @param path a filesystem path the process can read and map
+     * @param shownRoot the document ordinal of the one root that will be drawn.
+     *     Required, and there is no value meaning "every root": a bound that
+     *     can be switched off reads as a bound when it is not one. A host that
+     *     wants every root uses the byte-taking methods and pays the whole
+     *     file knowingly.
+     * @param faces one entry per face, in cascade order; an empty array loads
+     *     without text
+     * @return an opaque handle, or 0 for a null path, a path containing a NUL,
+     *     a negative {@code shownRoot}, a face this method refuses, or a window
+     *     or thread that could not be obtained. <b>Not for a document that
+     *     fails to load</b>: the mapping and the load run on the render thread
+     *     after this returns, so an unmappable path, a derived payload and a
+     *     {@code shownRoot} naming no root all give a non-zero handle and then
+     *     stop the loop, reported in logcat as {@code attach failed:} with the
+     *     status and the path. The same caveat as
+     *     {@link #nativeSurfaceCreated}, and for the same reason: a non-zero
+     *     handle does not mean the runtime started.
+     */
+    public static native long nativeSurfaceCreatedMapped(
+            Surface surface,
+            String path,
+            int shownRoot,
+            DsFace[] faces,
+            int width,
+            int height);
+
     /** Reports a new physical-pixel extent. Picked up by the next frame. */
     public static native void nativeSurfaceChanged(long handle, int width, int height);
 
