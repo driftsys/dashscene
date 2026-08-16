@@ -1617,10 +1617,14 @@ impl VectorField {
     /// `dashscene-gpu` would upload a texture, `dashscene-skia` would decode a
     /// PNG.
     ///
-    /// Both ask first today. **Only `dashscene-skia`'s order is pinned by a
-    /// test**, through the decode counter its per-call cache already carries;
-    /// swapping `dashscene-gpu`'s two operands so residency runs first leaves
-    /// its whole suite green, measured. That gap is issue #1159.
+    /// Both ask first, and each painter has a test that fails if it stops. They
+    /// count the same *kind* of waste through **two different instruments**:
+    /// `dashscene-skia` through a `cfg(test)` counter inside its own decode
+    /// cache, which is compiled out of every shipped build, and `dashscene-gpu`
+    /// through `Renderer::decodes`, which is a production accessor. Each pairs
+    /// the rejected case with a **drawing** one, because a test asserting only
+    /// that nothing was fetched passes equally against a painter that fetches
+    /// nothing at all.
     ///
     /// It is written here rather than only on [`atlas_rect`](Self::atlas_rect)
     /// because this method is the thing both painters call, and a painter

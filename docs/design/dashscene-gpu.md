@@ -589,6 +589,18 @@ encodes that instance, the blur's two passes and the base blit on top of the
 halves, and `Renderer::last_draw_runs` goes from 1 to 5. The picture is not the
 only observable, which is the reason that accessor is public.
 
+**A third observable pins the order rather than the answer** (issue #1159).
+`field_draws` is asked _before_ `resident_image`, which
+`dashpaint::VectorField::draws` states as part of its contract: a field the
+predicate rejects samples nothing, so making its atlas resident is pure waste.
+Nothing held that — swapping the two operands left this whole crate's suite
+green, and the test above is blind to it, because a degenerate field made
+resident is refused by nothing and still leaves its row unresolved.
+`a_field_that_draws_nothing_makes_no_atlas_resident` reads `Renderer::decodes`
+over an **encoded** atlas, since the coverage fixtures here are baked and a
+baked payload is never decoded. That bounds the claim: for a baked atlas the
+waste is an upload rather than a decode, and no counter sees it today.
+
 ## Two targets, one device
 
 `Renderer` draws into a texture view and reads it back; `SurfaceRenderer`
