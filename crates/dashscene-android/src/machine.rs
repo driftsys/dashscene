@@ -51,6 +51,66 @@ pub(crate) fn unpack(value: u64) -> (u32, u32) {
     ((value >> 32) as u32, value as u32)
 }
 
+/// Whether an extent describes a drawable at all.
+///
+/// `surfaceChanged` reports 0x0 during teardown and on some backgrounding
+/// transitions. **What that costs is not a crash**, and issue #1094 says
+/// otherwise: `dashscene_gpu::SurfaceRenderer::configure` returns early on a
+/// zero dimension and its `present` reports nothing drawn for one, so no zero
+/// reaches `wgpu::Surface::configure`. What it costs is an adapter, a device
+/// and the whole pipeline set acquired for a drawable with no pixels — 0.74 s
+/// on an emulator for a release build and over 218 s for a debug one (issue
+/// #960) — after which nothing is drawn until a drawable extent arrives, with
+/// `surfaceDestroyed` parked behind the acquisition when the 0x0 came from a
+/// teardown. `check_extent` naming that refusal rather than accepting it
+/// silently is issue #1149, in the painter.
+///
+/// **One function because it is one rule** (issue #1094): [`publish_extent`]
+/// asks it of what the UI thread reports, and [`LoopState::step`] asks it again
+/// of what it reads back. A second copy of a rule is how this crate's recovery
+/// path was broken three times.
+fn is_drawable((width, height): (u32, u32)) -> bool {
+    width > 0 && height > 0
+}
+
+/// Publishes an extent the UI thread reported, **unless it is not a drawable**
+/// (issue #1094).
+///
+/// The cell is the only channel between `surfaceChanged` and the render thread,
+/// and `loop_::resize` is its only writer. Storing a 0x0 into it destroys the
+/// last extent that described a drawable, and the loop then has nothing to
+/// build a surface for: [`LoopState::start`] reads this cell, so a
+/// `surfaceChanged(0, 0)` landing between `loop_::start` spawning the render
+/// thread and that thread reaching its acquisition was the extent the surface
+/// got taken up at.
+///
+/// Dropping the report instead leaves the cell holding the most recent extent
+/// that *was* a drawable, which is what both readers want. Keeping the created
+/// extent beside the cell and falling back to it was written first and is
+/// worse: after `surfaceChanged(1080, 2400)`, `surfaceChanged(720, 1612)` and
+/// `surfaceChanged(0, 0)` it attaches at 1080x2400, a size the surface has not
+/// had for two callbacks, where this attaches at 720x1612.
+///
+/// **Here rather than in `loop_::resize`** by this crate's own rule: the
+/// decision binds no NDK symbol, and `loop_` is behind
+/// `#[cfg(target_os = "android")]` where `just test`, `just test-regression`
+/// and the `android-build` job — a compile only — all pass with it deleted.
+/// `loop_::resize` is left holding the pointer check and nothing else.
+pub(crate) fn publish_extent(cell: &AtomicU64, width: u32, height: u32) {
+    if !is_drawable((width, height)) {
+        // Logcat is the only witness a device gives, and a window that stopped
+        // following its surface is otherwise a report with no trace of the
+        // report that was dropped. Bounded by UI callbacks rather than by
+        // frames: `surfaceChanged` runs on a lifecycle transition.
+        log(&format!(
+            "surfaceChanged reported {width}x{height}, which is not a drawable — not \
+             publishing it"
+        ));
+        return;
+    }
+    cell.store(pack(width, height), Ordering::Release);
+}
+
 /// How many consecutive surface rebuilds the loop will attempt before giving up.
 ///
 /// A rebuild that works is followed by a frame, and a frame resets the count —
@@ -159,6 +219,10 @@ pub(crate) struct LoopState {
     extent: Arc<AtomicU64>,
     /// The extent the surface is currently configured for, and `(0, 0)` until
     /// [`LoopState::start`] has taken one up.
+    ///
+    /// Written in two places and no others: `start`, from the cell, and the
+    /// accepted-resize arm of [`LoopState::step`]. [`LoopState::acquire`] only
+    /// reads it.
     configured: (u32, u32),
     /// The previous vsync's timestamp, for the frame delta.
     previous: Option<i64>,
@@ -238,11 +302,34 @@ impl LoopState {
     /// `android-build` only compiles. A refactor writing `state.start();`
     /// would leak the state and post a vsync callback for a surface the
     /// teardown check had just refused, and nothing but a device would say so.
+    ///
+    /// # What the cell holds, and why this needs no guard of its own (issue #1094)
+    ///
+    /// The extent is read here rather than handed in, so the surface is taken
+    /// up at the last extent the UI thread reported: `surfaceChanged` can land
+    /// between `loop_::start` spawning this thread and this thread getting
+    /// here. **What lands could be 0x0** — that is what `surfaceChanged`
+    /// reports during teardown and on some backgrounding transitions — and it
+    /// was read as an extent like any other and handed to `Frames::attach`.
+    ///
+    /// That is closed at the writer rather than here: [`publish_extent`] keeps
+    /// a report that is not a drawable out of the cell, so what this reads is
+    /// the most recent extent that was one. Guarding here as well would be a
+    /// second copy of the rule with nothing better to offer — the fallback it
+    /// would need is the extent the loop was created with, which is staler than
+    /// what the cell already holds.
+    ///
+    /// **The cell can still hold a 0x0 that never went through
+    /// [`publish_extent`]**: `loop_::start` seeds it with whatever
+    /// `nativeSurfaceCreated` was given, and a host that starts a loop for a
+    /// surface with no pixels gets an attach at 0x0. That is the host's call to
+    /// make and its cost is bounded — the surface is left unconfigured, nothing
+    /// is drawn, and the first drawable `surfaceChanged` recovers it through
+    /// [`LoopState::step`]. Refusing instead strands it: `start` answering
+    /// `false` stops the render thread, and no later `surfaceChanged` restarts
+    /// it.
     #[must_use]
     pub(crate) fn start(&mut self) -> bool {
-        // Read here rather than handed in, so the surface is taken up at the
-        // last extent the UI thread reported: `surfaceChanged` can land between
-        // `loop_::start` spawning this thread and this thread getting here.
         self.configured = unpack(self.extent.load(Ordering::Acquire));
         self.acquire(Acquire::First)
     }
@@ -400,7 +487,7 @@ impl LoopState {
         // different threads and a message would need a channel for one `u32`
         // pair.
         let wanted = unpack(self.extent.load(Ordering::Acquire));
-        if wanted != self.configured && wanted.0 > 0 && wanted.1 > 0 {
+        if wanted != self.configured && is_drawable(wanted) {
             // Recorded only when it was taken up. A refused extent — one past
             // the adapter maximum (issue #714) — is offered again next frame
             // rather than believed, which is what stops one refusal leaving the
@@ -647,28 +734,18 @@ mod tests {
     /// The fixture's own first attach always succeeds and is then wiped from the
     /// recording, so `attaches` describes the attaches *after* it and every
     /// assertion below counts only what the frames under test asked for.
+    ///
+    /// **Returns the same [`Fixture`] [`un_started`] does** (issue #1093). It
+    /// returned a four-tuple, and a second wrapper returned three of those four,
+    /// so one fixture had three arities and eleven tests destructured it
+    /// positionally — which put `dropped` out of reach of every test written
+    /// against a tuple, including all of the rebuild ones. Named fields cost a
+    /// prefix per use and make every observation reachable from every test.
     fn scripted(
         outcomes: Vec<Step>,
         attaches: Vec<Result<(), AttachError>>,
         accept_resize: bool,
-    ) -> (LoopState, Arc<AtomicU64>, Rc<RefCell<Recording>>) {
-        let (state, extent, recording, _) =
-            scripted_with_handshake(outcomes, attaches, accept_resize);
-        (state, extent, recording)
-    }
-
-    /// [`scripted`] with the handshake handed back, for the tests that need to
-    /// ask for a teardown mid-run.
-    fn scripted_with_handshake(
-        outcomes: Vec<Step>,
-        attaches: Vec<Result<(), AttachError>>,
-        accept_resize: bool,
-    ) -> (
-        LoopState,
-        Arc<AtomicU64>,
-        Rc<RefCell<Recording>>,
-        Arc<Handshake>,
-    ) {
+    ) -> Fixture {
         // Prepended rather than the caller writing it: the script is about the
         // rebuilds a test is exercising, and a fixture that made its own first
         // attach consume the first scripted answer would fail every rebuild
@@ -681,12 +758,7 @@ mod tests {
             "the fixture's own first attach is scripted to succeed"
         );
         *fixture.recording.borrow_mut() = Recording::default();
-        (
-            fixture.state,
-            fixture.extent,
-            fixture.recording,
-            fixture.handshake,
-        )
+        fixture
     }
 
     /// Parks a thread in [`Handshake::request_teardown`] and waits for the
@@ -731,10 +803,9 @@ mod tests {
     #[test]
     fn the_bound_gives_up_after_consecutive_rebuilds_with_no_frame_between_them() {
         let attempts = MAX_CONSECUTIVE_REBUILDS as usize + 1;
-        let (mut state, _extent, recording) =
-            scripted(vec![Step::Rebuild; attempts], Vec::new(), true);
+        let mut fixture = scripted(vec![Step::Rebuild; attempts], Vec::new(), true);
 
-        let actions = run(&mut state, attempts);
+        let actions = run(&mut fixture.state, attempts);
 
         let (last, rescheduled) = actions.split_last().expect("one action per vsync");
         assert!(
@@ -751,12 +822,12 @@ mod tests {
              {MAX_CONSECUTIVE_REBUILDS} and must give up, not reschedule"
         );
         assert!(
-            !state.running,
+            !fixture.state.running,
             "giving up must clear `running`, or the poll loop spins on its 100 ms \
              timeout and `is_running` keeps answering true"
         );
         assert_eq!(
-            recording.borrow().attaches.len(),
+            fixture.recording.borrow().attaches.len(),
             MAX_CONSECUTIVE_REBUILDS as usize,
             "the count is spent before the rebuild, so the step that gives up \
              re-attaches nothing — acquiring a device and discarding it unused is \
@@ -774,27 +845,27 @@ mod tests {
         let mut outcomes = vec![Step::Rebuild, Step::Rebuild, Step::Continue];
         outcomes.extend(vec![Step::Rebuild; MAX_CONSECUTIVE_REBUILDS as usize]);
         let total = outcomes.len();
-        let (mut state, _extent, _recording) = scripted(outcomes, Vec::new(), true);
+        let mut fixture = scripted(outcomes, Vec::new(), true);
 
-        let actions = run(&mut state, total);
+        let actions = run(&mut fixture.state, total);
 
         assert!(
             actions.iter().all(|action| *action == Action::Reschedule),
             "the frame at index 2 cleared the count, so the {MAX_CONSECUTIVE_REBUILDS} \
              rebuilds after it are all inside the bound: {actions:?}"
         );
-        assert!(state.running, "nothing here reached the bound");
+        assert!(fixture.state.running, "nothing here reached the bound");
     }
 
     /// A rebuild re-attaches the same window at the configured extent and keeps
     /// the loop scheduled. PR #887's defect was the reschedule going missing.
     #[test]
     fn a_rebuild_detaches_re_attaches_the_same_window_and_reschedules() {
-        let (mut state, _extent, recording) = scripted(vec![Step::Rebuild], Vec::new(), true);
+        let mut fixture = scripted(vec![Step::Rebuild], Vec::new(), true);
 
-        assert_eq!(state.step(FRAME_NANOS), Action::Reschedule);
+        assert_eq!(fixture.state.step(FRAME_NANOS), Action::Reschedule);
 
-        let recording = recording.borrow();
+        let recording = fixture.recording.borrow();
         assert_eq!(recording.detaches, 1, "the lost surface is dropped first");
         assert_eq!(
             recording.attaches,
@@ -814,30 +885,29 @@ mod tests {
     /// entrance that the fix for the first did not close.
     #[test]
     fn a_teardown_requested_while_the_surface_is_lost_stops_instead_of_re_attaching() {
-        let (mut state, _extent, recording, handshake) =
-            scripted_with_handshake(vec![Step::Rebuild], Vec::new(), true);
-        let waiter = park_a_teardown(&handshake);
+        let mut fixture = scripted(vec![Step::Rebuild], Vec::new(), true);
+        let waiter = park_a_teardown(&fixture.handshake);
 
         assert_eq!(
-            state.step(FRAME_NANOS),
+            fixture.state.step(FRAME_NANOS),
             Action::Stop,
             "the surface was lost and a teardown is pending — rebuilding here \
              acquires a device the handshake is already waiting to have dropped"
         );
         assert!(
-            !state.running,
+            !fixture.state.running,
             "and the poll loop must read that it stopped"
         );
         assert!(
-            recording.borrow().attaches.is_empty(),
+            fixture.recording.borrow().attaches.is_empty(),
             "no re-attach: the whole point is that the acquisition does not \
              start, got {:?}",
-            recording.borrow().attaches
+            fixture.recording.borrow().attaches
         );
 
         // The loop would reach `shut_down` and drop its `ReleaseOnExit`; here
         // that is done by hand so the parked thread comes back.
-        handshake.released();
+        fixture.handshake.released();
         waiter.join().unwrap();
     }
 
@@ -927,6 +997,103 @@ mod tests {
         );
     }
 
+    /// **A report that is not a drawable never reaches the cell, so the first
+    /// attach uses the last extent that was one** (issue #1094).
+    ///
+    /// The whole of the defect, driven through the writer the UI thread calls
+    /// rather than by storing into the cell directly: `surfaceChanged` reports
+    /// 0x0 during teardown and on some backgrounding transitions, and one
+    /// landing between `loop_::start` spawning the render thread and
+    /// `LoopState::start` reading the cell was the extent the surface got taken
+    /// up at.
+    ///
+    /// **Three reports, not one**, and that is what makes this test observe the
+    /// fix rather than agree with it. A fallback to the extent the loop was
+    /// created with — the first shape this took — attaches at `CONFIGURED`
+    /// here, because it has no memory of the 720x1612 in between. Keeping the
+    /// cell's last drawable value attaches at 720x1612, which is the size the
+    /// surface actually has.
+    ///
+    /// Every partly-zero pair, not only 0x0: a zero on either axis is the same
+    /// rule, so a one-sided case must not slip past.
+    #[test]
+    fn a_report_that_is_not_a_drawable_never_displaces_the_last_one_that_was() {
+        for not_drawable in [(0, 0), (0, 2400), (1080, 0)] {
+            let mut fixture = un_started(Vec::new(), Vec::new(), true);
+            publish_extent(&fixture.extent, 720, 1612);
+            publish_extent(&fixture.extent, not_drawable.0, not_drawable.1);
+
+            assert!(
+                fixture.state.start(),
+                "an attach that succeeds starts the loop"
+            );
+            assert_eq!(
+                fixture.recording.borrow().attaches,
+                vec![(WINDOW, 720, 1612)],
+                "the last extent that described a drawable, not the {not_drawable:?} \
+                 reported after it and not the {CONFIGURED:?} the loop was \
+                 created with"
+            );
+        }
+    }
+
+    /// A drawable report does reach the cell, which is what stops the guard
+    /// above being satisfied by a writer that stores nothing at all.
+    #[test]
+    fn a_drawable_report_reaches_the_cell() {
+        let extent = Arc::new(AtomicU64::new(pack(CONFIGURED.0, CONFIGURED.1)));
+
+        publish_extent(&extent, 720, 1612);
+
+        assert_eq!(
+            unpack(extent.load(Ordering::Acquire)),
+            (720, 1612),
+            "a report that describes a drawable is what the cell is for"
+        );
+    }
+
+    /// **A cell seeded with a 0x0 still attaches**, and the loop recovers on the
+    /// first drawable report.
+    ///
+    /// `loop_::start` seeds the cell with whatever `nativeSurfaceCreated` was
+    /// given, and that seed does not go through [`publish_extent`] — so a host
+    /// that starts a loop for a surface with no pixels reaches `attach` at 0x0
+    /// however the writer is guarded.
+    ///
+    /// Refusing there is the obvious reading of issue #1094 and is worse than
+    /// the defect: `start` answering `false` stops the render thread, and
+    /// nothing restarts it — a later `surfaceChanged` would publish into a cell
+    /// no thread is reading any more, leaving the window blank until the surface
+    /// cycled. This pins the recovery that makes attaching the right answer.
+    #[test]
+    fn a_cell_seeded_with_no_drawable_extent_still_starts_and_recovers() {
+        let mut fixture = un_started(Vec::new(), Vec::new(), true);
+        fixture.extent.store(pack(0, 0), Ordering::Release);
+
+        assert!(
+            fixture.state.start(),
+            "refusing here strands the surface: no later surfaceChanged reaches \
+             a thread that has stopped"
+        );
+        assert!(fixture.state.is_running());
+        assert_eq!(
+            fixture.recording.borrow().attaches,
+            vec![(WINDOW, 0, 0)],
+            "there is nothing better to attach at, and the alternative is a \
+             render thread that has stopped"
+        );
+
+        publish_extent(&fixture.extent, 720, 1612);
+        run(&mut fixture.state, 1);
+
+        assert_eq!(
+            fixture.recording.borrow().resizes,
+            vec![(720, 1612)],
+            "the first drawable report is a change from the 0x0 that was \
+             configured, so `step` takes it up"
+        );
+    }
+
     /// A first attach that fails stops the loop and gives up whatever it built
     /// partway.
     ///
@@ -1008,16 +1175,30 @@ mod tests {
 
     /// A rebuild whose re-attach fails stops the loop rather than rescheduling
     /// into a surface that does not exist.
+    ///
+    /// And the implementation it built partway is dropped, not merely detached
+    /// — the same rule as the first attach's, on the path that runs once per
+    /// recoverable surface loss rather than once per surface. Reachable only
+    /// since issue #1093: the rebuild tests destructured a tuple that left
+    /// `dropped` out.
     #[test]
     fn a_rebuild_that_cannot_re_attach_stops_the_loop() {
-        let (mut state, _extent, _recording) = scripted(
+        let mut fixture = scripted(
             vec![Step::Rebuild],
             vec![Err("no adapter".to_owned())],
             true,
         );
 
-        assert_eq!(state.step(FRAME_NANOS), Action::Stop);
-        assert!(!state.running);
+        assert_eq!(fixture.state.step(FRAME_NANOS), Action::Stop);
+        assert!(!fixture.state.running);
+
+        // What `render_thread` does next once the poll loop reads `is_running`.
+        fixture.state.shut_down();
+        assert!(
+            fixture.dropped.get(),
+            "a re-attach fails partway too, and what it built is retained for \
+             the life of the process unless the box goes with it"
+        );
     }
 
     /// **A refused resize is offered again.** `Frames::resize` answering `false`
@@ -1026,13 +1207,13 @@ mod tests {
     /// of the surface's life.
     #[test]
     fn a_refused_resize_is_offered_again_on_the_next_frame() {
-        let (mut state, extent, recording) = scripted(Vec::new(), Vec::new(), false);
-        extent.store(pack(720, 1612), Ordering::Release);
+        let mut fixture = scripted(Vec::new(), Vec::new(), false);
+        fixture.extent.store(pack(720, 1612), Ordering::Release);
 
-        run(&mut state, 3);
+        run(&mut fixture.state, 3);
 
         assert_eq!(
-            recording.borrow().resizes,
+            fixture.recording.borrow().resizes,
             vec![(720, 1612); 3],
             "a refusal is not believed, so the same extent is offered every frame"
         );
@@ -1041,13 +1222,13 @@ mod tests {
     /// An accepted resize is recorded, so it is offered once and not again.
     #[test]
     fn an_accepted_resize_is_offered_once() {
-        let (mut state, extent, recording) = scripted(Vec::new(), Vec::new(), true);
-        extent.store(pack(720, 1612), Ordering::Release);
+        let mut fixture = scripted(Vec::new(), Vec::new(), true);
+        fixture.extent.store(pack(720, 1612), Ordering::Release);
 
-        run(&mut state, 3);
+        run(&mut fixture.state, 3);
 
         assert_eq!(
-            recording.borrow().resizes,
+            fixture.recording.borrow().resizes,
             vec![(720, 1612)],
             "once taken up, the extent matches what is configured and is not \
              offered again"
@@ -1059,7 +1240,7 @@ mod tests {
     /// resize, and a rebuild.
     #[test]
     fn forced_is_consumed_by_the_frame_that_acts_on_it() {
-        let (mut state, extent, recording) = scripted(
+        let mut fixture = scripted(
             vec![Step::Continue, Step::Continue, Step::Rebuild],
             Vec::new(),
             true,
@@ -1067,13 +1248,14 @@ mod tests {
 
         // Frames one and two: the first is forced because the surface has drawn
         // nothing, the second has nothing to force it.
-        run(&mut state, 2);
+        run(&mut fixture.state, 2);
         // Frame three takes up a new extent, and frame four sees the flag it set.
-        extent.store(pack(720, 1612), Ordering::Release);
-        run(&mut state, 2);
+        fixture.extent.store(pack(720, 1612), Ordering::Release);
+        run(&mut fixture.state, 2);
 
         assert_eq!(
-            recording
+            fixture
+                .recording
                 .borrow()
                 .frames
                 .iter()
@@ -1092,14 +1274,14 @@ mod tests {
     /// the loop almost always ends with one still registered.
     #[test]
     fn a_callback_that_arrives_after_the_loop_stopped_does_nothing() {
-        let (mut state, _extent, recording) = scripted(vec![Step::Stop], Vec::new(), true);
+        let mut fixture = scripted(vec![Step::Stop], Vec::new(), true);
 
-        assert_eq!(state.step(FRAME_NANOS), Action::Stop);
-        assert_eq!(state.step(2 * FRAME_NANOS), Action::Stop);
-        assert_eq!(state.step(3 * FRAME_NANOS), Action::Stop);
+        assert_eq!(fixture.state.step(FRAME_NANOS), Action::Stop);
+        assert_eq!(fixture.state.step(2 * FRAME_NANOS), Action::Stop);
+        assert_eq!(fixture.state.step(3 * FRAME_NANOS), Action::Stop);
 
         assert_eq!(
-            recording.borrow().frames.len(),
+            fixture.recording.borrow().frames.len(),
             1,
             "only the frame that asked to stop ran; the two callbacks after it \
              must not reach the implementation"
@@ -1110,11 +1292,11 @@ mod tests {
     /// after it carries the interval.
     #[test]
     fn the_first_frame_has_no_delta_and_the_next_one_measures_the_interval() {
-        let (mut state, _extent, recording) = scripted(Vec::new(), Vec::new(), true);
+        let mut fixture = scripted(Vec::new(), Vec::new(), true);
 
-        run(&mut state, 2);
+        run(&mut fixture.state, 2);
 
-        let recording = recording.borrow();
+        let recording = fixture.recording.borrow();
         let deltas: Vec<f32> = recording.frames.iter().map(|(dt, _)| *dt).collect();
         assert_eq!(deltas[0], 0.0, "there is no previous vsync to subtract");
         // 1e-6 rather than something tighter: one f32 ulp at 0.0167 is about
@@ -1140,29 +1322,39 @@ mod tests {
     /// be asserting on the fixture rather than on the loop.
     #[test]
     fn shutting_down_stops_the_loop_detaches_once_and_silences_later_callbacks() {
-        let (mut state, _extent, recording) = scripted(Vec::new(), Vec::new(), true);
-        run(&mut state, 1);
-        assert!(state.is_running(), "one ordinary frame leaves it running");
+        let mut fixture = scripted(Vec::new(), Vec::new(), true);
+        run(&mut fixture.state, 1);
+        assert!(
+            fixture.state.is_running(),
+            "one ordinary frame leaves it running"
+        );
 
-        state.shut_down();
+        fixture.state.shut_down();
 
-        assert!(!state.is_running(), "the poll loop reads this to leave");
+        assert!(
+            !fixture.state.is_running(),
+            "the poll loop reads this to leave"
+        );
         assert_eq!(
-            recording.borrow().detaches,
+            fixture.recording.borrow().detaches,
             1,
             "the surface is released exactly once"
         );
         assert_eq!(
-            state.step(9 * FRAME_NANOS),
+            fixture.state.step(9 * FRAME_NANOS),
             Action::Stop,
             "a posted vsync cannot be cancelled, so one can still arrive here"
         );
         assert_eq!(
-            recording.borrow().frames.len(),
+            fixture.recording.borrow().frames.len(),
             1,
             "and it must not reach an implementation that has given up its surface"
         );
-        assert_eq!(recording.borrow().detaches, 1, "nor detach a second time");
+        assert_eq!(
+            fixture.recording.borrow().detaches,
+            1,
+            "nor detach a second time"
+        );
     }
 
     /// A zero extent is refused before it reaches [`Frames::resize`].
@@ -1171,18 +1363,27 @@ mod tests {
     /// transitions. Recording one as configured would leave the swapchain sized
     /// for a drawable with no pixels, and the guard that stops it is one `&&`
     /// away from deleted — with nothing else failing when it goes.
+    ///
+    /// **A zero on either axis, not only 0x0.** Only the square case was driven
+    /// until issue #1094, so weakening [`is_drawable`]'s `&&` to `||` failed
+    /// nothing on this path — the exact mutation the paragraph above warns
+    /// about, left open by the fixture it was written against.
     #[test]
     fn a_zero_extent_is_never_offered_to_the_implementation() {
-        let (mut state, extent, recording) = scripted(Vec::new(), Vec::new(), true);
-        extent.store(pack(0, 0), Ordering::Release);
+        for extent in [(0, 0), (0, 2400), (1080, 0)] {
+            let mut fixture = scripted(Vec::new(), Vec::new(), true);
+            fixture
+                .extent
+                .store(pack(extent.0, extent.1), Ordering::Release);
 
-        run(&mut state, 3);
+            run(&mut fixture.state, 3);
 
-        assert!(
-            recording.borrow().resizes.is_empty(),
-            "a zero extent differs from what is configured, so only the \
-             non-zero test keeps it out of the implementation: {:?}",
-            recording.borrow().resizes
-        );
+            assert!(
+                fixture.recording.borrow().resizes.is_empty(),
+                "{extent:?} differs from what is configured, so only the \
+                 drawable test keeps it out of the implementation: {:?}",
+                fixture.recording.borrow().resizes
+            );
+        }
     }
 }

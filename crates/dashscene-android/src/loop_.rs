@@ -34,10 +34,10 @@
 
 use std::ffi::c_void;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 
 use crate::frames::Frames;
-use crate::machine::{Action, LoopState, pack};
+use crate::machine::{self, Action, LoopState, pack};
 use crate::{Handshake, log};
 
 /// One live view, as the UI thread holds it.
@@ -45,11 +45,18 @@ use crate::{Handshake, log};
 /// Handed to a host language as an opaque pointer and handed back on every call.
 pub struct AndroidHost {
     handshake: Arc<Handshake>,
-    /// The extent the UI thread last reported, read by the render thread on the
-    /// frame after it changes. An atomic pair rather than a lock: written from
-    /// one thread, read from one thread, and never needing to be consistent
-    /// with anything else.
-    /// The extent the UI thread last reported, packed into one word.
+    /// The last extent the UI thread reported **that described a drawable**,
+    /// packed into one word and read by the render thread on the frame after it
+    /// changes.
+    ///
+    /// Not every report: [`crate::machine::publish_extent`] is the only writer
+    /// and drops one that is not a drawable, because a 0x0 stored here destroys
+    /// the last extent that was one and [`LoopState::start`] reads the same cell
+    /// (issue #1094). Seeded by [`start`] with whatever the host passed, which
+    /// does **not** go through that writer.
+    ///
+    /// An atomic pair rather than a lock: written from one thread, read from
+    /// one thread, and never needing to be consistent with anything else.
     ///
     /// **One atomic, not two.** Stored as two, `surfaceChanged` interleaving
     /// between the loop's two loads yields a (new width, old height) pair that
@@ -141,7 +148,16 @@ where
     }))
 }
 
-/// Reports a new **physical**-pixel extent. Picked up by the next frame.
+/// Reports a new **physical**-pixel extent, picked up by the next frame —
+/// **unless it describes no drawable, in which case it is dropped**.
+///
+/// `surfaceChanged` reports 0x0 during teardown and on some backgrounding
+/// transitions, and storing one destroys the last extent that was a drawable
+/// (issue #1094). So a `resize(host, 0, 0)` has no observable effect: the loop
+/// goes on presenting at the extent it has. `machine::publish_extent` carries
+/// the rule and says why it is there rather than here — named rather than
+/// linked, because `machine` is private and this item is not, which the
+/// intra-doc-link gate refuses.
 ///
 /// # Safety
 ///
@@ -152,7 +168,12 @@ pub unsafe fn resize(host: *mut AndroidHost, width: u32, height: u32) {
     }
     // SAFETY: the caller promises `host` is live.
     let host = unsafe { &*host };
-    host.extent.store(pack(width, height), Ordering::Release);
+    // **The store is `crate::machine`'s, not this function's** (issue #1094).
+    // Which reports reach the cell is a decision that binds no NDK symbol, and
+    // this file is behind `#[cfg(target_os = "android")]` where no test tier
+    // runs — the arrangement that shipped three consecutive broken repairs to
+    // the recovery path. What is left here is the pointer check.
+    machine::publish_extent(&host.extent, width, height);
 }
 
 /// Whether the frame loop is still live.
