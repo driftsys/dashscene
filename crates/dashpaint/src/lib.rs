@@ -2756,7 +2756,17 @@ pub struct AtlasIndex(pub u32);
 #[derive(Debug, Clone, PartialEq)]
 pub struct Atlas {
     /// The MSDF atlas image (RGB distance channels), an encoded asset.
-    pub image: ImageAsset,
+    ///
+    /// Private, and the last of the five to close (issue #1074). It is not a
+    /// divisor, which is what the other four had in common — what it carries is
+    /// the payload [`width`](Self::width) and [`height`](Self::height)
+    /// *describe*. `pub` here let any holder write a different sheet over it
+    /// after construction and leave the extent describing the old one, and
+    /// `dashscene-engine`'s own doc records what that costs: `TexelPayload::of`
+    /// takes the extent from the decode while `gpu_glyph_run` normalises with
+    /// the metrics extent, so a disagreement samples the wrong texels rather
+    /// than failing. Read it through [`image`](Self::image).
+    image: ImageAsset,
     /// Atlas image size in texels.
     ///
     /// Private for the reason [`px_per_em`](Self::px_per_em) is, and it is the
@@ -2938,14 +2948,19 @@ impl Atlas {
     /// extent is private for the same reason, so every value this type feeds a
     /// painter's arithmetic is checked here.
     ///
-    /// **[`image`](Self::image) is the one field still public**, and it is not
-    /// a divisor — but the argument above does reach it: a holder replacing the
-    /// payload after construction leaves `width` and `height` describing the old
-    /// one, and `dashscene-engine`'s own doc records what that costs
-    /// (`TexelPayload::of` takes the extent from the decode while
-    /// `gpu_glyph_run` normalises with the metrics extent, so a disagreement
-    /// samples the wrong texels rather than failing). That is issue #1074's
-    /// shape rather than this one's, and it is filed.
+    /// **Every field on this type is private since issue #1074**, and the last
+    /// one to close is the only one that is not a divisor. The argument above
+    /// still reached it: a holder replacing the payload after construction left
+    /// `width` and `height` describing the old one, and `dashscene-engine`'s own
+    /// doc records what that costs (`TexelPayload::of` takes the extent from
+    /// the decode while `gpu_glyph_run` normalises with the metrics extent, so a
+    /// disagreement samples the wrong texels rather than failing).
+    ///
+    /// **What that does not establish is that the extent and the payload
+    /// agree**, and this constructor does not check it. The pair is fixed at
+    /// construction and cannot come apart afterwards; a caller stating a wrong
+    /// pair here still states one. The check is the producer's —
+    /// [`image`](Self::image) names where, and why it is not duplicated here.
     ///
     /// This is a statement about *this* type, not about boundary B.
     /// [`VectorField::distance_range`] is the same operand on the coverage-mask
@@ -3025,6 +3040,26 @@ impl Atlas {
     /// [`width`](Self::width) gives.
     pub fn height(&self) -> u32 {
         self.height
+    }
+
+    /// The MSDF atlas image (RGB distance channels), an encoded asset.
+    ///
+    /// **The payload this atlas was built with**, which is the whole of what
+    /// closing the field buys (issue #1074): [`width`](Self::width) and
+    /// [`height`](Self::height) describe *these* bytes and cannot be left
+    /// describing a sheet swapped in afterwards.
+    ///
+    /// It does **not** say the two agree. Nothing in this constructor compares
+    /// the payload's header against the stated extent, and a caller may still
+    /// state a wrong pair at construction. What checks them is the producer:
+    /// `dashscene-engine`'s `atlas_from_bytes` reads the PNG header through
+    /// `image_id::identify` and refuses a sheet whose extent disagrees with the
+    /// metrics blob, before it calls [`new`](Self::new). Duplicating that here
+    /// would mean header-parsing every atlas a second time and would not reach
+    /// a baked payload at all, which carries no header — the same reason
+    /// [`ImageTable::push_baked`] takes the extent from its caller.
+    pub fn image(&self) -> &ImageAsset {
+        &self.image
     }
 
     /// The placement for `glyph_id`, or `None` when the atlas has no quad

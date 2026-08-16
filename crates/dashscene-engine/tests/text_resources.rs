@@ -90,7 +90,7 @@ fn a_faces_atlas_follows_it_through_the_family_major_flatten() {
     let carried: Vec<&[u8]> = resources
         .atlases
         .iter()
-        .map(|atlas| atlas.image.bytes.as_slice())
+        .map(|atlas| atlas.image().bytes.as_slice())
         .collect();
     let expected: Vec<Vec<u8>> = [ATLAS_REGULAR, ATLAS_SEMIBOLD, ATLAS_ARABIC]
         .iter()
@@ -234,7 +234,7 @@ fn one_family_spelled_two_ways_is_one_family_with_both_weights() {
     let carried: Vec<&[u8]> = resources
         .atlases
         .iter()
-        .map(|atlas| atlas.image.bytes.as_slice())
+        .map(|atlas| atlas.image().bytes.as_slice())
         .collect();
     let expected: Vec<Vec<u8>> = [ATLAS_REGULAR, ATLAS_SEMIBOLD, ATLAS_ARABIC]
         .iter()

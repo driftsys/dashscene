@@ -925,7 +925,7 @@ impl MsdfCache {
         if self.source != *atlases {
             self.decoded = atlases
                 .iter()
-                .map(|atlas| decode_image(atlas.image.as_ref()))
+                .map(|atlas| decode_image(atlas.image().as_ref()))
                 .collect();
         }
         self.source = Arc::clone(atlases);
