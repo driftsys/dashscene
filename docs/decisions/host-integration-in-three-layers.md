@@ -1,14 +1,21 @@
 # Host integration in three layers
 
-    status   **accepted 2026-08-07**, at v0.17's opening (epic #793). Nothing
-             in the three layers is built. The slice it belongs to is
-             **v0.19**, not v0.17: the planning session took the split this
-             record's own scope line anticipated, and the C ABI is the seam it
-             cut on.
+    status   **accepted 2026-08-07**, at v0.17's opening (epic #793).
+             **Layer 0 is built and shipped for Android at the v0.19
+             close (2026-08-16)**, and was already built for web and desktop
+             at v0.17; layers 1 and 2 are not built for any
+             platform. The slice it belongs to is **v0.19**, not
+             v0.17: the planning session took the split this record's own
+             scope line anticipated, and the C ABI is the seam it cut on.
+             What layer 0 became is
+             [`../design/c-abi.md`](../design/c-abi.md) and
+             [`../design/android-toolchain.md`](../design/android-toolchain.md).
     date     2026-08-05; ratified and re-scoped 2026-08-07; slice numbers
              corrected in place 2026-08-08 (story #796, the v0.17 close);
              narrowed to layer 0 for v0.19 on 2026-08-09 (epic #833); Unity
-             moved from v1 to slice v0.21 on 2026-08-12, iOS unchanged
+             moved from v1 to slice v0.21 on 2026-08-12, iOS unchanged; D3a
+             amended at the v0.19 close on 2026-08-16 (story #843); D4 and
+             D5 left unamended there, and issue #1187 carries why
     source   the v0.15 phase-end revision (epic #569), which opened v0.17
     scope    embedding into a platform host: how a platform surface reaches
              `dashscene-gpu`, how app state drives a scene, and how a scene is
@@ -51,9 +58,9 @@
 
 Platform reach was one slice when this was written. Web and desktop already work
 and are a packaging problem — **that half is v0.17 (epic #793)**, and this
-record does not bear on it. **Android is at zero** — no target triple, no
-toolchain, no CI job, and no FFI beyond `dashscene-unity`'s Unity-facing
-bindings — so it is the slice's one new platform.
+record does not bear on it. **Android was at zero when this was written** — no
+target triple, no toolchain, no CI job, and no FFI beyond `dashscene-unity`'s
+Unity-facing bindings — so it is the slice's one new platform.
 
 **iOS and the Unity host are deliberately not in v0.19.** iOS is a second
 platform bring-up with the same zero foundation, and Unity is blocked on
@@ -156,6 +163,26 @@ is to read a limit out of the thing that enforces it. The first Android story
 should confirm the target device class exposes Vulkan before anything is built
 on the assumption.
 
+**Amended at the v0.19 close (story #843): that instruction was not followed,
+and the slice shipped anyway.** The probe was built at story #839 and the
+measurement on target hardware was never taken, because no device was available
+— `../design/android-toolchain.md` records the deferral under "What is not
+measured", and the emulator cannot stand in for it, since it cannot be made to
+use the host GPU for Vulkan. The measurement is issue #885, **moved to v0.21**
+on 2026-08-16 with the rest of the target-hardware work.
+
+So layer 0 is built on the assumption this clause asked to have retired first.
+Nothing observed contradicts it, but the observation is weaker than it looks:
+the probe passes if **any** enumerated adapter satisfies the device request, and
+on that emulator the one that passes is SwiftShader, a **CPU** device. The
+adapter on the host GPU exposes **zero** storage buffers and fails. So what was
+observed is that a software Vulkan implementation binds four, which is not what
+this clause asks about — and `../design/android-toolchain.md` says to read the
+probe's summary as the at-least-one claim it makes (issue #890). An emulator is
+not the target device class, and that is the whole of what the clause was about.
+**The risk is unchanged, not reduced**, and the first slice with hardware is
+where it is settled.
+
 **D4 — `ANativeWindow_fromSurface` acquires a reference, and `surfaceDestroyed`
 must block until rendering has stopped.**
 
@@ -236,8 +263,9 @@ shared with the web and desktop packaging half, which is the seam
 `docs/roadmap.md` named and the one v0.17's opening cut on.
 
 **None of this reduces the toolchain cost, which is the real unknown.** The
-target triples, the NDK toolchain and CI for them are at zero, and no amount of
-API design moves them. A planning session should size that first.
+target triples, the NDK toolchain and CI for them were at zero when this was
+written, and no amount of API design moves them. A planning session should size
+that first.
 
 **Narrowing v0.19 to one new platform is what makes the slice sizeable at all.**
 It was five targets when the slice was opened; iOS and Unity moving to v1, and

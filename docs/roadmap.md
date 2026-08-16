@@ -1531,14 +1531,56 @@ Depends on: nothing in v0.16. It touches `dashbuf`, `dashscene-core`, `dashcue`,
 `dashscene-engine` and both painters, none of which is on the
 loading-performance path.
 
-### v0.19 — Android, the C ABI, and layer 0 — open
+### v0.19 — Android, the C ABI, and layer 0 — closed
 
-**Epic #833.** Planned 2026-08-09, at the v0.17 close. Split out of v0.17 at
-that slice's opening (2026-08-07), on the seam the v0.17 entry above named.
+**Epic #833.** Planned 2026-08-09, at the v0.17 close. **Closed 2026-08-16.**
+**Eleven stories were finished here**, plus #843, this close itself — twelve on
+the milestone. A **thirteenth**, #842, moved to v0.21 unfinished and is
+unreachable from a milestone query, which is why the two counts differ.
+Re-derive the finished eleven with
 
-Delivers: **the second platform.** Android is at zero — no target triple, no
-toolchain, no CI job, and no FFI beyond `dashscene-unity`'s Unity-facing
-bindings.
+    gh issue list --milestone "v0.19 — Android, the C ABI, and layer 0" \
+      --state closed --label story
+
+and read #842 from v0.21. Split out of v0.17 at that slice's opening
+(2026-08-07), on the seam the v0.17 entry above named. Design capture:
+`docs/archive/2026-08-09-v019-ANDROID-DRIVER-PROMPT.md` and
+`docs/archive/2026-08-15-v019-REMAINING-DEBT-DRIVER-PROMPT.md`.
+
+**What it shipped.** Layer 0, and only layer 0: the `aarch64-linux-android`
+toolchain and its CI gates (#839), the C ABI (#840), the Android integration
+crate with the surface handoff, the `AChoreographer` loop and the destroy
+handshake (#841), and the showcase packaged as an APK (#842's build half). The
+as-built records are [`design/c-abi.md`](design/c-abi.md) and
+[`design/android-toolchain.md`](design/android-toolchain.md). Alongside it the
+slice took the shown root from a concept (#837) through the traversal, solve and
+committed table (#838), added the frame-loop contract (#834) and the adapter as
+types (#835), and gave the C ABI fonts (#947) and a mapped, root-bounded load
+(#925).
+
+**It closed with one story moved out rather than finished, and that is the
+honest reading of the slice.** #842's on-device half — the frame-rate number
+from real hardware — went to v0.21 with #885, D3a's Vulkan measurement, because
+no device was available at any point in the slice. So **layer 0 is built and has
+never run on the target device class.** The emulator ran it, and
+`design/android-toolchain.md` records why an emulator cannot stand in: it cannot
+be made to use the host GPU for Vulkan. D3a asked for that confirmation _before_
+anything was built on the assumption; the amendment on
+[`decisions/host-integration-in-three-layers.md`](decisions/host-integration-in-three-layers.md)
+records that it was not, and that the risk is unchanged rather than reduced.
+
+**Held issues, each placed rather than left on a closed slice.** #828 (a
+portable conformance suite) to v0.21, where Unity is the second painter that can
+validate one. #767 (madvise) and #825 (the payload-size gate) to v1, with the
+other work waiting on a cold-cache measurement and target hardware. #779 closed.
+
+Delivered: **the second platform.** Much of what follows is the plan as written
+on 2026-08-09, kept because the reasoning is the record; read those parts in the
+past tense. **Paragraphs carrying their own later date are amendments, not
+plan** — the issue placements dated 2026-08-16 are this close's, and are the
+part it is accountable for. At planning time Android was at zero: no target
+triple, no toolchain, no CI job, and no FFI beyond `dashscene-unity`'s
+Unity-facing bindings. What that became is in "What it shipped" above.
 
 [`decisions/host-integration-in-three-layers.md`](decisions/host-integration-in-three-layers.md)
 is **accepted** and is the structure this slice builds against: three layers —

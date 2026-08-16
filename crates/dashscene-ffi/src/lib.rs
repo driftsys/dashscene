@@ -115,10 +115,31 @@
 //!
 //! # The three rules this ABI keeps
 //!
-//! 1. **No panic crosses the boundary.** Every entry point runs inside
-//!    [`std::panic::catch_unwind`] and turns an unwind into [`DsStatus::Panic`].
-//!    An unwind across `extern "C"` is undefined behaviour, and this crate is
-//!    the one place in the workspace where that can happen.
+//! 1. **No panic crosses the boundary. Every entry point runs inside
+//!    [`std::panic::catch_unwind`]** — stated as an absolute so a new one
+//!    cannot satisfy it by its author asserting it cannot panic, which is how
+//!    [`ds_last_error_message`] came to be unguarded once. An unwind across
+//!    `extern "C"` is undefined behaviour.
+//!
+//!    `ds_abi_version` is the single exception and returns a `const`. It is
+//!    named here rather than left to be discovered, and it is the only body in
+//!    this crate simple enough to earn that.
+//!
+//!    The nine returning a [`DsStatus`] use `guard`, which turns an unwind
+//!    into [`DsStatus::Panic`]. [`ds_runtime_free`] and
+//!    [`ds_last_error_message`] catch one directly instead, because neither
+//!    has a status to report it in — the first returns `void` and the second a
+//!    length — so each swallows it rather than naming it.
+//!    [`ds_abi_version`] is the only entry point with no `catch_unwind` at
+//!    all, and it returns a constant.
+//!
+//!    The property is **catching an unwind**, not calling `guard`: two entry
+//!    points hold it without the helper, so counting `guard` under-reports.
+//!
+//!    This is **not** the workspace's only `extern` boundary. `dashscene-android`
+//!    has an `AChoreographer` callback the NDK invokes and six JNI entry points,
+//!    `demo-android` four more, and `dashc` five — none of them catches an
+//!    unwind. This rule is this crate's; it is not evidence about theirs.
 //! 2. **No failure is representable only as a formatted string.** [`DsStatus`]
 //!    is a stable enum and is the contract; the message from
 //!    [`ds_last_error_message`] is diagnostic and carries no promises. That is
