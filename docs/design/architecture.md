@@ -233,11 +233,20 @@ measured (epic #476), and the browser target is WebGPU only.
   [rendering-and-painters.md](../technotes/rendering-and-painters.md) §9-§10. It
   is instanced SDF quads too, so it shares `dashscene-gpu`'s instance struct and
   its layer-1 and layer-2 suites (R-T5).
-- **Placeholders and node replacement** — a reserved schema surface: `Node`
-  already carries the fields (`contribution_id`/`fragment_ref`/
-  `declared_size`/`interim_fill`), added append-only so existing loaders keep
-  reading new documents. Bound by R5 (cold-start cost proportional to what is
-  shown) in
+- **Placeholders and node replacement** — a schema surface **still to be
+  added**: `Node` will carry the fields
+  (`contribution_id`/`fragment_ref`/`declared_size`/`interim_fill`), append-only
+  so existing loaders keep reading new documents. **None of the four exists, and
+  nothing is reserved for them** — `table Node` in
+  `crates/dashbuf/schema/dashbuf.fbs` holds no placeholder slot. Story #1126 on
+  v0.21 is what builds them, and this line said "already carries" until the
+  v0.19 phase-end revision checked it (issue #876). Re-derive over all four,
+  with a form that prints a count rather than exiting 1 on no match:
+
+      for f in contribution_id fragment_ref declared_size interim_fill; do
+        printf '%s %s\n' "$f" "$(git grep -l "$f" -- crates/ | wc -l)"
+      done Bound by R5
+  (cold-start cost proportional to what is shown) in
   [01-goals-and-requirements.md](../specification/01-goals-and-requirements.md)
   and `docs/archive/2026-07-14-design-1-seed.md` §10.2. The contract that will
   fill a placeholder at runtime is already designed:

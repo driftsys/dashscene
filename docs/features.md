@@ -5,6 +5,14 @@
                screen can be built on this today
     method     every claim below was checked against the code, not against
                another document. See "How this file is kept honest".
+    re-checked v0.19 phase-end, 2026-08-16. The pass was scoped, not
+               exhaustive: sections 5, 9 and 10, which are what v0.19
+               and v0.20 moved, the C ABI bullets among them. Two claims were corrected here: device
+               tuning read "planned (v1)" when the first measurements are
+               v0.21, and the Unity renderer's "contract exists" read as a
+               data plane that does not exist. Two more had already been
+               corrected days earlier at the v0.19 close (the mapped load,
+               and the panic rule).
     authority  docs/roadmap.md carries the sequencing;
                docs/specification/05-qualification.md carries the evidence.
                Where this file and one of those disagree, they are right
@@ -290,10 +298,15 @@ Checked against `crates/dashscene-core/src/arena.rs`,
       only the one being shown, so a browser — which has no bytes it did not
       download — can skip a screen's images only when no other screen uses any.
       See section 6.
-- [ ] **Tuned against the target device** — planned (v1). Around twenty specific
-      improvements are identified and deliberately held: none has a frame budget
-      or a device measurement behind it, so fixing one now would produce a
-      change whose only success criterion is that the tests still pass.
+- [ ] **Tuned against the target device** — **the first measurements are
+      v0.21**, the tuning they would justify is v1. Epic #1107 carries "Android
+      and Unity on target hardware: integration and performance", with D3a's
+      Vulkan measurement (#885) and the on-device frame rate (#842) under it —
+      both moved there from v0.19, which closed having never run on the target
+      device class. The roughly twenty specific improvements stay held on v1
+      (epic #476): none has a frame budget or a device measurement behind it, so
+      fixing one now would produce a change whose only success criterion is that
+      the tests still pass.
 
 ## 6. The design file format
 
@@ -338,9 +351,11 @@ Checked against `crates/dashbuf/src/container.rs`, `bank.rs`, `prefix.rs`,
       every byte addressable whether or not it was checked; a browser has
       no such thing. Issue #822 is the change that would remove the
       condition, and it is in the runtime rather than in either host.
-- [ ] **Placeholders for content still loading** — planned (v1). Blocked on
-      deciding what a not-yet-loaded image should show, which the design source
-      does not supply.
+- [ ] **Placeholders for content still loading** — **the schema surface is
+      v0.21**, the runtime behaviour is still unscheduled. Story #1126 adds the
+      four `Node` fields node replacement binds to and #1127 the diagnostic for
+      an unfilled one; what a not-yet-loaded image should _show_ is still
+      undecided, and the design source does not supply it.
 
 ## 7. Images, fonts and asset preparation
 
@@ -511,8 +526,16 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       a target device. One set of tolerance bands serves both, and no reference
       picture had to change. How either behaves on the hardware the product
       ships on has not been measured.
-- [ ] **Unity renderer** — **part built.** The contract keeping the data
-      readable from C# exists and the build enforces it. The renderer, its
+- [ ] **Unity renderer** — **part built, and less than that phrase suggests.**
+      What exists is the _type_ contract: story #600 pinned 26 boundary-B types
+      as FFI-representable, and `dashscene-unity` exports a layout and a
+      round-trip function for each — enough to prove a C# struct matches the
+      Rust one, and nothing more. **No entry point hands a host the committed
+      tables.** `crates/dashscene-ffi/include/dashscene.h` declares no rect, no
+      instance and no table, so a host that draws its own frames has nothing to
+      read. That is issue #859, now the first story of epic #1106. Boundary B
+      itself has two consumers, both Rust painters; it is the **C#** projection
+      of it that has had none since story #600 built it. The renderer, its
       shader library and the C# projection are planned (v0.21), in a separate
       repository that does not exist yet.
 - [ ] **Browsers without WebGPU** — WebGPU is the newer browser graphics

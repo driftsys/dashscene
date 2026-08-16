@@ -1794,6 +1794,35 @@ for the failure reporting the C ABI gains here.
 which are the MVP pair, and #1120, which holds what is not MVP.** The design
 findings are held on tracking issue #851 and must not be re-derived.
 
+**Revised at the v0.19 phase-end revision (2026-08-16).** The scope above is
+unchanged — three epics, the MVP pair plus the non-gating one. The revision
+changed three things rather than re-planning the slice.
+
+**#859, the data plane, was invisible.** Epic #1106 calls it "the first build
+step" and gates #1122 and #1123 on it, but it carried **no label**, so it
+appeared in no `story` or `debt` listing, and it was missing from the epic's own
+story table. A session planning this slice from labels would not have seen the
+step that comes before the table's first row. It is now a `story` and the
+table's first entry, making eight rather than seven.
+
+**What v0.19 contributes to it** is the reason the revision looked there:
+`docs/design/c-abi.md`, written at that close, records the same gap from the
+other side — layer 0 shipped **complete for a host that hands over a surface**,
+which is exactly the shape a host drawing its own frames cannot use. Unity is
+that host.
+
+**The hardware half is heavier than planned.** v0.19 closed having never run on
+the target device class: D3a's confirmation was required _before_ anything was
+built on the assumption and was never taken, and #842's on-device half moved
+here with #885. So #1107 now carries a risk that was supposed to be retired a
+slice earlier, and `host-integration-in-three-layers.md` says the risk is
+unchanged rather than reduced.
+
+**#876 was a live falsehood in a design record**, found by this revision:
+`architecture.md` said `Node` "already carries" the four placeholder fields, and
+all four are absent from the schema and from the workspace. Story #1126 on this
+slice is what builds them. Corrected, and the issue is now labelled `debt`.
+
 **The MVP pair are two epics because the halves gate on different kinds of
 thing** — #1106 on three owner-supplied **decisions**, #1107 on a **device**.
 One epic would have made the whole slice read as blocked whenever either half
@@ -1971,6 +2000,11 @@ until #842 moved here on 2026-08-16.
 **Track B waits on #1106**, for a Unity host to exist at all.
 
 ### v0.22 — SVG as a second producer — open
+
+**Checked and unchanged at the v0.19 phase-end revision (2026-08-16).** Two
+stories, #848 and #774, and no epic — the right shape for a slice opened but not
+yet planned, and nothing v0.19 taught bears on it. Recorded so a later reader
+can tell "checked" from "not checked".
 
 **No epic filed yet.** A second producer beside Figma. Proposed on 2026-08-09 as
 v0.21 and moved here on 2026-08-12. No other slice depends on it and it depends
