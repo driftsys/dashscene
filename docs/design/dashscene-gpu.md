@@ -294,12 +294,13 @@ before binding.
 there is no channel back to the caller. What there is now is a channel _out_:
 the row draws nothing and the refusal is recorded on `Renderer::refusals`,
 naming the consumer, the row and the `ResidencyError`, with a monotonic
-`Renderer::refusals_seen` beside `evictions` and `decodes` for a host that
-samples rather than polls. That is what P4's "never a silent drop" asks for
-without widening boundary B for every painter. Two larger changes stay open and
-are not this: widening the painter's return type, and refusing the document at
-load, which is the only shape that would give `Painter::samples` a caller and
-make `baked-texel-payloads-cross-boundary-b.md` D6 true rather than decorative.
+`Renderer::refusals_seen` beside `evictions`, `decodes` and `admissions` for a
+host that samples rather than polls. That is what P4's "never a silent drop"
+asks for without widening boundary B for every painter. Two larger changes stay
+open and are not this: widening the painter's return type, and refusing the
+document at load, which is the only shape that would give `Painter::samples` a
+caller and make `baked-texel-payloads-cross-boundary-b.md` D6 true rather than
+decorative.
 
 **A row that did not resolve keeps its instance out of every draw range** (issue
 #1024). The flags below make the fragment stage discard, which is what makes the
@@ -596,10 +597,14 @@ predicate rejects samples nothing, so making its atlas resident is pure waste.
 Nothing held that — swapping the two operands left this whole crate's suite
 green, and the test above is blind to it, because a degenerate field made
 resident is refused by nothing and still leaves its row unresolved.
-`a_field_that_draws_nothing_makes_no_atlas_resident` reads `Renderer::decodes`
-over an **encoded** atlas, since the coverage fixtures here are baked and a
-baked payload is never decoded. That bounds the claim: for a baked atlas the
-waste is an upload rather than a decode, and no counter sees it today.
+`a_field_that_draws_nothing_makes_no_atlas_resident` reads
+`Renderer::admissions`, which counts payloads **made resident** — so it covers a
+baked payload and an encoded one alike, and counts only a fetch that succeeded.
+That is why it exists (issue #1165). `Renderer::decodes` answers neither
+question here: it moves only for an encoded payload, and every coverage fixture
+in this crate is baked, so it could not see a wasted fetch on the one path the
+predicate exists to keep clear; and it is incremented before `allocate` runs, so
+a payload that decoded and was then refused would read as one.
 
 ## Two targets, one device
 

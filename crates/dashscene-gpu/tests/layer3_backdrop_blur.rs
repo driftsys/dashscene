@@ -26,7 +26,7 @@ use dashpaint::{
 use dashscene_gpu::{GpuPainter, ResidencyError};
 
 mod common;
-use common::{H, JPEG_FIXTURE, SAMPLE_PNG, W, renderer, texel};
+use common::{H, JPEG_FIXTURE, W, renderer, texel};
 
 /// Where the red half ends and the blue half begins.
 const SEAM: u32 = 32;
@@ -550,6 +550,64 @@ fn mask_field() -> ImageAsset {
         format: ImageFormat::Rgba8Unorm,
         bytes,
     }
+}
+
+/// The masked-and-frosted node the two `field_draws` tests draw: the two halves
+/// under a node whose fill **and** backdrop are both masked by `field`, over
+/// `atlas`.
+///
+/// Shared because those two tests differ in what they measure and not in what
+/// they draw (issue #1166). The geometry is
+/// `a_masked_backdrop_follows_the_fields_outline_rather_than_its_box`'s, and it
+/// is not arbitrary — the panel straddles [`SEAM`], which is what every probe in
+/// this file depends on.
+///
+/// **That reference test still builds its own**, so this is three copies down to
+/// two rather than to one. It draws a different node — `frosted`, with no fill —
+/// so folding it in would mean a second parameter for the one thing the two
+/// disagree about. Moving the panel there still moves it out from under these
+/// two callers silently.
+///
+/// **The fill is deliberate, and it is the opposite of what [`frosted`] does.**
+/// That helper omits one because a panel's own colour would sit over the frosted
+/// region and every probe there would read it instead of the blur. Neither
+/// caller here has a probe to protect, and the fill is what puts **both
+/// consumers of the flag in one node**: the masked fill is the arm `paint.wgsl`
+/// gates and the backdrop is the one `backdrop_mask` filters, so a field that
+/// draws nothing has to be empty on both, and a residency fetch added to either
+/// path is in this scene.
+///
+/// **The fill must stay a solid or a gradient.** `pack_rect` emits a fill
+/// instance on the shape branch for those two only, so an image or pattern fill
+/// here would silently leave the backdrop as the sole consumer carrying the
+/// shape — and the degenerate test's `last_draw_runs() == 5` would need a
+/// different number with nothing saying why.
+///
+/// The atlas index is taken rather than pushed because the caller owns the
+/// [`ImageTable`] it also renders with. Both callers push the same baked payload
+/// today; the parameter is what lets one of them stop.
+fn masked_frosted_scene(atlas: u32, field: VectorField) -> (Vec<RectEntry>, PaintTable) {
+    let mut paints = PaintTable::new();
+    let mut rects = halves(&mut paints);
+    let green = paints.intern_fill(&dashpaint::FillSpec::Solid {
+        color: rgba(0.0, 1.0, 0.0, 1.0),
+    });
+    let panel = paints.push_with(
+        PaintEntry {
+            fill: green,
+            ..PaintEntry::default()
+        },
+        EntryParts {
+            blurs: &[backdrop(24.0)],
+            shape: Some(VectorField {
+                image: atlas,
+                ..field
+            }),
+            ..EntryParts::default()
+        },
+    );
+    rects.push(rect(24.0, 8.0, 36.0, 32.0, panel));
+    (rects, paints)
 }
 
 /// **A masked node's backdrop follows the field's outline, not its box.**
@@ -1153,7 +1211,11 @@ fn a_degenerate_coverage_field_draws_nothing() {
         ("a sound field", MASK_RECT, [0.0, 0.0, 20.0, 32.0], true),
         (
             "no atlas rectangle",
-            [3, 2, 0, 0],
+            // Derived, so that moving `MASK_RECT` — which its own doc says is
+            // deliberately off the origin and may be moved to re-test the
+            // offset trap — moves this row with it and with the residency
+            // test's, which derives the same way.
+            [MASK_RECT[0], MASK_RECT[1], 0, 0],
             [0.0, 0.0, 20.0, 32.0],
             false,
         ),
@@ -1208,42 +1270,21 @@ fn a_degenerate_coverage_field_draws_nothing() {
     ] {
         let mut images = ImageTable::new();
         let atlas = images.push_baked(mask_field(), MASK_ATLAS, MASK_ATLAS);
-
-        let mut paints = PaintTable::new();
-        let mut rects = halves(&mut paints);
-        // The geometry of `a_masked_backdrop_follows_the_fields_outline_rather_than_its_box`
-        // with one member made degenerate — **and a fill that test deliberately
-        // has not got**. `frosted` says why it omits one: a panel's own colour
-        // would sit over the frosted region and every probe there would read it
-        // instead of the blur. This test has no probe to protect, and the fill
-        // is what puts **both consumers of the flag in one node**, where the
-        // refusal tests beside it take them a file apart: the masked fill is the
-        // arm `paint.wgsl` gates and the backdrop is the one `backdrop_mask`
-        // filters, and a degenerate field has to be empty on both.
-        //
-        // So the picture this would draw with the guard removed is not that
-        // test's: the fill shades the field's plane quad green at half coverage
-        // as well, over whatever frost the backdrop leaves.
-        let green = paints.intern_fill(&dashpaint::FillSpec::Solid {
-            color: rgba(0.0, 1.0, 0.0, 1.0),
-        });
-        let panel = paints.push_with(
-            PaintEntry {
-                fill: green,
-                ..PaintEntry::default()
-            },
-            EntryParts {
-                blurs: &[backdrop(24.0)],
-                shape: Some(VectorField {
-                    image: atlas,
-                    atlas_rect,
-                    plane_bounds,
-                    distance_range: 0.5,
-                }),
-                ..EntryParts::default()
+        // The picture this would draw with the guard removed is not the
+        // geometry test's: the fill `masked_frosted_scene` carries shades the
+        // field's plane quad green at half coverage as well, over whatever
+        // frost the backdrop leaves.
+        let (rects, paints) = masked_frosted_scene(
+            atlas,
+            VectorField {
+                // `image` is the helper's own argument; whatever is written
+                // here is overwritten by it.
+                image: 0,
+                atlas_rect,
+                plane_bounds,
+                distance_range: 0.5,
             },
         );
-        rects.push(rect(24.0, 8.0, 36.0, 32.0, panel));
 
         let clips = ClipTable::new();
         let mut painter = GpuPainter::new();
@@ -2212,10 +2253,10 @@ fn replacing_the_document_rebuilds_the_blur_bindings() {
 /// **A field that draws nothing makes no atlas resident** (issue #1159).
 ///
 /// `VectorField::draws`' own doc states asking before fetching the atlas as
-/// part of the predicate's contract — a field it rejects samples nothing, so
-/// making its atlas available is pure waste. `dashscene-skia`'s order is pinned
-/// by its decode counter (issue #1044); this is the same property one painter
-/// over, where the cost is an upload rather than a decode.
+/// part of the predicate's contract: a field it rejects samples nothing, so
+/// making its atlas resident is pure waste. `dashscene-skia`'s order is pinned
+/// by its own decode counter (issue #1044); this is the same property one
+/// painter over.
 ///
 /// # Why nothing pinned it before
 ///
@@ -2228,22 +2269,35 @@ fn replacing_the_document_rebuilds_the_blur_bindings() {
 /// because the predicate still gates the assignment. Every observable that test
 /// has is blind to the order.
 ///
-/// # The observable, and what it does not cover
+/// # The instrument, and why it is not the decode counter (issue #1165)
 ///
-/// `Renderer::decodes` counts payloads decoded since the renderer was built,
-/// so the atlas has to be **encoded** — the sibling's `push_baked` payload is
-/// never decoded, which is why this test carries its own PNG. That also bounds
-/// the claim: for a baked atlas the waste is an upload rather than a decode, and
-/// this counter would not see it.
+/// `Renderer::admissions` counts payloads **admitted to residency**, which is
+/// the property this test is named for. `Renderer::decodes` is not, on two
+/// counts that both apply on this path. It moves only for an *encoded* payload,
+/// and the coverage fixture these tests draw is baked — so the first version had
+/// to carry a PNG no other coverage fixture uses, leaving the payload kind they
+/// actually draw masks with unpinned. And it is incremented *before* `allocate`
+/// runs, so a payload that decoded and was then refused increments it while
+/// nothing became resident.
+///
+/// Both are asserted below, and they answer different questions: the baked
+/// fixture pins the fetch for the payload kind this file uses, and the decode
+/// count staying at zero throughout says the baked path never took the encoded
+/// one.
 ///
 /// # The order of the cases is load-bearing
 ///
-/// The degenerate case runs **first**, on a renderer that has made nothing
-/// resident, so a decode would happen if the gate were removed. Running it after
-/// the sound case would make it a residency cache hit and it would read zero
-/// however the gate behaved.
+/// The rejected cases run **before** the sound one, and the **first** of them is
+/// the one that discriminates: it runs on a renderer that has fetched nothing,
+/// so a fetch would happen if the gate were removed. The second is weaker by
+/// construction — both build the same `ImageTable`, so they share a
+/// `PayloadKey`, and with the gate removed the first iteration admits the
+/// payload and the second is a cache hit reading zero. It is kept because it
+/// covers the predicate's other half, not because it could catch the ordering
+/// on its own. Running either after the sound case would make it a cache hit
+/// too.
 ///
-/// The sound case is the positive control, and it is what says this path decodes
+/// The sound case is the positive control, and it is what says this path fetches
 /// at all: a test asserting only zero passes against a painter that stopped
 /// resolving fields entirely, which is the hole review found in the skia twin.
 #[test]
@@ -2252,38 +2306,10 @@ fn a_field_that_draws_nothing_makes_no_atlas_resident() {
     let mut renderer = renderer();
     let mut draw_field = |field: VectorField| {
         let mut images = ImageTable::new();
-        let atlas = images.push(ImageAsset {
-            format: ImageFormat::Png,
-            bytes: SAMPLE_PNG.to_vec(),
-        });
-        let mut paints = PaintTable::new();
-        let mut rects = halves(&mut paints);
-        // **A fill as well as the backdrop**, for the reason the sibling gives:
-        // it puts both consumers of the flag in one node, so a residency fetch
-        // added to either path is in this scene. `PaintEntry::default()` has no
-        // fill, and `pack_rect` emits a fill instance on the shape branch only
-        // for a solid or a gradient, so without this the backdrop instance is
-        // the only one carrying the shape.
-        let green = paints.intern_fill(&dashpaint::FillSpec::Solid {
-            color: rgba(0.0, 1.0, 0.0, 1.0),
-        });
-        let panel = paints.push_with(
-            PaintEntry {
-                fill: green,
-                ..PaintEntry::default()
-            },
-            EntryParts {
-                blurs: &[backdrop(24.0)],
-                shape: Some(VectorField {
-                    image: atlas,
-                    ..field
-                }),
-                ..EntryParts::default()
-            },
-        );
-        rects.push(rect(24.0, 8.0, 36.0, 32.0, panel));
+        let atlas = images.push_baked(mask_field(), MASK_ATLAS, MASK_ATLAS);
+        let (rects, paints) = masked_frosted_scene(atlas, field);
 
-        let before = renderer.decodes();
+        let before = (renderer.admissions(), renderer.decodes());
         let mut painter = GpuPainter::new();
         painter.paint(
             &rects,
@@ -2305,21 +2331,24 @@ fn a_field_that_draws_nothing_makes_no_atlas_resident() {
                 H,
             )
             .expect("the fixture extent is within any device's maximum");
-        (renderer.decodes() - before, renderer.last_draw_runs())
+        (
+            renderer.admissions() - before.0,
+            renderer.decodes() - before.1,
+            renderer.last_draw_runs(),
+        )
     };
 
-    // The fixture is 7x5, so this sub-rect is inside it. The two rejected cases
-    // are **derived from** the sound one, each changing one member, so "differs
-    // in the predicate's answer and in nothing else" is structural rather than
-    // a claim in a comment.
+    // The two rejected cases are **derived from** the sound one, each changing
+    // one member, so "differs in the predicate's answer and in nothing else" is
+    // structural rather than a claim in a comment.
     let sound = VectorField {
         image: 0,
-        atlas_rect: [1, 1, 4, 3],
+        atlas_rect: MASK_RECT,
         plane_bounds: [0.0, 0.0, 20.0, 32.0],
         distance_range: 0.5,
     };
     let no_texels = VectorField {
-        atlas_rect: [1, 1, 0, 0],
+        atlas_rect: [MASK_RECT[0], MASK_RECT[1], 0, 0],
         ..sound
     };
     let no_quad = VectorField {
@@ -2334,36 +2363,125 @@ fn a_field_that_draws_nothing_makes_no_atlas_resident() {
     );
 
     for (what, field) in [("no atlas rectangle", no_texels), ("no quad", no_quad)] {
+        let (admissions, decodes, _) = draw_field(field);
         assert_eq!(
-            draw_field(field).0,
-            0,
-            "a field with {what} must decode nothing: `field_draws` is asked before \
-             `resident_image`, and this renderer has made nothing resident yet, so a decode here \
-             is the payload being fetched for a field that samples none of it",
+            admissions, 0,
+            "a field with {what} must admit nothing: `field_draws` is asked before \
+             `resident_image`, so a fetch here is the payload being made available for a field \
+             that samples none of it",
+        );
+        assert_eq!(
+            decodes, 0,
+            "and it must decode nothing either — the fixture is baked, so this stays zero \
+             whatever the gate does, and a non-zero reading means the fixture stopped being the \
+             payload kind this file draws masks with",
         );
     }
 
-    // The positive control, and it asserts **residency** rather than only a
-    // decode. `Residency::resident` counts the decode and only then allocates,
-    // so a payload that decoded and was then refused — `FrameExceedsAtlas` —
-    // would satisfy a decode count of one while nothing became resident and the
-    // frame drew nothing. The refusal list and the draw count are what exclude
-    // that: five draws is a field that resolved and planned the backdrop.
-    let (decodes, runs) = draw_field(sound);
+    // The positive control. `admissions` is incremented after `allocate` and
+    // `upload` have both succeeded, so the count below already excludes a
+    // payload that decoded and was then refused — that was the weakness of the
+    // decode counter this replaced, not of this one. The refusal list and the
+    // draw count are kept for a different reason: they say the row the frame
+    // resolved is the one the picture is drawn from, so an admission that
+    // resolved nothing would still fail here.
+    let (admissions, decodes, runs) = draw_field(sound);
     assert_eq!(
-        decodes, 1,
-        "a sound field must decode its atlas exactly once, or the zeros above hold against a \
-         painter that resolves no field at all rather than against one that asks first",
+        admissions, 1,
+        "a sound field must make its atlas resident exactly once, or the zeros above hold \
+         against a painter that resolves no field at all rather than against one that asks first",
+    );
+    assert_eq!(
+        decodes, 0,
+        "a baked payload is never decoded, so this counter cannot see the fetch above — which is \
+         why `admissions` is the instrument and issue #1165 added it",
     );
     assert!(
         renderer.refusals().is_empty(),
-        "the sound field's payload must have been made resident, not decoded and then refused — \
+        "the sound field's payload must have been made resident, not fetched and then refused — \
          got {:?}",
         renderer.refusals(),
     );
     assert_eq!(
         runs, 5,
         "a sound field resolves, so the frame plans the backdrop and draws the masked fill; one \
-         draw would mean the decode above bought nothing",
+         draw would mean the fetch above bought nothing",
     );
+}
+
+/// **A payload is admitted once, however many frames draw it** (issue #1165).
+///
+/// `Residency::admissions` counts the insertion, so a residency **cache hit**
+/// must not move it — that is the property separating an admission counter from
+/// a call counter, and the reason the accessor's doc can say "steady state is
+/// zero growth".
+///
+/// Nothing else reaches it. `resolve_frame` memoises per row through
+/// `out.atlas_of_shape[row].is_none()`, so
+/// `a_field_that_draws_nothing_makes_no_atlas_resident` calls
+/// `Residency::resident` exactly once per payload and never takes the cache-hit
+/// path at all: moving the increment above that early return leaves it green.
+/// `Renderer::decodes` has this test one file over — a resident PNG decoded once
+/// across five frames — and the new counter arrived without the equivalent.
+///
+/// The same scene four times, so every frame after the first is a hit on both
+/// the frame's own memo and residency's.
+#[test]
+fn an_admitted_payload_is_counted_once_however_many_frames_draw_it() {
+    let clips = ClipTable::new();
+    let mut renderer = renderer();
+    let mut images = ImageTable::new();
+    let atlas = images.push_baked(mask_field(), MASK_ATLAS, MASK_ATLAS);
+    let (rects, paints) = masked_frosted_scene(
+        atlas,
+        VectorField {
+            image: 0,
+            atlas_rect: MASK_RECT,
+            plane_bounds: [0.0, 0.0, 20.0, 32.0],
+            distance_range: 0.5,
+        },
+    );
+
+    let mut draw = || {
+        let mut painter = GpuPainter::new();
+        painter.paint(
+            &rects,
+            &paints,
+            &images,
+            &clips,
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        renderer
+            .render(
+                painter.instances(),
+                &paints,
+                &images,
+                &clips,
+                &GlyphRunTable::new(),
+                W,
+                H,
+            )
+            .expect("the fixture extent is within any device's maximum");
+        renderer.admissions()
+    };
+
+    // The premise: this field draws, so the payload is admitted at all. A field
+    // that drew nothing would satisfy every assertion below at zero.
+    assert_eq!(
+        draw(),
+        1,
+        "the first frame must admit the coverage atlas, or the equality below holds against a \
+         scene that never fetched anything",
+    );
+    for frame in 2..=4 {
+        assert_eq!(
+            draw(),
+            1,
+            "frame {frame} re-admitted a payload residency already held: a cache hit returns \
+             before the increment, and a counter that moved here would be counting calls rather \
+             than admissions",
+        );
+    }
 }

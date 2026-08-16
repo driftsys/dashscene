@@ -1621,10 +1621,10 @@ impl VectorField {
     /// count the same *kind* of waste through **two different instruments**:
     /// `dashscene-skia` through a `cfg(test)` counter inside its own decode
     /// cache, which is compiled out of every shipped build, and `dashscene-gpu`
-    /// through `Renderer::decodes`, which is a production accessor. Each pairs
-    /// the rejected case with a **drawing** one, because a test asserting only
-    /// that nothing was fetched passes equally against a painter that fetches
-    /// nothing at all.
+    /// through `Renderer::admissions`, a production accessor counting payloads
+    /// made resident. Each pairs the rejected case with a **drawing** one,
+    /// because a test asserting only that nothing was fetched passes equally
+    /// against a painter that fetches nothing at all.
     ///
     /// It is written here rather than only on [`atlas_rect`](Self::atlas_rect)
     /// because this method is the thing both painters call, and a painter

@@ -369,6 +369,31 @@ pub struct Residency {
     /// just as happily if every frame decoded its payloads again. It did, until
     /// review caught it.
     decodes: u64,
+    /// How many payloads have been **admitted** to this set since it was built
+    /// (issue #1165).
+    ///
+    /// An event count, like its three siblings, and named for the event rather
+    /// than for the population: eviction never decrements it. `resident` is
+    /// deliberately not in the name — [`ResidencyError::FrameExceedsAtlas`]
+    /// carries a `resident` field that genuinely is a gauge of what one atlas
+    /// currently holds, and a host sampling this one for that number would read
+    /// a total that only rises.
+    ///
+    /// The instrument [`Self::decodes`] is not, and the difference is the whole
+    /// reason this exists: a decode happens only for an *encoded* payload, and
+    /// it is counted before [`Self::allocate`] runs — so a payload that decoded
+    /// and was then refused increments that counter while nothing became
+    /// resident. This one counts the insertion itself, so it answers "was this
+    /// payload fetched at all" for a baked payload and an encoded one alike, and
+    /// only when the fetch succeeded.
+    ///
+    /// That distinction has a concrete consequence here: the coverage-field
+    /// fixture this crate's `field_draws` tests draw is baked, so `decodes`
+    /// stays at zero however that path behaves and could not see a wasted fetch
+    /// on the one `VectorField::draws` exists to keep clear. Other fixtures in
+    /// those files are encoded — several are `Jpeg`, pushed to be refused — so
+    /// "baked" is a property of the drawing fixture rather than of the crate.
+    admissions: u64,
 }
 
 /// Why a payload could not be made resident.
@@ -473,6 +498,7 @@ impl Residency {
             allocations: 0,
             evictions: 0,
             decodes: 0,
+            admissions: 0,
         }
     }
 
@@ -547,6 +573,17 @@ impl Residency {
     /// Payloads evicted to make room since this set was built.
     pub fn evictions(&self) -> u64 {
         self.evictions
+    }
+
+    /// How many payloads this set has admitted since it was built.
+    ///
+    /// Steady state is zero growth, for the reason [`Self::decodes`] gives, and
+    /// over a wider population: this counts baked payloads too, and counts only
+    /// the fetches that succeeded. A cache hit returns before the increment,
+    /// which `an_admitted_payload_is_counted_once_however_many_frames_draw_it`
+    /// is what holds.
+    pub fn admissions(&self) -> u64 {
+        self.admissions
     }
 
     /// How many encoded payloads this set has decoded since it was built.
@@ -696,6 +733,7 @@ impl Residency {
         let slot = Slot { atlas, rect };
         texels.upload(queue, &self.atlases[atlas as usize].texture, rect);
 
+        self.admissions += 1;
         self.resident.insert(
             key,
             Residence {
