@@ -102,9 +102,12 @@ one. Nothing then divides by zero; what happens instead is that
 `TexelPayload::of` takes the extent from the decode while `gpu_glyph_run`
 normalises with the metrics extent, so a disagreement samples the wrong texels
 rather than failing — a plausible wrong picture, which is the class P4 refuses.
-The field is private behind `Atlas::image`, and the four in-workspace readers
-(`dashscene-skia`'s `MsdfCache::refresh`, `dashscene-gpu`'s `PayloadKey::atlas`
-and `resolve_frame`, and one `dashscene-engine` test) call the accessor.
+The field is private behind `Atlas::image`, and every in-workspace reader calls
+the accessor: `dashscene-skia`'s `MsdfCache::refresh`, `dashscene-gpu`'s
+`PayloadKey::atlas` and `resolve_frame`, and two `dashscene-engine` tests — five
+reading sites across four crates, with `dashpaint`'s own
+`an_atlas_reports_the_payload_it_was_built_with` a sixth. Re-derive with
+`grep -rn 'atlas.image()'` rather than trusting the count.
 
 **The payload is not deliberately replaceable, and that is the decision this
 records.** The alternative #1074 named was to keep it assignable and move an
@@ -222,10 +225,24 @@ did not have.
   does not make the floors redundant. `dashscene-skia`'s is `field_quad`; the
   lean painter's is `paint.wgsl`'s vertex stage, added at #1185.
 
-This list carried a sixth bullet until issue #1074 — "`Atlas::width` and
+  **A third site derives the same device quad and needs no floor**, which is
+  worth stating because it means the two painters still disagree here.
+  `blur.wgsl`'s masked-backdrop arm builds
+  `quad = vec4f(blur.bounds.xy + blur.plane.xy, blur.plane.zw - blur.plane.xy)`
+  — the extent taken from the plane alone, with the origin in the position term
+  only — so it cannot cancel whatever the origin is. The consequence is that for
+  a masked node at a collapsed origin carrying a backdrop blur, `dashscene-skia`
+  refuses the whole node at its gate and draws nothing while the lean painter's
+  blur pipeline draws its mask. Not a regression — the reference painter refused
+  it inside `field_coverage` before issue #1160 moved the ask up — and it is a
+  divergence #1048 would still leave open.
+
+This list carried a seventh bullet until issue #1074 — "`Atlas::width` and
 `Atlas::height` are still `pub` and unchecked" — which issue #1001 had already
 closed, and which this record's own section above says was closed. It is removed
-rather than corrected: there is nothing left of it to state.
+rather than corrected: there is nothing left of it to state. The "sixth gap"
+below counts filed gaps rather than positions in this list, and the two
+enumerations have never agreed.
 
 `GlyphRun::size` was filed as a sixth gap (#999) and is not one. It is the third
 operand of `px_range = distance_range_px * size / px_per_em`, and no seam in

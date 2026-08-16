@@ -537,14 +537,24 @@ fn identified_extent(format: ImageFormat, bytes: &[u8]) -> (u32, u32) {
 /// applies and this is the one place it is checked. Issue #1014 fixed
 /// [`GlyphRunTable::push_run`], PR #1038 carried it to the five ranges
 /// [`PaintTable::push_with`] assigns, and issue #1045 was the two sites left
-/// converting separately — [`ClipTable::push`] and [`ImageTable::push_row`].
+/// converting separately — [`ClipTable::push`] and `ImageTable::push_row`.
 ///
-/// Unreachable in practice on the target hardware for the four row arrays —
-/// four billion of any boundary-B row is orders of magnitude past a fixed
-/// memory budget. **The image pool is the near one**: its offset counts
-/// *bytes* rather than rows, so `u32::MAX` there is 4 GiB of payload, three
-/// orders of magnitude nearer than the others (issue #1045). Every one of them
-/// is checked because it is a contract these methods state.
+/// **Four helpers, nine arrays.** `PaintTable::flat_range` alone serves six —
+/// the five [`PaintTable::push_with`] assigns and the gradient stops — beside
+/// one each for the glyph quads, the clip boxes and the image pool. The count
+/// of helpers is what the tests enumerate; the count of arrays is what the rule
+/// covers, and they are not the same number.
+///
+/// Unreachable in practice on the target hardware for the eight row arrays —
+/// four billion of any boundary-B row is far past a fixed memory budget. **The
+/// image pool is the near one**: its offset counts *bytes* rather than rows, so
+/// `u32::MAX` there is 4 GiB of payload where four billion 12-byte `GlyphQuad`
+/// rows would be about 48 GB — an order of magnitude nearer (issue #1045).
+/// Every one of them is checked because it is a contract these methods state.
+///
+/// [`ImageTable::push_mapped`] does not come through here and states the same
+/// end bound itself, in `u64`: its offset is a file offset rather than a
+/// position in a growing array, so it has nothing to append at.
 fn bounded_range(array_len: usize, count: usize, array: &str, part: &str) -> (u32, u32) {
     let offset = u32::try_from(array_len).unwrap_or_else(|_| panic!("{array} exceed u32::MAX"));
     let count = u32::try_from(count).unwrap_or_else(|_| panic!("{part} exceed u32::MAX"));
@@ -869,15 +879,17 @@ impl ImageTable {
     ///
     /// This table's nouns on the shared [`bounded_range`], where the rule and
     /// the reason it is the sum rather than the two lengths are written once
-    /// (issues #1014 and #1045). The near ceiling of the four sites that rule
+    /// (issues #1014 and #1045). The near ceiling of the nine arrays that rule
     /// covers: this offset counts bytes rather than rows, so it is 4 GiB of
-    /// payload against a target with a fixed memory budget.
+    /// payload where four billion 12-byte `GlyphQuad` rows would be about
+    /// 48 GB — an order of magnitude nearer, on a target with a fixed memory
+    /// budget.
     ///
-    /// [`push_mapped`](Self::push_mapped) does **not** go through it, and that
-    /// is not the same omission #1045 named. Its offset comes from the caller
-    /// rather than from a growing array, so there is no next push whose offset
-    /// this one could put out of reach; it checks `offset + len` against the
-    /// region it names, in `u64`, before either is narrowed.
+    /// [`push_mapped`](Self::push_mapped) does **not** go through it, because
+    /// its offset is a file offset the caller states rather than a position in
+    /// a growing array — so there is no next push this one could put out of
+    /// reach, which is the half of #1014 that does not apply. It states the
+    /// other half itself, beside its region check.
     fn payload_range(array_len: usize, count: usize) -> (u32, u32) {
         bounded_range(
             array_len,
@@ -885,6 +897,59 @@ impl ImageTable {
             "an image pool's bytes",
             "one payload's bytes",
         )
+    }
+
+    /// [`push_mapped`](Self::push_mapped)'s range, checked against the
+    /// `region`-byte mapping it names and narrowed to the pair
+    /// [`ImageEntry`] stores.
+    ///
+    /// A free function of three numbers, rather than inline, because none of
+    /// what it refuses can be reached through the public path in a test: the
+    /// last of the three needs a mapping past 4 GiB. That is the same reason
+    /// `flat_ranges` tests [`bounded_range`]'s callers directly.
+    ///
+    /// # Panics
+    ///
+    /// On `offset + len` overflowing `u64`, and on a range that runs past the
+    /// region — which would otherwise be discovered by a painter slicing out of
+    /// bounds one frame later.
+    ///
+    /// On a range whose **end** runs past `u32::MAX` (issue #1045). This is the
+    /// sum rather than the two numbers, and the two narrowings below bound each
+    /// of them and their sum at nothing — so a mapping past 4 GiB admitted a row
+    /// whose end no `u32` can express. It reaches further than a Rust reader:
+    /// [`ImageEntry`] is a `#[repr(C)]` boundary-B row, and a C or C# consumer
+    /// adding the two fields in `uint32` wraps where `payload`'s `usize`
+    /// arithmetic does not.
+    ///
+    /// Not routed through [`payload_range`](Self::payload_range), which takes
+    /// the array's own length: nothing here appends to a pool, so the half of
+    /// issue #1014 about the *next* push does not apply, and the two numbers
+    /// arrive in `u64` where that helper would narrow them first.
+    fn mapped_range(offset: u64, len: u64, region: u64) -> (u32, u32) {
+        let end = offset
+            .checked_add(len)
+            .unwrap_or_else(|| panic!("payload range {offset}..+{len} overflows"));
+        assert!(
+            end <= region,
+            "payload range {offset}..{end} runs past the {region}-byte region it names"
+        );
+        assert!(
+            end <= u64::from(u32::MAX),
+            "payload range {offset}..{end} ends past u32::MAX: boundary B names a payload with a \
+             u32 offset and a u32 length, so nothing past that end has a range that can be \
+             expressed (story #578)"
+        );
+        let offset = u32::try_from(offset).unwrap_or_else(|_| {
+            panic!(
+                "payload offset {offset} is past {}: a mapped document is capped at 4 GiB by \
+                 ImageEntry's u32 offset (docs/decisions/assets-borrow-from-the-mapping.md D7)",
+                u32::MAX
+            )
+        });
+        let len = u32::try_from(len)
+            .unwrap_or_else(|_| panic!("payload length {len} is past {}", u32::MAX));
+        (offset, len)
     }
 
     /// A table whose payloads live in `region` and are never copied out of it —
@@ -944,23 +1009,8 @@ impl ImageTable {
              it: build a mapped table with ImageTable::mapped \
              (docs/decisions/assets-borrow-from-the-mapping.md D1)"
         );
-        let end = offset
-            .checked_add(len)
-            .unwrap_or_else(|| panic!("payload range {offset}..+{len} overflows"));
         let region = self.pool.bytes().len() as u64;
-        assert!(
-            end <= region,
-            "payload range {offset}..{end} runs past the {region}-byte region it names"
-        );
-        let offset = u32::try_from(offset).unwrap_or_else(|_| {
-            panic!(
-                "payload offset {offset} is past {}: a mapped document is capped at 4 GiB by \
-                 ImageEntry's u32 offset (docs/decisions/assets-borrow-from-the-mapping.md D7)",
-                u32::MAX
-            )
-        });
-        let len = u32::try_from(len)
-            .unwrap_or_else(|_| panic!("payload length {len} is past {}", u32::MAX));
+        let (offset, len) = Self::mapped_range(offset, len, region);
         if !format.is_encoded() {
             let expected = format
                 .payload_len(width, height)
@@ -2125,13 +2175,16 @@ impl PaintTable {
     /// This table's nouns on the shared [`bounded_range`], where the rule and the
     /// reason it is the sum rather than the two lengths are written once
     /// (issues #1014 and #1045).
+    ///
+    /// **The nouns are the table's rather than any one array's**, and that is
+    /// deliberate where the other three helpers name their array. This one
+    /// serves six: the five [`push_with`](Self::push_with) assigns through
+    /// [`span`](Self::span), and the gradient stops
+    /// [`intern_fill`](Self::intern_fill) assigns directly. A shadow is not a
+    /// fill row and a stop is not a row of the entry table, so a message naming
+    /// either would be wrong five times out of six.
     fn flat_range(array_len: usize, count: usize) -> (u32, u32) {
-        bounded_range(
-            array_len,
-            count,
-            "a paint table's fill rows",
-            "one part's fill rows",
-        )
+        bounded_range(array_len, count, "a paint table's rows", "one part's rows")
     }
 
     /// A row index, offset or count as the flattened types carry them.
@@ -3575,17 +3628,30 @@ pub trait Painter {
 /// long — about 48 GB of `GlyphQuad` — which no test can build (issue #1014).
 ///
 /// The arithmetic is the whole of the fix, so testing it directly is testing
-/// the fix: every one of these is the only producer of a range in its table,
-/// and every push routes the ranges it assigns through one of them.
+/// the fix: every push routes the ranges it assigns through one of these four,
+/// and a wrapper that stopped calling [`bounded_range`] fails these rather than
+/// only the shared function's own arithmetic.
 ///
 /// **Four callers rather than two since issue #1045.** `ClipTable::push` and
 /// `ImageTable::push_row` converted their offset and their count separately
 /// until then, so they had the shape #1014 corrected and no coverage. Each now
-/// has a named range helper of its own, exactly as the first two do, and the
-/// table below drives all four — so a fifth site added without a row here is
-/// what this list is for, and a wrapper that stopped calling
-/// [`bounded_range`] fails these rather than only the shared function's own
-/// arithmetic.
+/// has a named range helper of its own, exactly as the first two do.
+///
+/// **Two range producers sit outside the `sites` table**, so it is not the
+/// module's whole coverage and should not be read as one:
+///
+/// - `PaintTable::span` canonicalizes an empty range to `(0, 0)` before
+///   `flat_range` ever runs, and `an_empty_part_keeps_its_offset` covers that
+///   difference explicitly.
+/// - `ImageTable::push_mapped` takes a caller's file offsets rather than a
+///   growing array's length, so the half of #1014 about the *next* push does
+///   not apply to it and [`bounded_range`] is the wrong shape. It states the
+///   end bound itself, in `u64`, through `ImageTable::mapped_range` —
+///   extracted so that `a_mapped_range_ending_past_u32_max_is_refused` can
+///   reach a check no public path can, since it needs a mapping past 4 GiB.
+///
+/// A **third** producer appearing with neither a `sites` row nor a test of its
+/// own is what this list is for.
 #[cfg(test)]
 mod flat_ranges {
     use super::{ClipBox, ClipTable, CornerRadii, GlyphRunTable, ImageTable, PaintTable};
@@ -3652,6 +3718,54 @@ mod flat_ranges {
             assert_eq!(range(7, 0), (7, 0), "{what}");
         }
         assert_eq!(PaintTable::span(7, 0), (0, 0));
+    }
+
+    /// `ImageTable::push_mapped`'s range states the same end bound, and it is
+    /// the one member of the rule that no test can reach through its public
+    /// path: it needs a mapping past 4 GiB (issue #1045).
+    ///
+    /// Three refusals in order, and the middle row is the one this issue added.
+    /// The `4 GiB - 1` row is what says the bound is on the **end** rather than
+    /// on either number: both narrow to a `u32` on their own, and their sum does
+    /// not.
+    #[test]
+    fn a_mapped_range_ending_past_u32_max_is_refused() {
+        const FOUR_GIB: u64 = u32::MAX as u64 + 1;
+        // A mapping large enough that the region check cannot be what refuses
+        // the rows below — the whole point is which guard answers.
+        let region = 8 * FOUR_GIB;
+
+        assert_eq!(
+            ImageTable::mapped_range(1024, 4096, region),
+            (1024, 4096),
+            "a range well inside the ceiling is narrowed rather than refused"
+        );
+        assert_eq!(
+            ImageTable::mapped_range(u64::from(u32::MAX) - 4096, 4096, region),
+            (u32::MAX - 4096, 4096),
+            "the largest range that fits is assigned, so the guard bounds the range and not \
+             merely the offset"
+        );
+
+        let offset = u64::from(u32::MAX) - 999;
+        let len = 1000;
+        assert!(
+            u32::try_from(offset).is_ok() && u32::try_from(len).is_ok(),
+            "both numbers must narrow on their own, or the sum is not what is under test"
+        );
+        let payload =
+            std::panic::catch_unwind(move || ImageTable::mapped_range(offset, len, region))
+                .expect_err("a mapped range ending past u32::MAX must be refused");
+        let message = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .unwrap_or("<panic payload was not a string>")
+            .to_owned();
+        assert!(
+            message.contains("ends past u32::MAX"),
+            "the refusal must be the end-of-range check, not the region check above it or either \
+             narrowing below it; got: {message}"
+        );
     }
 
     /// The clip table hands back the range it was given, so the shared check is
