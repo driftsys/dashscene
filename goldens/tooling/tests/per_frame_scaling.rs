@@ -69,12 +69,20 @@
 //! ```text
 //! document           frame         solves   rect rows   bytes
 //! small-root (1)     paint-only         0           1     892
-//! small-root (1)     layout             1           1     297
+//! small-root (1)     layout             1           1     308
 //! many-root (65)     paint-only         0           1   11260
-//! many-root (65)     layout             1           1    1385
-//! ratio, many/small  layout          1.00x       1.00x   4.66x
-//! slope, per extra root                                     17
+//! many-root (65)     layout             1           1     308
+//! ratio, many/small  layout          1.00x       1.00x   1.00x
+//! slope, per extra root                                      0
 //! ```
+//!
+//! **The layout row's byte figures are equal, not merely close.** That is the
+//! third term at its strongest: the commit and the solver allocate the same
+//! bytes for a sixty-five-root document as for a one-root one.
+//!
+//! **The paint-only row is not**, and the band does not assert on it. Its
+//! difference is stable at about 162 bytes per extra root, from a cause nothing
+//! has attributed — issue #1146.
 //!
 //! The byte levels are stated for completeness and asserted on nowhere. What is
 //! asserted is the **growth** between the two documents — 1088 bytes, which is
@@ -107,6 +115,7 @@
 //!                    bytes per extra root
 //! before (#944)      69
 //! after  (#944)      17
+//! after  (#1111)      0
 //! ```
 //!
 //! It came down in four measured steps, each predicted before it was taken and
@@ -116,18 +125,23 @@
 //! group-opacity vectors followed, and to 17 when `dfs_order` stopped
 //! reserving the whole document.
 //!
-//! **17 is not zero, and what remains is in `dashscene-engine`**, which this
-//! story deliberately did not touch: `baseline_pass`'s `cross_offset` (8 bytes
-//! per node), `incremental`'s `on_path` (1 byte per node) and the
-//! `state.roots.clone()` whose own comment calls the roots list small when it
-//! is the document's root count (8 bytes per root). Issue #1111 carries them.
+//! **The last 17 were `dashscene-engine`'s**, which story #944 deliberately did
+//! not touch and issue #1111 then closed, in three steps that landed on their
+//! predictions exactly: 17 to 9 when `state.roots.clone()` became a borrow of a
+//! disjoint field, to 8 when `incremental`'s `on_path` became a set of the
+//! dirty closure rather than a flag per node, and to 0 when `baseline_pass`'s
+//! `cross_offset` became a map — which allocates nothing at all on a scene with
+//! no baseline text rows, where the vector it replaced was sized by the
+//! document and thrown away unused.
 //!
-//! **The one-root document's layout frame went up, from 289 bytes to 297**, and
-//! that is the honest reading of the last step: an unreserved `Vec` growing to
-//! one element takes a larger minimum allocation than a one-element reserve.
-//! The term is a slope precisely so that a level moving in the small case
-//! cannot be mistaken for the document-scaled cost this measures — 4705 bytes
-//! to 1385 over the sixty-five-root document, on the same change.
+//! **The one-root document's layout frame went up twice on the way**, 289 to
+//! 297 under #944 and 297 to 308 under #1111, and both are the honest reading
+//! of a trade. An unreserved `Vec` growing to one element takes a larger
+//! minimum allocation than a one-element reserve; a hash set holding one dirty
+//! node takes more than one byte. The term is a difference precisely so that a
+//! level moving in the small case cannot be mistaken for the document-scaled
+//! cost it measures — over the same two changes the sixty-five-root document
+//! went 4705 bytes to 308.
 //!
 //! The band landed first so that before-number was measured rather than
 //! remembered — a band added in the same change that improves what it measures
@@ -359,9 +373,17 @@ const MANY_RECT_ROWS: usize = 1;
 /// beyond the first — the third term, and the only one of the three that can
 /// see what a commit's per-node scratch costs.
 ///
-/// **69 until story #944; 17 after it.** The 17 that remain are
-/// `dashscene-engine`'s per-frame scratch, not the commit's — issue #1111 —
-/// so a change that moves this number downward is most likely that one.
+/// **69 until story #944, 17 after it, and 0 since issue #1111.** Zero is an
+/// equality, not a rounding: over the band's fixture the sixty-five-root
+/// document's steady-state layout frame allocates byte-identically to the
+/// one-root document's, 308 bytes each. A frame's allocation does not grow with
+/// the document at all, which is the third term's whole claim and is now stated
+/// at its strongest.
+///
+/// **This is the layout frame.** The paint-only frame is still document-scaled
+/// at about 162 bytes per extra root, from a cause nothing has attributed —
+/// issue #1146. That is why the sentence above says "steady-state layout frame"
+/// and not "a frame".
 ///
 /// # Why a slope where the other two terms are levels
 ///
@@ -395,7 +417,7 @@ const MANY_RECT_ROWS: usize = 1;
 /// one-root, seventeen-root and sixty-five-root documents alike. Only the sizes
 /// differ, because what scales is the length of vectors the commit allocates
 /// once each.
-const BYTES_PER_EXTRA_ROOT: u64 = 17;
+const BYTES_PER_EXTRA_ROOT: u64 = 0;
 
 /// The same three over the single-root document — the denominator the ratio is
 /// taken against, and what the many-root column becomes when #838 lands.

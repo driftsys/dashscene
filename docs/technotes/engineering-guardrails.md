@@ -168,10 +168,20 @@ rules.
   steady-state layout frame asks the allocator for per root beyond the first —
   and then bounded the scratch: **69 bytes per extra root before, 17 after.**
 
-  **The third term does not read 1.00x, and is not claimed to.** The 17 bytes
-  that remain are `dashscene-engine`'s own per-frame scratch — two vectors sized
-  by the document's node count and one by its root count — which story #944 did
-  not touch and issue #1111 carries.
+  **The third term reads 1.00x too, since issue #1111.** The 17 bytes that
+  remained after story #944 were `dashscene-engine`'s own per-frame scratch —
+  two vectors sized by the document's node count and one by its root count — and
+  closing them took the term to **0 bytes per extra root**, which over this
+  fixture means the sixty-five-root document's steady-state layout frame
+  allocates byte-identically to the one-root document's.
+
+  **What that does and does not say.** It is measured on the **layout** frame.
+  The paint-only frame is still document-scaled, at about 162 bytes per extra
+  root from a cause nothing has attributed (issue #1146), so the guarded claim
+  is "a steady-state layout frame costs the shown root and not the document" and
+  not the unqualified sentence. This entry states the narrower one on purpose:
+  reading it as the general claim is the same over-reading issue #944 filed
+  against this paragraph the first time.
 
   The before-numbers are still measured rather than remembered:
   `the_confinement_is_what_makes_the_number_one` clears the shown root on every

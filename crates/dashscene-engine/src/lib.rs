@@ -37,7 +37,7 @@ use dashscene_core::{
 };
 use dashscene_typeset::atlas::AtlasMetrics;
 use dashscene_typeset::text::{Font, FontFamily, TextShape, Typesetter, WeightedFont};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use taffy::prelude::*;
 use taffy::{AlignContent, AlignItems, AlignSelf, GridPlacement, JustifyContent, Position};
 
@@ -925,7 +925,6 @@ fn rebuild(
         arena,
         typesetter,
         &mut baseline_floors,
-        n,
         solves,
     );
 
@@ -1037,10 +1036,13 @@ fn incremental(
         }
     }
 
-    // `roots` is cloned so the loop does not hold a borrow of `state`
-    // while `state.tree` is recomputed (the roots list is small).
-    let roots = state.roots.clone();
-    let shown_taffy = shown_taffy_roots(arena, &roots);
+    // Borrowed, not cloned. `shown_taffy_roots` hands back a subslice of
+    // `state.roots`, and everything below it mutates `state.tree` — a
+    // *different* field, so the borrow checker takes both at once and the
+    // clone the comment here used to justify was never needed. It was 8 bytes
+    // per root in the document on every frame, which the per-frame band reads
+    // as document-scaled cost whatever the shown root is (issue #1111).
+    let shown_taffy = shown_taffy_roots(arena, &state.roots);
     let typesetter = compute_all(&mut state.tree, shown_taffy, typesetter, solves);
 
     // #272 baseline correction (see `rebuild`): re-place a baseline row's text
@@ -1054,7 +1056,6 @@ fn incremental(
         arena,
         typesetter,
         &mut state.baseline_floors,
-        state.node_count,
         solves,
     );
 
@@ -1062,14 +1063,20 @@ fn incremental(
     // (a fixed-size frame with a shifted child): mark every dirty node and
     // its ancestors so the readback descends to reach them, on top of
     // descending wherever a rect actually moved.
-    let mut on_path = vec![false; state.node_count];
+    //
+    // A set of what is on a path, not a flag per node in the document. What
+    // goes in is the dirty set closed over ancestors, which is bounded by what
+    // changed this frame — where a vector was bounded by the document, and
+    // cost a byte per node of it on every frame whatever was shown (issue
+    // #1111). The `break` below already made the insertion count the size of
+    // that closure rather than the sum of the chains.
+    let mut on_path: FxHashSet<NodeId> = FxHashSet::default();
     for &node in &dirty {
         let mut cursor = Some(node);
         while let Some(current) = cursor {
-            if on_path[current.index()] {
+            if !on_path.insert(current) {
                 break;
             }
-            on_path[current.index()] = true;
             cursor = state.parent_of[current.index()];
         }
     }
@@ -1653,7 +1660,7 @@ fn read_back_full(
     tree: &TaffyTree<TextContext>,
     taffy_of: &[taffy::NodeId],
     prev_rel: &mut [[u32; 4]],
-    cross_offset: &[Option<f32>],
+    cross_offset: &FxHashMap<NodeId, f32>,
     arena: &Arena,
     node: NodeId,
     parent_origin: (f32, f32),
@@ -1663,7 +1670,10 @@ fn read_back_full(
         .layout(taffy_of[node.index()])
         .expect("layout was computed for the whole tree");
     // A baseline-corrected child (#272) overrides Taffy's cross-axis offset.
-    let local_y = cross_offset[node.index()].unwrap_or(layout.location.y);
+    let local_y = cross_offset
+        .get(&node)
+        .copied()
+        .unwrap_or(layout.location.y);
     let x = parent_origin.0 + layout.location.x;
     let y = parent_origin.1 + local_y;
     prev_rel[node.index()] = rel_bits(
@@ -1705,8 +1715,8 @@ fn read_back_pruned(
     tree: &TaffyTree<TextContext>,
     taffy_of: &[taffy::NodeId],
     prev_rel: &mut [[u32; 4]],
-    cross_offset: &[Option<f32>],
-    on_path: &[bool],
+    cross_offset: &FxHashMap<NodeId, f32>,
+    on_path: &FxHashSet<NodeId>,
     arena: &Arena,
     node: NodeId,
     parent_origin: (f32, f32),
@@ -1719,7 +1729,10 @@ fn read_back_pruned(
     // A baseline-corrected child (#272) overrides Taffy's cross-axis offset;
     // the corrected `y` is folded into `rel_bits`, so a change to a sibling's
     // baseline shift is detected and re-emitted like any other move.
-    let local_y = cross_offset[node.index()].unwrap_or(layout.location.y);
+    let local_y = cross_offset
+        .get(&node)
+        .copied()
+        .unwrap_or(layout.location.y);
     let x = parent_origin.0 + layout.location.x;
     let y = parent_origin.1 + local_y;
     let cur = rel_bits(
@@ -1754,7 +1767,7 @@ fn read_back_pruned(
     // resized, or it is on the path to a node whose intent changed. A
     // node that neither moved nor guards a dirty descendant has an
     // unchanged subtree, and Taffy left its layouts untouched.
-    if rect_changed || on_path[node.index()] {
+    if rect_changed || on_path.contains(&node) {
         for &child in arena.children(node) {
             read_back_pruned(
                 tree,
@@ -1820,7 +1833,7 @@ fn collect_baseline_offsets(
     arena: &Arena,
     typesetter: &mut Typesetter,
     node: NodeId,
-    offsets: &mut [Option<f32>],
+    offsets: &mut FxHashMap<NodeId, f32>,
     floors: &mut Vec<(NodeId, f32)>,
 ) {
     let layout = arena.layout(node);
@@ -1880,7 +1893,7 @@ fn collect_baseline_offsets(
                 // Local y within the row's border box: the content-box top
                 // plus the gap between this child's baseline and the tallest.
                 let local_y = layout.padding.top + (max_baseline - baseline);
-                offsets[child.index()] = Some(local_y);
+                offsets.insert(child, local_y);
                 extent = extent.max(local_y + cross_size + layout.padding.bottom);
             }
             // #322: a HUG cross size was taken from the box bottoms taffy
@@ -1933,10 +1946,9 @@ fn baseline_pass(
     arena: &Arena,
     typesetter: Option<&mut Typesetter>,
     floors: &mut Vec<(NodeId, f32)>,
-    node_count: usize,
     solves: &mut u64,
-) -> Vec<Option<f32>> {
-    let mut cross_offset = vec![None; node_count];
+) -> FxHashMap<NodeId, f32> {
+    let mut cross_offset = FxHashMap::default();
     // Without a typesetter every text node measures to zero, so there is no
     // glyph baseline to correct and no row to grow.
     let Some(ts) = typesetter else {
@@ -1973,7 +1985,7 @@ fn baseline_pass(
 
     let ts = compute_all(tree, shown_taffy, Some(ts), solves)
         .expect("the typesetter was lent, not lost");
-    let mut cross_offset = vec![None; node_count];
+    let mut cross_offset = FxHashMap::default();
     let mut settled = Vec::new();
     for &root in arena.shown_roots() {
         collect_baseline_offsets(
