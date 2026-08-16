@@ -99,6 +99,16 @@ pub struct SkiaPainter {
     /// the posture the frame local had and the one [`MsdfCache::frame`] keeps
     /// for text.
     field_effect: Option<RuntimeEffect>,
+    /// The compiled diamond-gradient ramp, on the same terms as
+    /// [`field_effect`](Self::field_effect) — the third constant shader this
+    /// painter runs, and the one that was recompiled most often.
+    ///
+    /// Found reviewing the fix for issue #1186 rather than filed with it, and
+    /// strictly worse than the defect that issue named: `diamond_shader`
+    /// compiled per *draw* where `field_effect` compiled per *frame*, so a scene
+    /// of twenty diamond-gradient nodes paid twenty compiles a frame at about
+    /// 30 us each. `MsdfCache::effect`'s invariant covers this constant too.
+    diamond_effect: Option<RuntimeEffect>,
 }
 
 impl SkiaPainter {
@@ -147,6 +157,7 @@ impl SkiaPainter {
             images: ImageCache::default(),
             msdf: MsdfCache::default(),
             field_effect: None,
+            diamond_effect: None,
         }
     }
 
@@ -416,6 +427,7 @@ impl Painter for SkiaPainter {
         let image_cache = &mut self.images;
         let msdf_cache = &mut self.msdf;
         let field_effect = &mut self.field_effect;
+        let diamond_effect = &mut self.diamond_effect;
 
         let base_canvas = self.surface.canvas();
         base_canvas.clear(skia_safe::colors::TRANSPARENT);
@@ -658,7 +670,18 @@ impl Painter for SkiaPainter {
                 if field_quad(rect, field).is_some() {
                     let effect = field_effect.get_or_insert_with(compile_field_effect);
                     let atlas = image_cache.get(field.image);
-                    draw_vector_field(canvas, rect, paints, entry.fill, field, atlas, effect);
+                    draw_vector_field(
+                        canvas,
+                        rect,
+                        paints,
+                        entry.fill,
+                        field,
+                        atlas,
+                        MaskEffects {
+                            coverage: effect,
+                            diamond: diamond_effect,
+                        },
+                    );
                 }
             } else {
                 // A fill-less entry draws nothing (a layout-only node, or a
@@ -703,9 +726,25 @@ impl Painter for SkiaPainter {
                 // nothing, so a fill-less entry still paints exactly nothing
                 // here — the same outcome the old `if let Some(kind)` guard
                 // gave when `fill` was `Option::None`.
-                draw_fill_kind(canvas, rrect, draw_rect, image_cache, paints, entry.fill);
+                draw_fill_kind(
+                    canvas,
+                    rrect,
+                    draw_rect,
+                    image_cache,
+                    paints,
+                    entry.fill,
+                    diamond_effect,
+                );
                 for kind in paints.extra_fills(entry) {
-                    draw_fill_kind(canvas, rrect, draw_rect, image_cache, paints, *kind);
+                    draw_fill_kind(
+                        canvas,
+                        rrect,
+                        draw_rect,
+                        image_cache,
+                        paints,
+                        *kind,
+                        diamond_effect,
+                    );
                 }
                 if let Some(stroke) = paints.stroke(entry) {
                     draw_stroke(canvas, &rrect, stroke, draw_rect.opacity);
@@ -1139,6 +1178,20 @@ const FIELD_MASK_SKSL: &str = r"
 /// origin at the node box top-left (`device = rect_origin + plane_bounds`).
 /// The quad's margin reads as coverage 0, so drawing over exactly the quad
 /// clips nothing wrongly.
+/// The two compiled shaders a masked draw can need, both the painter's rather
+/// than the frame's (issue #1186).
+///
+/// They arrive in different states, and that is the reason this is a struct
+/// rather than two parameters. `coverage` is already compiled, because the
+/// caller resolved the atlas beside it and reaches this draw only for an entry
+/// that has one. `diamond` is not, because a masked fill reaches it only when
+/// its fill happens to be a diamond gradient — and a scene with none must
+/// compile none.
+struct MaskEffects<'a> {
+    coverage: &'a RuntimeEffect,
+    diamond: &'a mut Option<RuntimeEffect>,
+}
+
 fn draw_vector_field(
     canvas: &Canvas,
     rect: &RectEntry,
@@ -1146,14 +1199,14 @@ fn draw_vector_field(
     fill: PaintKind,
     field: &VectorField,
     atlas: &Image,
-    effect: &RuntimeEffect,
+    effects: MaskEffects<'_>,
 ) {
     // A shape with no fill has no ink to mask — a defensive guard; the
     // lowering always pairs a shape with a fill.
     if fill == PaintKind::NONE {
         return;
     }
-    let Some((dest, coverage)) = field_coverage(rect, field, atlas, effect) else {
+    let Some((dest, coverage)) = field_coverage(rect, field, atlas, effects.coverage) else {
         return;
     };
 
@@ -1181,7 +1234,7 @@ fn draw_vector_field(
             canvas.draw_rect(dest, &paint);
         }
         Fill::Gradient(gradient) => {
-            let mut paint = gradient_paint(gradient, rect);
+            let mut paint = gradient_paint(gradient, rect, effects.diamond);
             apply_opacity(&mut paint, rect.opacity);
             canvas.draw_rect(dest, &paint);
         }
@@ -1220,9 +1273,14 @@ fn draw_vector_field(
 /// still asked before the fetch, and the device-quad guard has joined it
 /// there.
 ///
-/// It runs twice for a field that draws — once at the call site and once
-/// inside [`field_coverage`] — which is about eight arithmetic operations
-/// against a `save_layer` and a shader construction on the same path.
+/// It runs more than once for a field that draws, and the count differs by
+/// arm. The masked fill asks twice: once at its call site and once inside
+/// [`field_coverage`]. The **backdrop** arm asks once above the blur loop and
+/// then once per blur, because each iteration reaches [`field_coverage`]
+/// through [`draw_backdrop_blur_field`] — so a node carrying three backdrops
+/// asks four times, and the surrounding comment says a node may carry several.
+/// That is about eight arithmetic operations per ask, against a `save_layer`, a
+/// shader construction and a Gaussian blur on the same path.
 ///
 /// # The shared predicate first (issues #1000 and #1144)
 ///
@@ -1816,6 +1874,7 @@ fn draw_fill_kind(
     image_cache: &mut ImageCache,
     paints: &PaintTable,
     kind: PaintKind,
+    diamond_effect: &mut Option<RuntimeEffect>,
 ) {
     match paints.fill(kind) {
         // The fill-less node (story #578): `entry.fill` reaches here as
@@ -1830,7 +1889,7 @@ fn draw_fill_kind(
             canvas.draw_rrect(rrect, &paint);
         }
         Fill::Gradient(gradient) => {
-            let mut paint = gradient_paint(gradient, rect);
+            let mut paint = gradient_paint(gradient, rect, diamond_effect);
             paint.set_anti_alias(true);
             apply_opacity(&mut paint, rect.opacity);
             canvas.draw_rrect(rrect, &paint);
@@ -1896,7 +1955,11 @@ fn gradient_frame(gradient: &Gradient, rect: &RectEntry) -> Matrix {
 /// Builds the skia paint for a gradient fill. A degenerate frame (no
 /// area) falls back to the first stop's color — deterministic; the
 /// validator owns rejecting it upstream (P4).
-fn gradient_paint(gradient: GradientView<'_>, rect: &RectEntry) -> skia_safe::Paint {
+fn gradient_paint(
+    gradient: GradientView<'_>,
+    rect: &RectEntry,
+    diamond_effect: &mut Option<RuntimeEffect>,
+) -> skia_safe::Paint {
     assert!(
         gradient.stops.len() <= MAX_GRADIENT_STOPS,
         "gradient stop budget exceeded: {} stops, budget {MAX_GRADIENT_STOPS} \
@@ -1943,7 +2006,7 @@ fn gradient_paint(gradient: GradientView<'_>, rect: &RectEntry) -> skia_safe::Pa
             None,
             Some(&frame),
         ),
-        GradientKind::Diamond => diamond_shader(&colors, &positions, &frame),
+        GradientKind::Diamond => diamond_shader(&colors, &positions, &frame, diamond_effect),
     };
 
     match shader {
@@ -1958,19 +2021,26 @@ fn gradient_paint(gradient: GradientView<'_>, rect: &RectEntry) -> skia_safe::Pa
     }
 }
 
-/// Diamond gradient: not a Skia primitive (docs/technotes/rendering-and-painters.md). An SkSL
-/// shader computes t = |x| + |y| in gradient unit space and samples a
+/// Diamond gradient: not a Skia primitive (docs/technotes/rendering-and-painters.md).
+/// [`DIAMOND_SKSL`] computes t = |x| + |y| in gradient unit space and samples a
 /// 1D ramp child — a linear gradient along x — so the stop machinery
 /// stays Skia's.
-fn diamond_shader(colors: &[Color4f], positions: &[f32], frame: &Matrix) -> Option<Shader> {
-    const SKSL: &str = r"
-        uniform shader ramp;
-        half4 main(float2 p) {
-            float t = clamp(abs(p.x) + abs(p.y), 0.0, 1.0);
-            return ramp.eval(float2(t, 0.5));
-        }
-    ";
-    let effect = RuntimeEffect::make_for_shader(SKSL, None).expect("diamond SkSL compiles");
+///
+/// The compiled effect is the painter's and is passed in: it was compiled here
+/// on every call, which is once per diamond-filled node per frame. The ramp
+/// child is genuinely per-call, because it carries this fill's own stops.
+fn diamond_shader(
+    colors: &[Color4f],
+    positions: &[f32],
+    frame: &Matrix,
+    effect: &mut Option<RuntimeEffect>,
+) -> Option<Shader> {
+    // Held on the painter rather than compiled here, on the same terms as
+    // `field_effect` and `MsdfCache::effect`: `DIAMOND_SKSL` is a constant, so
+    // no input can stale it. This one compiled per **draw** until then, where
+    // #1186's did per frame — `gradient_paint` is called once per diamond-filled
+    // node, so a scene of twenty paid twenty compiles a frame.
+    let effect = effect.get_or_insert_with(compile_diamond_effect);
     // The ramp is only sampled, never drawn; t maps along its x axis.
     let ramp = gradient_shader::linear(
         (Point::new(0.0, 0.0), Point::new(1.0, 0.0)),
@@ -2025,6 +2095,11 @@ thread_local! {
     /// `tests::paint_compiles_the_field_resolve_once_across_frames` is what
     /// says so.
     static FIELD_EFFECT_COMPILES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+
+    /// Test-only compile counter for the diamond-gradient ramp sampler, the
+    /// sibling of [`FIELD_EFFECT_COMPILES`] and thread-local for the same
+    /// reason. It counted per *draw* before the effect moved onto the painter.
+    static DIAMOND_EFFECT_COMPILES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Compiles the coverage-mask resolve. Called once per painter, through
@@ -2033,6 +2108,29 @@ fn compile_field_effect() -> RuntimeEffect {
     #[cfg(test)]
     FIELD_EFFECT_COMPILES.with(|c| c.set(c.get() + 1));
     RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None).expect("field-mask resolve SkSL compiles")
+}
+
+/// The diamond gradient's ramp sampler: `t = |x| + |y|` in gradient unit space,
+/// sampling a 1D linear ramp child, so the stop machinery stays Skia's.
+///
+/// A module constant rather than a `const` inside [`diamond_shader`] since the
+/// effect moved onto the painter: what makes holding a compiled effect sound is
+/// that its source is a constant, and a source declared inside the function
+/// that no longer compiles it says the opposite.
+const DIAMOND_SKSL: &str = r"
+    uniform shader ramp;
+    half4 main(float2 p) {
+        float t = clamp(abs(p.x) + abs(p.y), 0.0, 1.0);
+        return ramp.eval(float2(t, 0.5));
+    }
+";
+
+/// Compiles the diamond-gradient ramp sampler. Called once per painter, through
+/// `SkiaPainter::diamond_effect`'s `get_or_insert_with`.
+fn compile_diamond_effect() -> RuntimeEffect {
+    #[cfg(test)]
+    DIAMOND_EFFECT_COMPILES.with(|c| c.set(c.get() + 1));
+    RuntimeEffect::make_for_shader(DIAMOND_SKSL, None).expect("diamond SkSL compiles")
 }
 
 /// Decodes an encoded image asset with the Skia build's own codec —
@@ -2714,6 +2812,103 @@ mod tests {
             0,
             "a scene with no masked node compiles nothing, which is what makes the count above a \
              statement about caching rather than about eagerness",
+        );
+    }
+
+    /// **The diamond-gradient ramp sampler compiles once for a painter, not
+    /// once per draw** — the third constant shader, found reviewing #1186's fix.
+    ///
+    /// `diamond_shader` held its SkSL in a `const` and compiled it on every
+    /// call, and `gradient_paint` calls it once per diamond-filled node. So this
+    /// was strictly worse than the defect #1186 named: per draw rather than per
+    /// frame, at about the same 30 us.
+    ///
+    /// **Two nodes and two frames**, which is what separates the two axes. One
+    /// node over two frames would read 2 against the old code and so would
+    /// two nodes in one frame; only the product distinguishes a per-draw compile
+    /// from a per-frame one, and it read 4.
+    #[test]
+    fn paint_compiles_the_diamond_ramp_once_across_draws_and_frames() {
+        let mut paints = PaintTable::new();
+        let gradient = dashpaint::Gradient {
+            kind: dashpaint::GradientKind::Diamond,
+            handle_origin: Vec2 { x: 0.5, y: 0.5 },
+            handle_primary: Vec2 { x: 1.0, y: 0.5 },
+            handle_secondary: Vec2 { x: 0.5, y: 1.0 },
+            stops: dashpaint::StopRange::NONE,
+        };
+        let fill = paints.intern_fill(&dashpaint::FillSpec::Gradient {
+            gradient,
+            stops: vec![
+                dashpaint::GradientStop {
+                    offset: 0.0,
+                    color: RED,
+                },
+                dashpaint::GradientStop {
+                    offset: 1.0,
+                    color: RED,
+                },
+            ],
+        });
+        let entry = paints.push(dashpaint::PaintEntry {
+            fill,
+            ..dashpaint::PaintEntry::default()
+        });
+        let rects: Vec<RectEntry> = (0..2u8)
+            .map(|i| RectEntry {
+                x: f32::from(i) * 4.0,
+                y: 0.0,
+                w: 4.0,
+                h: 8.0,
+                paint: entry,
+                clip: dashpaint::ClipIndex::UNCLIPPED,
+                opacity: 1.0,
+                rotation: 0.0,
+                rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
+            })
+            .collect();
+
+        DIAMOND_EFFECT_COMPILES.with(|c| c.set(0));
+        let mut painter = SkiaPainter::new(8, 8);
+        for _ in 0..2 {
+            painter.paint(
+                &rects,
+                &paints,
+                &ImageTable::new(),
+                &ClipTable::new(),
+                &[],
+                &GlyphRunTable::new(),
+                None,
+            );
+        }
+        assert_eq!(
+            DIAMOND_EFFECT_COMPILES.with(|c| c.get()),
+            1,
+            "two diamond-filled nodes over two frames must compile the ramp sampler once: the \
+             effect is a painter field, not a per-call `const`",
+        );
+
+        // And a painter that never draws one has compiled nothing, which is what
+        // makes the count above a statement about caching rather than eagerness.
+        DIAMOND_EFFECT_COMPILES.with(|c| c.set(0));
+        let mut plain = SkiaPainter::new(8, 8);
+        let solid = paints.push_solid(RED);
+        plain.paint(
+            &[RectEntry {
+                paint: solid,
+                ..rects[0]
+            }],
+            &paints,
+            &ImageTable::new(),
+            &ClipTable::new(),
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        assert_eq!(
+            DIAMOND_EFFECT_COMPILES.with(|c| c.get()),
+            0,
+            "a scene with no diamond gradient compiles nothing",
         );
     }
 

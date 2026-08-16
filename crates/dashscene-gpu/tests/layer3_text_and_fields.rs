@@ -131,7 +131,7 @@ fn glyph_atlas() -> Atlas {
                 atlas_px: [4.0, 4.0, 8.0, 8.0],
             },
             // Glyph 31's twin with **no plane quad at all** (issue #1185).
-            // `Atlas::new` does not refuse it, so `pack_glyph_run` emits an
+            // `Atlas::new` does not refuse it, so `pack_run` emits an
             // instance whose `bounds` extent is `(right - left) * size` — zero —
             // and `msdf_sample` divides by it. It samples the same uniformly
             // graded quadrant, so if it draws anything at all it draws a
@@ -1048,7 +1048,7 @@ fn a_refused_coverage_field_draws_no_masked_fill() {
 /// **A glyph whose quad has no area draws nothing** (issue #1185).
 ///
 /// `msdf_sample` divides by the quad's extent, and until #1185 nothing refused
-/// a zero one. `pack_glyph_run` builds a glyph's `bounds` extent as
+/// a zero one. `pack_run` builds a glyph's `bounds` extent as
 /// `(right - left) * size` from the atlas row's own `plane_em`, and `Atlas::new`
 /// does not refuse a row whose plane quad has no area — so `t` divided by zero,
 /// the clamp took the sub-rect's edge, and the margin around a zero-area quad
@@ -1081,29 +1081,29 @@ fn a_glyph_whose_quad_has_no_area_draws_nothing() {
         a: 1.0,
     };
     // Same pen, same size, same texels — one em of plane quad apart.
-    for (glyph_id, what) in [(41, "no plane quad"), (31, "a one-em plane quad")] {
-        let (pixels, _) = draw_runs(&[one_glyph(glyph_id, 30.0, 20.0, 20.0, ink, 1.0)]);
-        let painted: Vec<(u32, u32)> = (0..H)
-            .flat_map(|y| (0..W).map(move |x| (x, y)))
-            .filter(|&(x, y)| texel(&pixels, x, y)[3] != 0)
-            .collect();
-        if glyph_id == 41 {
-            assert!(
-                painted.is_empty(),
-                "a glyph with {what} painted {} pixels, the first at {:?}",
-                painted.len(),
-                painted.first()
-            );
-        } else {
-            // Its quad is x 30..50, y 0..20, uniformly graded, so it resolves
-            // at the same alpha every other graded probe in this file does.
-            assert_eq!(
-                texel(&pixels, 35, 10)[3],
-                GRADED_ALPHA,
-                "a glyph with {what} must still draw, or the row above says nothing"
-            );
-        }
-    }
+    let at_pen = |glyph_id| draw_runs(&[one_glyph(glyph_id, 30.0, 20.0, 20.0, ink, 1.0)]).0;
+
+    let empty = at_pen(41);
+    let painted: Vec<(u32, u32)> = (0..H)
+        .flat_map(|y| (0..W).map(move |x| (x, y)))
+        .filter(|&(x, y)| texel(&empty, x, y)[3] != 0)
+        .collect();
+    assert!(
+        painted.is_empty(),
+        "a glyph with no plane quad painted {} pixels, the first at {:?}",
+        painted.len(),
+        painted.first()
+    );
+
+    // Glyph 31 is its twin over the same texels with a one-em plane quad. Its
+    // device quad is x 30..50, y 0..20, uniformly graded, so it resolves at the
+    // same alpha every other graded probe in this file does.
+    let drawn = at_pen(31);
+    assert_eq!(
+        texel(&drawn, 35, 10)[3],
+        GRADED_ALPHA,
+        "a glyph with a one-em plane quad must still draw, or the assertion above says nothing"
+    );
 }
 
 /// **A refused glyph run is submitted as no instances at all** (issue #1024),

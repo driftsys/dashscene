@@ -219,13 +219,15 @@ genuinely per-frame — the runs change every commit — and is built in
 `MsdfFrame`, which borrows the cache's shader and decodes rather than rebuilding
 them. A text-free scene still builds none of it.
 
-**The coverage-mask resolve is held the same way** (issue #1186). It was a
-`paint()` frame local, so `FIELD_MASK_SKSL` recompiled on every call that drew a
-baked shape — about 30 us, measured over 200 iterations against release Skia —
-while its sibling above was already a painter field. Both rest on one invariant,
-which `MsdfCache::effect` states: the shader is a constant, so no input can
-stale it. Both are lazy, so a scene carrying neither text nor a baked shape
-compiles nothing.
+**All three constant shaders are held the same way**, and two of them only since
+issue #1186. `FIELD_MASK_SKSL` was a `paint()` frame local, so it recompiled on
+every call that drew a baked shape — about 30 us, measured over 200 iterations
+against release Skia. `DIAMOND_SKSL` was worse and was found reviewing that fix:
+it lived in a `const` inside `diamond_shader` and compiled per **draw**, so a
+scene of twenty diamond-gradient nodes paid twenty compiles a frame. All three
+rest on one invariant, which `MsdfCache::effect` states: the shader is a
+constant, so no input can stale it. All three are lazy, so a scene carrying none
+of text, a baked shape or a diamond gradient compiles nothing.
 
 These atlases hang off the `GlyphRunTable` and are not `ImageTable` entries, so
 the painter-lifetime image cache above could not reach them; this is that

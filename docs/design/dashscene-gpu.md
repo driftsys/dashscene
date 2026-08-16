@@ -544,13 +544,16 @@ is usable", of which residency is one condition and a quad with area is the
 other; the fragment stage asks only whether to sample and does not distinguish
 them.
 
-The reachable arm is **text**, and its zero comes from the CPU: `pack_glyph_run`
-writes `bounds` as `[x, y, (right - left) * size,
-(top - bottom) * size]` from
-the atlas row's own `plane_em`, and `Atlas::new` refuses neither a zero `size`
-nor a row whose plane quad has no area.
-`a_glyph_whose_quad_has_no_area_draws_nothing` measures it both ways — without
-the guard, four pixels of the run's colour at full alpha around the pen.
+The reachable arm is **text**, and its zero comes from the CPU: `pack_run`
+writes `bounds` as `[x, y, (right - left) * size, (top - bottom) * size]`, from
+the atlas row's own `plane_em` and the run's size. Neither operand is refused,
+and not in the same place: `Atlas::new` does not look at a glyph's `plane_em`,
+so a row with no area is accepted, while `size` is `GlyphRun::size`, which no
+seam in `dashpaint` refuses at all — `dashscene-validator`'s
+`text.style-size-out-of-range` covers only the document path.
+`a_glyph_whose_quad_has_no_area_draws_nothing` measures the `plane_em` half both
+ways: without the guard, four pixels of the run's colour at full alpha around
+the pen.
 
 The **masked** arm is what #1185 was filed for, and its route is not observable
 here. Its quad is `hi - lo` with the node origin added to both ends, which

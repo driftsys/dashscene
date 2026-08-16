@@ -431,10 +431,16 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
     // arm: four pixels of the run's colour, at full alpha, around a glyph's pen.
     //
     // **The text arm is the reachable one**, and its zero comes from the CPU:
-    // `pack_glyph_run` writes `bounds` as `[x, y, (right - left) * size,
-    // (top - bottom) * size]` from the atlas row's own `plane_em`, and
-    // `Atlas::new` refuses neither a zero `size` nor a row whose plane quad has
-    // no area. `a_glyph_whose_quad_has_no_area_draws_nothing` pins it.
+    // `pack_run` writes `bounds` as `[x, y, (right - left) * size,
+    // (top - bottom) * size]`, from the atlas row's own `plane_em` and the run's
+    // size. Neither operand is refused, and they are refused in different
+    // places or not at all: `Atlas::new` does not look at a glyph's `plane_em`,
+    // so a row with no area is accepted, and `size` is `GlyphRun::size`, which
+    // no seam in `dashpaint` refuses — `dashscene-validator`'s
+    // `text.style-size-out-of-range` covers only the document path
+    // (`docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md`, the
+    // `GlyphRun::size` paragraph). `a_glyph_whose_quad_has_no_area_draws_nothing`
+    // pins the `plane_em` half.
     //
     // **The masked arm is the one #1185 was filed for, and it is not observable
     // on every backend.** Its quad is `hi - lo` with the node origin added to
