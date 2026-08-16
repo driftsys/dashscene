@@ -515,6 +515,49 @@ fn identified_extent(format: ImageFormat, bytes: &[u8]) -> (u32, u32) {
     (header.width, header.height)
 }
 
+/// `(offset, count)` for `count` items about to be appended to a flat array
+/// already `array_len` long, refusing a range whose **end** runs past
+/// `u32::MAX`.
+///
+/// `array` names what the whole array holds and `part` what the appended run
+/// holds, both as noun phrases, so each table's refusal names its own rows.
+///
+/// # The sum, not the two lengths separately (issue #1014)
+///
+/// Converting each alone accepts an array at `u32::MAX - 999` taking a
+/// 1000-item part: both conversions succeed, the append takes the array past
+/// what a `u32` offset can address, and the range handed back names items the
+/// next caller cannot reach. The refusal then lands on whichever later push
+/// happens to tip the offset itself over, a call away from the cause.
+///
+/// # One rule for every flat array on this boundary (issue #1045)
+///
+/// Boundary B names a flat array's items with a `u32` offset and a `u32` count
+/// everywhere it names one (story #578), so the ceiling is the same wherever it
+/// applies and this is the one place it is checked. Issue #1014 fixed
+/// [`GlyphRunTable::push_run`], PR #1038 carried it to the five ranges
+/// [`PaintTable::push_with`] assigns, and issue #1045 was the two sites left
+/// converting separately — [`ClipTable::push`] and [`ImageTable::push_row`].
+///
+/// Unreachable in practice on the target hardware for the four row arrays —
+/// four billion of any boundary-B row is orders of magnitude past a fixed
+/// memory budget. **The image pool is the near one**: its offset counts
+/// *bytes* rather than rows, so `u32::MAX` there is 4 GiB of payload, three
+/// orders of magnitude nearer than the others (issue #1045). Every one of them
+/// is checked because it is a contract these methods state.
+fn bounded_range(array_len: usize, count: usize, array: &str, part: &str) -> (u32, u32) {
+    let offset = u32::try_from(array_len).unwrap_or_else(|_| panic!("{array} exceed u32::MAX"));
+    let count = u32::try_from(count).unwrap_or_else(|_| panic!("{part} exceed u32::MAX"));
+    if offset.checked_add(count).is_none() {
+        panic!(
+            "a part of {count} appended at offset {offset} would end past u32::MAX: boundary B \
+             names {array} with a u32 offset and a u32 count, so nothing past that end has a \
+             range that can be expressed (story #578)"
+        );
+    }
+    (offset, count)
+}
+
 /// One image asset as the table **stores** it: what it is, and where its bytes
 /// are in the pool.
 ///
@@ -722,6 +765,9 @@ impl ImageTable {
     /// Panics on a baked payload, which states no extent of its own — use
     /// [`push_baked`](Self::push_baked). See `identified_extent` for why a
     /// baked extent cannot be derived from the bytes.
+    ///
+    /// Panics when the payload's bytes would end past `u32::MAX` in the pool
+    /// (issue #1045) — see [`push_row`](Self::push_row).
     pub fn push(&mut self, asset: ImageAsset) -> u32 {
         let (width, height) = identified_extent(asset.format, &asset.bytes);
         self.push_row(asset, width, height)
@@ -753,6 +799,9 @@ impl ImageTable {
     /// `docs/decisions/baked-texel-payloads-cross-boundary-b.md` D5 closed for
     /// the *format* and could not close for the extent, because the extent was
     /// not carried yet.
+    ///
+    /// Panics when the payload's bytes would end past `u32::MAX` in the pool
+    /// (issue #1045) — see [`push_row`](Self::push_row).
     pub fn push_baked(&mut self, asset: ImageAsset, width: u32, height: u32) -> u32 {
         assert!(
             !asset.format.is_encoded(),
@@ -782,6 +831,12 @@ impl ImageTable {
     /// On a mapped table. Copying a payload into a pool this table does not own
     /// is the mixed table D1 refuses, and refusing it here by name is what
     /// keeps that a stated limitation rather than a silent one (P4).
+    ///
+    /// On a payload whose bytes would **end** past `u32::MAX` in the pool —
+    /// [`bounded_range`]'s rule, and the reason it is the sum rather than the
+    /// two lengths (issue #1045). This is the near ceiling of the four arrays that
+    /// rule covers, because the pool's offset counts bytes: 4 GiB of payload
+    /// rather than four billion rows.
     fn push_row(&mut self, asset: ImageAsset, width: u32, height: u32) -> u32 {
         let Pool::Owned(blobs) = &mut self.pool else {
             panic!(
@@ -793,8 +848,10 @@ impl ImageTable {
         };
         let index =
             u32::try_from(self.entries.len()).expect("image table exceeds u32::MAX entries");
-        let offset = u32::try_from(blobs.len()).expect("image pool exceeds u32::MAX bytes");
-        let len = u32::try_from(asset.bytes.len()).expect("image payload exceeds u32::MAX bytes");
+        // The offset and the length as **one** range rather than two
+        // conversions (issue #1045), which is the shape issue #1014 corrected
+        // one table over.
+        let (offset, len) = Self::payload_range(blobs.len(), asset.bytes.len());
         blobs.extend_from_slice(&asset.bytes);
         self.entries.push(ImageEntry {
             format: asset.format.as_u32(),
@@ -804,6 +861,30 @@ impl ImageTable {
             height,
         });
         index
+    }
+
+    /// `(offset, count)` for a payload of `count` bytes about to be appended to
+    /// a pool already `array_len` bytes long, refusing a range whose **end**
+    /// runs past `u32::MAX`.
+    ///
+    /// This table's nouns on the shared [`bounded_range`], where the rule and
+    /// the reason it is the sum rather than the two lengths are written once
+    /// (issues #1014 and #1045). The near ceiling of the four sites that rule
+    /// covers: this offset counts bytes rather than rows, so it is 4 GiB of
+    /// payload against a target with a fixed memory budget.
+    ///
+    /// [`push_mapped`](Self::push_mapped) does **not** go through it, and that
+    /// is not the same omission #1045 named. Its offset comes from the caller
+    /// rather than from a growing array, so there is no next push whose offset
+    /// this one could put out of reach; it checks `offset + len` against the
+    /// region it names, in `u64`, before either is narrowed.
+    fn payload_range(array_len: usize, count: usize) -> (u32, u32) {
+        bounded_range(
+            array_len,
+            count,
+            "an image pool's bytes",
+            "one payload's bytes",
+        )
     }
 
     /// A table whose payloads live in `region` and are never copied out of it —
@@ -1145,14 +1226,39 @@ impl ClipTable {
     /// Takes the boxes rather than a [`ClipRegion`] because the range is
     /// only meaningful against this table's flat array, so only this table
     /// can produce a correct one.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the region would take the table past `u32::MAX` entries.
+    ///
+    /// Panics when the region's boxes would **end** past `u32::MAX` in the flat
+    /// array — [`bounded_range`]'s rule, and the reason it is the sum rather
+    /// than the two lengths (issue #1045).
     pub fn push(&mut self, boxes: &[ClipBox]) -> ClipIndex {
         let index = u32::try_from(self.entries.len()).expect("clip table exceeds u32::MAX entries");
-        let offset =
-            u32::try_from(self.boxes.len()).expect("clip table exceeds u32::MAX clip boxes");
-        let count = u32::try_from(boxes.len()).expect("a clip region exceeds u32::MAX boxes");
+        // The offset and the count as **one** range rather than two conversions
+        // (issue #1045), which is the shape issue #1014 corrected one table
+        // over.
+        let (offset, count) = Self::box_range(self.boxes.len(), boxes.len());
         self.boxes.extend_from_slice(boxes);
         self.entries.push(ClipRegion { offset, count });
         ClipIndex(index)
+    }
+
+    /// `(offset, count)` for a region of `count` boxes about to be appended to
+    /// a flat array already `array_len` long, refusing a range whose **end**
+    /// runs past `u32::MAX`.
+    ///
+    /// This table's nouns on the shared [`bounded_range`], where the rule and
+    /// the reason it is the sum rather than the two lengths are written once
+    /// (issues #1014 and #1045).
+    fn box_range(array_len: usize, count: usize) -> (u32, u32) {
+        bounded_range(
+            array_len,
+            count,
+            "a clip table's boxes",
+            "one region's boxes",
+        )
     }
 
     pub fn get(&self, index: ClipIndex) -> Option<ClipView<'_>> {
@@ -2016,28 +2122,16 @@ impl PaintTable {
     /// `(offset, count)` for `count` rows about to be appended at `array_len`,
     /// refusing a range whose **end** runs past `u32::MAX`.
     ///
-    /// The sum, not the two lengths separately (issue #1014). Converting each
-    /// alone accepts an array at `u32::MAX - 999` taking a 1000-row part: both
-    /// conversions succeed, the append takes the array past what a `u32` offset
-    /// can address, and the range handed back names rows the next caller cannot
-    /// reach. The refusal then lands on whichever later push happens to tip the
-    /// offset itself over, a call away from the cause.
-    ///
-    /// Unreachable in practice on the target hardware — every array this bounds
-    /// is a boundary-B row array, and four billion of any of them is orders of
-    /// magnitude past a fixed memory budget. It is checked because it is a
-    /// contract these methods state.
+    /// This table's nouns on the shared [`bounded_range`], where the rule and the
+    /// reason it is the sum rather than the two lengths are written once
+    /// (issues #1014 and #1045).
     fn flat_range(array_len: usize, count: usize) -> (u32, u32) {
-        let offset = Self::fill_index(array_len);
-        let count = Self::fill_index(count);
-        if offset.checked_add(count).is_none() {
-            panic!(
-                "a part of {count} rows appended at offset {offset} would end past u32::MAX: \
-                 boundary B names a flat array's rows with a u32 offset and a u32 count, so \
-                 nothing past that end has a range that can be expressed (story #578)"
-            );
-        }
-        (offset, count)
+        bounded_range(
+            array_len,
+            count,
+            "a paint table's fill rows",
+            "one part's fill rows",
+        )
     }
 
     /// A row index, offset or count as the flattened types carry them.
@@ -3174,29 +3268,18 @@ impl GlyphRunTable {
     /// already `array_len` long, refusing a range whose **end** runs past
     /// `u32::MAX`.
     ///
-    /// The sum, not the two lengths separately (issue #1014). Converting each
-    /// alone accepts an array at `u32::MAX - 999` taking a 1000-quad run: both
-    /// conversions succeed, `extend_from_slice` takes the array past what a
-    /// `u32` offset can address, and the run is given a [`GlyphRange`] as though
-    /// it were valid. The push that "would exceed `u32::MAX`" does not refuse,
-    /// and the *next* one does — one call away from its cause.
-    ///
-    /// The [`PaintTable`] side of this is `PaintTable::flat_range`, which the
-    /// five ranges [`PaintTable::push_with`] assigns go through. Both are
-    /// unreachable on the target hardware, where four billion 12-byte quads is
-    /// about 48 GB against a fixed memory budget; they are checked because they
-    /// are a contract these methods state.
+    /// This table's nouns on the shared [`bounded_range`], where the rule and
+    /// the reason it is the sum rather than the two lengths are written once
+    /// (issues #1014 and #1045). Unreachable here for the same reason it is
+    /// everywhere else that rule applies: four billion 12-byte quads is about
+    /// 48 GB against a fixed memory budget.
     fn quad_range(array_len: usize, count: usize) -> (u32, u32) {
-        let offset = u32::try_from(array_len).expect("glyph-run table exceeds u32::MAX quads");
-        let count = u32::try_from(count).expect("a glyph run exceeds u32::MAX quads");
-        if offset.checked_add(count).is_none() {
-            panic!(
-                "a run of {count} quads appended at offset {offset} would take the flat array \
-                 past u32::MAX: boundary B names a run's quads with a u32 offset and a u32 \
-                 count, so nothing past that end has a range that can be expressed (story #578)"
-            );
-        }
-        (offset, count)
+        bounded_range(
+            array_len,
+            count,
+            "a glyph-run table's quads",
+            "one run's quads",
+        )
     }
 
     /// The quads `run` draws, in draw order.
@@ -3452,16 +3535,36 @@ pub trait Painter {
     );
 }
 
-/// The two flat-array range assignments, tested here rather than through the
+/// The flat-array range assignments, tested here rather than through the
 /// public pushes because the case they refuse needs an array four billion rows
 /// long — about 48 GB of `GlyphQuad` — which no test can build (issue #1014).
 ///
 /// The arithmetic is the whole of the fix, so testing it directly is testing
-/// the fix: both helpers are the only producer of a range in their table, and
-/// both pushes route every range they assign through one of them.
+/// the fix: every one of these is the only producer of a range in its table,
+/// and every push routes the ranges it assigns through one of them.
+///
+/// **Four callers rather than two since issue #1045.** `ClipTable::push` and
+/// `ImageTable::push_row` converted their offset and their count separately
+/// until then, so they had the shape #1014 corrected and no coverage. Each now
+/// has a named range helper of its own, exactly as the first two do, and the
+/// table below drives all four — so a fifth site added without a row here is
+/// what this list is for, and a wrapper that stopped calling
+/// [`bounded_range`] fails these rather than only the shared function's own
+/// arithmetic.
 #[cfg(test)]
 mod flat_ranges {
-    use super::{GlyphRunTable, PaintTable};
+    use super::{ClipBox, ClipTable, CornerRadii, GlyphRunTable, ImageTable, PaintTable};
+
+    /// Every site that assigns a boundary-B range, by the helper its push
+    /// calls.
+    fn sites() -> [(&'static str, fn(usize, usize) -> (u32, u32)); 4] {
+        [
+            ("PaintTable::flat_range", PaintTable::flat_range),
+            ("GlyphRunTable::quad_range", GlyphRunTable::quad_range),
+            ("ClipTable::box_range", ClipTable::box_range),
+            ("ImageTable::payload_range", ImageTable::payload_range),
+        ]
+    }
 
     /// The tipping case from the issue: an array just under the ceiling taking
     /// a part that carries it over. Each length converts to a `u32` on its own,
@@ -3472,11 +3575,9 @@ mod flat_ranges {
         let count = 1000;
         assert!(u32::try_from(array_len).is_ok() && u32::try_from(count).is_ok());
 
-        let paint = std::panic::catch_unwind(|| PaintTable::flat_range(array_len, count))
-            .expect_err("a paint range ending past u32::MAX must be refused");
-        let quads = std::panic::catch_unwind(|| GlyphRunTable::quad_range(array_len, count))
-            .expect_err("a quad range ending past u32::MAX must be refused");
-        for payload in [paint, quads] {
+        for (what, range) in sites() {
+            let payload = std::panic::catch_unwind(move || range(array_len, count))
+                .expect_err("a range ending past u32::MAX must be refused");
             let message = payload
                 .downcast_ref::<String>()
                 .map(String::as_str)
@@ -3484,7 +3585,7 @@ mod flat_ranges {
                 .to_owned();
             assert!(
                 message.contains("past u32::MAX"),
-                "the refusal must be the end-of-range check, not one of the two length \
+                "{what}: the refusal must be the end-of-range check, not one of the two length \
                  conversions above it; got: {message}"
             );
         }
@@ -3496,14 +3597,9 @@ mod flat_ranges {
     fn a_range_ending_exactly_at_u32_max_is_assigned() {
         let array_len = u32::MAX as usize - 1000;
         let count = 1000;
-        assert_eq!(
-            PaintTable::flat_range(array_len, count),
-            (u32::MAX - 1000, 1000)
-        );
-        assert_eq!(
-            GlyphRunTable::quad_range(array_len, count),
-            (u32::MAX - 1000, 1000)
-        );
+        for (what, range) in sites() {
+            assert_eq!(range(array_len, count), (u32::MAX - 1000, 1000), "{what}");
+        }
     }
 
     /// An empty part at a non-empty array keeps the offset it is given.
@@ -3514,9 +3610,38 @@ mod flat_ranges {
     /// pins.
     #[test]
     fn an_empty_part_keeps_its_offset() {
-        assert_eq!(PaintTable::flat_range(7, 0), (7, 0));
+        for (what, range) in sites() {
+            assert_eq!(range(7, 0), (7, 0), "{what}");
+        }
         assert_eq!(PaintTable::span(7, 0), (0, 0));
-        assert_eq!(GlyphRunTable::quad_range(7, 0), (7, 0));
+    }
+
+    /// The clip table hands back the range it was given, so the shared check is
+    /// on the path a caller actually takes rather than only on the helper.
+    ///
+    /// The refusal itself cannot be reached this way — four billion `ClipBox`
+    /// rows is what it takes — so this pins the wiring and the rows above pin
+    /// the arithmetic.
+    #[test]
+    fn clip_push_assigns_the_range_it_appended_at() {
+        let mut clips = ClipTable::new();
+        let box_of = |x: f32| ClipBox {
+            x,
+            y: 0.0,
+            w: 1.0,
+            h: 1.0,
+            corners: CornerRadii::default(),
+        };
+        let first = clips.push(&[box_of(0.0), box_of(1.0)]);
+        let second = clips.push(&[box_of(2.0)]);
+        assert_eq!(
+            (clips.region(first).offset, clips.region(first).count),
+            (0, 2)
+        );
+        assert_eq!(
+            (clips.region(second).offset, clips.region(second).count),
+            (2, 1)
+        );
     }
 }
 
