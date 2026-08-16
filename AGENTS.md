@@ -295,9 +295,17 @@ precedent, and they are different reasons:
   read as blocked. This is v0.13's #474, "the inputs and rulings this slice
   waits on", and v0.21's #1106 (three owner decisions) against #1107 (target
   hardware).
+- **By MVP against the rest**, so a slice cannot be held open by optimization.
+  This is v0.21's #1120, and it comes with a rule: an epic split off this way
+  **declares that it does not gate the slice**, and what it still holds at the
+  close moves out. Debt that would read the same if the slice had never happened
+  does not belong on such an epic at all: route it by the standing rule — a
+  quick item blocking nothing to the rolling-debt milestone, anything unlocking
+  only with a v1 consumer to `v1`.
 
-**A slice with more than one epic reaches its phase end when the _last_ of them
-closes**, not the first. `docs/roadmap.md`'s ritual section says the same.
+**A slice with more than one epic reaches its phase end when the _last of its
+gating epics_ closes**, not the first, and not counting an epic declared
+non-gating. `docs/roadmap.md`'s ritual section says the same.
 
 Two milestones do not fit the shape above, and neither is a defect to go fix:
 **v0.23** is a holding milestone rather than a slice and will never have an
