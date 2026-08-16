@@ -89,6 +89,10 @@
 //!
 //! [`ds_runtime_load_document_with_text`]: dashscene_ffi::ds_runtime_load_document_with_text
 
+/// The JNI entry-point gate (issue #1184). `#[cfg(test)]` throughout: it
+/// compares two files' text and exports nothing.
+#[cfg(test)]
+mod entry;
 mod face;
 mod frames;
 mod handshake;

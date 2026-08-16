@@ -144,6 +144,33 @@ pub trait Frames: 'static {
     /// empty window until something else moved.
     fn frame(&mut self, dt: f32, forced: bool) -> Step;
 
+    /// Why the most recent [`Frames::resize`] answered `false`, if it can say.
+    ///
+    /// **Defaulted to `None`**, so an implementation that has nothing to add —
+    /// and `demo-android`'s, which this crate does not own — is unaffected.
+    ///
+    /// `resize` answers a bare `bool`, which cannot carry a reason across.
+    /// Bounding the refusal report in `machine` (issue #1157) would otherwise
+    /// have dropped the `DsStatus` and the ABI's error text with it, leaving a
+    /// device that refused for a lost surface indistinguishable in logcat from
+    /// one that refused an over-large drawable.
+    ///
+    /// **Answer from state `resize` recorded; do not read anything live.** The
+    /// loop calls this from the branch that reports a refusal, which is once
+    /// per refusal rather than once per frame, but that is a bound on how often
+    /// it is called and not a promise about when. An implementation that
+    /// resolved its reason here from a source that moves — a thread-local last
+    /// error, a device queried again — would be answering about whatever
+    /// happened since. `DocumentFrames` is the worked example: it resolves
+    /// `ds_last_error_message` inside `resize`, where that call is the last
+    /// failure, and only when the status changes, so the round trip is off the
+    /// per-frame path without the answer depending on call order.
+    ///
+    /// An implementation that has not refused anything answers `None`.
+    fn refusal_reason(&self) -> Option<String> {
+        None
+    }
+
     /// Drops the surface, **and everything else this holds that the next
     /// [`Frames::attach`] will not need**.
     ///

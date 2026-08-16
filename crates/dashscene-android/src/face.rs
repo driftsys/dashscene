@@ -184,6 +184,188 @@ const FACE_FIELDS: [&Field; 6] = [
     &ATLAS_METRICS,
 ];
 
+/// `source` with everything that is not code removed and whitespace
+/// collapsed.
+///
+/// Four constructs, recognised in one pass because each can hold text that
+/// reads as a declaration or as a brace and is neither: a block comment, a
+/// line comment, a string literal and a character literal. The literals are
+/// what issue #1097's second case turns on — a field holding the text
+/// `"public final int weight;"` satisfied a gate that stripped only
+/// comments — and the character literal matters to
+/// [`class_body`] rather than here, since a `'{'`
+/// would miscount the depth.
+///
+/// **Deliberately approximate, and safe because of which way it errs.**
+/// One pass rather than three is also what makes it *less* wrong than
+/// before: a `/*` inside a string no longer opens a comment, and a `//`
+/// inside one no longer truncates the line. What remains approximate is
+/// unterminated constructs, which swallow the rest of the file.
+///
+/// Removing too much can only make its consumers fail: `face` asks whether a
+/// declaration is *present*, and `entry` compares the set of `native`
+/// declarations against a list. Removing too little is the direction that
+/// could pass wrongly. So every way this can be wrong is a loud failure
+/// rather than a silent one, which is the property a drift gate needs and
+/// the reason it is not worth a real lexer.
+///
+/// **Java only.** `entry` feeds it `DashsceneNative.java` and reads Rust
+/// source raw, because `'` opens a character literal here and is almost
+/// always a lifetime in Rust — running this over `host.rs` cut it from
+/// 38 058 bytes to 7 959 and removed whole parameter lists, so which
+/// symbols survived depended on how many apostrophes the file happened to
+/// carry.
+#[cfg(test)]
+pub(crate) fn code_only(source: &str) -> String {
+    // **Bytes, not chars** (issue #1169). Every construct recognised here
+    // is ASCII — `/`, `*`, `"`, `'`, `\` — and a UTF-8 continuation byte is
+    // always >= 0x80, so it can never be mistaken for one of them. The
+    // two-byte escape skip can land mid-character, which is harmless: it is
+    // inside a literal, where nothing is copied out. Collecting the file as
+    // `Vec<char>` to look one byte ahead cost four bytes per character
+    // before any work began.
+    let bytes = source.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let this = bytes[at];
+        let next = bytes.get(at + 1).copied();
+        if this == b'/' && next == Some(b'*') {
+            // A space in place of a comment, which can legitimately sit
+            // between the tokens of a declaration.
+            out.push(b' ');
+            at += 2;
+            while at < bytes.len() && !(bytes[at] == b'*' && bytes.get(at + 1) == Some(&b'/')) {
+                at += 1;
+            }
+            at += 2;
+        } else if this == b'/' && next == Some(b'/') {
+            out.push(b' ');
+            while at < bytes.len() && bytes[at] != b'\n' {
+                at += 1;
+            }
+        } else if this == b'"' || this == b'\'' {
+            // **A quote pair, not a space**, for the reason `class_body`
+            // uses `{}`: a literal never sits between the tokens of a
+            // declaration, so what is on either side of one was never
+            // adjacent, and a space joins them. `public final int"x"weight;`
+            // declares nothing and collapsed to exactly the text this gate
+            // looks for. A quote pair cannot appear inside a declaration, so
+            // it cannot complete one.
+            //
+            // Not `{}` here: that would feed a brace to `class_body`'s
+            // depth counter and move the class body's boundaries.
+            out.extend_from_slice(b"\"\"");
+            at += 1;
+            while at < bytes.len() && bytes[at] != this {
+                // A backslash escapes the next byte, the closing quote
+                // included.
+                at += if bytes[at] == b'\\' { 2 } else { 1 };
+            }
+            at += 1;
+        } else {
+            out.push(this);
+            at += 1;
+        }
+    }
+    // Every byte copied out came from outside a comment or a literal, so
+    // the boundaries of any multi-byte character are intact.
+    let out = String::from_utf8(out).expect("only whole characters are copied out");
+
+    let mut collapsed = String::with_capacity(out.len());
+    for word in out.split_whitespace() {
+        if !collapsed.is_empty() {
+            collapsed.push(' ');
+        }
+        collapsed.push_str(word);
+    }
+    collapsed
+}
+
+/// The text **directly inside `class`'s own body**, with everything nested
+/// inside a further brace dropped (issue #1097).
+///
+/// `code` must have been through [`code_only`] first: this counts braces, and
+/// a `'{'` in a character literal or a `{` in a comment would move the body's
+/// boundaries.
+///
+/// **Depth, not brace matching.** A nested class is *between* `class Foo {` and
+/// its closing brace, so matching that pair is not enough — everything below
+/// depth 1 has to go. Dropping the nested text also drops a constructor body,
+/// which is exactly right: `this.weight = weight;` declares nothing.
+///
+/// `None` when the class header is not found, when what follows it is not a
+/// class body, or when the body never closes. Each caller decides what that
+/// means for it.
+///
+/// **Two consumers, one copy.** `face` asks it for `DsFace`, because
+/// `GetFieldID` is asked of a `DsFace` instance; `entry` asks it for
+/// `DashsceneNative` and `DemoNative`, because a `native` method moved into a
+/// nested class is mangled `…_00024Inner_…` and throws at the first call. The
+/// hole is the same hole and it is closed once.
+#[cfg(test)]
+pub(crate) fn class_body(code: &str, class: &str) -> Option<String> {
+    let header = format!("class {class}");
+    let mut from = 0;
+    let open = loop {
+        let at = from + code[from..].find(&header)?;
+        let after = code[at + header.len()..].chars().next();
+        // `class DsFaceInner` is a different class. Nothing needs checking
+        // on the left: the `class` keyword is part of the needle.
+        if after.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$') {
+            from = at + header.len();
+            continue;
+        }
+        // The brace need not be adjacent — `class DsFace implements Foo {`
+        // — but only an `extends`/`implements` clause may sit between, and
+        // that carries neither `;` nor `}`. Without this check a class whose
+        // own opening brace is missing matches the **constructor's**
+        // brace several declarations later and reports that body as the
+        // class's, which reads as `family` having gone missing.
+        let rest = &code[at + header.len()..];
+        let brace = rest.find('{')?;
+        if rest[..brace].contains(';') || rest[..brace].contains('}') {
+            return None;
+        }
+        break at + header.len() + brace;
+    };
+
+    let mut depth = 0_u32;
+    let mut body = String::new();
+    for character in code[open..].chars() {
+        match character {
+            '{' => {
+                depth += 1;
+                if depth == 2 {
+                    // **Braces, not a space**, and the difference is a false
+                    // pass. `code_only` elides something that sits *where a
+                    // token could*, so a space there keeps two real tokens
+                    // apart. Here a whole nested construct is elided and the
+                    // text either side of it was never adjacent, so a space
+                    // *joins* them: `public final int{ }weight;` collapsed
+                    // to `public final int weight;` and the gate reported a
+                    // field that nothing declares as declared. A brace pair
+                    // cannot appear inside a declaration, so it cannot
+                    // complete one.
+                    body.push_str("{}");
+                }
+            }
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(body);
+                }
+            }
+            _ if depth == 1 => body.push(character),
+            _ => {}
+        }
+    }
+    // Unbalanced braces are not valid Java. Reported as no body at all
+    // rather than as a truncated one, so nothing is searched that was not
+    // read to its end.
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,87 +396,7 @@ mod tests {
         }
     }
 
-    /// `source` with everything that is not code removed and whitespace
-    /// collapsed.
-    ///
-    /// Four constructs, recognised in one pass because each can hold text that
-    /// reads as a declaration or as a brace and is neither: a block comment, a
-    /// line comment, a string literal and a character literal. The literals are
-    /// what issue #1097's second case turns on — a field holding the text
-    /// `"public final int weight;"` satisfied a gate that stripped only
-    /// comments — and the character literal matters to
-    /// [`ds_face_body`] rather than here, since a `'{'`
-    /// would miscount the depth.
-    ///
-    /// **Deliberately approximate, and safe because of which way it errs.**
-    /// One pass rather than three is also what makes it *less* wrong than
-    /// before: a `/*` inside a string no longer opens a comment, and a `//`
-    /// inside one no longer truncates the line. What remains approximate is
-    /// unterminated constructs, which swallow the rest of the file.
-    ///
-    /// Removing too much can only make the assertion below fail, because that
-    /// assertion asks whether a declaration is *present*. Removing too little
-    /// is the direction that could pass wrongly. So every way this can be
-    /// wrong is a loud failure rather than a silent one, which is the property
-    /// a drift gate needs and the reason it is not worth a real lexer.
-    fn code_only(source: &str) -> String {
-        let chars: Vec<char> = source.chars().collect();
-        let mut out = String::with_capacity(source.len());
-        let mut at = 0;
-        while at < chars.len() {
-            let this = chars[at];
-            let next = chars.get(at + 1).copied();
-            if this == '/' && next == Some('*') {
-                // A space in place of each construct, so the tokens either side
-                // of it cannot join into a declaration written nowhere.
-                out.push(' ');
-                at += 2;
-                while at < chars.len() && !(chars[at] == '*' && chars.get(at + 1) == Some(&'/')) {
-                    at += 1;
-                }
-                at += 2;
-            } else if this == '/' && next == Some('/') {
-                out.push(' ');
-                while at < chars.len() && chars[at] != '\n' {
-                    at += 1;
-                }
-            } else if this == '"' || this == '\'' {
-                // **A quote pair, not a space**, for the reason `ds_face_body`
-                // uses `{}`: a literal never sits between the tokens of a
-                // declaration, so what is on either side of one was never
-                // adjacent, and a space joins them. `public final int"x"weight;`
-                // declares nothing and collapsed to exactly the text this gate
-                // looks for. A quote pair cannot appear inside a declaration, so
-                // it cannot complete one.
-                //
-                // Not `{}` here: that would feed a brace to `ds_face_body`'s
-                // depth counter and move the class body's boundaries.
-                out.push_str("\"\"");
-                at += 1;
-                while at < chars.len() && chars[at] != this {
-                    // A backslash escapes the next character, the closing quote
-                    // included.
-                    at += if chars[at] == '\\' { 2 } else { 1 };
-                }
-                at += 1;
-            } else {
-                out.push(this);
-                at += 1;
-            }
-        }
-
-        let mut collapsed = String::with_capacity(out.len());
-        for word in out.split_whitespace() {
-            if !collapsed.is_empty() {
-                collapsed.push(' ');
-            }
-            collapsed.push_str(word);
-        }
-        collapsed
-    }
-
-    /// The text **directly inside `DsFace`'s own class body**, with everything
-    /// nested inside a further brace dropped (issue #1097).
+    /// The text **directly inside `DsFace`'s own class body** (issue #1097).
     ///
     /// `GetFieldID` is asked of a `DsFace` instance, so only what that class
     /// declares can answer it. The gate matched anywhere in the file, which two
@@ -302,78 +404,13 @@ mod tests {
     /// moved into a nested `public static final class Inner`, and one into a
     /// second top-level class.
     ///
-    /// **Depth, not brace matching.** A nested class is *between*
-    /// `class DsFace {` and its closing brace, so matching that pair is not
-    /// enough — everything below depth 1 has to go. Dropping the nested text
-    /// also drops the constructor body, which is exactly right: `this.weight =
-    /// weight;` is not a declaration of anything.
-    ///
-    /// `None` when the class header is not found, when what follows it is not a
-    /// class body, or when the body never closes. [`gate`] reports that as
+    /// `None` for the reasons [`class_body`] gives. [`gate`] reports that as
     /// [`Gate::NoBody`] rather than folding it into a missing field: an empty
     /// body reports the *first* entry of [`FACE_FIELDS`] missing, which is
     /// exactly what a genuine `family` rename reports, and points the reader at
     /// the wrong repair.
     fn ds_face_body(code: &str) -> Option<String> {
-        const HEADER: &str = "class DsFace";
-        let mut from = 0;
-        let open = loop {
-            let at = from + code[from..].find(HEADER)?;
-            let after = code[at + HEADER.len()..].chars().next();
-            // `class DsFaceInner` is a different class. Nothing needs checking
-            // on the left: the `class` keyword is part of the needle.
-            if after.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$') {
-                from = at + HEADER.len();
-                continue;
-            }
-            // The brace need not be adjacent — `class DsFace implements Foo {`
-            // — but only an `extends`/`implements` clause may sit between, and
-            // that carries neither `;` nor `}`. Without this check a class whose
-            // own opening brace is missing matches the **constructor's**
-            // brace several declarations later and reports that body as the
-            // class's, which reads as `family` having gone missing.
-            let rest = &code[at + HEADER.len()..];
-            let brace = rest.find('{')?;
-            if rest[..brace].contains(';') || rest[..brace].contains('}') {
-                return None;
-            }
-            break at + HEADER.len() + brace;
-        };
-
-        let mut depth = 0_u32;
-        let mut body = String::new();
-        for character in code[open..].chars() {
-            match character {
-                '{' => {
-                    depth += 1;
-                    if depth == 2 {
-                        // **Braces, not a space**, and the difference is a false
-                        // pass. `code_only` elides something that sits *where a
-                        // token could*, so a space there keeps two real tokens
-                        // apart. Here a whole nested construct is elided and the
-                        // text either side of it was never adjacent, so a space
-                        // *joins* them: `public final int{ }weight;` collapsed
-                        // to `public final int weight;` and the gate reported a
-                        // field that nothing declares as declared. A brace pair
-                        // cannot appear inside a declaration, so it cannot
-                        // complete one.
-                        body.push_str("{}");
-                    }
-                }
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Some(body);
-                    }
-                }
-                _ if depth == 1 => body.push(character),
-                _ => {}
-            }
-        }
-        // Unbalanced braces are not valid Java. Reported as no body at all
-        // rather than as a truncated one, so nothing is searched that was not
-        // read to its end.
-        None
+        class_body(code, "DsFace")
     }
 
     /// The exact text `DsFace.java` must contain for one field.

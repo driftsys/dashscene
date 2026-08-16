@@ -239,6 +239,16 @@ pub(crate) struct LoopState {
     /// Consecutive surface rebuilds with no frame between them. See
     /// [`MAX_CONSECUTIVE_REBUILDS`].
     rebuilds: u32,
+    /// The extent most recently reported as refused, so the report is made
+    /// once per refusal rather than once per frame (issue #1157).
+    ///
+    /// **Cleared whenever the loop is at an extent that was taken up** — by a
+    /// resize that succeeds, and by a frame whose wanted extent is already the
+    /// configured one. The second is not redundant: returning to the
+    /// configured extent calls no `resize`, so without it a refuse, return,
+    /// refuse sequence — which is what a rotation away and back produces —
+    /// would report only the first of the two refusals.
+    last_refused: Option<(u32, u32)>,
     /// Read before **both** of this crate's device acquisitions, by the one
     /// path they share — see [`LoopState::acquire`].
     ///
@@ -278,6 +288,7 @@ impl LoopState {
             vsyncs: 0,
             frames_run: 0,
             rebuilds: 0,
+            last_refused: None,
             handshake,
         }
     }
@@ -370,6 +381,12 @@ impl LoopState {
             // gains a pending teardown nothing.
             self.frames.detach();
         }
+        // **Whichever acquisition this is, the device after it is not the one
+        // the record was written against** — a rebuild frees the runtime and
+        // acquires a fresh adapter, device and pipeline set. A refusal by a
+        // device that did not exist when the record was written has not been
+        // reported, so the record does not carry across (issue #1157).
+        self.last_refused = None;
 
         let (width, height) = self.configured;
         // **The marker pair, on both paths.** An acquisition in flight and one
@@ -411,6 +428,49 @@ impl LoopState {
                 false
             }
         }
+    }
+
+    /// Records a refusal of `wanted` and answers whether it is one that has
+    /// not been reported yet (issue #1157).
+    ///
+    /// **It writes**, which the name says: an assertion that reads it is also
+    /// an assertion that records. Its one caller guards the report in
+    /// [`LoopState::step`].
+    ///
+    /// **The retry is right; the reporting is what wanted bounding.** An extent
+    /// past the adapter maximum is refused on every call, and the loop offers
+    /// it again every frame on purpose — issue #714 is why, and
+    /// `a_refused_resize_is_offered_again_on_the_next_frame` pins it. What was
+    /// unbounded was the cost of a refusal that never stops being refused: one
+    /// logcat line, and in `DocumentFrames` one `ds_last_error_message` round
+    /// trip, per vsync for as long as the surface lives. Logcat is the only
+    /// diagnostic channel a device gives this crate, and its buffer is a ring,
+    /// so sixty lines a second overwrites the attach markers
+    /// `start_document_host` builds its wedge diagnosis on.
+    ///
+    /// A separate method, and not the `log` call inline, because `log` is a
+    /// no-op off Android: the bound would otherwise be observable on no target
+    /// and testable by nothing. What the tests drive instead is
+    /// [`Frames::refusal_reason`], which the report asks for and nothing else
+    /// calls, so counting those calls counts reports.
+    ///
+    /// **Not the [`MAX_CONSECUTIVE_REBUILDS`] treatment.** Giving up on a
+    /// refused resize would leave the scene laid out for the old size, which is
+    /// the state issue #714 exists to prevent.
+    ///
+    /// **The record is the extent and nothing else, and that is the bound's
+    /// one limit.** The same extent refused for a *different* reason on a later
+    /// frame is not reported again: the loop would have to ask
+    /// [`Frames::refusal_reason`] on every refused frame to notice, and asking
+    /// on every refused frame is the cost this exists to remove. Three things
+    /// do clear the record, so the case it misses is narrow — a resize that is
+    /// taken up, a frame already at the configured extent, and an acquisition,
+    /// which is a device the record was not written against. A status change
+    /// with none of those in between is a failure mode the frame path reports
+    /// on its own: a device lost under the loop answers [`Step::Rebuild`], and
+    /// the rebuild writes its own markers.
+    fn record_refusal(&mut self, wanted: (u32, u32)) -> bool {
+        self.last_refused.replace(wanted) != Some(wanted)
     }
 
     /// Whether the loop should still be scheduling frames.
@@ -487,7 +547,15 @@ impl LoopState {
         // different threads and a message would need a channel for one `u32`
         // pair.
         let wanted = unpack(self.extent.load(Ordering::Acquire));
-        if wanted != self.configured && is_drawable(wanted) {
+        if wanted == self.configured {
+            // Back at an extent that is taken up, which is the other way a
+            // refusal stops being the current state. Without this, refuse
+            // 1612x720, rotate back to the configured 720x1612 — which calls no
+            // `resize` at all, because there is nothing to change — and refuse
+            // 1612x720 again reports nothing the second time. Rotation produces
+            // exactly that sequence.
+            self.last_refused = None;
+        } else if is_drawable(wanted) {
             // Recorded only when it was taken up. A refused extent — one past
             // the adapter maximum (issue #714) — is offered again next frame
             // rather than believed, which is what stops one refusal leaving the
@@ -495,9 +563,28 @@ impl LoopState {
             // life.
             if self.frames.resize(wanted.0, wanted.1) {
                 self.configured = wanted;
+                // A resize that was taken up makes a later refusal of the
+                // extent recorded here worth reporting again. Cleared here as
+                // well as on the branch above, and not left to it: the extent
+                // can move again before the next frame, in which case that
+                // branch is not the one reached.
+                self.last_refused = None;
                 // A reconfigured swapchain has drawn nothing, and the
                 // generation cannot report that.
                 self.forced = true;
+            } else if self.record_refusal(wanted) {
+                // The reason is asked for here and not inside `resize`, so the
+                // `ds_last_error_message` round trip behind it happens once per
+                // refusal rather than once per frame.
+                let reason = self
+                    .frames
+                    .refusal_reason()
+                    .unwrap_or_else(|| "no reason given".to_owned());
+                log(&format!(
+                    "the surface refused a {}x{} drawable ({reason}) — offering it again \
+                     each frame until it is taken up",
+                    wanted.0, wanted.1
+                ));
             }
         }
 
@@ -618,6 +705,11 @@ mod tests {
         resizes: Vec<(u32, u32)>,
         attaches: Vec<(usize, u32, u32)>,
         detaches: usize,
+        /// One entry per [`Frames::refusal_reason`], which is **the report
+        /// itself** (issue #1157): [`LoopState::step`] asks for the reason only
+        /// on the branch that writes the log line, and nothing else calls it.
+        /// So this counts reports, on a target where `log` writes nowhere.
+        refusal_reasons: usize,
     }
 
     /// A [`Frames`] that answers from a script and records what it was asked.
@@ -630,7 +722,20 @@ mod tests {
         /// What each successive `attach` answers. Empty means it succeeds.
         attaches: VecDeque<Result<(), AttachError>>,
         /// Whether `resize` takes the new extent up.
+        ///
+        /// The fallback once `resize_script` is empty, so a test that does not
+        /// care writes one bool and a test that does scripts the sequence.
         accept_resize: bool,
+        /// What each successive `resize` answers before `accept_resize` takes
+        /// over — so refuse, accept, refuse can be driven through `step`
+        /// rather than asserted on the state directly (issue #1157).
+        ///
+        /// Shared with the fixture the way `recording` is, because the
+        /// implementation is boxed into the state and cannot be reached again.
+        resize_script: Rc<RefCell<VecDeque<bool>>>,
+        /// Whether the most recent `resize` refused, so `refusal_reason`
+        /// answers `Some` only when the trait allows it to.
+        refused_last_resize: bool,
         recording: Rc<RefCell<Recording>>,
         /// Set when this value is dropped, so a test can tell being detached
         /// from being released (issue #1085). `Rc<Cell<_>>` rather than a field
@@ -661,7 +766,22 @@ mod tests {
 
         fn resize(&mut self, width: u32, height: u32) -> bool {
             self.recording.borrow_mut().resizes.push((width, height));
-            self.accept_resize
+            let scripted = self.resize_script.borrow_mut().pop_front();
+            let took_up = scripted.unwrap_or(self.accept_resize);
+            self.refused_last_resize = !took_up;
+            took_up
+        }
+
+        /// Counted, because the count is what says the report was bounded.
+        ///
+        /// `Some` only after a `resize` that refused, which is the contract
+        /// [`Frames::refusal_reason`] states. Answering `Some` unconditionally
+        /// would make this fixture accept a `step` that asked for a reason with
+        /// no refusal behind it.
+        fn refusal_reason(&self) -> Option<String> {
+            self.recording.borrow_mut().refusal_reasons += 1;
+            self.refused_last_resize
+                .then(|| "scripted refusal".to_owned())
         }
 
         fn frame(&mut self, dt: f32, forced: bool) -> Step {
@@ -690,6 +810,9 @@ mod tests {
         state: LoopState,
         extent: Arc<AtomicU64>,
         recording: Rc<RefCell<Recording>>,
+        /// What successive `resize` calls answer; empty falls back to the
+        /// fixture's `accept_resize`.
+        resize_script: Rc<RefCell<VecDeque<bool>>>,
         handshake: Arc<Handshake>,
         /// Set when the scripted implementation is dropped (issue #1085).
         dropped: Rc<Cell<bool>>,
@@ -703,6 +826,7 @@ mod tests {
         accept_resize: bool,
     ) -> Fixture {
         let recording = Rc::new(RefCell::new(Recording::default()));
+        let resize_script = Rc::new(RefCell::new(VecDeque::new()));
         let extent = Arc::new(AtomicU64::new(pack(CONFIGURED.0, CONFIGURED.1)));
         let handshake = Arc::new(Handshake::new());
         let dropped = Rc::new(Cell::new(false));
@@ -710,6 +834,8 @@ mod tests {
             outcomes: outcomes.into(),
             attaches: attaches.into(),
             accept_resize,
+            resize_script: Rc::clone(&resize_script),
+            refused_last_resize: false,
             recording: Rc::clone(&recording),
             dropped: Rc::clone(&dropped),
         };
@@ -723,6 +849,7 @@ mod tests {
             state,
             extent,
             recording,
+            resize_script,
             handshake,
             dropped,
         }
@@ -1217,6 +1344,206 @@ mod tests {
             vec![(720, 1612); 3],
             "a refusal is not believed, so the same extent is offered every frame"
         );
+    }
+
+    /// **A refusal is reported once, not once per frame** (issue #1157).
+    ///
+    /// The retry itself is unbounded on purpose — the test above pins that — so
+    /// what this drives is the reporting beside it.
+    ///
+    /// **Counted through `Frames::refusal_reason` rather than through `log`**,
+    /// which is a no-op off Android: a bound that only the log could show would
+    /// be observable on no target this tier runs. `step` asks for the reason
+    /// only on the branch that writes the line and nothing else calls it, so
+    /// the count is the number of reports — and removing the guard makes this
+    /// fail rather than pass with three lines written.
+    #[test]
+    fn a_refusal_is_reported_once_per_refusal_and_not_once_per_frame() {
+        let mut fixture = scripted(Vec::new(), Vec::new(), false);
+        fixture.extent.store(pack(4096, 4096), Ordering::Release);
+
+        run(&mut fixture.state, 3);
+
+        assert_eq!(
+            fixture.recording.borrow().resizes,
+            vec![(4096, 4096); 3],
+            "the retry is unbounded and stays so — issue #714"
+        );
+        assert_eq!(
+            fixture.recording.borrow().refusal_reasons,
+            1,
+            "three frames refused the same extent, and that is one report"
+        );
+
+        // A different extent being refused is a different thing to report, and
+        // it is driven through `step` rather than by calling the predicate.
+        fixture.extent.store(pack(8192, 8192), Ordering::Release);
+        run(&mut fixture.state, 2);
+
+        assert_eq!(
+            fixture.recording.borrow().refusal_reasons,
+            2,
+            "the second extent is reported once as well, over its two frames"
+        );
+    }
+
+    /// **Refuse, accept, refuse the same extent again: reported twice**, driven
+    /// through `step` rather than by calling the predicate.
+    ///
+    /// The second refusal is the one worth reporting — an extent that had
+    /// started working has stopped — and without clearing the record on a
+    /// successful resize it would be silent. Scripted through `Frames::resize`
+    /// so that a future edit moving the `record_refusal` call to a branch that
+    /// an accepted resize does not reach fails here.
+    #[test]
+    fn a_refusal_after_an_accepted_resize_is_reported_again() {
+        let mut fixture = scripted(Vec::new(), Vec::new(), true);
+        // Refuse the first offer, take up the second, refuse the third.
+        fixture
+            .resize_script
+            .borrow_mut()
+            .extend([false, true, false]);
+
+        fixture.extent.store(pack(4096, 4096), Ordering::Release);
+        run(&mut fixture.state, 1);
+        assert_eq!(
+            fixture.state.last_refused,
+            Some((4096, 4096)),
+            "the first refusal is recorded"
+        );
+
+        fixture.extent.store(pack(720, 1612), Ordering::Release);
+        run(&mut fixture.state, 1);
+        assert_eq!(
+            fixture.state.last_refused, None,
+            "a resize that was taken up clears the record"
+        );
+
+        fixture.extent.store(pack(4096, 4096), Ordering::Release);
+        run(&mut fixture.state, 1);
+        assert_eq!(
+            fixture.state.last_refused,
+            Some((4096, 4096)),
+            "so the same extent refused again has not been reported yet"
+        );
+        assert_eq!(
+            fixture.recording.borrow().resizes,
+            vec![(4096, 4096), (720, 1612), (4096, 4096)],
+            "and every offer still reached the implementation"
+        );
+        assert_eq!(
+            fixture.recording.borrow().refusal_reasons,
+            2,
+            "two refusals with an accepted resize between them are two reports"
+        );
+    }
+
+    /// **Refuse, return to the configured extent, refuse again: reported
+    /// twice** — and the middle step calls no `resize` at all.
+    ///
+    /// The sequence a rotation away and back produces. Returning to the
+    /// configured extent changes nothing, so `step` does not offer it to the
+    /// implementation and the accepted-resize clear above is never reached;
+    /// without the second clear the second refusal is silent.
+    #[test]
+    fn a_refusal_after_returning_to_the_configured_extent_is_reported_again() {
+        let mut fixture = scripted(Vec::new(), Vec::new(), false);
+
+        fixture.extent.store(pack(4096, 4096), Ordering::Release);
+        run(&mut fixture.state, 1);
+
+        fixture
+            .extent
+            .store(pack(CONFIGURED.0, CONFIGURED.1), Ordering::Release);
+        run(&mut fixture.state, 1);
+        assert_eq!(
+            fixture.state.last_refused, None,
+            "the loop is back at an extent that is taken up"
+        );
+
+        fixture.extent.store(pack(4096, 4096), Ordering::Release);
+        run(&mut fixture.state, 1);
+
+        assert_eq!(
+            fixture.recording.borrow().resizes,
+            vec![(4096, 4096), (4096, 4096)],
+            "the configured extent is not offered — there is nothing to change"
+        );
+        assert_eq!(
+            fixture.recording.borrow().refusal_reasons,
+            2,
+            "and the refusal either side of it is reported both times"
+        );
+    }
+
+    /// **A refusal after a rebuild is reported again**, because the device that
+    /// refused is not the one the record was written against.
+    ///
+    /// A rebuild frees the runtime and acquires a fresh adapter, device and
+    /// pipeline set. Without clearing the record across the acquisition, the
+    /// first refusal on a new device writes nothing at all — in the crate whose
+    /// only diagnostic channel is logcat.
+    #[test]
+    fn a_refusal_after_a_rebuild_is_reported_again() {
+        let mut fixture = scripted(vec![Step::Continue, Step::Rebuild], Vec::new(), false);
+        fixture.extent.store(pack(4096, 4096), Ordering::Release);
+
+        // Refused, reported, and then the surface is lost and rebuilt.
+        run(&mut fixture.state, 2);
+        assert_eq!(
+            fixture.recording.borrow().refusal_reasons,
+            1,
+            "the first refusal is reported"
+        );
+        assert_eq!(
+            fixture.recording.borrow().detaches,
+            1,
+            "and the second frame rebuilt"
+        );
+        assert_eq!(
+            fixture.state.last_refused, None,
+            "the acquisition cleared the record"
+        );
+
+        run(&mut fixture.state, 1);
+        assert_eq!(
+            fixture.recording.borrow().refusal_reasons,
+            2,
+            "so the same extent refused by the new device is reported"
+        );
+    }
+
+    /// **A [`Frames`] that does not override `refusal_reason` reports no
+    /// reason, and `step` carries on.**
+    ///
+    /// The defaulted `None` is the answer every host outside this crate gives —
+    /// `demo-android`'s among them — so it is the path taken on a real device
+    /// by both of this repository's Android hosts but one. [`Released`] is a
+    /// real non-overriding implementation rather than a fixture written to be
+    /// one.
+    #[test]
+    fn a_frames_that_does_not_override_refusal_reason_gives_none() {
+        assert!(
+            Released.refusal_reason().is_none(),
+            "the defaulted answer is None"
+        );
+
+        let extent = Arc::new(AtomicU64::new(pack(4096, 4096)));
+        let handshake = Arc::new(Handshake::new());
+        let mut state = LoopState::new(
+            Box::new(Released),
+            WINDOW,
+            Arc::clone(&extent),
+            Arc::clone(&handshake),
+        );
+        // `Released::resize` refuses, so `step` takes the reporting branch and
+        // has to have a reason to write; `Released::frame` then stops the loop.
+        assert_eq!(
+            run(&mut state, 1),
+            vec![Action::Stop],
+            "the refusal is reported with no reason and the frame decides"
+        );
+        assert_eq!(state.last_refused, Some((4096, 4096)));
     }
 
     /// An accepted resize is recorded, so it is offered once and not again.

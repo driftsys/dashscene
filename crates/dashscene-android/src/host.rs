@@ -196,6 +196,24 @@ struct DocumentFrames {
     runtime: *mut DsRuntime,
     /// The document, **kept for the life of this object** — see [`Document`].
     document: Document,
+    /// Why the last `resize` was refused, for [`Frames::refusal_reason`].
+    ///
+    /// **Written only when the status changes** (issue #1157). Resolving the
+    /// message is a `ds_last_error_message` round trip — a size query, an
+    /// allocation and a second call — and `resize` runs on every frame that a
+    /// refused extent is offered again, so doing it unconditionally is one
+    /// round trip per vsync for as long as the surface lives. An extent past
+    /// the adapter maximum is refused with the same status every time, so the
+    /// steady refused state costs one round trip in total.
+    ///
+    /// **Resolved here rather than in [`Frames::refusal_reason`]**, which is
+    /// where the first fix put it. `ds_last_error_message` reports the last
+    /// failure on this thread, so it is correct only at the point the failure
+    /// happened; reading it later made the getter's answer depend on nothing
+    /// having called the ABI in between — an invariant that held only because
+    /// `LoopState::step` asks immediately, and that no signature stated. The
+    /// comparison below costs one `i32` and removes it.
+    refusal: Option<(DsStatus, String)>,
     /// The cascade and its sheets, **kept for the life of this object**, for
     /// the same reason `document` is: a rebuild after a recoverable surface
     /// loss detaches — which frees the runtime — and attaches again, and an
@@ -297,14 +315,38 @@ impl Frames for DocumentFrames {
         Ok(())
     }
 
+    /// **Answers what `resize` recorded, and reads nothing live**, so it has no
+    /// ordering requirement: the loop may ask whenever it likes, and an
+    /// embedder calling it directly gets the same answer.
+    fn refusal_reason(&self) -> Option<String> {
+        self.refusal
+            .as_ref()
+            .map(|(status, message)| format!("{status:?} {message}"))
+    }
+
     fn resize(&mut self, width: u32, height: u32) -> bool {
         // SAFETY: `runtime` is live and this is the only thread calling it.
         let resized = unsafe { dashscene_ffi::ds_runtime_resize(self.runtime, width, height) };
-        if resized != DsStatus::Ok {
-            log(&format!("resize: {resized:?} {}", last_error()));
-            return false;
+        // Recorded rather than logged (issue #1157). The loop offers a refused
+        // extent again every frame, on purpose, so anything done here is done
+        // once per vsync for as long as the surface lives: a logcat line
+        // written here overwrites the attach markers this crate's wedge
+        // diagnosis reads, logcat's buffer being a ring.
+        //
+        // The message is resolved **when the status changes**, which is the
+        // point at which `ds_last_error_message` reports this call rather than
+        // whatever ran after it. An extent past the adapter maximum is refused
+        // with the same status every frame, so the steady refused state costs
+        // one round trip and not sixty a second; a status that does change is a
+        // different failure and is worth the one it costs.
+        // `LoopState::step` asks `refusal_reason` for the text once per
+        // refusal.
+        if resized == DsStatus::Ok {
+            self.refusal = None;
+        } else if self.refusal.as_ref().map(|(status, _)| *status) != Some(resized) {
+            self.refusal = Some((resized, last_error()));
         }
-        true
+        resized == DsStatus::Ok
     }
 
     fn frame(&mut self, dt: f32, forced: bool) -> Step {
@@ -431,6 +473,7 @@ fn start_document_host(
         Box::new(DocumentFrames {
             runtime: std::ptr::null_mut(),
             document,
+            refusal: None,
             faces,
         })
     };
