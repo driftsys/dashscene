@@ -169,10 +169,10 @@ The one still held, brought by an earlier merge, is
 `2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`, added at the close of that slice's C
 ABI work to carry stories #841 and #842, and given #947 when that was split out
 of #863 on 2026-08-13. **#841 and #947 have landed and #842 has not** — it waits
-on hardware, as does D3a (#885) — so this prompt is the one still carrying live
-work, and it was rewritten on 2026-08-13 and corrected on 2026-08-14 against
-what had changed under it. It archives when epic #833 does, which its own status
-line says.
+on hardware, as does D3a (#885, moved to v0.21 on 2026-08-16) — so this prompt
+is the one still carrying live work, and it was rewritten on 2026-08-13 and
+corrected on 2026-08-14 against what had changed under it. It archives when epic
+#833 does, which its own status line says.
 
 **Correcting it rather than archiving it is the convention, not a hedge.** A
 driver prompt is archived verbatim rather than gardened into records, so the
@@ -454,8 +454,9 @@ leaves when those two land or move. It supersedes
 
 **Half its scope was gone inside a day of it landing**, which is worth reading
 as a property of this milestone rather than of the prompt: v0.19's remaining
-debt is small and moves fast, and what gates the slice is hardware for #842 and
-#885.
+debt is small and moves fast, and what gates the slice is hardware for #842.
+**#885 gated it too until 2026-08-16**, when it moved to v0.21 with #960 and
+#969; epic #951 records the ruling.
 
 `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md` was archived on 2026-08-13, when
 #838 and #863 both landed — the first just after local midnight, which is why

@@ -29,9 +29,10 @@
     gh issue list --milestone "v0.19 — Android, the C ABI, and layer 0" \
       --state open --json number,title,labels
 
-At 2026-08-16 that returns **six rows**: one `epic` (#833), three `story` (#842,
-#843, #950 — relabelled from `debt`), and two `debt` (#885, #944). It returned
-twelve on 2026-08-15. Re-run it rather than reading any figure here.
+At 2026-08-16 that returns **five rows**: one `epic` (#833), three `story`
+(#842, #843, #950 — relabelled from `debt`), and one `debt` (#944). It returned
+twelve on 2026-08-15, and six earlier on 2026-08-16, before **#885 moved to
+v0.21**. Re-run it rather than reading any figure here.
 
 **The milestone's own counts include pull requests, and reading them as issue
 progress overstates it.** `gh api repos/{owner}/{repo}/milestones` reports
@@ -53,12 +54,16 @@ what turned up the four stale counts below.
 
 - **#842** (`story`) — the showcase on device with the frame-timing instrument.
   Needs an Android device.
-- **#885** (`debt`) — the D3a Vulkan measurement on target hardware. Same.
 - **#843** (`story`) — the records. This is the slice's close write-up and is
   written when the rest is done, not before.
 
-**The slice cannot close without hardware for the first two.** Everything in the
-scope above is ordinary debt that gates nothing.
+**#885 was on this list until 2026-08-16**, when it moved to v0.21 along with
+#960 and #969 — the slice was re-scoped to carry the hardware-gated Android work
+beside Unity. Epic #951 records the ruling. It is not pickable for the same
+reason it never was; it is simply no longer this milestone's.
+
+**The slice cannot close without hardware for #842.** Everything in the scope
+above is ordinary debt that gates nothing.
 
 ## What landed since the previous prompt, so it is not redone
 
@@ -310,8 +315,8 @@ because the reasoning in the ones around it refers to the count.
    vector: `painted_extent` is already bounded by the shown-root walk, one line
    below `rect_of_slot`.
 
-Everything else in this milestone is either hardware-gated (#842, #885) or the
-close write-up (#843).
+Everything else in this milestone is either hardware-gated (#842) or the close
+write-up (#843).
 
 ## Traps this session hit, which cost real time
 
