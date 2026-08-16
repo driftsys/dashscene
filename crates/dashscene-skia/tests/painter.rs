@@ -2969,12 +2969,20 @@ fn a_coverage_mask_with_no_area_draws_nothing_through_the_backdrop() {
 /// A frosted node whose **own origin** is out of domain draws nothing either,
 /// and this is the device-quad guard rather than the shared predicate.
 ///
-/// `dest` is the plane bounds offset by the node origin, so a NaN origin makes
-/// `dest.width()` a NaN however sound the field is, and a finite origin near
-/// `f32::MAX` overflows both ends to `+inf`, whose difference is also a NaN.
+/// `dest` is the plane bounds offset by the node origin, and there are two
+/// mechanisms rather than one. A NaN origin makes `dest.width()` a NaN however
+/// sound the field is. A large finite origin makes the two ends **cancel**:
+/// `3.0e38f32 + 8.0 == 3.0e38` is true and `f32::MAX + 8.0 == f32::MAX` is
+/// true, so neither end overflows to an infinity and there is no `inf - inf` —
+/// the field extent has simply fallen below one ulp of the origin, both ends
+/// round to the same float, and the width is exactly zero. This doc and the
+/// second case's label said "overflows" until issue #1160 measured it, and so
+/// did the guard's own comment and the bodies of issues #1160 and #1048.
+///
 /// The guard is written `!(dest.width() > 0.0 && ...)` rather than
-/// `dest.width() <= 0.0` so that a NaN is refused: `NaN <= 0.0` is **false**,
-/// which admitted the quad.
+/// `dest.width() <= 0.0` so that the NaN case is refused: `NaN <= 0.0` is
+/// **false**, which admitted the quad. The cancelled case needs no such care —
+/// zero is not greater than zero either way.
 ///
 /// **This is characterization, not a pin, and the honest reading matters.**
 /// Measured: with the admitting spelling the picture is the same — Skia draws
@@ -3000,7 +3008,7 @@ fn a_frosted_node_with_an_out_of_domain_origin_draws_nothing() {
     let without = backdrop_scene(None);
     for (name, origin) in [
         ("a NaN origin", f32::NAN),
-        ("an origin whose quad overflows to infinity", 3.0e38),
+        ("an origin its quad's extent cancels against", 3.0e38),
     ] {
         assert_eq!(
             backdrop_scene_at(Some(sound), origin),

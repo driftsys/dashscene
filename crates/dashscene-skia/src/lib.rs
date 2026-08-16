@@ -561,12 +561,17 @@ impl Painter for SkiaPainter {
             // draw nothing; the lean painter never did, its gate sitting above
             // residency.
             //
-            // Above the loop because neither the shape nor the predicate varies
-            // per blur — a node may carry several backdrops, each over the
-            // result of the last — and because a field that covers nothing
-            // draws no backdrop at all rather than one empty one per blur.
+            // `field_quad` rather than `VectorField::draws` since issue #1160:
+            // the same question with the node origin in it, which the shared
+            // predicate cannot see. A field the origin collapses used to pass
+            // here and be refused inside the draw, below the fetch.
+            //
+            // Above the loop because neither the shape nor the quad varies per
+            // blur — a node may carry several backdrops, each over the result of
+            // the last — and because a field that covers nothing draws no
+            // backdrop at all rather than one empty one per blur.
             let shape = paints.shape(entry);
-            if shape.is_none_or(|field| field.draws()) {
+            if shape.is_none_or(|field| field_quad(rect, field).is_some()) {
                 for blur in paints
                     .blurs(entry)
                     .iter()
@@ -633,7 +638,11 @@ impl Painter for SkiaPainter {
                 // entry whose field covers nothing draws nothing, where the
                 // `else` below would draw its parametric fill over the whole
                 // box.
-                if field.draws() {
+                //
+                // `field_quad` rather than `VectorField::draws` since issue
+                // #1160 — the same question with the node origin in it. See the
+                // backdrop arm above.
+                if field_quad(rect, field).is_some() {
                     let effect = field_effect.get_or_insert_with(|| {
                         RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)
                             .expect("field-mask resolve SkSL compiles")
@@ -1173,17 +1182,31 @@ fn draw_vector_field(
     canvas.restore();
 }
 
-/// The device quad a baked-vector shape occupies, and the shader that
-/// resolves its field into a coverage mask over that quad.
-///
-/// Both draws that mask by a baked shape use it: the masked fill
-/// ([`draw_vector_field`]) and the backdrop blur
-/// ([`draw_backdrop_blur_field`], story #393). Stated once so the two cannot
-/// disagree about where the shape is or how sharp its edge resolves.
+/// The device quad a baked-vector shape occupies, or `None` for a shape that
+/// draws nothing.
 ///
 /// The padded field quad (`plane_bounds`) maps to device space at unit scale,
-/// origin at the node box top-left. `None` for a field that draws nothing,
-/// which is two separate answers taken in order.
+/// origin at the node box top-left, so `dest` is the plane bounds offset by
+/// [`RectEntry::x`] and [`RectEntry::y`].
+///
+/// **`None` is two separate answers taken in order**, and the whole reason
+/// this function exists is that they belong in one place (issue #1160). Until
+/// then [`VectorField::draws`] was asked at both of [`Painter::paint`]'s two
+/// masked arms — hoisted above `ImageCache::get` at issue #1044 — while the
+/// device-quad guard stayed inside [`field_coverage`], below the fetch. So a
+/// field the second guard refused still paid for its atlas. Both call sites
+/// now ask `field_quad(rect, field).is_some()`, which is the same question
+/// with the origin in it.
+///
+/// **Both #1044 hoists stay**, and this is what makes that consistent rather
+/// than a reversal: the consolidation is the two guards living in one named
+/// function, not the ask moving back down into the draw. The predicate is
+/// still asked before the fetch, and the device-quad guard has joined it
+/// there.
+///
+/// It runs twice for a field that draws — once at the call site and once
+/// inside [`field_coverage`] — which is about eight arithmetic operations
+/// against a `save_layer` and a shader construction on the same path.
 ///
 /// # The shared predicate first (issues #1000 and #1144)
 ///
@@ -1192,21 +1215,21 @@ fn draw_vector_field(
 /// out-of-domain one, which is why `PaintTable::push_with` does not refuse it
 /// (`docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md`).
 ///
-/// **The question is settled before this runs** (issue #1044). Neither of this
-/// function's two callers fetches an atlas — both are handed an already-decoded
-/// `&Image` — so the hoist is one level further out, in the two arms of
+/// **It is asked before the atlas is fetched** (issue #1044). Neither
+/// [`field_coverage`] nor either draw fetches an atlas — all three are handed an
+/// already-decoded `&Image` — so the ask belongs in the two arms of
 /// [`Painter::paint`] that own the [`ImageCache`]. `ImageCache::get` decodes on
-/// first request, and asking only here paid a full decode for a field that
-/// paints nothing. This function still asks, because that is what makes "a
-/// degenerate field draws nothing" this painter's own answer rather than a
-/// property of two call sites.
+/// first request, and asking only below the fetch paid a full decode for a field
+/// that paints nothing. [`field_coverage`] calls this function again anyway,
+/// because that is what makes "a degenerate field draws nothing" this painter's
+/// own answer rather than a property of two call sites.
 ///
 /// **Called rather than restated**, which it was until issue #1144.
 /// `dashscene-skia` does not depend on `dashscene-gpu`, so the two carried
 /// byte-identical expressions kept in step by prose — and that convention failed
 /// twice. Issue #1000 was the two painters disagreeing about which fields draw:
-/// without the predicate this function returned `Some` for a field with no atlas
-/// extent and `sx` became an infinity. On the masked-fill path that resolved to
+/// without the predicate [`field_coverage`] returned `Some` for a field with no
+/// atlas extent and `sx` became an infinity. On the masked-fill path that resolved to
 /// zero coverage and drew nothing anyway, so the two agreed by accident. On the
 /// **backdrop-blur** path they did not — `draw_backdrop_blur_field` clips to the
 /// coverage shader and opens a backdrop layer, and with an infinity in the
@@ -1230,7 +1253,8 @@ fn draw_vector_field(
 ///
 /// `dest` is the plane bounds offset by the node origin, and the predicate
 /// above cannot see it: with a large `rect.x` a positive `right - left` can
-/// cancel to a zero-width device quad, which would divide by zero here alone.
+/// cancel to a zero-width device quad, which [`field_coverage`] would then
+/// divide by to build its texel-to-device scale.
 ///
 /// **`dashscene-gpu` writes the same quantity, and this section said it had no
 /// such case until issue #1185.** `gpu_shape` does derive `px_range` from
@@ -1277,16 +1301,11 @@ fn draw_vector_field(
 /// positive-extent case is refused twice over, so no test tells which refusal
 /// ran.
 ///
-fn field_coverage(
-    rect: &RectEntry,
-    field: &VectorField,
-    atlas: &Image,
-    effect: &RuntimeEffect,
-) -> Option<(Rect, Shader)> {
-    let [left, top, right, bottom] = field.plane_bounds;
+fn field_quad(rect: &RectEntry, field: &VectorField) -> Option<Rect> {
     if !field.draws() {
         return None;
     }
+    let [left, top, right, bottom] = field.plane_bounds;
     let dest = Rect::from_ltrb(rect.x + left, rect.y + top, rect.x + right, rect.y + bottom);
     // Spelled as a negated positive rather than `<= 0.0`, so a NaN is refused
     // rather than admitted — `NaN <= 0.0` is false and waved the quad through.
@@ -1299,23 +1318,64 @@ fn field_coverage(
     //
     // `dest` adds the **node origin** and nothing refuses a non-finite one:
     // `check_rect_extent` covers a rect's `w` and `h` and not its `x` and `y`,
-    // and it belongs to `validate_scene`, which has no production caller. A NaN
-    // origin — or one large enough that both ends overflow to an infinity,
-    // whose difference is a NaN — reaches this line with a NaN width. Issue
-    // #1048 is the upstream half.
+    // and it belongs to `validate_scene`, which has no production caller. Two
+    // origins reach this line with a width that is not positive, and they are
+    // different mechanisms:
+    //
+    // - A **NaN** origin makes both ends NaN and their difference NaN.
+    // - A **large finite** origin makes them **cancel**. Not overflow, which is
+    //   what four documents said until issue #1160 measured it:
+    //   `3.0e38f32 + 8.0 == 3.0e38` is true and `f32::MAX + 8.0 == f32::MAX` is
+    //   true, so neither end reaches an infinity and there is no `inf - inf`.
+    //   What happens is that the field extent falls below one ulp of the origin,
+    //   so both ends round to the same float and the width is exactly zero.
+    //
+    // The second is a **ratio** of the two operands rather than a property of
+    // either — an origin of `1e8` against an 8-unit field admits, and an origin
+    // of `65536.0` against a 0.001-unit field collapses — which bounds what
+    // issue #1048 can do upstream. A finiteness rule over `RectEntry::x` and
+    // `y` covers the NaN route and not this one, so this floor stays necessary
+    // after #1048 lands.
     //
     // **This changes no picture, and the claim is narrower than it looks.**
     // Measured with the admitting spelling: a NaN device quad reaches the
     // resolve shader and Skia draws nothing regardless, on the masked fill and
     // the backdrop blur alike. So it is not the erasure issue #1000 closed —
     // that needed a *finite* quad and an infinite scale. What this spelling buys
-    // is that "a degenerate quad draws nothing", which this function's contract
+    // is that "a degenerate quad draws nothing", which this painter's contract
     // states, is decided here rather than resting on Skia's undocumented
     // handling of a NaN rectangle. It is the idiom `PaintTable::push_with` uses
     // two seams away, for the same reason.
     if !(dest.width() > 0.0 && dest.height() > 0.0) {
         return None;
     }
+    Some(dest)
+}
+
+/// The device quad a baked-vector shape occupies, and the shader that
+/// resolves its field into a coverage mask over that quad.
+///
+/// Both draws that mask by a baked shape use it: the masked fill
+/// ([`draw_vector_field`]) and the backdrop blur
+/// ([`draw_backdrop_blur_field`], story #393). Stated once so the two cannot
+/// disagree about where the shape is or how sharp its edge resolves.
+///
+/// `None` for a field that draws nothing, which is [`field_quad`]'s answer and
+/// carries that function's whole argument about the two guards behind it. What
+/// is left here is the mapping: the field's atlas sub-rect onto that quad, and
+/// the screen-pixel range its edge resolves over.
+///
+fn field_coverage(
+    rect: &RectEntry,
+    field: &VectorField,
+    atlas: &Image,
+    effect: &RuntimeEffect,
+) -> Option<(Rect, Shader)> {
+    // Both refusals, in one place and already asked at both call sites
+    // (issue #1160). Asking again here is what keeps "a degenerate field draws
+    // nothing" this function's own answer rather than a property of its
+    // callers.
+    let dest = field_quad(rect, field)?;
 
     // texel -> device: the shape's atlas sub-rect maps onto the padded quad.
     let [ax, ay, aw, ah] = field.atlas_rect;
@@ -2567,6 +2627,21 @@ mod tests {
     /// `tests/painter.rs` already assert that such a field paints nothing on
     /// both paths, and `a_sound_coverage_mask_still_draws` that a sound one
     /// does. This adds the cost, which no pixel can show.
+    ///
+    /// # The origin row (issue #1160)
+    ///
+    /// The third row carries a **sound** field at a node origin of `f32::MAX`,
+    /// where the device quad cancels to nothing. `VectorField::draws` accepts
+    /// it — the predicate reads `plane_bounds` alone — and until #1160 only
+    /// `field_coverage`'s own device-quad guard refused it, below the fetch. So
+    /// it paid for its atlas to draw nothing, which is exactly what #1044 fixed
+    /// for the other route.
+    ///
+    /// It reads **1 on `main` and 0 after**, so it falsifies rather than
+    /// decorates. `a_frosted_node_with_an_out_of_domain_origin_draws_nothing` in
+    /// `tests/painter.rs` covers the same origins for the *picture* and cannot
+    /// cover this: `DECODE_CALLS` is a `cfg(test)` thread-local in this file,
+    /// which an integration test cannot see.
     #[test]
     fn a_coverage_field_that_draws_nothing_decodes_no_atlas() {
         let mut images = ImageTable::new();
@@ -2602,7 +2677,16 @@ mod tests {
                 }][..],
             ),
         ] {
-            for (field, expected) in [(sound, 1), (degenerate, 0)] {
+            for (why, field, origin, expected) in [
+                ("draws", sound, 0.0, 1),
+                ("has no atlas extent", degenerate, 0.0, 0),
+                // A sound field whose *device* quad cancels: `f32::MAX + 8.0`
+                // is `f32::MAX`, so both ends of the 8-unit plane round to the
+                // same float and the quad has zero width. Not an overflow to an
+                // infinity, which four documents said until issue #1160
+                // measured it.
+                ("is collapsed by its node origin", sound, f32::MAX, 0),
+            ] {
                 let mut paints = PaintTable::new();
                 let fill = paints.intern_fill(&dashpaint::FillSpec::Solid { color: RED });
                 let entry = paints.push_with(
@@ -2617,8 +2701,8 @@ mod tests {
                     },
                 );
                 let rects = [RectEntry {
-                    x: 0.0,
-                    y: 0.0,
+                    x: origin,
+                    y: origin,
                     w: 8.0,
                     h: 8.0,
                     paint: entry,
@@ -2643,14 +2727,9 @@ mod tests {
                 assert_eq!(
                     DECODE_CALLS.with(|c| c.get()),
                     expected,
-                    "{what} whose coverage field {} must decode {expected} atlas: the predicate is \
-                 asked before `ImageCache::get`, not inside the draw call below it — and the \
-                 drawing case is what says this path decodes at all",
-                    if expected == 0 {
-                        "draws nothing"
-                    } else {
-                        "draws"
-                    },
+                    "{what} whose coverage field {why} must decode {expected} atlas: both refusals \
+                     are asked before `ImageCache::get`, not inside the draw call below it — and \
+                     the drawing case is what says this path decodes at all",
                 );
             }
         }
