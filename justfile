@@ -1257,17 +1257,16 @@ android-lint:
 # gate rather than a second place for the corpus to be rebuilt.
 #
 # It depends on `android` so a clean checkout has the libraries the scripts
-# need. It does **not** guarantee they package what that dependency just built:
-# both scripts prefer a `release` library over a `debug` one when both exist,
-# and `android` builds debug, so a machine that has ever built `--release` for
-# this target packages the older artifact and says so ("using the release
-# library"). Issue #1057 carries it.
+# need, and it packages what that dependency built. Both scripts used to prefer
+# a `release` library over a `debug` one when both existed, so a machine that
+# had ever built `--release` for this target packaged the older artifact and
+# said so ("using the release library"). The profile is named now, not searched
+# for: `DASHSCENE_ANDROID_PROFILE`, defaulted to `debug` because that is what
+# `android` builds (issue #1057).
 #
-# What keeps that off CI is **the step list, not the checkout**: `android-build`
-# restores `target/` from `Swatinem/rust-cache`, so it is not clean, and no step
-# in it builds `--release` for this triple. Adding one — folding in
-# `android-probe`, say, which does — would carry a release tree forward in the
-# cache and make #1057 reachable there.
+# That also removes the reason to keep `--release` steps out of this job.
+# Folding in `android-probe`, which builds release for this triple, no longer
+# changes what gets packaged.
 #
 # The prerequisites are the SDK's build-tools and platform — aapt2, d8,
 # zipalign, apksigner — a JDK for javac and keytool, and `zip`, which comes
@@ -1278,7 +1277,50 @@ android-lint:
 android-apk: android
     #!/usr/bin/env bash
     set -euo pipefail
+    # **Both halves run, and one run reports both** (issue #1058 §1). Under
+    # `set -euo pipefail` a harness failure meant `demo-android`'s Java was
+    # never compiled in that run, so breaking both hosts at once had the
+    # developer fix what the log named, rerun, and fail again on the other —
+    # for a gate whose whole purpose is compiling both. PR #1053's own
+    # verification relied on that ordering, so the masking was observed rather
+    # than hypothetical.
+    #
+    # Each half is `|| failed=...` rather than a `just` dependency, because a
+    # failing dependency aborts the chain, which is the masking itself. The
+    # message names which half went wrong: a red step whose last line is the
+    # other half's success is the ambiguity this section set out to remove.
+    failed=""
+    just _apk-harness || failed="the harness host"
+    just _apk-demo || failed="${failed:+${failed} and }the showcase host"
+    if [ -n "${failed}" ]; then
+      echo "android-apk: FAILED — ${failed}. Both halves ran; each reported above." >&2
+      exit 1
+    fi
+
+# The harness APK.
+#
+# Split out so `android-splitscreen` can depend on **this** rather than on
+# `android-apk` — issue #1058 §6 removed that recipe's inlined copy of the
+# invocation, and it installs only the harness APK, so a compile error in
+# `demo-android`'s Java should not stop D4's split-screen check.
+#
+# `DASHSCENE_ANDROID_PROFILE` is **defaulted, not assigned**: a caller who sets
+# it is honoured, where an unconditional `export` would silently package
+# something other than what was asked — issue #1057 inverted. The default is
+# `debug` because that is what `android` builds.
+[private]
+_apk-harness: android
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export DASHSCENE_ANDROID_PROFILE="${DASHSCENE_ANDROID_PROFILE:-debug}"
     ./crates/dashscene-android/harness/build.sh
+
+# The showcase APK, on the same terms as `_apk-harness` above.
+[private]
+_apk-demo: android
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export DASHSCENE_ANDROID_PROFILE="${DASHSCENE_ANDROID_PROFILE:-debug}"
     ./demo-android/android/build.sh
 
 # Build the D3a probe, push it to an attached device and run it.
@@ -1398,7 +1440,7 @@ android-probe:
 # screen, and a panel form factor is closer to this project's target anyway.
 #
 # Exercise D4's split-screen case against an emulator and assert the handshake.
-android-splitscreen:
+android-splitscreen: harness-tests _apk-harness
     #!/usr/bin/env bash
     set -euo pipefail
     adb=$(just _android-adb)
@@ -1407,26 +1449,34 @@ android-splitscreen:
     act="${pkg}/dev.driftsys.dashscene.HarnessActivity"
     script="crates/dashscene-android/harness/assert-drew.py"
 
-    # **The verdict is a file, and it is checked before anything expensive.**
-    # `verdict.sh` holds the logic that decides PASS or FAIL and `assert-drew.py`
-    # is the only witness that the painter drew; the two tests beside them
-    # exercise both against synthetic input and need no device. Running them
-    # here costs a second and means a broken gate fails now rather than after a
-    # cross-compile, an APK build, an install and ten minutes on an emulator.
+    # **The verdict is a file, and `harness-tests` — the first dependency above
+    # — has already exercised it.** `verdict.sh` holds the logic that decides
+    # PASS or FAIL and `assert-drew.py` is the only witness that the painter
+    # drew. `just` runs dependencies in order and to completion before this
+    # body, so a broken gate fails in about a second rather than after the
+    # cross-compile, the APK build, an install and ten minutes on an emulator.
     #
-    # Reading is what these replace, and reading has a record: it missed five
-    # distinct false verdicts across two review rounds, and it missed
+    # Reading is what those tests replace, and reading has a record: it missed
+    # five distinct false verdicts across two review rounds, and it missed
     # `assert-drew.py` passing a black frame for months (issue #1029).
-    just harness-tests
     . crates/dashscene-android/harness/verdict.sh
 
-    # **Build before requiring a device.** A cold `just android` is a
-    # multi-minute cross-compile and needs no emulator; checking for a device
-    # first and using it minutes later only widens the window in which it can
-    # go away. build.sh reports a missing libdashscene_android.so by name, so
-    # without `just android` this stops one step short.
-    just android
-    ./crates/dashscene-android/harness/build.sh
+    # **Dependencies, not two inlined calls** (issue #1058 §6). This ran
+    # `just android` and the harness `build.sh` directly, so there were two
+    # copies of that invocation and the second was exercised only by whoever had
+    # an emulator attached.
+    #
+    # `_apk-harness` rather than `android-apk`, because this installs only the
+    # harness APK and a compile error in `demo-android`'s Java should not stop
+    # D4's split-screen check. `harness-tests` is named first because `just`
+    # runs dependencies in order and to completion before the body, so the
+    # cheap gate that needs no toolchain fails before the cross-compile rather
+    # than after it.
+    #
+    # The build still happens before the device check, which is what the
+    # inlined version was written for: a cold cross-compile needs no emulator,
+    # and checking for a device minutes earlier only widens the window in which
+    # it can go away.
     apk="target/android-harness/harness.apk"
     if ! just _android-has-device; then
       # `sdk` is resolved here rather than at the top: it is read only in this

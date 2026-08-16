@@ -810,6 +810,25 @@ jobs:
       # of, rather than being inferred from a sibling job having the step.
       - uses: ./.github/actions/install-flatc
       - uses: extractions/setup-just@v4
+      # **The JDK is pinned** (issue #1058 §2). It was whatever the runner image
+      # defaulted to, while both `build.sh` scripts hard-code
+      # `javac --release 17` and `d8` and `apksigner` have floors of their own.
+      # GitHub has moved the ubuntu image's default `JAVA_HOME` repeatedly, and
+      # nothing recorded the version this gate was verified against.
+      #
+      # The argument made when `android-apk` landed — "an image that stopped
+      # shipping them would fail here rather than silently skip" — covers
+      # absence, which is the easy case. It does not cover a version change,
+      # which is the one that moves a green gate under you.
+      #
+      # 21 rather than 17: it is what both scripts are verified against locally,
+      # and what their `keytool` note about `-quiet` refers to. `--release 17`
+      # keeps the class files at the level `android.jar` and d8 accept, which is
+      # a separate question from which JDK compiles them.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
       # This job runs the recipe rather than inlining `cargo build`, which is
       # what every other compile job does. The difference is deliberate: the
       # recipe holds the NDK discovery, and inlining would put a second copy of
@@ -865,11 +884,14 @@ jobs:
       # here must not mask `c-abi` above — the only check that
       # `include/dashscene.h` matches what the library exports.
       #
-      # The runner image ships the Android SDK and a JDK, so nothing is
-      # installed here — the same reasoning as the NDK note above, and the same
-      # exposure: an image that stopped shipping them would fail here rather
-      # than silently skip, which is the correct direction. The JDK is taken
-      # from the image rather than pinned, which issue #1058 carries.
+      # The runner image ships the Android SDK, so nothing is installed for it
+      # here — the same reasoning as the NDK note above, and the same exposure:
+      # an image that stopped shipping it would fail here rather than silently
+      # skip, which is the correct direction.
+      #
+      # **The JDK is not taken from the image**; it is pinned by the
+      # `actions/setup-java` step above, because absence is the easy case and a
+      # version change is the one that moves a green gate (issue #1058 §2).
       - run: just android-apk
       # And clippy on the same triple, which ran nowhere until issue #1086.
       #

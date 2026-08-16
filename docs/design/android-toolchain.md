@@ -198,6 +198,32 @@ system plus a Kotlin toolchain, to produce an APK whose whole content is one
 manifest, two Java files and a shared library. `aapt2`, `javac`, `d8` and
 `apksigner` do it directly.
 
+**What that chain is pinned to, and what it is not** (issue #1058). The SDK's
+build-tools are discovered rather than pinned — highest installed, filtered to
+release versions, because `sort -V` puts `36.0.0-rc3` after `36.0.0` and a
+release candidate was therefore preferred to every release. The **JDK is
+pinned**, at temurin 21 in `android-build`: both scripts hard-code
+`javac --release 17`, which is the class-file level `android.jar` and `d8`
+accept, and that is a separate question from which JDK compiles them. The
+image's default `JAVA_HOME` has moved repeatedly, and a gate that takes it from
+the image is a gate whose toolchain changes without a commit.
+
+**The library it packages is named, not searched for** (issue #1057).
+`DASHSCENE_ANDROID_PROFILE`, defaulted to `debug` because that is what
+`just android` builds. Both scripts used to prefer a `release` library when both
+existed, so a machine that had ever built `--release` for this triple packaged
+the older artifact — an APK shipping a library that predated the change under
+test, reported as a successful build.
+
+`javac` and `d8` are each given the file list through an `@argfile` rather than
+through `find -exec ... +`, which batches by `ARG_MAX`: a second `d8` batch
+re-invokes it with the same `--output` and only the last batch survives. Every
+`classes*.dex` is staged, not the first, so a multidex build cannot lose one.
+The APK is then checked to carry the dex and the shared library, and verified
+with `apksigner`, before the intermediates are removed — packaging that dropped
+an entry otherwise yields an APK that installs and throws
+`ClassNotFoundException` at launch.
+
 It is a **lifecycle harness and not the demonstration**. Story #842's
 `demo-android` is that, and it cannot be reached by shipping the showcase as a
 `.dsb`: the showcase animates by writing a named signal and, in one scene, by
