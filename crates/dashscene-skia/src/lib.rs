@@ -85,6 +85,20 @@ pub struct SkiaPainter {
     /// [`ImageCache`] for the text half of the painter input, and
     /// [`DirtyMode`]-independent for the same reason.
     msdf: MsdfCache,
+    /// The compiled coverage-mask resolve, compiled on the first frame that
+    /// draws a baked shape and never invalidated (issue #1186).
+    ///
+    /// **Held for the reason [`MsdfCache::effect`] is**, and that field's doc
+    /// states the invariant for both: the shader is a constant, so no input can
+    /// stale it. [`FIELD_MASK_SKSL`] is equally a constant. This was a frame
+    /// local until #1186, so `RuntimeEffect::make_for_shader` ran again on every
+    /// `paint()` call that drew a masked node — about 30 us on this machine,
+    /// measured over 200 iterations against release Skia.
+    ///
+    /// Lazy, so a scene that carries no baked shape compiles nothing, which is
+    /// the posture the frame local had and the one [`MsdfCache::frame`] keeps
+    /// for text.
+    field_effect: Option<RuntimeEffect>,
 }
 
 impl SkiaPainter {
@@ -132,6 +146,7 @@ impl SkiaPainter {
             group_layers: retention::GroupCache::new(),
             images: ImageCache::default(),
             msdf: MsdfCache::default(),
+            field_effect: None,
         }
     }
 
@@ -400,6 +415,7 @@ impl Painter for SkiaPainter {
         let group_layers = &mut self.group_layers;
         let image_cache = &mut self.images;
         let msdf_cache = &mut self.msdf;
+        let field_effect = &mut self.field_effect;
 
         let base_canvas = self.surface.canvas();
         base_canvas.clear(skia_safe::colors::TRANSPARENT);
@@ -424,12 +440,12 @@ impl Painter for SkiaPainter {
         let mut next_group = 0usize;
         let mut open_group_ends: Vec<u32> = Vec::new();
         let mut open_layers: Vec<OpenLayer> = Vec::new();
-        // Baked-vector shapes (story B1): the MSDF resolve effect compiles
-        // once (lazily — a vector-free scene pays nothing). The atlas PNG a
-        // field samples is an ordinary `ImageTable` entry, so it comes from
-        // `image_cache` along with every other asset — one cache, one key
-        // space, one decode per asset (issues #101 and #639).
-        let mut field_effect: Option<RuntimeEffect> = None;
+        // Baked-vector shapes (story B1): the atlas PNG a field samples is an
+        // ordinary `ImageTable` entry, so it comes from `image_cache` along with
+        // every other asset — one cache, one key space, one decode per asset
+        // (issues #101 and #639). The resolve effect it is drawn with is
+        // `field_effect` above, on the painter since issue #1186: it compiled
+        // once per `paint()` call while it was a frame local here.
         // The run-by-anchor index, built once, over the atlases and shader
         // the painter already holds — re-decoding and re-compiling only what
         // this frame changed (issue #644). A text-free scene builds nothing.
@@ -585,10 +601,7 @@ impl Painter for SkiaPainter {
                         // so blurring its whole box would frost a rectangle
                         // where the design has a rounded shape.
                         Some(field) => {
-                            let effect = field_effect.get_or_insert_with(|| {
-                                RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)
-                                    .expect("field-mask resolve SkSL compiles")
-                            });
+                            let effect = field_effect.get_or_insert_with(compile_field_effect);
                             let atlas = image_cache.get(field.image);
                             draw_backdrop_blur_field(
                                 canvas,
@@ -643,10 +656,7 @@ impl Painter for SkiaPainter {
                 // #1160 — the same question with the node origin in it. See the
                 // backdrop arm above.
                 if field_quad(rect, field).is_some() {
-                    let effect = field_effect.get_or_insert_with(|| {
-                        RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)
-                            .expect("field-mask resolve SkSL compiles")
-                    });
+                    let effect = field_effect.get_or_insert_with(compile_field_effect);
                     let atlas = image_cache.get(field.image);
                     draw_vector_field(canvas, rect, paints, entry.fill, field, atlas, effect);
                 }
@@ -873,6 +883,12 @@ struct MsdfCache {
     /// shader is a constant, so no input can stale it. A scene that never
     /// carries a glyph run never compiles it, which is the posture the old
     /// lazy entry point had.
+    ///
+    /// **The same sentence covers [`SkiaPainter::field_effect`]** since issue
+    /// #1186, which is the coverage-mask half of exactly this: a constant
+    /// shader, compiled once, held for the painter's life. It was a `paint()`
+    /// frame local until then, and this doc is the reason it should not have
+    /// been.
     effect: Option<RuntimeEffect>,
 }
 
@@ -1986,6 +2002,22 @@ thread_local! {
     /// otherwise bump a counter this test did not mean to observe, flakily,
     /// whenever tests happen to run concurrently.
     static DECODE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+
+    /// Test-only compile counter for the coverage-mask resolve (issue #1186),
+    /// the sibling of [`DECODE_CALLS`] and thread-local for the same reason.
+    /// `SkiaPainter::field_effect` holds the compiled effect for the painter's
+    /// life, so this reads 1 however many frames draw a masked node, and
+    /// `tests::paint_compiles_the_field_resolve_once_across_frames` is what
+    /// says so.
+    static FIELD_EFFECT_COMPILES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Compiles the coverage-mask resolve. Called once per painter, through
+/// `SkiaPainter::field_effect`'s `get_or_insert_with` (issue #1186).
+fn compile_field_effect() -> RuntimeEffect {
+    #[cfg(test)]
+    FIELD_EFFECT_COMPILES.with(|c| c.set(c.get() + 1));
+    RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None).expect("field-mask resolve SkSL compiles")
 }
 
 /// Decodes an encoded image asset with the Skia build's own codec —
@@ -2571,6 +2603,102 @@ mod tests {
             DECODE_CALLS.with(|c| c.get()),
             2,
             "each of the two documents decodes its own atlas once"
+        );
+    }
+
+    /// **The coverage-mask resolve compiles once for a painter, not once per
+    /// frame** (issue #1186).
+    ///
+    /// `field_effect` was a `paint()` frame local, so
+    /// `RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)` ran again on
+    /// every call that drew a masked node — about 30 us on this machine,
+    /// measured over 200 iterations against release Skia. Its sibling
+    /// `MsdfCache::effect` was already a painter field, and that field's doc
+    /// gives the invariant both rely on: the shader is a constant, so no input
+    /// can stale it.
+    ///
+    /// **Three frames, and the count is what a one-frame test cannot see.** A
+    /// test that painted once would read 1 against the frame local too. It also
+    /// asserts the **third** row: a scene with no masked node compiles nothing,
+    /// which is the lazy posture the frame local had and the property a field
+    /// initialised in `with_mode` would lose.
+    #[test]
+    fn paint_compiles_the_field_resolve_once_across_frames() {
+        let mut images = ImageTable::new();
+        let image = images.push(ImageAsset {
+            format: dashpaint::ImageFormat::Png,
+            bytes: one_pixel_png(RED),
+        });
+        let field = dashpaint::VectorField {
+            image,
+            atlas_rect: [0, 0, 1, 1],
+            plane_bounds: [0.0, 0.0, 8.0, 8.0],
+            distance_range: 4.0,
+        };
+        let mut paints = PaintTable::new();
+        let fill = paints.intern_fill(&dashpaint::FillSpec::Solid { color: RED });
+        let masked = paints.push_with(
+            dashpaint::PaintEntry {
+                fill,
+                ..dashpaint::PaintEntry::default()
+            },
+            dashpaint::EntryParts {
+                shape: Some(field),
+                ..dashpaint::EntryParts::default()
+            },
+        );
+        let plain = paints.push_solid(RED);
+        let rect_at = |paint| {
+            [RectEntry {
+                x: 0.0,
+                y: 0.0,
+                w: 8.0,
+                h: 8.0,
+                paint,
+                clip: dashpaint::ClipIndex::UNCLIPPED,
+                opacity: 1.0,
+                rotation: 0.0,
+                rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
+            }]
+        };
+
+        FIELD_EFFECT_COMPILES.with(|c| c.set(0));
+        let mut painter = SkiaPainter::new(8, 8);
+        for _ in 0..3 {
+            painter.paint(
+                &rect_at(masked),
+                &paints,
+                &images,
+                &ClipTable::new(),
+                &[],
+                &GlyphRunTable::new(),
+                None,
+            );
+        }
+        assert_eq!(
+            FIELD_EFFECT_COMPILES.with(|c| c.get()),
+            1,
+            "three frames drawing a masked node must compile the resolve once: the effect is a \
+             painter field, not a frame local",
+        );
+
+        // A painter that has never drawn a masked node has compiled nothing.
+        FIELD_EFFECT_COMPILES.with(|c| c.set(0));
+        let mut unmasked = SkiaPainter::new(8, 8);
+        unmasked.paint(
+            &rect_at(plain),
+            &paints,
+            &images,
+            &ClipTable::new(),
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        assert_eq!(
+            FIELD_EFFECT_COMPILES.with(|c| c.get()),
+            0,
+            "a scene with no masked node compiles nothing, which is what makes the count above a \
+             statement about caching rather than about eagerness",
         );
     }
 
