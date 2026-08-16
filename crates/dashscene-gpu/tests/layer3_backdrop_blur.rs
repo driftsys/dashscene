@@ -1124,14 +1124,40 @@ fn a_refused_backdrops_blur_row_is_still_checked_against_its_table() {
 /// The atlas is a real baked payload, so residency is not what stops it.
 #[test]
 fn a_degenerate_coverage_field_draws_nothing() {
-    // One device for both cases. `Renderer::new` is an adapter request and a
-    // device creation, the dominant cost of every test in this file, and the
-    // renderer holds no scene state the second case would inherit — each
-    // `render` call plans its own frame and the first pass on the target clears.
+    // One device for every row. `Renderer::new` is an adapter request and a
+    // device creation, the dominant cost of every test in this file.
+    //
+    // **The renderer does carry state between rows**, and the sound row below is
+    // what puts it there: that row plans a backdrop, so `BlurTargets` allocates
+    // and then holds its frame-wide targets across the idle rows that follow,
+    // under the grace `TARGET_GRACE_FRAMES` names. Sharing is still sound —
+    // each `render` call plans its own frame, the first pass on the target
+    // clears, and what is held names nothing a later row reads — but the rows
+    // are order-dependent, and the sound one is first on purpose: it is the
+    // premise every row after it is read against.
     let mut renderer = renderer();
-    for (what, atlas_rect, plane_bounds) in [
-        ("no atlas rectangle", [3, 2, 0, 0], [0.0, 0.0, 20.0, 32.0]),
-        ("no quad", MASK_RECT, [0.0, 0.0, 0.0, 0.0]),
+    for (what, atlas_rect, plane_bounds, draws) in [
+        // **The sound row, and it is the premise the rest rest on** (issue
+        // #1143). Without it the refusal check below cannot fail for any row:
+        // `resolve_frame` reads `field_draws(field) && let Some(slot) =
+        // self.resident_image(..)`, so a rejected field short-circuits before
+        // residency is ever asked and `refusals()` is empty whatever the
+        // payload is. That assertion passed against a zero-byte atlas, which is
+        // exactly the case it claims to exclude.
+        //
+        // This row reaches residency through the same builder, so "no refusal"
+        // becomes a statement about this atlas rather than about a predicate
+        // that never asked. It also supplies the contrast the draw count is
+        // read against: a field that resolves plans the backdrop and brings the
+        // masked fill back into a range of its own.
+        ("a sound field", MASK_RECT, [0.0, 0.0, 20.0, 32.0], true),
+        (
+            "no atlas rectangle",
+            [3, 2, 0, 0],
+            [0.0, 0.0, 20.0, 32.0],
+            false,
+        ),
+        ("no quad", MASK_RECT, [0.0, 0.0, 0.0, 0.0], false),
         // The four positions an infinity passes the ordering in (issue #1034),
         // and so the four this frame drew before `field_draws` required finite
         // bounds. `left` and `top` take the negative one because `right > left`
@@ -1142,21 +1168,25 @@ fn a_degenerate_coverage_field_draws_nothing() {
             "an infinite left bound",
             MASK_RECT,
             [f32::NEG_INFINITY, 0.0, 20.0, 32.0],
+            false,
         ),
         (
             "an infinite top bound",
             MASK_RECT,
             [0.0, f32::NEG_INFINITY, 20.0, 32.0],
+            false,
         ),
         (
             "an infinite right bound",
             MASK_RECT,
             [0.0, 0.0, f32::INFINITY, 32.0],
+            false,
         ),
         (
             "an infinite bottom bound",
             MASK_RECT,
             [0.0, 0.0, 20.0, f32::INFINITY],
+            false,
         ),
         // Four finite bounds in the right order whose **difference** is not
         // finite: `3.0e38 - -3.0e38` is `6.0e38`, which overflows f32. This is
@@ -1167,11 +1197,13 @@ fn a_degenerate_coverage_field_draws_nothing() {
             "a plane quad whose width overflows",
             MASK_RECT,
             [-3.0e38, 0.0, 3.0e38, 32.0],
+            false,
         ),
         (
             "a plane quad whose height overflows",
             MASK_RECT,
             [0.0, -3.0e38, 20.0, 3.0e38],
+            false,
         ),
     ] {
         let mut images = ImageTable::new();
@@ -1236,12 +1268,12 @@ fn a_degenerate_coverage_field_draws_nothing() {
             )
             .expect("the fixture extent is within any device's maximum");
 
-        // The premise, proved rather than stated: the atlas is a real baked
-        // payload, so this scene is about degeneracy and not about a refusal
-        // wearing its clothes. Every sibling in this file proves its own the
-        // same way, and this is the negative form of it. It asserts nothing
-        // about the *diagnostic* issue #1021 asks for — only that residency is
-        // not what stopped the field.
+        // The premise, and it is the **sound** row that proves it: the atlas is
+        // a real baked payload, so this scene is about degeneracy and not about
+        // a refusal wearing its clothes. A degenerate row cannot prove that on
+        // its own — `field_draws` short-circuits before residency is asked, so
+        // this assertion holds for it whatever the payload is (issue #1143).
+        // It asserts nothing about the *diagnostic* issue #1021 asks for.
         assert!(
             renderer.refusals().is_empty(),
             "the field's atlas must be resident, or this measures a refusal and not a field with \
@@ -1261,13 +1293,21 @@ fn a_degenerate_coverage_field_draws_nothing() {
         //
         // A resolved field adds four to that: the fill's own instance back in a
         // second range, the blur's two passes, and the base blit.
+        //
+        // The sound row is what says those four are real rather than a number
+        // this test invented: it takes the same path and reports five.
         assert_eq!(
             renderer.last_draw_runs(),
-            1,
-            "a field with {what} must leave the frame at the one instance run its two halves \
-             make — a resolved one plans the backdrop and draws the masked fill, and no texel of \
-             this fixture can show either",
+            if draws { 5 } else { 1 },
+            "a field with {what} must leave the frame at {} draws — a resolved field plans the \
+             backdrop and draws the masked fill, and a rejected one leaves the one instance run \
+             its two halves make. For a rejected field no texel of this fixture can show which \
+             of the two happened, which is why the count is asserted at all",
+            if draws { 5 } else { 1 },
         );
+        if draws {
+            continue;
+        }
 
         // The whole canvas rather than a probe, for the reason the refusal tests
         // give: a NaN coordinate can land anywhere, so a check at one point

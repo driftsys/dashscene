@@ -2672,10 +2672,10 @@ fn a_changed_rect_count_rebuilds_every_composite() {
 /// The two ways a `VectorField` names no area to sample, and the sound control
 /// beside them.
 ///
-/// `dashscene-gpu`'s `field_draws` answers `false` for all of them — the quad's
-/// width and height finite and positive, then `atlas_rect[2] > 0 &&
-/// atlas_rect[3] > 0` — and skips the field before residency. These are the
-/// fields this painter has to answer the same way.
+/// [`dashpaint::VectorField::draws`] answers `false` for all of them, and both
+/// painters call it (issue #1144). The predicate is not restated here: it was,
+/// along with three other copies in prose, and keeping those in step by hand is
+/// what failed at issues #1000 and #1034.
 ///
 /// **The three `atlas_rect` rows are what one of these tests pins**, and both
 /// axes are varied because the two divisors are separate: `field_coverage`
@@ -2712,9 +2712,9 @@ fn a_changed_rect_count_rebuilds_every_composite() {
 /// those six rows pin and these six do not.
 ///
 /// That is not a claim that either check is redundant. The guard below catches a
-/// case the predicate cannot see — a large node origin collapsing a positive
-/// `right - left` to a zero-width device quad — and the predicate is what makes
-/// this painter answer `field_draws`.
+/// case the shared predicate cannot see — a large node origin collapsing a
+/// positive `right - left` to a zero-width device quad — and the predicate is
+/// what makes both painters answer alike.
 const DRAWS_NOTHING: [(&str, [u32; 4], [f32; 4]); 15] = [
     ("no atlas extent at all", [0, 0, 0, 0], [0.0, 0.0, 8.0, 8.0]),
     ("no atlas width", [0, 0, 0, 8], [0.0, 0.0, 8.0, 8.0]),
@@ -2929,7 +2929,8 @@ fn a_coverage_mask_with_no_area_draws_nothing_through_the_fill() {
         assert_eq!(
             render(&rects, &paints, &images, 8),
             empty,
-            "a field with {name} must draw nothing, as dashscene-gpu's field_draws skips it"
+            "a field with {name} must draw nothing: `VectorField::draws` rejects it and both \
+             painters take that answer"
         );
     }
 }
@@ -2984,7 +2985,8 @@ fn a_coverage_mask_with_no_area_draws_nothing_through_the_backdrop() {
 /// that would otherwise rest on Skia's undocumented handling of a NaN
 /// rectangle.
 ///
-/// `dashscene-gpu` does not guard this at all — `field_draws` reads the field
+/// `dashscene-gpu` does not guard this at all — the shared predicate reads the
+/// field
 /// and not the rect — and nothing upstream refuses a non-finite origin, which
 /// is issue #1048. This is one painter's floor, not a claim the two agree here.
 #[test]

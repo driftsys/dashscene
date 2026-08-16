@@ -154,11 +154,19 @@ did not have.
   this repository supplies, which is the reason `Atlas::new` gives for having no
   upper bound on its own copy of this operand.
 - **`VectorField::atlas_rect`'s extent is deliberately not refused.**
-  `dashscene-gpu`'s `field_draws` treats a zero width or height as a field that
-  draws nothing, so it is a legal state. That `dashscene-skia` divides by it
-  instead of taking the same skip is a painter divergence, issue #1000, which
-  also covers a non-finite `plane_bounds` — `field_draws` rejects that and
-  skia's own degenerate guard does not.
+  `VectorField::draws` treats a zero width or height as a field that draws
+  nothing, so it is a legal state. The painter divergence this bullet used to
+  record — `dashscene-skia` dividing by it where the lean painter skipped — was
+  issue #1000 and is closed; since issue #1144 the predicate is one method on
+  this crate's own type and both painters call it, so there is no second copy to
+  diverge.
+- **`VectorField::plane_bounds` is not refused either, for the same reason and
+  with the same caveat.** `VectorField::draws` rejects a quad whose width or
+  height is not finite and positive (issue #1034), so both painters agree it
+  draws nothing — but no seam _refuses_ it. Nothing produces such a quad, so it
+  arrives from an authored or corrupted `.dsb` rather than from the importer,
+  which is the shape this record's own reasoning would put at the seam. That
+  remains open.
 - **`push_with` is not atomic on its other panics** (issue #1012). Only this
   check runs before the five arrays are extended; `push_entry`'s panics do not,
   and the production caller interns the entry's fills into the same table before
