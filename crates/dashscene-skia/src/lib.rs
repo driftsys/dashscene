@@ -1162,46 +1162,37 @@ fn draw_vector_field(
 /// origin at the node box top-left. `None` for a field that draws nothing,
 /// which is two separate answers taken in order.
 ///
-/// # The lean painter's predicate first (issue #1000)
+/// # The shared predicate first (issues #1000 and #1144)
 ///
-/// `dashscene-gpu`'s `field_draws` — every plane bound finite, then `right >
-/// left && bottom > top && atlas_rect[2] > 0 && atlas_rect[3] > 0` — decides
-/// before residency whether a field draws at all, because every mapping in its
-/// `gpu_shape` divides by the atlas rectangle. A zero atlas extent is a
-/// **legal** state rather than an out-of-domain one, which is why
-/// `PaintTable::push_with` does not refuse it
-/// (`docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md`), and it
-/// is restated here so the reference painter takes the same answer.
+/// [`VectorField::draws`] decides whether a field draws at all, and both
+/// painters call it. A zero atlas extent is a **legal** state rather than an
+/// out-of-domain one, which is why `PaintTable::push_with` does not refuse it
+/// (`docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md`).
 ///
-/// Restated rather than shared: `dashscene-skia` does not depend on
-/// `dashscene-gpu`, and boundary B carries the rows rather than the predicate
-/// over them.
-///
-/// Without it this function returned `Some` for such a field and `sx` became an
-/// infinity. On the masked-fill path that resolved to zero coverage and drew
-/// nothing anyway, so the two painters agreed by accident. On the
-/// **backdrop-blur** path they did not: `draw_backdrop_blur_field` clips to the
+/// **Called rather than restated**, which it was until issue #1144.
+/// `dashscene-skia` does not depend on `dashscene-gpu`, so the two carried
+/// byte-identical expressions kept in step by prose — and that convention failed
+/// twice. Issue #1000 was the two painters disagreeing about which fields draw:
+/// without the predicate this function returned `Some` for a field with no atlas
+/// extent and `sx` became an infinity. On the masked-fill path that resolved to
+/// zero coverage and drew nothing anyway, so the two agreed by accident. On the
+/// **backdrop-blur** path they did not — `draw_backdrop_blur_field` clips to the
 /// coverage shader and opens a backdrop layer, and with an infinity in the
 /// shader's local matrix the layer composited over the backdrop and **erased
-/// it** — the reference painter destroying content the lean painter leaves
-/// untouched. Measured on a bar-under-frosted-node scene at 8×8: 32 of 64
-/// pixels, the whole bar, from opaque white to transparent.
+/// it**, measured at 32 of 64 pixels on a bar-under-frosted-node scene at 8x8.
 ///
-/// **The finite test is what closed the same defect one operand over.** An
-/// infinite plane bound passed the ordering — `inf > left` is true — so
-/// `field_draws` admitted it and so did this, and both painters then computed
-/// an infinite `px_range`. The symptom here was the worse of the two: the
-/// masked fill drew nothing while the **backdrop erased what was beneath it**,
-/// 32 of 64 pixels at 8x8, so the reference painter destroyed content the lean
-/// one left alone. Issue #1034. It is now the first term of the shared
-/// predicate, in both files.
+/// Issue #1034 was the restated predicate being wrong in **both**: ordering the
+/// plane bounds admits an infinity, and testing each bound for finiteness still
+/// admits two large bounds whose difference overflows. Each fix meant editing
+/// two copies and saying so in a comment. Both painters depend on `dashpaint`
+/// and both take a `&VectorField`, so the predicate lives there now and the
+/// agreement is structural.
 ///
 /// Whether such a field should instead be *refused* at
 /// `PaintTable::push_with`, beside the `distance_range` check, is the half that
-/// stays open on #1034: nothing produces an infinite bound, so it arrives from
+/// stays open on #1034: nothing produces a non-finite quad, so it arrives from
 /// an authored or corrupted `.dsb` rather than from the importer, which is the
-/// out-of-domain shape that seam exists for. The painter half is fixed here
-/// because it is what makes the two agree today.
+/// out-of-domain shape that seam exists for.
 ///
 /// # Then this painter's own device quad
 ///
@@ -1214,28 +1205,29 @@ fn draw_vector_field(
 ///
 /// # Which half of the shared predicate decides, and which is restatement
 ///
-/// **The two `atlas_rect` terms decide; the two `plane_bounds` terms do not.**
-/// Measured by deleting each term in turn and running this crate's suite:
-/// deleting either atlas term fails one test —
-/// `a_coverage_mask_with_no_area_draws_nothing_through_the_backdrop` — and
-/// deleting `right > left`, `bottom > top`, or both together fails nothing.
+/// **The `atlas_rect` terms and the finite-extent terms decide; the
+/// positive-extent terms do not.** Measured by deleting each in turn and running
+/// this crate's suite: deleting either atlas term, or either `is_finite`, fails
+/// `a_coverage_mask_with_no_area_draws_nothing_through_the_backdrop`, and
+/// deleting `width > 0.0`, `height > 0.0`, or both together fails nothing.
 ///
-/// No fixture can isolate **the two `plane_bounds` terms**, and the reason is a
+/// No fixture can isolate **the two positive-extent terms**, and the reason is a
 /// one-way implication rather than an equivalence. Adding the node origin to
 /// both ends of an interval cannot make a non-positive width positive, so
-/// wherever `right > left` is false the guard below is also true and refuses the
+/// wherever `width > 0.0` is false the guard below is also true and refuses the
 /// field on its own. The converse does not hold, and that is what the guard
 /// below exists for: a large `rect.x` can collapse a positive `right - left` to
-/// a zero-width device quad, which this predicate accepts and the guard refuses.
+/// a zero-width device quad, which the predicate accepts and the guard refuses.
+///
+/// A non-finite extent is what breaks that symmetry, and it is why those terms
+/// pin where the positive ones cannot: `inf - 0.0` is still positive, so the
+/// device-quad guard lets it through and only the predicate stops it.
 ///
 /// So neither check is redundant, and the measurement says something narrower
-/// than that they are: **on the fixtures this crate can build**, every plane
-/// case is refused twice over, so no test tells which refusal ran.
+/// than that they are: **on the fixtures this crate can build**, every
+/// positive-extent case is refused twice over, so no test tells which refusal
+/// ran.
 ///
-/// The plane terms are written anyway, because the predicate's job here is to
-/// *be* `field_draws`. A reader holding the two painters side by side sees one
-/// expression rather than two that happen to agree, and issue #1034 — which has
-/// to change both — changes one shape in two files.
 fn field_coverage(
     rect: &RectEntry,
     field: &VectorField,
@@ -1243,23 +1235,20 @@ fn field_coverage(
     effect: &RuntimeEffect,
 ) -> Option<(Rect, Shader)> {
     let [left, top, right, bottom] = field.plane_bounds;
-    let (width, height) = (right - left, bottom - top);
-    if !(width.is_finite()
-        && height.is_finite()
-        && width > 0.0
-        && height > 0.0
-        && field.atlas_rect[2] > 0
-        && field.atlas_rect[3] > 0)
-    {
+    if !field.draws() {
         return None;
     }
     let dest = Rect::from_ltrb(rect.x + left, rect.y + top, rect.x + right, rect.y + bottom);
     // Spelled as a negated positive rather than `<= 0.0`, so a NaN is refused
     // rather than admitted — `NaN <= 0.0` is false and waved the quad through.
-    // The plane bounds reaching here are finite, because the predicate above
-    // now requires it of each of the four rather than leaving it to the
-    // ordering, which rejected a NaN and admitted an infinity (issue #1034).
-    // But `dest` adds the **node origin** and nothing refuses a non-finite one:
+    // The quad's **extent** reaching here is finite, because
+    // `VectorField::draws` requires that of the two differences rather than of
+    // the four bounds — testing the bounds individually still admits two large
+    // ones whose difference overflows (issue #1034). Note what that does and
+    // does not give: the extent is finite, and an individual bound may still be
+    // enormous.
+    //
+    // `dest` adds the **node origin** and nothing refuses a non-finite one:
     // `check_rect_extent` covers a rect's `w` and `h` and not its `x` and `y`,
     // and it belongs to `validate_scene`, which has no production caller. A NaN
     // origin — or one large enough that both ends overflow to an infinity,

@@ -3054,71 +3054,24 @@ fn backdrop_mask(instance: &Instance, resolved: &Resolved) -> Option<Option<GpuS
     }
 }
 
-/// Whether a coverage mask has a finite quad of positive extent and an atlas
-/// rectangle to sample.
+/// Whether a coverage mask draws at all, which is
+/// [`dashpaint::VectorField::draws`] and nothing this crate decides.
 ///
-/// The reference painter's own degenerate guard, and the reason it is checked
-/// before the payload is made resident rather than after: every mapping in
-/// [`gpu_shape`] divides by the atlas rectangle, and a field with no quad
-/// sampled nothing anyway.
+/// Kept as a named function because it reads as a gate at its call site in
+/// [`Renderer::resolve_frame`], and because its own name is what
+/// `docs/design/dashscene-gpu.md` and several issue threads refer to. The
+/// predicate itself moved to `dashpaint` at issue #1144: it had been restated
+/// here and in `dashscene-skia`'s `field_coverage` and kept in step by prose,
+/// which failed twice — issue #1000 was the two painters disagreeing about which
+/// fields draw, and issue #1034 was the restated predicate being wrong in both.
+/// Both painters take a `&VectorField` and both depend on `dashpaint`, so the
+/// agreement is structural now rather than a convention.
 ///
-/// # The test is on the extent, not on the four bounds (issue #1034)
-///
-/// `right > left && bottom > top` rejects a NaN, because every comparison
-/// against one is false, and **admits an infinity**: `f32::INFINITY > 0.0` is
-/// true, and so is `0.0 > f32::NEG_INFINITY`. The two are not symmetric and the
-/// asymmetry was silent.
-///
-/// **Requiring the four bounds to be finite is not enough either**, which is
-/// what makes the extent the thing to test. `[-3.0e38, 0.0, 3.0e38, 8.0]` is
-/// four finite bounds in the right order, and `right - left` is `6.0e38`, which
-/// overflows `f32` to an infinity — so the quad the painters divide by is
-/// infinite while every bound they were handed was not. The subtraction is the
-/// operation whose domain matters, so it is the one checked, and `is_finite`
-/// over it rejects all three cases at once: a NaN bound makes the difference a
-/// NaN, an infinite bound makes it infinite or a NaN, and an overflow makes it
-/// infinite.
-///
-/// What an infinity reaches is a wrong picture rather than an empty one, and a
-/// different one per painter. [`gpu_shape`] scales `distance_range` by the quad
-/// width over the atlas width to get `px_range`, so this painter hands the
-/// shader an infinite range and an infinite `plane` — the implementation-defined
-/// WGSL `docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md`
-/// refuses `distance_range` for. `dashscene-skia` puts the infinity in a
-/// coverage shader's local matrix, where the masked fill draws nothing but the
-/// **backdrop erases what is beneath it** — measured at 8x8 on a
-/// bar-under-frosted-node scene, 32 of 64 pixels from opaque white to
-/// transparent. So the reference painter was the destructive one, and the two
-/// disagreed about a field they both accepted.
-///
-/// # Why here and not at the seam
-///
-/// [`dashpaint::PaintTable::push_with`] refuses `distance_range` out of domain
-/// and would be the tighter home, since a field carrying an infinite bound is
-/// out of domain in the same sense — nothing produces one, `dashc`'s baker
-/// deriving the bounds from the path bounding box, so it arrives only from an
-/// authored or corrupted `.dsb`. That seam is not touched here: this predicate
-/// is what `dashscene-skia`'s `field_coverage` restates, so changing it fixes
-/// both painters at once and leaves the seam question open rather than
-/// answering it wrongly. Issue #1034 records both halves.
-///
-/// [`dashpaint::VectorField::plane_bounds`] and that method still describe the
-/// admitting behaviour in their own prose. Correcting them is issue #1136:
-/// `dashpaint` belongs to another lane this slice, so the drift is filed rather
-/// than fixed here.
-///
-/// **The rejection is silent**, as every other rejection this predicate makes
-/// is: no diagnostic names it at any seam, which is issue #1021 and P4's
-/// complaint about all of them rather than a property this predicate adds.
+/// Checked **before** the payload is made resident rather than after: every
+/// mapping in [`gpu_shape`] divides by the atlas rectangle, and a field with no
+/// quad sampled nothing anyway.
 fn field_draws(field: &dashpaint::VectorField) -> bool {
-    let [left, top, right, bottom] = field.plane_bounds;
-    let (width, height) = (right - left, bottom - top);
-    width.is_finite()
-        && height.is_finite()
-        && width > 0.0
-        && height > 0.0
-        && field.atlas_rect[2] > 0
-        && field.atlas_rect[3] > 0
+    field.draws()
 }
 
 /// A contiguous range of instances drawn with one atlas bound.
@@ -5204,20 +5157,116 @@ mod tests {
     /// they name. Built through the buffer's own API, so the rows are laid out
     /// the way the packer lays them out.
     fn buffer(kinds: &[(InstanceKind, u32)]) -> InstanceBuffer {
+        let masked: Vec<_> = kinds
+            .iter()
+            .map(|&(kind, row)| (kind, row, Instance::NONE))
+            .collect();
+        masked_buffer(&masked)
+    }
+
+    fn run(instances: std::ops::Range<u32>, atlas: Option<u32>) -> DrawRun {
+        DrawRun { instances, atlas }
+    }
+
+    /// A buffer of one rect whose instances carry a coverage mask: `kinds`
+    /// paired with the row each names and the **shape row** it is masked by,
+    /// one-based as [`Instance::shape`] is.
+    fn masked_buffer(kinds: &[(InstanceKind, u32, u32)]) -> InstanceBuffer {
         let mut out = InstanceBuffer::new();
         out.begin_rect(0);
-        for &(kind, row) in kinds {
+        for &(kind, row, shape) in kinds {
             out.push(Instance {
                 kind: kind.as_u32(),
                 row,
+                shape,
                 ..Instance::default()
             });
         }
         out
     }
 
-    fn run(instances: std::ops::Range<u32>, atlas: Option<u32>) -> DrawRun {
-        DrawRun { instances, atlas }
+    /// **A masked instance takes its coverage field's atlas, whatever its
+    /// kind** (issue #1131).
+    ///
+    /// `sampled_row` reads [`Instance::shape`] *before* it looks at the kind, so
+    /// a solid fill carrying a mask samples the field's atlas and a masked
+    /// instance whose field did not resolve is left out of every run. Every
+    /// other case in this module passes `&[]` for `shapes` and builds its
+    /// instances through `..Instance::default()`, whose `shape` is
+    /// `Instance::NONE` — so that branch, the one of the three that decides a
+    /// *gap* from ordinary authored content rather than from a refusal, was
+    /// reached by nothing.
+    ///
+    /// The two cases differ in one member of one row, which is what makes the
+    /// second a statement about the mask rather than about the fixture.
+    #[test]
+    fn a_masked_instance_takes_its_fields_atlas_and_leaves_a_gap_without_one() {
+        // Shape row 1 — one-based — on the middle instance only, so the runs
+        // either side of it are the same in both cases.
+        let frame = masked_buffer(&[
+            (InstanceKind::FillSolid, 0, Instance::NONE),
+            (InstanceKind::FillSolid, 0, 1),
+            (InstanceKind::FillSolid, 0, Instance::NONE),
+        ]);
+
+        // Resolved, and the frame then holds exactly one atlas with no gap in
+        // it — so it takes the **whole-buffer** answer rather than segmenting.
+        // That is the documented saving, and it is correct here for the reason
+        // `draw_runs` gives: binding an atlas for instances that sample nothing
+        // costs nothing, where walking the buffer to find that out does.
+        //
+        // **This arm does not reach `sampled_row` at all**, and the message
+        // says so rather than naming it: the answer comes from
+        // `Resolved::atlases`, which reads the maps directly. What it pins is
+        // that a coverage field's atlas is in that set.
+        //
+        // The atlas is 1 rather than 0 deliberately. A field read through some
+        // other table, or not read at all, yields `[run(0..3, None)]` — which a
+        // fixture resolving into atlas 0 could not tell from a frame that
+        // samples nothing.
+        assert_eq!(
+            draw_runs(&frame, &resolved(&[], &[], &[Some(1)])),
+            vec![run(0..3, Some(1))],
+            "a frame whose only resolved payload is a coverage field must bind that field's \
+             atlas over the whole buffer",
+        );
+
+        // And unresolved: the instance draws nothing, so it is in no run at
+        // all and the two solids either side of it stay separate.
+        let mut undrawn = resolved(&[], &[], &[None]);
+        undrawn.undrawn = true;
+        assert_eq!(
+            draw_runs(&frame, &undrawn),
+            vec![run(0..1, None), run(2..3, None)],
+            "a masked instance whose field did not resolve must be left out of every run — the \
+             gap issue #1024 made the runs a subsequence rather than a partition for, reached \
+             here by a degenerate field rather than by a refusal",
+        );
+    }
+
+    /// **A masked instance is decided by its field and not by its kind**, which
+    /// is the precedence `sampled_row` reads in and the half a solid fill cannot
+    /// pin (issue #1131).
+    ///
+    /// The instance is `Text`, so both arms of that function match it: the shape
+    /// arm returns `atlas_of_shape[shape - 1]` and the kind arm would return
+    /// `atlas_of_run[row]`. The two resolve into **different** atlases, so the
+    /// answer says which arm ran.
+    ///
+    /// A fixture of solid fills cannot say: no kind arm matches one, so moving
+    /// the shape check below the kind arms leaves it reached anyway and every
+    /// assertion still passes. That mutation was run against the sibling case
+    /// above and survived it.
+    #[test]
+    fn a_masked_text_instance_samples_its_field_rather_than_its_glyph_atlas() {
+        let frame = masked_buffer(&[(InstanceKind::Text, 0, 1)]);
+        assert_eq!(
+            draw_runs(&frame, &resolved(&[], &[Some(0)], &[Some(1)])),
+            vec![run(0..1, Some(1))],
+            "a masked text instance must sample the coverage field's atlas (1), not its glyph \
+             run's (0): `sampled_row` reads `Instance::shape` before it looks at the kind, and \
+             a mask applies to whatever it is masking",
+        );
     }
 
     /// A frame whose image rows all sit in one atlas is one draw call, decided
@@ -5818,8 +5867,21 @@ mod tests {
                  picture no texel distinguishes",
             );
         }
-        let gates = code.matches("in.params2.w != 0.0").count();
-        let sampled = code.matches("msdf_coverage(").count();
+        // **Counted over `flat`, the same source the blocks are matched over**
+        // (issue #1132). Counting over `code` keeps the line breaks, so a gate
+        // condition re-wrapped across two lines — legal, since nothing formats
+        // `.wgsl` — drops `gates` to one and fails with a message about an
+        // ungated call that does not exist. Both numbers are unchanged by the
+        // switch today, measured.
+        let gates = flat.matches("in.params2.w != 0.0").count();
+        // The definition is subtracted, as the sibling test does for
+        // `image_colour`. `fn msdf_coverage(` lives in `sdf.wgsl` today, so this
+        // subtracts zero — but the two files are concatenated for the pipeline,
+        // so moving the helper here is a plausible refactor that would otherwise
+        // take `sampled` to three and report an ungated call that does not
+        // exist.
+        let sampled =
+            flat.matches("msdf_coverage(").count() - flat.matches("fn msdf_coverage(").count();
         assert_eq!(
             gates, sampled,
             "every `msdf_coverage` call in paint.wgsl must sit behind the resolved flag — {gates} \
@@ -5905,16 +5967,20 @@ mod tests {
              `resolve_frame` writes and never touches again",
         );
         let code = stripped_paint_wgsl();
+        // Runs of whitespace collapsed to one space, so every literal below is
+        // matched across the line breaks and indentation the source has. Not
+        // whitespace-insensitive: `!=0u` would not match, and neither would a
+        // call written without spaces after its commas.
+        //
+        // **Everything this test reads is read from here** (issue #1132),
+        // including the counts, so that a legal re-wrap of any matched
+        // construct cannot be reported as a defect in a different one.
+        let flat = code.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(
-            code.contains("let fill = images[row];"),
+            flat.contains("let fill = images[row];"),
             "the arm must bind the row it draws, so that the gate below reads that row's own flag \
              rather than another's",
         );
-        // Runs of whitespace collapsed to one space, so the two blocks below are
-        // matched across their line breaks and indentation. Not whitespace-
-        // insensitive: `!=0u` would not match, and neither would a call written
-        // without spaces after its commas.
-        let flat = code.split_whitespace().collect::<Vec<_>>().join(" ");
         // **The WGSL half of the layout**, which the `offset_of!` block at the
         // foot of this file cannot reach: it constrains the Rust struct, and a
         // member reordered here alone keeps every one of those assertions true.
@@ -5945,9 +6011,12 @@ mod tests {
              flow continues past the statement, which naga lowers to `metal::discard_fragment()` \
              on MSL, where the same is true — so the call would still run",
         );
-        let gates = code.matches("fill.resolved != 0u").count();
+        // Counted over `flat` for the reason the sibling test gives, and the
+        // same measurement: a re-wrapped gate condition would otherwise read as
+        // an ungated call (issue #1132).
+        let gates = flat.matches("fill.resolved != 0u").count();
         let coloured =
-            code.matches("image_colour(").count() - code.matches("fn image_colour(").count();
+            flat.matches("image_colour(").count() - flat.matches("fn image_colour(").count();
         assert_eq!(
             gates, coloured,
             "every `image_colour` call in paint.wgsl must sit **inside** the resolved gate — \

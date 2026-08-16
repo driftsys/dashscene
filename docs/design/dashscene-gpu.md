@@ -398,8 +398,10 @@ Issue #986 did that work: `PaintTable::push_with` now refuses a `distance_range`
 that is not finite and greater than zero, and `PaintTable::shapes` is private
 with `push_with` its only writer, so no such field reaches either painter. The
 paragraph above therefore describes a route that is closed at the seam rather
-than here. What is still open on this path is `atlas_rect` and `plane_bounds`,
-where `field_draws` skips and `dashscene-skia` divides — issue #1000.
+than here. What is still open on this path is `atlas_rect` and `plane_bounds`:
+both painters agree such a field draws nothing — `VectorField::draws` is one
+method both call since issue #1144, and issue #1000's divergence is closed — but
+no seam refuses either, which is the half of issue #1034 that stays open.
 
 **An unresolved mask makes the backdrop encode nothing at all**, which is not
 the same as encoding it unmasked. Unmasked means the parametric rounded box, so

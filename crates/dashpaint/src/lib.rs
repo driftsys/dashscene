@@ -1534,19 +1534,33 @@ pub struct VectorField {
     /// top-left origin.
     ///
     /// A zero width or height means the field draws nothing —
-    /// `dashscene-gpu`'s `field_draws` skips it before residency, and since
-    /// issue #1000 `dashscene-skia`'s `field_coverage` takes the same answer.
-    /// That is a legal state, not an out-of-domain one, so nothing refuses it.
+    /// [`draws`](Self::draws) rejects it and both painters take that answer.
+    /// **Not at the same point**: `dashscene-gpu` asks before making the atlas
+    /// resident, so a rejected field costs it no upload, while `dashscene-skia`
+    /// has already decoded the atlas by the time `field_coverage` asks. That is
+    /// a legal state, not an out-of-domain one, so nothing refuses it.
     pub atlas_rect: [u32; 4],
     /// The padded field quad in shape space, node-box-relative, y-down:
     /// `[left, top, right, bottom]`.
     ///
-    /// An empty or inverted quad means the field draws nothing, decided by the
-    /// same predicate `atlas_rect` names. **That predicate rejects a NaN and
-    /// admits an infinity** — every comparison against a NaN is false, while
-    /// `f32::INFINITY > left` is true — so a field carrying an infinite bound
-    /// reaches both painters and drives each one's screen-pixel range to an
-    /// infinity. Nothing refuses it at any seam: issue #1034.
+    /// A quad whose width or height is not finite and positive means the field
+    /// draws nothing, decided by the same [`draws`](Self::draws) predicate
+    /// `atlas_rect` names.
+    ///
+    /// **The test is on the extent, not on the four bounds** (issue #1034).
+    /// Ordering them alone rejected a NaN — every comparison against one is
+    /// false — and admitted an infinity, since `f32::INFINITY > left` is true;
+    /// and requiring each bound finite still admitted `[-3.0e38, 0.0, 3.0e38,
+    /// 8.0]`, whose difference overflows `f32`. Each of those drove both
+    /// painters' screen-pixel range to an infinity, and the reference painter's
+    /// backdrop erased what was beneath the node.
+    ///
+    /// **Rejected by the painters, refused by no seam.** [`PaintTable::push_with`]
+    /// does not refuse such a quad and `dashscene-validator` has no rule over
+    /// this member, so it is a legal draws-nothing state exactly as a zero
+    /// `atlas_rect` extent is. Whether it should instead be out of domain, beside
+    /// the [`distance_range`](Self::distance_range) check, is the half of issue
+    /// #1034 that stays open.
     pub plane_bounds: [f32; 4],
     /// The MSDF distance range in atlas texels (msdfgen `-pxrange`).
     ///
@@ -1556,6 +1570,62 @@ pub struct VectorField {
     /// domain it paints the same three wrong pictures that constructor's
     /// documentation enumerates.
     pub distance_range: f32,
+}
+
+impl VectorField {
+    /// Whether this field draws at all: a quad of finite, positive extent over
+    /// an atlas rectangle with texels in it.
+    ///
+    /// **The one predicate both painters take** (issue #1144). It was restated
+    /// in each of them and kept in step by prose, and that convention failed
+    /// twice: issue #1000 was the two disagreeing about which fields draw, and
+    /// issue #1034 was the restated predicate being wrong in both. Each fix was
+    /// "change both copies and say so in a comment". Here the agreement is
+    /// structural — `dashscene-skia` does not depend on `dashscene-gpu`, but
+    /// both depend on this crate and both already take a `&VectorField`.
+    ///
+    /// # What it decides, and what it deliberately does not
+    ///
+    /// This answers "draws nothing", which is a **legal** state. It is not a
+    /// domain check: [`PaintTable::push_with`] is where an out-of-domain operand
+    /// is refused, and a zero [`atlas_rect`](Self::atlas_rect) extent is
+    /// deliberately not refused there, because a field with no texels to sample
+    /// is something a producer may legitimately emit.
+    ///
+    /// # Why the extent and not the four bounds
+    ///
+    /// **The subtraction is the operation whose domain matters**, so it is the
+    /// one tested. Both painters scale by the quad's extent rather than
+    /// dividing by it — `dashscene-gpu` computes `distance_range * (right -
+    /// left) / aw` and `dashscene-skia` computes `dest.width() / aw`, each
+    /// dividing by the *atlas* rectangle — and a non-finite extent carries
+    /// straight through either multiplication into the screen-pixel range and
+    /// into the shader's local matrix.
+    ///
+    /// `is_finite` over the difference rejects all three ways out at once: a NaN
+    /// bound makes it a NaN, an infinite bound makes it infinite or a NaN, and
+    /// two large finite bounds whose difference overflows make it infinite.
+    /// Testing the bounds individually admits the last of those, which is how
+    /// issue #1034's first fix was still wrong. For finite bounds `width > 0.0`
+    /// and `right > left` agree exactly, so nothing that drew before stops
+    /// drawing.
+    ///
+    /// # The rejection is silent
+    ///
+    /// No diagnostic names a field this rejects, at this seam or any other,
+    /// which is issue #1021 and P4's complaint about all of them rather than a
+    /// property this predicate adds.
+    #[must_use]
+    pub fn draws(&self) -> bool {
+        let [left, top, right, bottom] = self.plane_bounds;
+        let (width, height) = (right - left, bottom - top);
+        width.is_finite()
+            && height.is_finite()
+            && width > 0.0
+            && height > 0.0
+            && self.atlas_rect[2] > 0
+            && self.atlas_rect[3] > 0
+    }
 }
 
 /// Where one entry's shadows sit in the [`PaintTable`]'s flat shadow array.
@@ -2197,18 +2267,21 @@ impl PaintTable {
     /// # What this seam does not cover
     ///
     /// `atlas_rect`'s width and height are divisors in both painters and are
-    /// **not** refused here, deliberately: `dashscene-gpu`'s `field_draws`
-    /// treats a zero extent as a field that draws nothing, so it is a legal
-    /// state rather than an out-of-domain one. Issue #1000 closed the painter
-    /// half of that instead — `dashscene-skia`'s `field_coverage` now takes the
-    /// same predicate — so the two painters agree on such a field without this
-    /// seam deciding anything about it.
+    /// **not** refused here, deliberately: [`VectorField::draws`] treats a zero
+    /// extent as a field that draws nothing, so it is a legal state rather than
+    /// an out-of-domain one. Issue #1000 closed the painter half of that
+    /// instead, and issue #1144 made the predicate one function both painters
+    /// call — so the two agree on such a field without this seam deciding
+    /// anything about it.
     ///
-    /// **`plane_bounds` is not refused here either, and is only partly covered
-    /// there.** `field_draws` rejects a NaN, because every comparison against
-    /// one is false, and admits an infinity; both painters then derive an
-    /// infinite screen-pixel range from it. That is issue #1034, and it is the
-    /// one operand of the three in that expression with no check on any path.
+    /// **`plane_bounds` is not refused here either, and for the same reason.**
+    /// [`VectorField::draws`] rejects a quad whose width or height is not finite
+    /// and positive, so both painters agree that such a field draws nothing —
+    /// but agreeing to draw nothing is not the same as refusing, and no seam
+    /// refuses this one. Whether it should, beside the `distance_range` check
+    /// above, is the half of issue #1034 that stays open: nothing produces a
+    /// non-finite quad, so it arrives from an authored or corrupted `.dsb`
+    /// rather than from the importer.
     ///
     /// # Atomic on its own refusals, and what that does not reach
     ///
@@ -3424,5 +3497,103 @@ mod flat_ranges {
         assert_eq!(PaintTable::flat_range(7, 0), (7, 0));
         assert_eq!(PaintTable::span(7, 0), (0, 0));
         assert_eq!(GlyphRunTable::quad_range(7, 0), (7, 0));
+    }
+}
+
+#[cfg(test)]
+mod field_draws {
+    use super::VectorField;
+
+    /// A field over an 8x8 atlas rectangle with the given plane quad.
+    fn field(plane_bounds: [f32; 4]) -> VectorField {
+        VectorField {
+            image: 0,
+            atlas_rect: [0, 0, 8, 8],
+            plane_bounds,
+            distance_range: 4.0,
+        }
+    }
+
+    /// **The three ways a quad's extent leaves its domain**, which is what
+    /// [`VectorField::draws`] tests rather than testing the four bounds
+    /// (issue #1034).
+    ///
+    /// The third row is the one that makes the distinction load-bearing: every
+    /// bound is finite and they are in the right order, so a predicate checking
+    /// `is_finite` on each of them admits it — and `3.0e38 - -3.0e38` is
+    /// `6.0e38`, which overflows `f32`. That was the first fix for #1034 and it
+    /// was still wrong.
+    ///
+    /// An infinity is given in the one position that *passes* the ordering:
+    /// negative for `left` and `top`, positive for `right` and `bottom`. In the
+    /// other position it fails the ordering and would prove nothing.
+    #[test]
+    fn a_quad_whose_extent_is_not_finite_draws_nothing() {
+        for (what, plane_bounds) in [
+            ("a NaN left bound", [f32::NAN, 0.0, 8.0, 8.0]),
+            ("a NaN bottom bound", [0.0, 0.0, 8.0, f32::NAN]),
+            ("an infinite left bound", [f32::NEG_INFINITY, 0.0, 8.0, 8.0]),
+            ("an infinite top bound", [0.0, f32::NEG_INFINITY, 8.0, 8.0]),
+            ("an infinite right bound", [0.0, 0.0, f32::INFINITY, 8.0]),
+            ("an infinite bottom bound", [0.0, 0.0, 8.0, f32::INFINITY]),
+            ("a width that overflows", [-3.0e38, 0.0, 3.0e38, 8.0]),
+            ("a height that overflows", [0.0, -3.0e38, 8.0, 3.0e38]),
+        ] {
+            assert!(
+                !field(plane_bounds).draws(),
+                "a field with {what} must draw nothing: both painters divide by the quad's \
+                 extent, and each of these makes that divisor non-finite",
+            );
+        }
+    }
+
+    /// An empty or inverted quad draws nothing, which is the ordinary
+    /// degenerate case rather than an out-of-domain one.
+    #[test]
+    fn a_quad_of_no_positive_extent_draws_nothing() {
+        for (what, plane_bounds) in [
+            ("no extent at all", [0.0, 0.0, 0.0, 0.0]),
+            ("no width", [4.0, 0.0, 4.0, 8.0]),
+            ("no height", [0.0, 4.0, 8.0, 4.0]),
+            ("a quad inverted in x", [8.0, 0.0, 2.0, 8.0]),
+            ("a quad inverted in y", [0.0, 8.0, 8.0, 2.0]),
+        ] {
+            assert!(
+                !field(plane_bounds).draws(),
+                "a field with {what} must draw nothing",
+            );
+        }
+    }
+
+    /// An atlas rectangle with no texels draws nothing, on either axis.
+    ///
+    /// Both axes, because the two are separate divisors in both painters: a
+    /// fixture zeroing only one could not tell a test of the pair from a test
+    /// of that one.
+    #[test]
+    fn an_atlas_rectangle_with_no_texels_draws_nothing() {
+        for (what, atlas_rect) in [
+            ("no extent at all", [0, 0, 0, 0]),
+            ("no width", [0, 0, 0, 8]),
+            ("no height", [0, 0, 8, 0]),
+        ] {
+            let mut sound = field([0.0, 0.0, 8.0, 8.0]);
+            sound.atlas_rect = atlas_rect;
+            assert!(
+                !sound.draws(),
+                "a field whose atlas rectangle has {what} must draw nothing",
+            );
+        }
+    }
+
+    /// **A sound field draws**, without which every assertion above passes
+    /// against a predicate that answers `false` unconditionally.
+    ///
+    /// The bounds are deliberately not symmetric and not at the origin, so a
+    /// predicate that had transposed a pair or dropped an origin term would
+    /// still have to answer `true` here for the right reason.
+    #[test]
+    fn a_sound_field_draws() {
+        assert!(field([1.0, 2.0, 9.0, 14.0]).draws());
     }
 }
