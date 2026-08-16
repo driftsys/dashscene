@@ -556,7 +556,12 @@ fn read_face<'frame, 'array>(
     }))
 }
 
-/// Reports a new **physical**-pixel extent. Picked up by the next frame.
+/// Reports a new **physical**-pixel extent, picked up by the next frame —
+/// **unless it describes no drawable, in which case it is dropped** (issue
+/// #1094). See [`loop_::resize`], which is the whole of the behaviour.
+///
+/// A negative `int` from Java is clamped to 0 and is therefore dropped by that
+/// same rule, rather than wrapping into a `u32` near 4 billion.
 ///
 /// # Safety
 ///
