@@ -2667,6 +2667,19 @@ impl Renderer {
         self.residency.decodes()
     }
 
+    /// How many payloads have been made resident since this renderer was built
+    /// — see [`crate::Residency::admissions`].
+    ///
+    /// Public for the reason [`Self::last_draw_runs`] is: a test that asserted
+    /// only the picture cannot tell a frame that fetched a payload it never
+    /// sampled from one that did not fetch it. It answers a question
+    /// [`Self::decodes`] cannot — whether a payload was fetched at all, for a
+    /// baked payload as well as an encoded one, and only when the fetch
+    /// succeeded (issue #1165).
+    pub fn admissions(&self) -> u64 {
+        self.residency.admissions()
+    }
+
     /// What the frame most recently resolved could not make resident.
     ///
     /// Empty for every frame that drew everything it was asked to, which is
@@ -3079,7 +3092,8 @@ fn backdrop_mask(instance: &Instance, resolved: &Resolved) -> Option<Option<GpuS
 ///
 /// **That order is held by a test**, since issue #1159:
 /// `a_field_that_draws_nothing_makes_no_atlas_resident` reads
-/// [`Renderer::decodes`] over an encoded atlas. Hoisting `resident_image` out of
+/// [`Renderer::admissions`], which counts a baked payload's fetch as well as an
+/// encoded one's (issue #1165). Hoisting `resident_image` out of
 /// the `&&` chain in [`Renderer::resolve_frame`] is what it catches — nothing
 /// caught it before, because a degenerate field made resident is still refused
 /// by nothing and still leaves its row unresolved.
