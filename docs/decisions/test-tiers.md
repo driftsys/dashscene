@@ -11,8 +11,9 @@
              docs/decisions/asset-quality-profile-bands.md (the tables the
              calibration tier re-derives),
              docs/decisions/review-before-ready-not-before-open.md (the
-             story-PR sequence the tiers are run against; a PR is never
-             marked ready, so the tier is due before merge)
+             pull-request sequence the tiers are run against, for every
+             branch; there is no ready transition to hang the tier on —
+             a PR is opened non-draft — so the tier is due before merge)
 
 ## Problem
 

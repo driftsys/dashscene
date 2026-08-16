@@ -1,8 +1,13 @@
-# Decision: the story-PR gate is merge — garden, open, review and build in parallel
+# Decision: the gate is merge — garden, open, review and build in parallel
 
     status   accepted
-    date     2026-07-13, revised 2026-08-01, revised 2026-08-12
-    scope    process — applies to every story PR
+    date     2026-07-13, revised 2026-08-01, revised 2026-08-12,
+             revised 2026-08-16
+    scope    process — applies to every pull request against this repository.
+             The 2026-08-16 revision widened it from story PRs alone,
+             because two of its steps now read differently when the pull
+             request closes a `debt` issue — which is not the same as
+             being on a `debt` branch.
     session  marshal/coordinator lane
 
 The filename still reads `review-before-ready-not-before-open` — the name this
@@ -35,6 +40,14 @@ What the surrounding rules actually gate on:
 
 So the invariant every source shares is: **the review is complete and critical
 findings are fixed before merge.** Only AGENTS.md tied it to PR creation.
+
+The 2026-08-16 revision departs from the second half of that invariant, and from
+`superpowers:requesting-code-review`'s "fix Critical issues immediately", in
+exactly two cases: a critical finding whose fix is blocked is filed with its
+blocker named, and one the author judges incorrect is rejected with the
+reasoning. Both are recorded dispositions rather than silences, and the
+alternative to the first is a pull request that can never merge. Nothing else
+about a critical finding changed.
 
 Tying it there also gave up real capability. The `/code-review` skill can post
 findings as inline PR comments (`--comment`) and can target a PR number directly
@@ -93,8 +106,13 @@ The review half is still held by the findings checklist below.
 
 ## Decision
 
-The gate is **merge**. A story PR is opened as an ordinary pull request and is
-never a draft. The sequence is:
+The gate is **merge**. Every pull request against this repository — a story
+branch, a debt branch, a documentation branch — is opened as an ordinary pull
+request and is never a draft. The sequence below binds all of them. Two steps
+read differently when the pull request **closes a `debt` issue** — the
+finding-triage rule's narrowing to nice-to-haves, and the stopgap rule — and
+both say so where they do. That is not the same as being on a `debt` branch: a
+debt ticket is regularly closed from a story branch. The sequence is:
 
 - **Garden before the PR is opened.** Working memory **this branch adds** under
   `docs/wip/` does not stay there unexplained. By the time the PR opens, every
@@ -146,28 +164,234 @@ never a draft. The sequence is:
   series adds the shorter one to the wall clock for nothing. The merge gate is
   unchanged: both must be complete.
 
-- **Capture every finding** as a checklist in the PR description. Fix critical
-  findings. File one `debt`-labeled issue per minor finding, **against a
-  milestone** — the current slice, the next one, or `v1` for work not scheduled
-  to a slice. Debt filed with no milestone is invisible at every slice close,
-  and that is the largest population there is: measured 2026-08-12, 52 open
-  `debt` issues carry no milestone against 42 in `v1`, the largest that does.
-  Re-derive rather than trusting those two numbers —
+- **Capture every finding** as a checklist in the PR description, and record
+  against each one which of the three things happened to it: **fixed**,
+  **rejected**, or **filed**. A ticked box on its own says only that the finding
+  was dealt with, not how, and the merge rule below needs to know which.
+
+- **Fix the findings in the pull request that found them.** File one as `debt`
+  only in these two cases:
+
+  - **The fix cannot be made here** — it is blocked on target hardware, on a
+    dependency this workspace does not have, on a v1 consumer, or on a ruling
+    only the repository owner can give. Name the blocker in the issue, and add
+    the `owner-input` label when the blocker is a ruling. Severity and cost do
+    not enter this one: a critical finding that is blocked is filed like any
+    other, because the alternative is a pull request that can never merge.
+  - **The finding is not critical, the fix is over half a day, and it names no
+    correctness defect.** On a pull request that closes a `debt` issue, file
+    only a **nice-to-have** — a finding that names no defect at all, a
+    preference about naming, structure or wording where the current form is
+    correct. Working a debt ticket does not get to file debt for a defect,
+    however small.
+
+  That last condition follows the ticket rather than the branch name: a `debt`
+  issue is regularly closed from a story branch — issue #1148 was closed by pull
+  request #1155 on `story/v1-conditional-dirty-drain`.
+
+  A finding you judge **incorrect** is rejected on the checklist, with the
+  reasoning written beside it. A review tool returns findings that are wrong at
+  any effort level, and the higher levels this repository tends to use are asked
+  to surface uncertain ones, so a false positive is expected output rather than
+  an edge case; `superpowers:requesting-code-review` says the same in its own
+  words: push back if the reviewer is wrong, with reasoning. What separates
+  rejecting from dropping is that the reasoning is written down where the
+  finding is.
+
+  Everything else is fixed in the pull request. Nothing is dropped silently.
+
+  **The terms above are left to judgement on purpose** — "critical", "over half
+  a day", "correctness defect" and "defect" alike. None is defined here, because
+  the earlier drafts of this revision that did define them spent five review
+  rounds generating contradictions between the definitions and the conditions —
+  a formal `critical` wide enough to be useful made the correctness condition
+  unreachable, and narrow enough to avoid that made it miss the defect class
+  this repository actually ships. "Nice-to-have" is defined, and only that one,
+  because it is narrower than the term the inherited vocabulary uses:
+  `superpowers:requesting-code-review` heads its lowest tier
+  `#### Minor (Nice to Have)` and its Minor covers small real defects. Under
+  this record such a defect is fixed rather than filed, so the narrowing has to
+  be said out loud or the condition reads as its opposite.
+
+- **Give a debt ticket the design it asks for, not a stopgap.** This binds any
+  pull request closing a `debt` issue, whatever its branch is called. When a
+  missing dependency or a named blocker stops that design, record it on the
+  ticket and leave the ticket open. Landing a partial fix and filing the
+  remainder converts one open item into two and moves the work no further
+  forward.
+
+- **Put every filed finding on a milestone, and link it to the pull request that
+  found it** — the current slice, the next one, or `v1` for work not scheduled
+  to a slice. The link is what makes a filed finding's provenance legible later;
+  issue #783, which predicted the `Residency` collision, is only readable as a
+  warning because it named the work it came from.
+
+  **A long finding never goes to `v0.23`.** That milestone's own description is
+  "one focused pull request each, under half a day, none blocking a named
+  consumer and none carrying a correctness defect", and a long finding costs
+  more than it admits. A **blocked** finding can belong there — blockedness
+  carries no cost condition, so a quick, non-correctness finding waiting on an
+  owner ruling matches that description exactly. Two of the milestone's open
+  issues are already that shape (#874 and #886, both `owner-input`).
+
+  **The `debt` label's own description is part of this rule and changes with
+  it.** When this record was written it read "Deferred minor finding from a code
+  review; non-blocking" — re-derive with `gh label list --json name,description`
+  rather than trusting that quotation, which this record's own follow-through
+  makes stale. Its first half is wrong under the new rule: a filed finding may
+  be critical, and it need not come from a review at all. The second half stays
+  true — a filed finding does not block its pull request, which is what the
+  merge rule below is for. The label is the one statement of the rule that
+  appears in the GitHub interface at the moment of filing, and correcting it is
+  one `gh label edit debt --description ...` call. It is made when this record
+  merges, not before, so that until then the description matches the rule
+  actually in force — and it is carried as an unticked item on this record's own
+  pull request, so forgetting it is visible rather than silent.
+
+  Debt filed with no milestone is invisible at every slice close. When this rule
+  was written that was the largest population there is — measured 2026-08-12, 52
+  open `debt` issues carried no milestone against 42 in `v1` — and the triage
+  that opened `v0.23` emptied it. Re-derive rather than assuming it is still
+  empty:
   `gh issue list --label debt --state open --limit 300
   --json milestone` is
   the whole derivation.
 
-- **Review the fix.** When a critical finding changes the implementation, the
-  change that fixes it is reviewed too — a pass over what changed, not a second
-  full pass.
+- **Review what the review changed.** Every change to the diff's **content**
+  made after the review pass gets a pass of its own — over what changed, not a
+  second full pass. The rebase and squash that `AGENTS.md` requires before
+  merging change no content and need none, which is what this record already
+  says of a rebase under "Consequences".
+
+  This widened on 2026-08-16 from "when a critical finding changes the
+  implementation". Under the replaced rule a minor finding became a ticket and
+  never touched the branch, so critical fixes were nearly the whole population
+  of post-review change. Now most findings are fixed in the pull request instead
+  — everything that is neither blocked nor long — and that population is most of
+  the diff's late edits. This record's own revision is the worked example: its
+  first review returned fifteen findings; the pass over the fixes for them
+  returned fifteen more, three of which were structural holes in the rule being
+  written; and three further passes found fifteen each. Not one of the first
+  fifteen was critical, so the narrow rule would not have asked for the pass
+  that found the holes.
 
 - **Merge** only once CI is green on the commit being merged, the review pass is
-  complete, and every critical finding is resolved.
+  complete, and **every** finding has one of the three dispositions recorded
+  against it: fixed, rejected with the reasoning, or filed. It binds every
+  finding rather than only the critical ones because, under the replaced rule, a
+  minor finding was filed by definition and so always had a disposition; now it
+  can be ticked with nothing behind it. This bullet said "every critical finding
+  is resolved" until 2026-08-16, which left a critical finding blocked on target
+  hardware, and a critical finding the author judged wrong, both with no reading
+  that let the pull request merge.
 
 The signal that a PR is not ready to merge is the findings checklist in its
 description: an absent or unticked checklist means the review is unfinished.
 That checklist is an artifact the review already produces, it is visible on the
 PR, and unlike draft it does not tell readers the diff is not ready to read.
+
+### Why filing became the exception (2026-08-16)
+
+Until this revision the rule read "file one `debt`-labeled issue per minor
+finding" — an instruction not to fix. `AGENTS.md` carried it in the sharper
+form, "instead of fixing them inline". The backlog it produced is what this
+revision answers.
+
+Every figure below comes from **one snapshot taken 2026-08-16 at 18:34Z**, so
+the totals reconcile against each other. Take a fresh one before quoting any of
+them — this repository files and closes `debt` continuously, and a figure
+re-derived an hour later will not match:
+
+    gh issue list --label debt --state all --limit 1000 \
+      --json number,title,body,labels,createdAt,closedAt,state,stateReason,milestone
+
+The `debt` label begins at issue #53 on 2026-07-11, so that snapshot covers 36
+days: **486 filed, 335 closed, 151 open**. Two distributions decide whether the
+backlog is an unhealthy codebase or an over-strict rule.
+
+**Time-to-close says the tickets were not scheduling anything.**
+
+    closed debt: 335
+      < 1 day : 160      157 completed, 3 closed as not planned
+      1–3 d   :  46
+      3–7 d   :  52
+      7–21 d  :  76
+      > 21 d  :   1
+      median  : 1.3 days
+
+Forty-eight per cent of closed debt closed within 24 hours of being filed, and
+157 of those 160 closed as completed rather than being triaged away. Filing
+added a file-issue step, a milestone assignment, a branch, a pull request and a
+second review to work that was done the same day either way. The `stateReason`
+field is what separates completed from not-planned, which is why the derivation
+command above requests it.
+
+**Age of the open backlog says the baseline is not the cause.** Median age 7.1
+days, oldest 35.8 days. An unhealthy baseline is a long tail of items nobody
+will reach; every open item here was filed inside the label's own 36-day
+history. (The oldest figure carries less than it appears to: the label itself is
+only 36 days old, so it is bounded by the label's age rather than by anything
+about the backlog. The median is the figure that reports something.)
+
+What the backlog reflects is inflow. Reconstructing the open count day by day,
+it fell to **51 on 2026-07-30** — the floor of the four-day sweep that closed
+the v0.13 burn-down, and the lowest point since the backlog established itself —
+the series is lower only across its first four days, when the label was new (3,
+33, 46, 48) — and has risen to **151 on 2026-08-16**. Across those 17 days,
+**260 issues were filed and 160 closed**. Measuring the rise from the sweep's
+floor makes it look larger than it is, which is why the floor is named as one:
+measured instead from 2026-07-26, the local peak four days before it, the count
+rises from 120 to 151. The trend holds from either anchor; the size of it does
+not.
+
+**That trend is description, not evidence.** The filing rule was in force across
+all 36 days of the series, and under it the count rose to 120, fell to 51 and
+rose to 151 — a constant cannot explain a change of direction, so the series
+cannot separate "the rule creates inflow" from "there was more development".
+What carries the argument is the time-to-close distribution above, which does
+not depend on the trend at all: a ticket filed and completed inside a day is one
+the rule required and the work did not, whatever the backlog was doing that
+week. The trend is here to say the backlog is growing rather than settled, and
+no more than that.
+
+**The `v0.23` milestone states the same thing in its own words.** It describes
+itself as "the quick debt — one focused pull request each, under half a day,
+none blocking a named consumer and none carrying a correctness defect", and 48
+open issues sit on it. Forty-six of those are, by that description, findings the
+new rule fixes rather than files. The other two carry the `owner-input` label —
+they are issues #874 and #886 — and are blocked findings, which the new rule
+files with the blocker named. The milestone's population supports the change for
+all but two of its items, rather than for every one.
+
+Four bounds on the above, so it is not read as more than it is.
+
+**The measurement counts every `debt` issue; the rule reaches only review
+findings.** Debt is also filed during implementation, sweeps and planning, and
+that share is outside this revision entirely. Of the 260 issues filed in the
+17-day window, 173 mention a review anywhere in the body — a loose upper bound,
+since a mention is not provenance — which leaves about a third of the inflow
+that this rule cannot touch. Issues #1175, #1168 and #1158 are examples: a
+`just --list` rendering defect, a reverted docs half, an emulator flag. This
+bounds the time-to-close distribution as well as the headline totals, and the
+distribution is the load-bearing evidence: an unknown share of the 160 same-day
+closures was debt the filing rule never required, since sweep and implementation
+debt closes quickly too. The direction survives — a rule telling reviewers to
+file rather than fix cannot help but contribute — but the size of the effect is
+not measured here.
+
+**78 of the open issues reference another `debt` issue**, which is consistent
+with debt work filing debt but does not prove it — a reference can mean blocks
+or relates as easily as it can mean provenance.
+
+**A keyword split of the open titles leaves roughly 91** that read as behaviour
+rather than prose or test cosmetics. This revision stops the backlog refilling.
+It does not empty it, and nothing here argues the remaining items are not worth
+doing.
+
+**The `v0.23` inference assumes its population is review-sourced.** Those 48
+issues came from a triage sweep, and the paragraph above reads them as findings
+the new rule would have fixed. That holds only for the ones a review produced,
+which was not checked issue by issue.
 
 ### What is enforced mechanically, since 2026-08-12
 
@@ -239,7 +463,8 @@ requires: a green `ci`, not a suite that ran.
 
 ## Consequences
 
-- `/code-review` runs against story PRs instead of declining them.
+- `/code-review` runs against this repository's pull requests instead of
+  declining them.
 - Review findings can be posted as inline PR comments, anchored to the lines
   they concern, instead of only as prose in the description.
 - The review target is the pushed diff CI has already run against.
@@ -259,12 +484,11 @@ requires: a green `ci`, not a suite that ran.
   catching. It is not the only thing that can land after the review; that is why
   the review-the-fix rule exists. It is the one that could be moved earlier by
   changing nothing but the order.
-- **A critical finding that changes the implementation can invalidate a record
-  already gardened.** The record is then re-gardened, and that change is
-  reviewed under the review-the-fix rule like any other. This is the accepted
-  cost of the ordering above, not an argument against it: the alternative
-  exempts every gardened record from review to spare the minority that a finding
-  invalidates.
+- **A finding that changes the implementation can invalidate a record already
+  gardened.** The record is then re-gardened, and that change is reviewed under
+  the review-the-fix rule like any other. This is the accepted cost of the
+  ordering above, not an argument against it: the alternative exempts every
+  gardened record from review to spare the minority that a finding invalidates.
 - The CI half of the gate is now enforced by the ruleset above. The review half
   is not. The mechanism that would enforce it directly — a required approving
   review — needs a second account, and there is not one. A required **status
