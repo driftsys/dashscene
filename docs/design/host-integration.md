@@ -326,6 +326,60 @@ that nothing in this repository called it at all, so what a device would have
 run was the path that draws no glyphs. There is still no device, which is the
 measurement issue #885 owes, so #969 stays open for that half.
 
+### The same route, through the Rust facades (issue #992)
+
+**Both Rust facades can now build one, not only name one.** Each re-exports
+`TextResources` beside `Typesetter` and `Atlas` so an embedder can name the
+parameter its load takes, and naming was as far as it went:
+`TextResources::from_faces` resolved through either crate and calling it did
+not, because its argument is a `Vec` of `FaceBytes` and that did not cross;
+`AtlasBytes` is needed by any face carrying a sheet, since `FaceBytes::atlas` is
+an `Option` a measure-only cascade leaves `None`. So the parameter every load
+path takes was unconstructible through the facade by either route, while the
+prose pointed an embedder at `dashscene-typeset` and `dashpaint` — which build a
+cascade or a sheet from parts, and are not what a host holding bytes needs. Each
+crate now re-exports `FaceBytes`, `AtlasBytes` and `TextResourcesError` as well.
+
+**What that buys is the shape `corpus/showcase/src/resources.rs` uses, which is
+both constructors rather than the byte route alone.** That file's two halves
+have different lifetimes — a `Typesetter` is per-scene, being `!Clone` and held
+exclusively by the solver shaping with it, while the atlas set is converted once
+for the process behind a `LazyLock` — so it calls `from_faces` from two places,
+keeps `typesetter` from one and `atlases` from the other, and pairs them with
+`TextResources::new`. Its own doc records why those cannot be one call. Every
+type that shape names is now reachable through either facade. What is still not
+carried is the vocabulary to build a `Typesetter` or an `Atlas` from parts,
+which is those two crates' whole surface rather than three plain-data types.
+
+`tests/text_resources.rs` in each crate builds the argument and makes the call
+naming nothing but the facade. It pins the four names that come from the engine
+against the engine's own types by an identity coercion — the check
+`tests/adapter_accessors.rs` describes, for the same reason — and the other two,
+`Typesetter` and `Atlas`, by a function-pointer coercion on
+`TextResources::new`, which compiles only if they are the types that constructor
+takes. Unlike that file's web half, this one is not gated on `wasm32` and
+`cargo test` runs it: these types are on every target, and only the load that
+takes them is gated.
+
+**What it does not check is a successful assembly**, and neither facade can:
+that needs real font bytes and a committed sheet, which neither crate ships. All
+three `from_faces` calls are refusals, the deepest stopping at
+`Font::from_bytes`, which is as far as placeholder bytes reach. The walk past
+that point — grouping, the atlas conversion, the slot ordering — is pinned in
+`dashscene-engine` beside the code that performs it. `corpus/showcase` runs the
+route on real bytes but reaches the engine directly, so it witnesses nothing
+about the facades.
+
+**One rule of this ABI does not travel with the route.** The `1..=1000` refusal
+above is `dashscene-ffi`'s: `TextResources::from_faces` performs no weight check
+and `TextResourcesError` has no variant for one, so a Rust embedder on either
+facade can declare a face at weight 0 and have it accepted, where a C caller on
+the same descriptor is refused by name. That asymmetry predates the re-export —
+`corpus/showcase` has reached `from_faces` directly since PR #988 — but this
+change widens who meets it, so it is filed as issue #1206 rather than settled
+here: whether the range belongs on the engine's constructor or stays the ABI's
+is a ruling about where a CSS rule lives, not a doc fix.
+
 ## What holds it
 
 | check                                                 | what it fails on                                                                                                                                                                                              |

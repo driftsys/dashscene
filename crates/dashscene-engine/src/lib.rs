@@ -106,8 +106,12 @@ impl TextResources {
 
 /// One face a host supplies, with the atlas its shaped glyphs sample.
 ///
-/// Owned bytes rather than borrowed, because the one caller is a C ABI whose
-/// pointers are valid only for the length of the call.
+/// Owned bytes rather than borrowed, because the caller this was written for is
+/// a C ABI whose pointers are valid only for the length of the call. It is no
+/// longer the only one: `corpus/showcase` builds these directly, and
+/// `dashscene-desktop` and `dashscene-web` re-export this type so an embedder
+/// can too (issue #992). Owned suits all three — a caller assembling a
+/// descriptor in Rust hands over bytes it no longer needs.
 #[derive(Debug)]
 pub struct FaceBytes {
     /// The family this face belongs to. Faces sharing a name become one
@@ -117,6 +121,13 @@ pub struct FaceBytes {
     /// is resolved by — and the family takes the first spelling to appear.
     pub family: String,
     /// The CSS weight this face stands for.
+    ///
+    /// **Unchecked here.** A CSS weight is `1..=1000` and `dashscene-ffi`
+    /// refuses one outside it by name, but this constructor does not: the value
+    /// reaches `WeightedFont::new` as given, and a face declared at 0 then
+    /// resolves against every request as if the caller had meant it. So the
+    /// same descriptor is refused on the C route and accepted on this one.
+    /// Which side should hold the rule is issue #1206.
     pub weight: u16,
     /// The font file's bytes.
     pub font: Vec<u8>,

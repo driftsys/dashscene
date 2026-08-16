@@ -1774,16 +1774,29 @@ hardware-gated issue at all**: what is left of the Android half here is closable
 on an emulator, as is #874, which stays on v0.23.
 
 **The Android half is the larger half, and it is one property rather than four
-items.** The recovery path is untested; the bound that gives up after repeated
-failures cannot be reached; the C ABI cannot report which frame failures are
-recoverable, so the host guesses; and the device probe accepts an adapter
-without checking the surface format the painter needs. All four describe one
-thing: **nothing on the Android path can report or detect its own failure.** The
-unreachable bound is the third consecutive repair to that recovery to have
-broken it, and all three were invisible for the same reason — the frame loop
-sits entirely behind a platform `cfg`, so a host-target test compiles none of
-it. That property is what this slice has to change; the four items are its
-symptoms.
+items.** As the slice opened: the recovery path was untested; the bound that
+gives up after repeated failures could not be reached; the C ABI could not
+report which frame failures are recoverable, so the host guessed; and the device
+probe accepted an adapter without checking the surface format the painter needs.
+All four described one thing: **nothing on the Android path could report or
+detect its own failure.** The unreachable bound was the third consecutive repair
+to that recovery to have broken it, and all three were invisible for the same
+reason — the frame loop sat entirely behind a platform `cfg`, so a host-target
+test compiled none of it. That property is what this slice has to change; the
+four items are its symptoms.
+
+**All four issues are closed. Three of them removed the defect; the fourth
+recorded it.** The state machine came out from behind the platform `cfg` into
+`crates/dashscene-android/src/machine.rs`, where it is tested on the host and
+where the bound both fires and is pinned in both directions (#888, #940). The
+ABI gained `DsStatus::SurfaceLost`, so `ds_runtime_draw` forwards the one
+classification `dashscene_gpu::FrameError::is_recoverable` makes instead of
+flattening every surface failure to one status (#884). The probe still cannot
+check the surface format — that needs a surface, and it enumerates adapters with
+no window — so #890 closed by making the probe say so, in a caveat printed on
+every run beside the two other things a passing result does not cover. The
+property this slice set out to change has changed for the loop and for the ABI;
+the probe's gap is recorded where a reader of its output meets it.
 
 Depends on: v0.19, for the Android code it hardens. v0.21 depends on it in turn,
 for the failure reporting the C ABI gains here.
