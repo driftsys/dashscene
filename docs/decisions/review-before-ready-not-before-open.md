@@ -418,9 +418,52 @@ as well as everyone else:
     non_fast_forward         `main` cannot be force-pushed
     deletion                 `main` cannot be deleted
 
+    ---- and one setting that is NOT part of the ruleset ----
+    allow_auto_merge: true   a repository property, and a PREREQUISITE of the
+                             `merge_queue` rule above — with it off, every
+                             enqueue fails. Re-adding the rule needs it on.
+
 The queue's seven parameters are written out because the recovery below removes
 the rule, and re-adding it without them restores GitHub's defaults rather than
-this configuration.
+this configuration. `allow_auto_merge` is written **inside** the same block for
+the same reason, even though no ruleset carries it: someone reconstructing the
+queue reads this block and stops there.
+
+**The `merge_queue` rule needs a repository setting the ruleset does not
+carry.** `allow_auto_merge` must be `true`, because GitHub implements "merge
+when ready" through auto-merge. With it off, every enqueue fails:
+
+    $ gh pr merge 1179 --merge
+    ! The merge strategy for main is set by the merge queue
+    GraphQL: Auto merge is not allowed for this repository
+    (enablePullRequestAutoMerge)
+
+Measured on PR #1179, which is what found it: the queue had been enabled and was
+unusable until the setting was turned on. It has been `true` since, and #1179
+then queued and merged normally (`merge_group` run 31963033234, success).
+
+It is recorded here because it is a plain repository property with no visible
+relationship to the ruleset — nobody would connect the two, and turning it off
+silently breaks every merge on the repository while the queue rule still reads
+as configured. `gh api repos/driftsys/dashscene --jq .allow_auto_merge` is the
+check. The recovery below does not touch it: it removes the queue rule, and
+re-adding the rule later needs the setting still on.
+
+**It also widens a hazard `AGENTS.md` already documents, and the two cannot be
+separated.** With the required checks passed, `gh pr merge` puts the pull
+request in the queue; with them still running it leaves auto-merge armed
+instead, and the merge happens later, unattended, with nobody reading the
+findings checklist. Before `allow_auto_merge` was on, the command simply failed,
+so the setting is what makes that second outcome reachable at all. Turning it
+off would close the hazard and break the queue with it: they are one mechanism.
+
+**`gh`'s own output does not tell the two apart.** It asks for auto-merge either
+way and reports the same success line, and which one happened is decided
+server-side by the check state at that moment. That is why `AGENTS.md`'s
+procedure has a third command: `gh pr view <n> --json state,mergeStateStatus` is
+what answers it. Nothing enforces the review half here, so what bounds it stays
+the checklist and whoever runs the command — confirm `gh pr checks` is green
+**before** enqueuing, not after.
 
 It buys the CI half of the gate, which
 `docs/decisions/ci-green-before-story-merge.md` previously held in prose alone.
