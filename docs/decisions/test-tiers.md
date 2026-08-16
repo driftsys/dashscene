@@ -426,12 +426,19 @@ push and pull request.
 event so a merge queue's batch gets the same `ci` check, and the tiers are
 scheduled there the same way they are on a pull request: the gates resolve from
 the batch's own `base_sha`/`head_sha`, so a documentation-only batch skips the
-compile half in the queue exactly as it does on the pull request. Two
-differences are worth knowing when reading a merge group's run. `convco` is
-gated on `pull_request` and skips, because the commit messages were linted on
-the pull request that entered the queue. And the range is derived by two
-mechanisms that use different dot semantics, which agree only while the batch's
-base is an ancestor of its head (issue #1171).
+compile half in the queue exactly as it does on the pull request. One difference
+is worth knowing when reading a merge group's run: `convco` is gated on
+`pull_request` and skips, because the commit messages were linted on the pull
+request that entered the queue.
+
+The range those gates read is resolved **once**, by the
+`resolve the range this
+run is about` step, and the filter and the code detector
+both read that step's outputs. Until issue #1171 each derived it from the
+payload itself, with different dot semantics that agreed only while the batch's
+base was an ancestor of its head. The step resolves the merge base, which makes
+the two-dot and three-dot forms the same diff, and annotates the run when it
+could not — every fallback from there over-runs rather than under-runs.
 
 **With one exception, added at issue #1086: `aarch64-linux-android`.**
 `just android-lint` is in CI's `android-build` job and in no local aggregate —

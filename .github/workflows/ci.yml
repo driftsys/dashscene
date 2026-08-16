@@ -11,22 +11,33 @@ on:
   # sits until it times out.
   #
   # The gates resolve from the batch's own range, not forced on. A merge group
-  # carries `base_sha` and `head_sha` in its payload, and both the filter step
-  # and the code detector below read them, so a documentation-only batch skips
-  # the compile half here exactly as it does on the pull request. Forcing
-  # instead would put `calibration`'s 272 s on the front of every merge.
+  # carries `base_sha` and `head_sha` in its payload, and the `resolve the range`
+  # step in `changes` is the one place that reads them — the filter and the code
+  # detector both read that step's outputs (issue #1171). So a documentation-only
+  # batch skips the compile half here exactly as it does on the pull request.
+  # Forcing instead would put `calibration`'s 272 s on the front of every merge.
   #
   # `convco` is the one job that does not run here. It is gated on
   # `pull_request`, and the aggregate accepts `skipped` — the commit messages
   # were linted on the pull request that entered the queue, and there is no
   # second author between there and here.
   #
-  # HOW THIS BREAKS, accurately. A wrong field name in the expressions below
-  # does NOT make the check silent: the expression yields an empty string,
-  # `scripts/is-code-change` fails closed to `true`, and `ci` reports GREEN over
-  # a degraded range. That is the likely defect, and it is loud in the wrong
-  # direction rather than quiet — a green merge group is not by itself evidence
-  # that these four expressions resolved.
+  # HOW THIS BREAKS, accurately. A wrong field name in the payload expressions on
+  # `resolve the range` does NOT make the check silent: the expression yields an
+  # empty string, that step reports a range it could not resolve, the filter
+  # falls back to comparing against the default branch and
+  # `scripts/is-code-change` fails closed to `true`. Both over-run rather than
+  # under-run, and `ci` reports GREEN over a degraded range. That is the likely
+  # defect, and it is loud in the wrong direction rather than quiet — a green
+  # merge group is not by itself evidence that the range resolved. Since issue
+  # #1171 the step annotates the run when it did not, which is the one place that
+  # says so without reading a collapsed step log.
+  #
+  # A typo in the two expressions that carry the resolved range onward — the
+  # filter's `base`/`ref` and the detector's `BASE`/`HEAD`, all four now reading
+  # `steps.range.outputs.*` — degrades the same way and is not covered by the
+  # annotation: an empty value there is indistinguishable from a range this
+  # event does not have.
   #
   # Only a narrower class stalls the queue instead: this trigger removed, the
   # workflow failing to parse on the queue's branch, or the aggregate `ci` job
@@ -79,10 +90,11 @@ jobs:
     name: changes
     runs-on: ubuntu-latest
     # ONE definition of "this run forces the gates". The filter step reads it as
-    # `env.FORCED` and the resolver reads it as `$FORCED`, so the predicate
+    # `env.FORCED` and the gate resolver reads it as `$FORCED`, so the predicate
     # cannot drift between them — two copies of it would mean a skipped filter
     # whose empty outputs are still consumed, which is a green run over a suite
-    # that never ran.
+    # that never ran. The `resolve the range` step below is the same rule
+    # applied to the other value two steps share (issue #1171).
     env:
       FORCED: ${{ github.event_name == 'workflow_dispatch' }}
     outputs:
@@ -90,11 +102,111 @@ jobs:
       packer: ${{ steps.gates.outputs.packer }}
       code: ${{ steps.gates.outputs.code }}
     steps:
-      # Full history: the code detector below diffs two arbitrary commits,
-      # which a shallow clone cannot resolve.
+      # Full history: the range step below asks for a merge base and the code
+      # detector diffs two arbitrary commits, neither of which a shallow clone
+      # can resolve.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # ONE definition of the range this run is about, for the same reason
+      # `FORCED` above is one definition of "this run forces the gates". Two
+      # steps consume it — the filter below and the code detector under that —
+      # and until issue #1171 each derived it from the event payload itself.
+      #
+      # Naming the same two shas twice would not have been enough, because the
+      # two consumers disagree about what a range *means*. Given a sha `base`,
+      # `dorny/paths-filter@v3` runs `git diff base..head` — TWO dots — and on a
+      # push, where it takes no base at all, it falls through to
+      # `git diff <before>..<default branch>`, also two. The detector runs three.
+      # Resolving the merge base here and handing THAT to both makes
+      # `base..head` and `base...head` the same diff by construction.
+      #
+      # The forms differ exactly when `base` is not an ancestor of `head`, and
+      # they differ in both directions. Over a branch whose base has moved on,
+      # two dots reports the base branch's own commits as this change's. Where
+      # the base branch made the same edit the branch did, two dots reports
+      # NOTHING and three reports the file — an under-report, and the filter has
+      # no fail-closed default to catch it the way `scripts/is-code-change` does.
+      # Both were reproduced over scratch repositories rather than argued.
+      #
+      # A merge group's `base_sha` is an ancestor of its `head_sha`, so nothing
+      # here was wrong — which is exactly the "only ever exercised the case where
+      # the bug cannot appear" reasoning the detector's own comment rejects.
+      - name: resolve the range this run is about
+        id: range
+        env:
+          # BASE is what genuinely differs by event. A merge group carries
+          # neither a pull request nor a `before` sha, so falling through to
+          # `github.event.before` would leave it empty and degrade the range.
+          #
+          # HEAD's middle arm is redundant, not a second asymmetry: `github.sha`
+          # is already the merge group's head commit, so the tail would have
+          # returned the same value. It is named because this whole path is
+          # first evaluated against a live payload at the moment merges start
+          # depending on it — which the queue has now done, repeatedly, since it
+          # went on.
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -uo pipefail
+          # Resolved: both consumers read the same commit, and `base..head` and
+          # `base...head` are then the same diff.
+          #
+          # Unresolved: each falls back to what it used before this step existed,
+          # and this step says so as an annotation rather than a line in a
+          # collapsed log. It does NOT fail the job. Every fallback here
+          # over-runs — the detector prints `true` on a range it cannot read, and
+          # the filter compares against the default branch, which on a merge
+          # group is the whole batch rather than the entry — and over-running is
+          # the direction this workflow already fails in. The `resolve the gates`
+          # step below refuses instead, because an empty value THERE skips a job
+          # rather than scheduling one.
+          NULL_SHA=0000000000000000000000000000000000000000
+          base=$BASE
+          filter_base=
+          filter_head=
+          if [ -z "$BASE" ] || [ "$BASE" = "$NULL_SHA" ]; then
+            # No base to resolve, and both shapes are legitimate: a
+            # `workflow_dispatch` carries no `before` and discards this answer
+            # anyway, and a branch's first push carries the null sha.
+            echo "::warning::range: this event carries no base ('${BASE}') — the gates fall back and run more than they need to"
+          elif ! resolved=$(git merge-base "$BASE" "$HEAD" 2>&1); then
+            # Two failures in one arm, and the difference is in git's own
+            # message rather than lost: no common ancestor, or a commit this
+            # clone does not have — which is what a force-push to `main` leaves
+            # behind, and also what a wrong expression above produces.
+            echo "::warning::range: cannot resolve ${BASE}...${HEAD} — the gates fall back. git said: ${resolved}"
+          else
+            base=$resolved
+            # Handed to the filter only when it resolved. An unresolvable sha
+            # passed to the action sends it down `ensureRefAvailable`, which
+            # fetches at depth 1 and can leave `.git/shallow` on the clone
+            # `fetch-depth: 0` had made complete — and the detector diffs that
+            # same clone two steps later. Withholding it keeps the action on its
+            # own documented fallback, which is what this workflow used before
+            # there was a step here.
+            filter_base=$resolved
+            filter_head=$HEAD
+            echo "range: ${BASE}...${HEAD} resolves to ${base}..${HEAD}"
+          fi
+          # And withheld on `pull_request` whatever resolved, because the action
+          # takes its file list from the GitHub API there — which is what the
+          # `pull-requests: read` permission at the top of this file is for — and
+          # warns once per input when either is set. That is the same value
+          # withheld from a consumer that has decided to ignore it, not a second
+          # derivation of it.
+          if [ "$EVENT" = pull_request ]; then
+            filter_base=
+            filter_head=
+          fi
+          {
+            echo "base=$base"
+            echo "head=$HEAD"
+            echo "filter_base=$filter_base"
+            echo "filter_head=$filter_head"
+          } >>"$GITHUB_OUTPUT"
+
       # Skipped on a forced run, because its answer would be discarded. On an
       # event with no `before` sha the action does not compare the ref with the
       # default branch and find nothing — it logs that `before` is missing and
@@ -105,24 +217,19 @@ jobs:
         if: env.FORCED != 'true'
         id: filter
         with:
-          # Both are declared with no default by the action and are ignored
-          # outright on `pull_request`, so these two expressions are empty on
-          # every event except a merge group and change nothing there.
+          # The range resolved above, and nothing derived here. The step
+          # decides when to withhold them and says why; empty is the action's
+          # own fallback, which this workflow used before that step existed.
           #
-          # `base` is the one that has to be here. Its fallback is the
-          # repository's default branch, so on a merge group the action would
-          # otherwise compare the throwaway `gh-readonly-queue/...` ref against
-          # `main` rather than against the commit the batch was built on.
-          #
-          # `ref` is redundant — the action falls back to the checked-out ref,
-          # which on a merge group already points at `head_sha`. It is passed
-          # anyway, and so is HEAD below, because no event this workflow can
-          # currently receive produces a merge group: the first live evaluation
-          # of these four expressions is the first queued merge. Naming the
-          # payload's own values costs nothing and removes the dependency on
-          # two fallbacks being what the documentation says they are.
-          base: ${{ github.event.merge_group.base_sha }}
-          ref: ${{ github.event.merge_group.head_sha }}
+          # `base` is the one that has to be passed when there is one. Its
+          # fallback is the repository's default branch, so on a merge group the
+          # action would otherwise compare the throwaway `gh-readonly-queue/...`
+          # ref against `main` rather than against the commit the batch was built
+          # on. `ref` is redundant — the action falls back to the checked-out ref
+          # — and is passed anyway, so neither value depends on a fallback being
+          # what the documentation says.
+          base: ${{ steps.range.outputs.filter_base }}
+          ref: ${{ steps.range.outputs.filter_head }}
           filters: |
             figma:
               - 'importers/figma/**'
@@ -207,33 +314,20 @@ jobs:
       - name: detect changes outside documentation
         id: code
         env:
-          # BASE is what genuinely differs. A merge group carries neither a
-          # pull request nor a `before` sha, so falling through to
-          # `github.event.before` would leave it empty, degrade the range, and
-          # fail closed to running everything on every merge.
-          #
-          # HEAD's middle arm is redundant, not a second asymmetry: `github.sha`
-          # is already the merge group's head commit, so the existing tail would
-          # have returned the same value. It is named explicitly for the reason
-          # given on the filter step above — this whole path is first evaluated
-          # against a live payload at the moment merges start depending on it.
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
-          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.sha }}
+          # The range resolved above, and nothing derived here (issue #1171).
+          BASE: ${{ steps.range.outputs.base }}
+          HEAD: ${{ steps.range.outputs.head }}
         run: |
           set -uo pipefail
-          # Three dots, not two. BASE is the base branch's current tip, not the
-          # merge base, so "git diff BASE HEAD" reports everything that landed on
-          # main since this branch diverged as though this branch had changed it.
-          # On a branch five commits behind main that read 34 files where the
-          # pull request changed 3. "BASE...HEAD" diffs from the merge base
-          # instead, which is the pull request's actual diff.
+          # Three dots, not two. Two dots reports everything that landed on the
+          # base branch since this one diverged as though this branch had
+          # changed it — on a branch five commits behind main that read 34 files
+          # where the pull request changed 3.
           #
-          # The two forms agree only when BASE is an ancestor of HEAD, which is
-          # why this shipped: the branch that verified it was cut from main's tip
-          # moments earlier, so the check only ever exercised the case where the
-          # bug cannot appear. For the push event they still agree whenever
-          # "before" is an ancestor of "sha", and three dots degrades to the
-          # merge base when a force-push means it is not.
+          # BASE is already the merge base, so on this step the two forms are the
+          # same diff and this is the form that stays right without that: the
+          # resolve step falls back to the raw base when it cannot compute one,
+          # and three dots degrades to the merge base where two would not.
           echo "changed files:"
           git diff --name-only --no-renames "$BASE...$HEAD" 2>/dev/null || true
           # The classification lives in scripts/is-code-change. `just verify`

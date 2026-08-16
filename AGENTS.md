@@ -627,6 +627,21 @@ Merging a PR — how the branch lands on `main`:
   queue the `--merge` strategy flag is ignored; it is kept for the case where
   the queue is lifted.
 
+  **`gh`'s output does not tell the two apart**, which is what the third command
+  above is for. It asks for auto-merge either way and prints the same success
+  line; which one happened is decided server-side by the check state at that
+  moment, and `state,mergeStateStatus` is what answers it.
+
+  **The queue runs on `allow_auto_merge`, a repository setting no ruleset
+  carries.** GitHub implements "merge when ready" through auto-merge, so with it
+  off every enqueue fails with `Auto merge is not allowed for this repository`.
+  It is on. That also means the unattended merge above and the queue are one
+  mechanism: the hazard cannot be closed by turning the setting off without
+  breaking every merge on the repository. Confirming `gh pr checks` first is the
+  whole remedy. `docs/decisions/review-before-ready-not-before-open.md` carries
+  the measurement, the check to run, and why the recovery there leaves the
+  setting alone.
+
   **Enqueuing is asynchronous.** The command returns before `main` has moved, so
   the post-merge steps below — the accidental-closure check, and confirming the
   previous lane's work survives — have nothing to look at yet and will pass over
