@@ -555,35 +555,50 @@ impl Painter for SkiaPainter {
             // Several backdrop blurs on one node apply in list order, each
             // over the result of the last, the same posture the shadow loops
             // below use for Figma's back-to-front `effects` array.
-            for blur in paints
-                .blurs(entry)
-                .iter()
-                .filter(|blur| blur.kind == BlurKind::Backdrop)
-            {
-                match paints.shape(entry) {
-                    // A baked-vector node's blur is confined to the field's
-                    // coverage, not to its box — the hero's own frosted panel
-                    // is exactly this shape, a VECTOR carrying
-                    // `BACKGROUND_BLUR` (`crates/dashc/src/figma/mod.rs`), so
-                    // blurring its whole box would frost a rectangle where the
-                    // design has a rounded shape.
-                    Some(field) => {
-                        let effect = field_effect.get_or_insert_with(|| {
-                            RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)
-                                .expect("field-mask resolve SkSL compiles")
-                        });
-                        let atlas = image_cache.get(field.image);
-                        draw_backdrop_blur_field(
-                            canvas,
-                            rect,
-                            field,
-                            atlas,
-                            effect,
-                            blur.radius,
-                            rect.opacity,
-                        );
+            // **Asked once, above the loop** (issue #1044). `ImageCache::get`
+            // decodes on first request and `field_coverage` answers `None` for
+            // a field with no area, so fetching first paid a full decode to
+            // draw nothing; the lean painter never did, its gate sitting above
+            // residency.
+            //
+            // Above the loop because neither the shape nor the predicate varies
+            // per blur — a node may carry several backdrops, each over the
+            // result of the last — and because a field that covers nothing
+            // draws no backdrop at all rather than one empty one per blur.
+            let shape = paints.shape(entry);
+            if shape.is_none_or(|field| field.draws()) {
+                for blur in paints
+                    .blurs(entry)
+                    .iter()
+                    .filter(|blur| blur.kind == BlurKind::Backdrop)
+                {
+                    match shape {
+                        // A baked-vector node's blur is confined to the field's
+                        // coverage, not to its box — the hero's own frosted
+                        // panel is exactly this shape, a VECTOR carrying
+                        // `BACKGROUND_BLUR` (`crates/dashc/src/figma/mod.rs`),
+                        // so blurring its whole box would frost a rectangle
+                        // where the design has a rounded shape.
+                        Some(field) => {
+                            let effect = field_effect.get_or_insert_with(|| {
+                                RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)
+                                    .expect("field-mask resolve SkSL compiles")
+                            });
+                            let atlas = image_cache.get(field.image);
+                            draw_backdrop_blur_field(
+                                canvas,
+                                rect,
+                                field,
+                                atlas,
+                                effect,
+                                blur.radius,
+                                rect.opacity,
+                            );
+                        }
+                        None => {
+                            draw_backdrop_blur_box(canvas, &rrect, blur.radius, rect.opacity);
+                        }
                     }
-                    None => draw_backdrop_blur_box(canvas, &rrect, blur.radius, rect.opacity),
                 }
             }
             // Drop shadows fall behind the fill (story #45,
@@ -612,12 +627,20 @@ impl Painter for SkiaPainter {
                 // field's coverage, not by the parametric box. The parametric
                 // stroke and corners do not apply (a vector carries its
                 // outline in the baked geometry).
-                let effect = field_effect.get_or_insert_with(|| {
-                    RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)
-                        .expect("field-mask resolve SkSL compiles")
-                });
-                let atlas = image_cache.get(field.image);
-                draw_vector_field(canvas, rect, paints, entry.fill, field, atlas, effect);
+                //
+                // **Asked before the atlas is fetched** (issue #1044), and
+                // inside this branch rather than on the `if let`: a masked
+                // entry whose field covers nothing draws nothing, where the
+                // `else` below would draw its parametric fill over the whole
+                // box.
+                if field.draws() {
+                    let effect = field_effect.get_or_insert_with(|| {
+                        RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)
+                            .expect("field-mask resolve SkSL compiles")
+                    });
+                    let atlas = image_cache.get(field.image);
+                    draw_vector_field(canvas, rect, paints, entry.fill, field, atlas, effect);
+                }
             } else {
                 // A fill-less entry draws nothing (a layout-only node, or a
                 // mask node whose shape is a stencil, not paint). Stacked
@@ -1168,6 +1191,15 @@ fn draw_vector_field(
 /// painters call it. A zero atlas extent is a **legal** state rather than an
 /// out-of-domain one, which is why `PaintTable::push_with` does not refuse it
 /// (`docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md`).
+///
+/// **The question is settled before this runs** (issue #1044). Neither of this
+/// function's two callers fetches an atlas — both are handed an already-decoded
+/// `&Image` — so the hoist is one level further out, in the two arms of
+/// [`Painter::paint`] that own the [`ImageCache`]. `ImageCache::get` decodes on
+/// first request, and asking only here paid a full decode for a field that
+/// paints nothing. This function still asks, because that is what makes "a
+/// degenerate field draws nothing" this painter's own answer rather than a
+/// property of two call sites.
 ///
 /// **Called rather than restated**, which it was until issue #1144.
 /// `dashscene-skia` does not depend on `dashscene-gpu`, so the two carried
@@ -2482,5 +2514,128 @@ mod tests {
             0,
             "a scene with no glyph runs decodes nothing"
         );
+    }
+
+    /// **A coverage field that draws nothing decodes no atlas** (issue #1044).
+    ///
+    /// `ImageCache::get` decodes on first request, and `field_coverage` answers
+    /// `None` for a field with no area — so asking after the fetch paid a full
+    /// decode for a field that paints nothing. `dashscene-gpu` never did: its
+    /// gate sits above residency, and `dashscene_gpu::field_draws`' own doc is
+    /// where that reason is written — "checked **before** the payload is made
+    /// resident rather than after".
+    ///
+    /// Both call sites are covered, because they are separate paths that each
+    /// fetch their own atlas: the masked fill, and the backdrop blur.
+    ///
+    /// **Each path is measured both ways**, which is what makes the zero mean
+    /// anything. A test asserting only `DECODE_CALLS == 0` passes just as well
+    /// against a painter that deleted the path: the drawing case asserting
+    /// **one** is what says the decode was skipped rather than never reachable.
+    /// Found by review — the first version had only the zeros.
+    ///
+    /// **What the backdrop row's `1` does not establish**, stated because the
+    /// mutation says so rather than because the shape suggests it: an entry
+    /// carrying a backdrop also carries its shape, so the masked-fill path runs
+    /// for it too and fetches the same image index first — and `ImageCache`
+    /// dedupes by index, so the count is one however many paths asked. Deleting
+    /// the backdrop path outright therefore still reads one and this test still
+    /// passes. Measured. What the backdrop row does pin is the **hoist**: with
+    /// its gate forced open the degenerate case reads one and fails, because the
+    /// fill path's own gate still holds. Isolating the backdrop path's decode
+    /// would need an entry with a shape whose fill path does not run, which this
+    /// painter has no way to build — `paints.shape(entry)` drives both.
+    ///
+    /// **The picture is pinned elsewhere** — the two `DRAWS_NOTHING` sweeps in
+    /// `tests/painter.rs` already assert that such a field paints nothing on
+    /// both paths, and `a_sound_coverage_mask_still_draws` that a sound one
+    /// does. This adds the cost, which no pixel can show.
+    #[test]
+    fn a_coverage_field_that_draws_nothing_decodes_no_atlas() {
+        let mut images = ImageTable::new();
+        let image = images.push(ImageAsset {
+            format: dashpaint::ImageFormat::Png,
+            bytes: one_pixel_png(RED),
+        });
+        let sound = dashpaint::VectorField {
+            image,
+            atlas_rect: [0, 0, 1, 1],
+            plane_bounds: [0.0, 0.0, 8.0, 8.0],
+            distance_range: 4.0,
+        };
+        // The same field with no atlas extent, so it draws nothing on either
+        // path. One member apart, so the two cases differ in the answer and in
+        // nothing else.
+        let degenerate = dashpaint::VectorField {
+            atlas_rect: [0, 0, 0, 0],
+            ..sound
+        };
+        assert!(
+            sound.draws() && !degenerate.draws(),
+            "the two fixtures must differ in exactly this predicate's answer",
+        );
+
+        for (what, blurs) in [
+            ("a masked fill", &[][..]),
+            (
+                "a backdrop blur",
+                &[dashpaint::Blur {
+                    kind: dashpaint::BlurKind::Backdrop,
+                    radius: 8.0,
+                }][..],
+            ),
+        ] {
+            for (field, expected) in [(sound, 1), (degenerate, 0)] {
+                let mut paints = PaintTable::new();
+                let fill = paints.intern_fill(&dashpaint::FillSpec::Solid { color: RED });
+                let entry = paints.push_with(
+                    dashpaint::PaintEntry {
+                        fill,
+                        ..dashpaint::PaintEntry::default()
+                    },
+                    dashpaint::EntryParts {
+                        shape: Some(field),
+                        blurs,
+                        ..dashpaint::EntryParts::default()
+                    },
+                );
+                let rects = [RectEntry {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 8.0,
+                    h: 8.0,
+                    paint: entry,
+                    clip: dashpaint::ClipIndex::UNCLIPPED,
+                    opacity: 1.0,
+                    rotation: 0.0,
+                    rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
+                }];
+
+                DECODE_CALLS.with(|c| c.set(0));
+                let mut painter = SkiaPainter::new(8, 8);
+                painter.paint(
+                    &rects,
+                    &paints,
+                    &images,
+                    &ClipTable::new(),
+                    &[],
+                    &GlyphRunTable::new(),
+                    None,
+                );
+
+                assert_eq!(
+                    DECODE_CALLS.with(|c| c.get()),
+                    expected,
+                    "{what} whose coverage field {} must decode {expected} atlas: the predicate is \
+                 asked before `ImageCache::get`, not inside the draw call below it — and the \
+                 drawing case is what says this path decodes at all",
+                    if expected == 0 {
+                        "draws nothing"
+                    } else {
+                        "draws"
+                    },
+                );
+            }
+        }
     }
 }

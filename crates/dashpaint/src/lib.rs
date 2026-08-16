@@ -1534,11 +1534,10 @@ pub struct VectorField {
     /// top-left origin.
     ///
     /// A zero width or height means the field draws nothing —
-    /// [`draws`](Self::draws) rejects it and both painters take that answer.
-    /// **Not at the same point**: `dashscene-gpu` asks before making the atlas
-    /// resident, so a rejected field costs it no upload, while `dashscene-skia`
-    /// has already decoded the atlas by the time `field_coverage` asks. That is
-    /// a legal state, not an out-of-domain one, so nothing refuses it.
+    /// [`draws`](Self::draws) rejects it, and both painters take that answer
+    /// before they fetch the atlas, which that method's own doc states as part
+    /// of its contract. That is a legal state, not an out-of-domain one, so
+    /// nothing refuses it.
     pub atlas_rect: [u32; 4],
     /// The padded field quad in shape space, node-box-relative, y-down:
     /// `[left, top, right, bottom]`.
@@ -1609,6 +1608,23 @@ impl VectorField {
     /// issue #1034's first fix was still wrong. For finite bounds `width > 0.0`
     /// and `right > left` agree exactly, so nothing that drew before stops
     /// drawing.
+    ///
+    /// # Ask before fetching the atlas
+    ///
+    /// Part of the contract rather than an optimisation each painter may choose
+    /// (issue #1044). A field this rejects samples nothing, so making its atlas
+    /// available is pure waste — and the two painters pay for it differently:
+    /// `dashscene-gpu` would upload a texture, `dashscene-skia` would decode a
+    /// PNG.
+    ///
+    /// Both ask first today. **Only `dashscene-skia`'s order is pinned by a
+    /// test**, through the decode counter its per-call cache already carries;
+    /// swapping `dashscene-gpu`'s two operands so residency runs first leaves
+    /// its whole suite green, measured. That gap is issue #1159.
+    ///
+    /// It is written here rather than only on [`atlas_rect`](Self::atlas_rect)
+    /// because this method is the thing both painters call, and a painter
+    /// author reading it is the one who needs to know.
     ///
     /// # The rejection is silent
     ///
