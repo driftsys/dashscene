@@ -129,8 +129,10 @@ landed with the stories and the original stayed here for a few hours, which the
 **Eleven, since the v0.19 debt prompt landed** (2026-08-15). Nine are design
 captures, described below, and **two driver prompts are held**: v0.19's Android
 half, and `2026-08-15-v019-REMAINING-DEBT-DRIVER-PROMPT.md`, which carries the
-issues in that slice needing no hardware — eight when it landed, seven since
-#922 was settled on 2026-08-15. It replaced
+issues in that slice needing no hardware — **eight when it landed and two on
+2026-08-16**: #922 settled that evening, #929, #930 and #932 together overnight,
+and #828 and #767 moved to v0.21 and v1 on the "decide rather than start" call
+their own sections argued for. It replaced
 `2026-08-15-v019-DEBT-DRIVER-PROMPT.md` on the same day, when #925, #945 and
 #946 landed and left that one describing work that was done; the count did not
 move, because one prompt was archived as the other was added.
@@ -444,10 +446,16 @@ Two driver prompts are held here now, both v0.19's, as the section above says.
 landed, and `integration/v0.19-android` merged into `main` on 2026-08-09 and is
 history — and leaves at the slice's close.
 `2026-08-15-v019-REMAINING-DEBT-DRIVER-PROMPT.md` carries the debt that does not
-wait on hardware — #944, #950, #932, #930, #929, #828 and #767, with #922
-settled on 2026-08-15 and struck in the prompt itself — and leaves when that
-work lands or moves to another milestone. It supersedes
+wait on hardware. It named eight; **#944 and #950 are what is left**, and the
+other six are struck in the prompt itself rather than deleted, because the
+corrections it made to their premises are what the work was done against. It
+leaves when those two land or move. It supersedes
 `2026-08-15-v019-DEBT-DRIVER-PROMPT.md`, archived 2026-08-15.
+
+**Half its scope was gone inside a day of it landing**, which is worth reading
+as a property of this milestone rather than of the prompt: v0.19's remaining
+debt is small and moves fast, and what gates the slice is hardware for #842 and
+#885.
 
 `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md` was archived on 2026-08-13, when
 #838 and #863 both landed — the first just after local midnight, which is why
