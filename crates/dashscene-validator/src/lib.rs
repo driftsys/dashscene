@@ -278,6 +278,34 @@ pub mod rule {
     /// the wire to one that wrote `0.0` deliberately (issue #1002).
     pub const VECTOR_ATLAS_DISTANCE_RANGE_OUT_OF_DOMAIN: &str =
         "vector.atlas-distance-range-out-of-domain";
+    /// A baked shape whose coverage field draws nothing: an atlas sub-rect with
+    /// no texels, or a plane quad whose width or height is not finite and
+    /// positive (issue #1021).
+    ///
+    /// A **warning**, and the reason is the same one [`INERT_MASK`] gives. This
+    /// is a legal state rather than an out-of-domain one:
+    /// `dashpaint::VectorField::draws` decides it, both painters take that
+    /// answer before they fetch the atlas, and
+    /// `docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md`
+    /// deliberately declines to refuse either member at the table seam for that
+    /// reason. So the document is renderable; the node it belongs to simply
+    /// does not appear, and P4 asks for the drop to be named rather than for the
+    /// document to be blocked.
+    ///
+    /// The predicate is `VectorField::draws` itself, called rather than
+    /// restated. Restating it is what issues #1000 and #1034 were each filed
+    /// for, and issue #1144 made the painters share one copy — a validator rule
+    /// that disagreed with it would be the third.
+    pub const VECTOR_SHAPE_DRAWS_NOTHING: &str = "vector.shape-draws-nothing";
+    /// A `VectorShape` carrying no `atlas_rect` or no `plane_bounds`.
+    ///
+    /// An **error**, unlike [`VECTOR_SHAPE_DRAWS_NOTHING`] beside it, because
+    /// the consequence is not a node that fails to draw. A flatbuffers struct
+    /// field with no `(required)` is absent rather than defaulted, and
+    /// `dashscene-core`'s loader reads both behind an `expect` documented as
+    /// "validated upstream (P4)" — which nothing was until this rule, so such a
+    /// document validated clean and then panicked the loader.
+    pub const VECTOR_SHAPE_GEOMETRY_MISSING: &str = "vector.shape-geometry-missing";
 
     // Image assets — the painter decodes them behind an `expect` documented
     // as "validated upstream (P4)". This is that upstream. `IMAGE_NO_BYTES`
@@ -342,11 +370,6 @@ pub mod rule {
     pub const RENDER_TARGET_BUDGET: &str = "paint.render-target-budget";
 
     // Geometry — an extent or radius that cannot rasterize (issue #128).
-    /// A rect whose width or height is non-finite (NaN/infinite) or negative.
-    /// Rects come from the solver, so this is a broken inter-crate contract
-    /// rather than authoring — but the paint gate is the last checkpoint
-    /// before a painter rasterizes NaN geometry. Paint gate only: a document
-    /// carries no resolved extent (P1).
     /// A `Node.opacity` that is non-finite or outside `0..=1` (story #44).
     /// Load gate: the document carries the authored value, so this is
     /// checked where the loader would otherwise clamp it silently — the same
@@ -359,7 +382,60 @@ pub mod rule {
     /// likely a mistake (story #44 M13).
     pub const INERT_MASK: &str = "paint.inert-mask";
 
+    /// A width or height that is non-finite (NaN/infinite) or negative.
+    ///
+    /// Checked on both a document (`Node.layout`'s authored `width` and
+    /// `height`) and a solved scene (`RectEntry.w` and `RectEntry.h`), the same
+    /// posture [`CORNER_RADIUS_INVALID`] takes. It was the paint gate's alone
+    /// until issue #1048, on the reading that "a document carries no resolved
+    /// extent (P1)" — true of the *resolved* extent, and the reason the paint
+    /// gate needs the rule, but `FixedSizeLayout` carries an authored one and
+    /// the paint gate is the one with no production caller.
     pub const RECT_INVALID_EXTENT: &str = "geometry.rect-invalid-extent";
+    /// An origin — `x` or `y` — that is non-finite (issue #1048).
+    ///
+    /// The sibling of [`RECT_INVALID_EXTENT`] over the other two members of the
+    /// same box, and checked at the same two gates. A negative origin is legal
+    /// and ordinary (a node offset above or left of its parent's origin), so
+    /// this is a finiteness rule where the extent rule is also a sign rule.
+    ///
+    /// **Finiteness is the whole predicate, and a large finite origin is a
+    /// different problem this rule deliberately does not reach.** Issue #1185
+    /// names that one: a node origin large enough that the field's extent falls
+    /// below one ulp of it makes `rect.x + left` and `rect.x + right` round to
+    /// the same float, so the device quad's extent is exactly zero by
+    /// **cancellation** — measured, and not the `inf - inf` issue #1048
+    /// predicted. It is a ratio of two operands rather than a property of
+    /// either: an origin of `1e8` against an 8-unit field is fine, and one of
+    /// `65536.0` against a 0.001-unit field collapses. No single-operand domain
+    /// rule can express that, which is why bounding the magnitude here would not
+    /// close it — and the number such a bound would need is one no measurement
+    /// in this repository supplies, the reason
+    /// `docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md` gives
+    /// for `distance_range` having no upper bound either.
+    ///
+    /// # What it is measured against
+    ///
+    /// P4, and not a picture. Measured on both painters at every origin this
+    /// rule names — NaN and the two infinities — a node draws **nothing** rather
+    /// than drawing wrongly, on the solid-fill path and the coverage-mask path
+    /// alike. **Both painters refuse the device quad**, each in its own place
+    /// and each spelled as a negated positive so a NaN is refused rather than
+    /// admitted: `dashscene-skia`'s `field_coverage` since PR #1038, and the
+    /// lean painter's `paint.wgsl` vertex stage since issue #1185, which clears
+    /// the same flag the fragment stage reads for a payload that could not be
+    /// made resident.
+    ///
+    /// **That the origin reaches a divisor at all is issue #1185's finding, and
+    /// it is what those two guards stand in front of.** `gpu_shape`'s
+    /// `px_range` really does read `plane_bounds` alone, with no origin in it —
+    /// but the masked-fill pipeline's vertex stage builds an origin-offset quad
+    /// and `msdf_sample` divides by its extent, so "no divisor is derived from
+    /// the origin" is true of the one and false of the painter. What a
+    /// non-finite origin does to that divisor is produce a quad both painters
+    /// now refuse, which is why this rule's finding is that the drop is
+    /// **unnamed** rather than that a picture is wrong.
+    pub const RECT_INVALID_ORIGIN: &str = "geometry.rect-invalid-origin";
     /// A corner radius that is negative or non-finite. Geometry-free authored
     /// intent (like a stroke width), so it is checked on both a document
     /// (`Paint.corners`) and a solved scene (`PaintEntry.corners`). A
@@ -410,8 +486,15 @@ pub mod rule {
     ///
     /// [`is_known`] answers membership in this slice, so a new rule not added
     /// here is treated as unknown by the waiver check — never silently
-    /// accepted. `tests/triage.rs::the_rule_registry_is_unique_and_covers_every_construct`
-    /// pins that every construct's rule is present, so the slice cannot rot.
+    /// accepted.
+    ///
+    /// Two tests pin it, and only the second one covers this whole slice.
+    /// `tests/triage.rs::the_rule_registry_is_unique_and_covers_every_construct`
+    /// pins that every **construct**'s rule is present, which is the import
+    /// gate's vocabulary alone;
+    /// `tests/triage.rs::registry::every_declared_rule_is_registered_in_all`
+    /// pins that every `pub const … : &str` this module declares is either
+    /// listed here or one of the four `waiver.*` meta-rules (issue #1042).
     pub const ALL: &[&str] = &[
         LAYER_BLUR,
         ADVANCED_BLEND_MODE,
@@ -446,6 +529,14 @@ pub mod rule {
         // rule missing here is treated as unknown by the waiver check.
         TRANSITION_TRACK_NODE_OUT_OF_RANGE,
         TRANSITION_CHANNEL_NOT_A_RECT,
+        // The four keyframe rules and the five grid rules below were absent
+        // until issue #1042's pin was written, for the same reason story
+        // #771's two were: nothing walked the declarations. All nine are
+        // raised by `validate_document`.
+        KEYFRAME_T_DECREASES,
+        KEYFRAME_T_REPEATS,
+        KEYFRAME_T_OUT_OF_RANGE,
+        KEYFRAME_VALUE_NOT_FINITE,
         TRANSITION_SPEC_OUT_OF_RANGE,
         TRANSITION_TRACK_ALSO_BOUND,
         LOOP_NODE_OUT_OF_RANGE,
@@ -456,6 +547,11 @@ pub mod rule {
         LOOP_CHANNEL_OVERRIDDEN_BY_A_VARIANT,
         LOOP_FILL_CHANNEL_ON_NON_SOLID_FILL,
         SIGNAL_NAME_DUPLICATE,
+        GRID_TRACK_INVALID_VALUE,
+        GRID_SPAN_ZERO,
+        GRID_ANCHOR_OUT_OF_RANGE,
+        GRID_SPAN_OUT_OF_RANGE,
+        GRID_FRACTION_TRACK_UNDER_HUG,
         UNKNOWN_ENUM,
         GRADIENT_NO_STOPS,
         GRADIENT_STOP_BUDGET,
@@ -479,12 +575,16 @@ pub mod rule {
         //
         // `the_rule_registry_is_unique_and_covers_every_construct` cannot catch
         // an omission here: it walks `Construct::ALL`, and every load-gate and
-        // index-chain rule is outside that vocabulary. Issue #1042 carries the
-        // test that would.
+        // index-chain rule is outside that vocabulary.
+        // `registry::every_declared_rule_is_registered_in_all` is the test that
+        // does (issue #1042); it found nine further omissions when it was
+        // written.
         SHAPE_FIELD_OUT_OF_RANGE,
         VECTOR_SHAPE_ATLAS_OUT_OF_RANGE,
         VECTOR_ATLAS_IMAGE_OUT_OF_RANGE,
         VECTOR_ATLAS_DISTANCE_RANGE_OUT_OF_DOMAIN,
+        VECTOR_SHAPE_DRAWS_NOTHING,
+        VECTOR_SHAPE_GEOMETRY_MISSING,
         IMAGE_NO_BYTES,
         ASSET_HASH_LENGTH,
         ASSET_ZERO_EXTENT,
@@ -498,6 +598,7 @@ pub mod rule {
         NODE_OPACITY_OUT_OF_RANGE,
         INERT_MASK,
         RECT_INVALID_EXTENT,
+        RECT_INVALID_ORIGIN,
         CORNER_RADIUS_INVALID,
         SHADOW_INVALID_GEOMETRY,
         BLUR_INVALID_RADIUS,

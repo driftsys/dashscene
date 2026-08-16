@@ -10,7 +10,7 @@ use dashbuf::{
     NodeArgs, Paint, PaintArgs, PlaneBounds, SolidFill, SolidFillArgs, VectorAtlas,
     VectorAtlasArgs, VectorShape, VectorShapeArgs, root_as_document,
 };
-use dashscene_validator::{Location, rule, validate_document};
+use dashscene_validator::{Location, Severity, rule, validate_document};
 use flatbuffers::{FlatBufferBuilder, WIPOffset};
 
 /// Builds a one-node document with the given paint pool, asset-table
@@ -267,6 +267,203 @@ fn a_narrow_vector_atlas_distance_range_is_clean() {
             !report.has(rule::VECTOR_ATLAS_DISTANCE_RANGE_OUT_OF_DOMAIN),
             "{range} is finite and greater than zero, so it is out of no domain this rule \
              states:\n{report}"
+        );
+    }
+}
+
+/// One way for a coverage field to draw nothing, as
+/// `dashpaint::VectorField::draws` decides it.
+struct Degenerate {
+    label: &'static str,
+    atlas_rect: [u32; 4],
+    plane_bounds: [f32; 4],
+}
+
+const DEGENERATE: &[Degenerate] = &[
+    Degenerate {
+        label: "an atlas sub-rect of no width",
+        atlas_rect: [0, 0, 0, 8],
+        plane_bounds: [0.0, 0.0, 8.0, 8.0],
+    },
+    Degenerate {
+        label: "an atlas sub-rect of no height",
+        atlas_rect: [0, 0, 8, 0],
+        plane_bounds: [0.0, 0.0, 8.0, 8.0],
+    },
+    Degenerate {
+        label: "a plane quad of no width",
+        atlas_rect: [0, 0, 8, 8],
+        plane_bounds: [4.0, 0.0, 4.0, 8.0],
+    },
+    Degenerate {
+        label: "a plane quad of no height",
+        atlas_rect: [0, 0, 8, 8],
+        plane_bounds: [0.0, 4.0, 8.0, 4.0],
+    },
+    Degenerate {
+        label: "an inverted plane quad",
+        atlas_rect: [0, 0, 8, 8],
+        plane_bounds: [8.0, 0.0, 0.0, 8.0],
+    },
+    // The three below are what the predicate reads as an extent rather than as
+    // four bounds (issue #1034): a NaN fails every comparison, an infinity
+    // passes an ordering test, and two large finite bounds have a difference
+    // that overflows.
+    Degenerate {
+        label: "a NaN plane bound",
+        atlas_rect: [0, 0, 8, 8],
+        plane_bounds: [f32::NAN, 0.0, 8.0, 8.0],
+    },
+    Degenerate {
+        label: "an infinite plane bound",
+        atlas_rect: [0, 0, 8, 8],
+        plane_bounds: [0.0, 0.0, f32::INFINITY, 8.0],
+    },
+    Degenerate {
+        label: "a plane quad whose width overflows",
+        atlas_rect: [0, 0, 8, 8],
+        plane_bounds: [-3.0e38, 0.0, 3.0e38, 8.0],
+    },
+];
+
+/// A shape whose field draws nothing, by every route
+/// `dashpaint::VectorField::draws` rejects (issue #1021).
+///
+/// Every row is a document that renders — the node is simply absent from it —
+/// so this is the case P4 asks to be *named* rather than blocked, and the
+/// severity assertion below is what says the rule got that right.
+///
+/// `tests/scene.rs` runs **the same eight rows** over the paint gate, which is
+/// what says the two gates raise one rule on one predicate.
+#[test]
+fn a_vector_shape_whose_field_draws_nothing_is_named() {
+    assert_eq!(
+        DEGENERATE.len(),
+        8,
+        "this table and `tests/scene.rs`'s must cover the same inputs; that file's has 8 rows"
+    );
+    for case in DEGENERATE {
+        let label = case.label;
+        let [ax, ay, aw, ah] = case.atlas_rect;
+        let [left, top, right, bottom] = case.plane_bounds;
+        let mut b = FlatBufferBuilder::new();
+        let image = png_asset(&mut b);
+        let atlas = atlas_with_distance_range(&mut b, 4.0);
+        let shape = VectorShape::create(
+            &mut b,
+            &VectorShapeArgs {
+                atlas: 0,
+                atlas_rect: Some(&AtlasRect::new(ax, ay, aw, ah)),
+                plane_bounds: Some(&PlaneBounds::new(left, top, right, bottom)),
+            },
+        );
+        let paint = solid_paint(&mut b, 0);
+        let bytes = finish(b, &[paint], &[image], &[atlas], &[shape]);
+        let doc = root_as_document(&bytes).expect("valid dashbuf document");
+
+        let report = validate_document(&doc);
+        let found = report
+            .find(rule::VECTOR_SHAPE_DRAWS_NOTHING)
+            .unwrap_or_else(|| panic!("{label} produced no diagnostic:\n{report}"));
+        assert_eq!(found.at, Location::VectorShape(0), "{label}");
+        assert_eq!(
+            found.severity,
+            Severity::Warning,
+            "{label}: a field that draws nothing is a legal state, so it must not block the \
+             document"
+        );
+        assert!(
+            !report.has_errors(),
+            "{label} raised an error beside the warning:\n{report}"
+        );
+    }
+}
+
+/// The pairing the rule needs to mean anything: a field that *does* draw must
+/// not be named. Without it the test above passes against a rule that fires on
+/// every shape.
+#[test]
+fn a_vector_shape_whose_field_draws_is_not_named() {
+    // A one-texel sub-rect over a one-unit quad — the smallest field that draws
+    // — and a quad with negative bounds, which is ordinary rather than
+    // degenerate because the padded quad extends past the geometry box.
+    for (label, (ax, ay, aw, ah), (left, top, right, bottom)) in [
+        (
+            "the smallest drawing field",
+            (0u32, 0u32, 1u32, 1u32),
+            (0.0f32, 0.0, 1.0, 1.0),
+        ),
+        (
+            "a quad with negative bounds",
+            (1, 1, 8, 8),
+            (-1.0, -1.0, 9.0, 9.0),
+        ),
+    ] {
+        let mut b = FlatBufferBuilder::new();
+        let image = png_asset(&mut b);
+        let atlas = atlas_with_distance_range(&mut b, 4.0);
+        let shape = VectorShape::create(
+            &mut b,
+            &VectorShapeArgs {
+                atlas: 0,
+                atlas_rect: Some(&AtlasRect::new(ax, ay, aw, ah)),
+                plane_bounds: Some(&PlaneBounds::new(left, top, right, bottom)),
+            },
+        );
+        let paint = solid_paint(&mut b, 0);
+        let bytes = finish(b, &[paint], &[image], &[atlas], &[shape]);
+        let doc = root_as_document(&bytes).expect("valid dashbuf document");
+
+        let report = validate_document(&doc);
+        assert!(
+            !report.has(rule::VECTOR_SHAPE_DRAWS_NOTHING),
+            "{label} draws, so nothing may name it:\n{report}"
+        );
+    }
+}
+
+/// A flatbuffers struct field with no `(required)` is **absent**, not
+/// defaulted, and `dashscene-core`'s loader reads both of these behind an
+/// `expect` documented as "validated upstream (P4)". Nothing was that upstream
+/// until issue #1021's rule, so such a document validated clean and then
+/// panicked the loader.
+#[test]
+fn a_vector_shape_missing_its_geometry_is_an_error() {
+    for (label, rect, plane) in [
+        (
+            "no atlas rect",
+            None,
+            Some(PlaneBounds::new(0.0, 0.0, 8.0, 8.0)),
+        ),
+        ("no plane bounds", Some(AtlasRect::new(0, 0, 8, 8)), None),
+        ("neither", None, None),
+    ] {
+        let mut b = FlatBufferBuilder::new();
+        let image = png_asset(&mut b);
+        let atlas = atlas_with_distance_range(&mut b, 4.0);
+        let shape = VectorShape::create(
+            &mut b,
+            &VectorShapeArgs {
+                atlas: 0,
+                atlas_rect: rect.as_ref(),
+                plane_bounds: plane.as_ref(),
+            },
+        );
+        let paint = solid_paint(&mut b, 0);
+        let bytes = finish(b, &[paint], &[image], &[atlas], &[shape]);
+        let doc = root_as_document(&bytes).expect("valid dashbuf document");
+
+        let report = validate_document(&doc);
+        let found = report
+            .find(rule::VECTOR_SHAPE_GEOMETRY_MISSING)
+            .unwrap_or_else(|| panic!("{label} produced no diagnostic:\n{report}"));
+        assert_eq!(found.at, Location::VectorShape(0), "{label}");
+        assert_eq!(found.severity, Severity::Error, "{label}");
+        // The absent case is reported once, under its own rule: `draws` cannot
+        // be asked about a row that cannot be built.
+        assert!(
+            !report.has(rule::VECTOR_SHAPE_DRAWS_NOTHING),
+            "{label} reported twice:\n{report}"
         );
     }
 }

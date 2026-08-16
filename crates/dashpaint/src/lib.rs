@@ -1710,12 +1710,19 @@ pub struct VectorField {
     /// painters' screen-pixel range to an infinity, and the reference painter's
     /// backdrop erased what was beneath the node.
     ///
-    /// **Rejected by the painters, refused by no seam.** [`PaintTable::push_with`]
-    /// does not refuse such a quad and `dashscene-validator` has no rule over
-    /// this member, so it is a legal draws-nothing state exactly as a zero
-    /// `atlas_rect` extent is. Whether it should instead be out of domain, beside
-    /// the [`distance_range`](Self::distance_range) check, is the half of issue
-    /// #1034 that stays open.
+    /// **Rejected by the painters, named by the validator, refused by no seam.**
+    /// [`PaintTable::push_with`] does not refuse such a quad, so it is a legal
+    /// draws-nothing state exactly as a zero `atlas_rect` extent is.
+    /// `dashscene-validator` does carry a rule over this member since issue
+    /// #1021 — `vector.shape-draws-nothing`, a **warning** at both its gates,
+    /// which calls [`draws`](Self::draws) rather than restating it, so it agrees
+    /// with this type by construction. A warning names the drop P4 asks to be
+    /// named; it does not make the state illegal, which is why "refused by no
+    /// seam" is still the whole of the refusal story here.
+    ///
+    /// Whether it should instead be out of domain, beside the
+    /// [`distance_range`](Self::distance_range) check, is the half of issue
+    /// #1034 that stays open — a rule that reports is not a seam that refuses.
     pub plane_bounds: [f32; 4],
     /// The MSDF distance range in atlas texels (msdfgen `-pxrange`).
     ///

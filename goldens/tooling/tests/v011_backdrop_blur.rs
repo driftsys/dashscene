@@ -615,7 +615,7 @@ fn baked_square_with_hole() -> (ImageTable, VectorField) {
     let mut images = ImageTable::new();
     let image = images.push(ImageAsset {
         format: ImageFormat::Png,
-        bytes: baked.image_png.clone(),
+        bytes: baked.image_png,
     });
     let field = VectorField {
         image,

@@ -155,11 +155,12 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
     // a dangling one is named here, at the pool entry that carries it (the
     // same per-pool posture as the paint and image checks above).
     for (i, shape) in vector_shapes.iter().enumerate() {
+        let at = Location::VectorShape(i as u32);
         let atlas = shape.atlas();
         if atlas as usize >= sizes.vector_atlases {
             report.push(error(
                 rule::VECTOR_SHAPE_ATLAS_OUT_OF_RANGE,
-                &Location::VectorShape(i as u32),
+                &at,
                 format!(
                     "vector shape references atlas {atlas}, but the document carries {} vector \
                      atlases",
@@ -167,6 +168,7 @@ pub fn validate_document(doc: &Document<'_>) -> Report {
                 ),
             ));
         }
+        check_shape_geometry(&mut report, &shape, &at);
     }
     for (i, atlas) in vector_atlases.iter().enumerate() {
         let image = atlas.image();
@@ -716,6 +718,62 @@ fn check_node_links(
         }
     }
 
+    // The authored box (issue #1048). `FixedSizeLayout` is intent, not a
+    // result, so P1 leaves it here rather than on the solved scene — but it is
+    // the source the resolved rect's origin comes from, and this is the gate
+    // with production callers. `validate_scene` carries the same two rules over
+    // the resolved row.
+    //
+    // **Whether the solver reads a given scalar is conditional, and this rule
+    // deliberately does not model that condition.** `dashscene-engine`'s
+    // `style_for` maps `x`/`y` into `style.inset` only under a `LayoutMode::None`
+    // parent (a root's location is resolved at readback), and maps `width`/
+    // `height` into `style.size` only on an axis whose `AxisSizing` is `Fixed`.
+    // So a non-finite scalar on a flex child, or on a `Hug` axis, is inert
+    // today. It is still named, and as an error, for the reason
+    // `paint.node-opacity-out-of-range` beside this is unconditional: a
+    // non-finite float in an authored box is never a value a producer meant,
+    // and it becomes live the moment the node's parent or sizing changes.
+    // Restating `style_for`'s mapping here to narrow it would be a second copy
+    // of that mapping, free to drift from the first — which is the failure
+    // issues #1000, #1034 and #1144 record for a different predicate.
+    //
+    // The message therefore says what is true of every node: the value cannot
+    // resolve. It does not claim the solver copies it.
+    //
+    // The extent half reuses `geometry.rect-invalid-extent` rather than adding
+    // a second id for the same predicate on the same quantity, which is the
+    // posture `geometry.corner-radius-invalid` already takes across the two
+    // gates.
+    if let Some(layout) = node.layout() {
+        for (origin, axis) in [(layout.x(), "x"), (layout.y(), "y")] {
+            if !origin.is_finite() {
+                report.push(error(
+                    rule::RECT_INVALID_ORIGIN,
+                    &at(),
+                    format!(
+                        "node layout {axis} is {origin}; an authored offset must be finite. \
+                         Where the solver reads it — a root, or a child of a passthrough parent \
+                         — it becomes the rect origin a painter places the node with, and the \
+                         node vanishes with no other symptom"
+                    ),
+                ));
+            }
+        }
+        for (extent, axis) in [(layout.width(), "width"), (layout.height(), "height")] {
+            if !extent.is_finite() || extent < 0.0 {
+                report.push(error(
+                    rule::RECT_INVALID_EXTENT,
+                    &at(),
+                    format!(
+                        "node layout {axis} is {extent}; an authored extent must be finite and \
+                         non-negative. The solver reads it on an axis sized `Fixed`"
+                    ),
+                ));
+            }
+        }
+    }
+
     // Node opacity has a schema-pinned domain (finite, 0..=1). The loader
     // clamps a stray value silently and a non-finite one reads back as
     // fully opaque (`NaN < 1.0` is false), so the load gate names it here —
@@ -824,7 +882,7 @@ fn check_fill<'a>(
         && let Some(image_fill) = fill.fill_as_image_fill()
     {
         check_enum!(report, at, "ImageFill.scale_mode", image_fill.scale_mode());
-        check_image_index(report, at, image_fill.image(), sizes.assets);
+        check_image_index(report, at, "image fill", image_fill.image(), sizes.assets);
     }
 }
 
@@ -912,6 +970,84 @@ fn check_paint_entry(report: &mut Report, paint: &Paint<'_>, at: &Location, size
             [color.r(), color.g(), color.b(), color.a()],
         );
     }
+}
+
+/// One `VectorShape`'s own geometry: is it there, and does the field it
+/// resolves to draw anything (issue #1021)?
+///
+/// The shape carries both members `dashpaint::VectorField::draws` reads, so the
+/// answer is settled here without resolving the atlas — the atlas contributes
+/// the payload index and the distance range, neither of which that predicate
+/// looks at.
+///
+/// **The predicate is called, not restated.** Both painters take
+/// `VectorField::draws` since issue #1144, after two rounds of a hand-copied
+/// version being wrong in one of them (#1000) and then in both (#1034). A rule
+/// here that spelled the same test out again would be the third copy, so this
+/// builds the row the loader would build and asks it.
+///
+/// The two findings differ in kind, which is why they are two rules:
+///
+/// - an **absent** struct is a `None` the loader `expect`s away, so the document
+///   panics the loader rather than rendering without the node — an error;
+/// - a **degenerate** one is a legal draws-nothing state that
+///   `docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md`
+///   deliberately declines to refuse at the table seam, so the scene renders and
+///   the node is simply absent — a warning, the posture `paint.inert-mask`
+///   already takes for the same shape of authoring mistake.
+fn check_shape_geometry(report: &mut Report, shape: &dashbuf::VectorShape<'_>, at: &Location) {
+    let (rect, plane) = match (shape.atlas_rect(), shape.plane_bounds()) {
+        (Some(rect), Some(plane)) => (rect, plane),
+        (rect, plane) => {
+            report.push(error(
+                rule::VECTOR_SHAPE_GEOMETRY_MISSING,
+                at,
+                format!(
+                    "vector shape carries {}; `dashscene-core`'s loader reads both behind an \
+                     `expect` and would panic on this document",
+                    match (rect.is_some(), plane.is_some()) {
+                        (false, false) => "neither an atlas rect nor plane bounds",
+                        (false, true) => "no atlas rect",
+                        (true, false) => "no plane bounds",
+                        // Unreachable: the arm above matched both as `Some`.
+                        (true, true) => unreachable!(),
+                    }
+                ),
+            ));
+            return;
+        }
+    };
+
+    // The row the loader builds, minus the two members the atlas supplies and
+    // `draws` does not read. `distance_range` takes a value inside its own
+    // domain so that this rule reports on the field's geometry alone; the atlas
+    // loop names a bad range under its own rule.
+    let field = dashpaint::VectorField {
+        image: 0,
+        atlas_rect: [rect.x(), rect.y(), rect.width(), rect.height()],
+        plane_bounds: [plane.left(), plane.top(), plane.right(), plane.bottom()],
+        distance_range: 1.0,
+    };
+    if field.draws() {
+        return;
+    }
+    report.push(warning(
+        rule::VECTOR_SHAPE_DRAWS_NOTHING,
+        at,
+        format!(
+            "this shape's coverage field draws nothing: its atlas sub-rect is {}x{} texels and \
+             its plane quad is {}x{} (from bounds [{}, {}, {}, {}]); both extents must be \
+             positive, and the quad's finite",
+            rect.width(),
+            rect.height(),
+            plane.right() - plane.left(),
+            plane.bottom() - plane.top(),
+            plane.left(),
+            plane.top(),
+            plane.right(),
+            plane.bottom(),
+        ),
+    ));
 }
 
 /// One image asset: its container format and its bytes.

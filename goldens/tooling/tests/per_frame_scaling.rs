@@ -19,12 +19,20 @@
 //!
 //! # What this measures, and why it is a count
 //!
-//! Three terms, all exact — and the first two identical on every machine. The
-//! third is exact on any one target and **not portable**: it is a byte count, so
-//! it moves with type layout and with `std`'s `Vec` growth strategy, where a
-//! count of solves and a count of table rows do not. Its figures below are
-//! recorded on macos aarch64 for that reason, and `report` prints the machine
-//! beside every measurement.
+//! Four terms, all exact — and all but one identical on every machine. The byte
+//! term is exact on any one target and **not portable**: it moves with type
+//! layout and with `std`'s `Vec` growth strategy, where a count of solves, of
+//! table rows and of glyph quads does not. Its figures below are recorded on
+//! macos aarch64 for that reason, and `report` prints the machine beside every
+//! measurement.
+//!
+//! **Three of the four are stated over one document and the fourth over
+//! another**, which is the shape issue #1015 gave this file. The solve, the
+//! table and the byte terms are about root count and are measured over
+//! [`common::many_root`], which carries no text on purpose — a typesetter's
+//! per-frame work inside a number about root count would be a different
+//! quantity. The glyph term is about per-quad work on the commit path and is
+//! measured over [`common::text_root`], which is one root and nothing but text.
 //!
 //! - **the solve** — `TaffySolver::solves()`, the number of Taffy layout
 //!   computations one frame ran. `dashscene_engine`'s `compute_all` runs one
@@ -46,8 +54,21 @@
 //!   one-row table. See [`BYTES_PER_EXTRA_ROOT`] for why this one is a slope
 //!   where the others are levels, why it is the layout frame, and why it is
 //!   bytes rather than a count of allocations.
+//! - **the glyph quads** — the quad count of `CommittedScene::glyphs()`, over
+//!   [`common::text_root`] rather than over the many-root document. Added by
+//!   issue #1015, and about a cost **none of the three above can see**: none of
+//!   them moves when per-quad work on the commit path changes, and the fixture
+//!   they are stated over carries no text at all, so zero quads passed through
+//!   `GlyphRunTable::push_run` in the only per-frame band there was. PR #1005
+//!   added a per-quad pass to that method, on the commit path, and had to
+//!   measure itself in a pull request because nothing here could.
+//!   [`every_frame_restages_every_glyph_quad_the_shown_root_carries`] holds it,
+//!   on the **paint-only** frame as well as the layout frame:
+//!   `Arena::commit` rebuilds the glyph-run table every commit and both wrapper
+//!   solvers forward `stage_text` rather than defaulting it (the fix for issue
+//!   #621), so a tick that changes only a fill re-pushes every run.
 //!
-//! None of the three is a stopwatch, and that is deliberate.
+//! None of the four is a stopwatch, and that is deliberate.
 //! `docs/decisions/startup-scaling-is-measured-by-a-counter.md` D1 rules for
 //! this repository that "a cost with no visible symptom needs a counter, not a
 //! stopwatch": a count is exact, identical on every machine, and either right
@@ -67,14 +88,26 @@
 //! retained Taffy tree, which is the frame a host pays once (issue #164).
 //!
 //! ```text
-//! document           frame         solves   rect rows   bytes
-//! small-root (1)     paint-only         0           1     892
-//! small-root (1)     layout             1           1     280
-//! many-root (65)     paint-only         0           1   11260
-//! many-root (65)     layout             1           1     280
-//! ratio, many/small  layout          1.00x       1.00x   1.00x
-//! slope, per extra root                                      0
+//! document           frame         solves   rect rows   bytes   glyph quads
+//! small-root (1)     paint-only         0           1     892             0
+//! small-root (1)     layout             1           1     280             0
+//! many-root (65)     paint-only         0           1   11260             0
+//! many-root (65)     layout             1           1     280             0
+//! ratio, many/small  layout          1.00x       1.00x   1.00x             —
+//! slope, per extra root                                      0             —
+//! text (3 lines)     paint-only         0           4    3956            15
+//! text (3 lines)     layout             1           4    5552            15
+//! text (6 lines)     layout             1           7       —            30
 //! ```
+//!
+//! The glyph column reads zero on every many-root and small-root row, which
+//! [`a_frame_costs_the_shown_root_and_not_the_document`] asserts on all six
+//! rather than leaves implicit. Read it for what it says: that band's solver has
+//! no typesetter, so the zero states that **no typesetter work is inside the
+//! other three terms** — it is not a claim about the fixture's content, and it
+//! would hold over a text-carrying document measured the same way. What the
+//! glyph term itself can see is the text rows below, taken through a solver that
+//! stages.
 //!
 //! **The layout row's byte figures are equal, not merely close.** That is the
 //! third term at its strongest: the commit and the solver allocate the same
@@ -202,6 +235,18 @@
 //!   which is the story's whole claim, restated as a test that had to be
 //!   retired.
 //!
+//! - [`the_glyph_term_tracks_the_text_and_not_the_document`] doubles the text
+//!   and requires the glyph term to double with it. The other two guards cannot
+//!   breach that term — the fixture they run over has no text to move — so it
+//!   needs its own.
+//!
+//!   It was also run against the path it names, twice, by mutating the working
+//!   tree and reverting: `GlyphRunTable::push_run` dropping the last quad of
+//!   every run took the term to **12 against 15** and the guard to 24 against
+//!   30; `Arena::commit` staging runs only when the paint-dirty set is empty —
+//!   which is "the commit stopped rebuilding the table every frame" — took the
+//!   paint-only frame to **0 against 15**. Neither edit is committed.
+//!
 //! **The upward injection story #836 said was unavailable is available now**,
 //! and it is the second guard. At 65 roots the two count terms were saturated
 //! at the document's own size, so nothing a test could stage made either
@@ -243,12 +288,18 @@
 //! on a desktop CPU, because a tiling GPU with a fixed frame budget is where it
 //! is spent.
 //!
-//! **Not a real scene's per-frame work.** The fixture's roots are leaves with
-//! an image fill and no text, so nothing here pays the typesetter, the glyph
-//! staging (`TaffySolver::stage_text`, which also walks every root) or a
-//! painter. Adding any of those would put costs that are not root-scaled into a
-//! number that is supposed to be about root count. A scene with text would show
-//! the same 65:1 shape with a larger constant, not a different shape.
+//! **Not a real scene's per-frame work.** The many-root fixture's roots are
+//! leaves with an image fill and no text, so none of its three terms pays the
+//! typesetter, the glyph staging (`TaffySolver::stage_text`, which also walks
+//! every root) or a painter. Adding any of those would put costs that are not
+//! root-scaled into a number that is supposed to be about root count. A scene
+//! with text would show the same 65:1 shape with a larger constant, not a
+//! different shape.
+//!
+//! That is why the glyph term is a **second fixture** rather than text added to
+//! the first, and it does not change what the sentence above says: the glyph
+//! band is one root, so it prices per-quad work and prices root scaling not at
+//! all. Neither band measures a painter, and nothing here is a frame time.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -263,6 +314,7 @@ use dashscene_engine::TaffySolver;
 mod common;
 
 use common::many_root::{EXTRA_FRAMES, document};
+use common::text_root;
 
 thread_local! {
     /// Bytes this thread has asked the allocator for while [`COUNTING`] was on.
@@ -450,6 +502,22 @@ struct FrameCost {
     solves: u64,
     /// Rows the committed rect table holds after the frame.
     rect_rows: usize,
+    /// Glyph quads the committed glyph-run table holds after the frame
+    /// (issue #1015).
+    ///
+    /// `Arena::commit` rebuilds that table on every commit and both wrapper
+    /// solvers forward `stage_text` rather than defaulting it (the fix for
+    /// issue #621), so this is a per-frame quantity and not a load-time one:
+    /// a paint-only tick re-pushes every run. It is the term the other three
+    /// cannot see — none of them moves when per-quad work on the commit path
+    /// changes, which is how PR #1005 added a per-quad pass to
+    /// `GlyphRunTable::push_run` with nothing to weigh it against.
+    ///
+    /// It reads zero over [`common::many_root`], which carries no text. That
+    /// is asserted rather than left implicit, because a zero from "the fixture
+    /// has no text" and a zero from "the glyph path stopped staging" look
+    /// identical, and the text band below is what tells them apart.
+    quads: usize,
     /// Bytes the commit asked the allocator for, counted by [`Counting`].
     bytes: u64,
 }
@@ -479,8 +547,24 @@ struct Loaded {
 /// two boundaries distinct: everything below this function is a frame, and
 /// nothing in it is a load.
 fn load(extra: usize) -> Loaded {
-    let file = document(extra);
+    let loaded = load_file(document(extra));
+    assert_eq!(
+        loaded.roots,
+        extra + 1,
+        "the fixture builds one root per frame, so a document with {extra} extra frames has {} \
+         roots; a loader that nested them would make every count below a different quantity",
+        extra + 1
+    );
+    loaded
+}
 
+/// [`load`]'s body, over any compiled document — the text fixture issue #1015
+/// added reaches the same harness through here.
+///
+/// The root-count assertion stays in [`load`] rather than moving down: it is a
+/// statement about `common::many_root`'s builder, and the text fixture is a
+/// one-root document to which it does not apply.
+fn load_file(file: Vec<u8>) -> Loaded {
     let dir = tempfile::tempdir().expect("a temporary directory");
     let path = dir.path().join("frames.dsb");
     std::fs::write(&path, &file).expect("the generated document writes");
@@ -514,13 +598,6 @@ fn load(extra: usize) -> Loaded {
     txn.commit();
 
     let roots = arena.roots().len();
-    assert_eq!(
-        roots,
-        extra + 1,
-        "the fixture builds one root per frame, so a document with {extra} extra frames has \
-         {} roots; a loader that nested them would make every count below a different quantity",
-        extra + 1
-    );
 
     Loaded {
         arena,
@@ -552,6 +629,7 @@ fn frame(loaded: &mut Loaded, solver: &mut TaffySolver<'_>, prop: Prop) -> Frame
     FrameCost {
         solves: solver.solves() - before,
         rect_rows: loaded.arena.committed().rects().len(),
+        quads: loaded.arena.committed().glyphs().all_quads().len(),
         bytes,
     }
 }
@@ -587,8 +665,17 @@ fn frame(loaded: &mut Loaded, solver: &mut TaffySolver<'_>, prop: Prop) -> Frame
 /// text-measuring solver would add the typesetter's own per-frame work to a
 /// number that is supposed to be about root count.
 fn warm_up(loaded: &mut Loaded) -> (TaffySolver<'static>, f32, FrameCost) {
-    let mut solver = TaffySolver::new();
+    warm_up_with(loaded, TaffySolver::new())
+}
 
+/// [`warm_up`]'s body over a solver the caller chose. The text band (issue
+/// #1015) supplies one built from `TextResources`, which is what makes its
+/// glyph term non-zero; every other measurement here supplies the fontless one
+/// [`warm_up`] builds.
+fn warm_up_with(
+    loaded: &mut Loaded,
+    mut solver: TaffySolver<'static>,
+) -> (TaffySolver<'static>, f32, FrameCost) {
     // `Prop::X` of the root's own x marks layout intent without moving
     // anything, so the tree is built from the document's own geometry.
     let x = loaded.arena.layout(loaded.shown).x;
@@ -629,7 +716,16 @@ fn paint_only_frame(loaded: &mut Loaded, solver: &mut TaffySolver<'_>) -> FrameC
 
 /// The two steady-state frames the band is stated over, after the warm-up.
 fn steady_state(loaded: &mut Loaded) -> (FrameCost, FrameCost, FrameCost) {
-    let (mut solver, x, first) = warm_up(loaded);
+    steady_state_with(loaded, TaffySolver::new())
+}
+
+/// [`steady_state`] over a solver the caller chose — the text band's entry
+/// point (issue #1015).
+fn steady_state_with(
+    loaded: &mut Loaded,
+    solver: TaffySolver<'static>,
+) -> (FrameCost, FrameCost, FrameCost) {
+    let (mut solver, x, first) = warm_up_with(loaded, solver);
     let paint = paint_only_frame(loaded, &mut solver);
     // The shown root moves by one unit. One node of one root is dirty.
     let layout = frame(loaded, &mut solver, Prop::X(x + 1.0));
@@ -797,17 +893,170 @@ fn small_baseline() -> FrameCost {
 fn report(label: &str, roots: usize, first: FrameCost, paint: FrameCost, layout: FrameCost) {
     println!(
         "PER-FRAME SCALING — {label}, root count {roots}: first frame {} solves / {} rect rows / \
-         {} B, paint-only frame {} solves / {} rect rows / {} B, layout frame {} solves / {} rect \
-         rows / {} B",
+         {} glyph quads / {} B, paint-only frame {} solves / {} rect rows / {} glyph quads / {} B, \
+         layout frame {} solves / {} rect rows / {} glyph quads / {} B",
         first.solves,
         first.rect_rows,
+        first.quads,
         first.bytes,
         paint.solves,
         paint.rect_rows,
+        paint.quads,
         paint.bytes,
         layout.solves,
         layout.rect_rows,
+        layout.quads,
         layout.bytes,
+    );
+}
+
+/// Lines the text band's fixture carries (issue #1015). Three, so the quad
+/// count is a multiple of [`text_root::QUADS_PER_LINE`] rather than equal to it
+/// — a term that reads 5 could be one line's quads or one line's characters,
+/// and 15 can only be three lines of five.
+const TEXT_LINES: usize = 3;
+
+/// The doubled fixture the sensitivity guard runs, so the guard is a statement
+/// about the glyph term and not about the presence of text.
+const TEXT_LINES_DOUBLED: usize = TEXT_LINES * 2;
+
+/// Glyph quads a steady-state frame over the [`TEXT_LINES`] document stages.
+///
+/// Derived from the fixture's own two constants, and it is the *fixture* that
+/// carries the measured statement: [`the_fixtures_line_stages_one_quad_per_character`]
+/// ties `text_root::QUADS_PER_LINE` to the line it is stated with, which is the
+/// assertion that fails if the line stops drawing one quad per character. This
+/// constant then says only "three of those lines", which is arithmetic and needs
+/// no independent measurement.
+const TEXT_QUADS: usize = TEXT_LINES * text_root::QUADS_PER_LINE;
+
+/// The fixture's line draws one quad per character, which is what makes
+/// `text_root::QUADS_PER_LINE` a number about this fixture rather than about
+/// `str::len` — and therefore what makes [`TEXT_QUADS`] mean anything.
+///
+/// Two independent properties, because one does not imply the other: the line is
+/// single-byte ASCII, so a character is a byte; and it carries no glyph with an
+/// empty outline, which a space is and which the atlas therefore has no row for.
+/// A line failing either stages fewer quads than it has bytes, and the band
+/// would then fail blaming the shaper for a fixture defect.
+///
+/// It lives here rather than beside the fixture because `tests/common/` is
+/// compiled into all eighteen binaries that declare `mod common;` — a `#[test]`
+/// there runs eighteen times under eighteen names. The binary that states the
+/// band is the one that owns this invariant.
+#[test]
+fn the_fixtures_line_stages_one_quad_per_character() {
+    let line = text_root::LINE;
+    assert!(
+        line.is_ascii() && !line.is_empty(),
+        "the fixture line must be ASCII: {line:?}"
+    );
+    assert!(
+        !line.chars().any(char::is_whitespace),
+        "a space has an empty outline and so no atlas row, which would make the quad count \
+         smaller than the character count with nothing failing: {line:?}"
+    );
+    assert_eq!(
+        line.chars().count(),
+        text_root::QUADS_PER_LINE,
+        "the fixture's line and the quad count it is stated with have drifted apart"
+    );
+}
+
+/// The glyph term (issue #1015). The other three terms in this file cannot see
+/// per-quad work on the commit path: the fixture they are stated over carries
+/// no text, so zero quads pass through `GlyphRunTable::push_run` in the only
+/// per-frame band there was, and a change that made that path materially more
+/// expensive per frame left every tier green. PR #1005 is the change that did
+/// exactly that, and measured itself in a pull request rather than in a test.
+///
+/// **Both frames are asserted, and the paint-only one is the point.**
+/// `Arena::commit` rebuilds the glyph-run table on every commit and both
+/// wrapper solvers forward `stage_text` rather than defaulting it (the fix for
+/// issue #621), so a tick that changes only a fill re-pushes every run of the
+/// scene. A term taken on the layout frame alone would be satisfied by a
+/// runtime that staged glyphs only when layout was dirty, which is not what
+/// this one does.
+///
+/// It keeps this file's counter discipline — no stopwatch, an equality with no
+/// tolerance — which is D1 of
+/// `docs/decisions/startup-scaling-is-measured-by-a-counter.md` applied to a
+/// fourth quantity rather than a change to what that record rules on.
+#[test]
+fn every_frame_restages_every_glyph_quad_the_shown_root_carries() {
+    let started = Instant::now();
+
+    let mut loaded = load_file(text_root::document(TEXT_LINES));
+    let resources = text_root::text_resources();
+    let (first, paint, layout) = steady_state_with(&mut loaded, TaffySolver::owning(resources));
+    report("text document", loaded.roots, first, paint, layout);
+
+    for (label, cost) in [("paint-only", paint), ("layout", layout)] {
+        assert_eq!(
+            cost.quads, TEXT_QUADS,
+            "a {label} frame over a {TEXT_LINES}-line document staged {} glyph quads against \
+             {TEXT_QUADS}. Either the commit stopped rebuilding the glyph-run table every frame \
+             — which would be a change to what `Arena::commit` guarantees, not an optimisation \
+             this band should absorb — or the shaper and the atlas no longer agree on what this \
+             line draws. Re-measure and move the constant, stating the before and the after",
+            cost.quads
+        );
+    }
+
+    // The solve and the rect table are held still on purpose: one root, four
+    // nodes. Without this the guard below could move the glyph term by moving
+    // the document's size rather than its text.
+    assert_eq!(layout.solves, 1, "one root, so one Taffy computation");
+    assert_eq!(
+        layout.rect_rows,
+        TEXT_LINES + 1,
+        "the root plus one node per line"
+    );
+
+    println!(
+        "PER-FRAME SCALING — glyph term: {TEXT_QUADS} quads per frame on both frames, \
+         {} on {}, {:.2} s wall",
+        std::env::consts::ARCH,
+        std::env::consts::OS,
+        started.elapsed().as_secs_f64(),
+    );
+}
+
+/// The sensitivity guard for the glyph term: doubling the text doubles it.
+///
+/// A band nothing has been shown to break is not yet a band
+/// (`docs/technotes/measured-verification.md`). The other two guards in this
+/// file breach the solve, the table and the byte terms; none of them touches
+/// this one, because the fixture they run over has no text to move.
+///
+/// It breaches by *staging more glyphs* rather than by mutating the commit
+/// path, which is the mutation a test can commit: the term has to track the
+/// quantity it names, and a constant that did not move here would be measuring
+/// something else.
+#[test]
+fn the_glyph_term_tracks_the_text_and_not_the_document() {
+    let mut doubled = load_file(text_root::document(TEXT_LINES_DOUBLED));
+    let resources = text_root::text_resources();
+    let (_, paint, layout) = steady_state_with(&mut doubled, TaffySolver::owning(resources));
+
+    let expected = TEXT_LINES_DOUBLED * text_root::QUADS_PER_LINE;
+    println!(
+        "PER-FRAME SCALING — guard: {TEXT_LINES_DOUBLED} lines stage {} quads per frame against \
+         the band's {TEXT_QUADS}",
+        layout.quads
+    );
+    assert_eq!(
+        paint.quads, expected,
+        "a paint-only frame over twice the text must stage twice the quads"
+    );
+    assert_eq!(
+        layout.quads, expected,
+        "and so must a layout frame; the term is the glyph-run table's size, which the commit \
+         rebuilds either way"
+    );
+    assert_ne!(
+        layout.quads, TEXT_QUADS,
+        "the glyph term did not move when the text did, so it is not measuring the glyph path"
     );
 }
 
@@ -845,6 +1094,34 @@ fn a_frame_costs_the_shown_root_and_not_the_document() {
         many_paint,
         many_layout,
     );
+
+    // The glyph term is zero on **every** frame of both documents, which is
+    // what this band's other three terms are stated on the assumption of: the
+    // fixture carries no text and the solver has no typesetter, so no
+    // typesetter work is inside the solve, the table or the byte figure.
+    //
+    // It is asserted here rather than in a test of its own so that it covers
+    // the many-root rows as well as the small-root ones, and so that it costs
+    // no extra document load. Note what it is and is not: with a fontless
+    // solver this zero would hold over a text-carrying document too, so it says
+    // "no typesetter work is in these numbers" and not "this fixture has no
+    // text". The term's own sensitivity is
+    // [`every_frame_restages_every_glyph_quad_the_shown_root_carries`] and its
+    // guard, which build a solver that can stage.
+    for (label, cost) in [
+        ("small first", small_first),
+        ("small paint-only", small_paint),
+        ("small layout", small_layout),
+        ("many first", many_first),
+        ("many paint-only", many_paint),
+        ("many layout", many_layout),
+    ] {
+        assert_eq!(
+            cost.quads, 0,
+            "the {label} frame staged {} glyph quads through a solver with no typesetter",
+            cost.quads
+        );
+    }
 
     // The denominator is asserted before the ratio is printed, not after. Two
     // reasons, and only the first is about correctness: without it the ratio

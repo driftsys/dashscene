@@ -480,6 +480,261 @@ fn a_negative_rect_extent_is_named() {
     assert!(report.has(rule::RECT_INVALID_EXTENT), "{report}");
 }
 
+/// Issue #1048: the extent rule's sibling over the other two members of the
+/// same box. Both painters add this origin to a coverage field's plane bounds
+/// to place the node; measured on both, every value here draws **nothing**
+/// rather than drawing wrongly, which is why the rule is filed under P4 —
+/// naming the drop — and not as a picture defect.
+#[test]
+fn a_non_finite_rect_origin_is_named() {
+    for (x, y) in [
+        (f32::NAN, 0.0),
+        (0.0, f32::NAN),
+        (f32::INFINITY, 0.0),
+        (0.0, f32::NEG_INFINITY),
+    ] {
+        let mut paints = PaintTable::new();
+        let entry = solid_entry(&mut paints, red());
+        let index = paints.push(entry);
+        let report = validate_scene(
+            &[RectEntry {
+                x,
+                y,
+                ..rect(100.0, 50.0, index.0)
+            }],
+            &paints,
+            &ImageTable::new(),
+            &ClipTable::new(),
+            &[],
+            &GlyphRunTable::new(),
+        );
+        assert!(
+            report.has(rule::RECT_INVALID_ORIGIN),
+            "origin ({x}, {y}) must be named:\n{report}"
+        );
+        assert!(report.has_errors());
+    }
+}
+
+/// The origin rule is a finiteness rule and deliberately not a sign rule: a
+/// node above or left of its parent's origin is ordinary. Without this the test
+/// above would pass against a rule copied from the extent one.
+#[test]
+fn a_negative_rect_origin_is_clean() {
+    let mut paints = PaintTable::new();
+    let entry = solid_entry(&mut paints, red());
+    let index = paints.push(entry);
+    let report = validate_scene(
+        &[RectEntry {
+            x: -40.0,
+            y: -12.5,
+            ..rect(100.0, 50.0, index.0)
+        }],
+        &paints,
+        &ImageTable::new(),
+        &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
+    );
+    assert!(
+        !report.has(rule::RECT_INVALID_ORIGIN),
+        "a negative origin is an ordinary offset:\n{report}"
+    );
+}
+
+/// One way for a coverage field to draw nothing, as
+/// `dashpaint::VectorField::draws` decides it.
+struct Degenerate {
+    label: &'static str,
+    atlas_rect: [u32; 4],
+    plane_bounds: [f32; 4],
+}
+
+/// Every route `draws` rejects, and **the same eight rows `tests/vector.rs`
+/// runs over the document gate**.
+///
+/// The two gates raise one rule on one predicate, so an input named at one and
+/// not at the other would be a divergence with nothing to report it. Keeping
+/// the two tables the same length is what makes the pair say that; an
+/// asymmetric pair is how a later change to one gate stops being visible in the
+/// other. They are two literals rather than one shared constant because
+/// `dashscene-validator`'s integration tests are separate binaries with no
+/// shared module — the parity is stated here and asserted by the count below.
+const DEGENERATE: &[Degenerate] = &[
+    Degenerate {
+        label: "an atlas sub-rect of no width",
+        atlas_rect: [0, 0, 0, 8],
+        plane_bounds: [0.0, 0.0, 8.0, 8.0],
+    },
+    Degenerate {
+        label: "an atlas sub-rect of no height",
+        atlas_rect: [0, 0, 8, 0],
+        plane_bounds: [0.0, 0.0, 8.0, 8.0],
+    },
+    Degenerate {
+        label: "a plane quad of no width",
+        atlas_rect: [0, 0, 8, 8],
+        plane_bounds: [4.0, 0.0, 4.0, 8.0],
+    },
+    Degenerate {
+        label: "a plane quad of no height",
+        atlas_rect: [0, 0, 8, 8],
+        plane_bounds: [0.0, 4.0, 8.0, 4.0],
+    },
+    Degenerate {
+        label: "an inverted plane quad",
+        atlas_rect: [0, 0, 8, 8],
+        plane_bounds: [8.0, 0.0, 0.0, 8.0],
+    },
+    // The three below are what the predicate reads as an extent rather than as
+    // four bounds (issue #1034): a NaN fails every comparison, an infinity
+    // passes an ordering test, and two large finite bounds have a difference
+    // that overflows.
+    Degenerate {
+        label: "a NaN plane bound",
+        atlas_rect: [0, 0, 8, 8],
+        plane_bounds: [f32::NAN, 0.0, 8.0, 8.0],
+    },
+    Degenerate {
+        label: "an infinite plane bound",
+        atlas_rect: [0, 0, 8, 8],
+        plane_bounds: [0.0, 0.0, f32::INFINITY, 8.0],
+    },
+    Degenerate {
+        label: "a plane quad whose width overflows",
+        atlas_rect: [0, 0, 8, 8],
+        plane_bounds: [-3.0e38, 0.0, 3.0e38, 8.0],
+    },
+];
+
+/// Issue #1021's scene-gate half: the resolved coverage field, checked with
+/// `dashpaint::VectorField::draws` itself rather than with a restatement of it.
+///
+/// A warning, not an error — the field is a legal draws-nothing state, so the
+/// scene renders and the node is absent from it.
+#[test]
+fn a_resolved_coverage_field_that_draws_nothing_is_named() {
+    assert_eq!(
+        DEGENERATE.len(),
+        8,
+        "this table and `tests/vector.rs`'s must cover the same inputs; that file's has 8 rows"
+    );
+    for &Degenerate {
+        label,
+        atlas_rect,
+        plane_bounds,
+    } in DEGENERATE
+    {
+        let mut paints = PaintTable::new();
+        let entry = solid_entry(&mut paints, red());
+        let index = paints.push_with(
+            entry,
+            EntryParts {
+                shape: Some(dashpaint::VectorField {
+                    image: 0,
+                    atlas_rect,
+                    plane_bounds,
+                    distance_range: 4.0,
+                }),
+                ..EntryParts::default()
+            },
+        );
+        // A real image table, because the field names asset 0 and the index
+        // rule beside this one is an error: an empty table would make
+        // `has_errors` below true for a reason this test is not about, and
+        // passing it against the *absence* of the index rule is how that gap
+        // survived until it was found on this pull request.
+        let report = validate_scene(
+            &[rect(100.0, 50.0, index.0)],
+            &paints,
+            &one_image(),
+            &ClipTable::new(),
+            &[],
+            &GlyphRunTable::new(),
+        );
+        let found = report
+            .find(rule::VECTOR_SHAPE_DRAWS_NOTHING)
+            .unwrap_or_else(|| panic!("{label} produced no diagnostic:\n{report}"));
+        assert_eq!(found.severity, Severity::Warning, "{label}");
+        assert!(!report.has_errors(), "{label}:\n{report}");
+    }
+}
+
+/// A one-entry image table, so a coverage field naming asset 0 resolves.
+fn one_image() -> ImageTable {
+    let mut images = ImageTable::new();
+    images.push(ImageAsset {
+        format: ImageFormat::Png,
+        bytes: SAMPLE_PNG.to_vec(),
+    });
+    images
+}
+
+/// The index half of `check_shape_field`. `ImageTable::resolve` panics on a
+/// miss, documented as "validated upstream (P4)", and `dashscene-gpu` calls it
+/// with `field.image` — so this gate is that upstream for a coverage mask, as
+/// it already was for an image fill.
+#[test]
+fn a_coverage_field_naming_no_image_asset_is_named() {
+    let mut paints = PaintTable::new();
+    let entry = solid_entry(&mut paints, red());
+    let index = paints.push_with(
+        entry,
+        EntryParts {
+            // One asset in the table below, so index 1 is one past its end.
+            shape: Some(dashpaint::VectorField {
+                image: 1,
+                atlas_rect: [0, 0, 8, 8],
+                plane_bounds: [0.0, 0.0, 8.0, 8.0],
+                distance_range: 4.0,
+            }),
+            ..EntryParts::default()
+        },
+    );
+    let report = validate_scene(
+        &[rect(100.0, 50.0, index.0)],
+        &paints,
+        &one_image(),
+        &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
+    );
+    assert!(report.has(rule::IMAGE_OUT_OF_RANGE), "{report}");
+    assert!(report.has_errors());
+    // The geometry is sound, so the field must not also be called degenerate.
+    assert!(!report.has(rule::VECTOR_SHAPE_DRAWS_NOTHING), "{report}");
+}
+
+/// The pairing: a field that draws is not named, so the test above cannot be
+/// passing against a rule that fires on every entry carrying a mask.
+#[test]
+fn a_resolved_coverage_field_that_draws_is_clean() {
+    let mut paints = PaintTable::new();
+    let entry = solid_entry(&mut paints, red());
+    let images = one_image();
+    let index = paints.push_with(
+        entry,
+        EntryParts {
+            shape: Some(dashpaint::VectorField {
+                image: 0,
+                atlas_rect: [1, 1, 8, 8],
+                plane_bounds: [-1.0, -1.0, 9.0, 9.0],
+                distance_range: 4.0,
+            }),
+            ..EntryParts::default()
+        },
+    );
+    let report = validate_scene(
+        &[rect(100.0, 50.0, index.0)],
+        &paints,
+        &images,
+        &ClipTable::new(),
+        &[],
+        &GlyphRunTable::new(),
+    );
+    assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
+}
+
 #[test]
 fn a_negative_scene_corner_radius_is_named() {
     // A PaintEntry's corners feed both its own rounding and — when the node
