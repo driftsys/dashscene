@@ -385,14 +385,37 @@ transitions to one destination is the collision case a set's two members already
 had — one lowers and the contention is named — and `declared_tweens` is the one
 fold both scopes use.
 
+Whether a **member root** carries the set's default transitions is whether some
+instance of that set actually emitted a table, not whether the set has a plan
+(debt #1141) — `emit` is per instance and can refuse one. That answer needs
+every instance walked, so emission runs as its own pass and its findings are
+held per node and replayed in the naming pass, which is what keeps the
+diagnostic order identical to the single interleaved loop it replaced.
+
 One authored reaction is **one finding** (debt #1056). Figma echoes a
 component's interaction onto every instance, so a mistake authored once inside a
 master arrived once per instance; findings agreeing in rule, message and the
 layer the reaction was authored on — the `<source>` half of the synthetic
 `I<instance>;<source>` id — collapse onto the first, which names how many
-further copies there were. `figma.unsupported` is deliberately left alone: it
-skips the node's subtree, so its copies are separate omissions rather than
-repetitions of one.
+further copies there were. The **message** is part of that key deliberately: it
+is the faithful summary of what distinguishes one finding from another, naming
+the refused construct as well as the destination. A key built from structured
+parts instead was tried and reverted for losing the construct — two different
+refused curves on one layer to one destination then reported only the first,
+which debt #149 forbids.
+
+**What that costs is a guard per message shape** (debt #1137, still open). The
+collapse holds only while every copy of one authored reaction renders the same
+message, and nothing in the type system keeps it — so each shape that can echo
+needs a test, and a new message shape arrives unguarded. Two are pinned:
+`one_authored_reaction_inside_a_master_is_one_finding_however_many_instances_show_it`
+for the omission shape and
+`a_refused_curve_echoed_onto_two_instances_is_one_finding` for the degrade
+shape, the second added after measurement showed a per-copy token in that
+message left the whole suite green.
+
+`figma.unsupported` is deliberately left alone: it skips the node's subtree, so
+its copies are separate omissions rather than repetitions of one.
 
 The reachability fixed point is solved by a **worklist** (debt #1066): the
 instances that paint directly seed it, and each member that becomes switchable

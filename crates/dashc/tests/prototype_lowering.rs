@@ -3021,7 +3021,7 @@ fn a_transition_declared_only_by_a_baked_layer_is_named_where_it_animates_nothin
 fn a_switch_that_no_host_can_carry_is_named_rather_than_dropped() {
     // The other half of the definition boundary, and a silent drop the first
     // fix round introduced. A layer inside a nested master resolves to a set it
-    // sits inside, and `table_host_of` refuses the member root because a
+    // sits inside, and `hosting` refuses the member root because a
     // definition stands between them — correctly, since that master reaches the
     // screen independently of the set. But refusing left the switch with no
     // table and no diagnostic: the branch handling "no table carries this"
@@ -3089,5 +3089,243 @@ fn a_switch_that_no_host_can_carry_is_named_rather_than_dropped() {
             .any(|m| m.contains("no switch into that set replaces")),
         "the boundary refuses the host, and says so — refusing in silence is the drop \
          P4 forbids: {diagnostics:?}",
+    );
+}
+
+// --- Debt #1141 and #1137: what a member root carries, and what keys a collapse.
+
+/// An `ON_CLICK` `CHANGE_TO` to `1:6` whose transition is a spring preset —
+/// real vocabulary Figma authors and `dashcue` has no spelling for, so the
+/// switch ships and its curve is refused. That refusal is what makes a
+/// carries-or-not answer visible: it is reported as a degrade where a table
+/// carries the switch, and as a loss where none does.
+fn refused_curve_to_active() -> serde_json::Value {
+    serde_json::json!([{
+        "trigger": { "type": "ON_CLICK" },
+        "actions": [{
+            "type": "NODE",
+            "destinationId": "1:6",
+            "navigation": "CHANGE_TO",
+            "transition": { "type": "SMART_ANIMATE", "easing": { "type": "GENTLE" }, "duration": 0.3 },
+        }],
+    }])
+}
+
+#[test]
+fn a_member_of_a_set_no_instance_could_emit_is_not_given_a_degrade() {
+    // Debt #1141. A member root was treated as carrying the set's default
+    // transitions on the strength of the set having a *plan*. A plan is not a
+    // table: `emit` is per instance and refuses one whose baked geometry
+    // disagrees with the member it shows. Where every instance is refused —
+    // here, the only one — `doc.variant_sets` is empty, and calling the
+    // member's refused curve a degrade claimed a state change no table carries.
+    // That is issue #1017's defect on a path that issue did not reach.
+    //
+    // `a_refused_curve_on_a_member_no_instance_echoes_is_still_a_degrade` is the
+    // neighbouring case and still passes: there an instance *does* emit, so the
+    // member's transition really is copied into a shipped table.
+    let mut member = boxed("1:6", "state=active", "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+    member["children"] = serde_json::json!([boxed("1:7", "bar", "FRAME", 40.0, 10.0, 20.0, 20.0)]);
+    member["interactions"] = refused_curve_to_active();
+    let mut rest = boxed("1:2", "state=rest", "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+    rest["children"] = serde_json::json!([boxed("1:3", "bar", "FRAME", 10.0, 10.0, 20.0, 20.0)]);
+    let mut instance = boxed("1:14", "card", "INSTANCE", 0.0, 200.0, 100.0, 50.0);
+    instance["componentId"] = serde_json::json!("1:2");
+    // The baked bar sits at x = 25 where the member it shows authors 10, which
+    // is an instance-level override the variant table cannot express — so this
+    // instance, the set's only one, emits nothing.
+    instance["children"] =
+        serde_json::json!([boxed("I1:14;1:3", "bar", "FRAME", 25.0, 210.0, 20.0, 20.0)]);
+
+    let (doc, diagnostics) = lower_json(document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "set",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [rest, member],
+        },
+        instance,
+    ])));
+
+    assert!(
+        doc.variant_sets.is_empty(),
+        "the only instance was refused, so no variant table ships at all",
+    );
+    let motion: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.rule == "figma.prototype.unsupported-motion")
+        .map(|d| d.message.as_str())
+        .collect();
+    assert!(
+        motion
+            .iter()
+            .any(|m| m.contains("no variant table carries the switch it would animate")),
+        "the member's curve lost a switch that ships nowhere: {diagnostics:?}",
+    );
+    assert!(
+        !motion.iter().any(|m| m.contains("lands in one frame")),
+        "and it must not be called a degrade, which would claim a state change no \
+         table carries: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn two_different_refused_curves_on_one_layer_are_both_reported() {
+    // Debt #149 — every finding survives one pass — at the scope debt #1056's
+    // collapse operates in. Two reactions on one layer to the same destination,
+    // refusing two different constructs, are two losses: a designer who fixes
+    // the DISSOLVE would otherwise meet the spring refusal only on the next
+    // compile, which is what P4 forbids.
+    //
+    // The collapse is keyed on the rendered message, which distinguishes them
+    // because the construct's own name is in it. A key built from the
+    // destination and the finding's kind — without the construct — folds the
+    // second onto the first and prints it nowhere. That was tried and reverted;
+    // this is what refuses it.
+    let react = |curve: serde_json::Value| {
+        serde_json::json!({
+            "trigger": { "type": "ON_CLICK" },
+            "actions": [{
+                "type": "NODE",
+                "destinationId": "1:6",
+                "navigation": "CHANGE_TO",
+                "transition": curve,
+            }],
+        })
+    };
+    let mut knob = boxed("I1:14;1:2:bar", "bar", "FRAME", 10.0, 210.0, 20.0, 20.0);
+    knob["interactions"] = serde_json::json!([
+        react(serde_json::json!({
+            "type": "DISSOLVE", "easing": { "type": "EASE_OUT" }, "duration": 0.3,
+        })),
+        react(serde_json::json!({
+            "type": "SMART_ANIMATE", "easing": { "type": "GENTLE" }, "duration": 0.3,
+        })),
+    ]);
+    let member = |id: &str, name: &str, x: f64| {
+        let mut node = boxed(id, name, "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+        node["children"] = serde_json::json!([boxed(
+            &format!("{id}:bar"),
+            "bar",
+            "FRAME",
+            x,
+            10.0,
+            20.0,
+            20.0
+        )]);
+        node
+    };
+    let mut instance = boxed("1:14", "card", "INSTANCE", 0.0, 200.0, 100.0, 50.0);
+    instance["componentId"] = serde_json::json!("1:2");
+    instance["children"] = serde_json::json!([knob]);
+
+    let (_, diagnostics) = lower_json(document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "set",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [member("1:2", "state=rest", 10.0), member("1:6", "state=active", 40.0)],
+        },
+        instance,
+    ])));
+
+    let motion: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.rule == "figma.prototype.unsupported-motion")
+        .map(|d| d.message.as_str())
+        .collect();
+    assert!(
+        motion.iter().any(|m| m.contains("DISSOLVE")),
+        "the refused transition kind is named: {diagnostics:?}",
+    );
+    assert!(
+        motion.iter().any(|m| m.contains("GENTLE")),
+        "and so is the refused easing, rather than being folded onto the first and \
+         printed nowhere: {diagnostics:?}",
+    );
+}
+
+#[test]
+fn a_refused_curve_echoed_onto_two_instances_is_one_finding() {
+    // Debt #1137's guard, for the message shape that had none.
+    //
+    // The collapse is keyed on the rendered message, so it holds only while
+    // every copy of one authored reaction renders the same message. That is a
+    // property of the message text, and nothing in the type system keeps it —
+    // so it needs a test per shape that can echo, not one.
+    //
+    // `one_authored_reaction_inside_a_master_is_one_finding_however_many_instances_show_it`
+    // pins the `figma.prototype.unsupported-interaction` omission shape. This
+    // pins the `figma.prototype.unsupported-motion` degrade shape, which was
+    // measured to be unguarded: adding the node path to "the switch lands in
+    // one frame" left the whole suite green.
+    let knob = |id: &str, y: f64| {
+        let mut node = boxed(id, "bar", "FRAME", 10.0, y, 20.0, 20.0);
+        node["interactions"] = serde_json::json!([{
+            "trigger": { "type": "ON_CLICK" },
+            "actions": [{
+                "type": "NODE",
+                "destinationId": "1:6",
+                "navigation": "CHANGE_TO",
+                // A spring preset: the switch ships and its curve is refused,
+                // which is what makes this the degrade shape.
+                "transition": {
+                    "type": "SMART_ANIMATE",
+                    "easing": { "type": "GENTLE" },
+                    "duration": 0.3,
+                },
+            }],
+        }]);
+        node
+    };
+    let member = |id: &str, name: &str, x: f64| {
+        let mut node = boxed(id, name, "COMPONENT", 0.0, 0.0, 100.0, 50.0);
+        node["children"] = serde_json::json!([boxed(
+            &format!("{id}:bar"),
+            "bar",
+            "FRAME",
+            x,
+            10.0,
+            20.0,
+            20.0
+        )]);
+        node
+    };
+    let instance = |id: &str, y: f64| {
+        let mut node = boxed(id, "card", "INSTANCE", 0.0, y, 100.0, 50.0);
+        node["componentId"] = serde_json::json!("1:2");
+        node["children"] = serde_json::json!([knob(&format!("I{id};1:2:bar"), y + 10.0)]);
+        node
+    };
+
+    let (_, diagnostics) = lower_json(document_with(serde_json::json!([
+        {
+            "id": "1:10",
+            "name": "set",
+            "type": "COMPONENT_SET",
+            "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 100.0, "height": 50.0 },
+            "children": [member("1:2", "state=rest", 10.0), member("1:6", "state=active", 40.0)],
+        },
+        instance("1:14", 200.0),
+        instance("1:15", 300.0),
+    ])));
+
+    let motion: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.rule == "figma.prototype.unsupported-motion")
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(
+        motion.len(),
+        1,
+        "one authored curve, one finding, whatever it is echoed onto: {diagnostics:?}",
+    );
+    assert!(
+        motion[0].contains("1 further copy of the same reaction"),
+        "and it says how many instances it stands for — which is what fails first \
+         if any part of this message ever varies per copy: {:?}",
+        motion[0],
     );
 }
