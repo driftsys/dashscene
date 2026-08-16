@@ -303,6 +303,15 @@ and vertical alignment. Verified in `crates/dashc/tests/text_lowering.rs`.
    `docs/decisions/unsupported-figma-constructs-refuse-the-compile.md` ("Revised
    at #140", "Revised at S0-impl"). The refused set as-built is listed in
    `docs/design/dashc.md` ("Scope boundaries").
+
+   A **mirrored** `relativeTransform` is one of these (debt #1047): a mirror is
+   a negative scale, scale is deferred
+   (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`, "Scale
+   and skew are not in this slice"), and `matrix_turn` reports `0.0` for one on
+   purpose, so without this the node lowered upright and unnamed. It is refused
+   on the matrix rather than on `turn`, which reports no angle for a mirror by
+   design, and only a **mirror** refuses — a matrix enclosing no area is named
+   by its own zero extent.
    (`strict_refuses_a_file_with_an_unsupported_construct`,
    `partial_emits_the_frame_and_warns_on_the_skipped_vector`,
    `a_second_visible_fill_fails_loudly_rather_than_being_silently_dropped`,
@@ -311,6 +320,8 @@ and vertical alignment. Verified in `crates/dashc/tests/text_lowering.rs`.
    `a_rotated_node_without_size_is_refused_rather_than_measured_from_its_bounds`,
    `a_turn_carried_only_by_relative_transform_still_refuses_a_node_with_children`,
    `a_half_turn_in_relative_transform_is_read_as_a_turn`,
+   `a_mirror_in_relative_transform_is_not_read_as_a_turn`,
+   `a_mirrored_node_is_omitted_with_a_warning_under_partial`,
    `an_alpha_mask_is_refused_by_name`, `a_luminance_mask_is_refused_by_name`,
    `a_text_node_used_as_a_mask_is_refused_by_name`,
    `a_non_basic_stroke_fails_loudly_rather_than_lowering_as_a_solid_one`,
@@ -461,13 +472,30 @@ Verified by `crates/dashc/tests/prototype_lowering.rs` and the unit tests in
 
     **A refused curve shall be called a degrade only where the switch it
     animates reaches a variant table**, which is narrower than the set having a
-    plan. Exactly two kinds of node carry a switch into a table: an `INSTANCE`
-    whose own table `emit` accepted, and a **member root** of a set that lowers,
-    whose reaction becomes that set's default transition. A switch anywhere else
-    — a baked child, a layer inside a master, an instance whose table `emit`
-    refused, a member of a set that lowers nothing — reaches no table, and its
-    refused curve shall be named as a warning saying so rather than as a degrade
-    claiming the switch lands.
+    plan. A switch reaches a table through its **host** — see rule 15 — and that
+    host must carry one: an `INSTANCE` whose own table `emit` accepted, or a
+    **member root** of a set that lowers, whose default transition table `emit`
+    copies into every instance. A switch that **lands in a set** whose host
+    carries no table — an instance whose table `emit` refused, or a member of a
+    set that lowers nothing — reaches nothing, and its refused curve shall be
+    named as a warning saying so rather than as a degrade claiming the switch
+    lands. A switch that lands in no set at all is an omission instead, at the
+    emit policy's severity, and its curve is part of that omission.
+
+    **A switch on a layer below its host still reaches that host's table** (debt
+    #1064). The table gathers every `CHANGE_TO` that resolves onto it, not only
+    the ones its root declares: a layer inside a master joins its set's default
+    table, and a baked layer inside an instance overrides that default for that
+    instance. Reading the root alone dropped the tween a deeper layer declared
+    with no diagnostic at all — the everyday shape of an inner layer driving the
+    enclosing instance's variant — because the pass then reported the switch as
+    having lost nothing. Where two layers of one scope declare a different
+    transition to the same destination, only one lowers and the contention shall
+    be named, exactly as it is for two members of one set (issue #976).
+    (`a_switch_on_a_baked_layer_carries_its_transition_into_the_instances_table`,
+    `a_baked_layers_own_reaction_overrides_the_sets_default_at_depth`,
+    `a_master_inner_layers_reaction_reaches_the_sets_default_table`,
+    `two_layers_of_one_instance_contending_over_a_destination_are_named`)
 
     It shall still be named. Dropping it would be a silent drop (P4) and would
     surface for the first time on the compile after the file is repaired.
@@ -497,18 +525,59 @@ Verified by `crates/dashc/tests/prototype_lowering.rs` and the unit tests in
     inside a member — is named nowhere; and a set that lowers no table can
     switch to nothing, so nothing inside it reaches the screen either.
 
-    Every such node shall be resolved the way any other node is: against the set
-    its own `componentId` names where it has one, and otherwise against the set
-    of the nearest `INSTANCE` or definition that shows it. Both halves are
-    required, because Figma echoes a component's reaction onto its instance
-    verbatim — so an inner layer driving the enclosing instance's variant
-    arrives both on the master, under a definition, and on the instance's baked
-    child, under neither.
+    **A `CHANGE_TO` shall be resolved from its destination, not from its
+    position** (debt #1065). The set being switched is the one the
+    `destinationId` is a member of; the switch lands when some **host** — the
+    node itself, or an enclosing `INSTANCE` or definition — belongs to that set,
+    and the nearest such host is the one whose table carries it. A destination
+    that is a member of no set any host belongs to shall be named as lowering
+    nowhere.
+
+    **A definition between the layer and that host shall stop it**, and the
+    switch shall then be named as lowering nowhere rather than reaching the
+    host's table. A master's contents reach the screen only through an instance
+    of it, so a layer inside a master that sits within a member belongs to the
+    master's content and not to the member's; letting its switch join the
+    enclosing set's table would have a reaction that never paints set the
+    transition every instance of that set ships (issue #1018). An **instance**
+    between the two shall be crossed, because its baked children do paint — that
+    asymmetry is what makes the nested-instance shape above work. The refusal
+    shall be named: nothing else in the pass reports it, so refusing in silence
+    would be the drop P4 forbids.
+
+    One rule shall answer both authoring shapes, because resolving by position
+    can only ever answer one of them. A layer switching the variant of the
+    instance it belongs to resolves through that instance — which is required
+    either way, since Figma echoes a component's reaction onto its instance
+    verbatim, so an inner layer driving the enclosing instance's variant arrives
+    both on the master, under a definition, and on the instance's baked child,
+    under neither. A **nested `INSTANCE` switching its parent's** variant shows
+    a set of its own, so stopping at the nearest host answered with that set and
+    reported an ordinary file as naming a destination that is not a member —
+    withholding the whole document under `Strict`.
     (`an_instance_inside_a_master_nothing_instantiates_shows_nothing`,
     `a_reaction_on_a_child_of_a_member_no_instance_echoes_is_still_named`,
     `a_switch_inside_a_member_is_judged_against_the_set_that_owns_it`,
     `a_reaction_echoed_onto_a_baked_child_resolves_through_its_instance`,
-    `a_member_reaction_is_not_named_where_the_set_lowers_no_table`)
+    `a_member_reaction_is_not_named_where_the_set_lowers_no_table`,
+    `a_nested_instance_switching_its_parents_variant_resolves_through_the_parent`,
+    `a_switch_on_a_nested_instance_still_resolves_its_own_set_first`)
+
+    **One authored reaction shall be one finding** (debt #1056). Figma echoes a
+    component's interaction onto every instance, so a mistake authored once
+    inside a master arrived once per instance that shows it: fifty instances of
+    one member reported fifty-one errors, one per copy. Findings that agree in
+    rule, message, and the layer the reaction was **authored** on — the
+    `<source>` half of the synthetic `I<instance>;<source>` id — shall be
+    reported once, at the first copy, with the number of further copies named in
+    the message.
+
+    This shall **not** extend to `figma.unsupported`, whose copies are not
+    redundant: it skips the node's subtree, so fifty copies are fifty omissions
+    from the document, where a prototype refusal leaves every node in place and
+    its copies produce identical bytes.
+    (`one_authored_reaction_inside_a_master_is_one_finding_however_many_instances_show_it`,
+    `a_refused_construct_echoed_onto_two_instances_stays_two_findings`)
 
 16. **Where either member's `relativeTransform` carries no angle of its own, two
     members facing different ways shall make the set unlowerable** (issue
