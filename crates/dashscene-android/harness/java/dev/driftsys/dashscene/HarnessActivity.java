@@ -10,6 +10,7 @@ import android.view.ViewGroup;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Arrays;
 
 /**
  * The smallest host that exercises layer 0: a SurfaceView, the three lifecycle
@@ -34,6 +35,16 @@ public final class HarnessActivity extends Activity implements SurfaceHolder.Cal
 
     /** The document this harness draws, from the APK's assets. */
     private static final String DOCUMENT = "scene.dsb";
+
+    /**
+     * The document ordinal the mapped load is bounded by.
+     *
+     * <p>0, and written down rather than defaulted: the staged scene has one
+     * root, so every ordinal a bound could name is this one, and a harness that
+     * let the value be chosen for it would not notice the day the staged
+     * document gained a second artboard.
+     */
+    private static final int SHOWN_ROOT = 0;
 
     /**
      * The one face the document's text is drawn with, staged by build.sh.
@@ -172,34 +183,61 @@ public final class HarnessActivity extends Activity implements SurfaceHolder.Cal
             // would use had never executed. `nativeSurfaceCreated` is this call
             // with no faces, so taking the other branch below is not a second
             // code path so much as the empty case of this one.
-            if (cascade != null) {
-                handle = DashsceneNative.nativeSurfaceCreatedWithText(
-                        holder.getSurface(),
-                        document,
-                        new DsFace[] {cascade},
-                        width,
-                        height);
-                Log.i(TAG, "harness: runtime handle " + handle + " (with text: "
-                        + cascade.family + " " + cascade.weight + ")");
+            DsFace[] faces = cascade == null ? new DsFace[0] : new DsFace[] {cascade};
+            // **The mapped load first** — issue #1035. It reads only the assets
+            // the shown root's subtree draws, out of a file the runtime maps,
+            // rather than every artboard's payloads through the owning loader.
+            // This is the caller that symbol had none of.
+            //
+            // The path is app storage rather than the asset itself: an asset
+            // compressed inside the APK cannot be mapped, and an uncompressed
+            // one is only a descriptor plus an offset. documentPath() extracts
+            // it once.
+            //
+            // **This host still reads the document into the JVM heap** and
+            // keeps it, because documentPath() writes those bytes and the
+            // fallback below needs them. What the mapped path removes is the
+            // native side: convert_byte_array's copy, and the owning loader's
+            // copy of every payload including artboards nothing draws. A host
+            // that never read the asset would save more, and could not have
+            // this fallback.
+            String mapped = documentPath();
+            if (mapped != null) {
+                handle = DashsceneNative.nativeSurfaceCreatedMapped(
+                        holder.getSurface(), mapped, SHOWN_ROOT, faces, width, height);
+                // **This marker says which entry point was called, and nothing
+                // about whether the document loaded.** The load runs on the
+                // render thread, after this returns; a non-zero handle means
+                // only that the window was obtained and the thread spawned,
+                // which is what nativeSurfaceCreated's own contract says.
+                // `attaching` / `attached` / `attach failed:` are what report
+                // the load, and a mapped load that fails names its status and
+                // the path.
+                Log.i(TAG, "harness: runtime handle " + handle + " (mapped requested, root "
+                        + SHOWN_ROOT + ", " + faces.length + " face(s))");
             }
-            // **A refused cascade falls back to the no-text call**, and this
-            // is not belt-and-braces. The four assets can read cleanly and the
-            // ABI still reject the face — metrics that do not decode, a PNG
-            // whose extent disagrees with them, a weight outside 1..=1000 —
-            // and the entry point answers 0 for all of it. Without this the
-            // harness would then draw nothing at all, which costs the
-            // lifecycle coverage that is its whole purpose, and the zero
-            // handle would take a branch whose own comment says a zero handle
-            // means the window or the thread could not be obtained. Reading
-            // the assets is not the only way a cascade fails.
-            if (handle == 0) {
-                handle = DashsceneNative.nativeSurfaceCreated(
-                        holder.getSurface(), document, width, height);
-                Log.i(TAG, "harness: runtime handle " + handle + " (no glyphs — "
-                        + (cascade == null
-                                ? "no cascade was staged"
-                                : "the cascade was refused; check the log above")
-                        + ", so text lays out as empty leaves)");
+            // **The byte path, when the mapped one could not be started.**
+            //
+            // Its reach is narrow and worth stating exactly, because the
+            // obvious reading is wrong: it covers what fails *synchronously* —
+            // documentPath() returning null on a full disk, a null or
+            // NUL-carrying path, an ordinal that is not one, and a window or
+            // thread that could not be obtained. It does **not** cover a load
+            // that fails on the render thread — an unmappable filesystem, a
+            // derived payload, a hash mismatch, or SHOWN_ROOT naming no root —
+            // because the handle is already non-zero by then. Measured: with
+            // SHOWN_ROOT set to 7 the handle came back non-zero and the loop
+            // then logged `attach failed: load_document: NoSuchRoot`, with this
+            // branch never reached.
+            //
+            // Making it cover those would mean blocking this callback on the
+            // load, which is the application-not-responding risk the whole
+            // spawn-and-return shape exists to avoid.
+            if (handle == 0 && cascade != null) {
+                handle = DashsceneNative.nativeSurfaceCreatedWithText(
+                        holder.getSurface(), document, faces, width, height);
+                Log.i(TAG, "harness: runtime handle " + handle + " (whole-file, with text: "
+                        + cascade.family + " " + cascade.weight + ")");
             }
         } else {
             DashsceneNative.nativeSurfaceChanged(handle, width, height);
@@ -312,15 +350,65 @@ public final class HarnessActivity extends Activity implements SurfaceHolder.Cal
         }
     }
 
+    /**
+     * The document as a path the runtime can map, extracted from the APK once,
+     * or null if it could not be written.
+     *
+     * <p><b>App storage, not the cache directory.</b> The runtime holds the
+     * mapping for as long as the document is loaded, and the system may delete
+     * a cache directory's contents at any time — including while it is mapped.
+     *
+     * <p>Extracted only when absent or the wrong length. A rotation calls
+     * {@code surfaceChanged} again, and rewriting a file the runtime currently
+     * has mapped is the one thing this must not do.
+     */
+    private String documentPath() {
+        if (document == null) {
+            return null;
+        }
+        java.io.File file = new java.io.File(getFilesDir(), DOCUMENT);
+        // **Content, not length.** build.sh copies whatever
+        // DASHSCENE_HARNESS_SCENE names to one fixed asset name, so switching
+        // to a different golden of the same size — or editing a colour in
+        // place — leaves a stale staged file that a length check accepts, and
+        // the runtime then maps bytes the APK no longer carries with nothing
+        // logging a difference. The document is small enough that comparing it
+        // costs less than being wrong about it.
+        if (file.isFile() && Arrays.equals(readFile(file), document)) {
+            return file.getAbsolutePath();
+        }
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
+            out.write(document);
+        } catch (IOException error) {
+            Log.e(TAG, "harness: could not stage " + DOCUMENT + " for mapping", error);
+            return null;
+        }
+        Log.i(TAG, "harness: staged " + file.getAbsolutePath() + " for the mapped load");
+        return file.getAbsolutePath();
+    }
+
+    /** The file's bytes, or null if it could not be read. */
+    private byte[] readFile(java.io.File file) {
+        try (InputStream in = new java.io.FileInputStream(file)) {
+            return readAll(in);
+        } catch (IOException error) {
+            return null;
+        }
+    }
+
     private byte[] readAsset(String name) throws IOException {
         try (InputStream in = getAssets().open(name)) {
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            byte[] chunk = new byte[16 * 1024];
-            int read;
-            while ((read = in.read(chunk)) != -1) {
-                out.write(chunk, 0, read);
-            }
-            return out.toByteArray();
+            return readAll(in);
         }
+    }
+
+    private static byte[] readAll(InputStream in) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] chunk = new byte[16 * 1024];
+        int read;
+        while ((read = in.read(chunk)) != -1) {
+            out.write(chunk, 0, read);
+        }
+        return out.toByteArray();
     }
 }
