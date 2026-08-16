@@ -1,9 +1,12 @@
 # One solver per live scene: a producer stages, the runtime commits
 
-    status   accepted (story #950, 2026-08-16)
+    status   accepted (story #950, 2026-08-16); extended by issue #1148,
+             2026-08-16 — the drain is conditional
     scope    corpus/showcase and the LiveScene contract it demonstrates;
-             binds #164 (the retained Taffy tree), #771 (the staged-variant
-             seam) and #863 (TaffySolver::owning)
+             Txn::commit_with's drain of Arena::layout_dirty and the
+             LayoutSolver method that gates it; binds #164 (the retained
+             Taffy tree), #771 (the staged-variant seam), #863
+             (TaffySolver::owning) and #191 (the contained-write fast path)
 
 ## Context
 
@@ -28,11 +31,14 @@ subject of this record.
 
 **A retained tree is correct only while one solver sees every commit into the
 arena, in order.** A commit consumes the arena's layout-dirty set; the next
-solve through that solver patches the nodes the set named and leaves the rest. A
-commit through a _different_ solver takes a dirty set the scene's solver will
-never see, and the scene's solver then patches nothing and replays a tree that
-no longer describes the scene. `corpus/showcase` had three such commits:
-`layout::paint` and `surfaces::paint` at build time, and
+solve through that solver patches the nodes the set named and leaves the rest.
+(**Read this paragraph against the extension at the end of this record**, which
+narrows "a commit" to a commit whose solver actually solved — issue #1148. What
+follows is unchanged for the second-producer case it is about, and the extension
+is where the qualifier is argued.) A commit through a _different_ solver takes a
+dirty set the scene's solver will never see, and the scene's solver then patches
+nothing and replays a tree that no longer describes the scene. `corpus/showcase`
+had three such commits: `layout::paint` and `surfaces::paint` at build time, and
 `layout::switch_variant` on every press of the variant key. Only the third
 stages layout intent — a `Txn::set_variant` marks every node its members
 override — so only the third was load-bearing, and it is the one the failing
@@ -92,6 +98,11 @@ change" from "a paint-only commit happened", which a naive commit counter is not
 pattern the architecture already says not to use, and it costs a rebuild when it
 fires. Filed as issue #1104 rather than made here, carrying the detector's
 design.
+
+Option 3 was then **built and parked** on `story/v1-retained-solver-detector`
+(commit `a956ea9c`, PR #1138, closed unmerged and kept as evidence). It is green
+and it works; what it is not is what its name says. See the extension below,
+which is the answer that made it wait.
 
 Option 4 was rejected on the tree rather than the clock: see **Consequences**.
 
@@ -181,3 +192,163 @@ layout-affecting channel, so no tick could replay a stale rect cache over the
 switch — was sound about `LiveScene`'s rect cache and one level too shallow: it
 did not cover the Taffy tree underneath it. Both are now covered by construction
 rather than by that argument.
+
+## Extension: the drain is conditional (issue #1148, 2026-08-16)
+
+Everything above is about a **second producer** — a solver other than the
+scene's committing geometry into the same arena. Issue #1104 was split out to
+detect that, and building the detector measured something the record above did
+not know: **the scene's own producer does it too, on its cheapest path, by
+design.**
+
+### What was found
+
+`Txn::commit_with` drained `Arena::layout_dirty` unconditionally. That set is
+not the commit's input; it is what a retained solver restyles its tree from
+(#164), so draining it is a claim that the restyle happened. A commit whose
+geometry came from anywhere else still made that claim.
+
+`dashlang`'s contained-write path is exactly such a commit.
+`apply_scalar_write`'s `WriteClass::Patch` arm patches one cached rect itself
+and commits through the replaying `CachedSolver` without solving (#191, A1) —
+while still staging a `Prop::Width`, which `prop_class` calls layout intent.
+`Prop::Text` is layout intent too, so a `bind_text` frame does the same. Every
+such tick discarded a restyle nobody had performed.
+
+Measured on a three-deep passthrough column, `chip` ancestor-contained and
+width-bound, the root X-bound so its write forces a solve:
+
+| tick                               | published `chip` | fresh solve |
+| ---------------------------------- | ---------------- | ----------- |
+| 1 — contained width write, 40 → 60 | `w = 60`         | `w = 60`    |
+| 2 — root moves, real solve runs    | **`w = 40`**     | `w = 60`    |
+
+The root's shifted origin makes the read-back descend the whole subtree and
+re-emit `chip` out of a tree whose `chip` style is still the build-time 40.
+`crates/dashlang/tests/retained_tree.rs` is that scene, and it fails at tick 2
+against the `main` this extension was written on.
+
+The reflow has to be **two** levels above the patched node: `incremental`
+restyles every dirty node _and its children_, so a write on the parent repairs
+the staleness as a side effect. That is the same mechanism issue #1118 records
+for why a scene-level test cannot probe a stale tree by marking nodes dirty.
+
+### Why the detector is not the answer to this
+
+`Arena::layout_commit_generation` plus a `LayoutSolver::committed` callback
+answers "a commit drained a layout-dirty set without this solver solving". Read
+against the code rather than against the intent, that is a description of
+`dashlang`'s fast path, not of a second producer. Measured on the parked branch,
+alternating a patch tick with a solve tick: **10 forced rebuilds over 10 pairs**
+— a full Taffy rebuild on essentially every reflow following a patch tick, which
+reverses #164's saving inside the frame loop.
+
+Each rebuild was _correct_: the tree really was stale. Detect-and-rebuild is the
+expensive answer to a condition that should not arise.
+
+### The choice
+
+**`LayoutSolver` gains a defaulted `consumes_layout_dirty(&self) -> bool`, and
+`commit_with` drains the set only when it is `true`.**
+
+- `true` is the default, and it is right for every solver that resolves geometry
+  from the arena: the internal `FixedSolver` and `TaffySolver`.
+- **A decorator forwarding `solve` must forward this too**, and that is not what
+  the first draft of this said. It claimed `FlipOverlay` "inherits the correct
+  answer by saying nothing", which is true only while the solver it wraps
+  happens to consume — and `FlipOverlay` wraps whatever solver an embedder
+  handed `attach_live`, including the replaying one this trait's own
+  documentation sanctions. Taking the default there drains a set nothing read,
+  on the one arm that is supposed to be the real solve. It is the decorator trap
+  issue #621 caught on `atlases` and `stage_text`, on a third method, and the
+  review on PR #1155 caught it here.
+- `false` is for a solver that replays rects the producer resolved for itself.
+  `CachedSolver` is the only one in the tree.
+- A commit answering `false` leaves the set in place. The nodes stay owed a
+  restyle until a solve performs one, and no rect is published from a style
+  nothing wrote.
+
+**Both of `CachedSolver`'s construction sites answer `false`, and the
+variant-switch arm is not the exception it looks like.** That arm's real solve
+runs at step 0 of `LiveScene::tick`, _before_ the transaction opens, so the set
+it read is not the set the commit is about to drain — every prop steps 1 to 4
+staged was added afterwards. Making that arm report consumption is the
+plausible-looking refinement, and it re-opens the defect for exactly those
+props: applying it (an `inner_solved` flag, set per construction site) fails
+`a_switch_tick_carries_the_writes_staged_after_its_solve` while the other two
+tests in that file still pass, so the three discriminate three different
+mistakes rather than restating one.
+
+### Alternatives considered
+
+- **A second commit entry point** (`commit_replaying`) rather than a trait
+  method. Same effect, no trait change — rejected because the fact belongs to
+  the solver, not to the call: an embedder writing its own replay solver would
+  have to know to reach for the other method, and picking the wrong one is
+  silent.
+- **Restyle instead of carrying** — a new `LayoutSolver` method the replay path
+  calls, patching the retained tree without computing. It removes the growth
+  question, and it puts per-node work (including `set_node_context`, which
+  builds a text node's measure input) onto the path that exists to be cheap.
+  Rejected: carrying costs one already-paid push and defers the restyle to a
+  frame that was going to restyle anyway.
+- **Fix it in `dashlang`** — remember the patched nodes and re-dirty them before
+  the next real solve. Rejected on the same ground story #950 was re-labelled
+  for: it removes the instance and leaves the class. A partial-report solver is
+  a pattern `LayoutSolver`'s own documentation invites, and core would still
+  drain behind one.
+
+### What it costs, and what stays open
+
+**The set is bounded against what is dirty, not against the document.** Carrying
+is what makes unbounded growth possible: a scene doing nothing but contained
+writes adds an entry per binding per frame and never drains. So a carrying
+commit dedups — first occurrence wins, so the staged order survives — and the
+predicate is `should_compact`'s, reused for the same reason and with the same
+amortization: a small floor, and twice what the previous dedup left. A set more
+than twice its own live content holds at least as many duplicates as distinct
+entries, so each dedup at least halves it and its `O(set)` cost amortizes to a
+constant per staged write. The frequent case costs one length compare and no
+allocation.
+
+**Bounding it by the node count instead was the first answer, and it is the one
+the review rejected.** It is sound — a set longer than the document provably
+holds duplicates — and it is useless at the size that matters: one animating
+node in a 10,000-node scene would accumulate 10,000 copies of itself before
+anything reclaimed them, and a reflow landing in that window would build
+`incremental`'s set out of all 10,000 to recover the one node that changed. That
+is a document-scaled cost per reflow, which is the property issue #164 exists to
+keep and the one issue #1111 is separately bounding.
+`a_carried_layout_dirty_set_stays_bounded_by_what_is_dirty_not_by_the_document`
+is measured on that shape — 1,000 nodes, 4 of them dirty — and the node-count
+predicate leaves 1,000 entries in it.
+
+**A carried entry can name a node that was already restyled**, and that is
+accepted rather than fixed. The switch arm carries the nodes its own step-0
+solve read. Restyling is idempotent and is not itself a Taffy computation, so
+the cost is extra `set_style` calls and never an extra solve — bounded, like the
+set, by twice the live dirty content rather than by the scene.
+
+**Carrying does not turn `incremental`'s early return into a computation** — not
+inside `LiveScene::tick`, where every path that reaches the real solver puts
+something in the set or changes the shown root on its own account: a
+`WriteClass::Solve` write and a `Visible` flip both push, `Txn::set_variant`
+pushes before step 0's solve, and a shown-root change skips that early return by
+a test of its own. Outside the tick, an embedder committing through a real
+solver after a run of replayed ones does compute where it used to return early —
+which is the defect being fixed, not a regression: returning early there left
+the tree describing a scene that had moved.
+
+**Issue #1104 stays open, and stays as written.** A genuine second producer runs
+a _real_ solver, which reports that it consumed the set and drains it; the
+scene's own solver still never sees it. The two are complementary, and the order
+matters: once the replay path stops draining, `layout_commit_generation` finally
+means what #1104's body says it means, because `dashlang`'s fast path no longer
+trips it. The parked branch is the design, not the implementation — its
+predicate was measured against a `main` where the replay drained.
+
+**Issue #1118's gap narrows and does not close.** What
+`corpus/showcase/tests/retained_tree.rs` cannot see is a stale tree that has not
+yet reached the committed table. The staleness this extension removes was one
+source of that; a second producer is the other, and it is the one #1118 was
+filed against. It stays open behind #1104.

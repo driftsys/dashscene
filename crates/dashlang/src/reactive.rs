@@ -804,6 +804,24 @@ fn apply_scalar_write(
 /// layout solve (A1). Core is unchanged: the "no solve" decision lives
 /// entirely in `dashlang`.
 ///
+/// # It replays, and says so (issue #1148)
+///
+/// [`LayoutSolver::consumes_layout_dirty`] is answered `false`, so a commit
+/// through this solver leaves `Arena::layout_dirty` in place instead of
+/// draining it. The set is what `inner` restyles its retained tree from, and
+/// this solver ran no solve at all — a `Prop::Width` staged by the
+/// `WriteClass::Patch` arm above is `PropClass::Layout`, and so is the
+/// `Prop::Text` a text binding stages. Draining it would leave those nodes
+/// styled as they were at the last real solve, and the next reflow would then
+/// recompute them out of that tree and publish the stale answer.
+///
+/// **Both construction sites answer the same way, and the switch arm is not the
+/// exception it looks like.** `LiveScene::tick` builds this on its variant-
+/// switch arm too, where the real solver *did* solve — but it solved at step 0,
+/// before the transaction opened, so the set it read is not the set this commit
+/// is about to drain: every prop that steps 1 to 4 staged was added after it
+/// looked. Reporting consumption there would discard exactly those.
+///
 /// # The text halves are forwarded, and only they (issue #621)
 ///
 /// `solve` is replaced; [`LayoutSolver::atlases`] and
@@ -837,6 +855,10 @@ impl LayoutSolver for CachedSolver<'_> {
         // Moved, not cloned: `self.rects` is already this call's answer,
         // built for exactly one `solve`.
         std::mem::take(&mut self.rects)
+    }
+
+    fn consumes_layout_dirty(&self) -> bool {
+        false
     }
 
     fn atlases(&mut self) -> Arc<Vec<Atlas>> {
@@ -921,6 +943,18 @@ impl LayoutSolver for FlipOverlay<'_> {
         }
 
         rects
+    }
+
+    // Whether the set was consumed is `inner`'s answer, because `solve`
+    // above is `inner`'s work: this wrapper writes over the answer and
+    // never produces one. Defaulting it to `true` would be right for the
+    // solver this scene is built with and wrong for a replaying one an
+    // embedder hands to `attach_live`, which the trait documents as a
+    // supported shape — the commit would then drain a set nothing read
+    // (issue #1148). The rule below is the same rule, and this is a third
+    // method it now covers rather than an exception to it.
+    fn consumes_layout_dirty(&self) -> bool {
+        self.inner.consumes_layout_dirty()
     }
 
     // The other two halves of the seam are forwarded, never defaulted.

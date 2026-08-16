@@ -327,6 +327,26 @@ cheaper design — carrying runs forward inside `commit_with`, which re-stages
 nothing — is recorded in the retired decision and is where a frame-budget
 problem here should be answered.
 
+**The replay declares itself one, since issue #1148.** `CachedSolver` answers
+`LayoutSolver::consumes_layout_dirty` with `false`, which is what stops
+`commit_with` draining `Arena::layout_dirty` behind it. The set is what the
+retained solver restyles its tree from, and a patchable write still stages a
+`Prop::Width` — layout intent by `prop_class`, like the `Prop::Text` a text
+binding stages. Draining it here left those nodes styled as they were at the
+last real solve, and the next reflow recomputed them out of that tree and
+published the stale answer. **Both** construction sites answer the same way: the
+variant-switch arm's real solve ran at step 0, before the transaction opened, so
+the set it read is not the set the commit is about to drain.
+
+`FlipOverlay` **forwards** the same method, which is the opposite answer for the
+opposite reason: it does not replace `solve`, it writes over what the scene's
+own solver returned, so whether the set was read is that solver's fact and not
+this wrapper's. Taking the trait default there would be right for every solver
+this repository builds and wrong for a replaying one an embedder hands to
+`attach_live` — the third method on which "a decorator that leaves it defaulted
+is silent, correct-looking and wrong" applies, after the two issue #621 caught.
+See `docs/decisions/one-solver-per-live-scene.md`.
+
 **Smoothing.** `Node::smooth(channel, Spring)` drives a bound channel through
 `dashcue`'s `Scheduler`: the signal sets the spring's target, the scheduler
 drives the value each frame, and a mid-flight retarget resumes from the current

@@ -420,8 +420,11 @@ fn atlas_from_bytes(sheet: AtlasBytes, index: usize) -> Result<Atlas, TextResour
 /// `corpus/showcase` was the last of those wrappers in the tree and is one no
 /// longer: it hands each scene a single `owning` solver (issue #950). What that
 /// cost it is the invariant a retained tree carries — one solver has to see
-/// every commit into the arena, in order, because a commit consumes the
-/// layout-dirty set the next solve would have patched from. See
+/// every commit into the arena that **solves**, in order, because such a commit
+/// consumes the layout-dirty set the next solve would have patched from. A
+/// commit that replays geometry the producer resolved for itself leaves the set
+/// alone and is therefore not a second producer in this sense
+/// (`LayoutSolver::consumes_layout_dirty`, issue #1148). See
 /// `docs/decisions/one-solver-per-live-scene.md`.
 #[derive(Debug)]
 enum Text<'a> {

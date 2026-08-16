@@ -73,6 +73,48 @@ pub trait LayoutSolver {
     /// unchanged frame costs no re-solve.
     fn solve(&mut self, arena: &Arena) -> Vec<(NodeId, SolvedRect)>;
 
+    /// Whether [`solve`](Self::solve) resolved this commit's geometry from
+    /// [`Arena::layout_dirty`] — and so whether [`Txn::commit_with`] may drain
+    /// that set.
+    ///
+    /// The set is what a **retained** solver restyles from: it patches exactly
+    /// the nodes named there and leaves the rest of its tree alone (issue
+    /// #164). Draining it is therefore not a bookkeeping detail of the commit
+    /// but a statement that the restyle has been done — and only the solver
+    /// knows whether it was.
+    ///
+    /// `true` is the answer for every solver that resolves geometry from the
+    /// arena, which is why it is the default: the internal `FixedSolver`
+    /// re-resolves every node, and `dashscene-engine`'s `TaffySolver` restyles
+    /// the set and then computes.
+    ///
+    /// **A decorator that forwards `solve` must forward this too**, and the
+    /// default is not the right answer for one. Its `solve` is the inner
+    /// solver's work, so whether the set was read is the inner solver's fact:
+    /// taking `true` here is correct only while the wrapped solver happens to
+    /// consume, and silently drains a set nothing read as soon as it does not.
+    /// `dashlang`'s `FlipOverlay` forwards it for that reason, beside the two
+    /// text halves it already forwards for the analogous one (issue #621).
+    ///
+    /// `false` is for a solver that **replays** geometry — one whose answer is
+    /// a cache the producer patched itself, so no tree was restyled and nothing
+    /// read the set. `dashlang`'s `CachedSolver` is that solver: a contained
+    /// scalar write patches one cached rect and commits without a solve (debt
+    /// #191), while still staging a `Prop::Width` that is `PropClass::Layout`.
+    /// Draining there discards a restyle nobody performed, and the next real
+    /// solve then recomputes that node out of a tree still holding its previous
+    /// style — a wrong rect, published, with nothing to report it. A commit
+    /// answering `false` leaves the set in place instead, so it accumulates
+    /// until a solver that does restyle consumes it.
+    ///
+    /// **Answer for the commit, not for the type.** A solver that solved
+    /// *outside* the commit and replays that answer inside it must still say
+    /// `false`: the set it read is not the set this commit is about to drain,
+    /// because anything staged in between was added after it looked.
+    fn consumes_layout_dirty(&self) -> bool {
+        true
+    }
+
     /// The atlases every run [`stage_text`](Self::stage_text) returns
     /// samples, in [`crate::AtlasIndex`] order — the set commit hands the painter
     /// alongside the runs, because a run's glyph ids mean nothing without
@@ -896,11 +938,22 @@ pub struct Arena {
     paint_map: FxHashMap<PaintKey, PaintIndex>,
     /// Retained clip interner, the clip-region analogue of `paint_map`.
     clip_map: FxHashMap<ClipKey, ClipIndex>,
-    /// Nodes whose layout-affecting intent changed since the last commit.
-    /// The retained solver reads this (via [`Arena::layout_dirty`]) to
-    /// mark exactly those nodes dirty in its tree; drained each commit.
-    /// May carry duplicates — consumers dedup.
+    /// Nodes whose layout-affecting intent changed since the last commit
+    /// that solved. The retained solver reads this (via
+    /// [`Arena::layout_dirty`]) to mark exactly those nodes dirty in its
+    /// tree; drained by a commit whose solver says it read it
+    /// ([`LayoutSolver::consumes_layout_dirty`]) and carried forward by one
+    /// that does not, so a replayed commit leaves the restyle it did not do
+    /// owed rather than discarding it. May carry duplicates — consumers
+    /// dedup; a carrying commit dedups when the set grows past twice what
+    /// the last one left ([`should_dedup_layout_dirty`]), which is what
+    /// bounds it.
     layout_dirty: Vec<NodeId>,
+    /// Distinct nodes [`Arena::layout_dirty`] is known to name — what the
+    /// last dedup left, or zero since the last drain. The live count a
+    /// carried set's growth is bounded against, held rather than recomputed
+    /// because recomputing it is the dedup (issue #1148).
+    layout_dirty_live: usize,
     /// Nodes whose paint intent (fill, stroke, corners) or clip flag
     /// changed since the last commit — what commit re-interns. Drained
     /// each commit; may carry duplicates.
@@ -1286,13 +1339,21 @@ impl Arena {
         self.nodes.len()
     }
 
-    /// Nodes whose layout-affecting intent changed since the last commit,
-    /// in the order the changes were staged (with possible duplicates).
-    /// This is the seam a retained [`LayoutSolver`] reads to mark exactly
-    /// those nodes dirty in its tree instead of re-solving the whole scene
-    /// (issue #164). Empty right after a commit; a `set_prop` of a
-    /// paint-only property adds nothing here, which is what lets a
-    /// paint-only frame skip the solve entirely.
+    /// Nodes whose layout-affecting intent changed since the last commit
+    /// **that solved**, in the order the changes were staged (with possible
+    /// duplicates). This is the seam a retained [`LayoutSolver`] reads to
+    /// mark exactly those nodes dirty in its tree instead of re-solving the
+    /// whole scene (issue #164). A `set_prop` of a paint-only property adds
+    /// nothing here, which is what lets a paint-only frame skip the solve
+    /// entirely.
+    ///
+    /// Empty right after a commit whose solver read it — see
+    /// [`LayoutSolver::consumes_layout_dirty`]. A commit whose solver did not
+    /// leaves every node it names still named, so a producer replaying its own
+    /// geometry can commit any number of times without a node it dirtied
+    /// losing its place in the queue. Such a commit may still **deduplicate**
+    /// the set in place to bound it, which removes no node and changes no
+    /// node's position relative to the others.
     pub fn layout_dirty(&self) -> &[NodeId] {
         &self.layout_dirty
     }
@@ -2041,6 +2102,14 @@ impl Txn<'_> {
     /// up in the bit compare. Fully deterministic given a deterministic
     /// solver (R7).
     ///
+    /// Every change log the arena keeps is drained here, with one exception:
+    /// [`Arena::layout_dirty`] is drained only when the solver says it
+    /// resolved this commit's geometry from it
+    /// ([`LayoutSolver::consumes_layout_dirty`], `true` by default). The other
+    /// sets are this commit's own input and it has just read them; that one is
+    /// a **consumer's** input, and draining it behind a solver that never
+    /// looked is how a retained tree goes stale.
+    ///
     /// # Panics
     ///
     /// Panics if the solver returns a rect for a node that is not this
@@ -2733,7 +2802,35 @@ impl Txn<'_> {
         let back = 1 - arena.front;
         arena.buffers[back] = back_scene;
         arena.front = back;
-        arena.layout_dirty.clear();
+        // The layout-dirty set is the one entry here that a *consumer* reads
+        // rather than this commit, so it is drained only when the solver says
+        // it read it ([`LayoutSolver::consumes_layout_dirty`]). A replaying
+        // solver leaves it, and the nodes it names stay owed a restyle until a
+        // solver that performs one takes them.
+        if solver.consumes_layout_dirty() {
+            arena.layout_dirty.clear();
+            arena.layout_dirty_live = 0;
+        } else if should_dedup_layout_dirty(arena.layout_dirty.len(), arena.layout_dirty_live) {
+            // Carrying the set forward is what makes it able to grow without
+            // bound: a scene doing nothing but contained writes adds a node per
+            // binding per frame and never drains (R4).
+            //
+            // The predicate is [`should_compact`]'s, for the same reason and
+            // with the same amortization — bounded against what is *live*
+            // rather than against the document. Bounding it by the node count
+            // instead would be sound and useless: one animating node in a
+            // 10,000-node scene would carry 10,000 duplicates of itself before
+            // a dedup, and the reflow that landed in that window would build
+            // `incremental`'s set out of all of them to recover the one node
+            // that changed — a document-scaled cost per reflow, which is the
+            // property issue #164 exists to keep.
+            //
+            // First occurrence wins, so the surviving order is still the order
+            // the changes were staged in.
+            let mut seen = FxHashSet::default();
+            arena.layout_dirty.retain(|node| seen.insert(*node));
+            arena.layout_dirty_live = arena.layout_dirty.len();
+        }
         arena.paint_dirty.clear();
         arena.clip_toggled.clear();
         arena.mask_toggled.clear();
@@ -3059,6 +3156,29 @@ const COMPACT_FLOOR: usize = 256;
 /// the rebuild's O(scene) cost amortize to a constant per commit.
 fn should_compact(table_len: usize, rect_count: usize) -> bool {
     table_len > COMPACT_FLOOR && table_len > 2 * rect_count
+}
+
+/// Carried-set size below which a dedup is not worth its bookkeeping —
+/// [`COMPACT_FLOOR`]'s counterpart for the layout-dirty set, and smaller
+/// because an entry is a `NodeId` rather than a paint entry (issue #1148).
+const LAYOUT_DIRTY_FLOOR: usize = 64;
+
+/// Whether a carried layout-dirty set holds enough duplicates to be worth
+/// deduplicating (issue #1148).
+///
+/// `live` is what the last dedup (or drain) left, so it is the count of
+/// distinct nodes the set is known to name. A set more than twice that size
+/// holds at least as many duplicates as distinct entries, and a dedup at
+/// least halves it — which is what makes the dedup's O(set) cost amortize to
+/// a constant per staged write, exactly as [`should_compact`] argues for the
+/// pooled tables.
+///
+/// Bounded against `live` and not against the arena's node count on purpose.
+/// Both bound the set, and only this one bounds it by *what is dirty*: the
+/// node count would let one animating node accumulate a document's worth of
+/// copies of itself before anything reclaimed them.
+fn should_dedup_layout_dirty(set_len: usize, live: usize) -> bool {
+    set_len > LAYOUT_DIRTY_FLOOR && set_len > 2 * live
 }
 
 /// Rebuild the paint table from the entries `rects` reference, renumber
