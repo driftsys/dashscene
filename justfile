@@ -383,7 +383,21 @@ secrets range="--all":
     # the first; the previous revision leaked a 19 MB export per run that way,
     # and referenced a variable the early-exit path had not yet assigned.
     work=$(mktemp -d)
-    trap 'rm -rf "$work"' EXIT
+    # The history gate below adds a git worktree inside $work, so the handler
+    # removes that worktree by name before deleting the directory. Both are in
+    # the one EXIT handler, because bash REPLACES an EXIT trap rather than
+    # appending, which is the leak the note above records.
+    #
+    # **`worktree remove`, never `worktree prune`.** Prune is repo-global and
+    # defaults to `--expire TIME_MAX`, so it deletes the administrative data of
+    # ANY worktree whose directory is momentarily absent — index, HEAD, reflog
+    # and refs/worktree, with no grace period. This recipe runs on every push
+    # through `just verify`, this machine carries a worktree per lane plus
+    # several under a temp directory a reaper can clear, and `prune` resolves
+    # against the common git dir shared by all of them. It would also race two
+    # concurrent runs, since `worktree add` creates the registration before the
+    # directory.
+    trap 'git worktree remove --force "$work/hist" >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
 
     # --- gate 0: is this history complete at all? ---------------------------
     #
@@ -435,22 +449,83 @@ secrets range="--all":
     # across history, so a fingerprint written for one of them does not
     # converge on the rest.
     #
-    # It does NOT follow that .gitleaksignore is inert here, which this
-    # comment claimed until 2026-08-15. gitleaks also matches a bare
-    # <file>:<rule>:<line> in git mode, so a fingerprint silences that path
-    # and line in EVERY commit that carries it. Measured over --all on that
-    # date: 101 findings with the file removed, 63 with it in place. The
-    # baseline therefore adjudicates only what the fingerprints leave, and a
-    # value pinned at a line it also occupies in history never reaches this
-    # comparison at all. Issue #987 carries the measurement and the options;
-    # until it is settled, do not read a clean run here as "every historical
-    # value is triaged". Note also that `-i <dir>` does not disable the file
-    # — remove it to reproduce.
+    # **The scan runs where .gitleaksignore is not**, which is what makes the
+    # baseline the whole adjudication rather than the remainder (issue #987).
+    # gitleaks matches a bare <file>:<rule>:<line> in git mode too, so a
+    # fingerprint silences that path and line in EVERY commit that carries it.
+    # Measured over --all on 2026-08-16, the only variable being whether the
+    # file is present:
+    #
+    #     with    .gitleaksignore : 63 findings, 31 distinct pairs
+    #     without .gitleaksignore : 101 findings, 54 distinct pairs
+    #
+    # 23 pairs were suppressed, and 17 of them appeared in no triage record at
+    # all. None was a credential — they are Figma `fileKey` and 40-hex
+    # component `key` values, the two classes the baseline header already
+    # describes — but nobody had been asked, and a clean run here was being
+    # read as "every historical value is triaged".
+    #
+    # **What git mode still does not read: merge commits.** gitleaks drives
+    # `git log -p`, which emits no patch for a merge, so a value introduced
+    # only by a conflict resolution never reaches this comparison. Measured on
+    # 8.30.1 against a synthetic repository: `gitleaks git --log-opts=--all`
+    # reports 0 and `gitleaks dir` reports 1 for the same blob, reachable at
+    # HEAD. Gate 1 covers it at HEAD and gate 3 covers it for its patterns over
+    # every reachable object, so the hole is this gate's rule set on merge-only
+    # content — which is why the line this prints says which scan it was.
+    #
+    # **A `--no-checkout` worktree is how the file is removed.** `-i <path>`
+    # does NOT disable the auto-loaded copy: measured on gitleaks 8.30.1
+    # against both an empty directory and an empty file, and the count stayed
+    # 63 either way. An earlier reading of this concluded the ignore file had
+    # no effect on git mode because of that flag. A worktree shares the object
+    # store and every ref, so `--all` and `--all --not --remotes` resolve to
+    # exactly the same objects — verified, 880 either side — and `--no-checkout`
+    # means nothing is written to disk, so it costs no checkout of a corpus this
+    # size. `gitleaks git` reads history rather than a working tree, so an empty
+    # one is all it needs.
     echo "── gitleaks: history ($scope_label, against the triaged baseline) ──"
     hist="$work/history.json"
+    # **The config comes from the EXPORT**, like the two triage records below
+    # and like gate 1's. Reading `.gitleaks.toml` from the working tree would
+    # let an uncommitted `[[allowlists]]` entry silence a value that is in
+    # history and not at HEAD — which is precisely what this gate, and not gate
+    # 1, exists to catch. It would re-open the suppression channel this change
+    # closes, one file over.
+    config="$work/head/.gitleaks.toml"
+    if [ ! -f "$config" ]; then
+        echo "history: ABORT — the export carries no .gitleaks.toml."
+        exit 1
+    fi
+    # Not `>/dev/null 2>&1` with an `if` after it: under `set -e` a failing
+    # `worktree add` exits here and the guard never runs, so git's reason was
+    # discarded for nothing. Captured, then reported.
+    wt_err=""
+    if ! wt_err=$(git worktree add --no-checkout --detach "$work/hist" HEAD 2>&1); then
+        echo "history: ABORT — could not create the scanning worktree."
+        printf '%s\n' "$wt_err" | sed 's/^/  /'
+        exit 1
+    fi
+    if [ -e "$work/hist/.gitleaksignore" ]; then
+        echo "history: ABORT — the scanning worktree has a .gitleaksignore."
+        echo "  This gate reads history the tree scan's fingerprints would hide;"
+        echo "  with that file present it would adjudicate only the remainder."
+        exit 1
+    fi
+    # **The `cd` is load-bearing and the subshell keeps it local.** gitleaks
+    # resolves `.gitleaksignore` from its working directory, not from the source
+    # path it is given: review proposed `gitleaks git "$work/hist"` from here as
+    # an equivalent, and it is not — measured, that form reports 63 findings,
+    # the suppressed count, because it picks up this checkout's ignore file. The
+    # `cd` is what makes the count 101. The config is therefore an absolute path
+    # from `$work`.
+    #
+    # A `cd` that fails would set `rc=1` and read as "findings", which the
+    # `jq -e 'type == "array"'` guard below catches: an absent report is not a
+    # clean history.
     rc=0
-    gitleaks git --log-opts="$range" --config .gitleaks.toml \
-        --report-format json --report-path "$hist" >/dev/null 2>&1 || rc=$?
+    ( cd "$work/hist" && gitleaks git --log-opts="$range" --config "$config" \
+        --report-format json --report-path "$hist" >/dev/null 2>&1 ) || rc=$?
     # 0 = clean, 1 = findings, anything else = the scan itself failed.
     if [ "$rc" -gt 1 ]; then
         echo "history: ABORT — gitleaks exited $rc; the scan did not complete."
@@ -488,7 +563,10 @@ secrets range="--all":
         printf '%s\n' "$new" | sed 's/^/  /'
         exit 1
     fi
-    echo "history: clean — $(jq 'length' "$hist") findings, all in the $(wc -l < "$work/baseline" | tr -d ' ') triaged pairs"
+    # Says which scan produced the number. "every value" would be wrong twice
+    # over: git mode reads no merge patches, and a narrowed range is narrowed on
+    # purpose. Issue #987 asked this line to state what it did NOT look at.
+    echo "history: clean — $(jq 'length' "$hist") findings from $scope_label, ignore-file suppression off, all in the $(wc -l < "$work/baseline" | tr -d ' ') triaged pairs (git mode reads no merge patches)"
 
     # --- gate 3: pattern grep over every object -----------------------------
     #
