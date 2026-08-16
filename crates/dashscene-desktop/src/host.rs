@@ -456,7 +456,7 @@ struct Host<A: App> {
     /// rather than claimed.
     ///
     /// `presents` counts calls that returned, **not** frames that reached the
-    /// window: a presenter answers [`Drawn::No`] for a zero-area drawable, an
+    /// window: a presenter answers [`crate::Drawn::No`] for a zero-area drawable, an
     /// occluded surface or a timed-out acquire, and those are counted here.
     /// [`App::measured`] is where that distinction is kept, because a caller
     /// measuring frame cost has to exclude the ones that did not happen.

@@ -16,7 +16,7 @@
 //! (`docs/decisions/dashscene-document-is-the-ir.md`).
 //!
 //! [`Document`] is the in-memory document — what a producer lowers *into* and
-//! what [`emit`] writes *out of*. Its paint types are `dashpaint`'s, so one
+//! what [`emit()`] writes *out of*. Its paint types are `dashpaint`'s, so one
 //! paint vocabulary spans the document, the runtime, and the painter, and a
 //! lowering cannot invent a construct no painter can draw.
 //!

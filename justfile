@@ -108,12 +108,38 @@ lint: deno-fmt-check
     # exist is this repository's most common defect, and until v0.16 nothing in
     # `just build` could see one: clippy does not resolve doc links, so a link
     # to a deleted function passed the whole gate (story #598 shipped one, and a
-    # review agent running `cargo doc` is what found it). `-D warnings` here
-    # covers `broken_intra_doc_links` and `private_intra_doc_links`, which is
-    # the pair that catches a renamed or removed item.
+    # review agent running `cargo doc` is what found it). `-D warnings` turns
+    # every rustdoc lint into an error here, which is more than the two this
+    # line used to name: `redundant_explicit_links` reaches the gate as well,
+    # and `broken_intra_doc_links` covers an ambiguous name ("both a function
+    # and a module") as well as an absent one. Both shapes are among the
+    # twelve corrections issue #1046 needed.
     #
     # `--no-deps` so it documents this workspace and not its dependency tree.
-    RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --quiet
+    #
+    # `--document-private-items` so the pass reads what rustdoc otherwise
+    # strips before resolving links. Do not reduce that to "private items":
+    # turning it on failed on TWELVE links across SEVEN crates that this gate
+    # had been passing, and they arrived by at least three different routes —
+    # a doc comment on a genuinely private item; a public item defined in a
+    # private module, re-exported, whose links are resolved only once that
+    # module is documented (`Waiver::rule` and `Easing` are both public and
+    # both were unchecked); and a name that is unambiguous only while the
+    # private module sharing it is stripped, which is where `emit` and
+    # `triage` came from. Issue #1046 carries the list.
+    #
+    # It was measured to cost nothing on the other half:
+    # `private_intra_doc_links` still fails a public doc that links to a
+    # private item, with the flag exactly as without it. Only rustdoc's
+    # explanatory note differs.
+    #
+    # `--keep-going` so one run reports every crate. Cargo otherwise stops
+    # scheduling work after the first failure, and both prior measurements of
+    # this command — issue #1046's own, and the one taken when it was
+    # scheduled — reported partial and mutually disjoint error sets because of
+    # it. A gate that under-reports is what sends someone round the loop
+    # twice.
+    RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --document-private-items --keep-going --quiet
     # Markdown, JSON, YAML and TOML. Its own recipe for the same reason
     # `wasm-lint` is one: CI's `prim` job runs exactly it, and a second copy in
     # YAML is the drift this repository keeps hitting.
