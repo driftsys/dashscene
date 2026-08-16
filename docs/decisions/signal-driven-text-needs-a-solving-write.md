@@ -35,8 +35,8 @@ that changes a string is the frame that erases every glyph run in the scene, the
 new string included.
 
 This is not theoretical and it is not new. `corpus/showcase/README.md` records
-it as "the defect these scenes are written around", and
-`corpus/showcase/src/typography.rs` pairs its readout's text binding with a
+it under "The defect these scenes were written around — fixed at issue #621",
+and `corpus/showcase/src/typography.rs` pairs its readout's text binding with a
 width binding for exactly this reason. It cost this story a critical defect
 anyway: the painter badge first bound only text and opacity, and announcing a
 painter wiped the scene's own text along with its own label. The hazard was
@@ -76,8 +76,10 @@ The two reasons this record gave for deferring, and what became of them:
 
 1. **Fix the replay.** `CachedSolver` delegates `atlases` and `stage_text` to
    the solver `LiveScene` already retains, so a replaying commit re-stages text
-   and no authoring rule is needed. This is the fix `corpus/showcase/README.md`
-   names.
+   and no authoring rule is needed. This is what issue #621 made;
+   `corpus/showcase/README.md` records the defect and names `CachedSolver` as
+   where the fix lives. It named it as still outstanding until 2026-08-16, three
+   paragraphs after saying it had landed (issue #1105).
 2. **Constrain the authoring.** Require every signal that drives a text binding
    to also drive a write that forces the solve, so the tick that changes a
    string is always a solving tick.
@@ -186,8 +188,9 @@ making it. That reason has not been discharged.
   under `corpus/showcase/src/` that call `Node::bind_text` at all.
   `corpus/showcase/src/surfaces.rs` is not among them: it has no text binding,
   and its signals drive `Channel::Width` and `Channel::X` only.
-- Measurement: `corpus/showcase/README.md` ("The defect these scenes are written
-  around"), which holds the run over 1,200 ticks at two extents.
+- Measurement: `corpus/showcase/README.md` ("The defect these scenes were
+  written around — fixed at issue #621"), which holds the run over 1,200 ticks
+  at two extents.
 - Related decisions: `docs/decisions/glyph-runs-cross-boundary-b.md` (commit as
   the run producer, and the per-node staging cost this defers paying);
   `docs/decisions/visible-is-layout-opacity-is-paint.md` (the layout/paint split

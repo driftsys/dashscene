@@ -155,8 +155,10 @@ It bit hardest exactly where it was least expected: a `bind_text` write is itsel
 paint-only, so a scene whose only animation was a changing string blanked that
 string the moment it changed.
 
-**Issue #621 fixed it.** The replay now borrows the scene's own solver and
-forwards both methods to it, so a paint-only commit keeps its text.
+**Issue #621 fixed it.** `CachedSolver` in `crates/dashlang/src/reactive.rs` —
+the rect replay `LiveScene::tick` commits through when no binding forced a
+re-solve — now borrows the scene's own solver and forwards both `atlases` and
+`stage_text` to it, so a paint-only commit keeps its text.
 
 Every scene here is still written so that **every signal drives at least one
 layout-affecting channel**, and that is now a property of how the scenes were
@@ -182,15 +184,12 @@ patched a Taffy tree that no longer described the row. The switch stages now and
 scene's own solver (issue #950,
 `docs/decisions/one-solver-per-live-scene.md`).
 
-The fix belongs in `dashlang`: the rect replay should delegate `atlases` and
-`stage_text` to the solver the live scene already owns. It is filed rather than
-made here, because `crates/dashlang/src/reactive.rs` is under change on another
-branch.
-
-A second, smaller gap: `Scene::signal_named` declares and looks up **scalar**
-signals only, so a bool signal — the kind `visible_when` takes — has no runtime
-name, and a scripted phase handed only a `LiveScene` cannot ask for one.
-`layout.rs` keeps its handle in a `OnceLock` as a result.
+A second defect in the same seam is still open, and it is smaller than the one
+this section is titled for: `Scene::signal_named` declares and looks up
+**scalar** signals only, so a bool signal — the kind `visible_when` takes — has
+no runtime name, and a scripted phase handed only a `LiveScene` cannot ask for
+one. `layout.rs` keeps its handle in a `OnceLock` as a result. Issue #623
+tracks it.
 
 ## How a scene is built
 
