@@ -1328,7 +1328,16 @@ fn draw_vector_field(
 /// `dest` is the plane bounds offset by the node origin, and the predicate
 /// above cannot see it: with a large `rect.x` a positive `right - left` can
 /// cancel to a zero-width device quad, which [`field_coverage`] would then
-/// divide by to build its texel-to-device scale.
+/// carry into its texel-to-device scale.
+///
+/// **Not by dividing by it**, which this comment said until a review of PR
+/// #1210 read the arithmetic: `sx` is `dest.width() / aw`, so the device quad
+/// is the *dividend* there and the atlas extent is the divisor. A zero width
+/// drives `sx` — and `px_range` with it — to zero rather than raising a
+/// division by zero. Dividing by the quad extent is `dashscene-gpu`'s
+/// `msdf_sample`, one painter over, which is where the sentence came from. What
+/// this guard is worth is the note further down: it changes no picture, and it
+/// buys the decision being this painter's rather than Skia's.
 ///
 /// **`dashscene-gpu` writes the same quantity, and this section said it had no
 /// such case until issue #1185.** `gpu_shape` does derive `px_range` from

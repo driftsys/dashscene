@@ -205,17 +205,43 @@ did not have.
   the document gate and the paint gate, by calling `VectorField::draws` instead
   of restating it. Both members this bullet and the one above it name are
   covered by that one warning, because one predicate decides both.
-- **`push_with` is not atomic on its other panics** (issue #1012). Only this
-  check runs before the five arrays are extended; `push_entry`'s panics do not,
-  and the production caller interns the entry's fills into the same table before
-  calling in.
-- **A `.dsb` reaches `push_with` through a validator that does not look at
-  `distance_range`** (issue #1002), so for a document the panic is currently the
-  only check rather than the second one. `Atlas::new` records the shape the pair
-  should have: `AtlasMetrics::from_bytes` refuses a bad blob at the parse
-  boundary, and the constructor check comes after it. Closing #1002 is more than
-  adding a rule: `validate_scene`, the gate whose stated job is to turn these
-  panics into named diagnostics, has no production caller at all.
+- **`push_with` is atomic on its own refusals** (issue #1012, which closed the
+  gap this bullet used to record). Every refusal runs before the first of the
+  five arrays is extended: `check_entry` resolves the index the entry would take
+  ahead of the copies, so the refusals it carries are raised there rather than
+  after them, which is where `push_entry` would have raised them. A caught
+  unwind therefore leaves the table as it was.
+
+  It does not follow that a commit is atomic, and `dashscene-core` has **two**
+  callers rather than the one this bullet used to name. `intern_paint` interns
+  the entry's own fill — when it carries one; a fill-less entry interns nothing
+  — and every stacked layer into the same table before it calls in, so a refusal
+  leaves those rows behind. `compact_paints` is the other, and its refusal is
+  not merely leftover rows: it renumbers `rects` in place as it walks and
+  installs the rebuilt table only at the end, so an unwind part-way leaves rects
+  naming rows of a table that is then dropped, against the old one still in
+  `paints`. **Neither residue is collected by a later rebuild**, which is the
+  natural assumption and is wrong: `should_compact` reads the entry count, and a
+  refusal grows the fill arrays without adding an entry.
+- **A `.dsb` now reaches `push_with` through a validator that does look at
+  `distance_range`** (issue #1002): `vector.atlas-distance-range-out-of-domain`
+  fires over the same `vector_atlases` loop `vector.atlas-image-out-of-range`
+  does, so past that gate the panic is the second check rather than the only
+  one. `Atlas::new` records the same shape for the glyph side, where
+  `AtlasMetrics::from_bytes` refuses a bad blob at the parse boundary and the
+  constructor check comes after it.
+
+  **The gate belongs to the hosts, not to the load.** The rule went into
+  `validate_document`, which `dashc`, `dashscene-desktop`, `dashscene-web` and
+  `dashscene-ffi` each call before loading — but `dashscene_core::load_document`
+  is public and calls no validator itself: it builds each `VectorField` with
+  `distance_range: atlas.distance_range()` and `expect`s the values as validated
+  upstream. So an embedder sitting on `dashscene-core` alone still has the seam
+  panic as its only check, which is the document-side twin of the producer
+  residual the closing paragraph below names. The rule went **not** into
+  `validate_scene` — the gate whose stated job is to turn these panics into
+  named diagnostics, and which has no production caller at all. That remains
+  true and remains the larger problem.
 - **`Atlas::new` does not compare its payload against the extent stated beside
   it.** Every field on the type is private since issue #1074, so the pair cannot
   come apart after construction — but nothing here refuses a pair that was wrong
@@ -258,6 +284,12 @@ operand of `px_range = distance_range_px * size / px_per_em`, and no seam in
 `TextStyle.size` that `dashscene-engine` copies into the field. The residual is
 the producer that stages a text style directly and never runs the gate, which is
 the same residual every public field on these rows has, and is the reason
-`GlyphRun::opacity` was examined and rejected. #999 is closed as not a finding;
-`distance_range` differs from both because it has no rule on any path, which is
-what made #986 and #1002 real.
+`GlyphRun::opacity` was examined and rejected. #999 is closed as not a finding.
+
+`distance_range` was the one that differed, because at the time it had no rule
+on any path. That is what made #986 and #1002 real, and both have now landed. So
+the two operands are covered the same way on the document path: a validator rule
+refuses the value, and past that gate a producer that stages directly is
+unchecked. They still differ in one respect. `distance_range` also has the seam
+panic this record decides, which runs whether or not the gate did; `size` has no
+equivalent.

@@ -102,6 +102,44 @@ All in `crates/dashscene-skia/src/lib.rs`:
   save/restore. The clip applies to the rect's own fill and stroke, not to the
   rects after it in slice order. Masks arrive as clip regions too (story #44),
   so the painter needs no mask code.
+- **A baked-vector coverage mask that names no area draws nothing, and one
+  function decides that.** `field_quad` takes two answers in order:
+  `VectorField::draws`, which lives on `dashpaint`'s own type and which both
+  painters call (issues #1000 and #1144), and then this painter's device-quad
+  guard. Both of `Painter::paint`'s masked arms ask it **above**
+  `ImageCache::get`, so a field that paints nothing pays no decode (issue
+  #1044), and `field_coverage` asks it again below the fetch, on the already
+  decoded sheet — which is what makes "a degenerate field draws nothing" this
+  function's own answer rather than a property of its two call sites.
+  Consolidating the predicate and the guard into one named function is issue
+  #1160, and that is what stopped a field the guard refused from fetching its
+  atlas first.
+
+  The two halves are not redundant, and they answer different failures. The
+  shared predicate is what the backdrop blur needs: without it `field_coverage`
+  returned `Some` for a field with no atlas extent, `sx` became an infinity, and
+  `draw_backdrop_blur_field`'s layer composited over the backdrop and erased it
+  — the masked _fill_ path resolved the same infinity to zero coverage and drew
+  nothing, so the two painters agreed by accident there. The device-quad guard
+  answers what the predicate cannot see: `dest` is the plane bounds offset by
+  the node origin, so a large `rect.x` can cancel a positive `right - left` to a
+  zero-width quad. **That one changes no picture** — the device extent is
+  `field_coverage`'s dividend and not its divisor, so a collapsed quad drives
+  `sx` and the screen-pixel range to zero rather than dividing by zero, and Skia
+  draws nothing for the NaN case regardless. What the guard buys is that this
+  painter's contract decides it, rather than resting on Skia's undocumented
+  handling of a degenerate rectangle.
+
+  Since issue #1185 the lean painter carries a floor over the same quantity in
+  `paint.wgsl`'s vertex stage, where `msdf_sample` genuinely does divide by the
+  quad extent. **That does not make the two painters agree here**, for two
+  separate reasons: issue #1195 records that Metal folds the cancellation out of
+  that shader, so the floor is reachable through the lean painter's text arm and
+  not through its masked one; and `blur.wgsl`'s masked-backdrop arm derives the
+  same quad with the origin in the position term only and carries no floor at
+  all, which `docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md`
+  records as a live divergence. `field_quad`'s own doc comment carries the
+  per-term measurement behind all of it.
 - Group opacity arrives resolved (story #44,
   `docs/decisions/masks-and-group-opacity.md`). The free path rides on
   `RectEntry.opacity`: each draw's paint alpha is multiplied by it
