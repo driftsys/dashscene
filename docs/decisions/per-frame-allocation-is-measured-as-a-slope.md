@@ -9,6 +9,11 @@
              the predicate holding it was split in two so that a guard
              breaching a count alone does not load a one-root document to
              satisfy a signature. The first Consequence records it.
+             **Amended again 2026-08-16 (v0.20, issue #1111)**: the term
+             reads **0**, D5's residue having been closed. The decision
+             itself — bytes, layout frame, difference not level — is
+             unchanged; D5 is rewritten because what it recorded is no
+             longer the case.
     scope    the third term of the per-frame scaling criterion,
              `goldens/tooling/tests/per_frame_scaling.rs`, and how any later
              per-frame allocation cost is stated in this repository.
@@ -80,22 +85,42 @@ whatever the other two tests were allocating. Under nextest, which gives each
 test its own process, the two would be equivalent — the suite is run both ways,
 so the weaker assumption is the one held.
 
-**D5 — the term states a residue rather than rounding it away.** It reads 17,
-not 0. What remains is `dashscene-engine`'s per-frame scratch, named in the
-constant's own documentation and carried by issue #1111. A band that reported
-zero by measuring only the crate under change would be the same defect the term
-was added to correct.
+**D5 — the term states a residue rather than rounding it away.** It read 17
+rather than 0 when story #944 landed, because what remained was
+`dashscene-engine`'s per-frame scratch rather than the commit's. A band that
+reported zero by measuring only the crate under change would have been the same
+defect the term was added to correct, so the residue was named in the constant's
+own documentation and filed as issue #1111.
+
+**That issue is now closed and the term reads 0** — an equality over the band's
+fixture, not a rounding: the sixty-five-root document's steady-state layout
+frame allocates byte-identically to the one-root document's, 280 bytes each.
+**The comparison had to be repaired to mean that.** A `saturating_sub` guarded
+the difference while the constant was positive; at 0 it turned the equality into
+"the many-root frame allocates no _more_", which a frame allocating fewer bytes
+passes. The term compares the many-root level against the one-root level plus
+the expectation now, which is the same test at any positive constant and a real
+equality at 0. D5 is kept rather than deleted because the rule it states is what
+produced that outcome; a term allowed to report zero early would have had
+nothing left to measure when the engine's turn came.
+
+**The rule applies again immediately.** The term is on the **layout** frame, and
+the paint-only frame is still document-scaled at about 162 bytes per extra root
+from a cause nothing has attributed. That is issue #1146, named here and in the
+constant's documentation rather than left to be inferred from a term that does
+not cover it.
 
 ## Consequences
 
-- The band has three terms, and `all_terms` breaches on any of them. It is two
-  predicates underneath — `within_band` for the two counts, `within_byte_band`
-  for this one — because only this term needs a one-root baseline and a baseline
-  is a whole document load, so a guard breaching a count alone does not pay for
-  one (issue #1119). `the_confinement_is_what_makes_the_number_one` requires all
-  three to move when the shown root is cleared, so the third term has the same
-  committed upward injection the other two have and could land in the same
-  change as the fix it measures without being inert.
+- The band has three terms, and `within_band` breaches on any of them. It is two
+  predicates underneath — `within_count_band` for the two counts,
+  `within_byte_band` for this one — because only this term needs a one-root
+  baseline and a baseline is a whole document load, so a guard breaching a count
+  alone does not pay for one (issue #1119).
+  `the_confinement_is_what_makes_the_number_one` requires all three to move when
+  the shown root is cleared, so the third term has the same committed upward
+  injection the other two have and could land in the same change as the fix it
+  measures without being inert.
 - **The guard's byte figure is 136, not the 69 the story started from, and that
   is not a regression.** An unconfined commit really does draw sixty-five
   artboards, so the rect table and everything sized by rect rows grows with it.
@@ -125,5 +150,9 @@ was added to correct.
   `carried_out`, went unnoticed in issue #944's own list of eight.
 - **Widening story #944 to `dashscene-engine` so the term could read zero.**
   Rejected for that story: a second crate, outside the issue's subject, in a
-  file parallel stories are known to collide on. The residue is filed as #1111
-  and named in the band instead (D5).
+  file parallel stories are known to collide on. The residue was filed as #1111
+  and named in the band instead (D5) — **and closed separately on 2026-08-16**,
+  which is the outcome that deferral was for. Taking it inside #944 would have
+  put three engine changes into a commit about the commit's interior, and the
+  measured ladder that priced each of them separately could not have been
+  stated.

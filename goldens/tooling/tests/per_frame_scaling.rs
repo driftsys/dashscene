@@ -69,18 +69,33 @@
 //! ```text
 //! document           frame         solves   rect rows   bytes
 //! small-root (1)     paint-only         0           1     892
-//! small-root (1)     layout             1           1     297
+//! small-root (1)     layout             1           1     280
 //! many-root (65)     paint-only         0           1   11260
-//! many-root (65)     layout             1           1    1385
-//! ratio, many/small  layout          1.00x       1.00x   4.66x
-//! slope, per extra root                                     17
+//! many-root (65)     layout             1           1     280
+//! ratio, many/small  layout          1.00x       1.00x   1.00x
+//! slope, per extra root                                      0
 //! ```
 //!
+//! **The layout row's byte figures are equal, not merely close.** That is the
+//! third term at its strongest: the commit and the solver allocate the same
+//! bytes for a sixty-five-root document as for a one-root one.
+//!
+//! **The paint-only row is not**, and the band does not assert on it. Its
+//! difference between the two documents came out at about 162 bytes per extra
+//! root on every run taken while issue #1111 was worked — unchanged by three
+//! separate changes to the engine's scratch, which is what says it is
+//! document-scaled rather than noise. That is not the same as calling the row
+//! *stable*: its **level** does move between repeats over one unchanged
+//! document (884, 884, 1284, 1172 below), which is why the term is taken on the
+//! layout row and why nothing here asserts on this one. Both readings are
+//! needed, and issue #1146 carries the unattributed cause.
+//!
 //! The byte levels are stated for completeness and asserted on nowhere. What is
-//! asserted is the **growth** between the two documents — 1088 bytes, which is
-//! the 17 above times the 64 extra roots — see [`BYTES_PER_EXTRA_ROOT`] for why
-//! it is a difference and why the comparison is against the whole growth rather
-//! than against a per-root quotient. The paint-only row's figures are the ones
+//! asserted is the many-root layout frame's own figure against the one-root
+//! frame's plus the slope times the extra roots — which at a slope of 0 is the
+//! byte identity above, and is why the row reads 1.00x. See
+//! [`BYTES_PER_EXTRA_ROOT`] for why it is stated per root and why the
+//! comparison is not a per-root quotient. The paint-only row's figures are the ones
 //! that move between runs of the same document, which is why the term is taken
 //! on the layout row.
 //!
@@ -107,6 +122,7 @@
 //!                    bytes per extra root
 //! before (#944)      69
 //! after  (#944)      17
+//! after  (#1111)      0
 //! ```
 //!
 //! It came down in four measured steps, each predicted before it was taken and
@@ -116,18 +132,24 @@
 //! group-opacity vectors followed, and to 17 when `dfs_order` stopped
 //! reserving the whole document.
 //!
-//! **17 is not zero, and what remains is in `dashscene-engine`**, which this
-//! story deliberately did not touch: `baseline_pass`'s `cross_offset` (8 bytes
-//! per node), `incremental`'s `on_path` (1 byte per node) and the
-//! `state.roots.clone()` whose own comment calls the roots list small when it
-//! is the document's root count (8 bytes per root). Issue #1111 carries them.
+//! **The last 17 were `dashscene-engine`'s**, which story #944 deliberately did
+//! not touch and issue #1111 then closed, in three steps that landed on their
+//! predictions exactly: 17 to 9 when `state.roots.clone()` became a borrow of a
+//! disjoint field, to 8 when `incremental`'s `on_path` became a set of the
+//! dirty closure rather than a flag per node, and to 0 when `baseline_pass`'s
+//! `cross_offset` became a map — which allocates nothing at all on a scene with
+//! no baseline text rows, where the vector it replaced was sized by the
+//! document and thrown away unused.
 //!
-//! **The one-root document's layout frame went up, from 289 bytes to 297**, and
-//! that is the honest reading of the last step: an unreserved `Vec` growing to
-//! one element takes a larger minimum allocation than a one-element reserve.
-//! The term is a slope precisely so that a level moving in the small case
-//! cannot be mistaken for the document-scaled cost this measures — 4705 bytes
-//! to 1385 over the sixty-five-root document, on the same change.
+//! **The one-root document's layout frame moved in both directions on the
+//! way**: 289 to 297 under story #944, because an unreserved `Vec` growing to
+//! one element takes a larger minimum allocation than a one-element reserve,
+//! then 297 to 280 under issue #1111, because the vectors that frame still
+//! allocated became either a map that stays empty or a stamp on a vector the
+//! solver already retains. The term is a difference precisely so that a level
+//! moving either way in the small case cannot be mistaken for the
+//! document-scaled cost it measures — over the same two changes the
+//! sixty-five-root document went 4705 bytes to 280.
 //!
 //! The band landed first so that before-number was measured rather than
 //! remembered — a band added in the same change that improves what it measures
@@ -135,12 +157,13 @@
 //! measured: [`the_confinement_is_what_makes_the_number_one`] removes the
 //! confinement on every run and reports 65 again.
 //!
-//! **On the byte term that guard reports 136, not the 69 story #944 started
-//! from, and the difference is not a regression.** An unconfined commit really
+//! **On the byte term that guard reports 119, which is neither the 69 story
+//! #944 started from nor the 0 the band now holds, and it is not a
+//! regression.** An unconfined commit really
 //! does draw sixty-five artboards, so the rect table and everything else sized
 //! by rect rows grows with it — costs the confined commit avoids by drawing
 //! less, rather than scratch it was wasting. The guard's job is to show the
-//! term moves when the confinement goes, and 136 against 17 shows it.
+//! term moves when the confinement goes, and 119 against 0 shows it.
 //!
 //! The paint-only row did not move, and that is worth stating. It was already
 //! zero at 65 roots: a commit whose changes are all paint-only solves nothing,
@@ -359,9 +382,17 @@ const MANY_RECT_ROWS: usize = 1;
 /// beyond the first — the third term, and the only one of the three that can
 /// see what a commit's per-node scratch costs.
 ///
-/// **69 until story #944; 17 after it.** The 17 that remain are
-/// `dashscene-engine`'s per-frame scratch, not the commit's — issue #1111 —
-/// so a change that moves this number downward is most likely that one.
+/// **69 until story #944, 17 after it, and 0 since issue #1111.** Zero is an
+/// equality, not a rounding: over the band's fixture the sixty-five-root
+/// document's steady-state layout frame allocates byte-identically to the
+/// one-root document's, 280 bytes each. A frame's allocation does not grow with
+/// the document at all, which is the third term's whole claim and is now stated
+/// at its strongest.
+///
+/// **This is the layout frame.** The paint-only frame is still document-scaled
+/// at about 162 bytes per extra root, from a cause nothing has attributed —
+/// issue #1146. That is why the sentence above says "steady-state layout frame"
+/// and not "a frame".
 ///
 /// # Why a slope where the other two terms are levels
 ///
@@ -395,7 +426,7 @@ const MANY_RECT_ROWS: usize = 1;
 /// one-root, seventeen-root and sixty-five-root documents alike. Only the sizes
 /// differ, because what scales is the length of vectors the commit allocates
 /// once each.
-const BYTES_PER_EXTRA_ROOT: u64 = 17;
+const BYTES_PER_EXTRA_ROOT: u64 = 0;
 
 /// The same three over the single-root document — the denominator the ratio is
 /// taken against, and what the many-root column becomes when #838 lands.
@@ -663,29 +694,36 @@ fn within_count_band(paint: FrameCost, layout: FrameCost) -> Result<(), String> 
 /// breaches a count and asserts on nothing else calls that one and skips this
 /// (issue #1119).
 ///
-/// `saturating_sub` rather than `-`: a many-root frame that allocated *less*
-/// than the one-root frame would underflow the u64 and panic inside the band,
-/// which reports worse than a breach does. It reads as a growth of zero, which
-/// is a breach against a non-zero constant and is exactly the "re-measure and
-/// move the constant" case.
+/// **The many-root frame's own figure is compared, not a saturated
+/// difference.** This term was a difference against a non-zero constant until
+/// issue #1111 took the constant to 0, and a `saturating_sub` on the way in
+/// quietly turned the equality into "the many-root frame allocates no *more*
+/// than the one-root frame": a frame that allocated 58 bytes *fewer* read as a
+/// growth of zero and passed. That is not what four documents in this
+/// repository state, which is byte identity. Comparing `layout.bytes` against
+/// `small_layout.bytes + expected` is the same test whenever the constant is
+/// positive and a real equality when it is 0, with no subtraction to saturate
+/// and no underflow to guard against.
 ///
-/// **The whole growth is what is compared, not the slope**, so this term is an
-/// exact equality like the two counts. Comparing `growth / extra_roots` against
-/// the constant would truncate: over 64 extra roots, anything up to 63 bytes of
-/// new document-scaled cost divides away and the band stays green — which is
-/// the "a change with no term that can see it" failure this term exists to
-/// close. The slope is derived from the equality for the message and the log,
-/// never asserted on.
+/// **The whole growth is compared, not the slope**, so this term is an exact
+/// equality like the two counts. Dividing by the root count first would
+/// truncate: over 64 extra roots, anything up to 63 bytes of new
+/// document-scaled cost divides away and the band stays green — which is the "a
+/// change with no term that can see it" failure this term exists to close. The
+/// slope is derived from the equality for the message and the log, never
+/// asserted on.
 fn within_byte_band(
     layout: FrameCost,
     small_layout: FrameCost,
     extra_roots: u64,
 ) -> Result<(), String> {
-    let growth = layout.bytes.saturating_sub(small_layout.bytes);
     let expected = BYTES_PER_EXTRA_ROOT * extra_roots;
-    if growth == expected {
+    if layout.bytes == small_layout.bytes + expected {
         return Ok(());
     }
+    // Only for the message: the report reads as a growth even when the frame
+    // shrank, so it is saturated here rather than in the comparison above.
+    let growth = layout.bytes.saturating_sub(small_layout.bytes);
     Err(format!(
         "a layout frame allocated {growth} bytes over the one-root document's {} across \
          {extra_roots} extra roots, against {expected} ({} bytes per extra root against \

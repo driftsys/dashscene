@@ -37,7 +37,7 @@ use dashscene_core::{
 };
 use dashscene_typeset::atlas::AtlasMetrics;
 use dashscene_typeset::text::{Font, FontFamily, TextShape, Typesetter, WeightedFont};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use taffy::prelude::*;
 use taffy::{AlignContent, AlignItems, AlignSelf, GridPlacement, JustifyContent, Position};
 
@@ -503,6 +503,22 @@ struct TreeState {
     /// needing a floor must have it removed, and the row's own style is not
     /// restyled when only a text child changed.
     baseline_floors: Vec<(NodeId, f32)>,
+    /// Which nodes are on a path to a changed node, stamped with the solve
+    /// that put them there rather than cleared between solves.
+    ///
+    /// Retained rather than allocated per frame, and dense rather than a set.
+    /// A per-frame vector sized by the document is what issue #1111 removed;
+    /// a set is bounded by the dirty closure and so is cheaper on the small
+    /// frames this runtime is built for, but it rehashes its way up on the
+    /// large ones — and a frame that dirties a large subtree is the frame a
+    /// fixed budget is judged on. Stamping a retained vector is neither:
+    /// nothing is allocated per frame, so the per-frame band still reads 0,
+    /// and the marking stays one indexed write per node with no hashing at
+    /// any dirty-set size.
+    on_path: Vec<u32>,
+    /// The stamp `on_path` carries for the solve in progress. Incremented per
+    /// solve, so the previous solve's marks read as absent without a clear.
+    pass: u32,
     /// The node count when the tree was built. A mismatch is a structural
     /// change and forces a rebuild.
     node_count: usize,
@@ -925,7 +941,6 @@ fn rebuild(
         arena,
         typesetter,
         &mut baseline_floors,
-        n,
         solves,
     );
 
@@ -958,6 +973,11 @@ fn rebuild(
 
     let state = TreeState {
         tree,
+        // One stamp per node, allocated with the tree and reused by every
+        // solve after it. Zero is "never marked", and the first solve stamps
+        // with 1 (issue #1111).
+        on_path: vec![0; n],
+        pass: 0,
         taffy_of,
         parent_of,
         roots,
@@ -1037,10 +1057,13 @@ fn incremental(
         }
     }
 
-    // `roots` is cloned so the loop does not hold a borrow of `state`
-    // while `state.tree` is recomputed (the roots list is small).
-    let roots = state.roots.clone();
-    let shown_taffy = shown_taffy_roots(arena, &roots);
+    // Borrowed, not cloned. `shown_taffy_roots` hands back a subslice of
+    // `state.roots`, and everything below it mutates `state.tree` — a
+    // *different* field, so the borrow checker takes both at once and the
+    // clone the comment here used to justify was never needed. It was 8 bytes
+    // per root in the document on every frame, which the per-frame band reads
+    // as document-scaled cost whatever the shown root is (issue #1111).
+    let shown_taffy = shown_taffy_roots(arena, &state.roots);
     let typesetter = compute_all(&mut state.tree, shown_taffy, typesetter, solves);
 
     // #272 baseline correction (see `rebuild`): re-place a baseline row's text
@@ -1054,7 +1077,6 @@ fn incremental(
         arena,
         typesetter,
         &mut state.baseline_floors,
-        state.node_count,
         solves,
     );
 
@@ -1062,14 +1084,23 @@ fn incremental(
     // (a fixed-size frame with a shifted child): mark every dirty node and
     // its ancestors so the readback descends to reach them, on top of
     // descending wherever a rect actually moved.
-    let mut on_path = vec![false; state.node_count];
+    //
+    // Stamped, not allocated. The vector is retained on the state and each
+    // solve marks with a fresh stamp, so the previous solve's marks read as
+    // absent and nothing is cleared or allocated per frame (issue #1111). The
+    // `break` still stops each walk at the first already-marked ancestor, so
+    // the work is the size of the dirty closure rather than the sum of the
+    // chains — the vector's size is the document's, but it is paid once at
+    // rebuild and never again.
+    state.pass = state.pass.wrapping_add(1);
+    let pass = state.pass;
     for &node in &dirty {
         let mut cursor = Some(node);
         while let Some(current) = cursor {
-            if on_path[current.index()] {
+            if state.on_path[current.index()] == pass {
                 break;
             }
-            on_path[current.index()] = true;
+            state.on_path[current.index()] = pass;
             cursor = state.parent_of[current.index()];
         }
     }
@@ -1109,7 +1140,8 @@ fn incremental(
                 &state.taffy_of,
                 &mut state.prev_rel,
                 &cross_offset,
-                &on_path,
+                &state.on_path,
+                pass,
                 arena,
                 root,
                 (origin.x, origin.y),
@@ -1653,7 +1685,7 @@ fn read_back_full(
     tree: &TaffyTree<TextContext>,
     taffy_of: &[taffy::NodeId],
     prev_rel: &mut [[u32; 4]],
-    cross_offset: &[Option<f32>],
+    cross_offset: &FxHashMap<NodeId, f32>,
     arena: &Arena,
     node: NodeId,
     parent_origin: (f32, f32),
@@ -1663,7 +1695,10 @@ fn read_back_full(
         .layout(taffy_of[node.index()])
         .expect("layout was computed for the whole tree");
     // A baseline-corrected child (#272) overrides Taffy's cross-axis offset.
-    let local_y = cross_offset[node.index()].unwrap_or(layout.location.y);
+    let local_y = cross_offset
+        .get(&node)
+        .copied()
+        .unwrap_or(layout.location.y);
     let x = parent_origin.0 + layout.location.x;
     let y = parent_origin.1 + local_y;
     prev_rel[node.index()] = rel_bits(
@@ -1705,8 +1740,9 @@ fn read_back_pruned(
     tree: &TaffyTree<TextContext>,
     taffy_of: &[taffy::NodeId],
     prev_rel: &mut [[u32; 4]],
-    cross_offset: &[Option<f32>],
-    on_path: &[bool],
+    cross_offset: &FxHashMap<NodeId, f32>,
+    on_path: &[u32],
+    pass: u32,
     arena: &Arena,
     node: NodeId,
     parent_origin: (f32, f32),
@@ -1719,7 +1755,10 @@ fn read_back_pruned(
     // A baseline-corrected child (#272) overrides Taffy's cross-axis offset;
     // the corrected `y` is folded into `rel_bits`, so a change to a sibling's
     // baseline shift is detected and re-emitted like any other move.
-    let local_y = cross_offset[node.index()].unwrap_or(layout.location.y);
+    let local_y = cross_offset
+        .get(&node)
+        .copied()
+        .unwrap_or(layout.location.y);
     let x = parent_origin.0 + layout.location.x;
     let y = parent_origin.1 + local_y;
     let cur = rel_bits(
@@ -1754,7 +1793,7 @@ fn read_back_pruned(
     // resized, or it is on the path to a node whose intent changed. A
     // node that neither moved nor guards a dirty descendant has an
     // unchanged subtree, and Taffy left its layouts untouched.
-    if rect_changed || on_path[node.index()] {
+    if rect_changed || on_path[node.index()] == pass {
         for &child in arena.children(node) {
             read_back_pruned(
                 tree,
@@ -1762,6 +1801,7 @@ fn read_back_pruned(
                 prev_rel,
                 cross_offset,
                 on_path,
+                pass,
                 arena,
                 child,
                 (x, y),
@@ -1799,8 +1839,11 @@ fn rel_bits(local_x: f32, local_y: f32, w: f32, h: f32) -> [u32; 4] {
 /// baseline meets the row's baseline line, the content-box top plus the
 /// tallest participating baseline. A non-text child keeps the box bottom
 /// Taffy uses for it (recomputed to the same place). Rows with no text child,
-/// and every other mode or alignment, are left untouched (`None`), so a
-/// baseline row of plain boxes solves exactly as before.
+/// and every other mode or alignment, put nothing in the map at all — an
+/// absent node keeps Taffy's y, so a baseline row of plain boxes solves
+/// exactly as before. The relation is sparse, which is why it is a map and not
+/// a slot per node (issue #1111): a scene with no baseline text row leaves it
+/// empty, and an empty map has allocated nothing.
 ///
 /// The walk visits every node, but only shapes at a baseline text row, which
 /// is rare. `baseline_y` is the first line's placed baseline, not a bare font
@@ -1820,7 +1863,7 @@ fn collect_baseline_offsets(
     arena: &Arena,
     typesetter: &mut Typesetter,
     node: NodeId,
-    offsets: &mut [Option<f32>],
+    offsets: &mut FxHashMap<NodeId, f32>,
     floors: &mut Vec<(NodeId, f32)>,
 ) {
     let layout = arena.layout(node);
@@ -1880,7 +1923,7 @@ fn collect_baseline_offsets(
                 // Local y within the row's border box: the content-box top
                 // plus the gap between this child's baseline and the tallest.
                 let local_y = layout.padding.top + (max_baseline - baseline);
-                offsets[child.index()] = Some(local_y);
+                offsets.insert(child, local_y);
                 extent = extent.max(local_y + cross_size + layout.padding.bottom);
             }
             // #322: a HUG cross size was taken from the box bottoms taffy
@@ -1900,8 +1943,14 @@ fn collect_baseline_offsets(
 
 /// Run the #272 baseline correction over a freshly solved tree, and give
 /// the solver a second turn when the correction needs a HUG row to be
-/// taller than Taffy sized it (#322). Returns each node's corrected
-/// cross-axis offset, `None` where the node keeps Taffy's.
+/// taller than Taffy sized it (#322). Returns the corrected cross-axis offset
+/// of each node that has one; a node absent from the map keeps Taffy's.
+///
+/// The map costs the readback a probe per visited node where a dense slot cost
+/// an index. That is unmeasured and issue #1153 carries it: the map is what
+/// makes a scene with no baseline row allocate nothing, and whether the probe
+/// is worth the allocation on a scene that has one is a wall-clock question
+/// this crate has not asked.
 ///
 /// The re-solve is what makes #322 a layout fix rather than a rect patch:
 /// the row's cross size feeds its own placement in its parent, its
@@ -1925,7 +1974,6 @@ fn collect_baseline_offsets(
 /// the re-solve would then compute every root in the document, which is the
 /// per-frame cost story #838 exists to remove, on exactly the text scenes the
 /// band cannot see (it runs `TaffySolver::new()` and returns above).
-#[allow(clippy::too_many_arguments)]
 fn baseline_pass(
     tree: &mut TaffyTree<TextContext>,
     taffy_of: &[taffy::NodeId],
@@ -1933,10 +1981,9 @@ fn baseline_pass(
     arena: &Arena,
     typesetter: Option<&mut Typesetter>,
     floors: &mut Vec<(NodeId, f32)>,
-    node_count: usize,
     solves: &mut u64,
-) -> Vec<Option<f32>> {
-    let mut cross_offset = vec![None; node_count];
+) -> FxHashMap<NodeId, f32> {
+    let mut cross_offset = FxHashMap::default();
     // Without a typesetter every text node measures to zero, so there is no
     // glyph baseline to correct and no row to grow.
     let Some(ts) = typesetter else {
@@ -1973,7 +2020,7 @@ fn baseline_pass(
 
     let ts = compute_all(tree, shown_taffy, Some(ts), solves)
         .expect("the typesetter was lent, not lost");
-    let mut cross_offset = vec![None; node_count];
+    let mut cross_offset = FxHashMap::default();
     let mut settled = Vec::new();
     for &root in arena.shown_roots() {
         collect_baseline_offsets(
