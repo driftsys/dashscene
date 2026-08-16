@@ -1963,13 +1963,23 @@ heading that delivers nothing. It has no epic, no deliverable and no close: it
 is worked between slices and at each slice close.
 
 It holds the quick items of the 2026-08-12 sweep — one focused pull request
-each, roughly half a day. **Two kinds sit in it, and the `owner-input` label
-separates them.** An unlabelled item is burn-down work a session can finish
-alone. A labelled item is the third term of
+each, under half a day, which is the milestone's own threshold rather than an
+approximation of it.
+[`decisions/review-before-ready-not-before-open.md`](decisions/review-before-ready-not-before-open.md)
+fixes a quick finding in the pull request that found it rather than filing it,
+so the only review-sourced item that still lands here is a **blocked** one — a
+quick, non-correctness finding waiting on a ruling or on hardware. The two
+`owner-input` items below are that shape. **Two kinds sit in it, and the
+`owner-input` label separates them.** An unlabelled item is burn-down work a
+session can finish alone. A labelled item is the third term of
 [`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md):
 resolvable now, gated on no v1 consumer, and still not burn-down work, because
 the next step is a ruling or an input only the repository owner can supply. A
-session taking work from here reads the label first; four items carry it today.
+session taking work from here reads the label first. Two items carry it as of
+2026-08-16 — issues #874 and #886, against the four this sentence claimed until
+then — so re-derive with
+`gh issue list --label owner-input --milestone "v0.23 — rolling quick debt"`
+rather than trusting the count here.
 
 It exists so that the three slices above stay readable. A slice whose scope is
 "the critical findings" means nothing if forty cosmetic items are scheduled

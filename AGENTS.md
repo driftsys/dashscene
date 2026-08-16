@@ -322,7 +322,12 @@ precedent, and they are different reasons:
   close moves out. Debt that would read the same if the slice had never happened
   does not belong on such an epic at all: route it by the standing rule — a
   quick item blocking nothing to the rolling-debt milestone, anything unlocking
-  only with a v1 consumer to `v1`.
+  only with a v1 consumer to `v1`. That is where an **already-filed** issue goes
+  at a phase close, and it is not the finding-triage rule below, which decides
+  whether a finding becomes an issue in the first place. Under that rule a quick
+  finding is fixed in the PR that found it rather than filed — unless it is
+  blocked. So `v0.23` keeps receiving items by two routes: already-filed issues
+  routed here at a phase close, and blocked findings filed from a review.
 
 **A slice with more than one epic reaches its phase end when the _last of its
 gating epics_ closes**, not the first, and not counting an epic declared
@@ -379,7 +384,11 @@ as three tiers, so "tests pass" is no longer a claim about all of it:
   the individual jobs to see which tiers executed
   (`docs/decisions/test-tiers.md`).
 
-Story workflow — the definition of done for every story:
+Branch workflow — the definition of done for every pull request against this
+repository, whatever the branch carries. Two rules below read differently when
+the PR **closes a `debt` issue**, which is not the same as being on a `debt`
+branch: a debt ticket is regularly closed from a story branch. Both say so where
+they do:
 
 - **Garden what this branch added to `docs/wip/` first** — before the
   `just build` below, so that build covers the prose just written, and before
@@ -417,19 +426,52 @@ Story workflow — the definition of done for every story:
   of the two to the wall clock. The merge gate is unchanged: both must be
   complete. Capture every finding as a checklist in the PR description — never
   drop a finding silently.
-- Fix all critical findings before merging. For minor findings, file one
-  `debt`-labeled issue each (linked to the story) instead of fixing them inline,
-  **and put it on a milestone** — the current slice, the next one, or `v1` for
-  anything not scheduled to a slice. Debt with no milestone is invisible at
-  every slice close, and it is the largest population of the four: 52 open
-  `debt` issues carry none, against 42 in `v1`, measured 2026-08-12. Re-derive
-  with `gh issue list --label debt --state open
+- **Fix findings in the pull request that found them.** File one as `debt` only
+  in these two cases:
+
+  - **The fix cannot be made here** — blocked on target hardware, on a
+    dependency this workspace does not have, on a v1 consumer, or on a ruling
+    only the repository owner can give. Name the blocker in the issue, and add
+    `owner-input` when the blocker is a ruling. Severity and cost do not enter:
+    a blocked critical finding is filed like any other, or its PR could never
+    merge.
+  - **Not critical, over half a day, and it names no correctness defect.** When
+    the PR closes a `debt` issue, file only a **nice-to-have** — a finding that
+    names no defect at all. Working a debt ticket does not file debt for a
+    defect, however small.
+
+  A finding you judge **incorrect** is rejected on the checklist with the
+  reasoning beside it. Everything else is fixed here, and nothing is dropped
+  silently. Record fixed / rejected / filed against each checklist item; a
+  ticked box alone does not say which.
+
+  "Critical" and "over half a day" are left to judgement on purpose — defining
+  them generated four rounds of contradictions. "Nice-to-have" is defined,
+  because it is narrower than `superpowers:requesting-code-review`'s
+  `#### Minor (Nice to Have)`, whose Minor covers small real defects that are
+  fixed here. Full rule and the measurement behind it:
+  `docs/decisions/review-before-ready-not-before-open.md`.
+- **Give a debt ticket the design it asks for, not a stopgap.** When a missing
+  dependency or a named blocker stops that, record it on the ticket and leave
+  the ticket open — do not land a partial fix and file the remainder as fresh
+  debt.
+- **Put every filed finding on a milestone, and link it to the PR that found
+  it** — the current slice, the next one, or `v1` for anything not scheduled to
+  a slice. A **long** finding never goes to `v0.23` — that milestone is work
+  under half a day. A **blocked** one can, since blockedness carries no cost
+  condition; issues #874 and #886 are already that shape. Debt with no milestone
+  is invisible at every slice close, which is why the rule exists; the record
+  above carries the measurement, and re-derive with
+  `gh issue list --label debt --state open
   --limit 300 --json milestone`
-  rather than trusting those two numbers.
-- **When a critical finding changes the implementation, review the fix too** — a
-  pass over what changed, not a second full pass. The fix is written under more
-  time pressure than the original and lands after the pass that would have
-  caught it.
+  rather than assuming that population is still empty.
+- **Review what the review changed** — every change made after the review pass
+  gets a pass of its own, over what changed rather than a second full pass. It
+  is written under more time pressure than the original and lands after the pass
+  that would have caught it. Widened on 2026-08-16 from "when a critical finding
+  changes the implementation": now that most findings are fixed in the PR rather
+  than filed, they are most of what lands late. The rebase and squash before
+  merging change no content and need no pass.
 - The findings checklist is what says the PR is not ready to merge: an absent or
   unticked checklist means the review is still running. **The review half is not
   enforced mechanically**: the direct mechanism is a required approving review,
@@ -481,10 +523,14 @@ Story workflow — the definition of done for every story:
   the start would have found nothing, and checking before the merge button would
   have saved the rename a whole extra PR cost. A slice's other sessions file
   against the work in flight, not against the work that is finished.
-- Merge only when the review pass is complete, every critical finding is
-  resolved, and CI is green on the commit being merged. A green run earlier is
-  not a promise: a later push, or a rebase onto a moved `main`, can turn it red
-  again, so check the commit you are about to merge.
+- Merge only when the review pass is complete, **every** finding has one of the
+  three dispositions recorded against it — fixed, rejected with the reasoning,
+  or filed — and CI is green on the commit being merged. Every finding rather
+  than only the critical ones: under the replaced rule a minor finding was filed
+  by definition and so always had one, and now it can be ticked with nothing
+  behind it. A green run earlier is not a promise: a later push, or a rebase
+  onto a moved `main`, can turn it red again, so check the commit you are about
+  to merge.
 
 Merging a PR — how the branch lands on `main`:
 

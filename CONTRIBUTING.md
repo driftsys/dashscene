@@ -97,10 +97,17 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
    exception.
 
 7. A maintainer reviews the PR while CI runs, and records the findings as a
-   checklist on it. Anything critical is fixed before merge; the rest is filed
-   as follow-up issues. Applying the `debt` label and a milestone to those needs
-   triage permission, so it is the maintainer's step rather than yours — you do
-   not need to file anything.
+   checklist on it. **The findings are fixed in that PR**, which is likely to
+   mean a round of changes on your branch rather than a list of issues opened
+   behind it. Filing a finding as a follow-up issue is the exception and has
+   conditions, and a finding judged incorrect is a third outcome that is neither
+   fixed nor filed. The conditions are in
+   [`docs/decisions/review-before-ready-not-before-open.md`](docs/decisions/review-before-ready-not-before-open.md),
+   which is where they are settled; `AGENTS.md` carries a working copy for
+   contributors with commit access. They are not restated here, because the
+   first version of this paragraph paraphrased them and dropped one. Applying
+   the `debt` label and a milestone needs triage permission, so filing is the
+   maintainer's step rather than yours — you do not need to file anything.
 
 ## Recipes
 

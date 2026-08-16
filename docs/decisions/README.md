@@ -72,12 +72,14 @@ records below. Per-story decisions land here directly:
   actual decision is the part no ruleset can see: repair CI in its own minimal
   PR rather than folding the fix into a story PR.
 - [review-before-ready-not-before-open.md](review-before-ready-not-before-open.md)
-  — the whole story-PR sequence, and the gate is merge rather than "PR opened":
-  garden what the branch added to `docs/wip/` before opening, never a draft, run
-  the review and CI in parallel, review the fix when a critical finding changes
-  the implementation, file debt against a milestone. The findings checklist says
-  whether it is ready, and the `main` ruleset enforces the half of the gate that
-  can be enforced.
+  — the whole pull-request sequence for every branch, and the gate is merge
+  rather than "PR opened": garden what the branch added to `docs/wip/` before
+  opening, never a draft, run the review and CI in parallel, review every change
+  made after the review pass, and fix the findings in the pull request that
+  found them — filing one as debt is the exception, narrower when the PR closes
+  a debt issue, and the measurement behind that is in the record. The findings
+  checklist says whether it is ready, and the `main` ruleset enforces the half
+  of the gate that can be enforced.
 - [dashpaint-owns-boundary-b-types.md](dashpaint-owns-boundary-b-types.md) —
   `dashpaint` owns the painter-side boundary-B types (story #3).
 - [painter-trait-infallible-slice-input.md](painter-trait-infallible-slice-input.md)
