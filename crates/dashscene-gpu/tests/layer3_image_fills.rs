@@ -740,6 +740,212 @@ fn a_replaced_document_does_not_draw_the_previous_documents_image() {
     );
 }
 
+/// **The same replacement, with a payload too large for the shared atlas**
+/// (issue #1050).
+///
+/// The sibling above uses a 4x2 payload, which lands in the shared atlas — and
+/// `Residency::forget_resident` *retains* the shared atlases, so the texture on
+/// the other side of the call is the same object and no bind group can go
+/// stale. That test cannot see this defect, which is why this one exists.
+///
+/// A payload wider than `dashscene_gpu::ATLAS_EXTENT` gets a texture of its own
+/// instead (issue #720), and a dedicated texture is **dropped** rather than
+/// retained. Here it is the only atlas in the set, so it is index 0 in both
+/// documents: dropped, re-created at the same index, and the atlas *count* —
+/// which is what `Frame` keys its rebind on — is one either side of the call.
+/// The comparison sees no change and the per-atlas bind groups keep naming the
+/// first document's view.
+///
+/// `BlurTargets` had the same defect one pipeline over with an atlas *index*
+/// rather than a count; both are cleared by `Renderer::forget_uploaded` now.
+#[test]
+fn a_replaced_document_does_not_draw_a_previous_dedicated_texture() {
+    let wide = dashscene_gpu::ATLAS_EXTENT + 1;
+    let scene = |seed: u8| {
+        let mut images = ImageTable::new();
+        images.push_baked(payload(wide, 2, |_, _| [seed, 10, 10, 255]), wide, 2);
+        let mut paints = PaintTable::new();
+        let fill = paints.intern_fill(&FillSpec::Image(ImageFill {
+            image: 0,
+            scale_mode: ScaleMode::Fill,
+            transform: Mat23::IDENTITY,
+            tile_scale: 1.0,
+        }));
+        let paint = paints.push(PaintEntry {
+            fill,
+            ..PaintEntry::default()
+        });
+        (images, paints, paint)
+    };
+
+    let mut renderer = renderer();
+    let draw = |renderer: &mut Renderer, images: &ImageTable, paints: &PaintTable, paint| {
+        let rects = [RectEntry {
+            x: 0.0,
+            y: 0.0,
+            w: 32.0,
+            h: 16.0,
+            paint,
+            clip: ClipIndex::UNCLIPPED,
+            opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
+        }];
+        let mut painter = GpuPainter::new();
+        painter.paint(
+            &rects,
+            paints,
+            images,
+            &ClipTable::new(),
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        renderer
+            .render(
+                painter.instances(),
+                paints,
+                images,
+                &ClipTable::new(),
+                &GlyphRunTable::new(),
+                W,
+                H,
+            )
+            .expect("the fixture extent is within any device's maximum")
+    };
+
+    let (first_images, first_paints, first_paint) = scene(40);
+    let first = draw(&mut renderer, &first_images, &first_paints, first_paint);
+    near(texel(&first, 4, 8), [40, 10, 10, 255], "the first document");
+    let allocated_first = renderer.allocations();
+
+    let (second_images, second_paints, second_paint) = scene(200);
+    assert_eq!(
+        first_images.all_entries()[0],
+        second_images.all_entries()[0],
+        "the two payloads must share a residency key, or this test proves nothing"
+    );
+
+    renderer.forget_uploaded();
+    let second = draw(&mut renderer, &second_images, &second_paints, second_paint);
+
+    // **The premise: the payload really was dedicated, so a texture was dropped
+    // and another created.** A retained shared atlas allocates nothing here, and
+    // the two documents are identical in shape so no buffer grows between them.
+    // Equal counts would mean this is the sibling test with a bigger payload.
+    assert!(
+        renderer.allocations() > allocated_first,
+        "the replacement must build a new texture: {allocated_first} allocations before and {} \
+         after means the payload landed in the shared atlas and was retained, and the reused \
+         index this test is about never existed",
+        renderer.allocations(),
+    );
+    near(
+        texel(&second, 4, 8),
+        [200, 10, 10, 255],
+        "the replaced document's own image, not the texture the per-atlas bind group still named",
+    );
+}
+
+/// **A replaced document whose first frame samples nothing still has a group to
+/// bind** (issue #1050).
+///
+/// `Renderer::forget_uploaded` drops the per-atlas bind groups, so `Frame` holds
+/// none and a bound-atlas count of zero. `Frame::upload` rebuilds on `rebind ||
+/// bind_groups.is_empty() || atlas_count() != bound_atlases`, and **the count
+/// comparison alone does not cover this frame**: a document that samples no
+/// payload has an atlas count of zero too, so the comparison agrees while there
+/// is not even a placeholder group to bind.
+///
+/// The two tests above cannot see it — both of their second documents sample a
+/// payload, so the count differs and the rebuild happens for that reason. This
+/// is the frame where emptiness is the only signal.
+#[test]
+fn a_replaced_document_that_samples_nothing_still_binds() {
+    let mut renderer = renderer();
+    let draw = |renderer: &mut Renderer, images: &ImageTable, paints: &PaintTable, paint| {
+        let rects = [RectEntry {
+            x: 0.0,
+            y: 0.0,
+            w: 32.0,
+            h: 16.0,
+            paint,
+            clip: ClipIndex::UNCLIPPED,
+            opacity: 1.0,
+            rotation: 0.0,
+            rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
+        }];
+        let mut painter = GpuPainter::new();
+        painter.paint(
+            &rects,
+            paints,
+            images,
+            &ClipTable::new(),
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        renderer
+            .render(
+                painter.instances(),
+                paints,
+                images,
+                &ClipTable::new(),
+                &GlyphRunTable::new(),
+                W,
+                H,
+            )
+            .expect("the fixture extent is within any device's maximum")
+    };
+
+    // A document that samples a payload, so the frame ends holding one atlas
+    // and a bind group per atlas. **Oversized, so that atlas is dedicated** —
+    // `forget_resident` retains the shared atlases and drops only the dedicated
+    // ones, so a shared atlas here would leave the count at one, the comparison
+    // would differ from the reset zero, and the rebuild would happen for that
+    // reason rather than for emptiness. Measured: with a 4x2 payload this test
+    // passes with the `is_empty` term deleted.
+    let wide = dashscene_gpu::ATLAS_EXTENT + 1;
+    let mut images = ImageTable::new();
+    images.push_baked(payload(wide, 2, |_, _| [40, 10, 10, 255]), wide, 2);
+    let mut paints = PaintTable::new();
+    let fill = paints.intern_fill(&FillSpec::Image(ImageFill {
+        image: 0,
+        scale_mode: ScaleMode::Fill,
+        transform: Mat23::IDENTITY,
+        tile_scale: 1.0,
+    }));
+    let sampling = paints.push(PaintEntry {
+        fill,
+        ..PaintEntry::default()
+    });
+    let first = draw(&mut renderer, &images, &paints, sampling);
+    near(texel(&first, 4, 8), [40, 10, 10, 255], "the first document");
+
+    renderer.forget_uploaded();
+
+    // And one that samples none: a solid fill, no image table entry drawn.
+    let mut plain = PaintTable::new();
+    let green = plain.intern_fill(&FillSpec::Solid {
+        color: dashpaint::Color {
+            r: 0.0,
+            g: 1.0,
+            b: 0.0,
+            a: 1.0,
+        },
+    });
+    let solid = plain.push(PaintEntry {
+        fill: green,
+        ..PaintEntry::default()
+    });
+    let second = draw(&mut renderer, &ImageTable::new(), &plain, solid);
+    near(
+        texel(&second, 4, 8),
+        [0, 255, 0, 255],
+        "the replaced document's solid fill, drawn through a group the frame had to rebuild",
+    );
+}
+
 /// A resident PNG is decoded once, however many frames draw it.
 ///
 /// The cost this whole mechanism exists to remove, and the one a pixel

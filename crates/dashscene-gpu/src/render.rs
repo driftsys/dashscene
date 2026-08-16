@@ -525,9 +525,10 @@ struct GpuMsdfRow {
     /// actually made resident (issues #972 and #993).
     ///
     /// **The third state a payload has**, and the one that was missing. A row is
-    /// zeroed both when a coverage field is degenerate — no quad, or no atlas
-    /// rectangle, which [`field_draws`] rejects before residency — and when the
-    /// payload was *refused*, and neither draws. What made that a defect rather
+    /// zeroed both when a coverage field is degenerate — whatever
+    /// [`field_draws`] rejects before residency, which since issue #1034 is a
+    /// quad of non-finite or non-positive extent as well as a missing atlas
+    /// rectangle — and when the payload was *refused*, and neither draws. What made that a defect rather
     /// than a saving is that both consumers inferred "this instance is masked"
     /// from [`Instance::shape`] alone: a zeroed row then means `px_range = 0`,
     /// and `msdf_coverage(sample, 0)` is `0.5` for every sample there is. Half
@@ -1470,6 +1471,23 @@ impl Renderer {
         // stale-row hazard story #585 fixed for instance rows.
         self.refusals.clear();
         self.refused_this_frame.clear();
+        // And every blur binding that names an atlas (issue #1050). The call
+        // above retains the shared atlas textures but drops the dedicated ones,
+        // so **every index after a dropped one shifts down** — and
+        // `BlurTargets::bound_atlases` is an atlas *index*, which is the key
+        // deciding whether those bind groups are rebuilt. Two documents whose
+        // masks land on the same index either side of that shift produce equal
+        // lists, nothing is rebuilt, and a bind group then names the texture
+        // that index had before. The frame-wide targets are not touched: they
+        // name this painter's own textures and nothing residency owns, so they
+        // survive a document replacement exactly as they survive an idle frame.
+        self.blurs.forget_atlases();
+        // And the paint pipeline's own per-atlas groups, which key on a *count*
+        // rather than a list and are therefore blind to a change that cancels
+        // out: one dedicated atlas dropped here and one created by the next
+        // document leaves the count where it was. `Frame::bound_atlases` says
+        // why that is not the same question as "did anything change".
+        self.frame.forget_atlases();
     }
 
     /// Every device object this renderer has allocated since it was built —
@@ -3005,8 +3023,9 @@ fn backdrop_blur_radius(instance: &Instance, index: u32, paints: &PaintTable) ->
 /// # `None` has two producers, and only one of them is named
 ///
 /// A row is left unresolved both when its payload was **refused** and when the
-/// field is **degenerate** — no quad, or no atlas rectangle, which
-/// [`field_draws`] rejects before residency is ever asked. Only the first is
+/// field is **degenerate** — no atlas rectangle, or a quad whose width or height
+/// is not finite and positive, which [`field_draws`] rejects before residency is
+/// ever asked; that predicate is the enumeration. Only the first is
 /// recorded on [`Renderer::refusals`]; the second reaches no diagnostic at any
 /// seam, which is the silent drop issue #1021 is about. It predates this
 /// function — [`Renderer::resolve_backdrop`] read the same flag and returned
@@ -3035,15 +3054,71 @@ fn backdrop_mask(instance: &Instance, resolved: &Resolved) -> Option<Option<GpuS
     }
 }
 
-/// Whether a coverage mask has a quad and an atlas rectangle to sample.
+/// Whether a coverage mask has a finite quad of positive extent and an atlas
+/// rectangle to sample.
 ///
 /// The reference painter's own degenerate guard, and the reason it is checked
 /// before the payload is made resident rather than after: every mapping in
 /// [`gpu_shape`] divides by the atlas rectangle, and a field with no quad
 /// sampled nothing anyway.
+///
+/// # The test is on the extent, not on the four bounds (issue #1034)
+///
+/// `right > left && bottom > top` rejects a NaN, because every comparison
+/// against one is false, and **admits an infinity**: `f32::INFINITY > 0.0` is
+/// true, and so is `0.0 > f32::NEG_INFINITY`. The two are not symmetric and the
+/// asymmetry was silent.
+///
+/// **Requiring the four bounds to be finite is not enough either**, which is
+/// what makes the extent the thing to test. `[-3.0e38, 0.0, 3.0e38, 8.0]` is
+/// four finite bounds in the right order, and `right - left` is `6.0e38`, which
+/// overflows `f32` to an infinity — so the quad the painters divide by is
+/// infinite while every bound they were handed was not. The subtraction is the
+/// operation whose domain matters, so it is the one checked, and `is_finite`
+/// over it rejects all three cases at once: a NaN bound makes the difference a
+/// NaN, an infinite bound makes it infinite or a NaN, and an overflow makes it
+/// infinite.
+///
+/// What an infinity reaches is a wrong picture rather than an empty one, and a
+/// different one per painter. [`gpu_shape`] scales `distance_range` by the quad
+/// width over the atlas width to get `px_range`, so this painter hands the
+/// shader an infinite range and an infinite `plane` — the implementation-defined
+/// WGSL `docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md`
+/// refuses `distance_range` for. `dashscene-skia` puts the infinity in a
+/// coverage shader's local matrix, where the masked fill draws nothing but the
+/// **backdrop erases what is beneath it** — measured at 8x8 on a
+/// bar-under-frosted-node scene, 32 of 64 pixels from opaque white to
+/// transparent. So the reference painter was the destructive one, and the two
+/// disagreed about a field they both accepted.
+///
+/// # Why here and not at the seam
+///
+/// [`dashpaint::PaintTable::push_with`] refuses `distance_range` out of domain
+/// and would be the tighter home, since a field carrying an infinite bound is
+/// out of domain in the same sense — nothing produces one, `dashc`'s baker
+/// deriving the bounds from the path bounding box, so it arrives only from an
+/// authored or corrupted `.dsb`. That seam is not touched here: this predicate
+/// is what `dashscene-skia`'s `field_coverage` restates, so changing it fixes
+/// both painters at once and leaves the seam question open rather than
+/// answering it wrongly. Issue #1034 records both halves.
+///
+/// [`dashpaint::VectorField::plane_bounds`] and that method still describe the
+/// admitting behaviour in their own prose. Correcting them is issue #1136:
+/// `dashpaint` belongs to another lane this slice, so the drift is filed rather
+/// than fixed here.
+///
+/// **The rejection is silent**, as every other rejection this predicate makes
+/// is: no diagnostic names it at any seam, which is issue #1021 and P4's
+/// complaint about all of them rather than a property this predicate adds.
 fn field_draws(field: &dashpaint::VectorField) -> bool {
     let [left, top, right, bottom] = field.plane_bounds;
-    right > left && bottom > top && field.atlas_rect[2] > 0 && field.atlas_rect[3] > 0
+    let (width, height) = (right - left, bottom - top);
+    width.is_finite()
+        && height.is_finite()
+        && width > 0.0
+        && height > 0.0
+        && field.atlas_rect[2] > 0
+        && field.atlas_rect[3] > 0
 }
 
 /// A contiguous range of instances drawn with one atlas bound.
@@ -3780,13 +3855,15 @@ struct BlurTargets {
     /// nothing across. Reusing A's group for B therefore binds exactly the right
     /// things.
     ///
-    /// **It is not correct against everything.** This is an atlas *index*, and
-    /// issue #1050 is the case where an index outlives what it named: a document
-    /// replacement drops a dedicated atlas, every index after it shifts down,
-    /// and two frames both reading `[Some(1)]` name different textures. That one
-    /// is open, and it is why this list is cleared on the first frame prepared
-    /// for no backdrop rather than held across
-    /// [`BLUR_TARGET_GRACE_FRAMES`].
+    /// **An index is only meaningful within one residency set.** A document
+    /// replacement drops the dedicated atlases and every index after one shifts
+    /// down, so two frames both reading `[Some(1)]` either side of that call can
+    /// name different textures — issue #1050. Keying the rebuild on this list
+    /// cannot see that, because the list is the same. What closes it is that
+    /// [`Renderer::forget_uploaded`] drops this list through
+    /// [`BlurTargets::forget_atlases`], so no list survives the call that moves
+    /// the indices. This is also why it is cleared on the first frame prepared
+    /// for no backdrop rather than held across [`BLUR_TARGET_GRACE_FRAMES`].
     ///
     /// The hazard is the **next** entry. Any further per-backdrop binding added
     /// to this layout would bind the previous frame's backdrop's value with no
@@ -3836,10 +3913,11 @@ struct BlurTargets {
 /// **It bounds only the frame-wide objects.** The per-backdrop uniforms and
 /// bind groups are dropped on the first such frame whatever this says, because
 /// each names a coverage atlas view — see [`BlurTargets::prepare`]. That split
-/// is also what keeps this grace from widening issue #1050, where
-/// [`Renderer::forget_uploaded`] leaves [`BlurTargets::bound_atlases`] naming
-/// atlas indices a document replacement has shifted: the groups that could go
-/// stale are the ones this does not hold.
+/// is what kept this grace from widening issue #1050 while it was open, and it
+/// is still why the two halves are released on different schedules: a document
+/// replacement now drops the atlas-naming half through
+/// [`BlurTargets::forget_atlases`], and the frame-wide half is held across it
+/// because nothing it names belongs to the residency set.
 const BLUR_TARGET_GRACE_FRAMES: u32 = 1;
 
 /// How many entries the blur bind-group layout has, and the number
@@ -3864,6 +3942,27 @@ const BLUR_TARGET_GRACE_FRAMES: u32 = 1;
 const BLUR_BINDINGS: usize = 6;
 
 impl BlurTargets {
+    /// Drops everything here that names an atlas — the per-backdrop uniforms,
+    /// their bind groups, and the atlas list keying their rebuild.
+    ///
+    /// Two callers, and the same argument covers both. [`Self::prepare`] calls
+    /// it for a frame that named no mask, where a held bind group would outlive
+    /// the backdrop it was built for. [`Renderer::forget_uploaded`] calls it for
+    /// a document replacement, where the *indices* outlive what they named:
+    /// `Residency::forget_resident` drops the dedicated textures and every index
+    /// after one shifts down, so equal lists across that call can name different
+    /// textures (issue #1050).
+    ///
+    /// The frame-wide targets are deliberately not dropped here. They name this
+    /// painter's own textures, which a new document does not invalidate, and
+    /// they are the three drawable-sized allocations
+    /// [`BLUR_TARGET_GRACE_FRAMES`] exists to hold on to.
+    fn forget_atlases(&mut self) {
+        self.uniforms.clear();
+        self.bind_groups.clear();
+        self.bound_atlases.clear();
+    }
+
     /// Makes one backdrop's worth of targets and parameters available per entry
     /// of `masks`, at `width` x `height`, rebuilding when any of those has
     /// changed or when the frame's buffers moved under the bind groups.
@@ -3960,9 +4059,7 @@ impl BlurTargets {
                     // taken here: it needs a second condition on this branch
                     // and a second claim about which bindings are safe to keep,
                     // where dropping the lot needs neither.
-                    self.uniforms.clear();
-                    self.bind_groups.clear();
-                    self.bound_atlases.clear();
+                    self.forget_atlases();
                 }
             }
             return;
@@ -4192,6 +4289,16 @@ struct Frame {
     bind_groups: Vec<wgpu::BindGroup>,
     /// How many atlases [`bind_groups`](Self::bind_groups) was built for, so a
     /// frame that created one rebuilds and a frame that did not does nothing.
+    ///
+    /// **A count is only meaningful within one residency set**, for the reason
+    /// [`BlurTargets::bound_atlases`] gives about an index (issue #1050). A
+    /// document replacement drops the dedicated textures, so a set of one
+    /// dedicated atlas becomes a set of none and the next document's own
+    /// dedicated atlas brings it back to one: the count matches, nothing is
+    /// rebuilt, and every group still names the previous document's view. So
+    /// [`Renderer::forget_uploaded`] resets this through
+    /// [`Frame::forget_atlases`] rather than leaving the count to notice a
+    /// change that cancelled out.
     bound_atlases: usize,
     /// Capacities in elements, not bytes. A buffer is reallocated only when a
     /// frame needs more than it holds.
@@ -4359,6 +4466,18 @@ impl Frame {
         self.bound_atlases = atlases.len();
     }
 
+    /// Drops the per-atlas bind groups, so the next [`Self::upload`] rebuilds
+    /// them whatever the atlas count says.
+    ///
+    /// The counterpart of [`BlurTargets::forget_atlases`], one pipeline over and
+    /// for the same reason: a document replacement moves what an atlas index
+    /// names, and a count that happens to match across it is not evidence that
+    /// the views did (issue #1050).
+    fn forget_atlases(&mut self) {
+        self.bind_groups.clear();
+        self.bound_atlases = 0;
+    }
+
     /// Puts this frame's data on the device, writing as little as it can, and
     /// reports whether any buffer moved.
     ///
@@ -4483,7 +4602,13 @@ impl Frame {
         // A new atlas is as much a reason to rebuild as a reallocated buffer:
         // the bind groups are per atlas, and one that does not exist yet cannot
         // be bound.
-        if rebind || residency.atlas_count() != self.bound_atlases {
+        //
+        // **`is_empty` is not implied by the count comparison** (issue #1050).
+        // `forget_atlases` leaves no groups and a count of zero, and a frame
+        // that then samples nothing has an atlas count of zero too — so the
+        // comparison agrees while there is not even a placeholder group to bind.
+        // The emptiness is the condition that reads what is actually held.
+        if rebind || self.bind_groups.is_empty() || residency.atlas_count() != self.bound_atlases {
             let views: Vec<&wgpu::TextureView> = (0..residency.atlas_count())
                 .map(|index| residency.view(index as u32))
                 .collect();

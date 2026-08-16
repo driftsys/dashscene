@@ -1093,6 +1093,15 @@ fn a_refused_backdrops_blur_row_is_still_checked_against_its_table() {
 ///   coincidence of how one adapter resolves a NaN sampler coordinate and not
 ///   a decision the shader states — the same argument `GpuMsdfRow::resolved`
 ///   makes against inferring absence from a value.
+/// - Dropping the **finite-extent** half fails this test on each of the six
+///   non-finite rows (issue #1034). Four of them carry an infinite bound, which
+///   the ordering admits — `f32::INFINITY > 0.0` is true and so is `0.0 >
+///   f32::NEG_INFINITY` — and two carry four finite bounds whose difference
+///   overflows, which a predicate testing each bound admits as well. Before the
+///   fix the field resolved, the backdrop was planned, and this frame took
+///   **five** draws rather than one, measured. The reference painter did worse
+///   with the same field — its backdrop **erased** the content beneath the node
+///   — which is what made this a divergence and not only a wrong picture.
 ///
 /// **The picture is not the only observable**, which is why that case is guarded
 /// here rather than merely pinned. A field that resolves makes `backdrop_mask`
@@ -1123,6 +1132,47 @@ fn a_degenerate_coverage_field_draws_nothing() {
     for (what, atlas_rect, plane_bounds) in [
         ("no atlas rectangle", [3, 2, 0, 0], [0.0, 0.0, 20.0, 32.0]),
         ("no quad", MASK_RECT, [0.0, 0.0, 0.0, 0.0]),
+        // The four positions an infinity passes the ordering in (issue #1034),
+        // and so the four this frame drew before `field_draws` required finite
+        // bounds. `left` and `top` take the negative one because `right > left`
+        // is what they have to satisfy; `right` and `bottom` take the positive
+        // one for the same reason mirrored. An infinity in the other position
+        // fails the ordering and was already rejected, so it would pin nothing.
+        (
+            "an infinite left bound",
+            MASK_RECT,
+            [f32::NEG_INFINITY, 0.0, 20.0, 32.0],
+        ),
+        (
+            "an infinite top bound",
+            MASK_RECT,
+            [0.0, f32::NEG_INFINITY, 20.0, 32.0],
+        ),
+        (
+            "an infinite right bound",
+            MASK_RECT,
+            [0.0, 0.0, f32::INFINITY, 32.0],
+        ),
+        (
+            "an infinite bottom bound",
+            MASK_RECT,
+            [0.0, 0.0, 20.0, f32::INFINITY],
+        ),
+        // Four finite bounds in the right order whose **difference** is not
+        // finite: `3.0e38 - -3.0e38` is `6.0e38`, which overflows f32. This is
+        // why `field_draws` tests the extent rather than the four bounds; a
+        // version checking `is_finite` on each bound admits these two and
+        // computes the same infinite `px_range` the rows above did.
+        (
+            "a plane quad whose width overflows",
+            MASK_RECT,
+            [-3.0e38, 0.0, 3.0e38, 32.0],
+        ),
+        (
+            "a plane quad whose height overflows",
+            MASK_RECT,
+            [0.0, -3.0e38, 20.0, 3.0e38],
+        ),
     ] {
         let mut images = ImageTable::new();
         let atlas = images.push_baked(mask_field(), MASK_ATLAS, MASK_ATLAS);
@@ -1931,5 +1981,190 @@ fn a_rotated_backdrop_frosts_a_rotated_region() {
         "turning a frosted panel a quarter turn changed only {differing} \
          pixels: the backdrop-blur pipeline is drawing the frosted region \
          unrotated while the node is rotated",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// A replaced document does not leave a blur bind group naming the old atlas
+// (issue #1050)
+// ---------------------------------------------------------------------------
+
+/// A field atlas one texel wider than `dashscene_gpu::ATLAS_EXTENT`, so
+/// residency gives it a texture of its own rather than a rectangle in the shared
+/// atlas (issue #720).
+///
+/// Written in full rather than as an intra-doc link: this is an integration test
+/// crate, the constant is in scope only through its path, and neither gate would
+/// catch the broken reference — `cargo doc` does not build test targets and
+/// clippy does not resolve intra-doc links.
+///
+/// The width is what makes it dedicated; the height stays at [`MASK_ATLAS`], so
+/// the payload is about 64 kB rather than the 16.8 MB a square one would be
+/// (2049 x 2049 x 4 bytes). `inside` selects which columns of [`MASK_RECT`] are
+/// inside the field, so two documents can carry visibly different masks at the
+/// same extent.
+fn wide_mask_field(inside: u32) -> ImageAsset {
+    let [rx, ry, rw, rh] = MASK_RECT;
+    let width = dashscene_gpu::ATLAS_EXTENT + 1;
+    let mut bytes = Vec::with_capacity((width * MASK_ATLAS * 4) as usize);
+    for y in 0..MASK_ATLAS {
+        for x in 0..width {
+            let inside_rect = x >= rx && x < rx + rw && y >= ry && y < ry + rh;
+            let v = match x.checked_sub(rx) {
+                Some(column) if inside_rect && column < inside => 255,
+                _ => 0,
+            };
+            bytes.extend_from_slice(&[v, v, v, 255]);
+        }
+    }
+    ImageAsset {
+        format: ImageFormat::Rgba8Unorm,
+        bytes,
+    }
+}
+
+/// A scene of the two halves under a frosted panel masked by a dedicated field
+/// atlas whose sub-rect is inside on its first `inside` columns.
+fn wide_masked_backdrop(inside: u32) -> (Vec<RectEntry>, PaintTable, ImageTable) {
+    let mut images = ImageTable::new();
+    let atlas = images.push_baked(
+        wide_mask_field(inside),
+        dashscene_gpu::ATLAS_EXTENT + 1,
+        MASK_ATLAS,
+    );
+    let mut paints = PaintTable::new();
+    let mut rects = halves(&mut paints);
+    let panel = paints.push_with(
+        PaintEntry::default(),
+        EntryParts {
+            blurs: &[backdrop(24.0)],
+            shape: Some(VectorField {
+                image: atlas,
+                atlas_rect: MASK_RECT,
+                plane_bounds: [0.0, 0.0, 20.0, 32.0],
+                distance_range: 0.5,
+            }),
+            ..EntryParts::default()
+        },
+    );
+    rects.push(rect(24.0, 8.0, 36.0, 32.0, panel));
+    (rects, paints, images)
+}
+
+/// **Replacing the document must not leave a blur bind group naming the atlas
+/// the old one used** (issue #1050).
+///
+/// `BlurTargets::bound_atlases` records an atlas **index** per drawn backdrop,
+/// and that list is the whole key deciding whether the bind groups are rebuilt.
+/// An index is meaningful only within one residency set:
+/// `Residency::forget_resident` drops every dedicated texture, so the indices
+/// after a dropped one shift down and a reused index can name a different
+/// texture entirely.
+///
+/// # The arrangement, which is not the one the issue describes
+///
+/// That issue reasoned from a mask sitting in atlas 1 above a *dedicated* atlas
+/// 0, replaced by a document whose mask lands in atlas 1 again. That shape is
+/// not reachable: `atlas_for` keeps exactly one shared atlas per format and
+/// returns the first, `forget_resident` retains it, and `push_atlas` appends —
+/// so a retained shared atlas only ever moves **down**, and the mask that
+/// follows it lands at a lower index than before, which the list comparison
+/// sees.
+///
+/// What is reachable is simpler. Here the mask's own atlas is the dedicated one
+/// and it is the only atlas in the set, so it is index 0 in both documents:
+/// the old texture is dropped, the new one is created, and both frames record
+/// `[Some(0)]`. Equal lists, different textures, and nothing rebuilt.
+///
+/// # Why the comparison is against a second renderer
+///
+/// A stale bind group is not visible in any counter — the groups exist either
+/// way — so the observable is the picture, and the baseline has to be the same
+/// document drawn by a renderer that never saw the first one. Comparing against
+/// a constant would pin this fixture's blur rather than the property.
+///
+/// The two masks differ in how many columns of `MASK_RECT` are inside, so the
+/// frosted region has a different width in each, and a blur reading the old
+/// atlas frosts the old width.
+#[test]
+fn replacing_the_document_rebuilds_the_blur_bindings() {
+    let clips = ClipTable::new();
+    let draw = |renderer: &mut dashscene_gpu::Renderer,
+                (rects, paints, images): &(Vec<RectEntry>, PaintTable, ImageTable)| {
+        let mut painter = GpuPainter::new();
+        painter.paint(
+            rects,
+            paints,
+            images,
+            &clips,
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        renderer
+            .render(
+                painter.instances(),
+                paints,
+                images,
+                &clips,
+                &GlyphRunTable::new(),
+                W,
+                H,
+            )
+            .expect("the fixture extent is within any device's maximum")
+    };
+
+    let first = wide_masked_backdrop(1);
+    let second = wide_masked_backdrop(4);
+
+    let mut reused = renderer();
+    let before = draw(&mut reused, &first);
+    let allocated_first = reused.allocations();
+    reused.forget_uploaded();
+    let after_replacement = draw(&mut reused, &second);
+
+    // **The premise this test rests on, and it is not the fixture's width.**
+    // What matters is that the field's atlas is *dedicated*, so that
+    // `forget_resident` drops it and the replacement re-creates one at the same
+    // index. A payload that fits the shared atlas is retained across the call,
+    // the texture is then the same object either side of it, and the comparison
+    // below would pass for a reason unrelated to this issue — which is what
+    // raising `ATLAS_EXTENT`, or changing `usable_extent`'s rounding, would do
+    // silently.
+    //
+    // The observable is the allocation counter: a dedicated texture and its view
+    // are two allocations, and the two documents are identical in shape, so no
+    // buffer grows between them and nothing else here allocates. Equal counts
+    // mean the payload was retained, and then no index ever named two textures.
+    assert!(
+        reused.allocations() > allocated_first,
+        "the replacement must build a new dedicated texture: {allocated_first} allocations \
+         before and {} after means the payload landed in the shared atlas and was retained, so \
+         the reused index this test is about never existed",
+        reused.allocations(),
+    );
+
+    let mut clean = renderer();
+    let expected = draw(&mut clean, &second);
+
+    // **The third premise: the two documents draw differently**, or the
+    // comparison below cannot fail however stale the binding is.
+    assert_ne!(
+        before, expected,
+        "the two fixtures must frost different regions, or a bind group naming the first \
+         document's atlas would draw the second document's picture anyway",
+    );
+    // Compared by first differing texel rather than by whole buffer: each frame
+    // is W x H x 4 bytes, and a bare `assert_eq!` on two of them prints about a
+    // hundred kilobytes of integers and names no pixel.
+    let differs = after_replacement
+        .chunks_exact(4)
+        .zip(expected.chunks_exact(4))
+        .position(|(a, b)| a != b);
+    assert_eq!(
+        differs.map(|i| (i as u32 % W, i as u32 / W)),
+        None,
+        "after `forget_uploaded` the frame must draw the new document, not blur through the \
+         coverage atlas the old one left at the same index — first differing texel above",
     );
 }

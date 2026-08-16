@@ -2672,10 +2672,10 @@ fn a_changed_rect_count_rebuilds_every_composite() {
 /// The two ways a `VectorField` names no area to sample, and the sound control
 /// beside them.
 ///
-/// `dashscene-gpu`'s `field_draws` answers `false` for both — `right > left &&
-/// bottom > top && atlas_rect[2] > 0 && atlas_rect[3] > 0` — and skips the
-/// field before residency. These are the fields this painter has to answer the
-/// same way.
+/// `dashscene-gpu`'s `field_draws` answers `false` for all of them — the quad's
+/// width and height finite and positive, then `atlas_rect[2] > 0 &&
+/// atlas_rect[3] > 0` — and skips the field before residency. These are the
+/// fields this painter has to answer the same way.
 ///
 /// **The three `atlas_rect` rows are what one of these tests pins**, and both
 /// axes are varied because the two divisors are separate: `field_coverage`
@@ -2684,22 +2684,38 @@ fn a_changed_rect_count_rebuilds_every_composite() {
 /// one. Measured by deleting each atlas term in turn: each failure is
 /// [`a_coverage_mask_with_no_area_draws_nothing_through_the_backdrop`] alone.
 /// **The fill test does not constrain the predicate at all** — its own note
-/// records why, and it holds for all eight rows, not five of them.
+/// records why, and it holds for all fifteen rows.
 ///
-/// **The five `plane_bounds` rows are characterization too, and no fixture
-/// could make them a pin.** Deleting `right > left`, `bottom > top`, or both
-/// leaves this whole suite green, because every plane case here is refused
-/// twice: adding the node origin to both ends of an interval cannot make a
-/// non-positive width positive, so the device-quad guard below the predicate
-/// catches each of them on its own. They are here to state that the picture
-/// does not depend on which of the two refusals ran, on both axes, in all four
-/// NaN positions, and on both draw paths.
+/// **The six non-finite rows are a pin, and they are the newest** (issue
+/// #1034). Four name a bound in the one position where an infinity *passes* the
+/// ordering — negative for `left` and `top`, positive for `right` and `bottom`
+/// — and two name four finite bounds whose **difference** overflows. All six
+/// drew before the predicate began testing the extent, and the last two also
+/// drew under the first version of that fix, which tested each bound instead.
+///
+/// Measured by reverting the predicate: the failure is
+/// [`a_coverage_mask_with_no_area_draws_nothing_through_the_backdrop`] alone,
+/// on the first such row it reaches. The **fill** test keeps passing, for the
+/// reason its own note gives about every other row — the infinite `sx` reaches
+/// the resolve shader, the shader answers zero coverage, and the `DstIn` mask
+/// erases the fill inside the saved layer, so that path swallows the defect. So
+/// these rows pin one of the two tests, and the backdrop is again the half
+/// where a divergence is visible.
+///
+/// **The six NaN and inverted rows are characterization, and no fixture could
+/// make them a pin.** Deleting the positive-extent terms leaves this suite
+/// green, because each of those cases is refused twice: adding the node origin
+/// to both ends of an interval cannot make a non-positive width positive, so
+/// the device-quad guard below the predicate catches each on its own. A
+/// non-finite extent is what breaks that symmetry — it survives both the
+/// ordering and the device-quad guard, since `inf > 0.0` is true — which is why
+/// those six rows pin and these six do not.
 ///
 /// That is not a claim that either check is redundant. The guard below catches a
 /// case the predicate cannot see — a large node origin collapsing a positive
 /// `right - left` to a zero-width device quad — and the predicate is what makes
-/// this painter answer `field_draws`. Neither has a fixture that isolates it.
-const DRAWS_NOTHING: [(&str, [u32; 4], [f32; 4]); 9] = [
+/// this painter answer `field_draws`.
+const DRAWS_NOTHING: [(&str, [u32; 4], [f32; 4]); 15] = [
     ("no atlas extent at all", [0, 0, 0, 0], [0.0, 0.0, 8.0, 8.0]),
     ("no atlas width", [0, 0, 0, 8], [0.0, 0.0, 8.0, 8.0]),
     ("no atlas height", [0, 0, 8, 0], [0.0, 0.0, 8.0, 8.0]),
@@ -2720,6 +2736,45 @@ const DRAWS_NOTHING: [(&str, [u32; 4], [f32; 4]); 9] = [
         "a plane quad inverted in y",
         [0, 0, 8, 8],
         [0.0, 8.0, 8.0, 2.0],
+    ),
+    // The four positions an infinity passes the ordering in, and so the four
+    // that drew before issue #1034. `left` and `top` take the negative one
+    // because `right > left` is what they have to satisfy; `right` and `bottom`
+    // take the positive one for the same reason mirrored.
+    (
+        "an infinite left bound",
+        [0, 0, 8, 8],
+        [f32::NEG_INFINITY, 0.0, 8.0, 8.0],
+    ),
+    (
+        "an infinite top bound",
+        [0, 0, 8, 8],
+        [0.0, f32::NEG_INFINITY, 8.0, 8.0],
+    ),
+    (
+        "an infinite right bound",
+        [0, 0, 8, 8],
+        [0.0, 0.0, f32::INFINITY, 8.0],
+    ),
+    (
+        "an infinite bottom bound",
+        [0, 0, 8, 8],
+        [0.0, 0.0, 8.0, f32::INFINITY],
+    ),
+    // Four finite bounds in the right order whose **difference** is not finite:
+    // `3.0e38 - -3.0e38` is `6.0e38`, which overflows f32. This is why the
+    // predicate tests the extent rather than the four bounds — a version
+    // checking `is_finite` on each bound admits this row and hands the coverage
+    // shader the same infinite scale the infinite rows above did.
+    (
+        "a plane quad whose width overflows",
+        [0, 0, 8, 8],
+        [-3.0e38, 0.0, 3.0e38, 8.0],
+    ),
+    (
+        "a plane quad whose height overflows",
+        [0, 0, 8, 8],
+        [0.0, -3.0e38, 8.0, 3.0e38],
     ),
 ];
 

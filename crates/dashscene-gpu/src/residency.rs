@@ -523,8 +523,15 @@ impl Residency {
         // allocate in it, and `evict_one` can never choose its payload — so
         // clearing its allocator would leave a full-size texture permanently
         // unreachable, which is a leak per document rather than the reuse this
-        // method promises. Every `Slot` is invalidated above, so the index shift
-        // this causes names nothing.
+        // method promises.
+        //
+        // **This shifts every atlas index after a dropped texture down**, and
+        // clearing `resident` above is not enough to make that harmless: it
+        // invalidates every `Slot`, but not a bare index recorded elsewhere.
+        // `BlurTargets::bound_atlases` was one, and issue #1050 is what that
+        // cost — `Renderer::forget_uploaded` now drops it in the same call that
+        // reaches here. Anything else keying on an atlas index has to be
+        // invalidated there too.
         self.atlases.retain(|atlas| !atlas.dedicated);
         for atlas in &mut self.atlases {
             atlas.allocator.clear();
