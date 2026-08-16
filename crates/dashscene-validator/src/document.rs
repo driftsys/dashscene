@@ -77,7 +77,7 @@ macro_rules! check_enum {
 /// band — including the v0.8 masks and group opacity (a mask is a shape
 /// stencil, an opacity a node alpha; neither is profile-differentiated) —
 /// so there is nothing here for a profile to differentiate. Out-of-profile
-/// constructs are caught at the import gate ([`crate::triage`]), which is
+/// constructs are caught at the import gate ([`crate::triage()`]), which is
 /// the only place they exist: by the time a construct is in the schema, it
 /// is in the vocabulary. The parameter returns when the effect vocabulary
 /// lands (a blur or blend mode is profile:full-only), with a rule behind it

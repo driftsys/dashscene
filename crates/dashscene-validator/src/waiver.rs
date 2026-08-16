@@ -43,8 +43,8 @@ use crate::{Diagnostic, Location, Report, Severity, rule};
 /// and why one waiver covers every identical finding at its target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Waiver {
-    /// The rule id this waiver suppresses. A value outside
-    /// [`rule::ALL`](crate::rule::ALL) is out of scope and is diagnosed.
+    /// The rule id this waiver suppresses. A value outside [`rule::ALL`] is
+    /// out of scope and is diagnosed.
     pub rule: String,
     /// The target the waiver covers. Matched by equality against a
     /// diagnostic's [`Diagnostic::at`], so a node waiver names the node and

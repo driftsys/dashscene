@@ -62,10 +62,15 @@
 //!
 //! **Story #838 removed the premise, so the guard went with it.**
 //! `Arena::dfs_order`, the solve and the paint all follow the root
-//! [`crate::document`] names on the arena it loaded into, so a row nothing
+//! `crate::document` names on the arena it loaded into, so a row nothing
 //! paints is a row nothing can ask for. [`layout`] fetches the shown root's own
 //! set for every document shape, which is the sentence issue #822 was opened to
 //! make writable.
+//!
+//! `crate::document` is named in backticks here and below rather than linked:
+//! it **is** gated on `wasm32` and this module is not, so an intra-doc link to
+//! it does not resolve on a host build, and intra-doc links are a lint gate
+//! here (`lib.rs` records the same reason for `load_document`).
 //!
 //! # What replaced it: the root named at load is the only one that can be shown
 //!
@@ -76,7 +81,7 @@
 //! empty slice.
 //!
 //! No host offers that switch today — `Txn::show_root` is named once, by
-//! [`crate::document`], during the load — and this is where it would be felt
+//! `crate::document`, during the load — and this is where it would be felt
 //! first. Widening the fetch is not the answer if it ever is offered: that is
 //! R5 surrendered for a capability nobody asked for. Fetching the newly shown
 //! root's payloads at the moment of the switch is, and it is the same lazy fetch
@@ -95,7 +100,7 @@
 //! variant and `dashc`'s emitter refuses one, so only a derivation manifest can
 //! bind a baked rung. `ImageTable::push_mapped` asserts that a *baked* payload's
 //! range is exactly the length its format and extent require, and an empty range
-//! would fail that assertion. [`crate::document`] refuses a derived binding by
+//! would fail that assertion. `crate::document` refuses a derived binding by
 //! name before it reaches here, for the same reason the native host does (issue
 //! #640), which is what keeps that assertion out of reach.
 //!

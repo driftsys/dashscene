@@ -247,7 +247,7 @@ impl SkiaPainter {
 /// A content hash would be the honest key, and the document has one —
 /// `dashbuf`'s `AssetEntry.hash`, BLAKE3-256 over the canonical payload. It
 /// does not reach here: the loader consumes it to bind each entry to its
-/// payload, and what crosses boundary B is [`ImageAsset`], which carries a
+/// payload, and what crosses boundary B is [`dashpaint::ImageAsset`], which carries a
 /// format and bytes and no hash. So the identity is established the only other
 /// way available at this level — the painter keeps the table it decoded from
 /// and compares the incoming one against it by value, byte for byte. Equal

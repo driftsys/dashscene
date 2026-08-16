@@ -596,8 +596,7 @@ pub struct VariantMember {
 /// not depend on `dashcue` and must not — `dashcue` is dependency-free by
 /// design and the direction is that consumers depend on it, never the
 /// reverse (SCOPE §9). `dashscene-engine` depends on both and converts, the
-/// same shape as [`Channel`](crate::Channel) mirroring the schema's
-/// `BindingChannel`.
+/// same shape as [`Channel`] mirroring the schema's `BindingChannel`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Easing {
     #[default]
@@ -2704,7 +2703,7 @@ fn rect_of_slot_checked(rect_of_slot: &[u32], id: NodeId, did: &str) -> u32 {
 /// in one and not the other, or present in both with different runs or
 /// different quads.
 ///
-/// Both halves are load-bearing. A `GlyphRun` carries a [`GlyphRange`]
+/// Both halves are load-bearing. A `GlyphRun` carries a [`crate::GlyphRange`]
 /// into its table's flat quad array rather than the quads themselves, so
 /// comparing runs alone answers only where an anchor's glyphs sit, never
 /// what they are (issue #798).

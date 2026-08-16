@@ -6,7 +6,7 @@
 //!
 //! | gate | entry point | answers |
 //! |---|---|---|
-//! | import | [`triage`] | is this source construct in the target's profile? (docs/specification/04-figma-vocabulary-profile.md) |
+//! | import | [`triage`](fn@crate::triage) | is this source construct in the target's profile? (docs/specification/04-figma-vocabulary-profile.md) |
 //! | load | [`validate_document`] | is this `.dsb` internally consistent? |
 //! | paint | [`validate_scene`] | does this solved scene stay inside painter budgets? |
 //!
