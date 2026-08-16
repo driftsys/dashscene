@@ -818,20 +818,24 @@ jobs:
       #
       # The runner image sets ANDROID_NDK_ROOT, which the recipe reads, so
       # nothing is installed here for it.
-      # The split-screen verdict, which needs no device and no toolchain.
+      # The harness's own gates, which need no device and no toolchain.
       #
       # `just android-splitscreen` decides D4's third case from
-      # HarnessActivity's logcat markers, and that recipe runs on no runner —
-      # it needs an attached emulator, so nothing schedules it. The logic that
-      # decides PASS or FAIL lives in `harness/verdict.sh` precisely so this
-      # step can exercise it: reading that logic, which was all anyone could do
-      # while it sat inline in the recipe, missed five distinct false verdicts
-      # across two review rounds of PR #1177.
+      # HarnessActivity's logcat markers, and `assert-drew.py` is the only
+      # witness that the painter drew anything. That recipe runs on no runner —
+      # it needs an attached emulator — so nothing scheduled either of them, and
+      # reading was the only check they had: it missed five false verdicts
+      # across two review rounds and a black frame passing for months
+      # (issues #1006, #1029).
       #
-      # Early in the job, and it costs milliseconds. A broken verdict fails
+      # The recipe rather than the two script paths, for the reason the
+      # `just android` note below gives about itself: a second copy of a path in
+      # YAML is the drift issue #903 keeps producing.
+      #
+      # Early in the job, and it costs about two seconds. A broken gate fails
       # here rather than reaching whoever next spends ten minutes on an
       # emulator.
-      - run: ./crates/dashscene-android/harness/verdict-test.sh
+      - run: just harness-tests
       - run: just android
       # The C ABI's conformance check, here rather than in a job of its own: it
       # needs only a C compiler, which every runner has, and this is already the
