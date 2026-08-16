@@ -11,9 +11,14 @@
 //! does.
 //!
 //! So the host still owns the window, still owns the seam, and hands the window
-//! handle to [`SurfaceRenderer::new`] once. What it gets back presents frames
+//! handle to `SurfaceRenderer::new` once. What it gets back presents frames
 //! and never returns a pixel — which is the property `demo/src/present.rs`
 //! argues the seam has to have, and the reason the trait names no buffer.
+//!
+//! `SurfaceRenderer::new` is native only — `#[cfg(not(target_arch = "wasm32"))]`
+//! — which is why it is named in backticks here and below rather than linked:
+//! this crate is documented for the wasm32 triple too, where a link to it does
+//! not resolve.
 //!
 //! # This is also the web target's path
 //!
@@ -33,7 +38,7 @@ pub struct SurfaceRenderer {
     /// and outliving it is the one ordering that is not allowed.
     surface: wgpu::Surface<'static>,
     renderer: Renderer,
-    /// Never holds an extent past [`Renderer::max_extent`]. [`Self::new`] and
+    /// Never holds an extent past [`Renderer::max_extent`]. `Self::new` and
     /// [`Self::resize`] are the only two writers and both refuse one, which is
     /// what makes [`Self::configure`] — called from three places, two of them
     /// on the frame path with no way to report — safe to call unconditionally.
@@ -179,7 +184,7 @@ impl SurfaceRenderer {
 
     /// Binds the painter and a swapchain to a `<canvas>`.
     ///
-    /// The web counterpart of [`SurfaceRenderer::new`], and the reason it
+    /// The web counterpart of `SurfaceRenderer::new`, and the reason it
     /// exists here rather than in the host: `wgpu` has a blanket
     /// `From<W> for SurfaceTarget` for anything window-shaped, and **no such
     /// conversion for a canvas** — it must be wrapped as
@@ -273,7 +278,7 @@ impl SurfaceRenderer {
         Self::new(AndroidNdkSurface { window }, width, height)
     }
 
-    /// [`SurfaceRenderer::new`] without the blocking wait — the constructor a
+    /// `SurfaceRenderer::new` without the blocking wait — the constructor a
     /// web host reaches through `SurfaceRenderer::for_canvas`, and the one
     /// every target has.
     pub async fn new_async(

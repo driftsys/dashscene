@@ -403,6 +403,16 @@ it in one `test` job alongside fifteen others on runners that became free when
 the repository went public. The tier is 154 s of that; the gate without it
 measures 8-10 s warm.
 
+Re-measured at issue #1109, which added a second intra-doc-link pass to `lint` —
+the wasm32 triple, on top of the host one already there. Fully warm on an
+Apple-silicon workstation: `lint` 5.5-9.1 s, `verify` 14.3 s, and the host
+`doc-links` pass **0.42 s** when it runs straight after a `lint` that has
+already documented the workspace. The gate is still seconds and the budget still
+holds. One caveat that is easy to mis-measure: a doc pass with different
+`RUSTDOCFLAGS` from the last one re-documents every member, which is 35-48 s and
+looks like a regression when it is a fingerprint miss — `doc` was aligned with
+`doc-links` at issue #1117 for exactly that reason.
+
 What it still catches: `lint` runs `clippy --all-targets`, which compiles what
 it lints, over the workspace and over every package `wasm-lint` names — so a
 compile error fails locally. There were three of those when this was measured

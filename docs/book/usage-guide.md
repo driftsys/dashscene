@@ -30,21 +30,22 @@ cd dashscene
 
 ## Common commands
 
-| Command                | What it does                                                                                                                             |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `just build`           | assemble + full check (this is what CI runs)                                                                                             |
-| `just test`            | sanity tier — ~7 s. Between edits, and before every commit.                                                                              |
-| `just test-regression` | regression tier — every test but the two calibration re-derivations. What `build` and the CI `test` job run; the pre-push hook does not. |
-| `just calibrate`       | calibration tier — 10 tests, ~54 s. Re-derives the committed asset tables.                                                               |
-| `just test-all`        | every tier in one run.                                                                                                                   |
-| `just lint`            | clippy -D warnings, `cargo fmt --check`, `just prim`, `deno fmt --check`                                                                 |
-| `just prim`            | `prim fmt --check .` then `prim lint .` — the Markdown, JSON, YAML and TOML gate, in the two verbs it takes                              |
-| `just fmt`             | reformat everything in place                                                                                                             |
-| `just check`           | regression tier + lint + audit                                                                                                           |
-| `just verify`          | the pre-push hook: commit-message lint, then lint + audit + a scoped secret scan. Seconds, and runs no test tier                         |
-| `just wasm`            | build `dashc` for `wasm32-unknown-unknown`                                                                                               |
-| `just deno-check`      | type-check the Deno Figma importer                                                                                                       |
-| `just book`            | serve this book locally                                                                                                                  |
+| Command                | What it does                                                                                                                                    |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `just build`           | assemble + full check (this is what CI runs)                                                                                                    |
+| `just test`            | sanity tier — ~7 s. Between edits, and before every commit.                                                                                     |
+| `just test-regression` | regression tier — every test but the two calibration re-derivations. What `build` and the CI `test` job run; the pre-push hook does not.        |
+| `just calibrate`       | calibration tier — 10 tests, ~54 s. Re-derives the committed asset tables.                                                                      |
+| `just test-all`        | every tier in one run.                                                                                                                          |
+| `just lint`            | clippy -D warnings, `cargo fmt --check`, `just doc-links`, `just prim`, `deno fmt --check`                                                      |
+| `just doc-links`       | the intra-doc-link gate on the host triple; the wasm32 and android triples carry their own pass inside `just wasm-lint` and `just android-lint` |
+| `just prim`            | `prim fmt --check .` then `prim lint .` — the Markdown, JSON, YAML and TOML gate, in the two verbs it takes                                     |
+| `just fmt`             | reformat everything in place                                                                                                                    |
+| `just check`           | regression tier + lint + audit                                                                                                                  |
+| `just verify`          | the pre-push hook: commit-message lint, then lint + audit + a scoped secret scan. Seconds, and runs no test tier                                |
+| `just wasm`            | build `dashc` for `wasm32-unknown-unknown`                                                                                                      |
+| `just deno-check`      | type-check the Deno Figma importer                                                                                                              |
+| `just book`            | serve this book locally                                                                                                                         |
 
 The full recipe set is in the repository's `justfile`. Which test tier to run
 when is `docs/decisions/test-tiers.md`.

@@ -60,6 +60,21 @@ weighs `measure/web-minimal` beside `demo-web` because a library crate has no
 measurable size of its own. Both came from story #795, and both are explained in
 [publishable-and-the-first-version.md](publishable-and-the-first-version.md).
 
+**`doc-links`, and what it did to `doc`.** The intra-doc-link gate is a third
+addition carrying a decision, and it changed a template recipe rather than only
+adding one. `doc-links` runs
+`RUSTDOCFLAGS='-D warnings' cargo doc --workspace --document-private-items`, and
+`doc` — the template's `cargo doc --open` — now passes exactly the same flags.
+Two reasons: rustdoc flags enter the fingerprint, so an unaligned pair
+re-documented every workspace member on each alternation (measured warm, 2.9 s
+aligned against 35-48 s each way); and `doc` would otherwise not render the
+private items the gate reads, so a rejected link could not be inspected after
+being repaired. **`just doc` therefore fails closed** — it refuses to open the
+browser on a broken link, where the template's form opened and hid it. The gate
+is one pass per triple, not one pass: `wasm-lint` and `android-lint` carry their
+own, and issues #1046, #1108, #1109 and #1117 are the sequence that got it
+there.
+
 **prim** replaced dprint and markdownlint-cli in one step, because the two were
 a pair over one file set and swapping either alone would have reformatted those
 files twice. prim covers Markdown, JSON, YAML and TOML, so the migration also

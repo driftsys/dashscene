@@ -39,8 +39,10 @@
 //! [`Container::parse`] borrows; it never copies a payload and never allocates
 //! one. An `mmap` of the file is therefore a drop-in, which is what the R5
 //! loading model ("one mmap of the whole file, once") needs — and since story
-//! #595 that is a fact rather than a property: [`crate::map::MappedFile`] is
-//! the mapping, and `crates/dashbuf/tests/mapped.rs` asserts that every section
+//! #595 that is a fact rather than a property: `crate::map::MappedFile` — in
+//! backticks because it is native only, and this crate is documented for
+//! wasm32 too, where it does not exist — is the mapping, and
+//! `crates/dashbuf/tests/mapped.rs` asserts that every section
 //! it hands back is a pointer into it at the offset the table declares.
 //! Parsing validates
 //! the header, the section table, and the table's own hash; payload hashes are
