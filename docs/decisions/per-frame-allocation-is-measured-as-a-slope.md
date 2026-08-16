@@ -94,10 +94,15 @@ own documentation and filed as issue #1111.
 
 **That issue is now closed and the term reads 0** — an equality over the band's
 fixture, not a rounding: the sixty-five-root document's steady-state layout
-frame allocates byte-identically to the one-root document's. D5 is kept rather
-than deleted because the rule it states is what produced that outcome; a term
-allowed to report zero early would have had nothing left to measure when the
-engine's turn came.
+frame allocates byte-identically to the one-root document's, 280 bytes each.
+**The comparison had to be repaired to mean that.** A `saturating_sub` guarded
+the difference while the constant was positive; at 0 it turned the equality into
+"the many-root frame allocates no _more_", which a frame allocating fewer bytes
+passes. The term compares the many-root level against the one-root level plus
+the expectation now, which is the same test at any positive constant and a real
+equality at 0. D5 is kept rather than deleted because the rule it states is what
+produced that outcome; a term allowed to report zero early would have had
+nothing left to measure when the engine's turn came.
 
 **The rule applies again immediately.** The term is on the **layout** frame, and
 the paint-only frame is still document-scaled at about 162 bytes per extra root

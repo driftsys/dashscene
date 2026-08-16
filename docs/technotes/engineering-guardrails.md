@@ -168,12 +168,21 @@ rules.
   steady-state layout frame asks the allocator for per root beyond the first —
   and then bounded the scratch: **69 bytes per extra root before, 17 after.**
 
-  **The third term reads 1.00x too, since issue #1111.** The 17 bytes that
-  remained after story #944 were `dashscene-engine`'s own per-frame scratch —
-  two vectors sized by the document's node count and one by its root count — and
-  closing them took the term to **0 bytes per extra root**, which over this
-  fixture means the sixty-five-root document's steady-state layout frame
-  allocates byte-identically to the one-root document's.
+  **The third term reads 0 since issue #1111**, which over this fixture means
+  the sixty-five-root document's steady-state layout frame allocates
+  byte-identically to the one-root document's — 280 bytes each. The 17 bytes
+  that remained after story #944 were `dashscene-engine`'s own per-frame
+  scratch: two vectors sized by the document's node count and one by its root
+  count.
+
+  **Stated as the term's own zero rather than as a ratio of levels.** 280 over
+  280 is 1.00x, but the levels are asserted on nowhere and have moved three
+  times across two stories (289, 297, 280); D3 of
+  [per-frame-allocation-is-measured-as-a-slope.md](../decisions/per-frame-allocation-is-measured-as-a-slope.md)
+  rejects a byte level for exactly that reason. A 1.00x written here would be
+  falsified by the next dependency bump that moved one level and not the other,
+  with nothing failing — the shape issue #944 filed against this paragraph the
+  first time.
 
   **What that does and does not say.** It is measured on the **layout** frame.
   The paint-only frame is still document-scaled, at about 162 bytes per extra

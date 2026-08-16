@@ -380,7 +380,9 @@ live nodes:
   to 17 (`docs/decisions/per-frame-allocation-is-measured-as-a-slope.md`). The
   17 that remained were the engine's rather than the arena's, and issue #1111
   closed them, so **the term is 0**: a steady-state layout frame allocates
-  byte-identically over a sixty-five-root document and a one-root one.
+  byte-identically over a sixty-five-root document and a one-root one, 280 bytes
+  each. That is the layout frame; the paint-only frame is still document-scaled
+  and unattributed (issue #1146).
 
 `rustc-hash` (`FxHashMap`) is the one crate #164 adds: an internal interner
 keyed by color/geometry bits needs neither SipHash's DoS resistance nor its

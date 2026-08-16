@@ -503,6 +503,22 @@ struct TreeState {
     /// needing a floor must have it removed, and the row's own style is not
     /// restyled when only a text child changed.
     baseline_floors: Vec<(NodeId, f32)>,
+    /// Which nodes are on a path to a changed node, stamped with the solve
+    /// that put them there rather than cleared between solves.
+    ///
+    /// Retained rather than allocated per frame, and dense rather than a set.
+    /// A per-frame vector sized by the document is what issue #1111 removed;
+    /// a set is bounded by the dirty closure and so is cheaper on the small
+    /// frames this runtime is built for, but it rehashes its way up on the
+    /// large ones — and a frame that dirties a large subtree is the frame a
+    /// fixed budget is judged on. Stamping a retained vector is neither:
+    /// nothing is allocated per frame, so the per-frame band still reads 0,
+    /// and the marking stays one indexed write per node with no hashing at
+    /// any dirty-set size.
+    on_path: Vec<u32>,
+    /// The stamp `on_path` carries for the solve in progress. Incremented per
+    /// solve, so the previous solve's marks read as absent without a clear.
+    pass: u32,
     /// The node count when the tree was built. A mismatch is a structural
     /// change and forces a rebuild.
     node_count: usize,
@@ -957,6 +973,11 @@ fn rebuild(
 
     let state = TreeState {
         tree,
+        // One stamp per node, allocated with the tree and reused by every
+        // solve after it. Zero is "never marked", and the first solve stamps
+        // with 1 (issue #1111).
+        on_path: vec![0; n],
+        pass: 0,
         taffy_of,
         parent_of,
         roots,
@@ -1064,19 +1085,22 @@ fn incremental(
     // its ancestors so the readback descends to reach them, on top of
     // descending wherever a rect actually moved.
     //
-    // A set of what is on a path, not a flag per node in the document. What
-    // goes in is the dirty set closed over ancestors, which is bounded by what
-    // changed this frame — where a vector was bounded by the document, and
-    // cost a byte per node of it on every frame whatever was shown (issue
-    // #1111). The `break` below already made the insertion count the size of
-    // that closure rather than the sum of the chains.
-    let mut on_path: FxHashSet<NodeId> = FxHashSet::default();
+    // Stamped, not allocated. The vector is retained on the state and each
+    // solve marks with a fresh stamp, so the previous solve's marks read as
+    // absent and nothing is cleared or allocated per frame (issue #1111). The
+    // `break` still stops each walk at the first already-marked ancestor, so
+    // the work is the size of the dirty closure rather than the sum of the
+    // chains — the vector's size is the document's, but it is paid once at
+    // rebuild and never again.
+    state.pass = state.pass.wrapping_add(1);
+    let pass = state.pass;
     for &node in &dirty {
         let mut cursor = Some(node);
         while let Some(current) = cursor {
-            if !on_path.insert(current) {
+            if state.on_path[current.index()] == pass {
                 break;
             }
+            state.on_path[current.index()] = pass;
             cursor = state.parent_of[current.index()];
         }
     }
@@ -1116,7 +1140,8 @@ fn incremental(
                 &state.taffy_of,
                 &mut state.prev_rel,
                 &cross_offset,
-                &on_path,
+                &state.on_path,
+                pass,
                 arena,
                 root,
                 (origin.x, origin.y),
@@ -1716,7 +1741,8 @@ fn read_back_pruned(
     taffy_of: &[taffy::NodeId],
     prev_rel: &mut [[u32; 4]],
     cross_offset: &FxHashMap<NodeId, f32>,
-    on_path: &FxHashSet<NodeId>,
+    on_path: &[u32],
+    pass: u32,
     arena: &Arena,
     node: NodeId,
     parent_origin: (f32, f32),
@@ -1767,7 +1793,7 @@ fn read_back_pruned(
     // resized, or it is on the path to a node whose intent changed. A
     // node that neither moved nor guards a dirty descendant has an
     // unchanged subtree, and Taffy left its layouts untouched.
-    if rect_changed || on_path.contains(&node) {
+    if rect_changed || on_path[node.index()] == pass {
         for &child in arena.children(node) {
             read_back_pruned(
                 tree,
@@ -1775,6 +1801,7 @@ fn read_back_pruned(
                 prev_rel,
                 cross_offset,
                 on_path,
+                pass,
                 arena,
                 child,
                 (x, y),
@@ -1812,8 +1839,11 @@ fn rel_bits(local_x: f32, local_y: f32, w: f32, h: f32) -> [u32; 4] {
 /// baseline meets the row's baseline line, the content-box top plus the
 /// tallest participating baseline. A non-text child keeps the box bottom
 /// Taffy uses for it (recomputed to the same place). Rows with no text child,
-/// and every other mode or alignment, are left untouched (`None`), so a
-/// baseline row of plain boxes solves exactly as before.
+/// and every other mode or alignment, put nothing in the map at all — an
+/// absent node keeps Taffy's y, so a baseline row of plain boxes solves
+/// exactly as before. The relation is sparse, which is why it is a map and not
+/// a slot per node (issue #1111): a scene with no baseline text row leaves it
+/// empty, and an empty map has allocated nothing.
 ///
 /// The walk visits every node, but only shapes at a baseline text row, which
 /// is rare. `baseline_y` is the first line's placed baseline, not a bare font
@@ -1913,8 +1943,14 @@ fn collect_baseline_offsets(
 
 /// Run the #272 baseline correction over a freshly solved tree, and give
 /// the solver a second turn when the correction needs a HUG row to be
-/// taller than Taffy sized it (#322). Returns each node's corrected
-/// cross-axis offset, `None` where the node keeps Taffy's.
+/// taller than Taffy sized it (#322). Returns the corrected cross-axis offset
+/// of each node that has one; a node absent from the map keeps Taffy's.
+///
+/// The map costs the readback a probe per visited node where a dense slot cost
+/// an index. That is unmeasured and issue #1153 carries it: the map is what
+/// makes a scene with no baseline row allocate nothing, and whether the probe
+/// is worth the allocation on a scene that has one is a wall-clock question
+/// this crate has not asked.
 ///
 /// The re-solve is what makes #322 a layout fix rather than a rect patch:
 /// the row's cross size feeds its own placement in its parent, its
@@ -1938,7 +1974,6 @@ fn collect_baseline_offsets(
 /// the re-solve would then compute every root in the document, which is the
 /// per-frame cost story #838 exists to remove, on exactly the text scenes the
 /// band cannot see (it runs `TaffySolver::new()` and returns above).
-#[allow(clippy::too_many_arguments)]
 fn baseline_pass(
     tree: &mut TaffyTree<TextContext>,
     taffy_of: &[taffy::NodeId],

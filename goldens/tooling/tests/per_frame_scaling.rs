@@ -69,9 +69,9 @@
 //! ```text
 //! document           frame         solves   rect rows   bytes
 //! small-root (1)     paint-only         0           1     892
-//! small-root (1)     layout             1           1     308
+//! small-root (1)     layout             1           1     280
 //! many-root (65)     paint-only         0           1   11260
-//! many-root (65)     layout             1           1     308
+//! many-root (65)     layout             1           1     280
 //! ratio, many/small  layout          1.00x       1.00x   1.00x
 //! slope, per extra root                                      0
 //! ```
@@ -81,14 +81,21 @@
 //! bytes for a sixty-five-root document as for a one-root one.
 //!
 //! **The paint-only row is not**, and the band does not assert on it. Its
-//! difference is stable at about 162 bytes per extra root, from a cause nothing
-//! has attributed — issue #1146.
+//! difference between the two documents came out at about 162 bytes per extra
+//! root on every run taken while issue #1111 was worked — unchanged by three
+//! separate changes to the engine's scratch, which is what says it is
+//! document-scaled rather than noise. That is not the same as calling the row
+//! *stable*: its **level** does move between repeats over one unchanged
+//! document (884, 884, 1284, 1172 below), which is why the term is taken on the
+//! layout row and why nothing here asserts on this one. Both readings are
+//! needed, and issue #1146 carries the unattributed cause.
 //!
 //! The byte levels are stated for completeness and asserted on nowhere. What is
-//! asserted is the **growth** between the two documents — 1088 bytes, which is
-//! the 17 above times the 64 extra roots — see [`BYTES_PER_EXTRA_ROOT`] for why
-//! it is a difference and why the comparison is against the whole growth rather
-//! than against a per-root quotient. The paint-only row's figures are the ones
+//! asserted is the many-root layout frame's own figure against the one-root
+//! frame's plus the slope times the extra roots — which at a slope of 0 is the
+//! byte identity above, and is why the row reads 1.00x. See
+//! [`BYTES_PER_EXTRA_ROOT`] for why it is stated per root and why the
+//! comparison is not a per-root quotient. The paint-only row's figures are the ones
 //! that move between runs of the same document, which is why the term is taken
 //! on the layout row.
 //!
@@ -134,14 +141,15 @@
 //! no baseline text rows, where the vector it replaced was sized by the
 //! document and thrown away unused.
 //!
-//! **The one-root document's layout frame went up twice on the way**, 289 to
-//! 297 under #944 and 297 to 308 under #1111, and both are the honest reading
-//! of a trade. An unreserved `Vec` growing to one element takes a larger
-//! minimum allocation than a one-element reserve; a hash set holding one dirty
-//! node takes more than one byte. The term is a difference precisely so that a
-//! level moving in the small case cannot be mistaken for the document-scaled
-//! cost it measures — over the same two changes the sixty-five-root document
-//! went 4705 bytes to 308.
+//! **The one-root document's layout frame moved in both directions on the
+//! way**: 289 to 297 under story #944, because an unreserved `Vec` growing to
+//! one element takes a larger minimum allocation than a one-element reserve,
+//! then 297 to 280 under issue #1111, because the vectors that frame still
+//! allocated became either a map that stays empty or a stamp on a vector the
+//! solver already retains. The term is a difference precisely so that a level
+//! moving either way in the small case cannot be mistaken for the
+//! document-scaled cost it measures — over the same two changes the
+//! sixty-five-root document went 4705 bytes to 280.
 //!
 //! The band landed first so that before-number was measured rather than
 //! remembered — a band added in the same change that improves what it measures
@@ -149,12 +157,13 @@
 //! measured: [`the_confinement_is_what_makes_the_number_one`] removes the
 //! confinement on every run and reports 65 again.
 //!
-//! **On the byte term that guard reports 136, not the 69 story #944 started
-//! from, and the difference is not a regression.** An unconfined commit really
+//! **On the byte term that guard reports 119, which is neither the 69 story
+//! #944 started from nor the 0 the band now holds, and it is not a
+//! regression.** An unconfined commit really
 //! does draw sixty-five artboards, so the rect table and everything else sized
 //! by rect rows grows with it — costs the confined commit avoids by drawing
 //! less, rather than scratch it was wasting. The guard's job is to show the
-//! term moves when the confinement goes, and 136 against 17 shows it.
+//! term moves when the confinement goes, and 119 against 0 shows it.
 //!
 //! The paint-only row did not move, and that is worth stating. It was already
 //! zero at 65 roots: a commit whose changes are all paint-only solves nothing,
@@ -376,7 +385,7 @@ const MANY_RECT_ROWS: usize = 1;
 /// **69 until story #944, 17 after it, and 0 since issue #1111.** Zero is an
 /// equality, not a rounding: over the band's fixture the sixty-five-root
 /// document's steady-state layout frame allocates byte-identically to the
-/// one-root document's, 308 bytes each. A frame's allocation does not grow with
+/// one-root document's, 280 bytes each. A frame's allocation does not grow with
 /// the document at all, which is the third term's whole claim and is now stated
 /// at its strongest.
 ///
