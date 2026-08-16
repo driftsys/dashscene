@@ -945,7 +945,7 @@ _android-ndk-bin:
     # honoured so the same recipe serves CI and a workstation.
     ndk="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
     if [ -z "${ndk}" ]; then
-      sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-${HOME}/Library/Android/sdk}}"
+      sdk=$(just _android-sdk)
       # Highest installed version rather than first, so a machine holding
       # several does not silently pin the oldest by sort order.
       ndk=$(ls -d "${sdk}"/ndk/* 2>/dev/null | sort -V | tail -1 || true)
@@ -1027,6 +1027,84 @@ _android-env api=ANDROID_API:
     printf 'export CC_aarch64_linux_android=%q\n' "${clang}"
     printf 'export AR_aarch64_linux_android=%q\n' "${bin}/llvm-ar"
 
+# Print the Android SDK root, honoured in the order every consumer uses.
+#
+# `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then the macOS default. Written once
+# because a copy of it diverging is not hypothetical: `android-splitscreen`
+# carried a two-level version, so on a machine exporting only
+# `ANDROID_SDK_ROOT` that recipe failed to find adb while `just android` and
+# both `build.sh` scripts succeeded (issue #1006 §7).
+#
+# It does not check the directory exists. Callers want different things from a
+# missing SDK — `_android-ndk-bin` falls through to its own NDK diagnostic,
+# `_android-adb` names the adb it could not find — and a check here would
+# report "no SDK" for a machine that has one and is merely missing
+# platform-tools.
+#
+# **The two `build.sh` scripts still carry their own copy**, and deliberately:
+# reaching this would make `just` a prerequisite of a script that is run
+# directly. They are the fourth and fifth copies, and issue #1058 §6 already
+# covers what those scripts share with these recipes.
+[private]
+_android-sdk:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-${HOME}/Library/Android/sdk}}"
+
+# Print the path to `adb`, or say what to install.
+#
+# `android-probe` and `android-splitscreen` both need it, and each carried its
+# own copy of this lookup until issue #1007 — a nested `if` with an explanatory
+# comment in one, a compressed one-liner in the other. The two had already
+# diverged in what they accept, which is the point: this is the shape
+# `_android-ndk-bin` establishes for the NDK, applied to the SDK.
+#
+# **Stdout is the path and nothing else**, for the reason `_android-ndk-bin`
+# gives about its own — the callers read it through a command substitution.
+#
+# The SDK fallback is three levels, `ANDROID_HOME` then `ANDROID_SDK_ROOT` then
+# the macOS default, which is what `_android-ndk-bin` and both `build.sh`
+# scripts use. `android-splitscreen` had only two of them (issue #1006 §7), so
+# on a machine exporting only `ANDROID_SDK_ROOT` that recipe failed to find adb
+# while `just android` and `build.sh` both succeeded.
+[private]
+_android-adb:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if command -v adb >/dev/null 2>&1; then
+      command -v adb
+      exit 0
+    fi
+    sdk=$(just _android-sdk)
+    adb="${sdk}/platform-tools/adb"
+    # Checked, so a missing platform-tools says so. Without it the caller's next
+    # step fails as "no device attached", which sends whoever reads it looking
+    # for a cable rather than for an install. The NDK alone satisfies
+    # `just android`, so having one without the other is the ordinary case.
+    if [ ! -x "${adb}" ]; then
+      echo "android: no adb on PATH and none at ${adb}" >&2
+      echo "android:   sdkmanager --install platform-tools" >&2
+      exit 1
+    fi
+    echo "${adb}"
+
+# Succeed when adb reports at least one attached device.
+#
+# `android-probe` and `android-splitscreen` both gate on this and carried the
+# same three-command test, differing only in the hint each prints after it —
+# and those hints legitimately differ, which is why the test is shared and the
+# messages are not. That is the other half of issue #1007: the lookup was the
+# copy it named, and this is the copy one call site further on.
+#
+# Silent by design. It answers with its exit status, so a caller writes
+# `if ! just _android-has-device; then` and prints its own diagnosis.
+[private]
+_android-has-device:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    adb=$(just _android-adb)
+    [ -n "$("${adb}" devices | sed '1d' | grep -w device || true)" ]
+
 # Build the lean painter for Android — a gate, like `wasm-painter`.
 #
 # The second platform's compile check, and the cheapest thing that says the
@@ -1037,6 +1115,7 @@ _android-env api=ANDROID_API:
 # Plain cargo with the NDK linker wired from the environment, rather than
 # `cargo-ndk`. It matches how every other target in this repository is built and
 # adds no tool to install.
+# Cross-compile the four Android members for aarch64-linux-android.
 android:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1089,6 +1168,7 @@ android:
 # Needs the NDK, like `android`. It does not depend on `android`, because
 # clippy's own check builds what it needs and depending on it would double the
 # compile for no gate.
+# Clippy and doc-link the five Android members on their own triple.
 android-lint:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1133,8 +1213,6 @@ android-lint:
         --target aarch64-linux-android {{ DOC_FLAGS }}
     RUSTDOCFLAGS='-D warnings' cargo doc -p showcase --lib --target aarch64-linux-android {{ DOC_FLAGS }}
 
-# Package both Android hosts into APKs — the gate that compiles their Java.
-#
 # `android` above cross-compiles the four Android **Rust** members and stops
 # there, so until this recipe existed **no gate compiled any Java in this
 # repository**. That is issue #1030, and it is how the false handshake marker
@@ -1173,6 +1251,7 @@ android-lint:
 # from neither: it is a system utility, and a slim image without it gets
 # through aapt2, javac and d8 before failing. `bootstrap` installs none of the
 # three, the same trade `android` makes for the NDK.
+# Package both Android hosts into APKs — the gate that compiles their Java.
 android-apk: android
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1199,6 +1278,7 @@ android-apk: android
 #
 # **An emulator result describes the host machine's GPU and is not the D3a
 # measurement.** Record it as an emulator result or not at all.
+# Build the D3a adapter probe, push it to an attached device and run it.
 android-probe:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1208,25 +1288,8 @@ android-probe:
     eval "${android_env}"
     cargo build -p dashscene-gpu --example adapter_report --release \
       --target aarch64-linux-android
-    # An `x && y` one-liner would rely on the `set -e` exemption for non-final
-    # commands in an `&&` list, which is exactly the kind of thing that is true
-    # today and breaks when someone reorders the line.
-    if command -v adb >/dev/null 2>&1; then
-      adb=adb
-    else
-      adb="${ANDROID_HOME:-${HOME}/Library/Android/sdk}/platform-tools/adb"
-      # Checked, so a missing platform-tools says so. Without this the next
-      # step's failure is reported as "no device attached", which sends whoever
-      # reads it looking for a cable rather than for an install. The NDK alone
-      # satisfies `just android`, so having one without the other is the
-      # ordinary case rather than a corner.
-      if [ ! -x "${adb}" ]; then
-        echo "android-probe: no adb on PATH and none at ${adb}" >&2
-        echo "android-probe:   sdkmanager --install platform-tools" >&2
-        exit 1
-      fi
-    fi
-    if [ -z "$("${adb}" devices | sed '1d' | grep -w device || true)" ]; then
+    adb=$(just _android-adb)
+    if ! just _android-has-device; then
       echo "android-probe: no device attached — start an emulator or plug one in" >&2
       exit 1
     fi
@@ -1235,9 +1298,6 @@ android-probe:
     "${adb}" shell chmod 755 /data/local/tmp/adapter_report
     "${adb}" shell /data/local/tmp/adapter_report
 
-# Exercise D4's split-screen case against an emulator, end to end, and assert
-# the handshake completed.
-#
 # `docs/decisions/host-integration-in-three-layers.md` D4 names three cases that
 # get the surface handshake wrong: rotation, backgrounding and split-screen. The
 # first two have been exercised; the third had not, and
@@ -1253,18 +1313,34 @@ android-probe:
 # activity is merely brought forward, which is what makes the path look dead.
 # So this force-stops first.
 #
-# The assertion is `HarnessActivity`'s own markers. `surfaceDestroyed —
-# entering the handshake` says the callback was reached; `surfaceDestroyed —
-# handshake complete, returning` is logged only after it has blocked for the
-# frame loop to stop and the surface to be dropped. Reaching the first without
-# the second is precisely the use-after-free D4 exists to prevent, so both are
-# required. Both are checked for presence, not for order.
+# **Start the emulator with `-gpu host`** (issue #1158). Under the default GPU
+# mode the painter cannot obtain a device, the harness draws a black frame, and
+# this recipe fails at `assert-drew` after about ten minutes with
+# `Failed to open rendernode`. Same AVD, same APK and same commit pass end to
+# end with the flag. `just android-probe` reports what the painter's own
+# `request_device` gets on the attached adapter, so it is the cheap check that
+# the mode is right before spending those ten minutes.
 #
-# A third marker, `no runtime handle, nothing to hand back`, is the case where
-# `nativeSurfaceCreated` could not obtain the window or spawn the thread. Until
-# 2026-08-15 the completion marker was logged outside its guard, so that case
-# emitted it having handed nothing back and this recipe reported a PASS for a
-# teardown that never happened (issue #1006).
+# The assertion is `HarnessActivity`'s own markers. `surfaceDestroyed —
+# entering the handshake` is logged unconditionally on entry; exactly one of
+# three lines follows it, and which one is the whole verdict:
+#
+#     handshake complete, returning        blocked for the loop to stop and the
+#                                          surface to be dropped — D4's case
+#     no drawable extent was ever reported nothing was started, so there was
+#                                          nothing to hand back (issue #1094)
+#     no runtime handle, nothing to hand   nativeSurfaceCreated could not get
+#     back                                 the window or spawn the thread
+#
+# **The markers are counted and paired, not matched for presence** (issue #1006
+# and its follow-up comment). The scoped log routinely holds more than one
+# create/destroy cycle, because the cold `--windowingMode 6` launch and the
+# Settings launch each resize the harness window. Presence alone passed when
+# cycle 1 completed and cycle 2 — the split transition, the one this recipe
+# exists to measure — entered `surfaceDestroyed` and never returned. Since every
+# entry logs exactly one of the three exits, `entering == complete + no-drawable
+# + no-handle` says every cycle finished, and a shortfall is precisely the
+# use-after-free window D4 names.
 #
 # It is a narrow case, and deliberately not the one issue #960 describes: a GPU
 # device that cannot be obtained returns a NON-ZERO handle — #960's own log
@@ -1297,19 +1373,28 @@ android-probe:
 #
 # A tablet profile rather than a phone: split-screen is most reliable on a large
 # screen, and a panel form factor is closer to this project's target anyway.
+#
+# Exercise D4's split-screen case against an emulator and assert the handshake.
 android-splitscreen:
     #!/usr/bin/env bash
     set -euo pipefail
-    sdk="${ANDROID_HOME:-${HOME}/Library/Android/sdk}"
+    adb=$(just _android-adb)
     img="system-images;android-35;google_apis_playstore;arm64-v8a"
     pkg=dev.driftsys.dashscene.harness
     act="${pkg}/dev.driftsys.dashscene.HarnessActivity"
-    if command -v adb >/dev/null 2>&1; then adb=adb; else adb="${sdk}/platform-tools/adb"; fi
-    if ! command -v adb >/dev/null 2>&1 && [ ! -x "${adb}" ]; then
-      echo "android-splitscreen: no adb on PATH and none at ${adb}" >&2
-      echo "android-splitscreen:   sdkmanager --install platform-tools" >&2
-      exit 1
-    fi
+    script="crates/dashscene-android/harness/assert-drew.py"
+
+    # **The verdict is a file, and it is checked before anything expensive.**
+    # `verdict.sh` holds the logic that decides PASS or FAIL; `verdict-test.sh`
+    # exercises it against synthetic logcat text and needs no device. Running it
+    # here costs milliseconds and means a broken verdict fails now rather than
+    # after a cross-compile, an APK build, an install and ten minutes on an
+    # emulator. Reading that logic — which is all anyone could do while it lived
+    # inline in this recipe — missed five distinct false verdicts across two
+    # review rounds.
+    ./crates/dashscene-android/harness/verdict-test.sh >/dev/null
+    . crates/dashscene-android/harness/verdict.sh
+
     # **Build before requiring a device.** A cold `just android` is a
     # multi-minute cross-compile and needs no emulator; checking for a device
     # first and using it minutes later only widens the window in which it can
@@ -1318,16 +1403,101 @@ android-splitscreen:
     just android
     ./crates/dashscene-android/harness/build.sh
     apk="target/android-harness/harness.apk"
-    if [ -z "$("${adb}" devices | sed '1d' | grep -w device || true)" ]; then
+    if ! just _android-has-device; then
+      # `sdk` is resolved here rather than at the top: it is read only in this
+      # branch, and a nested `just` per run for a string used once in an error
+      # hint is waste.
+      sdk=$(just _android-sdk)
       echo "android-splitscreen: the APK is built at ${apk}, but no device is attached." >&2
       echo "android-splitscreen: create the emulator once —" >&2
       echo "android-splitscreen:   avdmanager create avd -n dashscene-splitscreen \\" >&2
       echo "android-splitscreen:     -k '${img}' -d medium_tablet" >&2
-      echo "android-splitscreen: then start it and re-run —" >&2
-      echo "android-splitscreen:   ${sdk}/emulator/emulator -avd dashscene-splitscreen &" >&2
+      echo "android-splitscreen: then start it with a host GPU and re-run —" >&2
+      echo "android-splitscreen:   ${sdk}/emulator/emulator -avd dashscene-splitscreen -gpu host &" >&2
+      echo "android-splitscreen: -gpu host is required (issue #1158): the default mode" >&2
+      echo "android-splitscreen: draws a black frame and fails at assert-drew." >&2
       echo "android-splitscreen: the automotive image does not offer split-screen." >&2
       exit 1
     fi
+
+    # **The wide filter, and it is not the one the markers are counted with.**
+    # The harness logs `dashscene`/`harness: …`; the native side logs the same
+    # tag with no `harness:` prefix — `crates/dashscene-android/src/logging.rs`
+    # — so `attaching a WxH surface`, `attached`, `attach failed:` and
+    # `could not rebuild the surface:` carry no prefix at all. Those four are
+    # exactly what this recipe's header names as the evidence separating a
+    # wedged acquisition from a failed one, so a diagnostic dump that dropped
+    # them would print a failure with none of the evidence for it (issue #1006
+    # comment f).
+    dump_evidence() {
+      "${adb}" logcat -d 2>/dev/null \
+        | grep -E "[IEW] dashscene:|Failed to open rendernode" | tail -14 || true
+    }
+
+    # **Poll for the frame rather than sleeping a fixed time**, and treat the
+    # script's exit status as three cases rather than two (issue #1006 §4, §8).
+    #
+    # A `sleep 8` gated this: on a cold emulator the first frame can take
+    # longer, and the screenshot then catches the launch animation, which reads
+    # as "the painter drew nothing". Polling turns that false FAIL into a
+    # slower PASS.
+    #
+    # 1 is the painter's verdict, 2 a screenshot the script could not read and
+    # 127 no python3 on PATH. **`assert-drew.py` does not yet honour that
+    # contract for every unreadable file**: its `except (OSError, ValueError)`
+    # misses the `zlib.error` and `IndexError` a truncated PNG raises, so those
+    # still arrive here as 1. That is issue #1029 §2 and is fixed in the script,
+    # not here; this branch is already correct for when it is.
+    #
+    # 1 and 2 are both retried, 127 is not. A screenshot taken during the launch
+    # animation reads as "drew nothing" and an interrupted `exec-out screencap`
+    # is a truncated PNG — both transient. A missing interpreter cannot improve
+    # by waiting.
+    assert_drew() {
+      local shot out rc
+      shot="target/android-harness/screen-$1.png"
+      out=""
+      rc=1
+      for _ in $(seq 1 20); do
+        "${adb}" exec-out screencap -p > "${shot}" || true
+        set +e
+        out=$(python3 "${script}" "${shot}" 2>&1)
+        rc=$?
+        set -e
+        if [ "${rc}" -eq 0 ] || [ "${rc}" -eq 127 ]; then break; fi
+        sleep 1
+      done
+      printf '%s\n' "${out}"
+      return "${rc}"
+    }
+
+    # One reporter for both call sites. The fullscreen call had the
+    # environment-versus-painter split and the multi-window one did not, which
+    # reintroduced issue #1006 §4 at the newer of the two.
+    drew_or_die() {
+      local phase rc
+      phase="$1"
+      rc=0
+      assert_drew "${phase}" || rc=$?
+      if [ "${rc}" -eq 0 ]; then return 0; fi
+      if [ "${rc}" -gt 1 ]; then
+        echo "android-splitscreen: assert-drew could not run on the ${phase} frame" >&2
+        echo "android-splitscreen: (exit ${rc}). That is an environment failure, not a" >&2
+        echo "android-splitscreen: painter verdict: 127 is no python3 on PATH, 2 is a" >&2
+        echo "android-splitscreen: screenshot it could not read. Nothing is known" >&2
+        echo "android-splitscreen: about the painter." >&2
+        exit 1
+      fi
+      echo "android-splitscreen: the ${phase} process drew nothing, so a handshake" >&2
+      echo "android-splitscreen: result would say nothing about D4: surfaceDestroyed" >&2
+      echo "android-splitscreen: blocks for the frame loop to stop, and a loop that" >&2
+      echo "android-splitscreen: never started may never signal." >&2
+      echo "android-splitscreen: if the log below says 'Failed to open rendernode'," >&2
+      echo "android-splitscreen: restart the emulator with -gpu host (issue #1158)." >&2
+      dump_evidence >&2
+      exit 1
+    }
+
     # Uninstall rather than `install -r`. A signing key that changed makes the
     # latter fail with INSTALL_FAILED_UPDATE_INCOMPATIBLE while the device goes
     # on running the previous build — build.sh's own comment calls that the
@@ -1335,102 +1505,232 @@ android-splitscreen:
     "${adb}" uninstall "${pkg}" >/dev/null 2>&1 || true
     "${adb}" install "${apk}" >/dev/null
     "${adb}" shell am force-stop "${pkg}" || true
-    "${adb}" logcat -c
-    # **Assert it draws before asserting anything else.** The harness logs
-    # surfaceCreated, surfaceChanged and a runtime handle whether or not the
-    # painter obtained a device, and logs nothing when it did not (issue #960),
-    # so every log-only check passes against a black screen. That is how a black
-    # frame survived a full run here on 2026-08-14 and was found by a human
-    # looking at the emulator. The screenshot is the only witness.
+    # `|| true` on every logcat -c, like every other fallible adb call here.
+    # On Android 11 and later this routinely fails with "failed to clear the
+    # 'main' log" and returns non-zero; under `set -e` that aborted the run
+    # with no message of its own, after the cross-compile, the APK build and
+    # the install (issue #1006 §5).
+    "${adb}" logcat -c || true
+
+    # **A smoke check on the fullscreen launch**, so a black screen fails here
+    # rather than after the split transition.
     echo "android-splitscreen: launching, then checking it actually drew"
     "${adb}" shell am start -W -n "${act}" >/dev/null
-    sleep 8
-    shot="target/android-harness/screen.png"
-    "${adb}" exec-out screencap -p > "${shot}"
-    if ! python3 crates/dashscene-android/harness/assert-drew.py "${shot}"; then
-      echo "android-splitscreen: stopping here. A handshake result is meaningless" >&2
-      echo "android-splitscreen: while nothing is being drawn: surfaceDestroyed" >&2
-      echo "android-splitscreen: blocks for the frame loop to stop, and a loop" >&2
-      echo "android-splitscreen: that never started may never signal." >&2
-      "${adb}" logcat -d | grep -E "Failed to open rendernode|I dashscene:" | tail -8 >&2 || true
-      exit 1
-    fi
+    drew_or_die fullscreen
+
     # Only now is the split transition worth measuring.
     "${adb}" shell am force-stop "${pkg}" || true
-    "${adb}" logcat -c
+    "${adb}" logcat -c || true
     echo "android-splitscreen: relaunching cold into multi-window"
-    "${adb}" shell am start -W -n "${act}" --windowingMode 6 >/dev/null
+    start_out=$("${adb}" shell am start -W -n "${act}" --windowingMode 6 2>&1 || true)
+    # **Matched in bash, never `printf | grep -q`.** Under `pipefail` grep -q
+    # exits at its first match, printf dies on SIGPIPE, and the pipeline
+    # reports 141 — measured, with the match on the first of 40000 lines — so
+    # a match inverts into a miss. The rest of this recipe matches in bash for
+    # the same reason.
+    #
+    # **`am start` exits 0 when it refuses the launch** and prints `Error:` on
+    # stdout, so `>/dev/null` threw away the only evidence (issue #1006 §3).
+    # `error:` in lower case is adb's own, not `am`'s — a dead connection, a
+    # device that went away — and it lands in the same capture, so both cases
+    # are named rather than one being reported as the other.
+    if [[ "${start_out}" == *"Error:"* ]]; then
+      echo "android-splitscreen: am start refused the launch —" >&2
+      printf '%s\n' "${start_out}" | sed 's/^/android-splitscreen:   /' >&2
+      echo "android-splitscreen: an image with no multi-window feature refuses" >&2
+      echo "android-splitscreen: --windowingMode 6. The automotive image is one." >&2
+      exit 1
+    fi
+    if [[ "${start_out}" == *"error:"* ]]; then
+      echo "android-splitscreen: adb failed rather than am —" >&2
+      printf '%s\n' "${start_out}" | sed 's/^/android-splitscreen:   /' >&2
+      echo "android-splitscreen: the device was there a moment ago, so this is a" >&2
+      echo "android-splitscreen: connection that dropped rather than anything about" >&2
+      echo "android-splitscreen: windowing." >&2
+      exit 1
+    fi
+    # **A warm start is a Warning, not an Error**, so the check above does not
+    # see it: `am` prints "Activity not started, its current task has been
+    # brought to the front" and exits 0, having ignored `--windowingMode`
+    # entirely. The force-stop above is what should prevent it, and that call
+    # is `|| true`, so this case stays reachable.
+    if [[ "${start_out}" == *"brought to the front"* ]]; then
+      echo "android-splitscreen: am start was swallowed as a warm start, so" >&2
+      echo "android-splitscreen: --windowingMode was ignored and the activity was" >&2
+      echo "android-splitscreen: merely brought forward — onActivityRestartAttempt." >&2
+      echo "android-splitscreen: The force-stop above did not take effect; check" >&2
+      echo "android-splitscreen: that ${pkg} actually stopped." >&2
+      exit 1
+    fi
+
+    # **Scope the log to this process, by pid.** Taking the log from the
+    # relaunch's own `surfaceCreated` line onward was the previous scoping, and
+    # it has a failure mode of its own: that line is written at relaunch and the
+    # verdict is read after a dumpsys, a second `am start` and up to 30 s of
+    # polling, so on the emulator's 256 KB `main` ring the anchor can rotate out
+    # while the later markers survive (issue #1006 comment a). A pid cannot
+    # rotate out of the filter.
+    #
+    # `head -1`, because `pidof` prints every process of the package on one or
+    # more lines and a two-line `--pid=` argument is rejected — which
+    # `2>/dev/null` would then hide as an empty log and a confident FAIL.
+    #
+    # **Two fallbacks, and neither is "read the whole buffer".** An unscoped
+    # read admits the fullscreen run's own markers, which is the stale-pair
+    # false PASS issue #1006 §1 exists to prevent and is reachable because
+    # `logcat -c` above is `|| true`. If `pidof` says nothing, or if the
+    # pid-scoped read comes back empty — `--pid` unsupported, or the pid already
+    # gone — fall back to the `surfaceCreated` anchor, which is what this
+    # replaced rather than something weaker.
+    pid=$("${adb}" shell pidof "${pkg}" 2>/dev/null | tr -d '\r' | tr ' ' '\n' \
+      | grep -E '^[0-9]+$' | head -1 || true)
+    anchored_run() {
+      "${adb}" logcat -d 2>/dev/null | tr -d '\r' \
+        | grep -E "[IEW] dashscene: harness:" \
+        | awk '/surfaceCreated/{seen=1} seen' || true
+    }
+    if [ -n "${pid}" ]; then
+      this_run() {
+        "${adb}" logcat -d --pid="${pid}" 2>/dev/null | tr -d '\r' \
+          | grep -E "[IEW] dashscene: harness:" || true
+      }
+      if [ -z "$(this_run)" ]; then
+        echo "android-splitscreen: logcat --pid=${pid} returned nothing; anchoring" >&2
+        echo "android-splitscreen: on surfaceCreated instead." >&2
+        this_run() { anchored_run; }
+      fi
+    else
+      echo "android-splitscreen: no pid for ${pkg}; anchoring on surfaceCreated" >&2
+      this_run() { anchored_run; }
+    fi
+
     sleep 5
-    mode=$("${adb}" shell dumpsys activity activities 2>/dev/null \
-      | grep -A12 "A=[0-9]*:${pkg}" | grep -oE "mWindowingMode=[a-z-]+" | head -1 || true)
+    # **The Task line is the anchor, and that is deliberate rather than left
+    # over.** `mWindowingMode` is printed on the ConfigurationContainer dump
+    # that precedes the ActivityRecords, and this anchor is the one that has
+    # actually produced a correct reading on a device — 2026-08-14, the
+    # measurement this recipe's header records. An ActivityRecord anchor was
+    # written here and reverted: it is unverifiable without an emulator, and if
+    # the mode is not printed inside that block it resolves empty and every run
+    # fails at the gate below. What #1006 §6 is unambiguously right about is
+    # the interpolation: `${pkg}` went into an ERE, so every `.` in
+    # `dev.driftsys.dashscene.harness` matched any character. `-F` fixes that
+    # without changing what is read.
+    #
+    # **Verified on a device on 2026-08-16**, which is what settled it: this
+    # reads `mWindowingMode=multi-window` on an API 35 `medium_tablet` emulator
+    # in split-screen, across three consecutive runs of this recipe. The
+    # ActivityRecord anchor was written, could not be checked, and was reverted
+    # before that run — so the version that ships is the one with evidence.
+    mode=$("${adb}" shell dumpsys activity activities 2>/dev/null | tr -d '\r' \
+      | grep -F -A12 ":${pkg}" | grep -oE "mWindowingMode=[a-z-]+" | head -1 || true)
     if [ "${mode}" != "mWindowingMode=multi-window" ]; then
       echo "android-splitscreen: expected multi-window, got '${mode:-nothing}'" >&2
-      echo "android-splitscreen: a warm start swallows --windowingMode as" >&2
-      echo "android-splitscreen: onActivityRestartAttempt — force-stop first." >&2
+      echo "android-splitscreen: am start neither refused the launch nor reported a" >&2
+      echo "android-splitscreen: warm start, so this is the mode the window manager" >&2
+      echo "android-splitscreen: gave it — or the dump did not name the task." >&2
       exit 1
     fi
+
+    # **Assert this process drew, before Settings joins the split.** The verdict
+    # below comes from this process and nothing checked that it had drawn
+    # (issue #1006 §2) — but the check has to happen *now*: `screencap` captures
+    # the whole display, so once Settings occupies the other half its pixels
+    # alone clear `assert-drew.py`'s threshold and a black harness half would
+    # pass. The activity is already in multi-window, which the gate above just
+    # asserted, so this is the right process in the right mode.
+    drew_or_die multiwindow
+
+    # **The baseline, and it is what makes the verdict about the split.** The
+    # cold `--windowingMode 6` launch resizes the harness window itself, so a
+    # complete create/destroy cycle can already be in the log here. Counting
+    # absolutely would let that cycle satisfy the verdict without the
+    # transition this recipe exists to measure ever being observed.
+    ds_tally "$(this_run)"
+    base_entering=${ds_entering}
+    base_complete=${ds_complete}
+    base_nohandle=${ds_nohandle}
     echo "android-splitscreen: ${mode}; putting a second app in the other half"
-    "${adb}" shell am start -n com.android.settings/.Settings --windowingMode 6 >/dev/null 2>&1 || true
-    # Everything THIS instance logged, and nothing the previous one did. The
-    # force-stop above can leave the dying instance's teardown markers in the
-    # buffer: entries written in the millisecond window around a `logcat -c`
-    # are not removed, and a stale `entering`/`complete` pair is otherwise
-    # indistinguishable from this run's, which would report a PASS for a
-    # teardown the split transition never produced (issue #1006).
+    # Checked, for the reason the `am start` above is: `am` exits 0 and prints
+    # `Error: Activity class {...} does not exist.` on an image without
+    # Settings, and discarding that reported "the split transition destroyed no
+    # surface" — a use-after-free diagnosis for a missing app.
+    settings_out=$("${adb}" shell am start -n com.android.settings/.Settings \
+      --windowingMode 6 2>&1 || true)
+    if [[ "${settings_out}" == *"Error:"* ]]; then
+      echo "android-splitscreen: could not put Settings in the other half —" >&2
+      printf '%s\n' "${settings_out}" | sed 's/^/android-splitscreen:   /' >&2
+      echo "android-splitscreen: without a second app there is no split transition" >&2
+      echo "android-splitscreen: to measure, so this is not a D4 result." >&2
+      exit 1
+    fi
+
+    # One dump per iteration, assigned once. The break test used to evaluate
+    # the whole pipeline and throw the output away, then the next line ran it
+    # again — an extra adb round trip per iteration, and a window in which the
+    # buffer could change between the test and the read (issue #1006 comment e).
     #
-    # The relaunch's own `surfaceCreated` is the boundary. A process being torn
-    # down logs no such line, so taking the log from the first one onward drops
-    # exactly the stale pair and keeps everything this run emitted. A timestamp
-    # cutoff was tried first and is worse: `adb shell` joins argv with spaces
-    # unescaped, so the format string needs a second level of quoting, and
-    # second-precision rounds the cutoff down into the very window it excludes.
-    this_run() {
-      "${adb}" logcat -d 2>/dev/null | grep -E "I dashscene: harness:" | awk '/surfaceCreated/{seen=1} seen'
-    }
+    # It ends when the split has produced an entry AND every entry has reached
+    # one of its three exits, rather than only on the completion marker. A
+    # no-handle run logs no completion marker at all, so it used to run all 30
+    # iterations before the check that names it fired (comment b).
+    log=""
     for _ in $(seq 1 30); do
-      # Captured and matched in bash rather than piped into `grep -q`. Under
-      # `pipefail`, `grep -q` exits at its first match and closes the pipe,
-      # logcat dies on SIGPIPE, and the pipeline reports that failure — so the
-      # break would never fire and this loop would always run its full 30 s.
-      if [[ "$(this_run || true)" == *"handshake complete, returning"* ]]; then break; fi
+      log=$(this_run)
+      ds_tally "${log}"
+      if ds_settled "${base_entering}"; then break; fi
       sleep 1
     done
-    log="$(this_run || true)"
-    echo "${log}"
-    # `handle == 0` means nativeSurfaceCreated could not obtain the window or
-    # spawn the thread. HarnessActivity logs that case distinctly rather than
-    # falling through to the completion marker, which is what let a callback
-    # that handed nothing back still claim a handshake.
-    #
-    # This is NOT the no-GPU-device case. That returns a non-zero handle and
-    # takes the handshake branch — issue #960. `nativeIsRunning` would not
-    # answer it either, for the reason this recipe's own header now gives
-    # (issue #1080): a thread wedged inside an attach reports `true`. The
-    # `attaching`/`attached` marker pair in logcat is what does.
-    if [[ "${log}" == *"no runtime handle, nothing to hand back"* ]]; then
-      echo "android-splitscreen: FAIL — reached surfaceDestroyed with no runtime" >&2
-      echo "android-splitscreen: handle, so no handshake ran. nativeSurfaceCreated" >&2
-      echo "android-splitscreen: could not get the window or spawn the thread;" >&2
-      echo "android-splitscreen: check logcat for E lines this filter drops." >&2
-      exit 1
-    fi
-    # Matched in bash for the reason the wait loop above gives: a `printf |
-    # grep -q` pipeline reports SIGPIPE under `pipefail` once the log exceeds
-    # the pipe buffer, which here would invert into a FAIL on a log that
-    # carries the marker.
-    if [[ "${log}" != *"entering the handshake"* ]]; then
-      echo "android-splitscreen: FAIL — the surface was never destroyed, so D4's" >&2
-      echo "android-splitscreen: split-screen case did not run." >&2
-      exit 1
-    fi
-    if [[ "${log}" != *"handshake complete, returning"* ]]; then
-      echo "android-splitscreen: FAIL — entered the handshake and never returned." >&2
-      echo "android-splitscreen: That is the use-after-free window D4 names: the" >&2
-      echo "android-splitscreen: callback must block until the surface is dropped" >&2
-      echo "android-splitscreen: and then return." >&2
-      exit 1
-    fi
-    echo "android-splitscreen: PASS — drew a frame, surface destroyed, handshake completed"
+    # **A settle window, because balanced is not the same as finished.** The
+    # split can produce two cycles; if the first completes before the second
+    # enters, the loop breaks on a snapshot in which every entry has returned
+    # and a later hang is never seen. Three more seconds and a re-count close
+    # most of that window — not all of it, which is why it is a re-count rather
+    # than a claim.
+    sleep 3
+    log=$(this_run)
+    ds_tally "${log}"
+    printf '%s\n' "${log}"
+    echo "android-splitscreen: ${ds_entering} entered, ${ds_complete} completed, ${ds_nohandle} with no handle, ${ds_nodrawable} with no drawable (before the split: ${base_entering}, ${base_complete}, ${base_nohandle})"
+
+    case "$(ds_verdict "${base_entering}" "${base_complete}" "${base_nohandle}")" in
+      PASS)
+        echo "android-splitscreen: PASS — drew a frame in multi-window, the split destroyed $((ds_entering - base_entering)) surface(s), and every one returned ($((ds_complete - base_complete)) ran the handshake)"
+        ;;
+      FAIL:split-destroyed-nothing)
+        echo "android-splitscreen: FAIL — the split transition destroyed no surface," >&2
+        echo "android-splitscreen: so D4's split-screen case did not run. Everything" >&2
+        echo "android-splitscreen: counted predates putting Settings in the other half." >&2
+        exit 1
+        ;;
+      FAIL:entered-never-returned)
+        stuck=$((ds_entering - ds_complete - ds_nohandle - ds_nodrawable))
+        echo "android-splitscreen: FAIL — ${stuck} of ${ds_entering} entries never returned." >&2
+        echo "android-splitscreen: That is the use-after-free window D4 names: the" >&2
+        echo "android-splitscreen: callback must block until the surface is dropped and" >&2
+        echo "android-splitscreen: then return." >&2
+        dump_evidence >&2
+        exit 1
+        ;;
+      FAIL:split-had-no-handle)
+        echo "android-splitscreen: FAIL — $((ds_nohandle - base_nohandle)) of the split's" >&2
+        echo "android-splitscreen: own surfaceDestroyed calls found no runtime handle, so" >&2
+        echo "android-splitscreen: nativeSurfaceCreated could not get the window or spawn" >&2
+        echo "android-splitscreen: the thread. This is NOT the no-GPU-device case, which" >&2
+        echo "android-splitscreen: returns a non-zero handle (issue #960)." >&2
+        dump_evidence >&2
+        exit 1
+        ;;
+      FAIL:split-ran-no-handshake)
+        echo "android-splitscreen: FAIL — the split transition's own surfaceDestroyed" >&2
+        echo "android-splitscreen: returned without running a handshake, so D4's case" >&2
+        echo "android-splitscreen: never executed for it. An earlier cycle completing is" >&2
+        echo "android-splitscreen: not that measurement. ${ds_nodrawable} of the ${ds_entering}" >&2
+        echo "android-splitscreen: entries never carried a drawable extent (issue #1094)." >&2
+        dump_evidence >&2
+        exit 1
+        ;;
+    esac
 
 # Assemble the browser host into `target/web`, ready to serve.
 #

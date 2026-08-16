@@ -176,6 +176,15 @@ painter-capable adapter there is a CPU rasteriser.
   With a release library the split-screen case passes end to end and the
   handshake completes in **27 ms**.
 
+  **That run also needs the emulator started with `-gpu host`** (issue #1158,
+  measured 2026-08-16). Under the default GPU mode the painter cannot obtain a
+  device — `Failed to open rendernode` — the harness draws a black frame, and
+  the same release library fails at `assert-drew` instead. So the release build
+  is necessary and not sufficient, and the sentence above holds only with the
+  flag. `just android-probe` reports what the painter's own `request_device`
+  gets on the attached adapter, which is the cheap way to check the mode before
+  a ten-minute run.
+
 A static document draws once and then stops, which is the idle skip working: the
 generation does not advance, so no frame is worth drawing. Nothing about frame
 _rate_ can be read from this, and nothing here says Android works.

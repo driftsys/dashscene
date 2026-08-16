@@ -240,7 +240,11 @@ total, nineteen of them the crates above.
                       surface-destroy handshake completed — D4's third case
                       (issue #874). Needs a handheld or tablet emulator image,
                       not target hardware: the automotive image declares no
-                      split-screen feature. Needs the SDK build-tools and
+                      split-screen feature. **Start that emulator with
+                      `-gpu host`** — under the default GPU mode the painter
+                      gets no device, the harness draws a black frame and the
+                      run fails at assert-drew after about ten minutes
+                      (issue #1158). Needs the SDK build-tools and
                       python3 as well, neither of which bootstrap installs, on
                       top of the NDK that android needs. No hand gesture is
                       needed — am start --windowingMode 6 is accepted — but it

@@ -595,7 +595,10 @@ absence of any mobile target in the workspace.
       and `just android` builds debug. With a release library the split-screen
       case passes end to end and the handshake completes in 27 ms.
       `just android-splitscreen` is that run, and it packages what
-      `just android` built. The D3a measurement that
+      `just android` built. **The release library is necessary and not
+      sufficient**: the emulator also has to be started with `-gpu host`, or the
+      painter obtains no device, the harness draws black and the run fails at
+      `assert-drew` (issue #1158). The D3a measurement that
       says the painter's four fragment-stage storage buffers fit a target
       device **has not been taken** — see `docs/design/android-toolchain.md`,
       which records why an emulator cannot take it. Nothing here says Android
