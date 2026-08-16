@@ -554,7 +554,7 @@ secrets range="--all":
 # sanity tier — `check` is what `build` runs, so it takes the tier that is the
 # gate (docs/decisions/test-tiers.md). The pre-push hook does not run `check`;
 # see `verify`.
-check: test-regression lint audit secrets wasm-painter wasm-host c-abi
+check: test-regression lint audit secrets wasm-painter wasm-host c-abi harness-tests
 
 # Everything short of a PR: assemble + check.
 build: assemble check
@@ -1088,6 +1088,29 @@ _android-adb:
     fi
     echo "${adb}"
 
+# Run the Android harness's own tests — the two gates that decide what a device
+# run means.
+#
+# `verdict.sh` decides D4's split-screen verdict from HarnessActivity's markers,
+# and `assert-drew.py` is the only witness that the painter drew anything.
+# **Both are reachable only through `android-splitscreen`, which needs an
+# attached emulator and which nothing schedules**, so until these tests existed
+# the only check either had was reading it — and reading missed five false
+# verdicts across two review rounds and a black frame passing for months
+# (issues #1006, #1029).
+#
+# Neither test needs a device, an SDK or an NDK, and together they take about
+# two seconds. So this is in `check`, which means `just build` runs it, and CI's
+# `android-build` job runs this recipe rather than the two paths inline — the
+# rule that job's own comment gives about `just android`.
+#
+# Run the Android harness's own gates — the verdict and the drew-anything check.
+harness-tests:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ./crates/dashscene-android/harness/verdict-test.sh
+    ./crates/dashscene-android/harness/assert-drew-test.py
+
 # Succeed when adb reports at least one attached device.
 #
 # `android-probe` and `android-splitscreen` both gate on this and carried the
@@ -1385,14 +1408,16 @@ android-splitscreen:
     script="crates/dashscene-android/harness/assert-drew.py"
 
     # **The verdict is a file, and it is checked before anything expensive.**
-    # `verdict.sh` holds the logic that decides PASS or FAIL; `verdict-test.sh`
-    # exercises it against synthetic logcat text and needs no device. Running it
-    # here costs milliseconds and means a broken verdict fails now rather than
-    # after a cross-compile, an APK build, an install and ten minutes on an
-    # emulator. Reading that logic — which is all anyone could do while it lived
-    # inline in this recipe — missed five distinct false verdicts across two
-    # review rounds.
-    ./crates/dashscene-android/harness/verdict-test.sh >/dev/null
+    # `verdict.sh` holds the logic that decides PASS or FAIL and `assert-drew.py`
+    # is the only witness that the painter drew; the two tests beside them
+    # exercise both against synthetic input and need no device. Running them
+    # here costs a second and means a broken gate fails now rather than after a
+    # cross-compile, an APK build, an install and ten minutes on an emulator.
+    #
+    # Reading is what these replace, and reading has a record: it missed five
+    # distinct false verdicts across two review rounds, and it missed
+    # `assert-drew.py` passing a black frame for months (issue #1029).
+    just harness-tests
     . crates/dashscene-android/harness/verdict.sh
 
     # **Build before requiring a device.** A cold `just android` is a
@@ -1442,12 +1467,17 @@ android-splitscreen:
     # as "the painter drew nothing". Polling turns that false FAIL into a
     # slower PASS.
     #
-    # 1 is the painter's verdict, 2 a screenshot the script could not read and
-    # 127 no python3 on PATH. **`assert-drew.py` does not yet honour that
-    # contract for every unreadable file**: its `except (OSError, ValueError)`
-    # misses the `zlib.error` and `IndexError` a truncated PNG raises, so those
-    # still arrive here as 1. That is issue #1029 §2 and is fixed in the script,
-    # not here; this branch is already correct for when it is.
+    # **Four statuses, not three.** 1 is "the painter drew nothing", 3 is "it
+    # drew and the text did not" (issue #1100), 2 is a screenshot the script
+    # could not read and 127 is no python3 on PATH. The remedies have nothing in
+    # common, which is why 3 is separate from 1: 1 points at the GPU device, 3
+    # at the JNI text path.
+    #
+    # The script honours that contract since issue #1029 §2 — a truncated PNG
+    # used to raise `zlib.error` past its `except (OSError, ValueError)` and
+    # exit 1, which this branch reported as a painter fault.
+    # `assert-drew-test.py` covers the corrupt-file statuses, though not every
+    # internal handler that can produce one.
     #
     # 1 and 2 are both retried, 127 is not. A screenshot taken during the launch
     # animation reads as "drew nothing" and an interrupted `exec-out screencap`
@@ -1464,6 +1494,12 @@ android-splitscreen:
         out=$(python3 "${script}" "${shot}" 2>&1)
         rc=$?
         set -e
+        # Only 0 and 127 end the loop. 3 looks final — "the text did not
+        # draw" — but it is exactly what the frame between the window
+        # appearing and the painter's first frame looks like, so breaking on
+        # it reintroduced the false FAIL this polling exists to remove. A
+        # frame whose text is genuinely missing costs the full wait, which is
+        # the right trade for a gate.
         if [ "${rc}" -eq 0 ] || [ "${rc}" -eq 127 ]; then break; fi
         sleep 1
       done
@@ -1480,6 +1516,18 @@ android-splitscreen:
       rc=0
       assert_drew "${phase}" || rc=$?
       if [ "${rc}" -eq 0 ]; then return 0; fi
+      if [ "${rc}" -eq 3 ]; then
+        # **Not the painter, and not the GPU device.** Something drew, so the
+        # frame loop started and the D4 reasoning below holds; what did not draw
+        # is the text. Printing the no-device diagnosis here would overwrite the
+        # script's correct one (issue #1100).
+        echo "android-splitscreen: the ${phase} frame drew, but its text did not." >&2
+        echo "android-splitscreen: the JNI text entry point, the face cascade and the" >&2
+        echo "android-splitscreen: committed MSDF sheet are on that path, and nothing" >&2
+        echo "android-splitscreen: else in this repository exercises them." >&2
+        dump_evidence >&2
+        exit 1
+      fi
       if [ "${rc}" -gt 1 ]; then
         echo "android-splitscreen: assert-drew could not run on the ${phase} frame" >&2
         echo "android-splitscreen: (exit ${rc}). That is an environment failure, not a" >&2

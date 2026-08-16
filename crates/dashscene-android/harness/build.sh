@@ -67,15 +67,23 @@ fi
 # fixture the rest of the suite already trusts is the honest input.
 #
 # **This moved from v03-paint.dsb to a text fixture (issue #969), and
-# assert-drew.py's threshold is coupled to the choice.** That script counts
-# distinct colours below the title bar and passes at 16, and its own comment
-# says the harness ships a fixture that is not solid "and if that ever changes,
-# this threshold has to change with it". Measured on the emulator after the
-# change: **68 distinct colours** against the threshold of 16, so it passes —
-# but the margin is roughly four times rather than the "thousands" a gradient
-# fixture gives, and most of it now comes from glyph antialiasing. That script
-# belongs to issue #1006 and is not edited here; the narrowed margin and its
-# stale docstring are filed instead.
+# assert-drew.py is coupled to the choice in three places now, not one.** That
+# script surveys the client area — the top and bottom system bars excluded — and
+# asks three things of it, each with a constant fitted to *this* scene:
+#
+#     MIN_DISTINCT        16    is anything drawn at all
+#     MIN_LIGHT_FRACTION  0.5   is the ground light, as this fixture's is
+#     MIN_INK             12    did the glyphs draw
+#
+# Measured against the Skia reference render of this document: 55 distinct
+# colours on that script's sampling grid, 99.25% of pixels at or above luma 128,
+# and 41 ink pixels below it — every one of them between 40% and 60% of the
+# height, because the string is the only dark thing in the scene.
+#
+# So **changing this line now breaks three constants rather than one**, and a
+# dark-themed scene breaks them in a way that reads as a painter failure: a dark
+# ground fails `MIN_LIGHT_FRACTION` with the message for a black frame. Change
+# the scene and re-derive all three (issues #1029 and #1100).
 scene="${DASHSCENE_HARNESS_SCENE:-${root}/goldens/dsb/v07-text-hug-in-fill.dsb}"
 if [ ! -f "${scene}" ]; then
   echo "harness: no scene at ${scene}" >&2
