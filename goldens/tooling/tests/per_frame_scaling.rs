@@ -685,29 +685,36 @@ fn within_count_band(paint: FrameCost, layout: FrameCost) -> Result<(), String> 
 /// breaches a count and asserts on nothing else calls that one and skips this
 /// (issue #1119).
 ///
-/// `saturating_sub` rather than `-`: a many-root frame that allocated *less*
-/// than the one-root frame would underflow the u64 and panic inside the band,
-/// which reports worse than a breach does. It reads as a growth of zero, which
-/// is a breach against a non-zero constant and is exactly the "re-measure and
-/// move the constant" case.
+/// **The many-root frame's own figure is compared, not a saturated
+/// difference.** This term was a difference against a non-zero constant until
+/// issue #1111 took the constant to 0, and a `saturating_sub` on the way in
+/// quietly turned the equality into "the many-root frame allocates no *more*
+/// than the one-root frame": a frame that allocated 58 bytes *fewer* read as a
+/// growth of zero and passed. That is not what four documents in this
+/// repository state, which is byte identity. Comparing `layout.bytes` against
+/// `small_layout.bytes + expected` is the same test whenever the constant is
+/// positive and a real equality when it is 0, with no subtraction to saturate
+/// and no underflow to guard against.
 ///
-/// **The whole growth is what is compared, not the slope**, so this term is an
-/// exact equality like the two counts. Comparing `growth / extra_roots` against
-/// the constant would truncate: over 64 extra roots, anything up to 63 bytes of
-/// new document-scaled cost divides away and the band stays green — which is
-/// the "a change with no term that can see it" failure this term exists to
-/// close. The slope is derived from the equality for the message and the log,
-/// never asserted on.
+/// **The whole growth is compared, not the slope**, so this term is an exact
+/// equality like the two counts. Dividing by the root count first would
+/// truncate: over 64 extra roots, anything up to 63 bytes of new
+/// document-scaled cost divides away and the band stays green — which is the "a
+/// change with no term that can see it" failure this term exists to close. The
+/// slope is derived from the equality for the message and the log, never
+/// asserted on.
 fn within_byte_band(
     layout: FrameCost,
     small_layout: FrameCost,
     extra_roots: u64,
 ) -> Result<(), String> {
-    let growth = layout.bytes.saturating_sub(small_layout.bytes);
     let expected = BYTES_PER_EXTRA_ROOT * extra_roots;
-    if growth == expected {
+    if layout.bytes == small_layout.bytes + expected {
         return Ok(());
     }
+    // Only for the message: the report reads as a growth even when the frame
+    // shrank, so it is saturated here rather than in the comparison above.
+    let growth = layout.bytes.saturating_sub(small_layout.bytes);
     Err(format!(
         "a layout frame allocated {growth} bytes over the one-root document's {} across \
          {extra_roots} extra roots, against {expected} ({} bytes per extra root against \
