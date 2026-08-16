@@ -35,6 +35,15 @@ Highest rather than first, so a machine holding several does not silently pin
 the oldest by sort order. The `llvm/prebuilt/*/bin` glob absorbs the host tag,
 which is `darwin-x86_64` on Apple silicon and `linux-x86_64` on a runner.
 
+**The three exported variables are written once**, in a `_android-env` recipe
+that prints them for `android`, `android-lint` and `android-probe` to `eval`.
+They were inlined in each of those three until issue #1101, so adding a fourth —
+`RANLIB_aarch64_linux_android`, say — was three edits, and a partial one failed
+only on `android-probe`, the recipe that needs a device and therefore runs least
+often. `_android-env` also checks that the NDK actually ships a clang wrapper
+for the API floor below, which `_android-ndk-bin` does not: it guarantees the
+directory, not the per-level wrapper inside it.
+
 ### The API floor
 
 `ANDROID_API` in the `justfile`, currently **33**. A floor rather than a target
