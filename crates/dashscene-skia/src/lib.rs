@@ -1567,10 +1567,25 @@ fn backdrop_layer_paint(opacity: f32) -> skia_safe::Paint {
 /// `the_backdrop_blur_reads_past_the_node_box`).
 ///
 /// Nothing is drawn into the layer, so its whole content is the blurred
-/// backdrop and the immediate `restore` composites that over the sharp
-/// original. The node's own shadows, fills and stroke then draw on top
-/// through the ordinary path: a backdrop blur changes what is behind a node,
-/// not how the node paints.
+/// backdrop — and **what the immediate `restore` then does depends on the
+/// node's opacity** (debt #405, and this paragraph said otherwise until debt
+/// #1193). [`backdrop_layer_paint`] sets [`BlendMode::Src`] at full opacity, so
+/// the restore *replaces* the clipped region; below full opacity it takes
+/// `apply_opacity` instead and the restore is an ordinary `SrcOver` composite
+/// at the folded alpha.
+///
+/// `Src` and `SrcOver` are indistinguishable where the backdrop is opaque,
+/// which is every scene measured before #405 and the reason the composite
+/// reading survived. Where it is not, the blurred copy is not opaque either,
+/// the sharp original showed through beneath it, and the blur's alpha falloff
+/// was lost —
+/// `a_backdrop_blur_over_a_transparent_backdrop_softens_its_alpha_edge` is what
+/// sees it. The vector path reaches the same conclusion from a different
+/// starting point; [`draw_backdrop_blur_field`] carries that argument.
+///
+/// The node's own shadows, fills and stroke then draw on top through the
+/// ordinary path: a backdrop blur changes what is behind a node, not how the
+/// node paints.
 ///
 /// **Inside a [`GroupComposite`] the sample reads that group's layer, not the
 /// canvas beneath it.** The layer Skia filters is the innermost open one, so

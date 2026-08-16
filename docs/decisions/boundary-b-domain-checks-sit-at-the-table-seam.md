@@ -211,6 +211,16 @@ did not have.
   come apart after construction — but nothing here refuses a pair that was wrong
   when it arrived. The producer refuses it, one crate up, and only for an
   encoded sheet with a header to read.
+- **The device quad both painters derive cannot be refused at any seam here, and
+  both keep a local floor for it** (issues #1160 and #1185). The quantity is the
+  plane extent with the node origin added to both ends, and it collapses as a
+  _ratio_ of the two: an origin of `1e8` against an 8-unit field admits, an
+  origin of `65536.0` against a 0.001-unit field does not. No rule over either
+  operand alone expresses that, and the two never meet at one seam — a
+  `PaintTable` never sees a `RectEntry`. Issue #1048's finiteness rule over
+  `RectEntry::x` and `y` covers the NaN route and not this one, so closing it
+  does not make the floors redundant. `dashscene-skia`'s is `field_quad`; the
+  lean painter's is `paint.wgsl`'s vertex stage, added at #1185.
 
 This list carried a sixth bullet until issue #1074 — "`Atlas::width` and
 `Atlas::height` are still `pub` and unchecked" — which issue #1001 had already

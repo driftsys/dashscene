@@ -166,14 +166,26 @@ All in `crates/dashscene-skia/src/lib.rs`:
   lower index, so the backdrop is what those composited, not this node's own
   ink. `RectEntry.opacity` rides on the layer's paint like every other draw, so
   a dimmed node frosts proportionally. A baked-vector node (story B1) is
-  confined to the field's coverage instead of a box — the layer opens over the
-  field's padded quad and `BlendMode::DstIn` against the coverage shader clears
-  it outside the shape — because the live hero's frosted panel is exactly that:
-  a Figma VECTOR carrying `BACKGROUND_BLUR`. Inside a render-target
-  `GroupComposite` the sample reads that group's layer, not the canvas beneath
-  it: Skia filters the innermost open layer, which is the backdrop-root reading
-  the decision record settles. A `BlurKind::Layer` blur is skipped by name —
-  node-local, budgeted at v1, and nothing in this tree emits one.
+  confined to the field's coverage instead of a box — the coverage shader is
+  installed as a **clip** (`clip_rect` over the field's padded quad, then
+  `clip_shader` against the coverage) and the layer opens inside it — because
+  the live hero's frosted panel is exactly that: a Figma VECTOR carrying
+  `BACKGROUND_BLUR`.
+
+  It was a `BlendMode::DstIn` mask inside the layer until commit `3aa5eb4`, and
+  this paragraph still said so until debt #1036. The two are not equivalent:
+  `DstIn` clears the layer outside the outline, but the restore then still has
+  to composite what is left, leaving the destination weighted
+  `1 - blurred_alpha × coverage` where a replacement weights it `1 - coverage`.
+  Those agree only where the backdrop is opaque (debt #503). Promoting the mask
+  to a clip moves the coverage into the term the blend already lerps by. `DstIn`
+  **is** still how the masked _fill_ path works (`draw_vector_field`), which is
+  why the stale sentence read as describing something real. Inside a
+  render-target `GroupComposite` the sample reads that group's layer, not the
+  canvas beneath it: Skia filters the innermost open layer, which is the
+  backdrop-root reading the decision record settles. A `BlurKind::Layer` blur is
+  skipped by name — node-local, budgeted at v1, and nothing in this tree emits
+  one.
 
 ## Text — MSDF glyph runs (v0.5 Latin, story #30)
 
@@ -206,6 +218,14 @@ atlas set is the one being drawn (issue #644). The run-by-anchor index is
 genuinely per-frame — the runs change every commit — and is built in
 `MsdfFrame`, which borrows the cache's shader and decodes rather than rebuilding
 them. A text-free scene still builds none of it.
+
+**The coverage-mask resolve is held the same way** (issue #1186). It was a
+`paint()` frame local, so `FIELD_MASK_SKSL` recompiled on every call that drew a
+baked shape — about 30 us, measured over 200 iterations against release Skia —
+while its sibling above was already a painter field. Both rest on one invariant,
+which `MsdfCache::effect` states: the shader is a constant, so no input can
+stale it. Both are lazy, so a scene carrying neither text nor a baked shape
+compiles nothing.
 
 These atlases hang off the `GlyphRunTable` and are not `ImageTable` entries, so
 the painter-lifetime image cache above could not reach them; this is that

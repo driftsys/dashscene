@@ -767,7 +767,7 @@ impl ImageTable {
     /// baked extent cannot be derived from the bytes.
     ///
     /// Panics when the payload's bytes would end past `u32::MAX` in the pool
-    /// (issue #1045) — see [`push_row`](Self::push_row).
+    /// (issue #1045) — see `push_row`.
     pub fn push(&mut self, asset: ImageAsset) -> u32 {
         let (width, height) = identified_extent(asset.format, &asset.bytes);
         self.push_row(asset, width, height)
@@ -801,7 +801,7 @@ impl ImageTable {
     /// not carried yet.
     ///
     /// Panics when the payload's bytes would end past `u32::MAX` in the pool
-    /// (issue #1045) — see [`push_row`](Self::push_row).
+    /// (issue #1045) — see `push_row`.
     pub fn push_baked(&mut self, asset: ImageAsset, width: u32, height: u32) -> u32 {
         assert!(
             !asset.format.is_encoded(),
@@ -1232,7 +1232,7 @@ impl ClipTable {
     /// Panics when the region would take the table past `u32::MAX` entries.
     ///
     /// Panics when the region's boxes would **end** past `u32::MAX` in the flat
-    /// array — [`bounded_range`]'s rule, and the reason it is the sum rather
+    /// array — `bounded_range`'s rule, and the reason it is the sum rather
     /// than the two lengths (issue #1045).
     pub fn push(&mut self, boxes: &[ClipBox]) -> ClipIndex {
         let index = u32::try_from(self.entries.len()).expect("clip table exceeds u32::MAX entries");
@@ -3590,9 +3590,12 @@ pub trait Painter {
 mod flat_ranges {
     use super::{ClipBox, ClipTable, CornerRadii, GlyphRunTable, ImageTable, PaintTable};
 
+    /// One range helper, named for the failure message.
+    type Site = (&'static str, fn(usize, usize) -> (u32, u32));
+
     /// Every site that assigns a boundary-B range, by the helper its push
     /// calls.
-    fn sites() -> [(&'static str, fn(usize, usize) -> (u32, u32)); 4] {
+    fn sites() -> [Site; 4] {
         [
             ("PaintTable::flat_range", PaintTable::flat_range),
             ("GlyphRunTable::quad_range", GlyphRunTable::quad_range),

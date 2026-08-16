@@ -537,6 +537,33 @@ loading a texture nothing cleared, and
 sees it — the offscreen texture is held across `render` calls, so the frame
 comes back carrying the previous one.
 
+**`params2.w` carries a second reason to draw nothing since issue #1185**, and
+the vertex stage writes it for both MSDF arms: a quad with no area, which
+`msdf_sample` divides by. The component now means "this instance's MSDF sample
+is usable", of which residency is one condition and a quad with area is the
+other; the fragment stage asks only whether to sample and does not distinguish
+them.
+
+The reachable arm is **text**, and its zero comes from the CPU: `pack_glyph_run`
+writes `bounds` as `[x, y, (right - left) * size,
+(top - bottom) * size]` from
+the atlas row's own `plane_em`, and `Atlas::new` refuses neither a zero `size`
+nor a row whose plane quad has no area.
+`a_glyph_whose_quad_has_no_area_draws_nothing` measures it both ways — without
+the guard, four pixels of the run's colour at full alpha around the pen.
+
+The **masked** arm is what #1185 was filed for, and its route is not observable
+here. Its quad is `hi - lo` with the node origin added to both ends, which
+cancels once the plane extent falls below one ulp of the origin — but measured
+on Metal with a node at `x = 32.0` and a `1e-6`-unit plane, the shader produces
+exactly `1e-6` on both axes where an `f32` evaluation of what is written gives
+`0.0` on x and one ulp of 16 on y. That backend reassociates the origin out of
+the subtraction. Issue #1195 carries the measurement and is blocked on an
+adapter that does not. The guard stays either way: one comparison per vertex,
+and the property should hold in the source rather than rest on a backend's
+algebra. The reference painter refuses the same quantity in `field_quad`, where
+the cancellation genuinely happens because Skia computes the quad in Rust.
+
 The third consumer, a glyph run, states the same thing in the same word (issue
 #993) — the two share one `GpuMsdfRow` since #1027. It did not until then: the
 row kept `GpuGlyphRun::default()`, whose zero alpha the text arm carried into a
