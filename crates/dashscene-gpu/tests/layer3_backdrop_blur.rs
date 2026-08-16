@@ -26,7 +26,7 @@ use dashpaint::{
 use dashscene_gpu::{GpuPainter, ResidencyError};
 
 mod common;
-use common::{H, JPEG_FIXTURE, W, renderer, texel};
+use common::{H, JPEG_FIXTURE, SAMPLE_PNG, W, renderer, texel};
 
 /// Where the red half ends and the blue half begins.
 const SEAM: u32 = 32;
@@ -2206,5 +2206,164 @@ fn replacing_the_document_rebuilds_the_blur_bindings() {
         None,
         "after `forget_uploaded` the frame must draw the new document, not blur through the \
          coverage atlas the old one left at the same index — first differing texel above",
+    );
+}
+
+/// **A field that draws nothing makes no atlas resident** (issue #1159).
+///
+/// `VectorField::draws`' own doc states asking before fetching the atlas as
+/// part of the predicate's contract — a field it rejects samples nothing, so
+/// making its atlas available is pure waste. `dashscene-skia`'s order is pinned
+/// by its decode counter (issue #1044); this is the same property one painter
+/// over, where the cost is an upload rather than a decode.
+///
+/// # Why nothing pinned it before
+///
+/// `resolve_frame` reads `field_draws(field) && let Some(slot) =
+/// self.resident_image(..)`, and swapping those two operands left the whole
+/// crate suite green — measured, 221 tests. The sibling
+/// `a_degenerate_coverage_field_draws_nothing` cannot see it: with the order
+/// flipped a degenerate field's atlas *is* made resident, but the payload is
+/// sound so residency records no refusal, and the row still ends unresolved
+/// because the predicate still gates the assignment. Every observable that test
+/// has is blind to the order.
+///
+/// # The observable, and what it does not cover
+///
+/// `Renderer::decodes` counts payloads decoded since the renderer was built,
+/// so the atlas has to be **encoded** — the sibling's `push_baked` payload is
+/// never decoded, which is why this test carries its own PNG. That also bounds
+/// the claim: for a baked atlas the waste is an upload rather than a decode, and
+/// this counter would not see it.
+///
+/// # The order of the cases is load-bearing
+///
+/// The degenerate case runs **first**, on a renderer that has made nothing
+/// resident, so a decode would happen if the gate were removed. Running it after
+/// the sound case would make it a residency cache hit and it would read zero
+/// however the gate behaved.
+///
+/// The sound case is the positive control, and it is what says this path decodes
+/// at all: a test asserting only zero passes against a painter that stopped
+/// resolving fields entirely, which is the hole review found in the skia twin.
+#[test]
+fn a_field_that_draws_nothing_makes_no_atlas_resident() {
+    let clips = ClipTable::new();
+    let mut renderer = renderer();
+    let mut draw_field = |field: VectorField| {
+        let mut images = ImageTable::new();
+        let atlas = images.push(ImageAsset {
+            format: ImageFormat::Png,
+            bytes: SAMPLE_PNG.to_vec(),
+        });
+        let mut paints = PaintTable::new();
+        let mut rects = halves(&mut paints);
+        // **A fill as well as the backdrop**, for the reason the sibling gives:
+        // it puts both consumers of the flag in one node, so a residency fetch
+        // added to either path is in this scene. `PaintEntry::default()` has no
+        // fill, and `pack_rect` emits a fill instance on the shape branch only
+        // for a solid or a gradient, so without this the backdrop instance is
+        // the only one carrying the shape.
+        let green = paints.intern_fill(&dashpaint::FillSpec::Solid {
+            color: rgba(0.0, 1.0, 0.0, 1.0),
+        });
+        let panel = paints.push_with(
+            PaintEntry {
+                fill: green,
+                ..PaintEntry::default()
+            },
+            EntryParts {
+                blurs: &[backdrop(24.0)],
+                shape: Some(VectorField {
+                    image: atlas,
+                    ..field
+                }),
+                ..EntryParts::default()
+            },
+        );
+        rects.push(rect(24.0, 8.0, 36.0, 32.0, panel));
+
+        let before = renderer.decodes();
+        let mut painter = GpuPainter::new();
+        painter.paint(
+            &rects,
+            &paints,
+            &images,
+            &clips,
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        renderer
+            .render(
+                painter.instances(),
+                &paints,
+                &images,
+                &clips,
+                &GlyphRunTable::new(),
+                W,
+                H,
+            )
+            .expect("the fixture extent is within any device's maximum");
+        (renderer.decodes() - before, renderer.last_draw_runs())
+    };
+
+    // The fixture is 7x5, so this sub-rect is inside it. The two rejected cases
+    // are **derived from** the sound one, each changing one member, so "differs
+    // in the predicate's answer and in nothing else" is structural rather than
+    // a claim in a comment.
+    let sound = VectorField {
+        image: 0,
+        atlas_rect: [1, 1, 4, 3],
+        plane_bounds: [0.0, 0.0, 20.0, 32.0],
+        distance_range: 0.5,
+    };
+    let no_texels = VectorField {
+        atlas_rect: [1, 1, 0, 0],
+        ..sound
+    };
+    let no_quad = VectorField {
+        plane_bounds: [0.0, 0.0, 0.0, 0.0],
+        ..sound
+    };
+    // The premise, so that a later change to the predicate fails here naming
+    // itself rather than accusing `resolve_frame`'s operand order.
+    assert!(
+        sound.draws() && !no_texels.draws() && !no_quad.draws(),
+        "the three fixtures must differ in exactly this predicate's answer",
+    );
+
+    for (what, field) in [("no atlas rectangle", no_texels), ("no quad", no_quad)] {
+        assert_eq!(
+            draw_field(field).0,
+            0,
+            "a field with {what} must decode nothing: `field_draws` is asked before \
+             `resident_image`, and this renderer has made nothing resident yet, so a decode here \
+             is the payload being fetched for a field that samples none of it",
+        );
+    }
+
+    // The positive control, and it asserts **residency** rather than only a
+    // decode. `Residency::resident` counts the decode and only then allocates,
+    // so a payload that decoded and was then refused — `FrameExceedsAtlas` —
+    // would satisfy a decode count of one while nothing became resident and the
+    // frame drew nothing. The refusal list and the draw count are what exclude
+    // that: five draws is a field that resolved and planned the backdrop.
+    let (decodes, runs) = draw_field(sound);
+    assert_eq!(
+        decodes, 1,
+        "a sound field must decode its atlas exactly once, or the zeros above hold against a \
+         painter that resolves no field at all rather than against one that asks first",
+    );
+    assert!(
+        renderer.refusals().is_empty(),
+        "the sound field's payload must have been made resident, not decoded and then refused — \
+         got {:?}",
+        renderer.refusals(),
+    );
+    assert_eq!(
+        runs, 5,
+        "a sound field resolves, so the frame plans the backdrop and draws the masked fill; one \
+         draw would mean the decode above bought nothing",
     );
 }

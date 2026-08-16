@@ -2418,6 +2418,11 @@ impl Renderer {
                      none, matching the reference painter"
                 );
                 let field = &fields[row];
+                // The predicate before the fetch, which is part of
+                // `VectorField::draws`' contract rather than a local choice,
+                // and is held by `a_field_that_draws_nothing_makes_no_atlas_resident`
+                // (issue #1159). Hoisting `resident_image` out of this chain
+                // makes a field that draws nothing pay for its atlas.
                 if out.atlas_of_shape[row].is_none()
                     && field_draws(field)
                     && let Some(slot) =
@@ -3068,8 +3073,16 @@ fn backdrop_mask(instance: &Instance, resolved: &Resolved) -> Option<Option<GpuS
 /// agreement is structural now rather than a convention.
 ///
 /// Checked **before** the payload is made resident rather than after: every
-/// mapping in [`gpu_shape`] divides by the atlas rectangle, and a field with no
-/// quad sampled nothing anyway.
+/// mapping in [`gpu_shape`] divides by the atlas rectangle, a field with no quad
+/// sampled nothing anyway, and making an atlas resident for one is pure waste —
+/// which [`dashpaint::VectorField::draws`] states as part of its contract.
+///
+/// **That order is held by a test**, since issue #1159:
+/// `a_field_that_draws_nothing_makes_no_atlas_resident` reads
+/// [`Renderer::decodes`] over an encoded atlas. Hoisting `resident_image` out of
+/// the `&&` chain in [`Renderer::resolve_frame`] is what it catches — nothing
+/// caught it before, because a degenerate field made resident is still refused
+/// by nothing and still leaves its row unresolved.
 fn field_draws(field: &dashpaint::VectorField) -> bool {
     field.draws()
 }
