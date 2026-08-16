@@ -22,9 +22,9 @@ The dividing line is churn. A slice-level dependency — "v0.6 needs v0.5's atla
 — changes at a phase-end plan revision, a handful of times across the whole of
 v0. A story-level dependency — "issue X blocks issue Y" — changes weekly and
 stays in the issue body, where it already lives. This file therefore names each
-slice's epic issues — usually one, two where a slice's halves gate separately,
-as v0.21's do — and links no further: the stories under them, and their state,
-are GitHub's job.
+slice's epic issues — usually one, more where its parts gate separately or where
+one of them is declared not to gate the slice at all, as v0.21's three do — and
+links no further: the stories under them, and their state, are GitHub's job.
 
 ## Why this file exists at all
 
@@ -49,11 +49,14 @@ When a slice's epic closes, the remaining epics and stories are revised against
 what that slice taught, before the next slice starts: update, split, merge, or
 re-order the issues, and record the scope-level outcome in a retrospective
 (`AGENTS.md`, "Plan tracking"). **On a slice with more than one epic the trigger
-is the last of them to close**, not the first — a slice is not finished while
-one of its halves is still open, and firing the ritual on the first close would
-revise the plan against half a slice. This file is what that ritual keeps
-current — a slice entry below is only ever as fresh as its most recent revision,
-which is why each one says which revision produced it.
+is the last of its _gating_ epics to close**, not the first — a slice is not
+finished while one of its halves is still open, and firing the ritual on the
+first close would revise the plan against half a slice. An epic explicitly
+declared not to gate the slice, as v0.21's #1120 is, is not part of that
+trigger: what it still holds moves out at the close rather than delaying it.
+This file is what that ritual keeps current — a slice entry below is only ever
+as fresh as its most recent revision, which is why each one says which revision
+produced it.
 
 The ritual has one gate that is not a document edit: run `just calibrate` before
 revising anything. It re-derives the committed asset tables, and it is the only
@@ -1557,11 +1560,16 @@ the thing that enforces it.
 
 **That gate was downgraded to carried debt on 2026-08-09 (#885), and the debt
 moved to v0.21 on 2026-08-16**; the v0.21 entry below gives the reasoning.
-**This slice still waits on hardware, through story #842**, whose deliverable is
-a frame-rate number from a device — what the move changes is that none of
-v0.19's remaining _debt_ is hardware-gated. Nothing the rule states is relaxed
-by either step: nothing describes Android as working until the measurement is
-taken.
+**Story #842 followed it there later the same day, and this slice now waits on
+no hardware at all** — everything left on it is closable without a device.
+
+The two moves were one rule applied twice, and the first pass applied it
+inconsistently: work that only a target device can finish belongs on the slice
+whose entry condition is a target device. #842's deliverable is a frame-rate
+number from a device, so no amount of v0.19 work could have finished it either,
+and this entry claimed for part of a day that the slice still waited on
+hardware. Nothing the rule states is relaxed by any of it: nothing describes
+Android as working until the measurement is taken.
 
 Issue #767 (`madvise`) was held against this slice rather than v1's hardware:
 **Android is the first target where a genuinely cold page cache is ordinary
@@ -1620,6 +1628,12 @@ Holds:
   painter can port. It is filed against this slice because a C ABI and a second
   platform are when a second implementation first has to prove itself.
 
+  **It moved to v0.21 on 2026-08-16**, the first of that day's nine moves and
+  the only one made before this slice's rename. The reason above still holds and
+  is why it went where it did: the second implementation that has to prove
+  itself is the Unity painter, so it sits under that epic rather than beside a C
+  ABI that has shipped.
+
 **What was ruled when this slice opened** (2026-08-09), against what the
 showcase and the two shipped hosts actually contain rather than against the
 layering alone:
@@ -1644,6 +1658,11 @@ layering alone:
   and has no equivalent in `demo-web`. Measuring frame rate on a device requires
   it to be reachable from a third host, so "run the same demonstration" is not
   satisfied by the showcase crate alone.
+
+  **Story #842 carried both, and it moved to v0.21 on 2026-08-16**, so this
+  slice no longer delivers either. That is a real narrowing of what v0.19
+  closes, taken deliberately: the story cannot finish without a device, and this
+  slice has no other reason to wait for one.
 - **The per-frame cost gets a criterion, and it is measured before #822 rather
   than with it.** The shown-root record left this to this planning session by
   name — "R5 and its benchmark bound the load only. Whether this needs its own
@@ -1729,19 +1748,57 @@ for the failure reporting the C ABI gains here.
 
 ### v0.21 — Unity and Android on target hardware — open
 
-**Two epics, filed 2026-08-16: #1106 (Unity) and #1107 (target hardware).** The
-design findings are held on tracking issue #851 and must not be re-derived.
+**Three epics, all filed 2026-08-16: #1106 (Unity) and #1107 (target hardware),
+which are the MVP pair, and #1120, which holds what is not MVP.** The design
+findings are held on tracking issue #851 and must not be re-derived.
 
-**Two epics because the halves gate on different kinds of thing** — #1106 on
-three owner-supplied **decisions**, #1107 on a **device**. One epic would have
-made the whole slice read as blocked whenever either half was.
+**The MVP pair are two epics because the halves gate on different kinds of
+thing** — #1106 on three owner-supplied **decisions**, #1107 on a **device**.
+One epic would have made the whole slice read as blocked whenever either half
+was.
+
+**A third epic, #1120, holds what is not MVP.** #1106 and #1107 are MVP epics by
+the owner's ruling of 2026-08-16: a working embedded Unity host, and a measured
+Android platform. Optimization and debt this slice motivates sit on #1120, and
+anything that would read the same if v0.21 had never happened goes to `v1`
+instead. **#1120 does not gate the slice** — v0.21 closes when the two MVP epics
+close, and whatever #1120 still holds moves out rather than holding it open.
+
+**The slice took nine existing issues from other milestones on 2026-08-16**, in
+four passes over one day. Re-derive that figure from the issues' timelines
+rather than trusting it, and note that the earliest predates this slice's
+rename:
+
+- **#828** from v0.19, at 06:03 — the conformance suite, held across slices
+  because no painter had landed that was not written in Rust.
+- **#885** from v0.19 and **#960**, **#969** from v0.20 — the hardware-gated
+  three, on the ruling epic #951 records.
+- **#171** and **#134** from v1 — an entry condition, and the clip-edge decision
+  this slice's parity gate would otherwise discover.
+- **#872** and **#708** from v1 — costs measured so far only on an emulator or a
+  development machine, and not MVP.
+- **#842** from v0.19 — the frame-rate number from a device. The rule that moved
+  #885 applies to it unchanged, and applying it twice is what left v0.19 with no
+  hardware blocker.
+
+**A gap analysis then found that the Unity epic owned no story that built
+anything**, and eight more were filed: seven for the C# side — a deployment
+spike, the host, the painter, the text seam, the packaging path, the placeholder
+surface and its diagnostic — and one for the render-target budget Q-6 has left
+as a placeholder since the seed document.
+
+**Which issues sit under which epic is GitHub's**, per the table at the top of
+this file. What is named above is named because the slice-level reason needs the
+number — an entry condition, a rule applied twice, a decision owed before a
+gate. The full membership is not here and will not be kept here.
 
 **#1107's own two tracks do not gate alike, and the difference matters more than
-the epic split does.** Its Track A — the three device runs — needs the device
-and nothing else, so it can start while #1106 is blocked. Its **Track B, Unity
-on Android hardware, needs #1106 first**: there is no Unity host to run on a
-device until that epic delivers one. So the independence claimed here is between
-#1106 and #1107's Track A, and it does not extend to Track B.
+the epic split does.** Its Track A is device work, and three of its four items
+need the device and nothing else, so they can start while #1106 is blocked. Its
+**Track B, Unity on Android hardware, needs #1106 first**: there is no Unity
+host to run on a device until that epic delivers one. So the independence
+claimed here is between #1106 and #1107's Track A, and it does not extend to
+Track B.
 
 The precedent is v0.13's **#474**, "the inputs and rulings this slice waits on",
 which was that slice's second track beside the burn-down and held exactly the
@@ -1752,18 +1809,18 @@ it, plus #474. The three streams were split on a different rule —
 [`decisions/debt-streams-own-artifact-classes.md`](decisions/debt-streams-own-artifact-classes.md),
 by which artifact class a branch owns. And v0.14's apparent second epic is #47,
 the **v0.9** epic, which carries the v0.14 milestone; issue #1114 tracks that.
-So v0.21 is the first non-burndown slice to run two genuine epics.)
+So v0.21 is the first non-burndown slice to run more than one genuine epic.)
 
 The Unity half: the engine painter over BatchRendererGroup, and the C# host that
 sits on the `dashscene-ffi` data plane. Proposed for v0.20 on 2026-08-09 and
 moved here on 2026-08-12, behind the hardening slice.
 
 **A second half was added on 2026-08-16: the Android work that a target device
-gates**, which is #1107 — the three device runs the move brought here, and
-**Unity on Android hardware, integration and performance**, which is scope on
-that epic rather than stories. The slice was called "v0.21 — Unity" until then.
-The two paragraphs that follow describe the Unity half; the Android half is
-described after them, before the entry conditions the two halves now share.
+gates**, which is #1107 — the device work the moves brought here, and **Unity on
+Android hardware, integration and performance**, which is scope on that epic
+rather than stories. The slice was called "v0.21 — Unity" until then. The two
+paragraphs that follow describe the Unity half; the Android half is described
+after them, before the entry conditions the two halves now share.
 
 **What moved here from v1**, in the terms that section used: the engine painter
 with its SDF shader library and its material classes, and the C# declarative
@@ -1779,9 +1836,11 @@ itself is
 [`decisions/unity-painter-uses-brg.md`](decisions/unity-painter-uses-brg.md) and
 [`technotes/rendering-and-painters.md`](technotes/rendering-and-painters.md).
 
-**The Android half: three issues that only a device run can settle.** #885 came
-from v0.19, #960 and #969 from v0.20, all on 2026-08-16. **All three are device
-runs rather than code**, which is why no milestone's own work could finish them:
+**The Android half: four issues that only a device can settle.** #885 came from
+v0.19 and #960 and #969 from v0.20 in one pass on 2026-08-16, then #842 from
+v0.19 later the same day. **The first three are device runs rather than code**,
+which is why no milestone's own work could finish them; #842 is the exception
+and is described after them:
 
 - **#885** — D3a, the Vulkan measurement, for the reason the v0.19 entry above
   states. It closes by running `just android-probe` on the device and recording
@@ -1796,6 +1855,12 @@ runs rather than code**, which is why no milestone's own work could finish them:
 - **#969** — the device run for the text path. The harness already calls
   `nativeSurfaceCreatedWithText` and its glyphs draw, but **on an emulator**,
   which is the first half of its own "done when".
+- **#842 — the showcase on device, with the frame-timing instrument. The one
+  that is not purely a device run.** The instrument lives in `demo/src/shell.rs`
+  and is not reachable from a third host, so this story writes that reachability
+  into `demo-android` first. It came here on the same rule as the other three
+  and it is the reason v0.19 now has no hardware gate; what it does not share
+  with them is that hardware alone will not close it.
 
 **Why they sit here rather than on the slices they came from.** Each was on a
 milestone whose own work could not finish it. This slice is the one where that
@@ -1804,11 +1869,10 @@ artifacts, and a target device is an artifact of the same kind, so the three add
 no new class of blocker. Epic #951 records the ruling and the three placements
 it did not take.
 
-**What this does and does not buy.** v0.20 is left with no hardware-gated issue
-at all. **v0.19 still has one — story #842**, whose deliverable is a frame-rate
-number from a device, so that slice's close still waits on hardware. What
-changed for v0.19 is narrower than "no blocker": none of its remaining **debt**
-is hardware-gated, and #842 is the single item that is.
+**What this buys.** **v0.19 and v0.20 are both left with no hardware-gated issue
+at all.** For v0.20 that was true from the first move; for v0.19 it took two,
+because the first pass moved only the debt and left story #842 behind, and #842
+is the frame-rate number from a device. Both are on this slice now.
 
 **The Android work that a device does not gate stayed on v0.20** — fourteen
 issues at the time of the move, against which its own recovery-path work is
@@ -1832,6 +1896,14 @@ three only the Unity half, so neither half waits on the other's conditions.
 **The fourth is also the one that is not a decision**: the first three are
 settleable at will, and hardware was expected roughly 2026-08-23.
 
+**Only the second of the four has an issue of its own: #171**, moved here from
+v1 on 2026-08-16. It holds three records still marked `proposed` and only
+`unity-painter-uses-brg.md` is this slice's, so ratifying that one alone lifts
+the condition. **The first is tracked, though not by an issue of its own** — it
+is open question 4 on #851, "which of the three layers a Unity host occupies",
+recorded there as never settled during the discussion. The third and fourth are
+an artifact and a delivery, with nothing tracking them but this paragraph.
+
 **The Unity half's first build step is the data plane.** `dashscene-ffi` is
 shaped around a surface handle: a host gives dashscene a surface and dashscene
 draws into it. A host that draws the frame itself — which is what a Unity host
@@ -1843,17 +1915,18 @@ Depends on: v0.19 for the C ABI it extends, and on v0.20 for the failure
 reporting that ABI gains there. Its first three entry conditions are independent
 of both and can be settled at any time; the fourth is hardware.
 
-**One further edge, which is inside v0.19 rather than on the slice:** #1107's
-frame-rate work reads the frame-timing instrument that lives in
-`demo/src/shell.rs`, and **story #842 is what makes it reachable from
-`demo-android`**. #842 is open on v0.19 and is that slice's own hardware gate,
-so the performance half of #1107 waits on it — the three device runs of Track A
-do not.
+**#1107's Track A is not uniform, and the difference is worth planning around.**
+Three of its four items — #885, #960, #969 — exist as code and owe only the run:
+`just android-probe` and the text-carrying harness both run today. **#842 is the
+exception**: the frame-timing instrument lives in `demo/src/shell.rs` and is not
+reachable from a third host, so that story writes the reachability into
+`demo-android` before any device measures anything. A trip planned as four runs
+is planned wrong.
 
-**Neither of #1107's three device runs waits on anything still being built**:
-`just android-probe` and the text-carrying harness both exist and run today, and
-what each owes is the run itself. **Its Track B does wait** — on #1106, for a
-Unity host to exist at all.
+That edge used to cross a slice boundary, and no longer does: it was v0.19's
+until #842 moved here on 2026-08-16.
+
+**Track B waits on #1106**, for a Unity host to exist at all.
 
 ### v0.22 — SVG as a second producer — open
 

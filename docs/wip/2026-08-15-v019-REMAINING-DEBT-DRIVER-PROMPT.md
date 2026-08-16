@@ -46,6 +46,10 @@ shape: v0.19's remaining work is small, moves several times a day, and drains
 toward v0.21 as often as toward done. `#944` is the one row this prompt's own
 pull request removes, and it is the last `debt` on the milestone.
 
+**With #944 and #950 landed, this prompt's own scope is spent** — both issues it
+was written to carry are closed. What is left on the milestone is epic #833 and
+the records story #843, and this file archives when that epic closes.
+
 **The milestone's own counts include pull requests, and reading them as issue
 progress overstates it.** `gh api repos/{owner}/{repo}/milestones` reports
 `closed=33` for v0.19; three of those are merged PRs (#1079, #935, #928), so the
@@ -64,8 +68,6 @@ what turned up the four stale counts below.
 
 ## What is not pickable, so nobody starts it
 
-- **#842** (`story`) — the showcase on device with the frame-timing instrument.
-  Needs an Android device.
 - **#843** (`story`) — the records. This is the slice's close write-up and is
   written when the rest is done, not before.
 
@@ -74,8 +76,11 @@ what turned up the four stale counts below.
 beside Unity. Epic #951 records the ruling. It is not pickable for the same
 reason it never was; it is simply no longer this milestone's.
 
-**The slice cannot close without hardware for #842.** Everything in the scope
-above is ordinary debt that gates nothing.
+**#842 was on this list until 2026-08-16**, when it moved to v0.21 under epic
+#1107 — the frame-rate number is a device measurement, which is the same rule
+that moved #885. **This slice now needs no hardware at all**, which reverses
+what this prompt said for most of that day. Everything in the scope above is
+ordinary debt that gates nothing.
 
 ## What landed since the previous prompt, so it is not redone
 
@@ -340,8 +345,10 @@ bounded, and it was not the shape-removal it reads as: the conversion is correct
 only once nothing but the scene's own solver commits into its arena.
 `docs/decisions/one-solver-per-live-scene.md`.
 
-Everything else in this milestone is either hardware-gated (#842) or the close
-write-up (#843).
+Everything else in this milestone is the close write-up (#843). **#842 was the
+hardware-gated exception until 2026-08-16**, when it moved to v0.21 under epic
+#1107 on the same rule that moved #885 — so this milestone now needs no hardware
+at all.
 
 ## Traps this session hit, which cost real time
 
