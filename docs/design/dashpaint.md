@@ -217,9 +217,24 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   equal. It **also refuses** a `parts.shape` whose `distance_range` is not
   finite and greater than zero (issue #986) — the coverage-mask copy of the
   operand `Atlas::new` refuses for glyphs, and this is the seam because the
-  `shapes` array is private and `push` refuses an entry naming a shape. Only
-  that check runs before the five arrays are extended; the method is not atomic
-  on its other panics (issue #1012).
+  `shapes` array is private and `push` refuses an entry naming a shape. **Every
+  refusal the method carries runs before the first flat array is extended**
+  (issue #1012), so a caller that catches an unwind from any of them holds the
+  table exactly as it was: `check_entry` resolves the index the entry would take
+  ahead of the copies, and the five `extend` calls and the entry's own append
+  are the last statements in the method.
+
+  That is a property of the method and not of a commit, and `dashscene-core` has
+  **two** callers where the difference shows. `intern_paint` interns the entry's
+  own fill — when it carries one; a fill-less entry interns nothing — and every
+  stacked layer into this same table before it calls in, so a refusal leaves
+  those rows behind. `compact_paints` is the second, and its refusal is worse
+  than leftover rows: it renumbers `rects` as it walks and installs the rebuilt
+  table only at the end, so an unwind part-way leaves rects naming rows of a
+  table that is then dropped. **Neither residue is collected by a later
+  compaction**, which is the natural assumption and is wrong: `should_compact`
+  reads the _entry_ count, and a refusal grows the fill arrays without adding an
+  entry.
 - `PaintTable::intern_fill(&FillSpec) -> PaintKind` — the only way a fill enters
   the table. Unlike `push_with`, which copies an entry's parts in without dedup,
   this **deduplicates**: a shadow list belongs to one entry and has no identity
