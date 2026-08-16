@@ -104,46 +104,87 @@ lint: deno-fmt-check
     # the one most changes fail on — still reports first.
     just wasm-lint
     cargo fmt --all -- --check
-    # Intra-doc links, as a gate. A doc comment naming an item that does not
-    # exist is this repository's most common defect, and until v0.16 nothing in
-    # `just build` could see one: clippy does not resolve doc links, so a link
-    # to a deleted function passed the whole gate (story #598 shipped one, and a
-    # review agent running `cargo doc` is what found it). `-D warnings` turns
-    # every rustdoc lint into an error here, which is more than the two this
-    # line used to name: `redundant_explicit_links` reaches the gate as well,
-    # and `broken_intra_doc_links` covers an ambiguous name ("both a function
-    # and a module") as well as an absent one. Both shapes are among the
-    # twelve corrections issue #1046 needed.
-    #
-    # `--no-deps` so it documents this workspace and not its dependency tree.
-    #
-    # `--document-private-items` so the pass reads what rustdoc otherwise
-    # strips before resolving links. Do not reduce that to "private items":
-    # turning it on failed on TWELVE links across SEVEN crates that this gate
-    # had been passing, and they arrived by at least three different routes —
-    # a doc comment on a genuinely private item; a public item defined in a
-    # private module, re-exported, whose links are resolved only once that
-    # module is documented (`Waiver::rule` and `Easing` are both public and
-    # both were unchecked); and a name that is unambiguous only while the
-    # private module sharing it is stripped, which is where `emit` and
-    # `triage` came from. Issue #1046 carries the list.
-    #
-    # It was measured to cost nothing on the other half:
-    # `private_intra_doc_links` still fails a public doc that links to a
-    # private item, with the flag exactly as without it. Only rustdoc's
-    # explanatory note differs.
-    #
-    # `--keep-going` so one run reports every crate. Cargo otherwise stops
-    # scheduling work after the first failure, and both prior measurements of
-    # this command — issue #1046's own, and the one taken when it was
-    # scheduled — reported partial and mutually disjoint error sets because of
-    # it. A gate that under-reports is what sends someone round the loop
-    # twice.
-    RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --document-private-items --keep-going --quiet
+    # Intra-doc links. Its own recipe for the same reason `wasm-lint` and
+    # `prim` are: CI's `clippy` job runs exactly it, and a second copy in YAML
+    # is the drift this repository keeps hitting.
+    just doc-links
     # Markdown, JSON, YAML and TOML. Its own recipe for the same reason
     # `wasm-lint` is one: CI's `prim` job runs exactly it, and a second copy in
     # YAML is the drift this repository keeps hitting.
     just prim
+
+# Intra-doc links, as a gate — the HOST target.
+#
+# A doc comment naming an item that does not exist is this repository's most
+# common defect, and until v0.16 nothing in `just build` could see one: clippy
+# does not resolve doc links, so a link to a deleted function passed the whole
+# gate (story #598 shipped one, and a review agent running `cargo doc` is what
+# found it). `-D warnings` turns every rustdoc lint into an error here, which
+# is more than the two this comment used to name: `redundant_explicit_links`
+# reaches the gate as well, and `broken_intra_doc_links` covers an ambiguous
+# name ("both a function and a module") as well as an absent one. Both shapes
+# are among the twelve corrections issue #1046 needed.
+#
+# **This recipe is one target's pass, and no target's pass is the whole gate.**
+# An item behind a `cfg` this build does not satisfy is absent, not private, so
+# rustdoc never reads its doc comment and `--document-private-items` does not
+# help. `wasm-lint` and `android-lint` carry the pass for their own triples,
+# the same split clippy already has, and issue #1109 is where that came from —
+# it was not theoretical, seven broken links were sitting behind those two
+# cfgs, six on wasm32 and one on android.
+#
+# **A fourth population has no pass at all, and it is not a target:**
+# `cfg(target_os = "macos")`. This recipe runs on whatever host invokes it, so
+# CI resolves macOS-gated doc comments on no runner it has —
+# `dashscene-gpu/src/surface.rs` carries four such items — and only a macOS
+# developer's pre-push hook reads them. Naming it here rather than implying
+# that three passes are a partition.
+#
+# `--no-deps` so it documents this workspace and not its dependency tree.
+#
+# `--document-private-items` so the pass reads what rustdoc otherwise strips
+# before resolving links. Do not reduce that to "private items": turning it on
+# failed on TWELVE links across SEVEN crates that this gate had been passing,
+# and they arrived by at least three different routes — a doc comment on a
+# genuinely private item; a public item defined in a private module,
+# re-exported, whose links are resolved only once that module is documented
+# (`Waiver::rule` and `Easing` are both public and both were unchecked); and a
+# name that is unambiguous only while the private module sharing it is
+# stripped, which is where `emit` and `triage` came from. Issue #1046 carries
+# the list.
+#
+# It was measured to cost nothing on the other half: `private_intra_doc_links`
+# still fails a public doc that links to a private item, with the flag exactly
+# as without it. Only rustdoc's explanatory note differs.
+#
+# `--keep-going` so one run reports every crate. Cargo otherwise stops
+# scheduling work after the first failure, and both prior measurements of this
+# command — issue #1046's own, and the one taken when it was scheduled —
+# reported partial and mutually disjoint error sets because of it. A gate that
+# under-reports is what sends someone round the loop twice.
+#
+# **What no target's pass reaches: `#[cfg(test)]`.** rustdoc does not compile
+# with `--cfg test`, so a doc comment inside a test module is read by nothing,
+# and `--document-private-items` does not help — those items are absent, not
+# private. There is no repair available: `RUSTDOCFLAGS='--cfg test'` stops four
+# crates compiling outright (E0432/E0433 — a doc unit does not link
+# dev-dependencies) and `cargo doc` has no `--tests` selector. Measured under
+# issue #1116, which records it rather than leaving it to be rediscovered.
+
+# The flags the three GATE passes share — this recipe, `wasm-lint` and
+# `android-lint`, which spells it twice. Written out in full in the first draft
+# of this change, two copies had already drifted before it was reviewed, which
+# is the same duplication these recipes exist to avoid.
+#
+# `doc` deliberately does NOT take this: it drops `--keep-going`, because a
+# person waiting at a browser is better served by the first failure than by all
+# of them. Its other flags must stay in step with these, and the reason is in
+# its own comment.
+DOC_FLAGS := "--no-deps --document-private-items --keep-going --quiet"
+
+# The intra-doc-link gate, on the host triple.
+doc-links:
+    RUSTDOCFLAGS='-D warnings' cargo doc --workspace {{ DOC_FLAGS }}
 
 # The Markdown/JSON/YAML/TOML gate, in the two verbs it takes.
 #
@@ -584,6 +625,13 @@ verify:
     # cdylib passes, and the C ABI header check no longer runs locally at all;
     # CI covers that inside `android-build`.
     #
+    # It also resolves intra-doc links on two triples — the host through
+    # `doc-links` and wasm32 inside `wasm-lint` — which is why a broken doc
+    # link fails a push. The android triple is the one this cannot carry, for
+    # the NDK reason `android-lint` gives; CI has it. Measured warm after issue
+    # #1109 added the second pass: `lint` 5.5-9.1 s, this gate 14.3 s, the host
+    # doc pass 0.42 s of it. Still seconds.
+    #
     # WHERE THE DROPPED WORK IS CAUGHT. `.github/workflows/ci.yml` triggers on
     # `pull_request` and on pushes to `main` — NOT on a push to a feature
     # branch. So between pushing a branch and opening its pull request, none of
@@ -616,9 +664,25 @@ fmt:
     cargo fmt --all
     prim fmt .
 
+# The same flags as `doc-links`, deliberately (issue #1117). Two reasons, and
+# the second is the one that costs time. Without `--document-private-items`
+# this would not render the private items the gate now reads, so a link the
+# gate rejected could not be checked here after it was repaired. And different
+# rustdoc flags mean different fingerprints, so alternating this with `lint`,
+# `verify` or `build` re-documented every workspace member each way round:
+# measured warm on this branch, the aligned pair costs 2.9 s against 35-48 s
+# each way for the unaligned one.
+#
+# `-D warnings` travels with them because the fingerprint is what is being
+# aligned. That does mean this refuses to open on a broken link rather than
+# opening and hiding it.
+#
+# `--keep-going` is deliberately absent: this one is for a person waiting at a
+# browser, so stopping at the first failure reports sooner.
+
 # Open the rustdoc build in a browser.
 doc:
-    cargo doc --workspace --no-deps --open
+    RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --document-private-items --quiet --open
 
 # Serve the mdBook docs locally.
 book:
@@ -778,6 +842,30 @@ wasm-lint:
     cargo clippy -p dashscene-web --target wasm32-unknown-unknown --all-targets -- -D warnings
     cargo clippy -p demo-web --target wasm32-unknown-unknown --all-targets -- -D warnings
     cargo clippy -p web-minimal --target wasm32-unknown-unknown --all-targets -- -D warnings
+    # Intra-doc links on this triple, for the reason the clippy lines above are
+    # here: `doc-links` documents the host target, where a
+    # `cfg(target_arch = "wasm32")` item does not exist, so nothing had ever
+    # resolved a doc link written inside one. Six were broken when issue #1109
+    # was measured — five in `dashscene-gpu`, each a link from the async
+    # constructor to the blocking `new` it replaces, which is
+    # `cfg(not(target_arch = "wasm32"))` and so absent exactly here.
+    #
+    # **The selection is the whole workspace minus what cannot build here, not
+    # a list of the packages with a wasm32 half.** The sixth break was in
+    # `dashbuf`, which has no wasm32 half at all — it declares `pub mod map`
+    # under `cfg(not(target_arch = "wasm32"))` and links into it from a module
+    # that is always compiled, so the link resolves on every triple but this
+    # one. A four-package list written from "who has a browser half" missed it,
+    # and would have shipped this gate with a hole of exactly the kind it
+    # exists to close. Excluding is also the safer direction: a crate added to
+    # the workspace is gated by default, and one that cannot build for wasm32
+    # fails loudly here instead of being skipped in silence.
+    #
+    # The eight exclusions are the members that do not compile for this triple:
+    # `dashscene-desktop` and `dashscene-ffi` fail outright, and the other six
+    # carry native build scripts (skia, astcenc, zstd, nv-flip). Warm, this
+    # costs 1.1 s — no more than the four-package list it replaces.
+    RUSTDOCFLAGS='-D warnings' cargo doc --workspace --exclude dashscene-desktop --exclude dashscene-ffi --exclude dashscene-android --exclude dashscene-skia --exclude dashpack --exclude dashpack-astcenc-sys --exclude demo --exclude goldens --target wasm32-unknown-unknown {{ DOC_FLAGS }}
 
 # Exercise the C ABI as a C caller, against its own header.
 #
@@ -964,6 +1052,27 @@ android-lint:
     # is minutes in this job for no lint coverage at all. `wasm-lint` splits its
     # first line for the same kind of reason.
     cargo clippy -p showcase --target aarch64-linux-android --lib -- -D warnings
+    # Intra-doc links on this triple, for the reason `wasm-lint` carries the
+    # same line: `doc-links` documents the host target, where a
+    # `cfg(target_os = "android")` item does not exist, so nothing had ever
+    # resolved a doc link written inside one (issue #1109). It found one — a
+    # public `dashscene-android::loop_` linking into the private `frames`.
+    #
+    # **This is an explicit list where `wasm-lint` excludes instead, and the
+    # difference is deliberate.** These five are exactly the members carrying
+    # `target_os = "android"`; re-derive with
+    #
+    #     grep -rl 'target_os = "android"' crates/ corpus/ demo-android/
+    #
+    # and if that returns a member not named here, this line is stale. The
+    # whole-workspace shape is the safer default and is what `wasm-lint` uses,
+    # but this is the workflow's slowest job and `--all-targets` here drags
+    # Skia into the Android graph for no coverage, which the clippy comment
+    # above measures. `showcase` keeps its `--lib` selection for that reason.
+    RUSTDOCFLAGS='-D warnings' cargo doc \
+        -p dashscene-gpu -p dashscene-ffi -p dashscene-android -p demo-android \
+        --target aarch64-linux-android {{ DOC_FLAGS }}
+    RUSTDOCFLAGS='-D warnings' cargo doc -p showcase --lib --target aarch64-linux-android {{ DOC_FLAGS }}
 
 # Package both Android hosts into APKs — the gate that compiles their Java.
 #

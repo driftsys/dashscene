@@ -857,8 +857,12 @@ impl Renderer {
         pollster::block_on(Self::new_async())
     }
 
-    /// [`Renderer::new`] without the blocking wait: the constructor a web host
+    /// `Renderer::new` without the blocking wait: the constructor a web host
     /// drives, and the one every target has.
+    // `Renderer::new` is in backticks rather than linked, and must stay that
+    // way: it is `cfg(not(target_arch = "wasm32"))`, so the wasm32 pass of the
+    // intra-doc-link gate cannot resolve a link to it. Kept out of the doc
+    // comment itself because it is this repository's build, not this API.
     pub async fn new_async() -> Result<Self, RendererError> {
         let instance = wgpu::Instance::default();
         let adapter = instance

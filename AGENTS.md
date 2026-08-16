@@ -151,7 +151,19 @@ total, nineteen of them the crates above.
     just calibrate    calibration tier — 10 tests, ~54 s. Re-derives the
                       committed asset tables; see the schedule below.
     just test-all     every tier in one run.
-    just lint         clippy -D warnings, cargo fmt --check, prim, deno fmt --check
+    just lint         clippy -D warnings, cargo fmt --check, doc-links, prim,
+                      deno fmt --check
+    just doc-links    the intra-doc-link gate on the HOST triple. Its own
+                      recipe because CI's `clippy` job runs exactly it — until
+                      issue #1108 no CI job ran it at all. The wasm32 and
+                      android triples carry their own pass inside `wasm-lint`
+                      and `android-lint`; a cfg'd-out item does not exist in
+                      this build, so no single target's pass is the whole gate.
+                      Three passes are still not a partition: a
+                      `cfg(target_os = "macos")` doc comment is read on no CI
+                      runner, only on a macOS developer's pre-push, and
+                      `#[cfg(test)]` is reached by none of them and cannot be
+                      (issue #1116)
     just prim         prim fmt --check + prim lint over the Markdown, JSON,
                       YAML and TOML. Its own recipe because CI's `prim` job
                       runs exactly it. Both verbs are needed: `prim lint`
@@ -182,9 +194,10 @@ total, nineteen of them the crates above.
                       blocking wait off the web path, where it would deadlock
     just wasm-host    build demo-web for wasm32 — its browser half compiles on
                       no other target
-    just wasm-lint    clippy every crate with a wasm32 half, on that triple —
-                      the part of `lint` a host pass cannot see. Its own recipe
-                      because CI's `wasm-gates` job runs exactly it
+    just wasm-lint    clippy every crate with a wasm32 half, on that triple,
+                      and since issue #1109 the intra-doc-link pass for it too
+                      — the part of `lint` a host pass cannot see. Its own
+                      recipe because CI's `wasm-gates` job runs exactly it
     just android      cross-compile the four Android members for
                       aarch64-linux-android — dashscene-gpu, dashscene-ffi,
                       dashscene-android and demo-android. The second platform's
@@ -192,7 +205,9 @@ total, nineteen of them the crates above.
                       JNI halves compile on no other target. Needs an NDK,
                       which bootstrap does not install
     just android-lint  clippy those four on that triple plus showcase, which
-                      carries its own android arm and which demo-android links.
+                      carries its own android arm and which demo-android links,
+                      and since issue #1109 the intra-doc-link pass for the
+                      triple as well.
                       Nothing did until issue #1086 — `android` is cargo build,
                       so the platform half of dashscene-android and
                       demo-android's JNI half compiled unlinted. The Android

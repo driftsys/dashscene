@@ -65,12 +65,15 @@ Android backend support needed nothing from this repository.
 The CI job `android-build` runs that, the C ABI's conformance check,
 `just android-apk`, and `just android-lint` — four steps, in that order.
 
-`android-lint` is clippy on the same triple, added at issue #1086 because
-`just android` is `cargo build`: the platform half of `dashscene-android` and
-`demo-android`'s JNI half compiled in this job without ever being linted, the
-gap `just wasm-lint` closed for wasm32 at PR #907. It runs **last** because it
-is `-D warnings` under an unpinned stable toolchain, and a lint that goes red on
-a clippy release must not take the header-conformance check down with it.
+`android-lint` is clippy on the same triple — and, since issue #1109, the
+intra-doc-link pass for it as well, because a `cfg(target_os = "android")` item
+does not exist in the host build that `just doc-links` documents. It was added
+at issue #1086 because `just android` is `cargo build`: the platform half of
+`dashscene-android` and `demo-android`'s JNI half compiled in this job without
+ever being linted, the gap `just wasm-lint` closed for wasm32 at PR #907. It
+runs **last** because it is `-D warnings` under an unpinned stable toolchain,
+and a lint that goes red on a clippy release must not take the
+header-conformance check down with it.
 
 `just android-apk` packages both hosts' APKs and is the only **gate** that
 compiles any Java in this repository. Before that recipe, nothing scheduled a

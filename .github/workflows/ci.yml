@@ -401,12 +401,29 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v4
       # This job compiles the whole workspace, which reaches dashbuf.
       - uses: ./.github/actions/install-flatc
       # The host target only. Everything wasm32 is the `wasm-gates` job, which
       # holds the whole of `just lint`'s wasm32 half in one place rather than
       # splitting it across two caches.
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The intra-doc-link gate. Until issue #1108 it ran in NO CI job at all:
+      # CI mirrors `just lint` piece by piece — `fmt`, `prim`, `clippy`,
+      # `wasm-gates` — and this was the piece with no mirror, enforced only by
+      # the pre-push hook. `just doc-links` rather than the command, so that
+      # this file does not become the second copy that drifts.
+      #
+      # It shares a job with clippy for the third-party build and the cache,
+      # NOT for the workspace one. `cargo clippy` sets RUSTC_WORKSPACE_WRAPPER,
+      # which enters the fingerprint of workspace units only, so every
+      # workspace member is re-checked here before it is documented; the
+      # dependency graph beneath them is what gets reused. Measured in an
+      # isolated CARGO_TARGET_DIR: a `cargo doc` immediately after a `cargo
+      # clippy` of the same package still re-checks all five of its workspace
+      # dependencies. A job of its own would rebuild the third-party graph too,
+      # which is the larger half.
+      - run: just doc-links
 
   test:
     # Compile-heavy: skipped when the diff is documentation only

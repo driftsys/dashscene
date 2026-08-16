@@ -2,8 +2,10 @@
 //!
 //! Compiled on Android and nowhere else — every function here binds an NDK
 //! symbol. What it drives is [`Frames`], so the loop is written once and the
-//! scene source is the implementation's business; see [`crate::frames`] for why
-//! that line is drawn where it is.
+//! scene source is the implementation's business; see
+//! `crates/dashscene-android/src/frames.rs` for why that line is drawn where
+//! it is. A source path rather than a link because the `frames` module is
+//! private, so it appears in no rendered documentation on any target.
 //!
 //! # The threads, and which one does what
 //!
