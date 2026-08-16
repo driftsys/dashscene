@@ -21,6 +21,11 @@ number, and #885 — which is `debt`, not a story — is the D3a Vulkan measurem
 both need hardware that was expected roughly 2026-08-23. #843 (the records)
 depends on them.
 
+**Corrected 2026-08-16: #885 is no longer on this milestone.** It moved to v0.21
+with #960 and #969; see the "what waits for hardware" section below. So the
+sentence above holds for #842 alone, and #843 depends on #842 and on whatever
+v0.21 records about the measurement.
+
 **#947 has landed** (2026-08-14, pull request #978), so the sentence this
 paragraph carried until then — that it was the one story a session could pick up
 today — is spent. There is now no pickable story at all, and the whole of the
@@ -173,7 +178,10 @@ the flag on and off. That was tried and reverted; do not retry it.
 - **The D3a measurement, which is #885** — not #839, which closed. Until it
   exists, **nothing may describe Android as working** — not a record, not a
   document, not an issue, not a commit message. That is the entire cost of
-  having deferred it.
+  having deferred it. **It left this milestone on 2026-08-16**, moving to v0.21
+  with #960 and #969 when that slice was re-scoped to carry the hardware-gated
+  Android work beside Unity (epic #951). The rule above is unchanged by the
+  move; every count in this file that includes #885 predates it.
 - **All of #842.** Its deliverable is a frame-rate number, and an emulator
   number would describe the development machine.
 

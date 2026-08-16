@@ -1551,11 +1551,21 @@ unbuildable for this painter. The figure lives in a driver and in the GLES
 specification, not in the pinned crate, and this project reads a limit out of
 the thing that enforces it.
 
-Issue #767 (`madvise`) is held against this slice rather than v1's hardware:
+**That gate was downgraded to carried debt on 2026-08-09 (#885), and the debt
+moved to v0.21 on 2026-08-16**; the v0.21 entry below gives the reasoning.
+**This slice still waits on hardware, through story #842**, whose deliverable is
+a frame-rate number from a device — what the move changes is that none of
+v0.19's remaining _debt_ is hardware-gated. Nothing the rule states is relaxed
+by either step: nothing describes Android as working until the measurement is
+taken.
+
+Issue #767 (`madvise`) was held against this slice rather than v1's hardware:
 **Android is the first target where a genuinely cold page cache is ordinary
-rather than contrived**, which is the harness that measurement needs. It is not
-in the opening wave — it needs on-device measurement infrastructure that the
-toolchain story does not by itself deliver.
+rather than contrived**, which is the harness that measurement needs. It was
+never in the opening wave — it needs on-device measurement infrastructure that
+the toolchain story does not by itself deliver — and **it moved to v1 on
+2026-08-16**, beside #476 and #462, which wait on the same cold-cache
+measurement.
 
 **Confirmed against what v0.17 built (2026-08-08).** The structure above was
 ratified before either integration crate existed, and the question it left open
@@ -1693,6 +1703,11 @@ preference: **this is the only near-term slice whose start needs nothing from
 the repository owner.** v0.21 and v0.22 each wait on decisions and artifacts
 only the owner can supply, and those can be settled while this slice is built.
 
+**Its two hardware-gated issues moved to v0.21 on 2026-08-16**, #960 and #969,
+and the v0.21 entry below gives the reasoning. **This slice now has no
+hardware-gated issue at all**: what is left of the Android half here is closable
+on an emulator, as is #874, which stays on v0.23.
+
 **The Android half is the larger half, and it is one property rather than four
 items.** The recovery path is untested; the bound that gives up after repeated
 failures cannot be reached; the C ABI cannot report which frame failures are
@@ -1708,12 +1723,17 @@ symptoms.
 Depends on: v0.19, for the Android code it hardens. v0.21 depends on it in turn,
 for the failure reporting the C ABI gains here.
 
-### v0.21 — Unity — open
+### v0.21 — Unity and Android on target hardware — open
 
 **No epic filed yet; the design findings are held on tracking issue #851.** The
 engine painter over BatchRendererGroup, and the C# host that sits on the
 `dashscene-ffi` data plane. Proposed for v0.20 on 2026-08-09 and moved here on
 2026-08-12, behind the hardening slice.
+
+**A second half was added on 2026-08-16: the Android work that a target device
+gates.** The slice was called "v0.21 — Unity" until then. The three paragraphs
+that follow describe the Unity half; the Android half is described after them,
+before the entry conditions the two halves now share.
 
 **What moved here from v1**, in the terms that section used: the engine painter
 with its SDF shader library and its material classes, and the C# declarative
@@ -1729,23 +1749,72 @@ itself is
 [`decisions/unity-painter-uses-brg.md`](decisions/unity-painter-uses-brg.md) and
 [`technotes/rendering-and-painters.md`](technotes/rendering-and-painters.md).
 
-**Three entry conditions, all owner-supplied**, which is why this slice cannot
+**The Android half: three issues that only a device run can settle.** #885 came
+from v0.19, #960 and #969 from v0.20, all on 2026-08-16. **All three are device
+runs rather than code**, which is why no milestone's own work could finish them:
+
+- **#885** — D3a, the Vulkan measurement, for the reason the v0.19 entry above
+  states. It closes by running `just android-probe` on the device and recording
+  the adapter, `max_storage_buffers_per_shader_stage` and the device-request
+  verdict in [`design/android-toolchain.md`](design/android-toolchain.md). That
+  probe is windowless and needs nothing else built. Carried as debt rather than
+  as a slice gate since 2026-08-09.
+- **#960** — whether a **debug** attach ever completes, and whether it wedges on
+  target hardware. Not the surface-destroy handshake, which was measured at 27
+  ms on a tablet image and belongs to #874: what is unmeasured is the
+  acquisition, at 0.74 s in release against no observed completion in debug.
+- **#969** — the device run for the text path. The harness already calls
+  `nativeSurfaceCreatedWithText` and its glyphs draw, but **on an emulator**,
+  which is the first half of its own "done when".
+
+**Why they sit here rather than on the slices they came from.** Each was on a
+milestone whose own work could not finish it. This slice is the one where that
+condition is already true and already recorded — it waits on owner-supplied
+artifacts, and a target device is an artifact of the same kind, so the three add
+no new class of blocker. Epic #951 records the ruling and the three placements
+it did not take.
+
+**What this does and does not buy.** v0.20 is left with no hardware-gated issue
+at all. **v0.19 still has one — story #842**, whose deliverable is a frame-rate
+number from a device, so that slice's close still waits on hardware. What
+changed for v0.19 is narrower than "no blocker": none of its remaining **debt**
+is hardware-gated, and #842 is the single item that is.
+
+**The Android work that a device does not gate stayed on v0.20** — fourteen
+issues at the time of the move, against which its own recovery-path work is
+written. So does #874, the split-screen handshake case: it is emulator-gated
+rather than hardware-gated, and `just android-splitscreen` asks for a handheld
+or tablet image rather than for target hardware.
+
+**Nothing about the rule #885 states is relaxed by the move.** Nothing may
+describe Android as working until that measurement is taken, and emulator
+results stay labelled as emulator results.
+
+**Four entry conditions, all owner-supplied**, which is why this slice cannot
 simply be started: the layer question of
 [`decisions/host-integration-in-three-layers.md`](decisions/host-integration-in-three-layers.md)
-settled for a Unity host, the BRG record moved from proposed to accepted, and
-the Unity C# repository created — it does not exist, and `dashscene-unity` in
-this workspace is Rust-side bindings only.
+settled for a Unity host, the BRG record moved from proposed to accepted, the
+Unity C# repository created — it does not exist, and `dashscene-unity` in this
+workspace is Rust-side bindings only — and, for the Android half, a target
+device available. **The fourth gates only the Android half**, and the first
+three only the Unity half, so neither half waits on the other's conditions.
+**The fourth is also the one that is not a decision**: the first three are
+settleable at will, and hardware was expected roughly 2026-08-23.
 
-**Its first build step is the data plane.** `dashscene-ffi` is shaped around a
-surface handle: a host gives dashscene a surface and dashscene draws into it. A
-host that draws the frame itself — which is what a Unity host is — needs the
-opposite direction, and the committed tables cross no boundary today. Boundary B
-was made FFI-representable at v0.15 by story #600, and has had no consumer
-since.
+**The Unity half's first build step is the data plane.** `dashscene-ffi` is
+shaped around a surface handle: a host gives dashscene a surface and dashscene
+draws into it. A host that draws the frame itself — which is what a Unity host
+is — needs the opposite direction, and the committed tables cross no boundary
+today. Boundary B was made FFI-representable at v0.15 by story #600, and has had
+no consumer since.
 
 Depends on: v0.19 for the C ABI it extends, and on v0.20 for the failure
-reporting that ABI gains there. Its three entry conditions are independent of
-both and can be settled at any time.
+reporting that ABI gains there. Its first three entry conditions are independent
+of both and can be settled at any time; the fourth is hardware.
+
+**The two halves do not depend on each other**, and neither Android issue waits
+on anything still being built: `just android-probe` and the text-carrying
+harness both exist and run today. What each owes is the run itself, on a device.
 
 ### v0.22 — SVG as a second producer — open
 
