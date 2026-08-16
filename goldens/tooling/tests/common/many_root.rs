@@ -181,10 +181,23 @@ fn frame(name: &str, asset: u32, side: f32) -> Node {
 ///
 /// [`build`] decodes four 512x512 corpus photos and encodes `extra` 128x128
 /// tiles, about 2.5 s at `EXTRA_FRAMES` on macOS aarch64. The two binaries
-/// stated over this document ask for it nine times between them:
-/// `per_frame_scaling.rs` four (once at `0`, three at `EXTRA_FRAMES`) and
+/// stated over this document ask for it **ten** times between them:
+/// `per_frame_scaling.rs` five (two at `0`, three at `EXTRA_FRAMES`) and
 /// `startup_scaling.rs` five (three at `0`, two at `EXTRA_FRAMES`). This turns
-/// those nine builds into two per process.
+/// those ten builds into two per process.
+///
+/// **Re-derive rather than trust that split**, because it has already been
+/// wrong twice in consecutive stories: it read four-and-five while story #944's
+/// byte term had taken `per_frame_scaling.rs` to six, and issue #1119 then took
+/// it to five.
+///
+/// ```text
+/// grep -c "load(" goldens/tooling/tests/per_frame_scaling.rs
+/// grep -cE "[^_]document\(" goldens/tooling/tests/startup_scaling.rs
+/// ```
+///
+/// Both need the `fn load` definition and the comment lines discounted, which
+/// is why the numbers above are stated as a split rather than as one total.
 ///
 /// **What it buys is CPU, not elapsed time — measure before claiming
 /// otherwise.** `cargo test` runs a binary's tests on parallel threads, so the

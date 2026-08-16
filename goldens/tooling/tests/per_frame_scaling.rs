@@ -151,30 +151,39 @@
 //!
 //! # The band has been shown to break
 //!
-//! [`within_band`] is the assertion, written once and called three times: by
-//! the criterion, and by the two guards that are committed to breach it. A
-//! band nothing has been shown to break is not yet a band
-//! (`docs/technotes/measured-verification.md`, "the sensitivity guard").
+//! The assertion is written once and called by the criterion and by both guards
+//! committed to breach it, so none of them can drift from the others. It is two
+//! predicates underneath: [`within_count_band`] holds the two count terms and
+//! [`within_byte_band`] the third, because only that one needs a one-root
+//! baseline and a baseline is a whole document load — so a guard breaching a
+//! count alone does not pay for one (issue #1119). [`within_band`] is the band
+//! itself and joins them, and it keeps that name so the only predicate reading
+//! as "the band" is the one checking every term. A band nothing has been shown to break is
+//! not yet a band (`docs/technotes/measured-verification.md`, "the sensitivity
+//! guard").
 //!
 //! - [`a_paint_only_frame_that_marks_layout_intent_breaches_the_solve_term`]
 //!   drives the paint-only frame with a layout property instead. The solve term
-//!   goes from 0 to 65 and the band rejects it. That is the measurement a
+//!   goes from 0 to 1 and the band rejects it — **1, not 65: story #838
+//!   confined the solve, so a layout-dirty frame over this document runs one
+//!   Taffy computation whatever its root count.** That is the measurement a
 //!   misclassifying `set_prop` would produce, from the same path — it does not
 //!   prove the classifier is correct, which is `Arena::layout_dirty`'s own
 //!   tests' job, but it does prove this band would see it.
 //! - [`the_confinement_is_what_makes_the_number_one`] clears the shown root, so
-//!   the runtime traverses every root exactly as it did before story #838. Both
-//!   terms go to 65 and the band rejects them. It replaced a guard that ran the
+//!   the runtime traverses every root exactly as it did before story #838. The
+//!   two count terms go to 65 and the byte term to 136, and the band rejects
+//!   all three. It replaced a guard that ran the
 //!   same frames over a seventeen-root document: that one worked while the
 //!   terms tracked the document's size, and cannot work now that they do not —
 //!   which is the story's whole claim, restated as a test that had to be
 //!   retired.
 //!
 //! **The upward injection story #836 said was unavailable is available now**,
-//! and it is the second guard. At 65 roots both terms were saturated at the
-//! document's own size, so nothing a test could stage made either larger; with
-//! the traversal confined, removing the confinement is exactly such a mutation
-//! and it breaches both terms at once.
+//! and it is the second guard. At 65 roots the two count terms were saturated
+//! at the document's own size, so nothing a test could stage made either
+//! larger; with the traversal confined, removing the confinement is exactly
+//! such a mutation and it breaches every term at once.
 //!
 //! # It was also run against the two paths it names, once
 //!
@@ -364,7 +373,7 @@ const MANY_RECT_ROWS: usize = 1;
 /// and the sixty-five-root documents cancels every one of them and leaves
 /// exactly what grows with the document, which is the claim being made.
 ///
-/// **[`within_band`] compares the whole growth, not a per-root quotient.** This
+/// **[`within_byte_band`] compares the whole growth, not a per-root quotient.** This
 /// constant times the extra-root count is the expectation, so the term is an
 /// exact equality like the other two. Dividing first would truncate: over 64
 /// extra roots, up to 63 bytes of new document-scaled cost divides away and the
@@ -596,19 +605,27 @@ fn steady_state(loaded: &mut Loaded) -> (FrameCost, FrameCost, FrameCost) {
     (first, paint, layout)
 }
 
-/// The band. One predicate over the many-root document's two steady-state
-/// frames, so the criterion and the guards that breach it run the same check
-/// rather than two checks that have to agree.
+/// The two **count** terms, over the many-root document's two steady-state
+/// frames — the solve and the committed table. One predicate, so the criterion
+/// and the guards that breach it run the same check rather than two checks that
+/// have to agree.
+///
+/// Split from the byte term, which needs a one-root baseline this does not
+/// (issue #1119): a guard that breaches only a count no longer has to load a
+/// second document to satisfy a signature.
+///
+/// **Deliberately not called `within_band`.** The band has three terms, and
+/// every other artifact — the criterion's panic, the decision record, the
+/// guards' own messages — calls the three-term thing "the band". A predicate
+/// named for the band that silently checks two of its three terms is how a
+/// later caller drops one with no compile error to stop them, which is the
+/// failure this file's guards exist to make impossible. [`within_band`] is the
+/// one that checks all three.
 ///
 /// `Err` carries what breached and by how much, so a guard's own assertion can
 /// name it and a real regression reads as a diagnosis rather than as a number
 /// mismatch.
-fn within_band(
-    paint: FrameCost,
-    layout: FrameCost,
-    small_layout: FrameCost,
-    extra_roots: u64,
-) -> Result<(), String> {
+fn within_count_band(paint: FrameCost, layout: FrameCost) -> Result<(), String> {
     let mut breaches = Vec::new();
     if paint.solves != MANY_PAINT_SOLVES {
         breaches.push(format!(
@@ -631,30 +648,71 @@ fn within_band(
             ));
         }
     }
-    // The third term. `saturating_sub` rather than `-`: a many-root frame that
-    // allocated *less* than the one-root frame would underflow the u64 and
-    // panic inside the band, which reports worse than a breach does. It reads
-    // as a growth of zero, which is a breach against a non-zero constant and is
-    // exactly the "re-measure and move the constant" case below.
-    //
-    // **The whole growth is what is compared, not the slope**, so this term is
-    // an exact equality like the two above. Comparing
-    // `growth / extra_roots` against the constant would truncate: over 64 extra
-    // roots, anything up to 63 bytes of new document-scaled cost divides away
-    // and the band stays green — which is the "a change with no term that can
-    // see it" failure this term exists to close. The slope is derived from the
-    // equality for the message and the log, never asserted on.
+    if breaches.is_empty() {
+        Ok(())
+    } else {
+        Err(breaches.join("; "))
+    }
+}
+
+/// The third term: what a steady-state layout frame allocates that the document
+/// makes it allocate.
+///
+/// Separate from [`within_count_band`] because it is the only term needing a
+/// one-root baseline, and a baseline is a whole document load. A guard that
+/// breaches a count and asserts on nothing else calls that one and skips this
+/// (issue #1119).
+///
+/// `saturating_sub` rather than `-`: a many-root frame that allocated *less*
+/// than the one-root frame would underflow the u64 and panic inside the band,
+/// which reports worse than a breach does. It reads as a growth of zero, which
+/// is a breach against a non-zero constant and is exactly the "re-measure and
+/// move the constant" case.
+///
+/// **The whole growth is what is compared, not the slope**, so this term is an
+/// exact equality like the two counts. Comparing `growth / extra_roots` against
+/// the constant would truncate: over 64 extra roots, anything up to 63 bytes of
+/// new document-scaled cost divides away and the band stays green — which is
+/// the "a change with no term that can see it" failure this term exists to
+/// close. The slope is derived from the equality for the message and the log,
+/// never asserted on.
+fn within_byte_band(
+    layout: FrameCost,
+    small_layout: FrameCost,
+    extra_roots: u64,
+) -> Result<(), String> {
     let growth = layout.bytes.saturating_sub(small_layout.bytes);
     let expected = BYTES_PER_EXTRA_ROOT * extra_roots;
-    if growth != expected {
-        breaches.push(format!(
-            "a layout frame allocated {growth} bytes over the one-root document's {} across \
-             {extra_roots} extra roots, against {expected} ({} bytes per extra root against \
-             {BYTES_PER_EXTRA_ROOT})",
-            small_layout.bytes,
-            slope_of(growth, extra_roots),
-        ));
+    if growth == expected {
+        return Ok(());
     }
+    Err(format!(
+        "a layout frame allocated {growth} bytes over the one-root document's {} across \
+         {extra_roots} extra roots, against {expected} ({} bytes per extra root against \
+         {BYTES_PER_EXTRA_ROOT})",
+        small_layout.bytes,
+        slope_of(growth, extra_roots),
+    ))
+}
+
+/// **The band**: all three terms, for the callers that assert on all three.
+///
+/// Joined the way one predicate used to join them, so a breach in any term
+/// still reads as one message and a caller can still name which term moved.
+/// This name is the three-term one on purpose — see [`within_count_band`].
+fn within_band(
+    paint: FrameCost,
+    layout: FrameCost,
+    small_layout: FrameCost,
+    extra_roots: u64,
+) -> Result<(), String> {
+    let breaches: Vec<String> = [
+        within_count_band(paint, layout),
+        within_byte_band(layout, small_layout, extra_roots),
+    ]
+    .into_iter()
+    .filter_map(Result::err)
+    .collect();
     if breaches.is_empty() {
         Ok(())
     } else {
@@ -663,11 +721,16 @@ fn within_band(
 }
 
 /// The byte term as a rate, for a message or a log line. Never the thing
-/// asserted on — [`within_band`] compares the whole growth, because a division
-/// truncates and a truncated comparison cannot see a small regression.
+/// asserted on — [`within_byte_band`] compares the whole growth, because a
+/// division truncates and a truncated comparison cannot see a small
+/// regression.
 ///
 /// Answers 0 rather than dividing when a caller measures a one-root fixture
-/// against itself, which is the only way `extra_roots` reaches zero.
+/// against itself, which is the only way `extra_roots` reaches zero — and
+/// `EXTRA_FRAMES`' own documentation says a measurement wanting a different
+/// root count "asks for fewer", so that is reachable rather than theoretical.
+/// **Every site that prints or reports the rate goes through here**, so none of
+/// them can divide by zero and panic before an assertion has run.
 fn slope_of(growth: u64, extra_roots: u64) -> u64 {
     growth.checked_div(extra_roots).unwrap_or(0)
 }
@@ -675,11 +738,15 @@ fn slope_of(growth: u64, extra_roots: u64) -> u64 {
 /// The one-root document's steady-state layout frame — the denominator the byte
 /// slope is taken against.
 ///
-/// The criterion already has this figure and passes its own; the two guards
-/// below do not measure the small document for anything else and call this. It
-/// is a whole load and three frames, which is the cheapest honest way to get it:
+/// A whole load and three frames, which is the cheapest honest way to get it:
 /// the alternative is a second constant holding the one-root document's own byte
-/// count, and that is the level this term is a slope specifically to avoid.
+/// count, and that is the level this term is a difference specifically to avoid.
+///
+/// **One caller**, [`the_confinement_is_what_makes_the_number_one`], which
+/// asserts the byte term moves and so genuinely needs a baseline. The criterion
+/// measures the small document anyway and passes its own; the paint-only guard
+/// asserts on a count and calls [`within_band`], which needs none (issue
+/// #1119).
 fn small_baseline() -> FrameCost {
     let mut small = load(0);
     let (_, _, layout) = steady_state(&mut small);
@@ -767,7 +834,10 @@ fn a_frame_costs_the_shown_root_and_not_the_document() {
     println!(
         "PER-FRAME SCALING — {} bytes per extra root on a layout frame, against the band's \
          {BYTES_PER_EXTRA_ROOT} ({} B over the one-root document's {} B, across {} extra roots)",
-        many_layout.bytes.saturating_sub(small_layout.bytes) / (many.roots as u64 - 1),
+        slope_of(
+            many_layout.bytes.saturating_sub(small_layout.bytes),
+            many.roots as u64 - 1,
+        ),
         many_layout.bytes.saturating_sub(small_layout.bytes),
         small_layout.bytes,
         many.roots - 1,
@@ -814,8 +884,12 @@ fn a_frame_costs_the_shown_root_and_not_the_document() {
 }
 
 /// The solve term is sensitive: a frame that marks layout intent where the
-/// paint-only frame marks none moves it from 0 to one per root, and the band
-/// rejects it.
+/// paint-only frame marks none moves it from 0 to 1, and the band rejects it.
+///
+/// **One, not one per root.** Story #838 confined the solve to the shown root,
+/// so a layout-dirty frame over the sixty-five-root fixture runs a single Taffy
+/// computation — which is what the assertion below requires
+/// (`MANY_LAYOUT_SOLVES`).
 ///
 /// This is the measurement a `set_prop` that misclassified a paint property as
 /// layout-affecting would produce, taken from the same path. It does not prove
@@ -839,13 +913,12 @@ fn a_paint_only_frame_that_marks_layout_intent_breaches_the_solve_term() {
         mutated_paint.solves
     );
 
-    let breach = within_band(
-        mutated_paint,
-        layout,
-        small_baseline(),
-        many.roots as u64 - 1,
-    )
-    .expect_err("a layout-dirty frame in the paint-only slot must breach the band");
+    // The count terms alone. This guard asserts on the solve term and nothing
+    // else, and the byte term is the only one needing a one-root baseline — so
+    // calling the joined predicate here would load a whole second document to
+    // satisfy a signature (issue #1119).
+    let breach = within_count_band(mutated_paint, layout)
+        .expect_err("a layout-dirty frame in the paint-only slot must breach the band");
     assert!(
         breach.contains("paint-only frame ran"),
         "the guard must breach the solve term, not something else; it reported: {breach}"
@@ -898,7 +971,10 @@ fn the_confinement_is_what_makes_the_number_one() {
          stories #838 and #944 moved",
         unbounded_layout.solves,
         unbounded_layout.rect_rows,
-        unbounded_layout.bytes.saturating_sub(small_layout.bytes) / extra_roots,
+        slope_of(
+            unbounded_layout.bytes.saturating_sub(small_layout.bytes),
+            extra_roots,
+        ),
     );
 
     let breach = within_band(unbounded_paint, unbounded_layout, small_layout, extra_roots)
