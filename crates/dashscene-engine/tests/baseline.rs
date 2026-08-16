@@ -595,3 +595,81 @@ fn an_owning_solver_measures_through_its_typesetter_and_retains_its_tree() {
          per call would report another computation here"
     );
 }
+
+/// A row that stops being baseline-aligned loses its children's corrections on
+/// the **next** solve of a retained solver.
+///
+/// The corrections live in a retained, stamped table since issue #1153 — dense
+/// and allocated once at rebuild, where a fresh `FxHashMap` per solve made this
+/// property free. Nothing carries one solve's entries out of it now except a
+/// stamp that is bumped rather than a table that is cleared, so this is what
+/// says the bump happens: without it the run keeps a baseline offset for a row
+/// that no longer has a baseline, and every later frame draws it a descender too
+/// low.
+///
+/// **The row is FIXED height on purpose.** A HUG row records a #322 cross floor,
+/// and a solve whose floors differ from the last one's re-solves and starts a
+/// second collection — which bumps the stamp on its own and hides the missing
+/// per-solve bump entirely. A fixed row records no floor either time, so the
+/// pass takes its early return and the per-solve bump is the only one there is.
+/// Verified by mutation, and the mutation has to be the right one: `insert`
+/// indexes the slots `begin` sizes, so **deleting** the call makes the first
+/// collection panic on an empty table and every shape fails alike. The mutation
+/// that isolates the bump keeps the sizing and drops the stamp
+/// (`offsets.slots.resize(arena.node_count(), (0, 0.0))` in its place). Under
+/// that one a HUG twin of this test passes and this fails, with the run at
+/// 57.24 where 0 is expected.
+///
+/// Asserted on the committed rect rather than on the arena's intent, because
+/// the correction is a property of the solve and never of the document.
+#[test]
+fn a_row_that_stops_being_baseline_aligned_drops_its_corrections() {
+    let mut ts = typesetter();
+    let mut arena = Arena::new();
+    let mut solver = TaffySolver::with_typesetter(&mut ts);
+
+    let row = {
+        let mut txn = arena.open();
+        let row = txn.add_node(None, None);
+        txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+        txn.set_prop(row, Prop::SizingH(AxisSizing::Hug));
+        // Stated rather than left to `AxisSizing`'s default, because the whole
+        // fixture rests on it: see above.
+        txn.set_prop(row, Prop::SizingV(AxisSizing::Fixed));
+        txn.set_prop(row, Prop::Height(160.0));
+        txn.set_prop(row, Prop::CrossAlign(CrossAxisAlign::Baseline));
+        box_leaf(&mut txn, row, 40.0, 100.0);
+        text_leaf(&mut txn, row, "LARGE", 40.0);
+        txn.commit_with(&mut solver);
+        row
+    };
+
+    // And asserted, not only set: a row that had become HUG would have grown
+    // past its authored height to the #322 floor, and would then take the
+    // second-collection path this fixture exists to avoid.
+    assert_eq!(
+        rect_at(&arena, 0).3,
+        160.0,
+        "the row must stay at its authored height, or it is not the fixed shape this pins"
+    );
+
+    // The text run is creation index 2 — the row is 0 and the tall box is 1.
+    // The box is the tallest baseline, so the run is pushed down by the gap
+    // between the two.
+    let corrected = rect_at(&arena, 2).1;
+    assert!(
+        corrected > 1.0,
+        "the run must start out baseline-corrected, and sat at {corrected}"
+    );
+
+    let mut txn = arena.open();
+    txn.set_prop(row, Prop::CrossAlign(CrossAxisAlign::Start));
+    txn.commit_with(&mut solver);
+
+    let uncorrected = rect_at(&arena, 2).1;
+    assert!(
+        uncorrected.abs() < 0.01,
+        "a `Start` row with no padding places its children at 0, and the run sat at \
+         {uncorrected} — the previous solve's baseline correction, still applied"
+    );
+}
