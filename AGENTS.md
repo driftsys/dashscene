@@ -499,8 +499,12 @@ Merging a PR — how the branch lands on `main`:
   commands after it derives its own base from the same snapshot, so neither can
   be aimed at the wrong commit, and the rebase and the `--stat` check below both
   see the lanes that have landed. Skipping the fetch is its own defect: the
-  rebase becomes a no-op, the ruleset's `strict` flag refuses the merge as not
-  up to date, and the check below cannot see the lane it exists to catch.
+  rebase becomes a no-op and the check below cannot see the lane it exists to
+  catch. Nothing refuses it either: the ruleset's `strict` flag was what made
+  this step a precondition, and since 2026-08-16 it is off because the merge
+  queue covers what it covered. The queue compiles the combination, so a stale
+  branch is caught — but as a red batch after the fact, not as a refusal at the
+  point where it is cheap to fix.
 
   The old order — rebase, then squash — is safe only while `origin/main` is
   still the branch's merge base, and a fetch **between** the two steps closes
@@ -550,17 +554,61 @@ Merging a PR — how the branch lands on `main`:
 - Keep separate commits only when they are separately meaningful — for example a
   preparatory refactor and the behavior change that builds on it, each
   independently reviewable and revertable.
-- Land the PR with a merge commit ("Create a merge commit"). The branch is
-  already squashed, so `main` still reads as one change per PR, and the merge
-  commit records which PR the change came from.
-- Avoid "Rebase and merge". It replays each branch commit onto the current
-  `main`, so a conflict already resolved on the branch can come back during the
-  replay (this is what blocked PR #108). A merge commit integrates the branch
-  as-is and does not re-raise resolved conflicts.
-- **A merge commit is the only method the ruleset allows.** Since 2026-08-16
-  `allowed_merge_methods` on ruleset 20731537 is `["merge"]`, so squash and
-  rebase are refused at the button rather than discouraged in prose. Naming the
-  method explicitly is still the habit — `gh pr merge --merge`.
+- **A branch lands through the merge queue, not the merge button.** Since
+  2026-08-16 ruleset 20731537 carries a `merge_queue` rule. GitHub builds a
+  temporary branch holding `main` plus everything queued ahead, runs `ci` on
+  **that**, and fast-forwards `main` only if it passes. The queue merges with a
+  merge commit and `allowed_merge_methods` is `["merge"]`, so squash and rebase
+  are refused rather than discouraged in prose, and `main` still reads as one
+  change per PR.
+
+  **Enqueue only once `ci` is green, and check what the command actually did.**
+
+      gh pr checks <n>          # confirm green FIRST
+      gh pr merge <n> --merge   # then enqueue
+      gh pr view <n> --json state,mergeStateStatus
+
+  `gh pr merge` behaves differently depending on what it finds: with the
+  required checks passed it adds the pull request to the queue, and **with them
+  still running it silently enables auto-merge instead** — which merges later,
+  unattended, with nobody reading the findings checklist. This repository's own
+  advice is to review while CI runs, so that is the normal state of a PR when
+  the review finishes, and it is exactly when the wrong thing happens. Under a
+  queue the `--merge` strategy flag is ignored; it is kept for the case where
+  the queue is lifted.
+
+  **Enqueuing is asynchronous.** The command returns before `main` has moved, so
+  the post-merge steps below — the accidental-closure check, and confirming the
+  previous lane's work survives — have nothing to look at yet and will pass over
+  a merge that has not happened. Wait for `main` to carry the merge commit
+  before running them. A batch that goes red, or that hits
+  `check_response_timeout_minutes`, drops the pull request back out of the queue
+  and leaves it open, and nothing announces that.
+
+  **The run that decides the merge is the merge group's, not the pull
+  request's.** A green pull request is what admits the branch to the queue; it
+  says nothing about the state of `main` afterwards. Read the merge group's own
+  run when something lands red.
+- **The squash-and-rebase shaping above is still required; only its enforcement
+  changed.** `strict_required_status_checks_policy` is now `false`, so nothing
+  refuses a stale branch at the button, and the queue would catch it later as a
+  red batch. Shaping is what keeps `main` at one commit per PR, which no ruleset
+  ever enforced. Keep doing all of it — the rebase is now a convention rather
+  than a precondition (`docs/decisions/review-before-ready-not-before-open.md`).
+- Avoid "Rebase and merge" if the queue is ever lifted. It replays each branch
+  commit onto the current `main`, so a conflict already resolved on the branch
+  can come back during the replay (this is what blocked PR #108). A merge commit
+  integrates the branch as-is and does not re-raise resolved conflicts.
+- **A broken merge-group expression reports green over the wrong range — it does
+  not go silent.** A wrong field name in `ci.yml` yields an empty string,
+  `scripts/is-code-change` fails closed to `true`, and the suite runs against a
+  degraded range and passes. Verified by running the script with an empty BASE.
+  Only a narrower class times the queue out instead: the `merge_group` trigger
+  removed, the workflow failing to parse on the queue's branch, or the aggregate
+  `ci` job renamed. For that class, remove the `merge_queue` rule from ruleset
+  20731537 — restoring its seven parameters from the decision record when it
+  goes back, since re-adding it bare restores GitHub's defaults — fix through an
+  ordinary PR, and re-add it.
 
 Plan revision at the end of each phase: story breakdowns for future slices are
 provisional by design. When a slice's epic closes (v0.1, v0.2, …) — the **last**

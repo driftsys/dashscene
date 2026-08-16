@@ -177,15 +177,32 @@ as well as everyone else:
     pull_request             a change reaches `main` through a pull request
       approvals required: 0  (see above — a self-approval is not accepted,
                              and there is no second account)
-    required_status_checks   `ci` green on the head being merged, and the
-      strict: true           branch up to date with `main` first
+      allowed_merge_methods    ["merge"] since 2026-08-16 — squash and rebase
+                               are refused rather than discouraged
+    required_status_checks   `ci` green on the head being merged
+      strict: false            since 2026-08-16 — the queue below supersedes
+                               it; see the consequence at the end of this
+                               section
+    merge_queue              since 2026-08-16 — a branch lands through the
+      merge_method: MERGE      queue, which builds `main` plus everything
+      grouping: ALLGREEN       queued ahead and runs `ci` on that
+      max_entries_to_build: 5
+      max_entries_to_merge: 5
+      min_entries_to_merge: 1
+      min_entries_to_merge_wait_minutes: 5
+      check_response_timeout_minutes: 60
     non_fast_forward         `main` cannot be force-pushed
     deletion                 `main` cannot be deleted
 
+The queue's seven parameters are written out because the recovery below removes
+the rule, and re-adding it without them restores GitHub's defaults rather than
+this configuration.
+
 It buys the CI half of the gate, which
-`docs/decisions/ci-green-before-story-merge.md` previously held in prose alone,
-and the `strict` flag makes the rebase-before-merge step in `AGENTS.md` a
-precondition rather than a convention.
+`docs/decisions/ci-green-before-story-merge.md` previously held in prose alone.
+Until 2026-08-16 the `strict` flag also made the rebase-before-merge step in
+`AGENTS.md` a precondition rather than a convention; the queue now covers what
+that flag covered, and the rebase step is a convention again.
 
 **What an empty bypass list does and does not buy.** It stops the rules being
 bypassed at the merge button, by the admin as much as anyone. It does not stop
@@ -269,6 +286,45 @@ requires: a green `ci`, not a suite that ran.
   the CI run the review was raced against, and the review does not need
   re-running for it. The flag is one field, and dropping it is the remedy if the
   serialisation costs more than the staleness it prevents.
+
+  **That remedy was taken on 2026-08-16, together with the thing that replaces
+  it.** `strict` is now `false` and the ruleset carries a `merge_queue` rule
+  instead. The queue builds a temporary branch holding `main` plus everything
+  queued ahead and runs `ci` on that, so the combination is tested once per
+  batch rather than once per branch per rebase.
+
+  **Why `strict` went off is a weaker claim than "the two would have fought".**
+  GitHub's own documentation frames the queue as providing "the same benefits as
+  Require branches to be up to date before merging, but does not require a pull
+  request author to update their pull request branch" — that is supersession,
+  not conflict, so leaving the flag on would most likely have been redundant
+  rather than harmful. It was turned off because a redundant precondition that
+  forces a rebase is exactly the serialisation this consequence describes, and
+  not because the pair was measured to misbehave. Neither position was tested
+  here. If the queue ever appears not to engage, turning `strict` back on is the
+  first thing to try: there are community reports of a ruleset `merge_queue`
+  rule engaging only once strict was enabled.
+
+  **The run that decides a merge is the merge group's, not the pull request's.**
+  A green pull request is what admits the branch to the queue; it says nothing
+  about the state of `main` afterwards.
+
+  **What can go wrong, stated accurately.** A wrong field name in `ci.yml`'s
+  merge-group expressions does **not** make the check silent: the expression
+  yields an empty string, `scripts/is-code-change` fails closed to `true`, and
+  `ci` reports green over the wrong range. That is the likely defect and it is
+  loud in the wrong direction, not quiet. The genuinely silent failures are
+  narrower — the `merge_group` trigger removed, the workflow failing to parse on
+  the queue's branch, or the aggregate job renamed out from under the required
+  check — and only those time the queue out rather than failing it. Recovery for
+  the silent class is to remove the `merge_queue` rule, restoring the seven
+  parameters recorded above when it goes back, fix through an ordinary pull
+  request, and re-add it. Note that `strict` is `false` throughout that window,
+  so branches merging at the button during it are compiled against whatever
+  `main` they were cut from.
+
+  `AGENTS.md` carries the working procedure, and `docs/decisions/test-tiers.md`
+  carries what the third event schedules.
 
 ## Alternatives considered
 
