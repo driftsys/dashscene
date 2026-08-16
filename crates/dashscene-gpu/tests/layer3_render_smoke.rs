@@ -245,6 +245,135 @@ fn the_maximum_extent_draws_and_one_past_it_is_refused_on_either_axis() {
     assert_eq!(pixels.len(), (W * H * 4) as usize);
 }
 
+/// A drawable with no pixels is refused by name, on either axis and on both.
+///
+/// The other end of the range the test above drives, and it failed the same way
+/// rather than harmlessly: `check_extent` tested only `> max_extent`, which is
+/// false for `0`, so a zero passed every caller and reached wgpu. Measured
+/// before the guard existed — `Renderer::render` at `0x8` panicked inside
+/// `Device::create_texture` with `Dimension X is zero`, through the
+/// uncaptured-error handler that issue #714 is about. The claim under test is
+/// that it is a `Result` now, not that the caller is sensible.
+///
+/// Each axis is driven to zero on its own with the other left ordinary, for the
+/// same reason the over-large test does it: a check that reads only one of the
+/// two passes a fixture that zeroes both. `0x0` is included as well, because a
+/// check written `width == 0 && height == 0` also passes the both-zero fixture
+/// while admitting each single-axis one.
+///
+/// This is the offscreen path deliberately, and the other half of issue #1149's
+/// decision has **no test at all**: a window is allowed to report a zero and
+/// `SurfaceRenderer` takes one without refusing it, but constructing a
+/// `SurfaceRenderer` needs a real window and nothing in this workspace builds a
+/// surface headlessly. So if this refusal is ever pushed up into the two
+/// window-sized callers — which is what issue #1149 proposes as its "cheap
+/// half" — nothing here goes red. What would break is `dashscene-desktop`,
+/// whose `resized` passes any `Err` from `resize` to `fail`, on every minimise.
+#[test]
+fn a_drawable_with_no_pixels_is_refused_on_either_axis() {
+    let mut renderer = renderer();
+
+    let mut paints = PaintTable::new();
+    let red = paints.push_solid(Color {
+        r: 1.0,
+        g: 0.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    let clips = ClipTable::new();
+    let mut painter = GpuPainter::new();
+    painter.paint(
+        &[rect(0.0, 0.0, 8.0, 8.0, red, ClipIndex::UNCLIPPED)],
+        &paints,
+        &ImageTable::new(),
+        &clips,
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+
+    let before = renderer.allocations();
+    for (width, height) in [(0, 16), (16, 0), (0, 0)] {
+        let refused = renderer.render(
+            painter.instances(),
+            &paints,
+            &ImageTable::new(),
+            &clips,
+            &GlyphRunTable::new(),
+            width,
+            height,
+        );
+        let Err(RendererError::NoPixels {
+            width: reported_width,
+            height: reported_height,
+        }) = refused
+        else {
+            panic!(
+                "a {width}x{height} drawable has no pixels and was not refused by name: \
+                 {refused:?}",
+                refused = refused.map(|pixels| pixels.len())
+            );
+        };
+        assert_eq!((reported_width, reported_height), (width, height));
+    }
+
+    // `render_dirty` as well as `render`, because that is where the guard
+    // actually is — `render` is a one-line delegation to it, and both are
+    // `pub`. A later change that hoisted the check up into `render`, which is
+    // where the `# Errors` doc lives and so reads as a tidy-up, would leave
+    // `render_dirty` handing a zero straight to `Device::create_texture` with
+    // this test still green.
+    let refused = renderer.render_dirty(
+        painter.instances(),
+        &paints,
+        &ImageTable::new(),
+        &clips,
+        &GlyphRunTable::new(),
+        None,
+        0,
+        16,
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(RendererError::NoPixels {
+                width: 0,
+                height: 16
+            })
+        ),
+        "render_dirty admitted a drawable with no pixels"
+    );
+
+    // Refused before anything is allocated, and asserted rather than claimed:
+    // `allocations` counts the three device objects `Offscreen::new` creates,
+    // so this pins that the refusal happens ahead of them.
+    //
+    // It is not what catches the guard being moved below `Offscreen::new` —
+    // that call is the one that dies on a zero, so the test panics there
+    // instead. What this covers is an allocation added *above* the guard, which
+    // nothing else here would notice.
+    assert_eq!(
+        renderer.allocations(),
+        before,
+        "a refused extent allocated something"
+    );
+
+    // And the renderer is still usable: the refusal costs the caller nothing
+    // but the frame it asked for.
+    let pixels = renderer
+        .render(
+            painter.instances(),
+            &paints,
+            &ImageTable::new(),
+            &clips,
+            &GlyphRunTable::new(),
+            W,
+            H,
+        )
+        .expect("an ordinary extent still renders after a refusal");
+    assert_eq!(pixels.len(), (W * H * 4) as usize);
+}
+
 /// A filled rect covers its inside and leaves its outside alone.
 ///
 /// The coarsest claim layer 3 makes, and the one that fails if the vertex

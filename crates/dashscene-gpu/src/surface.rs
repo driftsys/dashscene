@@ -29,7 +29,7 @@
 use dashpaint::{ClipTable, GlyphRunTable, ImageTable, PaintTable};
 
 use crate::instance::InstanceBuffer;
-use crate::render::{Changes, Renderer, RendererError, TARGET_FORMAT};
+use crate::render::{Changes, Renderer, RendererError, TARGET_FORMAT, has_pixels};
 
 /// A renderer bound to a window's swapchain.
 pub struct SurfaceRenderer {
@@ -40,14 +40,37 @@ pub struct SurfaceRenderer {
     renderer: Renderer,
     /// Never holds an extent past [`Renderer::max_extent`]. `Self::new` and
     /// [`Self::resize`] are the only two writers and both refuse one, which is
-    /// what makes [`Self::configure`] — called from three places, two of them
-    /// on the frame path with no way to report — safe to call unconditionally.
+    /// what makes [`Self::configure`] — called from four places, two of them on
+    /// the frame path with no way to report — safe to call unconditionally.
     /// See [`RendererError::Extent`] for what configuring past it does.
+    ///
+    /// It **can** hold a zero, and always could: a window reports one whenever
+    /// it is minimised, hidden or not yet laid out, and both writers ask
+    /// `Renderer::check_extent`, which is the upper bound alone (issue #1149).
+    /// [`has_pixels`] is what the two readers that decide whether to *draw* ask
+    /// — [`Self::configure`] and [`Self::present`], which each return early on
+    /// a zero. [`Self::resize`] reads the pair without it, to compare against
+    /// the extent it was handed.
     config: wgpu::SurfaceConfiguration,
     /// Set when the swapchain reported itself out of date but still handed over
     /// a texture. It cannot be reconfigured while that texture is alive —
-    /// `Surface::configure` panics — so the next frame does it before
-    /// acquiring.
+    /// `Surface::configure` panics — so the next frame that has something to
+    /// draw into does it before acquiring.
+    ///
+    /// Cleared by [`Self::configure`] rather than by whoever asked for it, so
+    /// that **any** reconfigure satisfies it. That is all four of its callers,
+    /// and each is a real reconfigure that leaves nothing owed: the
+    /// constructor, [`Self::resize`] — which counts and used not to, the bug
+    /// this fixed — [`Self::present`]'s deferral, and [`Self::acquire`]'s
+    /// `Outdated` retry. The last is unreachable with the flag set today,
+    /// because the `configure()` [`Self::present`] calls on the line before
+    /// clears it — `present` no longer writes this field at all — and it is
+    /// listed because the argument is "a reconfigure satisfies the deferral"
+    /// rather than "only these callers may".
+    ///
+    /// It therefore survives a minimised window: `configure` returns early for
+    /// an extent with no pixels *without* reaching the clear, so the deferral
+    /// is still owed when a drawable extent comes back.
     stale: bool,
 }
 
@@ -309,6 +332,15 @@ impl SurfaceRenderer {
         let renderer = Renderer::on_adapter(instance, adapter, format).await?;
         // Before the configuration is built, so the invariant on `config` holds
         // from the first value ever stored in it.
+        //
+        // `check_extent` and not `check_drawable`: a zero passes here on
+        // purpose (issue #1149). Refusing one would strand an Android surface —
+        // `DocumentFrames::attach` returns `Err`, `LoopState::acquire` clears
+        // `running`, and `render_thread` goes straight to `shut_down`, leaving a
+        // render thread no later `surfaceChanged` restarts and a window blank
+        // until the surface cycles. PR #1152 wrote exactly that and removed it
+        // again. The renderer is built unconfigured instead, and the first
+        // drawable extent to arrive configures it.
         renderer.check_extent(width, height)?;
 
         let config = wgpu::SurfaceConfiguration {
@@ -378,8 +410,11 @@ impl SurfaceRenderer {
 
     /// Reconfigures for a drawable of `width` x `height` physical pixels.
     ///
-    /// A zero dimension leaves the surface unconfigured: `Surface::configure`
-    /// panics on one, and a minimised window has nothing to present to anyway.
+    /// A zero dimension configures nothing: `Surface::configure` panics on one,
+    /// and a minimised window has nothing to present to anyway. The zero is
+    /// still stored, and the swapchain built for the previous extent stays as
+    /// it was — this does **not** leave the surface unconfigured, which only
+    /// the constructor can do by never configuring at all.
     ///
     /// # Errors
     ///
@@ -387,6 +422,18 @@ impl SurfaceRenderer {
     /// address on either axis. The configuration is left as it was, so a
     /// caller that reports the error and stops is presenting the extent it was
     /// presenting before, rather than an extent nothing configured.
+    ///
+    /// **Never [`RendererError::NoPixels`]**, which is why this asks
+    /// `Renderer::check_extent` rather than `Renderer::check_drawable`
+    /// (issue #1149). A zero here is a window reporting its own state rather
+    /// than a caller's arithmetic, and the hosts read an error from this call
+    /// as fatal: `dashscene-desktop`'s `resized` hands one to `fail`, which
+    /// ends the host, and it calls this with `0x0` on every minimise — so
+    /// refusing would turn minimising a window into a shutdown.
+    /// `dashscene-web`'s `resize_if_needed` propagates it out of the frame loop
+    /// for a canvas that is merely hidden. The zero is stored and nothing is
+    /// configured for it, which is what [`SurfaceRenderer::present`] reports as
+    /// [`Drawn::No`] until a drawable extent arrives.
     pub fn resize(&mut self, width: u32, height: u32) -> Result<(), RendererError> {
         if (width, height) == (self.config.width, self.config.height) {
             return Ok(());
@@ -426,13 +473,19 @@ impl SurfaceRenderer {
         glyphs: &GlyphRunTable,
         changes: Option<Changes<'_>>,
     ) -> Result<Drawn, FrameError> {
-        if self.config.width == 0 || self.config.height == 0 {
+        if !has_pixels(self.config.width, self.config.height) {
             return Ok(Drawn::No);
         }
         if self.stale {
             // Deferred from the frame that reported it, which was holding the
-            // texture that made reconfiguring illegal.
-            self.stale = false;
+            // texture that made reconfiguring illegal. `configure` clears the
+            // flag itself, so nothing clears it here.
+            //
+            // That move was for `resize`, not for this line: `resize`
+            // reconfigures and did not clear the flag, so the next frame
+            // reconfigured again. Clearing it here as well would have dropped
+            // no deferral — the extent guard above returns first, so this block
+            // is unreachable with an extent that has no pixels.
             self.configure();
         }
         let Some(frame) = self.acquire()? else {
@@ -460,13 +513,20 @@ impl SurfaceRenderer {
     /// has no area.
     ///
     /// Infallible because of the invariant on [`SurfaceRenderer::config`], and
-    /// it has to be: two of the three callers are on the frame path, where an
-    /// out-of-date swapchain is reconfigured and retried with nowhere to report
-    /// a refusal to. The `debug_assert` is what holds the invariant against a
+    /// it has to be: two of the four callers are on the frame path — `present`
+    /// and `acquire` — where an out-of-date swapchain is reconfigured and
+    /// retried with nowhere to report a refusal to. The `debug_assert` is what
+    /// holds the invariant against a
     /// future third writer — an over-large extent reaching the line below does
     /// not return an error, it aborts the process (issue #714).
+    ///
+    /// The early return below is the lower bound, and it is a return rather
+    /// than a second `debug_assert` for the reason issue #1149 turns on:
+    /// `Surface::configure` panics on a zero exactly as it does on an
+    /// over-large extent, but a window produces a zero on its own and
+    /// produces an over-large extent only through a bug.
     fn configure(&mut self) {
-        if self.config.width == 0 || self.config.height == 0 {
+        if !has_pixels(self.config.width, self.config.height) {
             return;
         }
         debug_assert!(
@@ -482,6 +542,23 @@ impl SurfaceRenderer {
         // `new` — every reconfigure resets it, and a resize is a reconfigure.
         #[cfg(target_os = "macos")]
         self.match_layer_to_srgb();
+        // Last, so that nothing separates the two lines above: issue #746's
+        // invariant is that the colour-space call sits directly after the
+        // configure, and `assert_layer_is_colour_matched` reads this function
+        // to say so.
+        //
+        // Here rather than at the one caller that used to do it, because
+        // **every** reconfigure satisfies a pending deferral and `resize` is a
+        // reconfigure. `resize` did not clear the flag, so a `Suboptimal`
+        // report followed by a window resize — the common pair, since a resize
+        // is what makes a swapchain suboptimal — configured twice: once here
+        // for the new extent, and again on the next frame, discarding the
+        // swapchain this call had just built. That is the whole of what moving
+        // it fixed.
+        //
+        // The early return above is what keeps the move safe for a minimised
+        // window: no reconfigure happened, so the deferral is still owed.
+        self.stale = false;
     }
 
     /// Tells the window server that this swapchain's contents are sRGB, so it

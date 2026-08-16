@@ -683,8 +683,43 @@ pub struct Renderer {
     placeholder: wgpu::TextureView,
 }
 
+/// Whether an extent has any pixels in it.
+///
+/// **One spelling of the lower bound, for this crate.** Its readers are one
+/// claim: [`Renderer::check_drawable`] turns a `false` into
+/// [`RendererError::NoPixels`], while [`crate::surface::SurfaceRenderer`]
+/// returns early on one instead, which is the distinction issue #1149 rests on.
+///
+/// Other crates spell the same floor themselves. Grep for it rather than
+/// trusting a list here: an enumeration of the copies is drift surface no gate
+/// can check, and one written into this comment was wrong three times in the
+/// branch that added it. `dashscene-android` is the one that could not share
+/// this even if it were `pub` — it depends on `dashscene-ffi` alone and reaches
+/// past it to nothing, which its `Cargo.toml` records as a rule rather than an
+/// accident. For the rest, consolidating means making this `pub`, a decision
+/// about this crate's public surface that a debt fix should not take.
+///
+/// Named for the quantity rather than for `drawable`, because
+/// [`Renderer::check_drawable`] answers a **wider** question — both bounds, not
+/// this one — and two names a letter apart for two different predicates is how
+/// the upper bound gets dropped by a substitution that looks like a cleanup.
+pub(crate) fn has_pixels(width: u32, height: u32) -> bool {
+    width > 0 && height > 0
+}
+
 /// What a renderer could not be built for, or could not be asked to draw.
+///
+/// `#[non_exhaustive]` because this crate keeps discovering ends of ranges it
+/// has to name — `NoPixels` is one, added at issue #1149 — and a downstream
+/// `match` that was exhaustive should not stop compiling for it.
+///
+/// The precedent is `dashpaint::AtlasBuildError`, an error enum in this crate's
+/// own dependency. Deliberately not `dashscene-desktop`'s `AdapterDetails`,
+/// whose note argues from a type nothing downstream can construct: that reaches
+/// adding a field to a struct, not adding a variant to an enum somebody
+/// matches on.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum RendererError {
     /// No adapter at all — a machine or a runner with no GPU and no software
     /// device installed.
@@ -713,6 +748,30 @@ pub enum RendererError {
     /// is non-unwinding and takes the process down with it. Issue #714 aborted
     /// the showcase host that way on an ordinary window resize.
     Extent { width: u32, height: u32, max: u32 },
+    /// A drawable with no pixels — zero on one axis or on both.
+    ///
+    /// The other end of the range [`Self::Extent`] guards, and it fails the
+    /// same way rather than harmlessly: `wgpu::Device::create_texture` raises
+    /// `Dimension X is zero` for one, and a wgpu validation error reaches the
+    /// uncaptured error handler, which panics. Measured on this crate's own
+    /// offscreen path before this variant existed — `Renderer::render` at `0x8`
+    /// aborted the process rather than returning here (issue #1149, whose
+    /// remaining half is the diagnostic the permissive window path still does
+    /// not give).
+    ///
+    /// **A window is allowed to report one and never receives this.**
+    /// A minimised window, a canvas that is `display: none`, and an Android
+    /// surface the system has not laid out yet all report `0x0` legitimately,
+    /// and every one of them is a state a frame loop passes back out of. So
+    /// [`crate::SurfaceRenderer`]'s constructor and
+    /// [`crate::SurfaceRenderer::resize`] ask `Renderer::check_extent`, which
+    /// is the upper bound alone, and configure nothing for a zero — the
+    /// constructor leaves a surface that was never configured, and `resize`
+    /// stores the zero and leaves the swapchain it already had. See those two
+    /// for the measurements that forced it. Only `Renderer::check_drawable`
+    /// returns this, and only the offscreen path asks it, where there is no
+    /// window to be minimised and a zero is the caller's own arithmetic.
+    NoPixels { width: u32, height: u32 },
 }
 
 impl std::fmt::Display for RendererError {
@@ -735,6 +794,11 @@ impl std::fmt::Display for RendererError {
                 "a {width}x{height} drawable exceeds the {max} px maximum this device can \
                  address on either dimension"
             ),
+            RendererError::NoPixels { width, height } => write!(
+                f,
+                "a {width}x{height} drawable has no pixels; wgpu refuses a zero dimension, so \
+                 there is nothing to draw into"
+            ),
         }
     }
 }
@@ -746,7 +810,8 @@ impl std::error::Error for RendererError {
             RendererError::NoSurface(e) => Some(e),
             RendererError::NoAdapter
             | RendererError::NoLinearFormat(_)
-            | RendererError::Extent { .. } => None,
+            | RendererError::Extent { .. }
+            | RendererError::NoPixels { .. } => None,
         }
     }
 }
@@ -1408,11 +1473,22 @@ impl Renderer {
         self.max_extent
     }
 
-    /// Refuses a drawable this device cannot address, on either axis.
+    /// Refuses a drawable larger than this device can address, on either axis.
     ///
     /// Every caller that is about to hand an extent to `wgpu` goes through
     /// here first. See [`RendererError::Extent`] for why the check is made
     /// ahead of the call rather than around it.
+    ///
+    /// **The upper bound only.** A zero passes here, deliberately: this is what
+    /// every caller in [`crate::surface`] asks — the constructor, `resize`, and
+    /// the `debug_assert` in `configure` — and a window reports `0x0` whenever
+    /// it is minimised, hidden or not yet laid out.
+    /// [`Renderer::check_drawable`] is the same question plus the lower bound,
+    /// and it is what the offscreen path asks (issue #1149).
+    ///
+    /// The third of those three is the one to notice: `configure`'s check is a
+    /// `debug_assert`, so on the path that actually calls `Surface::configure`
+    /// the upper bound is compiled out of every release build.
     pub(crate) fn check_extent(&self, width: u32, height: u32) -> Result<(), RendererError> {
         if width > self.max_extent || height > self.max_extent {
             return Err(RendererError::Extent {
@@ -1422,6 +1498,33 @@ impl Renderer {
             });
         }
         Ok(())
+    }
+
+    /// Refuses an extent this device cannot draw into at all — too large for
+    /// it, or with no pixels.
+    ///
+    /// [`Renderer::check_extent`] plus the lower bound, for the callers that have
+    /// no window behind them. **Both ends fail the same way**: wgpu
+    /// raises a validation error for a zero exactly as it does for an
+    /// over-large extent, and a wgpu validation error reaches the uncaptured
+    /// error handler, which panics.
+    ///
+    /// Until issue #1149 no check on **this** type asked the lower bound.
+    /// `width > max_extent` is false for `0`, so a pixel-less extent passed
+    /// every check a `Renderer` made and failed later, inside wgpu:
+    /// `Renderer::render` at `0x8` panicked in `Device::create_texture` with
+    /// `Dimension X is zero`, which is how issue #714 aborted the showcase host
+    /// from the other end of the range.
+    ///
+    /// [`crate::surface::SurfaceRenderer`] did already guard it, in the two
+    /// places that decide whether to draw — those are the early returns
+    /// `has_pixels` now spells — which is why a window never reached this and
+    /// an offscreen render did.
+    pub(crate) fn check_drawable(&self, width: u32, height: u32) -> Result<(), RendererError> {
+        if !has_pixels(width, height) {
+            return Err(RendererError::NoPixels { width, height });
+        }
+        self.check_extent(width, height)
     }
 
     /// Whether this device can hold an ASTC block texture at all.
@@ -1544,11 +1647,12 @@ impl Renderer {
     /// # Errors
     ///
     /// [`RendererError::Extent`] if either dimension is past
-    /// [`Renderer::max_extent`]. That is the one failure a caller can be told
-    /// about rather than aborted by, and it is a `Result` where the empty
-    /// buffer below is a panic because an extent is a number a caller computes
-    /// — from a window, from a fixture — while an empty pack is a bug in the
-    /// call itself.
+    /// [`Renderer::max_extent`], and [`RendererError::NoPixels`] if either is
+    /// zero (issue #1149). Those are the two ends of one range, and they are
+    /// the failures a caller can be told about rather than aborted by: an
+    /// extent is a number a caller computes — from a window, from a fixture —
+    /// where the empty buffer below is a panic because an empty pack is a bug
+    /// in the call itself.
     ///
     /// # Panics
     ///
@@ -1599,7 +1703,13 @@ impl Renderer {
         // Before the assert, and before anything is allocated: an over-large
         // extent reaches `Device::create_texture` two statements below, and a
         // caller cannot be told about a validation error that panicked.
-        self.check_extent(width, height)?;
+        //
+        // `check_drawable` rather than `check_extent`, because a zero reaches
+        // the same call and panics there too (issue #1149). This path has no
+        // window behind it — every caller is a test, a golden or an embedder
+        // asking for a texture — so, unlike `SurfaceRenderer`, it has no reason
+        // to accept an extent that cannot be drawn into.
+        self.check_drawable(width, height)?;
         assert!(
             !buffer.instances().is_empty(),
             "render was given a frame with no instances"
@@ -5080,8 +5190,8 @@ mod tests {
     use super::{
         BLUR_BINDINGS, BLUR_WGSL, DrawRun, GRADIENT_WORDS, GpuGlyphRun, GpuImage, GpuMsdfRow,
         GpuShape, MINIMUM_CAPACITY, Offscreen, PAINT_WGSL, PaintHeap, Renderer, Resolved,
-        SHADOW_WORDS, dirty_ranges, draw_runs, gpu_glyph_run, gradient_kind, grown, paint_heap,
-        scale_mode,
+        SHADOW_WORDS, dirty_ranges, draw_runs, gpu_glyph_run, gradient_kind, grown, has_pixels,
+        paint_heap, scale_mode,
     };
     use crate::instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
     use dashpaint::{
@@ -5089,6 +5199,33 @@ mod tests {
         GradientStop, ImageTable, PaintEntry, PaintTable, ScaleMode, Shadow, ShadowKind, StopRange,
         Vec2,
     };
+
+    /// Zero on either axis has no pixels, and one pixel does.
+    ///
+    /// The boundary rather than the idea: the failures this guards against are
+    /// a predicate rewritten as `width > 1`, and one written
+    /// `width == 0 && height == 0` — the second admits each single-axis zero
+    /// while still refusing the pair, so a fixture that only zeroes both would
+    /// not catch it.
+    ///
+    /// **This is not a test of either decision it feeds.** That
+    /// `Renderer::check_drawable` turns a `false` into `RendererError::NoPixels`
+    /// is covered by
+    /// `layer3_render_smoke::a_drawable_with_no_pixels_is_refused_on_either_axis`,
+    /// which needs an adapter and so cannot live here. That
+    /// `SurfaceRenderer::resize` *accepts* a zero instead is covered by nothing:
+    /// constructing one needs a real window, and nothing in this workspace
+    /// builds a surface headlessly. That half is held by the call sites' prose
+    /// and by the two hosts that would shut down without it (issue #1149).
+    #[test]
+    fn only_a_zero_axis_has_no_pixels() {
+        assert!(!has_pixels(0, 0));
+        assert!(!has_pixels(0, 16));
+        assert!(!has_pixels(16, 0));
+        assert!(has_pixels(1, 1));
+        assert!(has_pixels(1, 16));
+        assert!(has_pixels(16, 1));
+    }
 
     /// A resolved frame whose image rows landed in `images`, whose glyph runs
     /// landed in `runs`, and whose coverage masks landed in `shapes`.
