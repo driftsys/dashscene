@@ -4848,9 +4848,10 @@ const _: () = assert!(size_of::<GpuComposite>() == 16);
 #[cfg(test)]
 mod tests {
     use super::{
-        BLUR_BINDINGS, BLUR_WGSL, DrawRun, GRADIENT_WORDS, GpuGlyphRun, GpuImage, GpuShape,
-        MINIMUM_CAPACITY, Offscreen, PAINT_WGSL, PaintHeap, Renderer, Resolved, SHADOW_WORDS,
-        dirty_ranges, draw_runs, gpu_glyph_run, gradient_kind, grown, paint_heap, scale_mode,
+        BLUR_BINDINGS, BLUR_WGSL, DrawRun, GRADIENT_WORDS, GpuGlyphRun, GpuImage, GpuMsdfRow,
+        GpuShape, MINIMUM_CAPACITY, Offscreen, PAINT_WGSL, PaintHeap, Renderer, Resolved,
+        SHADOW_WORDS, dirty_ranges, draw_runs, gpu_glyph_run, gradient_kind, grown, paint_heap,
+        scale_mode,
     };
     use crate::instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan};
     use dashpaint::{
@@ -4864,11 +4865,71 @@ mod tests {
     ///
     /// Only the atlas maps matter to `draw_runs`; the row arrays are sized to
     /// match so that an index into either means the same thing.
+    ///
+    /// **Each row carries the flag its atlas argument implies** (issue #1041).
+    /// `Renderer::resolve_frame` holds the same invariant over each of the three
+    /// tables — a row is resolved exactly when its payload landed in an atlas —
+    /// and states it as three `debug_assert!`s, one per table. Filling every row
+    /// with `Default` while setting the atlas maps from the arguments made this
+    /// fixture a direct counterexample to all three, and the two coexisted only
+    /// because the assertions are in `resolve_frame` while this builds a
+    /// `Resolved` directly. Nothing read the rows, so nothing was wrong; what it
+    /// cost was the next edit, since moving those invariants into `Resolved`'s
+    /// own construction would have failed many tests on their data rather than
+    /// on their code, and the cheapest way to silence that is to weaken the
+    /// assertions.
+    ///
+    /// **`px_range` travels with the flag**, which the flag's own documentation
+    /// is what requires: [`GpuMsdfRow::resolved`] is non-zero exactly when the
+    /// three members above it describe a payload the frame made resident, and a
+    /// row claiming that at `px_range: 0.0` is the `msdf_coverage(sample, 0) ==
+    /// 0.5` state issues #972 and #993 removed. Setting the flag alone would
+    /// have moved this fixture's counterexample one level down rather than
+    /// removing it: `backdrop_mask` reads the flag and would answer `Some` for a
+    /// mask with no range at all. `uv` and `half_uv` are left zeroed and are not
+    /// modelled — nothing this fixture reaches samples an atlas — so the row is
+    /// coherent about what makes it draw, not a complete resolution.
+    ///
+    /// [`Resolved::undrawn`] is stated per case rather than derived here, for
+    /// the reason its own line gives.
     fn resolved(images: &[Option<u32>], runs: &[Option<u32>], shapes: &[Option<u32>]) -> Resolved {
+        /// The row `resolve_frame` writes for a coverage mask or a glyph run
+        /// that landed in an atlas, and the zeroed one every other row keeps.
+        fn msdf(atlas: &Option<u32>) -> GpuMsdfRow {
+            if atlas.is_none() {
+                return GpuMsdfRow::default();
+            }
+            GpuMsdfRow {
+                resolved: 1,
+                // Any non-zero range; the value is not read, its being in
+                // domain is. `gpu_shape` and `gpu_glyph_run` never produce a
+                // zero one beside a set flag.
+                px_range: 1.0,
+                ..GpuMsdfRow::default()
+            }
+        }
         Resolved {
-            images: vec![GpuImage::default(); images.len()],
-            runs: vec![GpuGlyphRun::default(); runs.len()],
-            shapes: vec![GpuShape::default(); shapes.len()],
+            images: images
+                .iter()
+                .map(|atlas| GpuImage {
+                    resolved: u32::from(atlas.is_some()),
+                    ..GpuImage::default()
+                })
+                .collect(),
+            runs: runs
+                .iter()
+                .map(|atlas| GpuGlyphRun {
+                    msdf: msdf(atlas),
+                    ..GpuGlyphRun::default()
+                })
+                .collect(),
+            shapes: shapes
+                .iter()
+                .map(|atlas| GpuShape {
+                    msdf: msdf(atlas),
+                    ..GpuShape::default()
+                })
+                .collect(),
             atlas_of_image: images.to_vec(),
             atlas_of_run: runs.to_vec(),
             atlas_of_shape: shapes.to_vec(),
@@ -5334,9 +5395,68 @@ mod tests {
     ///
     /// # What it asserts, and what defeats a weaker version
     ///
-    /// **Comments are stripped first.** Both gates sit under long explanatory
-    /// blocks that quote the condition, so a count over the raw source stays at
-    /// two with the gate deleted and its comment left behind.
+    /// **Comments are stripped first, and three of this test's seven literals
+    /// need it.** Measured both ways against the current `paint.wgsl`: with the
+    /// strip removed, both blocks below and the `MsdfRow` declaration stop
+    /// matching, while the two carries and the other two declarations still
+    /// match. Comments sit *inside* exactly those three — between `if in.shape
+    /// != 0u {` and its gate, between `} else if kind == KIND_TEXT {` and its
+    /// gate, and between the `MsdfRow` members — so collapsing the raw source
+    /// runs that prose into the middle of each literal. The strip is what any
+    /// assertion spanning commented lines of this file rests on, and it is load-
+    /// bearing today rather than reserved for a comment that arrives later.
+    ///
+    /// **The counts are the part it does not affect.** Neither counted literal
+    /// appears in any comment: the prose writes `msdf_coverage` without its
+    /// parenthesis, and the only two comments mentioning `params2.w` are in the
+    /// vertex stage — one among the `VertexOut` members and one inside
+    /// `vs_main`, each describing both paths rather than one arm — and neither
+    /// spells the whole condition. So the strip changes neither number.
+    ///
+    /// This paragraph asserted something different and false until issue #1040:
+    /// that both gates sat under blocks quoting the condition, so a raw count
+    /// stayed at two with a gate deleted and its comment left behind. No comment
+    /// quotes either counted literal, then or now. The correction matters
+    /// because a reader who checks a stated fact and finds it false is the
+    /// reader most likely to delete the thing it justifies — and here that would
+    /// turn three assertions red, with messages about MSDF gating that say
+    /// nothing about comments.
+    ///
+    /// **Each arm's gate and its call are matched as one block** (issue #1043),
+    /// because counting cannot see structure. Emptying a gate and leaving the
+    /// call below it —
+    ///
+    /// ```text
+    /// if in.params2.w != 0.0 {
+    /// }
+    /// shape = msdf_coverage(msdf_sample(...), in.params2.z);
+    /// ```
+    ///
+    /// — leaves two gate literals against two calls, so both counts below still
+    /// agree while both arms are inert. That mutation was run against the
+    /// count-only version of this test and it passed. It matters more here than
+    /// for an ordinary test for the reason
+    /// `the_image_arm_gates_on_the_row_the_frame_resolved` gives one table over:
+    /// PR #1009 measured that deleting the `KIND_TEXT` gate changes no rendered
+    /// texel, so nothing else in the suite fails either, and the whole of issue
+    /// #993 would ship as a coincidence between two defaults in two files.
+    ///
+    /// **Each block is anchored on the arm it belongs to** — `if in.shape != 0u
+    /// {` and `} else if kind == KIND_TEXT {` — rather than matched anywhere in
+    /// the file. That is what makes the differing quads do any work: the arms
+    /// map `msdf_sample` against `in.params0`, where the field carries its own
+    /// padded quad, and against `in.bounds`, where a glyph's quad is its own
+    /// bounds, and **exchanging the two leaves both unanchored literals present
+    /// in the file**. Anchored, that swap fails. It is worth pinning rather than
+    /// trusting to the quads alone: a masked field sampled against the node's
+    /// bounds is a coverage mask read at the wrong scale, which is a plausible
+    /// wrong picture rather than an empty one.
+    ///
+    /// **The arm's own closing brace is not matched.** Adding it would say
+    /// "and this arm holds nothing else", which is a constraint on where the
+    /// shader may grow rather than on where the call sits — a legitimate second
+    /// statement in either arm would fail with a message about gating. The
+    /// opener and the gate are what containment needs.
     ///
     /// **The carry is matched as a whole statement**, not as the substring
     /// `f32(run.msdf.resolved)`. Reordering it to
@@ -5416,6 +5536,38 @@ mod tests {
                  `px_range` before `resolved` is what keeps the gate reading the flag",
             );
         }
+        // **The arm, its gate and its call as one block** (issue #1043). The
+        // counts below cannot see structure, so they hold with both branches
+        // emptied and both calls moved out from under them. Each block is
+        // anchored on the arm it belongs to rather than matched anywhere in the
+        // file, which is what makes the quads tell the two apart: without the
+        // opener, exchanging `in.params0` and `in.bounds` between the arms
+        // leaves both literals present and passes.
+        for (arm, opener, quad) in [
+            ("the masked", "if in.shape != 0u {", "in.params0"),
+            (
+                "the `KIND_TEXT`",
+                "} else if kind == KIND_TEXT {",
+                "in.bounds",
+            ),
+        ] {
+            // The arm's own closing brace is deliberately **not** matched. It
+            // would additionally require the arm to hold nothing but the gate,
+            // which is a constraint on where the shader may grow rather than on
+            // where the call sits, and it would fail a legitimate second
+            // statement with a message about gating.
+            let guarded = format!(
+                "{opener} if in.params2.w != 0.0 {{ shape = msdf_coverage(msdf_sample(in.params1, \
+                 {quad}, in.params2.xy, in.local), in.params2.z); }}"
+            );
+            assert!(
+                flat.contains(&guarded),
+                "{arm} arm must read exactly \n\n    {guarded}\n\nso that its `msdf_coverage` call \
+                 sits **inside** its own resolved gate. A branch emptied while its call stays \
+                 below it leaves every count in this test agreeing and both arms inert, over a \
+                 picture no texel distinguishes",
+            );
+        }
         let gates = code.matches("in.params2.w != 0.0").count();
         let sampled = code.matches("msdf_coverage(").count();
         assert_eq!(
@@ -5482,10 +5634,18 @@ mod tests {
     ///
     /// **Comments are stripped first.** No comment in `paint.wgsl` contains any
     /// matched literal today — the prose writes `image_colour` without its
-    /// parenthesis — so this is defence against a comment that later quotes one,
-    /// not against a comment that does. The sibling test strips for the same
-    /// reason and states a stronger one, and it has the structural hole this one
-    /// closes: issues #1040 and #1043.
+    /// parenthesis — so no comment can inflate either count. **The strip is
+    /// still load-bearing**, for a different reason than containment: comments
+    /// sit *between* the `Image` members, so collapsing the raw source runs that
+    /// prose into the middle of the declaration literal and it stops matching.
+    /// Measured both ways. The two block literals below are unaffected, having
+    /// no comment inside them today.
+    ///
+    /// The sibling test rests on the same strip more heavily: three of its seven
+    /// literals need it, against one of this test's three. It also carried the
+    /// structural hole this one closes, until issue #1043. What the two still do
+    /// not share is here and not there — the row binding asserted below, and the
+    /// definition subtracted from the call count.
     #[test]
     fn the_image_arm_gates_on_the_row_the_frame_resolved() {
         assert_eq!(
