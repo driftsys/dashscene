@@ -4,6 +4,31 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The merge queue's batch. GitHub builds a temporary branch holding `main`
+  # plus the queued pull requests and asks for the same `ci` check on it, so
+  # this trigger is what makes the queue's answer exist at all: without it no
+  # required check ever reports on a merge group, and every queued pull request
+  # sits until it times out.
+  #
+  # The gates resolve from the batch's own range, not forced on. A merge group
+  # carries `base_sha` and `head_sha` in its payload, and both the filter step
+  # and the code detector below read them, so a documentation-only batch skips
+  # the compile half here exactly as it does on the pull request. Forcing
+  # instead would put `calibration`'s 272 s on the front of every merge.
+  #
+  # `convco` is the one job that does not run here. It is gated on
+  # `pull_request`, and the aggregate accepts `skipped` — the commit messages
+  # were linted on the pull request that entered the queue, and there is no
+  # second author between there and here.
+  #
+  # IF THE QUEUE STALLS: an expression below that names a payload field wrongly
+  # makes `ci` report NOTHING on the merge group rather than reporting red, and
+  # a required check that never arrives times out every queued pull request
+  # instead of failing one. `main` takes no direct push and the ruleset's bypass
+  # list is empty, so the way out is to remove the `merge_queue` rule from
+  # ruleset 20731537 — merges go back to the button — fix the expression through
+  # an ordinary pull request, and re-add the rule.
+  merge_group:
   # Manual trigger: forces every path-filtered job, so the expensive shape can
   # be run without waiting for a diff that happens to schedule it.
   #
@@ -72,6 +97,24 @@ jobs:
         if: env.FORCED != 'true'
         id: filter
         with:
+          # Both are declared with no default by the action and are ignored
+          # outright on `pull_request`, so these two expressions are empty on
+          # every event except a merge group and change nothing there.
+          #
+          # `base` is the one that has to be here. Its fallback is the
+          # repository's default branch, so on a merge group the action would
+          # otherwise compare the throwaway `gh-readonly-queue/...` ref against
+          # `main` rather than against the commit the batch was built on.
+          #
+          # `ref` is redundant — the action falls back to the checked-out ref,
+          # which on a merge group already points at `head_sha`. It is passed
+          # anyway, and so is HEAD below, because no event this workflow can
+          # currently receive produces a merge group: the first live evaluation
+          # of these four expressions is the first queued merge. Naming the
+          # payload's own values costs nothing and removes the dependency on
+          # two fallbacks being what the documentation says they are.
+          base: ${{ github.event.merge_group.base_sha }}
+          ref: ${{ github.event.merge_group.head_sha }}
           filters: |
             figma:
               - 'importers/figma/**'
@@ -156,8 +199,18 @@ jobs:
       - name: detect changes outside documentation
         id: code
         env:
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          # BASE is what genuinely differs. A merge group carries neither a
+          # pull request nor a `before` sha, so falling through to
+          # `github.event.before` would leave it empty, degrade the range, and
+          # fail closed to running everything on every merge.
+          #
+          # HEAD's middle arm is redundant, not a second asymmetry: `github.sha`
+          # is already the merge group's head commit, so the existing tail would
+          # have returned the same value. It is named explicitly for the reason
+          # given on the filter step above — this whole path is first evaluated
+          # against a live payload at the moment merges start depending on it.
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
+          HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.sha }}
         run: |
           set -uo pipefail
           # Three dots, not two. BASE is the base branch's current tip, not the

@@ -421,6 +421,17 @@ recipe is the list, not this sentence. What now reaches CI unverified is a
 failing test, and the CI `test` job runs the regression tier completely on every
 push and pull request.
 
+**And on every merge group, since 2026-08-16.** `ci.yml` takes a `merge_group`
+event so a merge queue's batch gets the same `ci` check, and the tiers are
+scheduled there the same way they are on a pull request: the gates resolve from
+the batch's own `base_sha`/`head_sha`, so a documentation-only batch skips the
+compile half in the queue exactly as it does on the pull request. Two
+differences are worth knowing when reading a merge group's run. `convco` is
+gated on `pull_request` and skips, because the commit messages were linted on
+the pull request that entered the queue. And the range is derived by two
+mechanisms that use different dot semantics, which agree only while the batch's
+base is an ancestor of its head (issue #1171).
+
 **With one exception, added at issue #1086: `aarch64-linux-android`.**
 `just android-lint` is in CI's `android-build` job and in no local aggregate —
 not `lint`, not `check`, not `build` — because putting it in one would give that
