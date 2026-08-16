@@ -433,17 +433,38 @@ differ on every frame indefinitely.
 four objects each, the line of `prepare`'s inventory that scales — go on the
 first frame prepared for none, because each names one backdrop's coverage atlas
 view and that frame named no mask. The frame-wide base, snapshot, scratch and
-blit survive `BLUR_TARGET_GRACE_FRAMES` of them.
+blit survive `TARGET_GRACE_FRAMES` of them.
 
 That constant is **one**, and what it buys is exact: a gap of one frame costs
 the per-backdrop objects to come back from, and a gap of two or more costs those
 and the frame-wide ones underneath them — four against twelve, for one backdrop.
-No fixed number covers every pattern, and this one is chosen for the
-pathological case: a refusal that flickers frame to frame and never settles,
-which `FrameExceedsAtlas` can do indefinitely. A refusal lasting two consecutive
-frames still releases, and that is the intended answer rather than a shortfall —
-three drawable-sized textures are about 24 MiB at 1920 x 1080, and a scene that
-has not frosted for two frames is asking for them back.
+
+Since issue #1055 it is shared. `LayerTargets` keys its own release on the same
+counter through `Grace`, and had no grace at all before: a render-target group
+that comes and goes on alternate frames rebuilt four objects per layer on every
+change — a drawable-sized texture, its view, a uniform buffer and a bind group —
+measured at four for one layer.
+
+The two holders differ in **what** the grace covers, and that is a property
+rather than a choice. It covers everything in `LayerTargets`, because a layer's
+bind group names only that layer's own view and its own alpha buffer; it covers
+the frame-wide half alone in `BlurTargets`, whose per-backdrop groups name a
+coverage atlas view belonging to the residency set.
+
+They also differ in what an extra frame of holding costs, and the layer half is
+the larger of the two on a scene that uses it. The blur half holds three
+drawable-sized textures whatever the scene does. The layer half holds one **per
+layer**, and `dashscene_validator::RENDER_TARGET_BUDGET_PLACEHOLDER` warns at
+eight — so a scene at that warning holds around eight full-target textures for
+one extra frame where a frosted scene holds three. That is the figure to weigh
+if this constant is ever revisited, and it is the reason the release half is
+pinned by a test rather than left to the hold's. No fixed number covers every
+pattern, and this one is chosen for the pathological case: a refusal that
+flickers frame to frame and never settles, which `FrameExceedsAtlas` can do
+indefinitely. A refusal lasting two consecutive frames still releases, and that
+is the intended answer rather than a shortfall — three drawable-sized textures
+are about 24 MiB at 1920 x 1080, and a scene that has not frosted for two frames
+is asking for them back.
 
 The per-backdrop half is dropped on the first such frame because a bind group
 there **can** name a coverage atlas view the frame did not name. Not all of them

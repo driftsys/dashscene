@@ -138,10 +138,14 @@ The release is now in two steps, and `BlurTargets::prepare` is where the split
 is written. The per-backdrop uniforms and bind groups go on the first frame that
 draws no backdrop, because one of them can name a coverage atlas view that frame
 did not name. The frame-wide textures and the base blit survive
-`BLUR_TARGET_GRACE_FRAMES` — one — consecutive such frames, so a gap of one
-frame costs four objects to come back from and a gap of two or more costs
-twelve. A scene that has genuinely stopped frosting still releases, one frame
-later than it did.
+`TARGET_GRACE_FRAMES` — one — consecutive such frames, so a gap of one frame
+costs four objects to come back from and a gap of two or more costs twelve. A
+scene that has genuinely stopped frosting still releases, one frame later than
+it did.
+
+The constant was `BLUR_TARGET_GRACE_FRAMES` until issue #1055, which gave
+`LayerTargets` the same hold and so renamed it for the property rather than for
+its first user. What it means for a backdrop is unchanged.
 
 R-T4's per-frame budget grows for a frame with a backdrop by one full-target
 copy, two blur passes and one composite. That is stated rather than hidden, and

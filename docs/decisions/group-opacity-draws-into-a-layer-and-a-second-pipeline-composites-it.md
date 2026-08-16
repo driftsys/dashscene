@@ -114,8 +114,25 @@ One render pass per target change, so a frame with _g_ groups encodes at most
 _2g + 1_ passes where it previously encoded one, and a target returned to loads
 rather than clears. One texture of the target's extent per layer, allocated when
 the extent or the layer count changes and held across frames otherwise. One
-uniform buffer and one bind group per layer, written every frame — a group's
-alpha animates without changing how many layers there are.
+uniform buffer and one bind group per layer, written on every frame that
+prepares a layer — a group's alpha animates without changing how many layers
+there are.
+
+**A layer count of zero holds rather than releases**, for `TARGET_GRACE_FRAMES`
+frames (issue #1055). Releasing on the first such frame made a group that comes
+and goes on alternate frames — a fading overlay, a group whose only node is
+toggled — rebuild four objects per layer on every change, one of them a
+drawable-sized texture; measured at four for one layer. Two consecutive frames
+without a layer still release, so a scene that has stopped compositing does not
+hold a drawable-sized texture per layer for the life of the renderer.
+
+The grace is the mechanism `BlurTargets` took at issue #1020, shared rather than
+copied. It covers **everything** here, where for a backdrop it covers only the
+frame-wide half: a layer's bind group names that layer's own view and its own
+alpha buffer, both allocated beside it, so nothing this type holds names a
+resource it does not own. A blur's per-backdrop bind group names a coverage
+atlas view belonging to the residency set, which is what forces the two-step
+release there and not here.
 
 `Renderer::last_draw_runs` now counts composite draws as well as atlas runs,
 which is what it always claimed to count.

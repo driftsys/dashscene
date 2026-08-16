@@ -1466,7 +1466,7 @@ fn a_frame_whose_only_backdrop_is_refused_allocates_nothing() {
 /// # What is compared, and why one alternation is not enough
 ///
 /// A single refused frame proves nothing: the targets survive
-/// `BLUR_TARGET_GRACE_FRAMES` of them, so the measurement has to straddle that
+/// `TARGET_GRACE_FRAMES` of them, so the measurement has to straddle that
 /// boundary. Coming back from **one** idle frame rebuilds only the per-backdrop
 /// uniforms and bind groups; coming back from **two** rebuilds those and the
 /// frame-wide targets underneath them. So the claim is that the first is
@@ -1627,7 +1627,7 @@ fn an_alternating_refusal_does_not_rebuild_the_frame_wide_targets() {
         after_one < after_two,
         "coming back from one refused frame must cost less than coming back from two: {after_one} \
          against {after_two}.\n\n\
-         **This test assumes `BLUR_TARGET_GRACE_FRAMES` is 1**, which it cannot read — the \
+         **This test assumes `TARGET_GRACE_FRAMES` is 1**, which it cannot read — the \
          constant is private to the crate. If it was raised, both returns above are inside the \
          grace, both cost the same, and this fails saying nothing about the fix: add refused \
          frames to the second run until it straddles the new boundary. If it was removed, both \
@@ -1869,7 +1869,7 @@ fn a_frame_with_a_backdrop_allocates_and_a_steady_one_does_not() {
 
     // A frame with no backdrop releases the per-backdrop uniforms and bind
     // groups, and the next frosted frame has to build them again. **Not the
-    // three drawable-sized targets**, which survive `BLUR_TARGET_GRACE_FRAMES`
+    // three drawable-sized targets**, which survive `TARGET_GRACE_FRAMES`
     // of such frames since issue #1020 — one plain frame is inside that, so
     // what `rebuilt` counts here is four objects and not twelve.
     // `an_alternating_refusal_does_not_rebuild_the_frame_wide_targets` is what
