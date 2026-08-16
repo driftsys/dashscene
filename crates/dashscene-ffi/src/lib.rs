@@ -453,7 +453,54 @@ pub unsafe extern "C" fn ds_runtime_load_document(
     })
 }
 
+/// Drops the runtime's current document: the scene first, then the arena it
+/// indexes.
+///
+/// **The two are one statement, which is why they are one function.** A
+/// `LiveScene` holds the [`NodeId`](dashscene_core::NodeId)s of the arena it was
+/// attached to, so a runtime carrying the previous scene beside a fresh arena
+/// drives ids against an arena that does not have them — wrong nodes written, or
+/// an index panic, silently in a release build. Every loader replaces the arena,
+/// and none of them may leave the scene behind.
+///
+/// It is the **panic** path that makes the pairing load-bearing rather than
+/// tidy. Nothing between this call and a loader's reassignment of
+/// `runtime.scene` returns, but the calls in between can unwind — the loaders'
+/// own `load_document` and `load_document_mapped` each carry a `# Panics`
+/// clause, `show_appended_root` panics by design, and `dashlang::attach_live`
+/// carries one too and commits through the solver besides — and `guard` turns an
+/// unwind into [`DsStatus::Panic`] with the runtime still alive. The next
+/// [`ds_runtime_tick`] then answers [`DsStatus::NoDocument`], which is true,
+/// instead of ticking the previous document's scene against the new arena.
+///
+/// **The mapped loader had the pairing and the byte-taking one did not**, which
+/// is issue #1183: one invariant, two call sites, and nothing holding them
+/// together. A third loader is deferred rather than rejected — see this module's
+/// note on descriptors — so the pairing is a function rather than a convention.
+///
+/// It also frees the previous arena **before** the next document is built rather
+/// than after, which is what keeps a second load off a peak of two whole arenas.
+///
+/// # Where a caller puts it
+///
+/// **Below every step that can return a status**, so a refused load leaves the
+/// previously loaded document drawable. That ordering belongs to each loader
+/// rather than to this function, and each carries a test for it.
+fn drop_document(runtime: &mut DsRuntime) {
+    runtime.scene = None;
+    runtime.arena = Arena::new();
+}
+
 /// The load both entry points run. `text` is what the caller could supply.
+///
+/// Every failure this returns is raised **before** [`drop_document`], so a
+/// refused load leaves a previously loaded document drawable —
+/// `load_mapped_into`'s promise, on this path, and the reason the document is
+/// dropped after the open and the gate rather than beside the rest of the setup.
+///
+/// [`ds_runtime_load_document_with_text`] can also refuse **above** this
+/// function, in `text_from_c`, which is why no test drives that entry point for
+/// the property: a cascade rejected there has not reached the document at all.
 fn load_into(runtime: &mut DsRuntime, bytes: &[u8], text: Option<TextResources>) -> DsStatus {
     let (document, payloads) = match dashbuf::open_verified(bytes) {
         Ok(opened) => opened,
@@ -470,7 +517,12 @@ fn load_into(runtime: &mut DsRuntime, bytes: &[u8], text: Option<TextResources>)
     // A fresh arena per load, so a second load does not stack a second
     // document on the first. The generation restart that implies is exactly
     // what `document_replaced` is for, and it is reported below.
-    runtime.arena = Arena::new();
+    //
+    // Here rather than higher up: everything above can still return, and
+    // `a_refused_byte_load_leaves_the_loaded_document_drawable` guards that.
+    // `load_document` below carries the unwind `drop_document` exists for
+    // (issue #1183).
+    drop_document(runtime);
     dashscene_core::load_document(&document, &payloads, &mut runtime.arena);
     // `TaffySolver::boxed` rather than the same two arms written here: it
     // exists so that no document loader can disagree with another about what
@@ -479,13 +531,26 @@ fn load_into(runtime: &mut DsRuntime, bytes: &[u8], text: Option<TextResources>)
         &mut runtime.arena,
         TaffySolver::boxed(text),
     ));
+    announce_document_replaced(runtime);
+    DsStatus::Ok
+}
+
+/// Tells an attached surface that the document under it was replaced.
+///
+/// The other half of [`drop_document`], and a function for the same reason: a
+/// loader that dropped the old document and forgot this leaves the painter
+/// describing the outgoing arena while the incoming one's generations restart
+/// from zero — the failure `dashscene-desktop` and `dashscene-web` both name
+/// under "rebuilding on resize". Nothing in the frames themselves says the arena
+/// changed, so this call is the only notice there is.
+///
+/// **Called after the new scene is attached, not beside the drop**, which is why
+/// it is not part of [`drop_document`]: what it announces is a document that has
+/// been replaced, and until the reassignment there is not one.
+fn announce_document_replaced(runtime: &mut DsRuntime) {
     if let Some(surface) = runtime.surface.as_mut() {
-        // The arena is new, so its generations restart and nothing in the
-        // frames themselves says so — the trap `dashscene-web` and
-        // `dashscene-desktop` both name under "rebuilding on resize".
         surface.document_replaced();
     }
-    DsStatus::Ok
 }
 
 /// The mapped load, bounded by `shown_root`.
@@ -588,19 +653,18 @@ fn load_mapped_into(
     // already holds rows, whatever put them there, and this is what keeps that
     // condition out of reach.
     //
-    // **The scene is dropped in the same breath as the arena it indexes.** A
-    // `LiveScene` holds `NodeId`s of the arena it was attached to; leaving the
-    // previous one in place across this assignment would pair it with an arena
-    // those ids do not name. Nothing below returns, but three calls between
-    // here and the reassignment can **panic** — `load_document_mapped` on a
-    // payload past 4 GiB, `show_appended_root` by design — and `guard` turns an
-    // unwind into `DsStatus::Panic` with the runtime still alive. Without this
-    // line the next `ds_runtime_tick` would drive the old scene against the new
-    // arena; with it, that tick reports `DsStatus::NoDocument`, which is true.
-    runtime.scene = None;
-    runtime.arena = Arena::new();
-    // Zero, and stated as a literal rather than measured, because the arena on
-    // the line above is new and a measurement here could only ever return 0 —
+    // Here rather than higher up: nothing below returns, so this could sit
+    // beside the rest of the setup, and it does not — every failure above is
+    // raised before the arena is replaced, which is what
+    // `a_refused_mapped_load_leaves_the_loaded_document_drawable` asserts.
+    // The calls that can unwind between here and the reassignment are
+    // `load_document_mapped` on a payload past 4 GiB, `show_appended_root` by
+    // design, and `attach_live`; the byte-taking loader's window holds the
+    // last of those and `load_document`.
+    drop_document(runtime);
+    // Zero, and stated as a literal rather than measured, because
+    // `drop_document` above installed a new arena and a measurement here could
+    // only ever return 0 —
     // reading it back would suggest this path can see a non-empty arena, which
     // is exactly the confusion `show_appended_root`'s parameter exists to
     // resolve. The two hosts that pass a real value take a caller-supplied
@@ -630,11 +694,7 @@ fn load_mapped_into(
         &mut runtime.arena,
         TaffySolver::boxed(text),
     ));
-    if let Some(surface) = runtime.surface.as_mut() {
-        // The arena is new, so its generations restart and nothing in the
-        // frames themselves says so.
-        surface.document_replaced();
-    }
+    announce_document_replaced(runtime);
     DsStatus::Ok
 }
 
@@ -1477,6 +1537,141 @@ mod tests {
         unsafe { ds_runtime_free(runtime) };
     }
 
+    /// The committed table's row count, which is the loaded document's and no
+    /// one else's — an arena replaced by a load that was refused reads 0.
+    ///
+    /// **Takes the handle and checks it here**, where
+    /// `a_document_loaded_with_fonts_stages_glyph_runs_and_measures_its_text`'s
+    /// `measured` takes a reference and is checked at its one call site. Both
+    /// answer CodeQL's `rust/access-invalid-pointer`, and this shape is the one
+    /// that survives being called more than once: with the check at the call
+    /// site, a second dereference further down the test — past a load, past a
+    /// tick, or inside a loop — is out of reach of it again, which is what the
+    /// rule reported against the first cut of these two tests.
+    fn committed_rows(runtime: *const DsRuntime) -> usize {
+        // `as_ref` rather than `&*` behind an `assert!`: it is the conversion
+        // that carries the null check in its type, and CodeQL's
+        // `rust/access-invalid-pointer` reads the raw dereference as
+        // unguarded whatever assertion precedes it — which is what it reported
+        // against the first two cuts of this helper.
+        //
+        // SAFETY: `ds_runtime_new` answered Ok where this handle was made, and
+        // nothing has freed it yet; null is the one other case and `as_ref`
+        // answers `None` for it.
+        let runtime = unsafe { runtime.as_ref() }.expect("the handle under test is live");
+        runtime.arena.committed().rects().len()
+    }
+
+    /// A document that opens and then fails the gate: one root node naming a
+    /// paint entry the document does not carry.
+    ///
+    /// The other refusal a byte-taking load can make. Junk bytes never reach
+    /// `validate_document` at all, so without this the pair below would cover
+    /// one of the two arms and claim both.
+    fn gate_failing_document() -> Vec<u8> {
+        use dashbuf::{Document as Doc, DocumentArgs, NO_PARENT, Node, NodeArgs};
+        use flatbuffers::FlatBufferBuilder;
+
+        let mut builder = FlatBufferBuilder::new();
+        let nodes = vec![Node::create(
+            &mut builder,
+            &NodeArgs {
+                parent: NO_PARENT,
+                // The document declares no paints, so this resolves to
+                // nothing and `check_node_links` reports it as
+                // `paint.entry-out-of-range`.
+                paint_entry: 3,
+                ..Default::default()
+            },
+        )];
+        let nodes = builder.create_vector(&nodes);
+        let document = Doc::create(
+            &mut builder,
+            &DocumentArgs {
+                nodes: Some(nodes),
+                ..Default::default()
+            },
+        );
+        builder.finish(document, None);
+
+        let bank = dashbuf::bank::ColdBank::raw(std::iter::empty());
+        dashbuf::bank::assemble(builder.finished_data(), &bank).expect("the fixture assembles")
+    }
+
+    /// A **refused** byte-taking load leaves the document already loaded still
+    /// drawable — the pair to
+    /// [`a_refused_mapped_load_leaves_the_loaded_document_drawable`], over
+    /// `load_into`, which is what both byte-taking entry points run.
+    ///
+    /// It drives it through [`ds_runtime_load_document`] alone.
+    /// [`ds_runtime_load_document_with_text`]'s own refusals are raised in
+    /// `text_from_c` **above** `load_into`, so a cascade rejected there has not
+    /// reached the document and there is nothing for this property to be about.
+    ///
+    /// It guards the ordering issue #1183's fix depends on rather than the fix
+    /// itself. `drop_document` sits **below** the open and the gate; moving it
+    /// above either would discard a good document on a load that was refused,
+    /// and nothing else in this file would notice. Both refusal arms are here
+    /// for that reason: `Open`, which is raised before the document is even
+    /// read, and `Gate`, which is raised after it.
+    ///
+    /// **What is asserted is the committed table, not that a scene exists.** A
+    /// tick answering `Ok` says only that `runtime.scene` is `Some`, which is
+    /// still true of the state this whole fix is about — the previous
+    /// document's scene beside a fresh arena — so a test resting on the status
+    /// alone would pass over an arena replaced above the gate. The row count is
+    /// a property of the document that was loaded, and a replaced arena reads 0.
+    ///
+    /// The **panic** path the fix exists for is not covered, and cannot be from
+    /// here — see the mapped pair's own note for why.
+    #[test]
+    fn a_refused_byte_load_leaves_the_loaded_document_drawable() {
+        let document = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../goldens/dsb/v07-text-hug-in-fill.dsb"
+        ))
+        .expect("the committed fixture is present");
+
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe { ds_runtime_load_document(runtime, document.as_ptr(), document.len()) },
+            DsStatus::Ok
+        );
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+            DsStatus::Ok,
+            "the first load left a scene to tick"
+        );
+        let loaded = committed_rows(runtime);
+        assert!(loaded > 0, "the fixture commits rects to compare against");
+
+        let junk = [0_u8; 32];
+        let refused = gate_failing_document();
+        for (bytes, expected) in [
+            (junk.as_slice(), DsStatus::Open),
+            (refused.as_slice(), DsStatus::Gate),
+        ] {
+            assert_eq!(
+                unsafe { ds_runtime_load_document(runtime, bytes.as_ptr(), bytes.len()) },
+                expected
+            );
+            assert_eq!(
+                unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+                DsStatus::Ok,
+                "a load refused as {expected:?} must leave the previously loaded document \
+                 drawable, not discard it"
+            );
+            assert_eq!(
+                committed_rows(runtime),
+                loaded,
+                "and drawable means the document that was loaded, not whatever a refused load \
+                 left behind: {expected:?}"
+            );
+        }
+        unsafe { ds_runtime_free(runtime) };
+    }
+
     /// The size query works before the buffer exists, so a caller can size one.
     #[test]
     fn the_error_message_reports_the_size_it_needs() {
@@ -2316,15 +2511,26 @@ mod tests {
     /// That is what `load_mapped_into` promises in prose — "every failure this
     /// returns is raised before the runtime's arena is replaced" — and it is
     /// worth an assertion rather than a reading, because the order of the
-    /// fallible steps against the arena assignment is the whole of it. Move the
-    /// residency walk below `runtime.arena = Arena::new()` and this fails.
+    /// fallible steps against [`drop_document`] is the whole of it. Move the
+    /// residency walk below that call and this fails.
     ///
-    /// It says nothing about the **panic** path, which is the reason
-    /// `runtime.scene` is cleared beside the arena rather than left until the
-    /// end: an unwind between the two would otherwise leave a new arena paired
-    /// with the previous scene's `NodeId`s. `guard` makes that state reachable
-    /// and no test here can force it, so the clearing is argued at the call
-    /// site rather than covered.
+    /// It says nothing about the **panic** path, which is why
+    /// [`drop_document`] clears the scene rather than leaving it until the end:
+    /// an unwind between the two would otherwise leave a new arena paired with
+    /// the previous scene's `NodeId`s. `guard` makes that state reachable and no
+    /// test here can force it, so the clearing is argued at that function rather
+    /// than covered.
+    ///
+    /// **It asserts the committed table, not the tick's status**, for the reason
+    /// its byte-taking pair does: a tick answers `Ok` whenever `runtime.scene`
+    /// is `Some`, which is true of the broken state as well, so the status alone
+    /// passes over an arena replaced above the residency walk.
+    ///
+    /// It covers `Payload` and none of this path's five other refusals — `Map`,
+    /// `Open`, `Gate`, `Derived` and `NoSuchRoot`. `Map` and `NoSuchRoot` have
+    /// tests of their own, but each loads into a fresh runtime and never ticks,
+    /// so neither says a previous document survived; mapped `Open`, mapped
+    /// `Gate` and `Derived` are reached by no test in this crate at all.
     #[test]
     fn a_refused_mapped_load_leaves_the_loaded_document_drawable() {
         let dir = tempfile::tempdir().expect("a temp dir");
@@ -2339,15 +2545,16 @@ mod tests {
             },
             DsStatus::Ok
         );
-        let mut advanced = false;
         assert_eq!(
-            unsafe { ds_runtime_tick(runtime, 0.016, &mut advanced) },
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
             DsStatus::Ok,
             "the first load left a scene to tick"
         );
+        let loaded = committed_rows(runtime);
+        assert!(loaded > 0, "the fixture commits rects to compare against");
 
-        // A load refused at the residency walk, which sits above the arena
-        // assignment.
+        // A load refused at the residency walk, which sits above
+        // `drop_document`.
         assert_eq!(
             unsafe {
                 ds_runtime_load_document_mapped(runtime, bad.as_ptr(), 0, std::ptr::null(), 0)
@@ -2355,9 +2562,15 @@ mod tests {
             DsStatus::Payload
         );
         assert_eq!(
-            unsafe { ds_runtime_tick(runtime, 0.016, &mut advanced) },
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
             DsStatus::Ok,
             "a refused load must leave the previously loaded document drawable, not discard it"
+        );
+        assert_eq!(
+            committed_rows(runtime),
+            loaded,
+            "and drawable means the document that was loaded, not an emptied arena a scene is \
+             still attached to"
         );
         unsafe { ds_runtime_free(runtime) };
     }

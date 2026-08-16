@@ -220,8 +220,16 @@ DsStatus ds_runtime_load_document_with_text(DsRuntime *runtime,
  *
  * THE MAPPING IS THE RUNTIME'S. You keep no lifetime rule and you must not
  * unlink or rewrite the file while it is loaded: the arena holds the mapping,
- * and each load installs a fresh arena, so the previous mapping is released
- * when the next load or ds_runtime_free happens.
+ * and a load that SUCCEEDS installs a fresh arena, so the previous mapping is
+ * released then or at ds_runtime_free.
+ *
+ * A LOAD THAT FAILS RELEASES NOTHING. Every status any of the three loaders
+ * returns is raised before the arena is replaced, so a refused load leaves the
+ * previously loaded document drawable and its mapping held. Do not unlink the
+ * previous file until a later load has answered DS_OK. DS_PANIC is the one
+ * answer that says nothing either way: the runtime is alive, but where the
+ * unwind happened decides what it still holds, and the next ds_runtime_tick
+ * answers DS_NO_DOCUMENT when the load had got as far as replacing the arena.
  *
  * THE ROOT IS NAMED ONCE, at load. There is no call for changing it
  * afterwards; load again to show a different artboard.
