@@ -279,13 +279,34 @@ switch itself is core's. `dashlang` builds directly on `dashscene-core`;
 
 ## Plan tracking
 
-The v0 plan lives as GitHub issues on this repo: one `epic`-labeled issue and
-one milestone per `docs/roadmap.md` slice, broken into `story`-labeled issues. A
-slice that is opened but not yet planned has its milestone and no epic, which is
-where issues surfaced by the previous slice are placed. Stories are split so
-that independent stories can run in parallel; each story is worked in its own
-git worktree, on the branch named in the story issue, and its body lists what it
-depends on and what it blocks.
+The v0 plan lives as GitHub issues on this repo: one milestone per
+`docs/roadmap.md` slice, with an `epic`-labeled issue under it, broken into
+`story`-labeled issues.
+
+**One epic is the usual shape, not a rule.** Two reasons to split have
+precedent, and they are different reasons:
+
+- **By artifact territory**, so two sessions cannot regenerate the same golden.
+  This is v0.13's three streams (#438, #439, #475) under its burn-down (#362),
+  and it is binding rather than optional where it applies:
+  `docs/decisions/debt-streams-own-artifact-classes.md` is accepted and says the
+  split is drawn by what a branch owns.
+- **By what gates the parts**, so one blocked half does not make the whole slice
+  read as blocked. This is v0.13's #474, "the inputs and rulings this slice
+  waits on", and v0.21's #1106 (three owner decisions) against #1107 (target
+  hardware).
+
+**A slice with more than one epic reaches its phase end when the _last_ of them
+closes**, not the first. `docs/roadmap.md`'s ritual section says the same.
+
+Two milestones do not fit the shape above, and neither is a defect to go fix:
+**v0.23** is a holding milestone rather than a slice and will never have an
+epic, and **v0.9** has none because #47, its epic, carries the v0.14 milestone
+(issue #1114). A slice that is opened but not yet planned has its milestone and
+no epic, which is where issues surfaced by the previous slice are placed.
+Stories are split so that independent stories can run in parallel; each story is
+worked in its own git worktree, on the branch named in the story issue, and its
+body lists what it depends on and what it blocks.
 
 **Running CI's expensive path on demand.** `gh workflow run ci --ref main`
 forces every path-filtered gate — `calibration` and `deno` — on. Ordinary work
@@ -458,10 +479,11 @@ Merging a PR — how the branch lands on `main`:
   `gh pr merge --merge`.
 
 Plan revision at the end of each phase: story breakdowns for future slices are
-provisional by design. When a slice's epic closes (v0.1, v0.2, …), revise the
-remaining epics and stories against what was learned before starting the next
-slice — update, split, merge, or re-order the issues, and record scope-level
-changes as new or updated records in `docs/decisions/`.
+provisional by design. When a slice's epic closes (v0.1, v0.2, …) — the **last**
+of them, on a slice carrying more than one — revise the remaining epics and
+stories against what was learned before starting the next slice: update, split,
+merge, or re-order the issues, and record scope-level changes as new or updated
+records in `docs/decisions/`.
 
 **Re-check `docs/features.md` in the same pass**, against the code rather than
 against `docs/design/` or `docs/specification/`. It asserts, feature by feature,

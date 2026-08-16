@@ -15,15 +15,16 @@ is nothing to keep in sync between the two.
 | What each slice delivers        | Which stories are open, closed, who owns them |
 | Inter-slice dependency edges    | Story-level dependency edges                  |
 | Which E-criteria a slice closes | Debt triage and milestone assignment          |
-| The epic issue number per slice | Everything that churns weekly                 |
+| Each slice's epic issue numbers | Everything that churns weekly                 |
 | The v1 and v2 outlines          |                                               |
 
 The dividing line is churn. A slice-level dependency — "v0.6 needs v0.5's atlas"
 — changes at a phase-end plan revision, a handful of times across the whole of
 v0. A story-level dependency — "issue X blocks issue Y" — changes weekly and
-stays in the issue body, where it already lives. This file therefore names an
-epic issue per slice and links no further: the stories under it, and their
-state, are GitHub's job.
+stays in the issue body, where it already lives. This file therefore names each
+slice's epic issues — usually one, two where a slice's halves gate separately,
+as v0.21's do — and links no further: the stories under them, and their state,
+are GitHub's job.
 
 ## Why this file exists at all
 
@@ -47,9 +48,12 @@ record was kept. That position is reversed here, for three reasons:
 When a slice's epic closes, the remaining epics and stories are revised against
 what that slice taught, before the next slice starts: update, split, merge, or
 re-order the issues, and record the scope-level outcome in a retrospective
-(`AGENTS.md`, "Plan tracking"). This file is what that ritual keeps current — a
-slice entry below is only ever as fresh as its most recent revision, which is
-why each one says which revision produced it.
+(`AGENTS.md`, "Plan tracking"). **On a slice with more than one epic the trigger
+is the last of them to close**, not the first — a slice is not finished while
+one of its halves is still open, and firing the ritual on the first close would
+revise the plan against half a slice. This file is what that ritual keeps
+current — a slice entry below is only ever as fresh as its most recent revision,
+which is why each one says which revision produced it.
 
 The ritual has one gate that is not a document edit: run `just calibrate` before
 revising anything. It re-derives the committed asset tables, and it is the only
@@ -1666,8 +1670,8 @@ for the file-level overlap.
 
 ### v0.20 — hardening: the critical findings and the Android recovery path — open
 
-**No epic filed yet.** Planned 2026-08-12, before the v0.19 phase-end revision
-rather than at it.
+**Epic #951**, filed 2026-08-13. Planned 2026-08-12, before the v0.19 phase-end
+revision rather than at it.
 
 **That is not a departure from the revision ritual — it is the third time the
 ritual has fired off-cycle**, after v0.4 and v0.7 above, and it fired for the
@@ -1725,21 +1729,47 @@ for the failure reporting the C ABI gains here.
 
 ### v0.21 — Unity and Android on target hardware — open
 
-**No epic filed yet; the design findings are held on tracking issue #851.** The
-engine painter over BatchRendererGroup, and the C# host that sits on the
-`dashscene-ffi` data plane. Proposed for v0.20 on 2026-08-09 and moved here on
-2026-08-12, behind the hardening slice.
+**Two epics, filed 2026-08-16: #1106 (Unity) and #1107 (target hardware).** The
+design findings are held on tracking issue #851 and must not be re-derived.
+
+**Two epics because the halves gate on different kinds of thing** — #1106 on
+three owner-supplied **decisions**, #1107 on a **device**. One epic would have
+made the whole slice read as blocked whenever either half was.
+
+**#1107's own two tracks do not gate alike, and the difference matters more than
+the epic split does.** Its Track A — the three device runs — needs the device
+and nothing else, so it can start while #1106 is blocked. Its **Track B, Unity
+on Android hardware, needs #1106 first**: there is no Unity host to run on a
+device until that epic delivers one. So the independence claimed here is between
+#1106 and #1107's Track A, and it does not extend to Track B.
+
+The precedent is v0.13's **#474**, "the inputs and rulings this slice waits on",
+which was that slice's second track beside the burn-down and held exactly the
+items a coding session could not finish because what they needed was an owner
+input. That is the same reason for splitting as this slice's. (v0.13 ran five
+epics: #362, the burn-down, plus #438, #439 and #475, which were streams within
+it, plus #474. The three streams were split on a different rule —
+[`decisions/debt-streams-own-artifact-classes.md`](decisions/debt-streams-own-artifact-classes.md),
+by which artifact class a branch owns. And v0.14's apparent second epic is #47,
+the **v0.9** epic, which carries the v0.14 milestone; issue #1114 tracks that.
+So v0.21 is the first non-burndown slice to run two genuine epics.)
+
+The Unity half: the engine painter over BatchRendererGroup, and the C# host that
+sits on the `dashscene-ffi` data plane. Proposed for v0.20 on 2026-08-09 and
+moved here on 2026-08-12, behind the hardening slice.
 
 **A second half was added on 2026-08-16: the Android work that a target device
-gates.** The slice was called "v0.21 — Unity" until then. The three paragraphs
-that follow describe the Unity half; the Android half is described after them,
-before the entry conditions the two halves now share.
+gates**, which is #1107 — the three device runs the move brought here, and
+**Unity on Android hardware, integration and performance**, which is scope on
+that epic rather than stories. The slice was called "v0.21 — Unity" until then.
+The two paragraphs that follow describe the Unity half; the Android half is
+described after them, before the entry conditions the two halves now share.
 
 **What moved here from v1**, in the terms that section used: the engine painter
 with its SDF shader library and its material classes, and the C# declarative
 skin. Everything else v1 listed stays there.
 
-**Its design is already worked out and should not be re-derived.** A long-form
+**Its design is already worked out and must not be re-derived.** A long-form
 capture was drafted and closed unmerged after four review rounds found 4, 12, 15
 and 13 findings, concentrated in the sections making recommendations about
 unwritten code — and twice a fix introduced a worse defect than the one it
@@ -1782,9 +1812,10 @@ is hardware-gated, and #842 is the single item that is.
 
 **The Android work that a device does not gate stayed on v0.20** — fourteen
 issues at the time of the move, against which its own recovery-path work is
-written. So does #874, the split-screen handshake case: it is emulator-gated
-rather than hardware-gated, and `just android-splitscreen` asks for a handheld
-or tablet image rather than for target hardware.
+written. **#874 also did not move here**, though it sits on v0.23 rather than on
+v0.20: it is emulator-gated rather than hardware-gated, and
+`just android-splitscreen` asks for a handheld or tablet image rather than for
+target hardware.
 
 **Nothing about the rule #885 states is relaxed by the move.** Nothing may
 describe Android as working until that measurement is taken, and emulator
@@ -1812,9 +1843,17 @@ Depends on: v0.19 for the C ABI it extends, and on v0.20 for the failure
 reporting that ABI gains there. Its first three entry conditions are independent
 of both and can be settled at any time; the fourth is hardware.
 
-**The two halves do not depend on each other**, and neither Android issue waits
-on anything still being built: `just android-probe` and the text-carrying
-harness both exist and run today. What each owes is the run itself, on a device.
+**One further edge, which is inside v0.19 rather than on the slice:** #1107's
+frame-rate work reads the frame-timing instrument that lives in
+`demo/src/shell.rs`, and **story #842 is what makes it reachable from
+`demo-android`**. #842 is open on v0.19 and is that slice's own hardware gate,
+so the performance half of #1107 waits on it — the three device runs of Track A
+do not.
+
+**Neither of #1107's three device runs waits on anything still being built**:
+`just android-probe` and the text-carrying harness both exist and run today, and
+what each owes is the run itself. **Its Track B does wait** — on #1106, for a
+Unity host to exist at all.
 
 ### v0.22 — SVG as a second producer — open
 
