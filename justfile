@@ -15,20 +15,20 @@ default:
 assemble:
     cargo build --workspace
 
-# Run the sanity tier — the loop between edits and before every commit.
 # About 5 s. Tier definitions and the schedule: docs/decisions/test-tiers.md.
 #
 # `cargo test --doc` rides along in every tier recipe because nextest does not
 # run doctests. Leaving it out would mean three recipes that each claim to run
 # a tier and each silently skip the same three tests.
+# Run the sanity tier — the loop between edits and before every commit.
 test:
     cargo nextest run --workspace -P sanity
     cargo test --workspace --doc
 
-# Run the regression tier — what `check`, `build` and the CI `test` job run.
 # About 33 s locally when warm, 154 s for the whole workspace suite. This is the
 # gate; `just test` is not, and the pre-push hook no longer runs it either
 # (see `verify`).
+# Run the regression tier — what `check`, `build` and the CI `test` job run.
 test-regression:
     cargo nextest run --workspace -P regression
     cargo test --workspace --doc
@@ -59,6 +59,7 @@ test-regression:
 # versions apart and only a machine-readable format makes them agree. The
 # same rendering also carries ANSI colour whenever CARGO_TERM_COLOR is set,
 # which `dtolnay/rust-toolchain` sets on every CI job.
+# Run the calibration tier — re-derives the committed asset tables.
 calibrate:
     cargo nextest list --workspace -P calibration --message-format json \
         | jq -r '."rust-suites" | to_entries[] as $s | $s.value.testcases | to_entries[] | select(.value."filter-match".status == "matches") | "\($s.key) \(.key)"' \
@@ -79,6 +80,7 @@ calibrate:
 # `deno` job. E7's frames are asserted measured rather than pending by
 # no_frame_is_pending_so_e7_is_asserted_over_all_of_them, in the profile. Run
 # the CI `exit-gate` job for the whole claim.
+# Run the exit-gate tier — E1-E5, E7 and E6's native half.
 exit-gate:
     cargo nextest list --workspace -P exit-gate --message-format json \
         | jq -r '."rust-suites" | to_entries[] as $s | $s.value.testcases | to_entries[] | select(.value."filter-match".status == "matches") | "\($s.key) \(.key)"' \
@@ -95,6 +97,7 @@ test-all:
 
 # Rust + markdown + Deno lint gate: clippy, cargo fmt check, prim, deno fmt
 # check.
+# Lint everything: clippy, rustfmt, doc-links, prim and the Deno sources.
 lint: deno-fmt-check
     cargo clippy --workspace --all-targets -- -D warnings
     # The wasm32 half, which the line above never sees. Its own recipe rather
@@ -186,7 +189,6 @@ DOC_FLAGS := "--no-deps --document-private-items --keep-going --quiet"
 doc-links:
     RUSTDOCFLAGS='-D warnings' cargo doc --workspace {{ DOC_FLAGS }}
 
-# The Markdown/JSON/YAML/TOML gate, in the two verbs it takes.
 #
 # `fmt --check` and `lint` are not redundant. `prim lint` reports format drift
 # for JSON, YAML and TOML but NOT for Markdown: it exits 0 on a Markdown file
@@ -200,6 +202,7 @@ doc-links:
 #
 # Both read only this repository, so prim is PINNED, in `bootstrap` and in the
 # `prim` CI job. See the `audit` job for the opposite case.
+# The Markdown/JSON/YAML/TOML gate, in the two verbs it takes.
 prim:
     prim fmt --check .
     prim lint .
@@ -300,13 +303,13 @@ figma-sharing:
     fi
     echo "figma-sharing: all $checked fixtures explicitly link-viewable"
 
-# Copy the root LICENSE and NOTICE into every publishable crate.
 #
 # Cargo packages only files under a crate's own directory, so the root copies
 # reach no `.crate`. Apache-2.0 §4(a) and §4(d) require both to travel with the
 # code — §4(d) in particular carries Arm's attribution for the vendored astcenc
 # sources. `every_publishable_crate_packages_the_licence_and_notice` fails the
 # build if a copy goes missing or drifts.
+# Copy the root LICENSE and NOTICE into every publishable crate.
 licenses:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -632,6 +635,7 @@ secrets range="--all":
 # sanity tier — `check` is what `build` runs, so it takes the tier that is the
 # gate (docs/decisions/test-tiers.md). The pre-push hook does not run `check`;
 # see `verify`.
+# Run the regression tier and every gate `build` adds to `assemble`.
 check: test-regression lint audit secrets wasm-painter wasm-host c-abi harness-tests
 
 # Everything short of a PR: assemble + check.
@@ -770,7 +774,6 @@ book:
 release:
     git std bump
 
-# What an embedder's runtime actually weighs (issue #776, story #795).
 #
 # Measures `measure/web-minimal` — the smallest browser embedder that draws a
 # `.dsb` — and `demo-web` beside it, built and post-processed identically so the
@@ -786,6 +789,7 @@ release:
 #
 # Needs `wasm-bindgen-cli` (matching the workspace's `wasm-bindgen`) and
 # `brotli`, neither of which `bootstrap` installs.
+# What an embedder's runtime actually weighs (issue #776, story #795).
 measure-runtime:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -806,7 +810,6 @@ measure-runtime:
     echo "wasm-bindgen: $(wasm-bindgen --version)"
     echo "brotli:       $(brotli --version)"
 
-# What would have to be true before anything is published (story #795).
 #
 # Repeatable rather than a one-time audit, which is the point: both registry
 # defects this recipe checks for were found by hand once and had already
@@ -820,6 +823,7 @@ measure-runtime:
 #
 # `--no-verify` is deliberately NOT passed: the compile of the packaged tree is
 # most of the value.
+# What would have to be true before anything is published (story #795).
 package:
     cargo test -p demo --test registry_consistency
     # The publishable members, derived rather than listed: `--workspace` packages
@@ -863,16 +867,15 @@ install:
 clean:
     cargo clean
 
-# Build dashc's cdylib for wasm32 — the module the Deno importer loads.
 #
 # --lib on purpose. Without it, cargo also builds the `dashc` bin for wasm,
 # producing a second artifact (dashc.wasm) that is the CLI: it reads files and
 # reads the environment, and it exports none of the ABI. Two .wasm files where
 # one is a decoy is a trap — the importer loads dashc_wasm.wasm.
+# Build dashc's cdylib for wasm32 — the module the Deno importer loads.
 wasm:
     cargo build -p dashc --lib --release --target wasm32-unknown-unknown
 
-# Build the lean painter for wasm32 — the target the web host runs on.
 #
 # A gate rather than an artifact, and the only thing enforcing that no blocking
 # wait reaches the web path. `pollster` is a native-only dependency of
@@ -883,15 +886,16 @@ wasm:
 #
 # Separate from `wasm`, which several recipes depend on for dashc's module
 # alone; folding this in would build the painter for every Deno run.
+# Build the lean painter for wasm32 — the target the web host runs on.
 wasm-painter:
     cargo build -p dashscene-gpu --target wasm32-unknown-unknown
 
-# Build the browser host for wasm32 — a gate, like `wasm-painter`.
 #
 # Separate from it because they fail for different reasons: that one catches a
 # blocking wait reaching the web path, this one catches the host itself, whose
 # browser half compiles on no other target and would otherwise be checked by
 # nothing until someone opened a page.
+# Build the browser host for wasm32 — a gate, like `wasm-painter`.
 wasm-host:
     cargo build -p demo-web --target wasm32-unknown-unknown
 
@@ -915,6 +919,7 @@ wasm-host:
 # which found the painter built for wasm32 by `wasm-painter` and linted for it
 # by nothing — `-- -D warnings` reaches the selected package, not its path
 # dependencies, so the three lines below never denied a warning in it.
+# Clippy and doc-link every wasm32 half — CI's `wasm-gates` job runs this.
 wasm-lint:
     cargo clippy -p dashscene-gpu --target wasm32-unknown-unknown --lib -- -D warnings
     cargo clippy -p dashscene-web --target wasm32-unknown-unknown --all-targets -- -D warnings
@@ -945,7 +950,6 @@ wasm-lint:
     # costs 1.1 s — no more than the four-package list it replaces.
     RUSTDOCFLAGS='-D warnings' cargo doc --workspace --exclude dashscene-desktop --exclude dashscene-ffi --exclude dashscene-android --exclude dashscene-skia --exclude dashpack --exclude dashpack-astcenc-sys --exclude demo --exclude goldens --target wasm32-unknown-unknown {{ DOC_FLAGS }}
 
-# Exercise the C ABI as a C caller, against its own header.
 #
 # The Rust tests in `dashscene-ffi` call the same functions, but they call them
 # as Rust: they see the real enum and a header that was never involved. This is
@@ -957,6 +961,7 @@ wasm-lint:
 # Links the `cdylib` rather than the `staticlib`: the dynamic library carries
 # its own transitive links, where the static one would make this recipe name
 # every system framework `wgpu` pulls in and re-name them per platform.
+# Exercise the C ABI as a C caller, against its own header.
 c-abi:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1908,7 +1913,6 @@ android-splitscreen: harness-tests _apk-harness
         ;;
     esac
 
-# Assemble the browser host into `target/web`, ready to serve.
 #
 # `wasm-bindgen` post-processes the module cargo produced into the JS glue a
 # page imports. The CLI's version and the `wasm-bindgen` crate's are two halves
@@ -1918,6 +1922,7 @@ android-splitscreen: harness-tests _apk-harness
 # The CLI is not installed by `bootstrap`. It builds from source in minutes and
 # is needed only by this demonstration, so every clone paying for it would be
 # the wrong trade; the check below prints the exact command instead.
+# Assemble the browser host into `target/web`, ready to serve.
 web-build:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1946,12 +1951,12 @@ web-build:
     cp goldens/dsb/*.dsb target/web/goldens/dsb/
     echo "web-build: target/web is ready — 'just web' serves it"
 
-# Serve the browser host on 127.0.0.1, with byte ranges honoured.
 #
 # The server is `demo-web/serve.py` rather than `python3 -m http.server`, which
 # does not implement `Range`. Without ranges the host still draws — it notices
 # the whole file arrived — but the prefix loading this story exists to
 # demonstrate never happens.
+# Serve the browser host on 127.0.0.1, with byte ranges honoured.
 web port="8787": web-build
     python3 demo-web/serve.py target/web {{ port }}
 
@@ -1961,6 +1966,7 @@ deno-check:
 
 # Run the Deno importer's test suite. Depends on `wasm`: the suite loads
 # dashc_wasm.wasm and asserts its output against the golden .dsb.
+# Run the Deno importer's tests, against a freshly built `dashc_wasm.wasm`.
 deno-test: wasm
     cd importers/figma && deno task test
 
@@ -1971,11 +1977,13 @@ deno-fmt:
 # Check the Deno importer sources are already formatted, without rewriting
 # them. Matches the CI deno job's formatting gate (.github/workflows/ci.yml);
 # `deno-fmt` alone cannot fail, so this is the recipe that actually gates it.
+# Check the Deno importer's formatting — the recipe that actually gates it.
 deno-fmt-check:
     cd importers/figma && deno task fmt --check
 
 # Capture the Figma fixture corpus, image-fill bytes included. Needs
 # FIGMA_TOKEN (docs/decisions/figma-access-plan-and-pat-policy.md). Never commit the token.
+# Capture the Figma fixture corpus from live Figma. Needs a PAT.
 deno-capture: wasm
     cd importers/figma && deno task capture
 
@@ -1998,6 +2006,7 @@ deno-capture: wasm
 #                                                     # declarable roots, then
 #                                                     # rerun with the chosen
 #                                                     # --root
+# Import one live Figma file and print the diagnostics it raised.
 reprobe key root="": wasm
     #!/usr/bin/env bash
     set -euo pipefail
@@ -2116,6 +2125,7 @@ reprobe key root="": wasm
 #   just render MRk9I5cYY6yJa8JhljzkBn 2411:10795  # first-light
 #   just render S30AJmYfnDKGeSQmzuXEUk 1973:6580    # hero
 #   just render S30AJmYfnDKGeSQmzuXEUk 1973:6580 lite   # the same file under Lite
+# Import one live Figma node and render it under a Gfx QA profile.
 render key root="" profile="raw": wasm
     #!/usr/bin/env bash
     set -euo pipefail
@@ -2172,6 +2182,7 @@ render key root="" profile="raw": wasm
 #     figures are in goldens/tooling/tests/perceptual_calibration.rs.
 #   - ITU-R BT.500 and ITU-T P.910 are the standard protocols for running this
 #     properly. Nothing here implements one.
+# Render the Gfx QA triptych, and state the viewing conditions it needs.
 triptych:
     #!/usr/bin/env bash
     set -euo pipefail

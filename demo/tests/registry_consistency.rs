@@ -33,6 +33,20 @@
 //! of seventeen names would be the seventh registry, and it would drift exactly
 //! as the other six can.
 //!
+//! # Two justfile checks that are not about crates (issues #1167 and #1175)
+//!
+//! The two tests at the end of this file are not registry checks and the
+//! paragraphs above do not describe them. They are here because this file
+//! already reads and parses the justfile in three places, and issue #1167 asked
+//! whether a justfile assertion should overload a test named for the demo
+//! registry or take a binary of its own: the answer taken was to overload it,
+//! and this section is what keeps that legible. One asserts the NDK linker
+//! variable is named by one recipe; the other asserts every recipe `just --list`
+//! shows describes itself in a sentence.
+//!
+//! **If a third arrives, that is the point to move all three out** into a file
+//! named for the justfile rather than for the registry.
+//!
 //! # What each registry is worth, measured by mutating it
 //!
 //! Every registry below was emptied of one crate in turn and this suite re-run.
@@ -515,4 +529,208 @@ fn every_publishable_crate_packages_the_licence_and_notice() {
         "run `just licenses`.\n  {}",
         missing.join("\n  ")
     );
+}
+
+/// The NDK cross-compiling wiring is written in exactly one recipe (issue
+/// #1167).
+///
+/// PR #1162 consolidated three inlined copies into `_android-env` (issue
+/// #1101). **Nothing failed if a fourth appeared**, and the third arrived
+/// exactly that way: PR #1098 added `android-lint` with its own inlined copy,
+/// one screen below a header arguing that a duplicated package list "is the
+/// drift issue #903 keeps producing".
+///
+/// The check needs neither a device nor an NDK, which is why it can live in the
+/// sanity tier: the linker variable's *name* is what a copy has to spell, so
+/// the assertion is over the justfile's text.
+///
+/// Here rather than in a file of its own for the reason issue #1167 leaves
+/// open: this file already reads and parses the justfile in three other tests,
+/// and a second test binary costs a link per run for one assertion.
+#[test]
+fn the_android_linker_variable_is_named_only_by_the_android_env_recipe() {
+    const VARIABLE: &str = "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER";
+    let justfile = read(workspace_root().join("justfile"));
+    let exempt = recipe_lines(&justfile, "_android-env");
+
+    // Guards the matcher itself: a rename that this test did not follow would
+    // otherwise make the assertion below vacuously true, and a `_android-env`
+    // that stopped being found would exempt nothing rather than everything.
+    assert!(
+        justfile.contains(VARIABLE),
+        "{VARIABLE} is named nowhere in the justfile — if the wiring was renamed, \
+         rename it here too rather than deleting this test"
+    );
+    assert!(
+        !exempt.is_empty(),
+        "the `_android-env` recipe was not found, so this test would report every \
+         mention of {VARIABLE} as a stray"
+    );
+
+    let stray: Vec<usize> = justfile
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| line.contains(VARIABLE))
+        .map(|(i, _)| i + 1)
+        .filter(|line| !exempt.contains(line))
+        .collect();
+
+    assert!(
+        stray.is_empty(),
+        "{VARIABLE} is named outside the `_android-env` recipe, at justfile \
+         line(s) {stray:?}. The NDK wiring is written once and consumed by \
+         assigning `just _android-env`'s output and then eval-ing the variable — \
+         never `eval \"$(just _android-env)\"`, which swallows a missing NDK, and \
+         never a second copy, which is the drift issues #1101 and #903 were each \
+         filed for."
+    );
+}
+
+/// The 1-based line numbers a recipe's header and body occupy.
+///
+/// A `just` recipe's body is its header plus the indented lines under it: an
+/// unindented line ends it, **including a comment**, which is the next recipe's
+/// documentation. That is stricter than "not a comment" and is the difference
+/// that matters here — `_android-env` is followed immediately by `_android-sdk`'s
+/// header block, and treating comments as part of the body would exempt twenty
+/// lines this test exists to police. Blank lines inside a body are kept, since
+/// `just` allows them.
+///
+/// Empty if there is no such recipe, which the caller asserts on rather than
+/// reading as "nothing to exempt".
+fn recipe_lines(justfile: &str, recipe: &str) -> BTreeSet<usize> {
+    let mut lines = BTreeSet::new();
+    let mut inside = false;
+    for (i, text) in justfile.lines().enumerate() {
+        let header =
+            text.starts_with(recipe) && text[recipe.len()..].starts_with([' ', ':']) && !inside;
+        if header {
+            inside = true;
+        } else if inside && !text.is_empty() && !text.starts_with([' ', '\t']) {
+            inside = false;
+        }
+        if inside {
+            lines.insert(i + 1);
+        }
+    }
+    lines
+}
+
+/// Every recipe `just --list` shows describes itself in a sentence, not in the
+/// tail of one (issue #1175).
+///
+/// `just` takes a recipe's description from the **last comment line** above it.
+/// This justfile writes long explanatory headers, so for most recipes that line
+/// was the tail of a wrapped sentence: `test # a tier and each silently skip the
+/// same three tests.`, `lint # check.`, `package # most of the value.` — and
+/// `just --list` is the discovery surface, being what `just` prints with no
+/// arguments.
+///
+/// # The predicate, and the half of it that is not obvious
+///
+/// **Shape**: a description starts with a capital and ends with a full stop.
+/// That catches most wrapped tails, because a sentence broken across a line
+/// break resumes in lower case.
+///
+/// **Continuation**: it does not catch all of them, because a tail can resume
+/// on a capitalised token. `deno-capture`'s did — `FIGMA_TOKEN
+/// (docs/…/figma-access-plan-and-pat-policy.md). Never commit the token.` passes
+/// the shape test and is still the back half of "Needs FIGMA_TOKEN …". Issue
+/// #1175's own `awk` command misses it for the same reason, which is why this
+/// counted **23** fragments on `main` where that command counted 22.
+///
+/// So the description is also refused when the prose line above it does not end
+/// a sentence. An **indented** comment line does not count as prose: several
+/// recipes end their block with an example block (`reprobe`, `render`), and a
+/// command line is not a wrapped sentence.
+///
+/// It is not a test of whether a summary is *good*, and does not pretend to be.
+#[test]
+fn every_listed_recipe_describes_itself_in_a_sentence() {
+    let justfile = read(workspace_root().join("justfile"));
+    let lines: Vec<&str> = justfile.lines().collect();
+
+    let mut fragments = Vec::new();
+    let (mut listed, mut described) = (0usize, 0usize);
+    for (i, line) in lines.iter().enumerate() {
+        let Some(name) = listed_recipe_name(line) else {
+            continue;
+        };
+        listed += 1;
+
+        // The description is the last comment line above the header, skipping
+        // any `[attribute]` lines between the two — `just` reads through those,
+        // and this file already uses seven of them.
+        let mut j = i;
+        while j > 0 && lines[j - 1].starts_with('[') {
+            j -= 1;
+        }
+        let Some(text) = j.checked_sub(1).and_then(|k| lines[k].strip_prefix("# ")) else {
+            // No comment block at all: `just --list` shows the recipe with no
+            // description, so there is no fragment to find.
+            continue;
+        };
+        described += 1;
+        let text = text.trim();
+
+        let shaped = text.starts_with(|c: char| c.is_ascii_uppercase()) && text.ends_with('.');
+        // The line above the description, when it is prose rather than an
+        // indented example.
+        let continues = j
+            .checked_sub(2)
+            .and_then(|k| lines[k].strip_prefix("# "))
+            .filter(|above| !above.starts_with(' '))
+            .is_some_and(|above| !above.trim_end().ends_with(['.', ':', ';', '!', '?']));
+
+        if !shaped {
+            fragments.push(format!("{name} -> {text}"));
+        } else if continues {
+            fragments.push(format!("{name} -> (continues the line above) {text}"));
+        }
+    }
+
+    // Two guards, because there are two matchers and either can stop matching.
+    // Counting only the headers would let every description silently go
+    // unread — spell them `#Text` instead of `# Text` and `strip_prefix`
+    // returns `None` for all of them — while the test still reported no
+    // fragments.
+    assert!(
+        listed > 40,
+        "only {listed} listed recipes were found in the justfile, which means this \
+         test's header matcher stopped matching rather than that the file shrank"
+    );
+    assert!(
+        described * 10 >= listed * 9,
+        "only {described} of {listed} listed recipes had a description this test \
+         could read, which means its comment matcher stopped matching rather than \
+         that the descriptions were deleted"
+    );
+    assert!(
+        fragments.is_empty(),
+        "these recipes' `just --list` descriptions are a sentence fragment rather \
+         than a summary — write a one-line summary as the LAST comment line above \
+         the recipe, with the explanation above it (issue #1175):\n  {}",
+        fragments.join("\n  ")
+    );
+}
+
+/// The name `just --list` shows for `line`, if it shows one.
+///
+/// A header is unindented, is not a comment, an assignment or a setting, and
+/// names the recipe before its parameters or its colon. Two details `just`
+/// decides and this has to follow: a name starting with `_` is **hidden** from
+/// the listing, and a leading `@` — which only silences the echo — is not part
+/// of the name and does not hide anything.
+fn listed_recipe_name(line: &str) -> Option<&str> {
+    let body = line.strip_prefix('@').unwrap_or(line);
+    if line.starts_with([' ', '\t', '#']) || !line.contains(':') || line.contains(":=") {
+        return None;
+    }
+    let name = body.split([' ', ':']).next()?;
+    let listed = !name.is_empty()
+        && !name.starts_with('_')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    listed.then_some(name)
 }
