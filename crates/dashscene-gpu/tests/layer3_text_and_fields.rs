@@ -91,7 +91,8 @@ fn glyph_field() -> ImageAsset {
     }
 }
 
-/// An atlas over [`glyph_field`], with both glyphs one em square.
+/// An atlas over [`glyph_field`]: three glyphs one em square, and one with no
+/// plane quad at all.
 ///
 /// `plane_em` is `[left, bottom, right, top]` y-up from the baseline, so a
 /// one-em square glyph is `[0, 0, 1, 1]` and its quad's top sits a full size
@@ -127,6 +128,18 @@ fn glyph_atlas() -> Atlas {
             AtlasGlyph {
                 glyph_id: 31,
                 plane_em: [0.0, 0.0, 1.0, 1.0],
+                atlas_px: [4.0, 4.0, 8.0, 8.0],
+            },
+            // Glyph 31's twin with **no plane quad at all** (issue #1185).
+            // `Atlas::new` does not refuse it, so `pack_glyph_run` emits an
+            // instance whose `bounds` extent is `(right - left) * size` — zero —
+            // and `msdf_sample` divides by it. It samples the same uniformly
+            // graded quadrant, so if it draws anything at all it draws a
+            // definite alpha rather than an accident of which edge the clamp
+            // took. Named by only one test; the others address ids by number.
+            AtlasGlyph {
+                glyph_id: 41,
+                plane_em: [0.0, 0.0, 0.0, 0.0],
                 atlas_px: [4.0, 4.0, 8.0, 8.0],
             },
         ],
@@ -1027,6 +1040,67 @@ fn a_refused_coverage_field_draws_no_masked_fill() {
                 texel(&pixels, x, y),
                 [0, 0, 0, 0],
                 "a refused coverage field painted ({x}, {y})"
+            );
+        }
+    }
+}
+
+/// **A glyph whose quad has no area draws nothing** (issue #1185).
+///
+/// `msdf_sample` divides by the quad's extent, and until #1185 nothing refused
+/// a zero one. `pack_glyph_run` builds a glyph's `bounds` extent as
+/// `(right - left) * size` from the atlas row's own `plane_em`, and `Atlas::new`
+/// does not refuse a row whose plane quad has no area — so `t` divided by zero,
+/// the clamp took the sub-rect's edge, and the margin around a zero-area quad
+/// was shaded at whatever coverage that edge resolved to. The run's colour in a
+/// small square where the glyph is not.
+///
+/// **Both ways in one test**, which is what makes the zero mean anything: the
+/// same run at the same pen with glyph 31, whose plane quad is one em square
+/// over the same uniformly graded texels, draws. A test asserting only the
+/// empty frame would pass against a painter that stopped drawing text.
+///
+/// # This is the reachable half of #1185, not the one it was filed for
+///
+/// The issue is about the **masked** arm, whose quad is `hi - lo` with the node
+/// origin added to both ends, and that route is not observable on this
+/// machine's adapter. Measured against `paint.wgsl` on Metal, with a node at
+/// `x = 32.0` and a `1e-6`-unit plane: had the shader evaluated
+/// `(32.0 + 1e-6) - (32.0 + 0.0)` in `f32` the extent would be `0.0` on x and
+/// one ulp of 16 — `1.9073486e-6` — on y, and it is exactly `1e-6` on both, so
+/// the backend reassociates the origin out of the subtraction and no
+/// cancellation occurs. The guard is in the vertex stage for both arms because
+/// the property should hold in the source rather than depend on that; what
+/// **this** test can reach is the arm whose zero comes from the CPU.
+#[test]
+fn a_glyph_whose_quad_has_no_area_draws_nothing() {
+    let ink = Color {
+        r: 0.0,
+        g: 1.0,
+        b: 1.0,
+        a: 1.0,
+    };
+    // Same pen, same size, same texels — one em of plane quad apart.
+    for (glyph_id, what) in [(41, "no plane quad"), (31, "a one-em plane quad")] {
+        let (pixels, _) = draw_runs(&[one_glyph(glyph_id, 30.0, 20.0, 20.0, ink, 1.0)]);
+        let painted: Vec<(u32, u32)> = (0..H)
+            .flat_map(|y| (0..W).map(move |x| (x, y)))
+            .filter(|&(x, y)| texel(&pixels, x, y)[3] != 0)
+            .collect();
+        if glyph_id == 41 {
+            assert!(
+                painted.is_empty(),
+                "a glyph with {what} painted {} pixels, the first at {:?}",
+                painted.len(),
+                painted.first()
+            );
+        } else {
+            // Its quad is x 30..50, y 0..20, uniformly graded, so it resolves
+            // at the same alpha every other graded probe in this file does.
+            assert_eq!(
+                texel(&pixels, 35, 10)[3],
+                GRADED_ALPHA,
+                "a glyph with {what} must still draw, or the row above says nothing"
             );
         }
     }

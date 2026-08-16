@@ -1231,9 +1231,26 @@ fn draw_vector_field(
 /// `dest` is the plane bounds offset by the node origin, and the predicate
 /// above cannot see it: with a large `rect.x` a positive `right - left` can
 /// cancel to a zero-width device quad, which would divide by zero here alone.
-/// `dashscene-gpu` has no such case — it hands `plane_bounds` to the shader and
-/// derives its scale from `right - left` directly — so this second guard is
-/// this painter's and not a restatement of anything.
+///
+/// **`dashscene-gpu` writes the same quantity, and this section said it had no
+/// such case until issue #1185.** `gpu_shape` does derive `px_range` from
+/// `right - left` directly, with no origin in it — but the masked-fill pipeline
+/// builds an origin-offset quad in `paint.wgsl`'s vertex stage
+/// (`lo = inst.bounds.xy + field.plane.xy`,
+/// `hi = inst.bounds.xy + field.plane.zw`, `quad = vec4f(lo, hi - lo)`) and
+/// `msdf_sample` divides by `quad.zw`. Since #1185 that stage refuses a quad
+/// with no area through `params2.w`, so both painters now carry a local floor
+/// and this one is not alone.
+///
+/// **What that pipeline does not reproduce is the cancellation**, at least on
+/// the one adapter this workspace can measure. On Metal, the compiled shader
+/// evaluates the pair to `plane.zw - plane.xy` — the origin folded out of the
+/// subtraction — where an `f32` evaluation of what is written would give zero.
+/// So the lean painter's guard is reachable through its **text** arm, whose
+/// zero-area quad comes from the CPU, and not through the masked arm the issue
+/// was filed for. Issue #1195 carries the measurement and what would settle it.
+/// None of that reaches this function: Skia computes `dest` on the CPU, in
+/// Rust, where the cancellation is exactly what happens.
 ///
 /// # Which half of the shared predicate decides, and which is restatement
 ///
