@@ -1521,11 +1521,14 @@ mod tests {
     /// **A [`Frames`] that does not override `refusal_reason` reports no
     /// reason, and `step` carries on.**
     ///
-    /// The defaulted `None` is the answer every host outside this crate gives —
-    /// `demo-android`'s among them — so it is the path taken on a real device
-    /// by both of this repository's Android hosts but one. [`Released`] is a
-    /// real non-overriding implementation rather than a fixture written to be
-    /// one.
+    /// The defaulted `None` is what an implementation with no reason to give
+    /// answers. **Neither of this repository's two Android hosts takes that
+    /// path on a device any more** — `demo-android` overrode it at issue #1194,
+    /// as `DocumentFrames` already had — so the path is exercised by
+    /// [`Released`] and by whatever an embedder writes. That is why the test
+    /// drives `Released`: it is a real non-overriding implementation rather
+    /// than a fixture written to be one, and it is now the only one in the
+    /// tree.
     #[test]
     fn a_frames_that_does_not_override_refusal_reason_gives_none() {
         assert!(

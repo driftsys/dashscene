@@ -46,15 +46,18 @@
 //! scripted pulse and the timing instrument below are demonstration concerns. An
 //! embedder writes its own `Frames` and keeps the loop.
 
+mod refusal;
 mod timing;
 
+pub use refusal::Refusal;
 pub use timing::{Sample, Timing};
 
 /// Picks a scene by name, falling back to the first.
 ///
-/// Compiled on every target and tested on the host: it is the one thing in this
-/// crate that can be wrong without a device, so it is kept out of the platform
-/// half for the reason `dashscene-web` keeps `fetch` and `shown` out of its own.
+/// Compiled on every target and tested on the host: it is one of the things in
+/// this crate that can be wrong without a device, so it is kept out of the
+/// platform half for the reason `dashscene-web` keeps `fetch` and `shown` out of
+/// its own. [`Refusal`] is the other, and its module states the same rule.
 pub fn select(name: Option<&str>) -> &'static showcase::Showcase {
     match name.and_then(showcase::by_name) {
         Some(scene) => scene,

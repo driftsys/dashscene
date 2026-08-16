@@ -146,8 +146,12 @@ pub trait Frames: 'static {
 
     /// Why the most recent [`Frames::resize`] answered `false`, if it can say.
     ///
-    /// **Defaulted to `None`**, so an implementation that has nothing to add —
-    /// and `demo-android`'s, which this crate does not own — is unaffected.
+    /// **Defaulted to `None`**, so an implementation that has nothing to add is
+    /// unaffected. That is what let it be introduced without touching
+    /// `demo-android`, which this crate does not own; that host has since
+    /// overridden it too (issue #1194), so the default is now the answer of
+    /// implementations that hold no renderer of their own — `machine`'s
+    /// `Released` is the one in this crate — rather than of a second host.
     ///
     /// `resize` answers a bare `bool`, which cannot carry a reason across.
     /// Bounding the refusal report in `machine` (issue #1157) would otherwise
