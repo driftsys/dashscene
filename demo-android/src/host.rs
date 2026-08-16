@@ -20,6 +20,7 @@ use jni::errors::LogErrorAndDefault;
 use jni::objects::{JClass, JObject, JString};
 use jni::sys::{jboolean, jint, jlong};
 
+use crate::refusal::Refusal;
 use crate::select;
 use crate::timing::Timing;
 
@@ -48,6 +49,23 @@ struct ShowcaseFrames {
     /// documentation names.
     phase: u64,
     timing: Timing,
+    /// Why the last [`Frames::resize`] answered `false`, for
+    /// [`Frames::refusal_reason`].
+    ///
+    /// **Recorded rather than logged** (issue #1194, the same defect issue
+    /// #1157 named in `dashscene-android`). The loop offers a refused extent
+    /// again every frame on purpose, so a logcat line written where the refusal
+    /// is detected is one line per vsync for as long as that extent is offered
+    /// — and logcat's buffer is a ring, so that rate overwrites the attach
+    /// markers a device run is read through. `LoopState::step` asks
+    /// [`Frames::refusal_reason`] from the branch that reports a refusal, which
+    /// `record_refusal` bounds to once per refused extent rather than once per
+    /// frame.
+    ///
+    /// [`Refusal`] rather than a bare `String`, so the same bound holds for the
+    /// message itself and so the ordering this depends on is testable off
+    /// Android — that module's own documentation gives both reasons.
+    refusal: Refusal,
 }
 
 impl ShowcaseFrames {
@@ -109,6 +127,13 @@ impl Frames for ShowcaseFrames {
         Ok(())
     }
 
+    /// **Answers what `resize` recorded, and reads nothing live**, so the loop
+    /// may ask whenever it likes — which is what [`Frames::refusal_reason`]
+    /// asks of an implementation.
+    fn refusal_reason(&self) -> Option<String> {
+        self.refusal.reason()
+    }
+
     fn resize(&mut self, width: u32, height: u32) -> bool {
         // Matched rather than chained: `if let Some(..) && let Err(..)` takes
         // its branch only when a renderer exists *and* the resize failed, so
@@ -117,12 +142,36 @@ impl Frames for ShowcaseFrames {
         match self.renderer.as_mut() {
             Some(renderer) => {
                 if let Err(error) = renderer.resize(width, height) {
-                    log(&format!("resize: {error:?}"));
+                    // Recorded rather than logged (issue #1194); see `refusal`.
+                    //
+                    // `Display` rather than `Debug`: `RendererError` writes one
+                    // by hand, and for the one error this call can raise it
+                    // gives the extent, the device maximum and which axis
+                    // exceeded it, where `Debug` gives the three numbers as a
+                    // struct literal. `frame` below already logs `{error}` for
+                    // the same type. It costs the same and logcat is the only
+                    // channel a device run has.
+                    self.refusal.refused(width, height, || format!("{error}"));
                     return false;
                 }
             }
-            None => return false,
+            None => {
+                // **Defensive, and not reachable through the loop.**
+                // `LoopState::step` runs only after `acquire` returned from a
+                // successful `attach`, and a rebuild detaches and re-attaches
+                // back to back, stopping the loop if that fails — so no vsync
+                // reaches here with no renderer. It is recorded rather than
+                // left silent because the arm answers `false` and the loop's
+                // report would otherwise name "no reason given", which is what
+                // an embedder driving `Frames` itself would see.
+                self.refusal
+                    .refused(width, height, || "no renderer is attached".to_owned());
+                return false;
+            }
         }
+        // Cleared on the way out, so a refusal that is later taken up does not
+        // leave its reason to be reported against the next one.
+        self.refusal.clear();
         self.build(width, height);
         true
     }
@@ -249,6 +298,13 @@ impl Frames for ShowcaseFrames {
         self.live = None;
         self.arena = Arena::new();
         self.painter = GpuPainter::new();
+        // **The refusal record too**, for the reason `LoopState::acquire`
+        // clears its own `last_refused`: the device after a rebuild is not the
+        // one the record was written against. Left set, it would answer
+        // `refusal_reason` for a renderer that has refused nothing — and the
+        // loop asks only when it reports a refusal, so a `wanted == configured`
+        // frame never calls `resize` to overwrite it (issue #1194).
+        self.refusal.clear();
     }
 }
 
@@ -301,6 +357,7 @@ pub extern "system" fn Java_dev_driftsys_dashscene_demo_DemoNative_nativeStart<'
                     elapsed: 0.0,
                     phase: u64::MAX,
                     timing: Timing::new(),
+                    refusal: Refusal::default(),
                 })
             };
             // SAFETY: `window` is the reference `fromSurface` returned, which is
