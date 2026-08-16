@@ -961,7 +961,71 @@ _android-ndk-bin:
       echo "android: ${ndk} has no llvm prebuilt toolchain" >&2
       exit 1
     fi
+    # **Stdout here is the path and nothing else**, which is why both messages
+    # above go to stderr. `_android-env` below folds this into its own stdout,
+    # and three recipes `eval` that — so an informational line added here is not
+    # a cosmetic change: it becomes a command, and they fail with
+    # `bash: android:: command not found`. Anything for a human goes to `>&2`.
     echo "${bin}"
+
+# Print the NDK cross-compiling wiring as shell exports, for the caller to eval.
+#
+# The three recipes that cross-compile — `android`, `android-lint` and
+# `android-probe` — each carried their own copy of these five lines, so adding
+# `RANLIB_aarch64_linux_android`, or changing the linker name when an NDK
+# renames it, was three edits. A partial one fails only on whichever recipe was
+# missed, and that is `android-probe`: it needs a device, so it runs least often
+# (issue #1101).
+#
+# **Printing exports rather than running the command** is the shape
+# `_android-ndk-bin` establishes one recipe above — a private recipe answers a
+# question and the caller decides what to do with the answer. A wrapper that ran
+# a command instead would have to carry `android`'s four `cargo build` lines
+# through justfile-then-shell quoting for no gain.
+#
+# **Assign, then eval. Never `eval "$(just _android-env)"`.** A command
+# substitution that fails inside `eval`'s argument yields the empty string,
+# `eval ""` succeeds, and the recipe would carry on with no exports at all —
+# reaching cargo's linker error instead of `_android-ndk-bin`'s "no NDK found".
+# Assigning first keeps the `set -e` abort that the inlined copies had, because
+# the status of an assignment is the status of the substitution.
+#
+# `%q` rather than bare interpolation: the path is read off the filesystem and
+# goes back through `eval`, so an SDK under a directory with a space in it would
+# otherwise be re-split into two words.
+#
+# **The API level is a parameter, and that is not style.** `just` passes no
+# variable override into a nested `just`, so reading `{{ ANDROID_API }}` here
+# would silently ignore `just ANDROID_API=34 android`: measured on just 1.38.0,
+# the outer recipe sees 34 and a nested one still sees the default. Taking it as
+# an argument defaulted to the variable — `api=ANDROID_API` — restores the
+# override and keeps `just _android-env` standalone.
+#
+# It is also the one part of the Android toolchain that can now be checked
+# without a cross-compile: `just _android-env` prints what the other three
+# recipes will use, in about a second, and fails here rather than minutes later
+# inside cargo when the wrapper it names is absent.
+[private]
+_android-env api=ANDROID_API:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bin=$(just _android-ndk-bin)
+    clang="${bin}/aarch64-linux-android{{ api }}-clang"
+    # `_android-ndk-bin` guarantees the directory, not the per-API wrapper in
+    # it. An NDK ships one wrapper per level it supports — r28 carries 21 to 35
+    # — so an older NDK, or an `ANDROID_API` raised past what this one ships,
+    # leaves this path pointing at nothing. Unchecked, that surfaces minutes
+    # later as a linker-not-found error inside cargo, with the NDK never named.
+    if [ ! -x "${clang}" ]; then
+      echo "android: ${bin}" >&2
+      echo "android: has no aarch64-linux-android{{ api }}-clang, so ANDROID_API" >&2
+      echo "android: {{ api }} is past what this NDK supports. Install a newer NDK," >&2
+      echo "android: or lower ANDROID_API in this justfile." >&2
+      exit 1
+    fi
+    printf 'export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=%q\n' "${clang}"
+    printf 'export CC_aarch64_linux_android=%q\n' "${clang}"
+    printf 'export AR_aarch64_linux_android=%q\n' "${bin}/llvm-ar"
 
 # Build the lean painter for Android — a gate, like `wasm-painter`.
 #
@@ -976,11 +1040,10 @@ _android-ndk-bin:
 android:
     #!/usr/bin/env bash
     set -euo pipefail
-    bin=$(just _android-ndk-bin)
-    clang="${bin}/aarch64-linux-android{{ ANDROID_API }}-clang"
-    export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${clang}"
-    export CC_aarch64_linux_android="${clang}"
-    export AR_aarch64_linux_android="${bin}/llvm-ar"
+    # Assigned, then evalled — never `eval "$(just _android-env)"`, which
+    # swallows a missing NDK and compiles unwired. See `_android-env`.
+    android_env=$(just _android-env {{ ANDROID_API }})
+    eval "${android_env}"
     cargo build -p dashscene-gpu --target aarch64-linux-android
     # And the ABI, which is what a platform host actually links. Building the
     # painter alone would leave the crate a host embeds verified on no target
@@ -1029,14 +1092,10 @@ android:
 android-lint:
     #!/usr/bin/env bash
     set -euo pipefail
-    # **A third copy of this wiring** — `android` and `android-probe` carry the
-    # other two, so raising `ANDROID_API` is three edits. Issue #1101, not fixed
-    # here because the fix edits both of those recipes as well.
-    bin=$(just _android-ndk-bin)
-    clang="${bin}/aarch64-linux-android{{ ANDROID_API }}-clang"
-    export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${clang}"
-    export CC_aarch64_linux_android="${clang}"
-    export AR_aarch64_linux_android="${bin}/llvm-ar"
+    # Assigned, then evalled — never `eval "$(just _android-env)"`, which
+    # swallows a missing NDK and compiles unwired. See `_android-env`.
+    android_env=$(just _android-env {{ ANDROID_API }})
+    eval "${android_env}"
     # One invocation for the four that take the same flags, rather than one
     # each: four would re-resolve the graph four times in what is already the
     # workflow's slowest job.
@@ -1143,11 +1202,10 @@ android-apk: android
 android-probe:
     #!/usr/bin/env bash
     set -euo pipefail
-    bin=$(just _android-ndk-bin)
-    clang="${bin}/aarch64-linux-android{{ ANDROID_API }}-clang"
-    export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${clang}"
-    export CC_aarch64_linux_android="${clang}"
-    export AR_aarch64_linux_android="${bin}/llvm-ar"
+    # Assigned, then evalled — never `eval "$(just _android-env)"`, which
+    # swallows a missing NDK and compiles unwired. See `_android-env`.
+    android_env=$(just _android-env {{ ANDROID_API }})
+    eval "${android_env}"
     cargo build -p dashscene-gpu --example adapter_report --release \
       --target aarch64-linux-android
     # An `x && y` one-liner would rely on the `set -e` exemption for non-final
