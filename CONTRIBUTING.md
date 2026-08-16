@@ -87,9 +87,14 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
    `secrets` and `convco` are ungated and still have to pass.
 
    `main` carries a ruleset, so a change reaches it through a pull request with
-   `ci` green and the branch up to date. Nobody can step around that at the
-   merge button — a maintainer could disable the ruleset, which is a deliberate
-   act with an audit-log entry, not a quiet exception.
+   `ci` green. Since 2026-08-16 it also carries a merge queue: an approved pull
+   request is added to a queue rather than merged directly, and GitHub runs `ci`
+   once more on `main` plus everything queued ahead of it before anything lands.
+   Your branch does not need to be up to date for that — the queue builds the
+   combination itself — so there is no need to keep rebasing while you wait.
+   Nobody can step around the ruleset at the merge button; a maintainer could
+   disable it, which is a deliberate act with an audit-log entry, not a quiet
+   exception.
 
 7. A maintainer reviews the PR while CI runs, and records the findings as a
    checklist on it. Anything critical is fixed before merge; the rest is filed

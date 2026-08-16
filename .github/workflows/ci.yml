@@ -21,13 +21,21 @@ on:
   # were linted on the pull request that entered the queue, and there is no
   # second author between there and here.
   #
-  # IF THE QUEUE STALLS: an expression below that names a payload field wrongly
-  # makes `ci` report NOTHING on the merge group rather than reporting red, and
-  # a required check that never arrives times out every queued pull request
-  # instead of failing one. `main` takes no direct push and the ruleset's bypass
-  # list is empty, so the way out is to remove the `merge_queue` rule from
-  # ruleset 20731537 — merges go back to the button — fix the expression through
-  # an ordinary pull request, and re-add the rule.
+  # HOW THIS BREAKS, accurately. A wrong field name in the expressions below
+  # does NOT make the check silent: the expression yields an empty string,
+  # `scripts/is-code-change` fails closed to `true`, and `ci` reports GREEN over
+  # a degraded range. That is the likely defect, and it is loud in the wrong
+  # direction rather than quiet — a green merge group is not by itself evidence
+  # that these four expressions resolved.
+  #
+  # Only a narrower class stalls the queue instead: this trigger removed, the
+  # workflow failing to parse on the queue's branch, or the aggregate `ci` job
+  # renamed out from under the required check. Then no check ever reports and
+  # every queued pull request times out rather than one failing. The way out is
+  # to remove the `merge_queue` rule from ruleset 20731537 — restoring its seven
+  # parameters from docs/decisions/review-before-ready-not-before-open.md, since
+  # re-adding it bare restores GitHub's defaults — fix through an ordinary pull
+  # request, and re-add the rule.
   merge_group:
   # Manual trigger: forces every path-filtered job, so the expensive shape can
   # be run without waiting for a diff that happens to schedule it.
