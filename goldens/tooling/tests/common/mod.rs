@@ -16,6 +16,56 @@
 //! and the perceptual calibration both measure (issue #544). [`many_root`] is
 //! the fourth: the sixty-five-root document the load criterion and the
 //! per-frame criterion are both stated over (story #836).
+//!
+//! # Why the three generators stay declared here (issue #932)
+//!
+//! [`manifest`], [`many_root`] and [`stress`] are unrelated to each other, and
+//! every binary declaring `mod common;` compiles all three whether it names
+//! them or not. Eighteen binaries declare it and **eleven name none of the
+//! three**. Issue #932 offered two shapes — a `#[path]` include per fixture in
+//! only the binaries that use it, or a split into a sibling `fixtures/`
+//! directory — and asked for the cost to be measured before either was
+//! chosen, saying that under a second the honest answer is to write the reason
+//! down here and close it.
+//!
+//! Measured 2026-08-16 on macOS aarch64, on an otherwise idle machine: the
+//! serial (`-j1`) rebuild of exactly those eleven binaries, with the three
+//! `pub mod` lines present and removed, seven runs each. **3.13 s against
+//! 2.82 s at the medians, 3.10 s against 2.76 s at the minima — a difference
+//! of about 0.31 s across all eleven**, or roughly 29 ms per binary.
+//! Re-derive it by timing
+//!
+//!     cargo build -j1 -p goldens --test <each of the eleven>
+//!
+//! both ways, touching this file before each run so the binaries really
+//! rebuild — without the `touch` cargo answers from cache and both sides
+//! measure nothing. Take it on an idle machine: measured while another
+//! checkout was running its own gates, the same comparison returned 4.2 to
+//! 9.7 s and no usable difference.
+//!
+//! That is well under the threshold the issue set itself, so the idiom stays.
+//!
+//! **What the number is, stated carefully.** It is the whole marginal cost of
+//! declaring the three modules in a binary — codegen *and* the link work that
+//! follows from it, since with the three lines removed none of the eleven
+//! still references `dashc_wasm` or `serde_json`/`goldens::oracle`. What it is
+//! *not* is a saving in dependency compilation: those are dev-dependencies of
+//! this package and are built once for it whichever shape this module takes.
+//!
+//! It also describes the tree as this branch leaves it, which is the tree the
+//! decision applies to. [`decode_png`] below now keeps `png` in every binary
+//! that declares `mod common;`, where before this branch `png` reached one
+//! only through [`many_root`] — so the same comparison taken on the parent
+//! commit would have found a slightly larger difference.
+//!
+//! **This measures binaries that already declare `mod common;`, and says
+//! nothing about one newly declaring it.** That is a much larger number:
+//! adding `mod common;` to `derived_bank.rs` — tried on this branch, for
+//! issue #929, and reverted — took its serial rebuild from 0.43 s to 0.77 s
+//! on its own, because it then links the whole golden harness rather than
+//! `dashbuf` + `dashpack` + `png`. One binary joining costs about what all
+//! eleven above pay together, and `derived_bank` is in the sanity tier that
+//! runs before every commit. Issue #1090 carries that.
 
 #![allow(dead_code)]
 
@@ -197,12 +247,93 @@ pub fn size_of(arena: &Arena, node: NodeId) -> (f32, f32) {
     (rect.w, rect.h)
 }
 
+/// Decodes a PNG to 8-bit RGBA through the `png` crate, widening an RGB
+/// source to opaque RGBA.
+///
+/// `what` names the payload in each panic below, so a failure says which
+/// input was bad. It reads as the subject of the sentence — "the canonical
+/// payload has a readable PNG header" — so pass a noun phrase, not a path.
+///
+/// # Which decoder, and why it is not [`decode_rgba`]
+///
+/// The `png` crate, deliberately, and not Skia. `perceptual_calibration.rs`'s
+/// scores are read beside `crates/dashpack/tests/band_contract.rs`'s band
+/// fractions, which decodes the same way; a second decoder's disagreement
+/// would sit inside every comparison, indistinguishable from codec error.
+/// That is the reason this helper exists in this form, and it binds that
+/// caller — `many_root`'s use is ordinary decoding and would tolerate either.
+/// [`decode_rgba`] is not interchangeable with this: it goes through Skia to
+/// land in the golden *comparison* space
+/// (`docs/decisions/golden-comparison-space.md`), which is what a rendered
+/// frame is compared in. This one is the packer's input space.
+///
+/// # Panics
+///
+/// Naming `what`: if `bytes` is not a readable PNG, if it does not fit in
+/// memory, if it decodes as neither RGB nor RGBA, or if it decodes at other
+/// than eight bits per sample.
+///
+/// That last check is here because no `png::Transformations` is set, so a
+/// sixteen-bit source would arrive as `ColorType::Rgb` at six bytes per pixel
+/// and the widening below would read `chunks_exact(3)` across sample halves —
+/// wrong texels, no panic, and a caller slicing the oversized buffer stays in
+/// bounds. Both copies this replaced had that hole. It is not a claim that
+/// everything else is rejected: an 8-bit RGB source carrying `tRNS`
+/// transparency still decodes here with its alpha forced opaque. A caller
+/// needing either case sets `png::Transformations` itself, as
+/// `goldens/tooling/tests/lean_painter_baked_assets.rs` does (issue #1090).
+pub fn decode_png(bytes: &[u8], what: &str) -> (u32, u32, Vec<u8>) {
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    let mut reader = decoder
+        .read_info()
+        .unwrap_or_else(|e| panic!("{what} has a readable PNG header: {e}"));
+    let mut buffer = vec![
+        0;
+        reader
+            .output_buffer_size()
+            .unwrap_or_else(|| panic!("{what} fits in memory"))
+    ];
+    let info = reader
+        .next_frame(&mut buffer)
+        .unwrap_or_else(|e| panic!("{what} decodes: {e}"));
+    // Colour type first, then depth. An indexed or grayscale source is
+    // rejected for being indexed or grayscale, which is the useful thing to
+    // say about it; checking depth first would answer a 4-bit palette with a
+    // sentence about sample width.
+    assert!(
+        matches!(info.color_type, png::ColorType::Rgb | png::ColorType::Rgba),
+        "{what} is {:?}; it must be RGB or RGBA",
+        info.color_type
+    );
+    assert_eq!(
+        info.bit_depth,
+        png::BitDepth::Eight,
+        "{what} decodes at {:?}; this helper reads one byte per sample and \
+         sets no png::Transformations, so any other depth would be widened \
+         across sample boundaries",
+        info.bit_depth
+    );
+    buffer.truncate(info.buffer_size());
+    let texels = match info.color_type {
+        png::ColorType::Rgba => buffer,
+        png::ColorType::Rgb => buffer
+            .chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
+        other => panic!("{what} is {other:?}; it must be RGB or RGBA"),
+    };
+    (info.width, info.height, texels)
+}
+
 /// Decodes a PNG into unpremultiplied RGBA8888 — the golden comparison space
 /// (`docs/decisions/golden-comparison-space.md`, the same space
 /// `SkiaPainter::rgba_bytes` reads back). Shared by the text goldens'
 /// sensitivity guards, which measure a differing-pixel count against a
 /// deliberately broken render (#120: helpers shared across this directory's
 /// binaries live here, not copied per file).
+///
+/// Not the decoder a canonical payload goes through — see [`decode_png`],
+/// which states the split.
 pub fn decode_rgba(png_bytes: &[u8]) -> Vec<u8> {
     use skia_safe::{AlphaType, ColorType, Data, ImageInfo, images};
     let img = images::deferred_from_encoded_data(Data::new_copy(png_bytes), None)

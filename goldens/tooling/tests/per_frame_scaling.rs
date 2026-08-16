@@ -492,7 +492,10 @@ fn a_frame_costs_the_shown_root_and_not_the_document() {
     println!(
         "PER-FRAME SCALING — ratio {:.2}x on the solve and {:.2}x on the committed table \
          (#838's target: 1.00x on both), measured on {} {} in {:.1} ms — which is the whole \
-         measurement, almost all of it generating the two documents rather than running frames",
+         measurement, and mostly document generation rather than frames. Under `cargo test` \
+         that figure varies with scheduling order: the documents are memoised per size \
+         (issue #930), so this test pays a build, waits on another test's, or finds one \
+         already made. Nothing asserts on it",
         many_layout.solves as f64 / small_layout.solves as f64,
         many_layout.rect_rows as f64 / small_layout.rect_rows as f64,
         std::env::consts::OS,
