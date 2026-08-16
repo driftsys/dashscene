@@ -818,6 +818,20 @@ jobs:
       #
       # The runner image sets ANDROID_NDK_ROOT, which the recipe reads, so
       # nothing is installed here for it.
+      # The split-screen verdict, which needs no device and no toolchain.
+      #
+      # `just android-splitscreen` decides D4's third case from
+      # HarnessActivity's logcat markers, and that recipe runs on no runner —
+      # it needs an attached emulator, so nothing schedules it. The logic that
+      # decides PASS or FAIL lives in `harness/verdict.sh` precisely so this
+      # step can exercise it: reading that logic, which was all anyone could do
+      # while it sat inline in the recipe, missed five distinct false verdicts
+      # across two review rounds of PR #1177.
+      #
+      # Early in the job, and it costs milliseconds. A broken verdict fails
+      # here rather than reaching whoever next spends ten minutes on an
+      # emulator.
+      - run: ./crates/dashscene-android/harness/verdict-test.sh
       - run: just android
       # The C ABI's conformance check, here rather than in a job of its own: it
       # needs only a C compiler, which every runner has, and this is already the
