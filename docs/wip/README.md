@@ -14,9 +14,9 @@ See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 ## Why the WIP gate currently reports eleven files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-ten and exits non-zero. All ten are deliberate, accepted exceptions rather than
-ungardened debt, and they are recorded here so the gate's result is explained
-rather than merely tolerated.
+eleven and exits non-zero. All eleven are deliberate, accepted exceptions rather
+than ungardened debt, and they are recorded here so the gate's result is
+explained rather than merely tolerated.
 
 **The gate is deliberately not wired into CI, and this section is why.** Its
 result here is non-zero by design and would stay non-zero for as long as any
@@ -448,10 +448,12 @@ Two driver prompts are held here now, both v0.19's, as the section above says.
 landed, and `integration/v0.19-android` merged into `main` on 2026-08-09 and is
 history — and leaves at the slice's close.
 `2026-08-15-v019-REMAINING-DEBT-DRIVER-PROMPT.md` carries the debt that does not
-wait on hardware. It named eight; **#944 is what is left**, #950 having landed
-on 2026-08-16, and the other seven are struck in the prompt itself rather than
-deleted, because the corrections it made to their premises are what the work was
-done against. It leaves when that one lands or moves. It supersedes
+wait on hardware. It named eight and **none are left**: #950 landed on
+2026-08-16 and #944 the same day, and the rest are struck in the prompt itself
+rather than deleted, because the corrections it made to their premises are what
+the work was done against. **It is archivable now**, and leaves at the slice's
+close with the other v0.19 prompt rather than in either story's pull request —
+story #843 is where that happens. It supersedes
 `2026-08-15-v019-DEBT-DRIVER-PROMPT.md`, archived 2026-08-15.
 
 **Half its scope was gone inside a day of it landing**, which is worth reading

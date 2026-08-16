@@ -3580,3 +3580,131 @@ fn clearing_the_shown_root_returns_to_every_root_and_renumbers() {
         "the root that was shown alone is row 1 again, which is the renumbering"
     );
 }
+
+/// A solver reporting a node **outside** the shown root's subtree is not an
+/// error: it is handed the whole arena, `LayoutSolver` is a public trait, and
+/// since story #838 the commit resolves rects for the shown root alone. The
+/// extra rect is skipped and the commit succeeds.
+///
+/// Untestable before that story, because every root was drawn. It is pinned now
+/// because issue #944 keys the commit's `solved` scratch by rect row rather
+/// than by arena slot, so a node with no row is exactly what this skips — and
+/// the alternative reading of "no row", row 0, is the shown root's own rect
+/// (issue #980).
+#[test]
+fn a_rect_for_an_unshown_root_is_skipped_rather_than_committed() {
+    use dashscene_core::{LayoutSolver, SolvedRect};
+
+    /// Reports every root in the arena, which is what a solver walking
+    /// `Arena::roots` rather than `Arena::shown_roots` does.
+    struct EveryRoot;
+
+    impl LayoutSolver for EveryRoot {
+        fn solve(&mut self, arena: &Arena) -> Vec<(dashscene_core::NodeId, SolvedRect)> {
+            arena
+                .roots()
+                .iter()
+                .map(|&id| {
+                    (
+                        id,
+                        SolvedRect {
+                            x: 1.0,
+                            y: 2.0,
+                            w: 3.0,
+                            h: 4.0,
+                        },
+                    )
+                })
+                .collect()
+        }
+    }
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let first = txn.add_node(None, Some("shown"));
+    let second = txn.add_node(None, Some("unshown"));
+    txn.show_root(Some(first));
+    txn.commit_with(&mut EveryRoot);
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.rects().len(),
+        1,
+        "the commit draws the shown root alone, so the rect the solver returned for the other \
+         root is skipped rather than committed"
+    );
+    assert_eq!(
+        scene.rect_index_of(first),
+        Some(0),
+        "and the shown root keeps row 0"
+    );
+    assert_eq!(
+        scene.rect_index_of(second),
+        None,
+        "while the root that was not shown resolves to no row at all — not to row 0, which is \
+         the shown root's own rect (issue #980)"
+    );
+}
+
+/// The same skip, on the **non-structural** path — the one that reuses the
+/// previous commit's slot-to-rect map instead of building one.
+///
+/// A node added under a root that is not shown does not change `order.len()`,
+/// so the commit is not structural and the map is the previous commit's, which
+/// was sized when that node did not exist. The new node is therefore *past the
+/// end* of the map rather than `NO_RECT` inside it, and both mean the same
+/// thing: this commit resolves no rect for it. Reading the short map as "not a
+/// node of this arena" would reject a node the arena genuinely holds (issue
+/// #944).
+#[test]
+fn a_rect_for_a_root_added_since_the_map_was_built_is_skipped_too() {
+    use dashscene_core::{LayoutSolver, SolvedRect};
+
+    struct EveryRoot;
+
+    impl LayoutSolver for EveryRoot {
+        fn solve(&mut self, arena: &Arena) -> Vec<(dashscene_core::NodeId, SolvedRect)> {
+            arena
+                .roots()
+                .iter()
+                .map(|&id| {
+                    (
+                        id,
+                        SolvedRect {
+                            x: 1.0,
+                            y: 2.0,
+                            w: 3.0,
+                            h: 4.0,
+                        },
+                    )
+                })
+                .collect()
+        }
+    }
+
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let first = txn.add_node(None, Some("shown"));
+    txn.add_node(None, Some("unshown"));
+    txn.show_root(Some(first));
+    txn.commit_with(&mut EveryRoot);
+
+    // A third root, under nothing shown. `order` is still the one shown node,
+    // so this commit is not structural and the map is not rebuilt.
+    let mut txn = arena.open();
+    let third = txn.add_node(None, Some("added later"));
+    txn.commit_with(&mut EveryRoot);
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.rects().len(),
+        1,
+        "the shown root is still the only row"
+    );
+    assert_eq!(
+        scene.rect_index_of(third),
+        None,
+        "and the root added after the map was built resolves to no row, rather than being \
+         rejected as though it were not a node of this arena"
+    );
+}

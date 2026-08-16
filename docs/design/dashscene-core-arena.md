@@ -339,6 +339,46 @@ live nodes:
 - **Partial solve.** The `LayoutSolver::solve` contract now blesses returning
   only the movers (`docs/decisions/layout-solver-seam.md`); the engine's
   retained `TaffySolver` does exactly that (`docs/design/dashscene-engine.md`).
+- **Scratch keyed by rect row (story #944).** #164 made the commit's _work_
+  scale with the change, and story #838 confined the solve, the committed table
+  and the paint to the shown root — but the commit's own per-node scratch went
+  on being sized by `arena.nodes.len()` and indexed by `NodeId` slot. A frame
+  drawing one artboard of sixty-five allocated sixty-five entries in nine
+  vectors to produce a one-row table. The nine are `solved`, the clip pair
+  `region_out_index`/`region_out_changed`, the mask pair
+  `mask_region`/`mask_changed`, the visibility pair
+  `eff_hidden`/`hidden_changed`, the group-opacity carry `carried_out`, and
+  `rect_of_slot` — which the next paragraph removes rather than re-keys. The
+  other eight are sized by the walk and keyed by **rect row** now, joining
+  `painted_extent`, which was already the walk's length before this change
+  (issue #980 converted it, for a different reason). The loop that seeds
+  `solved` from the previous commit walks the same order rather than every slot.
+
+  The slot-to-rect map this keying needs is not a tenth vector: it is the
+  committed buffer's own `rect_index`, built once above the solve and handed on
+  at the end. A commit that is not structural does not build it at all — the
+  previous commit's map already describes this DFS order, which is the premise
+  the copy-on-write bullet above already relies on. `parent_row` is the single
+  lookup that crosses back from a `NodeId`, for the parent reads the clip, mask,
+  visibility and opacity cascades each make.
+
+  **A reused map can be shorter than the arena**, and `rect_of_slot_at` is the
+  one read that knows it: adding a node under a root that is not shown leaves
+  `order.len()` alone, so the commit is not structural and the map is not
+  rebuilt, and the new slot is past its end. Past the end and `NO_RECT` inside
+  it both mean "no rect this commit". Whether a `NodeId` names a node of the
+  arena at all is asked of the arena instead, so a genuinely foreign id is still
+  named as one (P4).
+
+  One diagnostic narrows with it: a solver returning **two** rects for a node
+  outside the shown root's subtree is no longer named, because neither reaches a
+  row. A duplicate for a drawn node and a foreign `NodeId` both still panic
+  (P4). `crates/dashscene-core/tests/arena.rs` pins the skip.
+
+  What this costs is measured, not asserted: `BYTES_PER_EXTRA_ROOT` in
+  `goldens/tooling/tests/per_frame_scaling.rs` went from 69 bytes per extra root
+  to 17 (`docs/decisions/per-frame-allocation-is-measured-as-a-slope.md`). The
+  17 that remain are the engine's, not the arena's — issue #1111.
 
 `rustc-hash` (`FxHashMap`) is the one crate #164 adds: an internal interner
 keyed by color/geometry bits needs neither SipHash's DoS resistance nor its

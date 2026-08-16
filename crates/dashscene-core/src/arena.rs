@@ -1320,7 +1320,20 @@ impl Arena {
     /// different node before and after, so a dirty set does not span it and
     /// [`CommittedScene::renumbered`] is what says so.
     fn dfs_order(&self) -> Vec<NodeId> {
-        let mut order = Vec::with_capacity(self.nodes.len());
+        // Deliberately not `with_capacity(self.nodes.len())`. Since story #838
+        // this walk covers the shown roots' subtrees, so reserving the whole
+        // document was the last per-commit allocation left that is sized by
+        // what is *not* drawn (issue #944).
+        //
+        // **This is a trade, not a free win.** Growth costs about log2(len)
+        // allocations and copies what it has grown past, where the reserve
+        // was one exact allocation and no copying — so a commit that shows
+        // *every* root pays more here than it used to, and the band measures
+        // the direction: the one-root document's layout frame went up by 8
+        // bytes on this step. What it buys is that a document with sixty-five
+        // roots and one shown stops reserving sixty-five slots for a walk of
+        // one, which is the case the shown-root work exists for.
+        let mut order = Vec::new();
         let mut stack: Vec<NodeId> = self.shown_roots().iter().rev().copied().collect();
         while let Some(id) = stack.pop() {
             order.push(id);
@@ -2085,33 +2098,103 @@ impl Txn<'_> {
         // DFS document order (rect-table index order).
         let order = arena.dfs_order();
 
-        // Geometry from the solver, keyed by arena slot. Malformed
-        // solver output is a broken contract, named loudly (P4):
-        // duplicates and foreign ids never commit silently.
-        let mut solved: Vec<Option<SolvedRect>> = vec![None; arena.nodes.len()];
+        // A node was added since the previous commit iff the node count
+        // grew (v0.4 never removes). A structural change re-indexes the
+        // rect table, so the previous index maps cannot be reused.
+        // A renumbering is structural whether or not the node count moved: two
+        // roots with equal subtrees give equal lengths and different meanings,
+        // so the index maps have to be rebuilt either way.
+        //
+        // Read before the solve because the map below is, and the map is what
+        // lets this commit's scratch be keyed by rect index (issue #944).
+        // Nothing between here and where it used to be computed can move it:
+        // `order` is already taken, `renumbered` is decided above, and the
+        // previous buffer is not written until this commit publishes.
+        let structural = order.len() != arena.buffers[arena.front].node_ids.len() || renumbered;
+
+        // The slot-to-rect map: for each arena slot, the row this commit's
+        // rect table gives it. Built once, here, and handed to the committed
+        // buffer at the end rather than built twice.
+        //
+        // On a **structural** commit this is the vector the buffer needs
+        // anyway. On any other commit the previous commit's map already
+        // describes this DFS order — which is the premise the buffer below
+        // has always relied on when it shares that map by reference — so
+        // there is nothing to build at all, and a steady-state frame stops
+        // paying a document-sized allocation for it (issue #944).
+        //
+        // `NO_RECT` rather than zero, for the reason D4 of
+        // `docs/decisions/the-runtime-paints-the-shown-root.md` gives: a zero
+        // default is a *valid* rect index — row 0, the shown root's own rect —
+        // so every slot this walk does not reach would answer with the shown
+        // root's geometry instead of admitting it has none. The walk covers
+        // the shown roots' subtrees, and the arena holds every slot, so on a
+        // confined commit those are not the same set (issue #980).
+        //
+        // **The reused map can be shorter than the arena**, and every read of
+        // it below has to treat that as `NO_RECT` rather than as an unknown
+        // node. Adding a node under a root that is not shown leaves
+        // `order.len()` alone, so the commit is not structural and the map is
+        // not rebuilt: the new slot is past the end of a map sized when it did
+        // not exist. `rect_of_slot_at` is that read, and it is the only one.
+        let rect_of_slot: Arc<Vec<u32>> = if structural {
+            let mut map = vec![NO_RECT; arena.nodes.len()];
+            for (i, &id) in order.iter().enumerate() {
+                // In range for u32 by the add_node guard.
+                map[id.index()] = i as u32;
+            }
+            Arc::new(map)
+        } else {
+            Arc::clone(&arena.buffers[arena.front].rect_index)
+        };
+
+        // Geometry from the solver, keyed by **rect index** — one entry per
+        // node this commit draws rather than one per node the document holds
+        // (issue #944). Malformed solver output is a broken contract, named
+        // loudly (P4): duplicates and foreign ids never commit silently.
+        let node_count = arena.nodes.len();
+        let mut solved: Vec<Option<SolvedRect>> = vec![None; order.len()];
         for (id, rect) in solver.solve(arena) {
-            let slot = solved.get_mut(id.index()).unwrap_or_else(|| {
-                panic!("solver returned a rect for {id:?}, which is not a node of this arena")
-            });
+            // Whether the id names a node at all is asked of the arena, never
+            // of the map: the map is a statement about what this commit draws,
+            // and can be shorter than the arena (see `rect_of_slot` above).
             assert!(
-                slot.replace(rect).is_none(),
+                id.index() < node_count,
+                "solver returned a rect for {id:?}, which is not a node of this arena"
+            );
+            let row = rect_of_slot_at(&rect_of_slot, id);
+            // A node outside the shown root's subtree, or one added since the
+            // map was built. The solver is handed the whole arena and
+            // `LayoutSolver` is a public trait, so reporting one is not an
+            // error — this commit simply resolves no rect for it (story #838).
+            // It is dropped rather than stored, which is the one thing this
+            // keying gives up: a solver returning *two* rects for such a node
+            // is no longer named, where a duplicate for a drawn node still is.
+            if row == NO_RECT {
+                continue;
+            }
+            assert!(
+                solved[row as usize].replace(rect).is_none(),
                 "solver returned two rects for {id:?}"
             );
         }
         // Carry forward the previous commit's rect for every node the
-        // solver did not report — by NodeId, so a structural change that
-        // shifted the DFS index still finds the right previous rect. A
+        // solver did not report — looked up by NodeId, so a structural change
+        // that shifted the DFS index still finds the right previous rect. A
         // node that is neither solved now nor present in a previous commit
         // stays `None` and trips the invariant below.
+        //
+        // Walks this commit's own order rather than every slot the arena
+        // holds: a node under an unshown root has no entry to fill (#944).
         {
             let previous = &arena.buffers[arena.front];
-            for (slot, geom) in solved.iter_mut().enumerate() {
-                if geom.is_none()
-                    && let Some(&ri) = previous.rect_index.get(slot)
+            for (row, &id) in order.iter().enumerate() {
+                if solved[row].is_none()
+                    && let Some(&ri) = previous.rect_index.get(id.index())
                     && ri != NO_RECT
                 {
                     let r = previous.rects[ri as usize];
-                    *geom = Some(SolvedRect {
+                    solved[row] = Some(SolvedRect {
                         x: r.x,
                         y: r.y,
                         w: r.w,
@@ -2131,33 +2214,29 @@ impl Txn<'_> {
             arena.mask_toggled.iter().map(|n| n.index()).collect();
 
         let previous = &arena.buffers[arena.front];
-        // A node was added since the previous commit iff the node count
-        // grew (v0.4 never removes). A structural change re-indexes the
-        // rect table, so the previous index maps cannot be reused.
-        // A renumbering is structural whether or not the node count moved: two
-        // roots with equal subtrees give equal lengths and different meanings,
-        // so the index maps have to be rebuilt either way.
-        let structural = order.len() != previous.node_ids.len() || renumbered;
 
         // The paint and clip tables start shared with the previous
         // commit; `intern_*` copies-on-write only when a new entry is
         // pushed. `region_out_index`/`region_out_changed` carry, per node,
         // the clip region it hands its children and whether that region
         // changed — the parent-before-child DFS lets a child read them.
+        //
+        // Every vector below is keyed by **rect row**, not by arena slot, and
+        // sized by this commit's own walk: a document's unshown roots cost it
+        // nothing (issue #944). `parent_row` is the crossing back.
         let mut back_paints = Arc::clone(&previous.paints);
         let mut back_clips = Arc::clone(&previous.clips);
         let mut rects: Vec<RectEntry> = Vec::with_capacity(order.len());
-        let n = arena.nodes.len();
         // `None` until the node is visited, so a child that reads its
         // parent's region before the parent resolved it fails by name
         // rather than reading a silent `UNCLIPPED` (issue #198).
-        let mut region_out_index: Vec<Option<ClipIndex>> = vec![None; n];
-        let mut region_out_changed: Vec<bool> = vec![false; n];
+        let mut region_out_index: Vec<Option<ClipIndex>> = vec![None; order.len()];
+        let mut region_out_changed: Vec<bool> = vec![false; order.len()];
         let visible_toggled_set: FxHashSet<usize> =
             arena.visible_toggled.iter().map(|n| n.index()).collect();
 
         // Mask resolution (`docs/decisions/masks-and-group-opacity.md`).
-        // `mask_region[parent slot]` is the region a mask child hands the
+        // `mask_region[parent row]` is the region a mask child hands the
         // siblings that follow it: the parent's own region with every mask
         // child seen so far chained on (successive masks intersect, not
         // replace — M3). `None` = no mask child yet, so a following sibling
@@ -2165,36 +2244,30 @@ impl Txn<'_> {
         // that the masking a following sibling receives changed this commit
         // (a mask added, removed, moved, or made in/visible), so the
         // sibling re-resolves even in the mask-off direction (M1). Keyed by
-        // parent slot; the DFS never writes a parent's slot between its
-        // children, so the value a later sibling reads is stable.
-        let mut mask_region: Vec<Option<ClipIndex>> = vec![None; n];
-        let mut mask_changed: Vec<bool> = vec![false; n];
-        // `eff_hidden[slot]` is whether the node, or any ancestor, is
+        // the parent's rect row; the DFS never writes a parent's entry between
+        // its children, so the value a later sibling reads is stable.
+        let mut mask_region: Vec<Option<ClipIndex>> = vec![None; order.len()];
+        let mut mask_changed: Vec<bool> = vec![false; order.len()];
+        // `eff_hidden[row]` is whether the node, or any ancestor, is
         // `Visible(false)`. A hidden subtree draws nothing under the fixed
         // solver (which does not hide it), so its rects resolve to the
-        // draws-nothing entry (M5). `hidden_changed[slot]` propagates a
+        // draws-nothing entry (M5). `hidden_changed[row]` propagates a
         // visibility toggle down the subtree so a descendant re-interns its
         // paint. Parent-before-child DFS fills both.
-        let mut eff_hidden: Vec<bool> = vec![false; n];
-        let mut hidden_changed: Vec<bool> = vec![false; n];
-        // Per rect index: slot lookup, and the painted extent of the rect
-        // (its box grown by any stroke outset) for the overlap test — `None`
-        // when the rect paints nothing (M10). The exclusive subtree end is
-        // filled post-order below.
-        // `NO_RECT` rather than zero, for the reason D4 of
-        // `docs/decisions/the-runtime-paints-the-shown-root.md` gives for the
-        // committed `rect_index` one field over: a zero default is a *valid*
-        // rect index — row 0, the shown root's own rect — so every slot this
-        // walk does not reach would answer with the shown root's geometry
-        // instead of admitting it has none. The walk covers the shown roots'
-        // subtrees, and `n` is every slot the arena holds, so on a confined
-        // commit those are not the same set (issue #980).
-        let mut rect_of_slot: Vec<u32> = vec![NO_RECT; n];
+        let mut eff_hidden: Vec<bool> = vec![false; order.len()];
+        let mut hidden_changed: Vec<bool> = vec![false; order.len()];
+        // Per rect index: the painted extent of the rect (its box grown by any
+        // stroke outset) for the overlap test — `None` when the rect paints
+        // nothing (M10). The exclusive subtree end is filled post-order below.
         let mut painted_extent: Vec<Option<Extent>> = vec![None; order.len()];
 
         for (i, &id) in order.iter().enumerate() {
-            rect_of_slot[id.index()] = i as u32;
             let node = &arena.nodes[id.index()];
+            // The parent's rect row, resolved once for the four cascades below
+            // that read it — clip, mask, visibility and group opacity. A node
+            // in `order` has its parent in `order` too, because the walk covers
+            // whole subtrees, and the DFS reaches the parent first (issue #944).
+            let parent_i = node.parent.map(|p| parent_row(&rect_of_slot, p));
             // Effective visibility folds the active variant override on top
             // of the base field, the same overlay-on-read the geometry and
             // fill use (story #283): a member that sets Visible(false) hides
@@ -2202,7 +2275,7 @@ impl Txn<'_> {
             // fixed-solver commit resolves it to draws-nothing (M5) and stops
             // it masking.
             let node_visible = arena.overlay(id).visible.unwrap_or(node.layout.visible);
-            let geometry = solved[id.index()].unwrap_or_else(|| {
+            let geometry = solved[i].unwrap_or_else(|| {
                 panic!(
                     "no rect for {id:?}: the solver did not resolve it and no previous commit did \
                      either (P4)"
@@ -2228,14 +2301,20 @@ impl Txn<'_> {
             // itself, only its descendants / following siblings.)
             let (region_in_index, region_in_changed) = match node.parent {
                 Some(parent) => {
+                    // `parent_i` is `node.parent` mapped, so it is `Some`
+                    // exactly when this arm is taken. Named rather than
+                    // matched as a tuple, because the unreachable arm of that
+                    // tuple would resolve a child to `UNCLIPPED` — a root's
+                    // answer — and mis-clip its whole subtree in silence, which
+                    // is the shape issue #198 exists to refuse (P4).
+                    let pi = parent_i.expect("a node with a parent has a parent row");
                     // Read the parent's outgoing region through the guard
                     // in both arms, so an order violation is caught even
                     // when a mask supplies the region actually used
                     // (issue #198).
-                    let parent_out = parent_region_out(&region_out_index, parent);
-                    let changed =
-                        region_out_changed[parent.index()] || mask_changed[parent.index()];
-                    match mask_region[parent.index()] {
+                    let parent_out = parent_region_out(&region_out_index, pi, parent);
+                    let changed = region_out_changed[pi] || mask_changed[pi];
+                    match mask_region[pi] {
                         Some(masked) => (masked, changed),
                         None => (parent_out, changed),
                     }
@@ -2253,16 +2332,15 @@ impl Txn<'_> {
             // Effective visibility: hidden if this node or any ancestor is
             // `Visible(false)` (M5). `hidden_changed` propagates a
             // visibility toggle down so a descendant re-interns its paint.
-            let parent_hidden = node.parent.is_some_and(|p| eff_hidden[p.index()]);
-            let parent_hidden_changed = node.parent.is_some_and(|p| hidden_changed[p.index()]);
-            eff_hidden[id.index()] = parent_hidden || !node_visible;
-            hidden_changed[id.index()] =
-                parent_hidden_changed || visible_toggled_set.contains(&id.index());
+            let parent_hidden = parent_i.is_some_and(|pi| eff_hidden[pi]);
+            let parent_hidden_changed = parent_i.is_some_and(|pi| hidden_changed[pi]);
+            eff_hidden[i] = parent_hidden || !node_visible;
+            hidden_changed[i] = parent_hidden_changed || visible_toggled_set.contains(&id.index());
 
             // A mask node and a hidden node both draw nothing — a mask is a
             // stencil (`docs/decisions/masks-and-group-opacity.md`), a
             // hidden node is not drawn (M5). Neither contributes to overlap.
-            let draws_nothing = node.mask || eff_hidden[id.index()];
+            let draws_nothing = node.mask || eff_hidden[i];
 
             // Paint: reuse the stable previous index unless the node's paint
             // intent changed, its mask flag toggled (paint-dirty), or its
@@ -2271,7 +2349,7 @@ impl Txn<'_> {
             // the cache-miss arm so a change-scaled commit does not
             // heap-clone every gradient's stops every frame (M9, P3).
             let paint = match prev_entry
-                .filter(|_| !paint_dirty_set.contains(&id.index()) && !hidden_changed[id.index()])
+                .filter(|_| !paint_dirty_set.contains(&id.index()) && !hidden_changed[i])
             {
                 Some(prev) => prev.paint,
                 None => {
@@ -2389,18 +2467,17 @@ impl Txn<'_> {
                     h: geometry.h,
                     corners: node.corners,
                 };
-                region_out_index[id.index()] = Some(intern_region(
+                region_out_index[i] = Some(intern_region(
                     &mut back_clips,
                     clip_map,
                     region_in_index,
                     node_box,
                 ));
-                region_out_changed[id.index()] =
+                region_out_changed[i] =
                     region_in_changed || clip_toggled_set.contains(&id.index()) || box_changed;
             } else {
-                region_out_index[id.index()] = Some(region_in_index);
-                region_out_changed[id.index()] =
-                    region_in_changed || clip_toggled_set.contains(&id.index());
+                region_out_index[i] = Some(region_in_index);
+                region_out_changed[i] = region_in_changed || clip_toggled_set.contains(&id.index());
             }
 
             // A visible mask node stencils the siblings that follow it in
@@ -2409,7 +2486,7 @@ impl Txn<'_> {
             // does not mask (M2). Any change to this node's masking — flag
             // toggled, geometry moved, or visibility changed — re-resolves
             // the regions its following siblings receive (M1).
-            if let Some(parent) = node.parent {
+            if let Some(mask_parent_i) = parent_i {
                 let node_masks = node.mask && node_visible;
                 if node_masks {
                     let node_box = ClipBox {
@@ -2419,7 +2496,7 @@ impl Txn<'_> {
                         h: geometry.h,
                         corners: node.corners,
                     };
-                    mask_region[parent.index()] = Some(intern_region(
+                    mask_region[mask_parent_i] = Some(intern_region(
                         &mut back_clips,
                         clip_map,
                         region_in_index,
@@ -2430,7 +2507,7 @@ impl Txn<'_> {
                     || visible_toggled_set.contains(&id.index())
                     || (node.mask && box_changed);
                 if mask_state_changed {
-                    mask_changed[parent.index()] = true;
+                    mask_changed[mask_parent_i] = true;
                 }
             }
 
@@ -2444,7 +2521,7 @@ impl Txn<'_> {
         let mut subtree_end: Vec<u32> = (1..=order.len() as u32).collect();
         for i in (0..order.len()).rev() {
             if let Some(parent) = arena.nodes[order[i].index()].parent {
-                let pi = rect_of_slot[parent.index()] as usize;
+                let pi = parent_row(&rect_of_slot, parent);
                 subtree_end[pi] = subtree_end[pi].max(subtree_end[i]);
             }
         }
@@ -2457,11 +2534,11 @@ impl Txn<'_> {
         // carried product, and its subtree draws into that layer at a
         // reset product of 1.
         let mut groups: Vec<GroupComposite> = Vec::new();
-        let mut carried_out: Vec<f32> = vec![1.0; n];
+        let mut carried_out: Vec<f32> = vec![1.0; order.len()];
         for (i, &id) in order.iter().enumerate() {
             let node = &arena.nodes[id.index()];
             let base = match node.parent {
-                Some(parent) => carried_out[parent.index()],
+                Some(parent) => carried_out[parent_row(&rect_of_slot, parent)],
                 None => 1.0,
             };
             let opacity = node.opacity.clamp(0.0, 1.0);
@@ -2481,11 +2558,11 @@ impl Txn<'_> {
                 // at full alpha; the group's alpha applies once, at the
                 // composite.
                 rects[i].opacity = 1.0;
-                carried_out[id.index()] = 1.0;
+                carried_out[i] = 1.0;
             } else {
                 let alpha = if opacity < 1.0 { base * opacity } else { base };
                 rects[i].opacity = alpha;
-                carried_out[id.index()] = alpha;
+                carried_out[i] = alpha;
             }
         }
 
@@ -2527,7 +2604,12 @@ impl Txn<'_> {
         // placed glyphs exactly as the solver supplies the rects.
         let glyphs = {
             let geometry = |id: NodeId| {
-                let i = rect_of_slot_checked(&rect_of_slot, id, "asked for the geometry of");
+                let i = rect_of_slot_checked(
+                    &rect_of_slot,
+                    node_count,
+                    id,
+                    "asked for the geometry of",
+                );
                 let r = rects[i as usize];
                 SolvedRect {
                     x: r.x,
@@ -2545,8 +2627,12 @@ impl Txn<'_> {
             // so the run order *within* one text node — the font-fallback
             // split — is preserved.
             for staged in &mut staged {
-                staged.run.rect =
-                    rect_of_slot_checked(&rect_of_slot, staged.node, "returned a run for");
+                staged.run.rect = rect_of_slot_checked(
+                    &rect_of_slot,
+                    node_count,
+                    staged.node,
+                    "returned a run for",
+                );
             }
             staged.sort_by_key(|staged| staged.run.rect);
             let mut table = GlyphRunTable::with_atlases(solver.atlases());
@@ -2618,24 +2704,15 @@ impl Txn<'_> {
         // The index maps change only on a structural change; otherwise the
         // previous commit's maps still describe this DFS order, so share
         // them by reference.
-        let (node_ids, rect_index) = if structural {
-            // `NO_RECT` rather than zero, so a node this commit resolved no
-            // rect for reads as absent rather than as row 0. Since story #838
-            // that is an ordinary case — every node under an unshown root — and
-            // a zero default would have answered "the shown root's own rect"
-            // for all of them.
-            let mut rect_index = vec![NO_RECT; n];
-            for (i, &id) in order.iter().enumerate() {
-                // In range for u32 by the add_node guard.
-                rect_index[id.index()] = i as u32;
-            }
-            (Arc::new(order), Arc::new(rect_index))
+        let node_ids = if structural {
+            Arc::new(order)
         } else {
-            (
-                Arc::clone(&previous.node_ids),
-                Arc::clone(&previous.rect_index),
-            )
+            Arc::clone(&previous.node_ids)
         };
+        // The map the walk was keyed against, handed on rather than rebuilt.
+        // It was already either this commit's own (structural) or the previous
+        // commit's shared by reference (issue #944).
+        let rect_index = rect_of_slot;
         let images = Arc::clone(&arena.images);
         let back_scene = CommittedScene {
             rects,
@@ -2686,10 +2763,15 @@ impl Txn<'_> {
 /// rect, is the answer it must not be given: the run would draw, anchored
 /// on another artboard's box, at a position no design specified and with
 /// nothing to report it (issue #980, P4).
-fn rect_of_slot_checked(rect_of_slot: &[u32], id: NodeId, did: &str) -> u32 {
-    let index = *rect_of_slot
-        .get(id.index())
-        .unwrap_or_else(|| panic!("the stager {did} {id:?}, which is not a node of this arena"));
+fn rect_of_slot_checked(rect_of_slot: &[u32], node_count: usize, id: NodeId, did: &str) -> u32 {
+    assert!(
+        id.index() < node_count,
+        "the stager {did} {id:?}, which is not a node of this arena"
+    );
+    // Past the end of the map and `NO_RECT` inside it mean the same thing —
+    // this commit resolved no rect — so both take the message below rather
+    // than the one above (issue #944).
+    let index = rect_of_slot_at(rect_of_slot, id);
     assert!(
         index != NO_RECT,
         "the stager {did} {id:?}, which this commit resolved no rect for: it is outside the \
@@ -3152,9 +3234,49 @@ fn compact_clips(
     *clips = Arc::new(table);
 }
 
+/// The rect-table row a node resolved to in this commit, or [`NO_RECT`].
+///
+/// **The one read of the slot-to-rect map**, because the map can be shorter
+/// than the arena and every caller has to treat that the same way. A commit
+/// that is not structural reuses the previous commit's map, and a node added
+/// under an unshown root since then leaves `order.len()` unchanged — so the new
+/// slot is past the end of the map rather than `NO_RECT` inside it. Both mean
+/// "this commit resolved no rect for it" (issue #944).
+///
+/// Whether the id names a node of the arena at all is a different question,
+/// asked of the arena rather than of this map.
+fn rect_of_slot_at(rect_of_slot: &[u32], id: NodeId) -> u32 {
+    rect_of_slot.get(id.index()).copied().unwrap_or(NO_RECT)
+}
+
+/// The rect-table row a visited node's parent resolved to.
+///
+/// The commit's scratch is keyed by rect row rather than by arena slot, so that
+/// it costs the shown root's subtree and not the document (issue #944); this is
+/// the lookup that has to cross back from a `NodeId`. A node the walk reaches
+/// has its parent in the same walk — the traversal covers whole subtrees — and
+/// the DFS reaches the parent first, so the row is always both mapped and
+/// already written.
+///
+/// # Panics
+///
+/// Panics if the parent has no row, which means the walk reached a node whose
+/// parent it did not: a traversal that is not the one `rect_of_slot` was built
+/// from. Reading row 0 instead would silently give the whole subtree the shown
+/// root's clip, mask and alpha (issue #980, P4).
+fn parent_row(rect_of_slot: &[u32], parent: NodeId) -> usize {
+    let row = rect_of_slot_at(rect_of_slot, parent);
+    assert!(
+        row != NO_RECT,
+        "commit reached a child of {parent:?} while {parent:?} itself has no rect row: the walk \
+         and the rect-table map disagree about which nodes this commit draws"
+    );
+    row as usize
+}
+
 /// The clip region a parent hands its children, read while the child is
 /// visited. `None` means the commit walk reached a child before its
-/// parent: [`Arena::dfs_order`] is parent-before-child, so an unset slot
+/// parent: [`Arena::dfs_order`] is parent-before-child, so an unset entry
 /// is a broken traversal invariant, not a recoverable state.
 ///
 /// The pre-#164 commit path stored these as `Option` for exactly this
@@ -3162,8 +3284,8 @@ fn compact_clips(
 /// vector defaulting to `UNCLIPPED`, which would mis-clip the whole
 /// subtree in silence instead (issue #198). P4 — a violated invariant is
 /// a named failure, never a silent degrade.
-fn parent_region_out(region_out: &[Option<ClipIndex>], parent: NodeId) -> ClipIndex {
-    region_out[parent.index()].unwrap_or_else(|| {
+fn parent_region_out(region_out: &[Option<ClipIndex>], pi: usize, parent: NodeId) -> ClipIndex {
+    region_out[pi].unwrap_or_else(|| {
         panic!(
             "commit reached a child of {parent:?} before {parent:?} itself: the clip cascade \
              requires parent-before-child document order (P4)"
@@ -3491,7 +3613,7 @@ mod tests {
     #[test]
     fn parent_region_out_returns_a_resolved_parents_region() {
         let region_out = vec![Some(ClipIndex(7)), None];
-        assert_eq!(parent_region_out(&region_out, NodeId(0)), ClipIndex(7));
+        assert_eq!(parent_region_out(&region_out, 0, NodeId(0)), ClipIndex(7));
     }
 
     #[test]
@@ -3501,7 +3623,7 @@ mod tests {
         // parent's slot still unset. Reading `UNCLIPPED` there instead
         // would mis-clip the whole subtree in silence.
         let region_out = vec![None, Some(ClipIndex(1))];
-        let _ = parent_region_out(&region_out, NodeId(0));
+        let _ = parent_region_out(&region_out, 0, NodeId(0));
     }
 
     // The interner guard's rollback rule (issue #196), exercised on the

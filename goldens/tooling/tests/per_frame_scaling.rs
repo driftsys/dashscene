@@ -19,7 +19,12 @@
 //!
 //! # What this measures, and why it is a count
 //!
-//! Two terms, both exact and identical on every machine:
+//! Three terms, all exact — and the first two identical on every machine. The
+//! third is exact on any one target and **not portable**: it is a byte count, so
+//! it moves with type layout and with `std`'s `Vec` growth strategy, where a
+//! count of solves and a count of table rows do not. Its figures below are
+//! recorded on macos aarch64 for that reason, and `report` prints the machine
+//! beside every measurement.
 //!
 //! - **the solve** — `TaffySolver::solves()`, the number of Taffy layout
 //!   computations one frame ran. `dashscene_engine`'s `compute_all` runs one
@@ -31,8 +36,18 @@
 //! - **the committed table** — the row count of `CommittedScene::rects()`,
 //!   which `Arena::dfs_order` fills from **all** roots. Every frame rebuilds
 //!   it, so its size is a per-frame cost and not a load-time one.
+//! - **the commit's allocation** — bytes one steady-state layout frame asks the
+//!   allocator for, per root beyond the first, counted through a
+//!   `#[global_allocator]` wrapping `System`. Added by story #944, which is
+//!   about a cost **the two terms above cannot see**: the commit's per-node
+//!   scratch was sized by the document while the solve and the table were
+//!   already confined to the shown root, so both of those read 1.00x while a
+//!   frame still allocated sixty-five entries in nine vectors to produce a
+//!   one-row table. See [`BYTES_PER_EXTRA_ROOT`] for why this one is a slope
+//!   where the others are levels, why it is the layout frame, and why it is
+//!   bytes rather than a count of allocations.
 //!
-//! Neither is a stopwatch, and that is deliberate.
+//! None of the three is a stopwatch, and that is deliberate.
 //! `docs/decisions/startup-scaling-is-measured-by-a-counter.md` D1 rules for
 //! this repository that "a cost with no visible symptom needs a counter, not a
 //! stopwatch": a count is exact, identical on every machine, and either right
@@ -52,13 +67,22 @@
 //! retained Taffy tree, which is the frame a host pays once (issue #164).
 //!
 //! ```text
-//! document           frame         solves   rect rows
-//! small-root (1)     paint-only         0           1
-//! small-root (1)     layout             1           1
-//! many-root (65)     paint-only         0           1
-//! many-root (65)     layout             1           1
-//! ratio, many/small  layout          1.00x       1.00x
+//! document           frame         solves   rect rows   bytes
+//! small-root (1)     paint-only         0           1     892
+//! small-root (1)     layout             1           1     297
+//! many-root (65)     paint-only         0           1   11260
+//! many-root (65)     layout             1           1    1385
+//! ratio, many/small  layout          1.00x       1.00x   4.66x
+//! slope, per extra root                                     17
 //! ```
+//!
+//! The byte levels are stated for completeness and asserted on nowhere. What is
+//! asserted is the **growth** between the two documents — 1088 bytes, which is
+//! the 17 above times the 64 extra roots — see [`BYTES_PER_EXTRA_ROOT`] for why
+//! it is a difference and why the comparison is against the whole growth rather
+//! than against a per-root quotient. The paint-only row's figures are the ones
+//! that move between runs of the same document, which is why the term is taken
+//! on the layout row.
 //!
 //! # Before and after, because this band exists to state both
 //!
@@ -74,11 +98,49 @@
 //! after  (#838)       1    1.00x    1    1.00x
 //! ```
 //!
+//! **The third term is on the same footing.** Neither term above moves when
+//! the commit's per-node scratch does, so story #944 added the byte slope
+//! first, measured it against the unchanged commit, and then bounded the
+//! scratch.
+//!
+//! ```text
+//!                    bytes per extra root
+//! before (#944)      69
+//! after  (#944)      17
+//! ```
+//!
+//! It came down in four measured steps, each predicted before it was taken and
+//! each landing on its prediction exactly: 69 to 65 when the slot-to-rect map
+//! stopped being built twice, to 45 when `solved` and its carry-forward loop
+//! were keyed by rect row, to 21 when the clip, mask, visibility and
+//! group-opacity vectors followed, and to 17 when `dfs_order` stopped
+//! reserving the whole document.
+//!
+//! **17 is not zero, and what remains is in `dashscene-engine`**, which this
+//! story deliberately did not touch: `baseline_pass`'s `cross_offset` (8 bytes
+//! per node), `incremental`'s `on_path` (1 byte per node) and the
+//! `state.roots.clone()` whose own comment calls the roots list small when it
+//! is the document's root count (8 bytes per root). Issue #1111 carries them.
+//!
+//! **The one-root document's layout frame went up, from 289 bytes to 297**, and
+//! that is the honest reading of the last step: an unreserved `Vec` growing to
+//! one element takes a larger minimum allocation than a one-element reserve.
+//! The term is a slope precisely so that a level moving in the small case
+//! cannot be mistaken for the document-scaled cost this measures — 4705 bytes
+//! to 1385 over the sixty-five-root document, on the same change.
+//!
 //! The band landed first so that before-number was measured rather than
 //! remembered — a band added in the same change that improves what it measures
 //! cannot fail, and cannot show what the change was worth. And it is still
 //! measured: [`the_confinement_is_what_makes_the_number_one`] removes the
 //! confinement on every run and reports 65 again.
+//!
+//! **On the byte term that guard reports 136, not the 69 story #944 started
+//! from, and the difference is not a regression.** An unconfined commit really
+//! does draw sixty-five artboards, so the rect table and everything else sized
+//! by rect rows grows with it — costs the confined commit avoids by drawing
+//! less, rather than scratch it was wasting. The guard's job is to show the
+//! term moves when the confinement goes, and 136 against 17 shows it.
 //!
 //! The paint-only row did not move, and that is worth stating. It was already
 //! zero at 65 roots: a commit whose changes are all paint-only solves nothing,
@@ -156,6 +218,8 @@
 //! number that is supposed to be about root count. A scene with text would show
 //! the same 65:1 shape with a larger constant, not a different shape.
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -167,6 +231,103 @@ use dashscene_engine::TaffySolver;
 mod common;
 
 use common::many_root::{EXTRA_FRAMES, document};
+
+thread_local! {
+    /// Bytes this thread has asked the allocator for while [`COUNTING`] was on.
+    ///
+    /// Const-initialised, and `Cell` has no destructor, so touching either of
+    /// these from inside `alloc` neither allocates nor registers a thread-local
+    /// destructor — both of which would be re-entrant.
+    static BYTES: Cell<u64> = const { Cell::new(0) };
+    static COUNTING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The system allocator, adding up request sizes on the measuring thread while
+/// the measurement is on.
+///
+/// **Thread-local rather than a global counter**, because CI runs this binary
+/// under `cargo test` (`.github/workflows/ci.yml`), which runs a binary's tests
+/// as threads in one process: a global counter would report this frame plus
+/// whatever the other two tests were allocating at the time. Under nextest,
+/// which gives each test its own process, the two would be equivalent — the
+/// suite is run both ways, so the weaker assumption is the one to hold.
+///
+/// `try_with` rather than `get`, so an allocation made while thread-locals are
+/// being torn down reads as "not counting" instead of panicking inside the
+/// allocator.
+struct Counting;
+
+impl Counting {
+    fn on() -> bool {
+        COUNTING.try_with(Cell::get).unwrap_or(false)
+    }
+
+    fn add(bytes: usize) {
+        let _ = BYTES.try_with(|total| total.set(total.get() + bytes as u64));
+    }
+}
+
+unsafe impl GlobalAlloc for Counting {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if Self::on() {
+            Self::add(layout.size());
+        }
+        // SAFETY: the layout is passed through unchanged to the allocator this
+        // one wraps, which is the only allocator any of these pointers came
+        // from.
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        // Forwarded rather than left to the trait default, which would route
+        // through `alloc` and then memset. `vec![false; n]` and `vec![0u8; n]`
+        // are most of what a commit allocates, and the default would take them
+        // off `System`'s lazily-zeroed pages in the one binary whose subject is
+        // allocation. The byte count is the same either way.
+        if Self::on() {
+            Self::add(layout.size());
+        }
+        // SAFETY: as above.
+        unsafe { System.alloc_zeroed(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // SAFETY: as above — `ptr` was produced by `System` through this
+        // wrapper, with this layout.
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        if Self::on() {
+            // The growth, not the new size: the old bytes were counted when
+            // they were first asked for, and counting them again would report
+            // a vector that doubled once as if it had been allocated twice.
+            Self::add(new_size.saturating_sub(layout.size()));
+        }
+        // SAFETY: as above.
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: Counting = Counting;
+
+/// Counting on for as long as this lives, and off however it ends.
+struct CountingOn;
+
+impl CountingOn {
+    fn start() -> Self {
+        BYTES.set(0);
+        COUNTING.set(true);
+        CountingOn
+    }
+}
+
+impl Drop for CountingOn {
+    fn drop(&mut self) {
+        COUNTING.set(false);
+    }
+}
 
 /// Taffy layout computations a **paint-only** frame runs over the many-root
 /// document. Zero: a commit whose changes are all paint-only marks nothing
@@ -184,6 +345,48 @@ const MANY_LAYOUT_SOLVES: u64 = 1;
 /// count under the shown root. That is the other half of what the story
 /// removed.
 const MANY_RECT_ROWS: usize = 1;
+
+/// Bytes one steady-state **layout** frame asks the allocator for, per root
+/// beyond the first — the third term, and the only one of the three that can
+/// see what a commit's per-node scratch costs.
+///
+/// **69 until story #944; 17 after it.** The 17 that remain are
+/// `dashscene-engine`'s per-frame scratch, not the commit's — issue #1111 —
+/// so a change that moves this number downward is most likely that one.
+///
+/// # Why a slope where the other two terms are levels
+///
+/// The two above are counts of work and a level states them exactly. A byte
+/// level would also hold every *fixed* allocation a frame makes — the rect
+/// table, the dirty sets, Taffy's own per-solve working memory — and would move
+/// whenever any of those changed, including on a dependency bump that has
+/// nothing to do with what this term is about. The slope between the one-root
+/// and the sixty-five-root documents cancels every one of them and leaves
+/// exactly what grows with the document, which is the claim being made.
+///
+/// **[`within_band`] compares the whole growth, not a per-root quotient.** This
+/// constant times the extra-root count is the expectation, so the term is an
+/// exact equality like the other two. Dividing first would truncate: over 64
+/// extra roots, up to 63 bytes of new document-scaled cost divides away and the
+/// band stays green, which is the failure this term exists to close.
+///
+/// # Why the layout frame and not the paint-only one
+///
+/// The paint-only frame's byte count moves across repeats over one unchanged
+/// document — 884, 884, 1284, 1172 on the small one — because the paint table's
+/// own interning and its pooled-entry compaction (issue #197) move with it, and
+/// neither is a document-scaled cost. The layout frame repeats
+/// bit-identically: 289, 1393 and 4705 bytes over the one, seventeen and
+/// sixty-five-root documents, which is 69 per extra root at all three sizes.
+///
+/// # Why bytes and not an allocation count
+///
+/// Issue #944 offers either. **The count cannot see this at all**: a
+/// steady-state layout frame makes exactly 21 allocation calls over the
+/// one-root, seventeen-root and sixty-five-root documents alike. Only the sizes
+/// differ, because what scales is the length of vectors the commit allocates
+/// once each.
+const BYTES_PER_EXTRA_ROOT: u64 = 17;
 
 /// The same three over the single-root document — the denominator the ratio is
 /// taken against, and what the many-root column becomes when #838 lands.
@@ -207,6 +410,8 @@ struct FrameCost {
     solves: u64,
     /// Rows the committed rect table holds after the frame.
     rect_rows: usize,
+    /// Bytes the commit asked the allocator for, counted by [`Counting`].
+    bytes: u64,
 }
 
 /// A committed arena, and the temporary file its payloads are mapped from.
@@ -291,10 +496,23 @@ fn frame(loaded: &mut Loaded, solver: &mut TaffySolver<'_>, prop: Prop) -> Frame
     let before = solver.solves();
     let mut txn = loaded.arena.open();
     txn.set_prop(loaded.shown, prop);
-    txn.commit_with(solver);
+    // The commit and nothing else. `open` and `set_prop` are the producer's
+    // side of the seam and run outside the frame loop (P3), so counting them
+    // would put a producer's cost into a per-frame number.
+    //
+    // Turned off by a drop guard rather than by the next statement: `commit_with`
+    // has several `assert!` paths, and an unwinding one would otherwise leave
+    // this thread counting every later allocation, so the *next* frame measured
+    // on it would report a number with no bad commit anywhere near it.
+    let bytes = {
+        let _counting = CountingOn::start();
+        txn.commit_with(solver);
+        BYTES.get()
+    };
     FrameCost {
         solves: solver.solves() - before,
         rect_rows: loaded.arena.committed().rects().len(),
+        bytes,
     }
 }
 
@@ -385,7 +603,12 @@ fn steady_state(loaded: &mut Loaded) -> (FrameCost, FrameCost, FrameCost) {
 /// `Err` carries what breached and by how much, so a guard's own assertion can
 /// name it and a real regression reads as a diagnosis rather than as a number
 /// mismatch.
-fn within_band(paint: FrameCost, layout: FrameCost) -> Result<(), String> {
+fn within_band(
+    paint: FrameCost,
+    layout: FrameCost,
+    small_layout: FrameCost,
+    extra_roots: u64,
+) -> Result<(), String> {
     let mut breaches = Vec::new();
     if paint.solves != MANY_PAINT_SOLVES {
         breaches.push(format!(
@@ -408,6 +631,30 @@ fn within_band(paint: FrameCost, layout: FrameCost) -> Result<(), String> {
             ));
         }
     }
+    // The third term. `saturating_sub` rather than `-`: a many-root frame that
+    // allocated *less* than the one-root frame would underflow the u64 and
+    // panic inside the band, which reports worse than a breach does. It reads
+    // as a growth of zero, which is a breach against a non-zero constant and is
+    // exactly the "re-measure and move the constant" case below.
+    //
+    // **The whole growth is what is compared, not the slope**, so this term is
+    // an exact equality like the two above. Comparing
+    // `growth / extra_roots` against the constant would truncate: over 64 extra
+    // roots, anything up to 63 bytes of new document-scaled cost divides away
+    // and the band stays green — which is the "a change with no term that can
+    // see it" failure this term exists to close. The slope is derived from the
+    // equality for the message and the log, never asserted on.
+    let growth = layout.bytes.saturating_sub(small_layout.bytes);
+    let expected = BYTES_PER_EXTRA_ROOT * extra_roots;
+    if growth != expected {
+        breaches.push(format!(
+            "a layout frame allocated {growth} bytes over the one-root document's {} across \
+             {extra_roots} extra roots, against {expected} ({} bytes per extra root against \
+             {BYTES_PER_EXTRA_ROOT})",
+            small_layout.bytes,
+            slope_of(growth, extra_roots),
+        ));
+    }
     if breaches.is_empty() {
         Ok(())
     } else {
@@ -415,19 +662,47 @@ fn within_band(paint: FrameCost, layout: FrameCost) -> Result<(), String> {
     }
 }
 
+/// The byte term as a rate, for a message or a log line. Never the thing
+/// asserted on — [`within_band`] compares the whole growth, because a division
+/// truncates and a truncated comparison cannot see a small regression.
+///
+/// Answers 0 rather than dividing when a caller measures a one-root fixture
+/// against itself, which is the only way `extra_roots` reaches zero.
+fn slope_of(growth: u64, extra_roots: u64) -> u64 {
+    growth.checked_div(extra_roots).unwrap_or(0)
+}
+
+/// The one-root document's steady-state layout frame — the denominator the byte
+/// slope is taken against.
+///
+/// The criterion already has this figure and passes its own; the two guards
+/// below do not measure the small document for anything else and call this. It
+/// is a whole load and three frames, which is the cheapest honest way to get it:
+/// the alternative is a second constant holding the one-root document's own byte
+/// count, and that is the level this term is a slope specifically to avoid.
+fn small_baseline() -> FrameCost {
+    let mut small = load(0);
+    let (_, _, layout) = steady_state(&mut small);
+    layout
+}
+
 /// Prints one document's numbers. The counts are the criterion; the wall clock
 /// and the machine are recorded here and asserted on nowhere (D6 of
 /// `startup-scaling-is-measured-by-a-counter.md`).
 fn report(label: &str, roots: usize, first: FrameCost, paint: FrameCost, layout: FrameCost) {
     println!(
-        "PER-FRAME SCALING — {label}, root count {roots}: first frame {} solves / {} rect rows, \
-         paint-only frame {} solves / {} rect rows, layout frame {} solves / {} rect rows",
+        "PER-FRAME SCALING — {label}, root count {roots}: first frame {} solves / {} rect rows / \
+         {} B, paint-only frame {} solves / {} rect rows / {} B, layout frame {} solves / {} rect \
+         rows / {} B",
         first.solves,
         first.rect_rows,
+        first.bytes,
         paint.solves,
         paint.rect_rows,
+        paint.bytes,
         layout.solves,
         layout.rect_rows,
+        layout.bytes,
     );
 }
 
@@ -490,6 +765,15 @@ fn a_frame_costs_the_shown_root_and_not_the_document() {
     );
 
     println!(
+        "PER-FRAME SCALING — {} bytes per extra root on a layout frame, against the band's \
+         {BYTES_PER_EXTRA_ROOT} ({} B over the one-root document's {} B, across {} extra roots)",
+        many_layout.bytes.saturating_sub(small_layout.bytes) / (many.roots as u64 - 1),
+        many_layout.bytes.saturating_sub(small_layout.bytes),
+        small_layout.bytes,
+        many.roots - 1,
+    );
+
+    println!(
         "PER-FRAME SCALING — ratio {:.2}x on the solve and {:.2}x on the committed table \
          (#838's target: 1.00x on both), measured on {} {} in {:.1} ms — which is the whole \
          measurement, and mostly document generation rather than frames. Under `cargo test` \
@@ -503,7 +787,13 @@ fn a_frame_costs_the_shown_root_and_not_the_document() {
         started.elapsed().as_secs_f64() * 1000.0,
     );
 
-    within_band(many_paint, many_layout).unwrap_or_else(|breach| {
+    within_band(
+        many_paint,
+        many_layout,
+        small_layout,
+        many.roots as u64 - 1,
+    )
+    .unwrap_or_else(|breach| {
         panic!(
             "the per-frame band over the {}-root document is breached — {breach}. This band was \
              measured at {MANY_LAYOUT_SOLVES} solves and {MANY_RECT_ROWS} rect rows per frame \
@@ -512,7 +802,12 @@ fn a_frame_costs_the_shown_root_and_not_the_document() {
              and move these constants, stating the before and the after. If it is not, a frame has \
              become more expensive than the document's own size, which nothing here predicts — \
              check dashscene_engine::compute_all (one solve per root) and Arena::dfs_order (every \
-             root's subtree into one table).",
+             root's subtree into one table). If what breached is the byte term, it is a per-frame \
+             allocation sized by the document rather than by the shown root: the commit's own \
+             scratch is keyed by rect row since story #944, so look first at whatever was added \
+             since, and at the three allocations issue #1111 still carries in dashscene-engine. A \
+             term that breached *downward* is that issue being closed — re-measure and move \
+             {BYTES_PER_EXTRA_ROOT}, stating the before and the after.",
             many.roots
         )
     });
@@ -544,8 +839,13 @@ fn a_paint_only_frame_that_marks_layout_intent_breaches_the_solve_term() {
         mutated_paint.solves
     );
 
-    let breach = within_band(mutated_paint, layout)
-        .expect_err("a layout-dirty frame in the paint-only slot must breach the band");
+    let breach = within_band(
+        mutated_paint,
+        layout,
+        small_baseline(),
+        many.roots as u64 - 1,
+    )
+    .expect_err("a layout-dirty frame in the paint-only slot must breach the band");
     assert!(
         breach.contains("paint-only frame ran"),
         "the guard must breach the solve term, not something else; it reported: {breach}"
@@ -572,9 +872,11 @@ fn a_paint_only_frame_that_marks_layout_intent_breaches_the_solve_term() {
 /// takes on every run rather than a figure in a commit message.
 #[test]
 fn the_confinement_is_what_makes_the_number_one() {
+    let small_layout = small_baseline();
     let mut many = load(EXTRA_FRAMES);
+    let extra_roots = many.roots as u64 - 1;
     let (_, bounded_paint, bounded_layout) = steady_state(&mut many);
-    within_band(bounded_paint, bounded_layout)
+    within_band(bounded_paint, bounded_layout, small_layout, extra_roots)
         .expect("the band holds while the shown root is named");
 
     // The confinement removed, and nothing else. A fresh solver, because the
@@ -590,17 +892,23 @@ fn the_confinement_is_what_makes_the_number_one() {
     let unbounded_layout = frame(&mut many, &mut solver, Prop::X(x + 1.0));
 
     println!(
-        "PER-FRAME SCALING — guard: with no shown root the same document measures {} solves and \
-         {} rect rows on a layout frame, against the band's {MANY_LAYOUT_SOLVES} and \
-         {MANY_RECT_ROWS} — the before-number story #838 moved",
-        unbounded_layout.solves, unbounded_layout.rect_rows
+        "PER-FRAME SCALING — guard: with no shown root the same document measures {} solves, \
+         {} rect rows and {} bytes per extra root on a layout frame, against the band's \
+         {MANY_LAYOUT_SOLVES}, {MANY_RECT_ROWS} and {BYTES_PER_EXTRA_ROOT} — the before-numbers \
+         stories #838 and #944 moved",
+        unbounded_layout.solves,
+        unbounded_layout.rect_rows,
+        unbounded_layout.bytes.saturating_sub(small_layout.bytes) / extra_roots,
     );
 
-    let breach = within_band(unbounded_paint, unbounded_layout)
+    let breach = within_band(unbounded_paint, unbounded_layout, small_layout, extra_roots)
         .expect_err("an unconfined traversal must breach the band");
     assert!(
-        breach.contains("layout frame ran") && breach.contains("rect rows against"),
-        "both terms must move when the confinement goes, not just one; it reported: {breach}"
+        breach.contains("layout frame ran")
+            && breach.contains("rect rows against")
+            && breach.contains("bytes per extra root"),
+        "all three terms must move when the confinement goes, not just some of them; it reported: \
+         {breach}"
     );
     assert_eq!(
         (
