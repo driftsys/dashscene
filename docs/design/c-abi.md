@@ -161,14 +161,53 @@ the review caught it. Two entry points hold the property without the helper, and
 `ds_last_error_message`'s own comment records that it was made to hold it
 precisely because rule 1 had claimed it already did.
 
-A caught panic leaves the runtime alive, and **only the mapped load accounts for
-that**. It clears `runtime.scene` immediately before replacing the arena — the
-two statements are adjacent — rather than leaving it until the scene is rebuilt.
-**Three calls sit between that clear and the reassignment**:
-`load_document_mapped`, `show_appended_root` and `attach_live`, each of which
-can panic. Without the early clear, a caught panic in any of them would leave a
+A caught panic leaves the runtime alive, and **every load accounts for that**,
+through one function. `drop_document` clears `runtime.scene` and replaces the
+arena in that order, and each loader calls it rather than writing the pair out.
+Without the clear, a caught panic before the scene is rebuilt would leave a
 runtime holding a new arena and the previous document's `LiveScene`, driving
 `NodeId`s against an arena that does not have them.
+
+The calls in that window whose own documentation says they can unwind are
+`load_document_mapped`, `show_appended_root` and `attach_live` on the mapped
+path, and `load_document` and `attach_live` on the byte-taking one. Re-derive
+that from the source rather than from a count here: the window also holds calls
+that cannot unwind, so "how many calls are between the two" is a different
+question with a different answer.
+
+**The mapped load had the pairing and the byte-taking loads did not**, which is
+what this record found and issue #1183 fixed; making it a function rather than a
+convention is what stops a third loader repeating it. Nothing tests the panic
+path on either. `guard` is what makes the state reachable, and no fixture that
+reaches it exists: `load_document`'s panics fire on indices
+`dashscene_validator` already rejects, so building one would mean finding a
+document the gate accepts and the loader panics on — a validator gap, which is a
+defect to file rather than a fixture to rest a test on. That correspondence
+between the gate and the loader's asserts is held by reading, not by any check,
+so this is what is known rather than a proof that no such fixture exists.
+
+What **is** covered is the ordering the pairing depends on: `drop_document` sits
+below every step that can return a status, so a **refused** load leaves the
+previous document drawable, asserted on the committed table rather than on the
+tick's status — a tick answers `Ok` for the broken state too, because the scene
+is `Some` either way.
+
+**The two tests are not equally complete, and the record says so rather than
+putting them in parallel.**
+`a_refused_byte_load_leaves_the_loaded_document_drawable` covers every arm its
+path can return: `Open` and `Gate`.
+`a_refused_mapped_load_leaves_the_loaded_document_drawable` covers `Payload`
+alone, out of `Map`, `Open`, `Gate`, `Derived`, `NoSuchRoot` and `Payload`.
+`Map` and `NoSuchRoot` have tests of their own, but each loads into a fresh
+runtime and never ticks, so neither says a previous document survived — and
+mapped `Open`, mapped `Gate` and `Derived` are reached by no test in the crate
+at all.
+
+The header carries the caller-facing half of this: a load that fails releases
+nothing, so a C host must not unlink the previous file until a later load has
+answered `DS_OK`. It said the opposite until issue #1183 — "each load installs a
+fresh arena, so the previous mapping is released when the next load happens" —
+which `just c-abi` cannot see, being prose.
 
 ## The header is hand-written, and one gate checks the halves agree
 
@@ -197,10 +236,10 @@ documentation rather than citing it, and it states counts the repository's
 convention says not to state. Issue #1190 carries both, and the test that would
 make the counts unnecessary.
 
-- **The two byte-taking loads do not clear the scene before replacing the
-  arena** — issue #1183, found while writing this record. A panic caught inside
-  `load_into` leaves a fresh arena paired with the previous document's
-  `LiveScene`. It is the mapped loader that has the guard.
+- ~~The two byte-taking loads do not clear the scene before replacing the
+  arena~~ — **closed (issue #1183)**, found while writing this record. Both
+  loaders now clear it, and the panic boundary section above states what each
+  window holds.
 - **No data plane** — issue #859. Nothing here carries a boundary-B row, so a
   host that wants to draw the frame with its own renderer cannot.
 - ~~No host calls the mapped load~~ — **closed 2026-08-16 (issue #1035)**, while
