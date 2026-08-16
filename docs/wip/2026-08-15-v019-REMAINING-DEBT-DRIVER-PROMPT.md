@@ -11,14 +11,17 @@
             — captures have the table, prompts have that file's prose — so
             this commit updates those paragraphs, and the tracked count is
             unchanged because one prompt replaced another.
-    scope   the eight v0.19 issues that are not blocked on an Android
-            device: **#944**, **#950**, **#932**, **#930**, **#929**,
-            **#922**, **#828**, **#767**. **Six of those are startable
-            today.** #828 wants a second painter that does not exist and
-            #767 wants a cold-cache harness, so both are listed to be
-            *decided* rather than started — see their own section.
-            **#922 has since landed** and is struck from its section
-            below; seven remain, five of them startable.
+    scope   **written for eight issues; two remain.** This prompt was
+            written on 2026-08-15 and half its scope was gone inside a
+            day, which is itself the most useful thing it records about
+            this milestone. Live: **#944** and **#950**. Landed: #922
+            (PR #1084), then #929, #930 and #932 together (PR #1099).
+            Moved out on 2026-08-16 after the "decide rather than start"
+            call each section argued for: **#828 to v0.21**, where Unity
+            is the second painter that can validate a portable suite, and
+            **#767 to v1**, beside #476 and #462, which wait on the same
+            cold-cache measurement. Their sections are kept below, struck,
+            because the reasoning is the record.
     epic    #833
 
 ## Re-derive before trusting any of this
@@ -26,11 +29,17 @@
     gh issue list --milestone "v0.19 — Android, the C ABI, and layer 0" \
       --state open --json number,title,labels
 
-At 2026-08-15 that returned **twelve rows**: one `epic` (#833), two `story`
-(#842, #843), eight `debt`, and #767 unlabelled. The milestone stood at 28
-closed of 40. **#922 then closed later the same day**, so the same command now
-returns eleven rows and seven `debt` — which is why the scope line above says
-seven remain. Re-run it rather than reading either figure here.
+At 2026-08-16 that returns **six rows**: one `epic` (#833), three `story` (#842,
+#843, #950 — relabelled from `debt`), and two `debt` (#885, #944). It returned
+twelve on 2026-08-15. Re-run it rather than reading any figure here.
+
+**The milestone's own counts include pull requests, and reading them as issue
+progress overstates it.** `gh api repos/{owner}/{repo}/milestones` reports
+`closed=33` for v0.19; three of those are merged PRs (#1079, #935, #928), so the
+issue figure is **30 closed of 36**. Count issues explicitly:
+
+    gh issue list --milestone "v0.19 — Android, the C ABI, and layer 0" \
+      --state all --limit 100 --json number,state
 
 **The list decays under v0.20's work, which is running in parallel and is
 loud.** On 2026-08-15 v0.20 took **53 new issues**, of which **20 were closed
@@ -138,6 +147,10 @@ because the reasoning in the ones around it refers to the count.
   milliseconds, and the showcase scenes are small, so the saving may not clear
   its noise. One answer in the tree beats two either way.
 
+- **#932 — LANDED in PR #1099, do not start it.** The section below is kept
+  because its corrections to the issue's counts are what the work was done
+  against.
+
 - **#932 — `goldens/tooling/tests/common/` compiles three generators into every
   binary that declares it.** **The issue says nineteen such binaries. It is
   eighteen** — of 37 test binaries in that directory, so the compile-cost
@@ -151,6 +164,10 @@ because the reasoning in the ones around it refers to the count.
   compile cost to be measured before either shape is chosen, and says plainly
   that if it is under a second the honest answer is to write the reason in
   `mod.rs` and close this. That is a real outcome, not a failure.
+
+- **#930 — LANDED in PR #1099, do not start it.** The section below is kept
+  because its corrections to the issue's counts are what the work was done
+  against.
 
 - **#930 — the many-root document is regenerated on every call.** **Both call
   counts in the issue are now low.** `many_root::document` is still uncached —
@@ -181,6 +198,10 @@ because the reasoning in the ones around it refers to the count.
   others — so "the two `cargo test` steps" would be wrong; these are the two
   that build this document. Whoever takes this states which of those they are
   buying.
+
+- **#929 — LANDED in PR #1099, do not start it.** The section below is kept
+  because its corrections to the issue's counts are what the work was done
+  against.
 
 - **#929 — a third `decode_png`.** **The title says byte-identical and that is
   no longer true.** There are still three, in
@@ -245,6 +266,12 @@ because the reasoning in the ones around it refers to the count.
 
 ## The two that are not really pickable either, and why they are listed anyway
 
+- **#828 — MOVED to v0.21 on 2026-08-16.** Unity is where a second
+  implementation of R-T5's maths appears; v0.19 delivered a second _platform_
+  reaching the **same** painter, since `dashscene-ffi` links `dashscene-gpu`.
+  Designing a portable expectation format with no second consumer to validate it
+  is how the wrong format gets designed. The original text:
+
 - **#828 — a portable conformance suite.** Filed against v0.19 because this is
   the first slice with a second implementation. The layer-2 suite is real —
   `crates/dashscene-gpu/tests/layer2_conformance.rs` and
@@ -259,6 +286,9 @@ because the reasoning in the ones around it refers to the count.
   is a decision for whoever closes the slice, and it should be made deliberately
   rather than by the issue sitting still.
 
+- **#767 — MOVED to v1 on 2026-08-16.** It sits with #476 and #462, which wait
+  on the same cold-cache measurement. The original text:
+
 - **#767 — madvise the prefetch ranges.** Unbuilt: `crates/dashbuf/src/map.rs`
   calls no `advise`, and the workspace pins `memmap2 = "0.9"`, which has
   `advise_range` behind `#[cfg(unix)]`.
@@ -270,22 +300,18 @@ because the reasoning in the ones around it refers to the count.
   practice for the same reason #885 is, even though nothing in it needs an
   Android device. Do not start it expecting to finish.
 
-## Suggested order, and why
+## What is left, and in what order
 
-1. ~~**#922**~~ — **done.** The committed-table option was taken. Its second
-   property, the nine unretried and uncached fetches, was **not** fixed and is
-   now issue #1078 on `v0.23 — rolling quick debt`, so it is out of this
-   prompt's scope rather than lost. Note for whoever picks that up: the
-   committed checksum has already closed the trust axis that made caching
-   awkward, which its parent issue could not assume.
-2. **#929** then **#932** — same directory, and #929's consolidation changes
-   what #932 is choosing between. Both need `just calibrate` awareness.
-3. **#930** — after #932, because if #932 splits the module the caching question
-   moves with it.
-4. **#950** — independent, and it removes a shape three documents call wrong.
-5. **#944** — the story. Give it its own spec and plan.
-6. **#828** and **#767** — decide whether they move to v1 rather than starting
-   them.
+1. **#950** — independent, bounded, and it removes a shape three documents call
+   wrong. Note it was **relabelled from `debt` to `story`** on 2026-08-16 by
+   another session, so read it again before scoping: someone has reconsidered
+   its size.
+2. **#944** — the story. Give it its own spec and plan, and start from the ninth
+   vector: `painted_extent` is already bounded by the shown-root walk, one line
+   below `rect_of_slot`.
+
+Everything else in this milestone is either hardware-gated (#842, #885) or the
+close write-up (#843).
 
 ## Traps this session hit, which cost real time
 
