@@ -130,6 +130,27 @@ are append-only at the tail, so scale joins later without an R7 break, and Figma
 cannot author skew at all — shipping it now would put a construct in the
 vocabulary with no producer able to exercise it.
 
+**A mirror is a negative scale, and it refuses rather than lowering upright**
+(debt #1047, revised there). `matrix_turn` reads a negative determinant as `0.0`
+on purpose — reporting the half-turn `atan2` gives a horizontal flip would draw
+a new wrong picture rather than repair one, which is what issue #878 is about.
+Repairing the angle was right; what was missing is that nothing then named the
+mirror, so a flipped chevron — an everyday authoring move — lowered upright with
+no diagnostic under any emit policy. That is the silent drop this record already
+forbids one stage later, in the painter: "a painter that accepted a rotation and
+drew the node unrotated would be a silent drop, which P4 forbids". A producer
+that accepts a mirror and lowers the node unmirrored is that same drop, and it
+now takes the ordinary refusal — `figma.unsupported`, severity following the
+emit policy, the node's subtree skipped
+(`docs/specification/06-dashc-figma-lowering.md`, "Refusal" 1).
+
+The refusal is on the matrix's handedness, not on `turn`, which reports no angle
+for a mirror by design and so cannot be the source. Only a mirror refuses: a
+matrix enclosing no area is named by its own zero extent instead. A **member**
+of a component set is unaffected, because the walk skips a `COMPONENT` whole —
+two members facing different ways stay the set-level comparison issue #1019
+built, and that comparison is what still sees a mirror inside a definition.
+
 ## The vocabulary and the lowering land complete; a painter may refuse
 
 The vocabulary and the lowering land whole, rather than being cut to what one

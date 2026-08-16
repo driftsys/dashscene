@@ -1637,9 +1637,10 @@ fn a_mirror_in_relative_transform_is_not_read_as_a_turn() {
     // The other side of the determinant test. A single mirror's determinant
     // is negative, and `atan2(m10, m00)` would report it as a half-turn — a
     // new wrong picture rather than a repair, since the document has no
-    // mirror and a node drawn at 180 degrees is not one. It lowers as it did
-    // before `relativeTransform` was parsed: unrotated, from its bounding
-    // box, and with children, which a genuine turn would refuse.
+    // mirror and a node drawn at 180 degrees is not one. Repairing the angle is
+    // still right — no rotated-node blocker fires here — but since debt #1047
+    // the mirror itself is refused by name, so the node does not lower at all
+    // and its box is asserted nowhere below.
     let file = document(serde_json::json!({
         "name": "mirrored-frame",
         "type": "FRAME",
@@ -1652,19 +1653,92 @@ fn a_mirror_in_relative_transform_is_not_read_as_a_turn() {
         }],
     }));
 
-    let (doc, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
-        .expect("a mirrored node carries no construct the walk refuses");
+    let (_, diagnostics) = lower(&file, Profile::Core, &BTreeMap::new())
+        .expect("a refusal is a diagnostic, not a compile error");
+    let named: Vec<&str> = diagnostics
+        .iter()
+        .filter(|d| d.rule == "figma.unsupported")
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(
+        named,
+        vec![
+            "a mirrored relativeTransform (the document has no mirror or negative scale) is not \
+              in the document vocabulary yet"
+        ],
+        "the mirror is refused by its own name. The rotated-node blockers do not fire \
+         alongside it here because this fixture carries no `rotation` field, so \
+         `turn()` falls through to `matrix_turn`, which reports 0.0 for a mirror — \
+         a node carrying both would earn both: {diagnostics:?}",
+    );
     assert!(
-        diagnostics.iter().all(|d| d.rule != "figma.unsupported"),
-        "a mirror is not a turn, so no rotated-node blocker fires: {diagnostics:?}",
+        diagnostics
+            .iter()
+            .filter(|d| d.rule == "figma.unsupported")
+            .all(|d| d.severity == Severity::Error),
+        "an omission is an error under the default Strict policy (R6): {diagnostics:?}",
+    );
+}
+
+#[test]
+fn a_mirrored_node_is_omitted_with_a_warning_under_partial() {
+    // The other half of the policy contract for debt #1047's refusal: the node
+    // is skipped under either policy, so `Partial` still emits the document
+    // with the gap named rather than withholding the bytes
+    // (`docs/specification/06-dashc-figma-lowering.md`, "Refusal" 1).
+    //
+    // The mirrored node has a painting sibling, or skipping it would leave the
+    // document with no content at all and `figma.no-content` would be what the
+    // test measured.
+    let file = document_json(serde_json::json!({
+        "name": "page",
+        "type": "FRAME",
+        "size": { "x": 200.0, "y": 200.0 },
+        "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 200.0, "height": 200.0 },
+        "children": [
+            {
+                "name": "mirrored-frame",
+                "type": "FRAME",
+                "relativeTransform": [[-1.0, 0.0, 30.0], [0.0, 1.0, 40.0]],
+                "absoluteBoundingBox": { "x": 30.0, "y": 40.0, "width": 50.0, "height": 60.0 },
+            },
+            {
+                "name": "upright",
+                "type": "FRAME",
+                "absoluteBoundingBox": { "x": 0.0, "y": 0.0, "width": 10.0, "height": 10.0 },
+            },
+        ],
+    }));
+    let (bytes, report) = compile_figma_with_bindings_and_policy(
+        &file.to_string(),
+        Profile::Core,
+        &BTreeMap::new(),
+        &[],
+        EmitPolicy::Partial,
+    )
+    .expect("Partial emits the document with the mirrored node omitted");
+    assert!(!bytes.is_empty(), "a document is emitted");
+
+    let refusals: Vec<_> = report
+        .diagnostics()
+        .iter()
+        .filter(|d| d.rule == dashc_wasm::figma::rule::UNSUPPORTED)
+        .collect();
+    assert_eq!(refusals.len(), 1, "one figma.unsupported for the mirror");
+    assert_eq!(
+        refusals[0].severity,
+        Severity::Warning,
+        "under Partial the omission is a warning and the bytes are handed over",
     );
 
-    let (_, n) = node(&doc, "mirrored-frame");
-    assert_eq!(n.rotation, 0.0, "a mirror carries no angle");
+    // The page frame and the upright sibling lower; the mirrored node does not.
+    let (document, payloads) = dashbuf::open_verified(&bytes).expect("a valid .dsb file");
+    let mut arena = Arena::new();
+    load_document(&document, &payloads, &mut arena);
     assert_eq!(
-        (n.box2d.width, n.box2d.height),
-        (50.0, 60.0),
-        "an unrotated node's extent is still its bounding box's",
+        arena.committed().rects().len(),
+        2,
+        "the page and the upright sibling are present, the mirrored node omitted",
     );
 }
 

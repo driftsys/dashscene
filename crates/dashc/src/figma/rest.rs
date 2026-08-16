@@ -483,6 +483,18 @@ pub(super) fn carries_its_angle(m: Option<[[f32; 3]; 2]>) -> bool {
     m.is_none_or(|m| handedness(m) == Handedness::Upright)
 }
 
+/// Whether a matrix mirrors — the one handedness the document has no vocabulary
+/// for at all.
+///
+/// Deliberately narrower than `!carries_its_angle`, which is also true of a
+/// collapsed matrix: a collapsed one encloses no area, and its own zero extent
+/// is what names it rather than its handedness (`has_area` above is that test).
+/// The walk refuses on this alone, so widening it would refuse a node for the
+/// wrong reason.
+pub(super) fn is_mirrored(m: Option<[[f32; 3]; 2]>) -> bool {
+    m.is_some_and(|m| handedness(m) == Handedness::Mirrored)
+}
+
 /// Whether two `relativeTransform`s face the same way — the same handedness
 /// and the same angle, with the scale each carries divided out.
 ///

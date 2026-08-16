@@ -105,10 +105,12 @@ Checked against `crates/dashscene-engine/src/lib.rs`,
 - [ ] **Rotation** — **part built.** An element without children draws at an
       angle, about a stated turning point, through **both** painters, and an
       imported rotated element is measured against the design tool's own render
-      pixel for pixel. Two gaps, each reported rather than drawn wrong: a
+      pixel for pixel. Three gaps, each reported rather than drawn wrong: a
       rotated element **containing** other elements is refused, because a
-      rotation here does not apply to what is inside it; and scale and skew
-      remain absent.
+      rotation here does not apply to what is inside it; a **mirrored** element
+      — one flipped left-to-right or top-to-bottom — is refused, because there
+      is no way to say "mirrored" here and drawing it unflipped would be a
+      picture the designer never drew; and scale and skew remain absent.
 - [ ] **Absolutely-positioned children, layout-consuming strokes, and reversed
       paint order** — each refused by name. Defaulting any of them would
       silently move the elements around it.
@@ -443,6 +445,17 @@ Checked against `importers/figma/src/`, `crates/dashc/src/`,
       interaction: a trigger, action or navigation outside the vocabulary is
       refused on such an instance exactly as it is anywhere else, because it
       has no lowering whichever file carries the component.
+
+      **A click authored on a layer inside a component drives the component it
+      sits inside**, which is how designers usually build an interactive
+      component, and it carries its own Smart Animate timing. So does a
+      component nested inside another one whose click changes the outer one's
+      state. **One mistake is reported once per layer it was
+      written on**, however many copies of that layer are on screen: the design
+      tool repeats a component's interactions onto every copy, and a file with
+      fifty copies used to report the same problem fifty-one times. It now
+      reports it twice — once for each of the two states the layer was drawn in
+      — and a report that stands for more than one copy says how many.
 - [x] **Design tokens and designer intent** — Figma Variables reach the running
       application both as values and by name, without a plugin. A companion
       plugin lets a designer mark scaffolding that should not ship. Which

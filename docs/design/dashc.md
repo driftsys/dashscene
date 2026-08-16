@@ -365,6 +365,44 @@ the document — otherwise a refused curve on a switch that lands nowhere is fil
 as "the switch lands in one frame", claiming a state change beside the finding
 that says it lowers nowhere (issue #1017).
 
+A `CHANGE_TO` resolves **from its destination**, not from where it sits (debt
+#1065). The set being switched is the one the `destinationId` is a member of;
+the switch travels through the nearest **host** — the node itself, or an
+enclosing `INSTANCE` or definition — that belongs to that set. `Walked` carries
+the whole host chain for it, because reading the nearest host alone can only
+answer one of the two authoring shapes: it is right for a layer switching the
+variant of the instance it belongs to, and wrong for a nested `INSTANCE`
+switching its _parent's_, which shows a set of its own and so answered with that
+set — reporting an ordinary file as naming a destination that is not a member,
+which withholds the document under `Strict`.
+
+A host's variant table then gathers **every** switch that resolves onto it,
+rather than only the ones its root declares (debt #1064): a layer inside a
+master joins its set's default table, and a baked layer inside an instance
+overrides that default for that instance alone. Reading the roots alone dropped
+a deeper layer's tween in silence. Two layers of one scope declaring different
+transitions to one destination is the collision case a set's two members already
+had — one lowers and the contention is named — and `declared_tweens` is the one
+fold both scopes use.
+
+One authored reaction is **one finding** (debt #1056). Figma echoes a
+component's interaction onto every instance, so a mistake authored once inside a
+master arrived once per instance; findings agreeing in rule, message and the
+layer the reaction was authored on — the `<source>` half of the synthetic
+`I<instance>;<source>` id — collapse onto the first, which names how many
+further copies there were. `figma.unsupported` is deliberately left alone: it
+skips the node's subtree, so its copies are separate omissions rather than
+repetitions of one.
+
+The reachability fixed point is solved by a **worklist** (debt #1066): the
+instances that paint directly seed it, and each member that becomes switchable
+enqueues the instances inside it. Rescanning the whole file per round cost a
+chain C levels deep C+1 full scans — measured at 9 rounds over 39 nodes for C =
+8, against 15 instance visits — for diagnostics that are byte-identical either
+way across every fixture in `corpus/figma-fixtures/`. Each node's `interactions`
+is read once for the whole pass, into a vector parallel to the walk, rather than
+once by the set planning and again by the naming loop.
+
 ## Bindings (v0.7, story #167)
 
 `compile_figma_with_bindings` takes the importer's joined variable-binding rows
@@ -412,9 +450,14 @@ noted, because a real Figma file will hit them:
   Its box comes from `size` and its origin is recovered from
   `absoluteBoundingBox` by subtracting the rotated box's own offset to those
   bounds — the bounding box is the axis-aligned bounds of the _rotated_ shape (a
-  result, P1), 22.5 % too large at 15°. Two shapes still refuse by name: a
+  result, P1), 22.5 % too large at 15°. Three shapes still refuse by name: a
   rotated node **with children**, since a rotation does not compose onto a
-  descendant (issue #845), and a rotated node with no `size`. The `node-fx`
+  descendant (issue #845), a rotated node with no `size`, and — since debt #1047
+  — a node whose `relativeTransform` **mirrors**. The mirror refuses on the
+  matrix's own handedness rather than on `turn`, which reports `0.0` for a
+  mirror by design; a matrix enclosing no area does not refuse here, because its
+  own zero extent is what names it. Before that the flip lowered upright and
+  unnamed under every policy, which is the silent drop P4 forbids. The `node-fx`
   import oracle measures the result against Figma's own render. Node opacity,
   mask nodes, and hidden nodes were un-pinned at v0.8 (story #44): they lower
   into `Node.opacity` / `Node.mask` / `Node.visible`. A box outline mask lowers;

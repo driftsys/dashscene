@@ -789,6 +789,40 @@ impl Walk<'_> {
                 blockers.push("a rotated node with no size".to_string());
             }
         }
+        // A **mirrored** `relativeTransform` — a horizontal or vertical flip,
+        // an everyday Figma authoring move. `matrix_turn` reads a negative
+        // determinant as `0.0` deliberately, because reporting the half-turn
+        // `atan2` gives a flip would draw a new wrong picture rather than
+        // repair one (issue #878). Repairing the angle is right; what was
+        // missing is that nothing named the mirror, so a flipped chevron
+        // lowered upright in silence under every emit policy (debt #1047).
+        //
+        // This is the specification's ordinary refusal rule rather than a new
+        // judgement: a mirror is a negative scale, scale is deferred
+        // (`docs/decisions/rotation-is-paint-only-and-anchored-explicitly.md`,
+        // "Scale and skew are not in this slice"), and a construct the
+        // `Document` cannot express is a named diagnostic whose severity
+        // follows the emit policy, with the node's subtree skipped
+        // (`docs/specification/06-dashc-figma-lowering.md`, "Refusal" 1). The
+        // same record's argument for painters settles the alternative of
+        // lowering it upright with a warning: "a painter that accepted a
+        // rotation and drew the node unrotated would be a silent drop, which
+        // P4 forbids", and a producer that accepts a mirror and lowers the node
+        // unmirrored is that same drop one stage earlier.
+        //
+        // It reads the matrix rather than `turn()`. Only `matrix_turn` reports
+        // `0.0` for a mirror; `turn()` prefers a non-zero `rotation` field and
+        // falls back to the matrix, so a node carrying both a non-zero
+        // `rotation` and a mirroring matrix has a non-zero `turn()` — and earns
+        // the rotated-node blockers above **as well as** this one, which is
+        // right, because those are two separate constructs the document cannot
+        // express.
+        if rest::is_mirrored(node.relative_transform) {
+            blockers.push(
+                "a mirrored relativeTransform (the document has no mirror or negative scale)"
+                    .to_string(),
+            );
+        }
         // `sectionContentsHidden` hides a SECTION's children in Figma. The
         // document has no vocabulary for a hidden-contents section, so
         // lowering its children anyway would silently render content Figma
