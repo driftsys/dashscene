@@ -4,7 +4,11 @@
              #944)** — the term, its guard clause and the four measured
              steps that moved it shipped together. Measured 69 bytes per
              extra root against the unchanged commit and **17** against the
-             one this story left.
+             one this story left. **Amended 2026-08-16 (v0.20, issue
+             #1119)**: the term's shape and every number are unchanged, and
+             the predicate holding it was split in two so that a guard
+             breaching a count alone does not load a one-root document to
+             satisfy a signature. The first Consequence records it.
     scope    the third term of the per-frame scaling criterion,
              `goldens/tooling/tests/per_frame_scaling.rs`, and how any later
              per-frame allocation cost is stated in this repository.
@@ -84,11 +88,14 @@ was added to correct.
 
 ## Consequences
 
-- The band has three terms, and `within_band` breaches on any of them.
-  `the_confinement_is_what_makes_the_number_one` requires all three to move when
-  the shown root is cleared, so the third term has the same committed upward
-  injection the other two have and could land in the same change as the fix it
-  measures without being inert.
+- The band has three terms, and `all_terms` breaches on any of them. It is two
+  predicates underneath — `within_band` for the two counts, `within_byte_band`
+  for this one — because only this term needs a one-root baseline and a baseline
+  is a whole document load, so a guard breaching a count alone does not pay for
+  one (issue #1119). `the_confinement_is_what_makes_the_number_one` requires all
+  three to move when the shown root is cleared, so the third term has the same
+  committed upward injection the other two have and could land in the same
+  change as the fix it measures without being inert.
 - **The guard's byte figure is 136, not the 69 the story started from, and that
   is not a regression.** An unconfined commit really does draw sixty-five
   artboards, so the rect table and everything sized by rect rows grows with it.
