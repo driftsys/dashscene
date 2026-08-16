@@ -183,9 +183,16 @@ public final class HarnessActivity extends Activity implements SurfaceHolder.Cal
             // loop was live at the exact moment it was not. Measured on
             // 2026-08-15 (issue #960).
             //
-            // What does tell them apart is the pair of native markers around
-            // the attach: `attaching a WxH surface` with no `attached a WxH
-            // surface` after it is a wedged acquisition, and
+            // What does tell them apart is the native markers around the
+            // attach, read as three cases rather than two (issue #1080).
+            // `attaching a WxH surface` precedes every acquisition;
+            // `attached a WxH surface` follows one that succeeded; and
+            // `attach failed:` — or `could not rebuild the surface:` — follows
+            // one that finished and failed, with the loop already stopped.
+            // **Only `attaching` followed by none of those is a wedged
+            // acquisition.** A missing `attached` on its own is not: that
+            // reports every failed attach as a wedge.
+            //
             // `surfaceDestroyed has been waiting N s` names the wait it holds.
             //
             // A distinct marker rather than silence, so the recipe can tell

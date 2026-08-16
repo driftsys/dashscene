@@ -255,8 +255,9 @@ Two claims made when this landed were wrong, and both are corrected here:
 The coupling that _is_ new is neither of those. It is **six field names as
 strings**. Nothing in this repository checked them against `DsFace.java` until
 issue #1089: renaming a field there left every gate green — `host.rs` is behind
-`cfg(target_os = "android")` so no test links it, no gate runs clippy for that
-triple (issue #1086), and `just android-apk` compiles both halves without
+`cfg(target_os = "android")` so no test links it, nothing then linted that
+triple (`just android-lint` closed that half at issue #1086, and a lint reads
+one side in any case), and `just android-apk` compiles both halves without
 comparing them. The failure arrived as `NoSuchFieldError` at the first
 `surfaceChanged`, and the harness then fell back to the no-text call and drew no
 glyphs — the same "no picture" shape the array-length agreement had.

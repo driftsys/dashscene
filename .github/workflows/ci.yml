@@ -719,6 +719,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
+          # `clippy` for the `android-lint` step below. The `wasm-gates` job
+          # asks for the same component for the same reason.
+          components: clippy
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
       # flatc is needed, though it was not while this job built the painter
@@ -762,9 +765,9 @@ jobs:
       # first step built plus committed inputs. It is in this job rather than a
       # new one because this is the job that already produces that `.so`.
       #
-      # **Last, deliberately.** It is the newest step and the one depending on
-      # the runner's SDK, so a failure here must not mask `c-abi` above — the
-      # only check that `include/dashscene.h` matches what the library exports.
+      # **Late, deliberately.** It depends on the runner's SDK, so a failure
+      # here must not mask `c-abi` above — the only check that
+      # `include/dashscene.h` matches what the library exports.
       #
       # The runner image ships the Android SDK and a JDK, so nothing is
       # installed here — the same reasoning as the NDK note above, and the same
@@ -772,6 +775,30 @@ jobs:
       # than silently skip, which is the correct direction. The JDK is taken
       # from the image rather than pinned, which issue #1058 carries.
       - run: just android-apk
+      # And clippy on the same triple, which ran nowhere until issue #1086.
+      #
+      # `just android` is `cargo build`, so the platform half of
+      # `dashscene-android` (`host.rs`, `loop_.rs`) and `demo-android`'s JNI
+      # half — code those crates' own docs describe as reachable by no test —
+      # compiled without being linted. `just wasm-lint` closed the same gap for
+      # wasm32 at PR #907; this is the Android half of that rule.
+      #
+      # It is not redundant with the `clippy` job: that one runs
+      # `--workspace --all-targets` on the **host** triple, where every
+      # `cfg(target_os = "android")` item is compiled out entirely.
+      #
+      # **Last, and for the reason the step above states about itself.** This is
+      # now the newest step, and the one most exposed to the toolchain: it is
+      # `-D warnings` under an unpinned `dtolnay/rust-toolchain@stable`, so a
+      # stable release that adds a lint — or that fixes the
+      # `missing_const_for_thread_local` false positive, turning the `#[expect]`
+      # in `dashscene-ffi` into an `unfulfilled_lint_expectations` error — turns
+      # this job red. Ahead of `c-abi` it would take the header conformance
+      # check and the Java compile down with it; here it takes only itself.
+      #
+      # The recipe rather than an inlined list, for the reason `just android`
+      # above gives.
+      - run: just android-lint
 
   atlas-repro:
     # Compile-heavy: skipped when the diff is documentation only

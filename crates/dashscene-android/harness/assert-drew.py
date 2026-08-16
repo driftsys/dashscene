@@ -8,8 +8,13 @@ whether or not a device was obtained, and logs nothing when one was not — issu
 that does not.
 
 It counts distinct colours below the title bar. The harness ships
-`goldens/dsb/v03-paint.dsb`, which is gradients and fills, so a drawn frame has
-thousands; a frame the painter never reached has one.
+`goldens/dsb/v07-text-hug-in-fill.dsb` — see `build.sh` — so a drawn frame has
+dozens, most of them from glyph antialiasing.
+
+**A frame the painter never reached does not reliably have one**, which is the
+limit of this check rather than its premise: system chrome below the title bar
+is counted too, and issue #1029 verified that a gesture-navigation pill alone
+clears the threshold on an otherwise black frame. See `MIN_DISTINCT` below.
 
 Exits 0 when the client area looks drawn, 1 when it does not, 2 on a file it
 cannot read. Reads PNG directly: the SDK's Python has no PIL, and adding a
@@ -26,9 +31,40 @@ import zlib
 # nothing" rather than "the painter drew nothing but Android drew a title".
 SKIP_TOP_FRACTION = 0.12
 
-# A gradient fixture yields thousands. A solid-colour scene would be a false
-# negative, which is why the harness ships a fixture that is not solid — if that
-# ever changes, this threshold has to change with it.
+# A solid-colour scene would be a false negative, which is why the harness ships
+# a fixture that is not solid — if that ever changes, this threshold has to
+# change with it.
+#
+# **The margin narrowed and the threshold did not move** (issue #1081). This was
+# written for `v03-paint.dsb`, a gradient fixture yielding thousands. The harness
+# moved to `v07-text-hug-in-fill.dsb` at issue #969, so the text entry point is
+# exercised, and most of the colour now comes from glyph antialiasing rather than
+# from a gradient: **68 distinct colours measured on the emulator, against this
+# threshold of 16.** Four times over rather than three orders of magnitude.
+# That figure was taken with the early return below removed — as committed the
+# script stops counting at the threshold and reports `16+`, so re-deriving it
+# means lifting that return, not just running this.
+#
+# Sixteen is kept, and the reasoning is worth recording because the number now
+# looks arbitrary where it used to look obvious. What this check separates is
+# "the painter drew" from "the painter drew nothing", and the failing side of
+# that is one colour, not fifteen. Raising it towards 68 would trade a real
+# margin against antialiasing that differs by device, driver and scale factor.
+#
+# **It is not the instrument for the black-frame hole, and raising it is not the
+# fix for that either.** Issue #1029 verified that an all-black frame carrying
+# only an API 35 gesture-navigation pill in the bottom 4% passes this check: the
+# pill's antialiasing alone supplies more than sixteen colours. `SKIP_TOP_FRACTION`
+# excludes the top 12% and nothing at the bottom, so system chrome is counted as
+# though the painter had drawn it. A larger threshold would raise the bar that
+# chrome has to clear rather than stop counting it, which is a different and
+# worse fix than excluding the bottom bar — and that is #1029's to make.
+#
+# Nor does a colour count know anything about *text*, which is what the fixture
+# is staged for since issue #969. It cannot say the glyphs drew: it only says
+# some part of the frame is not uniform, and the fill and the system chrome can
+# supply that between them. Issue #1100 carries it — the second half of #1081,
+# split out rather than closed with it.
 MIN_DISTINCT = 16
 
 

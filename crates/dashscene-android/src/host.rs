@@ -280,9 +280,14 @@ impl Frames for DocumentFrames {
 /// `Starting` as well as `Running`, and the render thread reports `started()`
 /// only once its attach has returned. So a thread still inside an attach — up
 /// to 218 s on an unoptimized build (issue #960) — answers `true`, which is
-/// the same answer a drawing loop gives. What separates them is the pair of
-/// log lines around the attach: `attaching a WxH surface` with no
-/// `attached a WxH surface` after it.
+/// the same answer a drawing loop gives. What separates them is the log lines
+/// around the attach, read as three cases rather than two: `attaching a WxH
+/// surface` precedes every acquisition, `attached a WxH surface` follows every
+/// one that succeeded, and `attach failed:` — or `could not rebuild the
+/// surface:` — follows one that finished and failed, with the loop already
+/// stopped. **Only `attaching` followed by none of those is a thread still
+/// inside the call.** Treating a missing `attached` as a wedge on its own
+/// reports every failed attach as one (issue #1080).
 ///
 /// [`Handshake::is_running`]: crate::Handshake::is_running
 fn start_document_host(

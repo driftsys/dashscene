@@ -411,6 +411,17 @@ recipe is the list, not this sentence. What now reaches CI unverified is a
 failing test, and the CI `test` job runs the regression tier completely on every
 push and pull request.
 
+**With one exception, added at issue #1086: `aarch64-linux-android`.**
+`just android-lint` is in CI's `android-build` job and in no local aggregate —
+not `lint`, not `check`, not `build` — because putting it in one would give that
+recipe an NDK prerequisite it does not have today. So a compile error that only
+appears on the Android triple does **not** fail locally, and the sentence above
+does not cover it. That is not hypothetical: the recipe's own first run found an
+`E0308` in a `dashscene-ffi` test — `c_char` is `i8` on a developer's machine
+and `u8` on Android — which every local gate had passed for as long as the test
+had existed. Run `just android-lint` by hand when the diff touches anything that
+compiles on that triple.
+
 **Running the expensive path on demand.** The workflow takes a
 `workflow_dispatch`, which forces every path-filtered gate on:
 

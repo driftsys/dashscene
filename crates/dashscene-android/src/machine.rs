@@ -289,9 +289,13 @@ impl LoopState {
         // that never started are otherwise the same picture in logcat — no line
         // either way — which is what left issue #960 reading as "draws nothing
         // and reports nothing" and made a wedged acquisition take a person
-        // watching an emulator to find. `attaching` with no `attached` after it
-        // is the rule the harness's own comment states, so a path that wrote
-        // only one of the two would make that rule false.
+        // watching an emulator to find. Every acquisition writes `attaching`
+        // and then exactly one of `attached`, `attach failed:` or `could not
+        // rebuild the surface:` — that is the three-way reading the harness and
+        // the split-screen recipe both state (issue #1080), and a path writing
+        // none of the four would make it false. A missing `attached` alone
+        // means nothing: only `attaching` with none of the other three after it
+        // is a thread still inside the call.
         log(&format!("attaching a {width}x{height} surface"));
         // SAFETY: the window outlives the loop — the destroy handshake is what
         // makes that true — so it is as live now as it was when the thread was

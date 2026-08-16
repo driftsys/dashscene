@@ -62,10 +62,19 @@ host draws through. It compiled without a source change, pulling in `ndk-sys`,
 `jni-sys`, `gpu-allocator` and `wgpu-core-deps-windows-linux-android`, so wgpu's
 Android backend support needed nothing from this repository.
 
-The CI job `android-build` runs that, the C ABI's conformance check, and
-`just android-apk`, which packages both hosts' APKs and is the only **gate**
-that compiles any Java in this repository. Before that recipe, nothing scheduled
-a Java compile: the harness `build.sh` was reachable only through
+The CI job `android-build` runs that, the C ABI's conformance check,
+`just android-apk`, and `just android-lint` — four steps, in that order.
+
+`android-lint` is clippy on the same triple, added at issue #1086 because
+`just android` is `cargo build`: the platform half of `dashscene-android` and
+`demo-android`'s JNI half compiled in this job without ever being linted, the
+gap `just wasm-lint` closed for wasm32 at PR #907. It runs **last** because it
+is `-D warnings` under an unpinned stable toolchain, and a lint that goes red on
+a clippy release must not take the header-conformance check down with it.
+
+`just android-apk` packages both hosts' APKs and is the only **gate** that
+compiles any Java in this repository. Before that recipe, nothing scheduled a
+Java compile: the harness `build.sh` was reachable only through
 `android-splitscreen`, which runs it before its device check but which nothing
 runs automatically, and `demo-android`'s script had no caller at all, so its two
 files had been compiled by no one (issue #1030). CodeQL's `java-kotlin` analysis
@@ -134,10 +143,17 @@ painter-capable adapter there is a CPU rasteriser.
   `Running`, and the render thread reports `started()` only once its attach has
   returned — so a thread wedged inside an attach answers `true`, the same answer
   a drawing loop gives. What does answer it is the pair of markers around the
-  attach: `attaching a WxH surface` with no `attached a WxH surface` after it.
-  The `android-splitscreen` recipe still names `nativeIsRunning` in two comments
-  and belongs to issue #1006. The v0.19 driver prompt asserted the emulator
-  could exercise all three cases; for this AVD that is false.
+  attach **read together with the failure line**, which is a three-way reading
+  rather than the two-way one this record carried until issue #1080:
+  `attaching a WxH surface` is written before every acquisition, `attached`
+  after every one that succeeded, and `attach failed:` or
+  `could not rebuild the surface:` after one that finished and failed. Only
+  `attaching` followed by none of the three is the wedge. Reading "no
+  `attached`" on its own as a wedge calls every failed attach one, which is the
+  same shape of wrong advice #1080 was filed to remove. The
+  `android-splitscreen` recipe named `nativeIsRunning` in two comments until PR
+  #1098 corrected them under #1080. The v0.19 driver prompt asserted the
+  emulator could exercise all three cases; for this AVD that is false.
 
   **The measurement that explains it, taken 2026-08-15 (issue #960).** The
   attach never returned because the build was unoptimized, not because the
