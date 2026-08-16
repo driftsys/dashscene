@@ -62,8 +62,13 @@ pub(crate) fn unpack(value: u64) -> (u32, u32) {
 /// on an emulator for a release build and over 218 s for a debug one (issue
 /// #960) — after which nothing is drawn until a drawable extent arrives, with
 /// `surfaceDestroyed` parked behind the acquisition when the 0x0 came from a
-/// teardown. `check_extent` naming that refusal rather than accepting it
-/// silently is issue #1149, in the painter.
+/// teardown. The painter does **not** refuse it on this path, and will not:
+/// `SurfaceRenderer` keeps taking a zero, because returning an error from its
+/// constructor strands this crate's own render thread, and the refusal
+/// (`Renderer::check_drawable`) is on the offscreen path Android never reaches.
+/// `docs/design/dashscene-gpu.md` records that split. So this guard is the only
+/// one, rather than the first of two. Issue #1149 stays open for what a host is
+/// *told* about a zero-extent surface, which is still only `Drawn::No`.
 ///
 /// **One function because it is one rule** (issue #1094): [`publish_extent`]
 /// asks it of what the UI thread reports, and [`LoopState::step`] asks it again

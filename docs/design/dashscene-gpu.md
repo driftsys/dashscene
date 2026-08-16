@@ -161,6 +161,36 @@ resolution limits come from the adapter and every other downlevel limit stays.
 `check_extent` refuses past it rather than panicking inside
 `Surface::configure`.
 
+**The floor is a separate guard, because the two layers answer it differently**
+(issue #1149). wgpu raises a validation error for a zero dimension exactly as it
+does for an over-large one, and a validation error reaches the uncaptured error
+handler, which panics:
+
+    In Device::create_texture, label = 'dashscene-gpu target'
+      Dimension X is zero
+
+So `check_drawable` is `check_extent` plus the lower bound, returning
+`RendererError::NoPixels`, and the offscreen path — `Renderer::render` and
+`render_dirty` — asks it.
+
+`SurfaceRenderer` does not. A window reports `0x0` whenever it is minimised,
+hidden, or not yet laid out, so all three of its call sites — the constructor,
+`resize`, and the `debug_assert` in `configure` — ask `check_extent`, the
+ceiling alone. Nothing is configured _for_ a zero, which is not the same as the
+surface ending up unconfigured: only the constructor can leave one that way, by
+never configuring at all, while `resize` stores the zero and keeps the swapchain
+built for the previous extent. `configure` and `present` are where the surface
+layer reads the floor, each returning early. The third is the one to notice: it
+is a `debug_assert`, so on the path that actually calls `Surface::configure` the
+ceiling is compiled out of every release build. Refusing there would strand an
+Android render thread at construction, and would end `dashscene-desktop`'s host
+on every minimise, since its `resized` hands any `Err` from `resize` to `fail`.
+`render::has_pixels` is the one spelling of the floor that both layers read.
+
+What a host is told about a zero-extent surface is still only `Drawn::No`, which
+it shares with an occluded window and a timed-out acquire — issue #1149 stays
+open for that half.
+
 The storage-buffer count is the limit that shaped the crate. The paint
 pipeline's bind group stands at:
 
