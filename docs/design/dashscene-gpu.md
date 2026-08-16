@@ -372,16 +372,17 @@ gate working by accident and gives `tile_scale` the bit pattern of `1u32`,
 quiet one, and no fixture in this crate tiles.
 
 **"The row draws nothing" is a property of the resolved row, not of the
-instance.** A coverage mask reaching this painter is resolved, degenerate — no
-quad or no atlas rectangle, which `field_draws` rejects before residency — or
-refused. `GpuMsdfRow::resolved` is what distinguishes the first from the other
-two, and both consumers read it rather than inferring the mask from
-`Instance::shape`. Inferring it is what made a refused field draw: an unresolved
-row carries a zero `px_range`, and `msdf_coverage(sample, 0)` is `0.5` for every
-sample there is, so the fill drew the node's ink at half alpha and the backdrop
-drew half-strength frost — each over the antialiasing margin at the node's
-top-left corner, since a zeroed plane has no area for the margin to grow (issue
-#972). The flag is stated rather than derived from `px_range` for the reason
+instance.** A coverage mask reaching this painter is resolved, degenerate —
+whatever `field_draws` rejects before residency, which is a quad whose width or
+height is not finite and positive, or a missing atlas rectangle — or refused.
+`GpuMsdfRow::resolved` is what distinguishes the first from the other two, and
+both consumers read it rather than inferring the mask from `Instance::shape`.
+Inferring it is what made a refused field draw: an unresolved row carries a zero
+`px_range`, and `msdf_coverage(sample, 0)` is `0.5` for every sample there is,
+so the fill drew the node's ink at half alpha and the backdrop drew
+half-strength frost — each over the antialiasing margin at the node's top-left
+corner, since a zeroed plane has no area for the margin to grow (issue #972).
+The flag is stated rather than derived from `px_range` for the reason
 `blur.wgsl` gives against its own `masked`: a zero range is a degenerate field,
 not an absent one, and a real field can take a value a sentinel would claim.
 
@@ -457,8 +458,14 @@ to keep, where dropping the lot needs neither.
 boundary, and its two inequalities pin one half each. That returning from one
 refused frame costs **less** than returning from two is what says the frame-wide
 half was held — with the grace removed both cost twelve. That it costs **more
-than nothing** is what says the per-backdrop half was not, which is what keeps
-the grace clear of issue #1050.
+than nothing** is what says the per-backdrop half was not.
+
+That split was also what kept the grace clear of issue #1050 while it was open.
+It is closed now: `Renderer::forget_uploaded` drops everything naming an atlas
+through `BlurTargets::forget_atlases` and `Frame::forget_atlases`, so no atlas
+key — the blur's list of indices, or the paint pipeline's count — survives the
+call that moves what those keys name. The frame-wide targets are held across a
+document replacement, because nothing they name belongs to the residency set.
 
 **`BlurTargets::bound_atlases` keys the rebuild per slot, not per backdrop**
 (issue #1026), and that is correct for one reason: the atlas texture view is the
@@ -546,15 +553,18 @@ divergence that has to be settled with it.
 
 `a_degenerate_coverage_field_draws_nothing` pins the painter's half over both
 consumers, and **the two rejections are not guarded by the same observable**.
-Dropping the quad half of `field_draws` changes the picture. Dropping the
-atlas-rectangle half changes no texel either consumer draws, measured — the row
-goes out with a NaN `half_uv` and an infinite `px_range`, and both arms come
-back at zero coverage and discard. What catches that one is the draw count: a
-field that resolves plans the backdrop **and** brings the masked fill naming it
-back into a range of its own, so the frame encodes that instance, the blur's two
-passes and the base blit on top of the halves, and `Renderer::last_draw_runs`
-goes from 1 to 5. The picture is not the only observable, which is the reason
-that accessor is public.
+Dropping the positive-extent half of `field_draws` changes the picture, and so
+does dropping its finite half — six rows carry a non-finite quad extent, four
+from an infinite bound and two from finite bounds whose difference overflows,
+and without that term the frame takes five draws where one is correct (issue
+#1034). Dropping the atlas-rectangle half changes no texel either consumer
+draws, measured — the row goes out with a NaN `half_uv` and an infinite
+`px_range`, and both arms come back at zero coverage and discard. What catches
+that one is the draw count: a field that resolves plans the backdrop **and**
+brings the masked fill naming it back into a range of its own, so the frame
+encodes that instance, the blur's two passes and the base blit on top of the
+halves, and `Renderer::last_draw_runs` goes from 1 to 5. The picture is not the
+only observable, which is the reason that accessor is public.
 
 ## Two targets, one device
 
