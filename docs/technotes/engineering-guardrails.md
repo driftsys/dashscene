@@ -145,11 +145,11 @@ rules.
   pre-slice load path, which is what says the 1.00x it reports now was earned
   rather than assumed.
 
-  **The per-frame cost is measured too, and it now reports the same 1.00x.**
-  That benchmark's own D3 puts its boundary at "a committed arena with the shown
-  root's assets resident", so it says nothing about what a frame costs once the
-  document is loaded — and until story #838 the answer was that the per-frame
-  cost was **not** bounded by the shown root.
+  **The per-frame cost is measured too, on three terms.** That benchmark's own
+  D3 puts its boundary at "a committed arena with the shown root's assets
+  resident", so it says nothing about what a frame costs once the document is
+  loaded — and until story #838 the answer was that the per-frame cost was
+  **not** bounded by the shown root.
   `goldens/tooling/tests/per_frame_scaling.rs` (story #836) measured it over the
   same sixty-five-root document, on macos aarch64: a layout frame ran **65 Taffy
   layout computations against a one-root document's 1**, and the committed rect
@@ -159,9 +159,28 @@ rules.
   document before or after, which is the retained tree's own property (issue
   #164) rather than anything this chain bought.
 
-  The before-number is still measured rather than remembered:
+  **Those two terms are not the whole per-frame cost, and this paragraph used to
+  read as though they were** (issue #944). Neither of them moves when the
+  commit's own per-node scratch is sized by the document, which it was: a frame
+  drawing one artboard of sixty-five allocated sixty-five entries in nine
+  vectors to produce a one-row table, while both terms above read 1.00x. Story
+  #944 added a third term for it — `BYTES_PER_EXTRA_ROOT`, the bytes a
+  steady-state layout frame asks the allocator for per root beyond the first —
+  and then bounded the scratch: **69 bytes per extra root before, 17 after.**
+
+  **The third term does not read 1.00x, and is not claimed to.** The 17 bytes
+  that remain are `dashscene-engine`'s own per-frame scratch — two vectors sized
+  by the document's node count and one by its root count — which story #944 did
+  not touch and issue #1111 carries.
+
+  The before-numbers are still measured rather than remembered:
   `the_confinement_is_what_makes_the_number_one` clears the shown root on every
-  run and reports 65 again.
+  run and breaches all three terms — 65 solves, 65 rect rows, and 136 bytes per
+  extra root. **The byte figure is larger than the 69 that story #944 started
+  from, and that is not a regression**: an unconfined commit really does draw
+  sixty-five artboards, so the rect table and everything else sized by rect rows
+  grows with it. Those are costs the confined commit avoids by drawing less, not
+  scratch it was wasting.
 
 ## Format and process
 

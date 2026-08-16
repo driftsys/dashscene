@@ -11,14 +11,16 @@
             — captures have the table, prompts have that file's prose — so
             this commit updates those paragraphs, and the tracked count is
             unchanged because one prompt replaced another.
-    scope   **written for eight issues; one remains.** This prompt was
+    scope   **written for eight issues; none remain.** This prompt was
             written on 2026-08-15 and half its scope was gone inside a
             day, which is itself the most useful thing it records about
-            this milestone. Live: **#944**. Landed: #922
-            (PR #1084), then #929, #930 and #932 together (PR #1099),
-            then #950 (2026-08-16) — which took a story to close and
-            left `docs/decisions/one-solver-per-live-scene.md` behind
-            it.
+            this milestone. **Live: none, once this prompt's own pull
+            request lands.** Landed: #922 (PR #1084), then #929, #930 and
+            #932 together (PR #1099), then #950 (2026-08-16) — which took
+            a story to close and left
+            `docs/decisions/one-solver-per-live-scene.md` behind it — and
+            #944 (2026-08-16), which left
+            `docs/decisions/per-frame-allocation-is-measured-as-a-slope.md`.
             Moved out on 2026-08-16 after the "decide rather than start"
             call each section argued for: **#828 to v0.21**, where Unity
             is the second painter that can validate a portable suite, and
@@ -32,12 +34,17 @@
     gh issue list --milestone "v0.19 — Android, the C ABI, and layer 0" \
       --state open --json number,title,labels
 
-At 2026-08-16 that returns **five rows**: one `epic` (#833), three `story`
-(#842, #843, #950 — relabelled from `debt`), and one `debt` (#944). It returned
-twelve on 2026-08-15, and six earlier on 2026-08-16, before **#885 moved to
-v0.21**. **#950 landed later the same day**, which takes it to four. Two of this
-file's figures moved on 2026-08-16 for two unrelated reasons, which is the
-argument for the next line rather than for any number here: re-run the query.
+**This paragraph no longer states the answer, and that is the correction.** It
+has carried a count since it was written and every one has been overtaken:
+twelve on 2026-08-15, then six, five and four on 2026-08-16 — as #885 and #842
+moved to v0.21, and as #950 landed. **Two of those went stale inside the single
+editing session that was correcting them**, about two minutes apart, and the
+rewrite was wrong on a label the second time.
+
+So the figure is the command's to give, not this file's. What is durable is the
+shape: v0.19's remaining work is small, moves several times a day, and drains
+toward v0.21 as often as toward done. `#944` is the one row this prompt's own
+pull request removes, and it is the last `debt` on the milestone.
 
 **The milestone's own counts include pull requests, and reading them as issue
 progress overstates it.** `gh api repos/{owner}/{repo}/milestones` reports
@@ -135,7 +142,10 @@ and both are now false. What changed:
   rather than committing it. `docs/decisions/one-solver-per-live-scene.md` is
   the record; the detector for the general hazard is issue #1104.
 
-This leaves **#944**, **#828** and **#767** live in this prompt.
+**Nothing is left live in this prompt.** #950 landed on 2026-08-16 and #944 the
+same day; #944's section below is kept because the correction it makes to the
+issue's own vector count is what the work was done against, and because the band
+term it calls for now exists.
 
 This section held five until #922 landed; its bullet is kept below, struck,
 because the reasoning in the ones around it refers to the count.
