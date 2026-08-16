@@ -24,6 +24,7 @@ use std::ffi::{CStr, c_void};
 use dashscene_ffi::{DsRuntime, DsStatus, DsSurfaceKind};
 use jni::errors::LogErrorAndDefault;
 use jni::objects::{JByteArray, JClass, JObject, JObjectArray, JString};
+use jni::signature::FieldSignature;
 use jni::strings::JNIStr;
 use jni::sys::{jboolean, jint, jlong};
 use jni::{Env, EnvUnowned, jni_sig};
@@ -45,6 +46,71 @@ const fn jni_name(name: &'static CStr) -> &'static JNIStr {
     match JNIStr::from_cstr(name) {
         Some(name) => name,
         None => panic!("a DsFace field name is not valid modified UTF-8"),
+    }
+}
+
+/// One `DsFace` field's name and JNI signature, both derived from
+/// [`crate::face`]'s single entry for it (issue #1096).
+///
+/// **The descriptor is written twice and cannot be written once.** `jni_sig!`
+/// takes a literal and parses it at compile time, so it cannot read
+/// `face::FONT.descriptor`; and `face` cannot spell a `jni_sig!` at all,
+/// because `jni` is an Android-only dependency and that module compiles
+/// everywhere. What this macro adds is the `const` assertion between the two,
+/// so a descriptor changed in one place and not the other is a compile error
+/// rather than a `NoSuchFieldError` at the first `surfaceChanged` — the same
+/// standing that the *name* has had since issue #1089, and the gap issue #1096
+/// was filed for.
+///
+/// **Where it fires, and where it does not.** Only on the one target this file
+/// compiles for, so `just android` and `just android-lint` are the gates and no
+/// test tier is. That is a property of `read_face` being behind the platform
+/// `cfg`, not of this macro; the pairing against `DsFace.java` is what runs in
+/// `just test`, in `face`'s own tests.
+macro_rules! face_field {
+    ($field:expr, $descriptor:literal) => {{
+        const NAME: &JNIStr = jni_name($field.name);
+        const _: () = assert!(
+            face::same_descriptor($field.descriptor, $descriptor),
+            "a DsFace descriptor in face.rs is not the one host.rs looks that \
+             field up with. GetFieldID resolves a field by name AND descriptor, \
+             so the two must be the same text."
+        );
+        Bound {
+            name: NAME,
+            sig: jni_sig!($descriptor),
+        }
+    }};
+}
+
+/// A field's name and signature, paired by [`face_field!`] and **not separable
+/// afterwards**.
+///
+/// One value rather than two locals, because two locals in one scope can be
+/// crossed: `env.get_field(&face, weight_name, family_sig)` compiles and throws
+/// `NoSuchFieldError` on the device at the first `surfaceChanged` — the exact
+/// failure issues #1089 and #1096 exist to make impossible. `read_face` holds
+/// six of these at once, three of them with distinct descriptors, so the
+/// crossing is available to a careless edit rather than hypothetical.
+///
+/// The signature half has no reader but [`Bound::get`]. The name half is also
+/// read directly, at the two diagnostics that say which field was absent —
+/// deliberately, because a second spelling there would survive a rename and
+/// name a field that no longer exists on the exact path a reader consults when
+/// the load has failed.
+struct Bound {
+    name: &'static JNIStr,
+    sig: FieldSignature<'static>,
+}
+
+impl Bound {
+    /// Reads this field off `object`.
+    fn get<'local>(
+        &self,
+        env: &mut Env<'local>,
+        object: &JObject<'_>,
+    ) -> jni::errors::Result<jni::objects::JValueOwned<'local>> {
+        env.get_field(object, self.name, &self.sig)
     }
 }
 
@@ -452,17 +518,19 @@ fn read_face<'frame, 'array>(
     faces: &JObjectArray<'array, JObject<'array>>,
     index: usize,
 ) -> jni::errors::Result<Option<OwnedFace>> {
-    // **The six names, from the one list this crate holds** (issue #1089).
-    // Spelled in `crate::face` rather than here, because a host test can read
-    // that module and compare it against `DsFace.java`'s own declarations — and
-    // nothing else can: this file is behind the platform `cfg`, so no test
-    // binary links it and no gate lints it.
-    const FAMILY: &JNIStr = jni_name(face::FAMILY);
-    const WEIGHT: &JNIStr = jni_name(face::WEIGHT);
-    const FACE_INDEX: &JNIStr = jni_name(face::FACE_INDEX);
-    const FONT: &JNIStr = jni_name(face::FONT);
-    const ATLAS_PNG: &JNIStr = jni_name(face::ATLAS_PNG);
-    const ATLAS_METRICS: &JNIStr = jni_name(face::ATLAS_METRICS);
+    // **The six names and the six descriptors, from the one list this crate
+    // holds** (issues #1089, #1096). Spelled in `crate::face` rather than here,
+    // because a host test can read that module and compare it against
+    // `DsFace.java`'s own declarations — and nothing else can: this file is
+    // behind the platform `cfg`, so no test binary links it.
+    //
+    // **Built at each read rather than bound to six locals**, so there is no
+    // local to cross. Binding them was the first shape and it moved the hazard
+    // rather than removing it: five of the six descriptors are shared — `I` by
+    // `weight` and `faceIndex`, `[B` by the three arrays — so
+    // `let weight_field = face_field!(face::FACE_INDEX, "I");` satisfies the
+    // `const` assertion, compiles, lints, and reads the wrong field into
+    // `weight` on the device with no exception and no log line.
 
     let face = faces.get_element(env, index)?;
     if face.is_null() {
@@ -472,12 +540,12 @@ fn read_face<'frame, 'array>(
         return Ok(None);
     }
 
-    let family = env.get_field(&face, FAMILY, jni_sig!("Ljava/lang/String;"))?;
+    let family = face_field!(face::FAMILY, "Ljava/lang/String;").get(env, &face)?;
     let family: JString = env.cast_local::<JString>(family.l()?)?;
     if family.is_null() {
         log(&format!(
             "nativeSurfaceCreatedWithText: face {index} has no {}",
-            FAMILY.to_str()
+            face::FAMILY.name.to_string_lossy()
         ));
         return Ok(None);
     }
@@ -488,7 +556,7 @@ fn read_face<'frame, 'array>(
     // answers to the same question. What is refused is only what a `u16` cannot
     // carry to the ABI at all — a truncating cast would turn 65 936 into 400
     // and the ABI would accept it.
-    let weight = env.get_field(&face, WEIGHT, jni_sig!("I"))?.i()?;
+    let weight = face_field!(face::WEIGHT, "I").get(env, &face)?.i()?;
     let Ok(weight) = u16::try_from(weight) else {
         log(&format!(
             "nativeSurfaceCreatedWithText: face {index} declares weight {weight}, which does \
@@ -499,7 +567,7 @@ fn read_face<'frame, 'array>(
     // `face_index` is a `u32` in the descriptor and a signed `int` in Java, so
     // the only value that cannot cross is a negative one. Refused rather than
     // clamped: a negative index is a caller's mistake, and 0 is a real face.
-    let face_index = env.get_field(&face, FACE_INDEX, jni_sig!("I"))?.i()?;
+    let face_index = face_field!(face::FACE_INDEX, "I").get(env, &face)?.i()?;
     let Ok(face_index) = u32::try_from(face_index) else {
         log(&format!(
             "nativeSurfaceCreatedWithText: face {index} declares faceIndex {face_index}, which \
@@ -512,13 +580,13 @@ fn read_face<'frame, 'array>(
     // rather than repeating it as a literal. A second spelling here would
     // survive a rename and name a field that no longer exists, on the exact
     // path a reader consults when the load has failed.
-    let mut bytes_field = |name: &JNIStr| -> jni::errors::Result<Option<Vec<u8>>> {
-        let array = env.get_field(&face, name, jni_sig!("[B"))?.l()?;
+    let mut bytes_field = |field: &Bound| -> jni::errors::Result<Option<Vec<u8>>> {
+        let array = field.get(env, &face)?.l()?;
         let array: JByteArray = env.cast_local::<JByteArray>(array)?;
         if array.is_null() {
             log(&format!(
                 "nativeSurfaceCreatedWithText: face {index} has no {}",
-                name.to_str()
+                field.name.to_str()
             ));
             return Ok(None);
         }
@@ -530,13 +598,13 @@ fn read_face<'frame, 'array>(
     // already refused — 63 940 B of PNG and 4 448 B of metrics on the
     // harness's own cascade — and log three lines for one bad face, which
     // reads as three problems.
-    let Some(font) = bytes_field(FONT)? else {
+    let Some(font) = bytes_field(&face_field!(face::FONT, "[B"))? else {
         return Ok(None);
     };
-    let Some(atlas_png) = bytes_field(ATLAS_PNG)? else {
+    let Some(atlas_png) = bytes_field(&face_field!(face::ATLAS_PNG, "[B"))? else {
         return Ok(None);
     };
-    let Some(atlas_metrics) = bytes_field(ATLAS_METRICS)? else {
+    let Some(atlas_metrics) = bytes_field(&face_field!(face::ATLAS_METRICS, "[B"))? else {
         return Ok(None);
     };
 

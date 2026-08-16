@@ -31,16 +31,36 @@ package dev.driftsys.dashscene;
  * resolves a field by both.
  *
  * <p><b>Change it in {@code face.rs} too — and, for a type change, in
- * {@code host.rs}'s {@code jni_sig!} literal for that field.</b> The test
- * checks this file against {@code face.rs}; nothing yet checks {@code face.rs}
- * against {@code host.rs}, so a type changed in two of the three places passes
- * the gate and still fails on the device (issue #1096).
+ * {@code host.rs}'s {@code jni_sig!} literal for that field.</b> All three are
+ * held mechanically now, but by two different gates, and <b>which gate catches
+ * a half-finished change depends on which half you finished</b> (issue #1096):
+ *
+ * <ul>
+ * <li>this file and {@code face.rs} agree, {@code host.rs} does not — a
+ *     <b>compile error</b>, from a {@code const} assertion, on {@code just
+ *     android} and {@code just android-lint} only, because {@code host.rs}
+ *     compiles on no other target;</li>
+ * <li>{@code face.rs} and {@code host.rs} agree, this file does not — a
+ *     <b>failing test</b>, {@code just test}, on every platform;</li>
+ * <li>this file and {@code host.rs} agree, {@code face.rs} does not — both of
+ *     the above fire.</li>
+ * </ul>
+ *
+ * <p>So neither gate alone covers every permutation, and "it compiled" is not
+ * the same claim as "the three agree". Run {@code just test} and {@code just
+ * android} before pushing a type change.
  *
  * <p>The check looks for each declaration it expects, with whitespace
  * <i>between tokens</i> collapsed — so extra spaces and line breaks between
  * words are fine, while {@code weight ;} or {@code byte [] font} are not found
  * even though Java accepts them. That is a red test rather than a broken build,
  * and the failure message says which it is.
+ *
+ * <p><b>It is looked for in this class's own body</b> (issue #1097). A
+ * declaration moved into a nested class, or into a second top-level class in
+ * this file, is not one {@code GetFieldID} can resolve on a {@code DsFace}
+ * instance and does not satisfy the check. Neither does one that survives only
+ * inside a string literal.
  *
  * <p><b>It does not check the other direction</b>: adding a seventh field here
  * fails nothing, because the native half reads these six and would simply
