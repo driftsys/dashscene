@@ -11,12 +11,23 @@ convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports eleven files
+## Why the WIP gate currently reports nine files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-eleven and exits non-zero. All eleven are deliberate, accepted exceptions rather
+nine and exits non-zero. All nine are deliberate, accepted exceptions rather
 than ungardened debt, and they are recorded here so the gate's result is
 explained rather than merely tolerated.
+
+**All nine are design captures rather than driver prompts**, and since the v0.19
+close (story #843, 2026-08-16) **no driver prompt is held here at all** — the
+state this file has been in at several earlier points — 2026-08-02, 2026-08-07
+and the v0.17 close among them — because a prompt belongs to a slice and both of
+v0.19's were archived when it closed.
+
+Not all nine are untouched: several are **partly gardened**, their implemented
+halves already written into records and their `status` lines saying which half
+remains. The table below is what says which — read it rather than a count, which
+this file has already been wrong about twice.
 
 **The gate is deliberately not wired into CI, and this section is why.** Its
 result here is non-zero by design and would stay non-zero for as long as any
@@ -34,20 +45,20 @@ ungardened debt.
 **This count has been wrong before.** It read "seven" from the v0.13 close until
 2026-08-02, while eight files were tracked — the v0.14/v0.15 breakdown was added
 and never listed. It went from seven to eight again later the same day, when the
-v0.15 driver prompt was added — since archived, and described below as one of
-the fifteen. Issue #663 was then filed against the count rather than against
-this ledger, and asserted eight ungardened files when seven were accounted for
-here. It went from eight to nine on 2026-08-05, when v0.16's driver prompt was
-added while v0.15's was still held. It went back to eight on 2026-08-07, when
-epic #594 closed and v0.16's prompt was archived. Both of the next two
-transitions fell on 2026-08-08: to nine when v0.17's prompt landed (`0ab6547`,
-and note it is _named_ for the 2026-08-07 planning session that wrote it, not
-for the day it was committed), and back to eight when epic #793 closed and that
-prompt was archived. **The two prompts never overlapped**, which the file names
-alone would suggest they did. It went back to nine on 2026-08-09, when v0.18's
-prompt landed — written on 2026-08-08 against a `main` that moved underneath it,
-so its first revision counted ten and had to be re-derived on the rebase. It
-reached a real ten later that same day, when
+v0.15 driver prompt was added — since archived, and described below among the
+archived prompts. Issue #663 was then filed against the count rather than
+against this ledger, and asserted eight ungardened files when seven were
+accounted for here. It went from eight to nine on 2026-08-05, when v0.16's
+driver prompt was added while v0.15's was still held. It went back to eight on
+2026-08-07, when epic #594 closed and v0.16's prompt was archived. Both of the
+next two transitions fell on 2026-08-08: to nine when v0.17's prompt landed
+(`0ab6547`, and note it is _named_ for the 2026-08-07 planning session that
+wrote it, not for the day it was committed), and back to eight when epic #793
+closed and that prompt was archived. **The two prompts never overlapped**, which
+the file names alone would suggest they did. It went back to nine on 2026-08-09,
+when v0.18's prompt landed — written on 2026-08-08 against a `main` that moved
+underneath it, so its first revision counted ten and had to be re-derived on the
+rebase. It reached a real ten later that same day, when
 `2026-08-09-svg-as-a-second-producer.md` was added, and that addition read this
 paragraph and updated the count in the same commit — which is what the rule at
 the end of this section asks for.
@@ -109,11 +120,15 @@ commit and each stays for the half that is still undone.
 after the close above took twelve to ten — the commit crosses local midnight,
 and this ledger dates by commit day). Two prompts are held for **one** slice,
 which is new: the earlier same-slice pair was v0.18's, where the second
-superseded the first. These two do not. v0.19 was worked on two tracks that
-shared no branch — the Android half on `integration/v0.19-android`, the
-shown-root chain on `main` — and each track was handed its own. **That split is
-over**: the Android branch merged into `main` on 2026-08-09, and everything
-since has gone straight to `main`.
+superseded the first. These two do not — though v0.19 had a supersession of its
+own inside its debt half: `2026-08-15-v019-DEBT-DRIVER-PROMPT.md` was replaced
+by `2026-08-15-v019-REMAINING-DEBT-DRIVER-PROMPT.md` on the same day and
+archived then, so the tracked count did not move and both are among the archived
+prompts counted further below. v0.19 was worked on two tracks that shared no
+branch — the Android half on `integration/v0.19-android`, the shown-root chain
+on `main` — and each track was handed its own. **That split is over**: the
+Android branch merged into `main` on 2026-08-09, and everything since has gone
+straight to `main`.
 
 **Ten, when the shown-root prompt was archived** (2026-08-13). It left as soon
 as it carried nothing rather than waiting for v0.19's close, which is what its
@@ -126,25 +141,18 @@ archiving belong in one commit**, and in this case they were not: the records
 landed with the stories and the original stayed here for a few hours, which the
 `sdd-working-memory-lifecycle` rule calls a copy rather than a gardening.
 
-**Eleven, since the v0.19 debt prompt landed** (2026-08-15). Nine are design
-captures, described below, and **two driver prompts are held**: v0.19's Android
-half, and `2026-08-15-v019-REMAINING-DEBT-DRIVER-PROMPT.md`, which carries the
-issues in that slice needing no hardware — **eight when it landed and one on
-2026-08-16**: #922 settled that evening, #929, #930 and #932 together overnight,
-#828 and #767 moved to v0.21 and v1 on the "decide rather than start" call their
-own sections argued for, and #950 landed as a story late that day. **This file
-keeps two counts of that prompt, here and at the paragraph below the table, and
-they have gone out of step before** — a change to one is a change to both. It
-replaced `2026-08-15-v019-DEBT-DRIVER-PROMPT.md` on the same day, when #925,
-#945 and #946 landed and left that one describing work that was done; the count
-did not move, because one prompt was archived as the other was added.
+**Nine, since story #843 archived v0.19's two driver prompts** (2026-08-16). All
+nine are design captures, described below. The count reached eleven on
+2026-08-15 and came back down when the slice closed, which is the shape to
+expect: captures accumulate slowly and prompts arrive and leave with their
+slice.
 
 **Two prompts for one slice has happened before and is not a supersession.**
-v0.19 held two in August when the Android and shown-root tracks ran on branches
-that shared nothing. These two split by kind rather than by track: one carries
-the story that waits on hardware, the other the debt that does not. The Android
-one archives at the slice's close; this one archives when its own work lands,
-which is the earlier of the two.
+v0.19 carried an Android prompt and a debt prompt at once, each for a different
+half of the slice. **Both were archived together on 2026-08-16**, at the close,
+rather than separately as this paragraph once predicted — the debt prompt became
+archivable first, when its last issue was settled, and it waited for the close
+so that one commit moved both.
 
 Two were v0.18's, and **both left at that slice's close on 2026-08-11**:
 `2026-08-08-v018-DRIVER-PROMPT.md`, added the day v0.17 closed, and
@@ -167,22 +175,24 @@ first: the lowering needed a variant-set emitter that did not exist, and the
 fifteen `refused-*` nodes it counted turn out to exercise eleven constructs,
 because four of them carry no interaction at all.
 
-The one still held, brought by an earlier merge, is
-`2026-08-09-v019-ANDROID-DRIVER-PROMPT.md`, added at the close of that slice's C
-ABI work to carry stories #841 and #842, and given #947 when that was split out
-of #863 on 2026-08-13. **#841 and #947 have landed and #842 has not** — it waits
-on hardware, as does D3a (#885, moved to v0.21 on 2026-08-16) — so this prompt
-is the one still carrying live work, and it was rewritten on 2026-08-13 and
-corrected on 2026-08-14 against what had changed under it. It archives when epic
-#833 does, which its own status line says.
+`2026-08-09-v019-ANDROID-DRIVER-PROMPT.md` was the last one held here, added at
+the close of that slice's C ABI work to carry stories #841 and #842, and given
+#947 when that was split out of #863 on 2026-08-13. It was rewritten on
+2026-08-13 and corrected on 2026-08-14 against what had changed under it.
+**Archived on 2026-08-16 at the v0.19 close**, which its own status line said
+would happen when epic #833 did. #841 and #947 landed; #842's on-device half and
+D3a (#885) moved to v0.21 rather than finishing, so what that prompt still
+described is live work on another slice — recorded on the issues rather than
+carried here, because a prompt belongs to the slice that opened it.
 
-**Correcting it rather than archiving it is the convention, not a hedge.** A
-driver prompt is archived verbatim rather than gardened into records, so the
-test is whether it still carries live work: it carries #842, so it stays. Both
-of its durable findings — the emulator's SwiftShader-only Vulkan adapter, and
-the `__INTRODUCED_IN(33)` consequence for `AChoreographer_postVsyncCallback` —
-are already in `docs/design/android-toolchain.md`, so a verbatim archive later
-loses nothing.
+**Correcting a prompt rather than archiving it is the convention while its work
+is live, not a hedge.** A driver prompt is archived verbatim rather than
+gardened into records, so the test is whether it still carries live work. It
+carried #842, and when that story moved to v0.21 on 2026-08-16 the prompt was
+archived with the slice. Both of its durable findings — the emulator's
+SwiftShader-only Vulkan adapter, and the `__INTRODUCED_IN(33)` consequence for
+`AChoreographer_postVsyncCallback` — are already in
+`docs/design/android-toolchain.md`, so a verbatim archive later loses nothing.
 
 For a few hours on 2026-08-12 and 2026-08-13 it had a companion,
 `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md`, carrying the same slice's `main`
@@ -202,14 +212,14 @@ claimed the fall was a first, which
 Driver prompts — the brief a session is handed to carry out a named piece of
 work — are transient by construction, spent the moment their work lands, and the
 convention is to archive them verbatim rather than garden them into records.
-Nineteen are in `docs/archive/`: eighteen `*-DRIVER-PROMPT.md` plus the one
-`*-SPIKE.md`, which is counted there because it was archived verbatim beside the
-prompt that carried out its design rather than gardened. That number is a third
-copy of a count and goes stale the same way the other two do — re-derive it with
-`git ls-files docs/archive/ | grep -cE 'DRIVER-PROMPT|SPIKE'` rather than
-trusting it. Note that the command must match the spike too: dropping it returns
-the subordinate count, eighteen, and a reader following a command that disagrees
-with the headline concludes the ledger is stale when it is not.
+Twenty-three are in `docs/archive/`: twenty-two `*-DRIVER-PROMPT.md` plus the
+one `*-SPIKE.md`, which is counted there because it was archived verbatim beside
+the prompt that carried out its design rather than gardened. That number is a
+third copy of a count and goes stale the same way the other two do — re-derive
+it with `git ls-files docs/archive/ | grep -cE 'DRIVER-PROMPT|SPIKE'` rather
+than trusting it. Note that the command must match the spike too: dropping it
+returns the subordinate count, twenty-two, and a reader following a command that
+disagrees with the headline concludes the ledger is stale when it is not.
 
 **The v0.17 prompt left when epic #793 closed** (2026-08-08), archived verbatim
 as `docs/archive/2026-08-07-v017-DRIVER-PROMPT.md` on the same rule every prompt
@@ -294,10 +304,10 @@ says why that happened — **re-derive from `git ls-tree` and `git ls-files`
 rather than trusting the prose**, and that applies to a claimed "first" exactly
 as it applies to a count.
 
-One of the fifteen is `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md`,
-v0.13's `t2-check-has-no-teeth` tier — 19 items whose common property was an
-assertion that could not distinguish right from wrong. It was archived on
-2026-08-02, when epic #362 closed.
+One of them is `2026-07-27-t2-checks-that-cannot-fail-DRIVER-PROMPT.md`, v0.13's
+`t2-check-has-no-teeth` tier — 19 items whose common property was an assertion
+that could not distinguish right from wrong. It was archived on 2026-08-02, when
+epic #362 closed.
 
 **One item under that label, #499, was still open when it was archived, and the
 milestones say why that is correct rather than an oversight.** The prompt's own
@@ -443,24 +453,18 @@ z-interleave, and the as-built records now carry all of it
 decision record's two resolution sections). Both it and the driver prompt that
 carried out its design are archived verbatim in `docs/archive/`.
 
-Two driver prompts are held here now, both v0.19's, as the section above says.
-`2026-08-09-v019-ANDROID-DRIVER-PROMPT.md` carries story #842 — #841 and #947
-landed, and `integration/v0.19-android` merged into `main` on 2026-08-09 and is
-history — and leaves at the slice's close.
-`2026-08-15-v019-REMAINING-DEBT-DRIVER-PROMPT.md` carries the debt that does not
-wait on hardware. It named eight and **none are left**: #950 landed on
-2026-08-16 and #944 the same day, and the rest are struck in the prompt itself
-rather than deleted, because the corrections it made to their premises are what
-the work was done against. **It is archivable now**, and leaves at the slice's
-close with the other v0.19 prompt rather than in either story's pull request —
-story #843 is where that happens. It supersedes
-`2026-08-15-v019-DEBT-DRIVER-PROMPT.md`, archived 2026-08-15.
+**No driver prompt is held here now.** Both of v0.19's were archived verbatim on
+2026-08-16 by story #843, the slice's close, which is where this file said that
+would happen rather than in either story's pull request.
+`2026-08-09-v019-ANDROID-DRIVER-PROMPT.md` had carried story #842, whose
+on-device half moved to v0.21; `2026-08-15-v019-REMAINING-DEBT-DRIVER-PROMPT.md`
+had carried eight issues and ended with none, its corrections struck in place
+rather than deleted because they are what the work was done against.
 
 **Half its scope was gone inside a day of it landing**, which is worth reading
-as a property of this milestone rather than of the prompt: v0.19's remaining
-debt is small and moves fast, and what gates the slice is hardware for #842.
-**#885 gated it too until 2026-08-16**, when it moved to v0.21 with #960 and
-#969; epic #951 records the ruling.
+as a property of that milestone rather than of the prompt: v0.19's remaining
+debt was small and moved fast, and what the slice ended up waiting on was
+hardware for #842 and #885 — both of which moved to v0.21 rather than finishing.
 
 `2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md` was archived on 2026-08-13, when
 #838 and #863 both landed — the first just after local midnight, which is why
@@ -477,8 +481,11 @@ This paragraph said "none" from 2026-08-07, when v0.17's prompt was added and
 this sentence was not touched, until that prompt was archived a day later and
 the sentence became accidentally true again. It is the same shape as the count
 above it, and for the same reason: adding a file here and editing this file are
-one change, and nothing enforces it. The most recent archived are the two v0.18
-prompts, `2026-08-08-v018-DRIVER-PROMPT.md` and
+one change, and nothing enforces it. **The most recent archived are v0.19's two,
+on 2026-08-16 at its close — the third time two left together.** Before them,
+`2026-08-15-v019-DEBT-DRIVER-PROMPT.md` when its replacement superseded it, and
+`2026-08-11-v019-SHOWN-ROOT-DRIVER-PROMPT.md` on 2026-08-13. Before those, the
+two v0.18 prompts, `2026-08-08-v018-DRIVER-PROMPT.md` and
 `2026-08-09-v018-DRIVER-PROMPT.md`, on 2026-08-11 when epic #769 closed — the
 second time two left together, after `2e8ad20` took the glyph-run spike and its
 driver prompt on 2026-07-29; before them

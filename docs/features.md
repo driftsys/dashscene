@@ -522,9 +522,14 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
 
 ## 10. Platform support
 
-Checked against `demo/`, `demo-web/`, `crates/dashscene-web/`,
-`crates/dashscene-desktop/`, `crates/dashscene-unity/src/lib.rs`, and the
-absence of any mobile target in the workspace.
+Checked against `demo/`, `demo-web/`, `demo-android/`, `crates/dashscene-web/`,
+`crates/dashscene-desktop/`, `crates/dashscene-android/`,
+`crates/dashscene-ffi/` and `crates/dashscene-unity/src/lib.rs`. **The mobile
+target that was absent when this line was written exists**: v0.19 added the
+`aarch64-linux-android` triple and three workspace members — `dashscene-ffi`,
+`dashscene-android` and `demo-android`. Four crates cross-compile for that
+triple and `just android-lint` covers five, so count the recipe rather than this
+sentence.
 
 - [x] **Desktop** — a windowed host with an event loop, pointer and keyboard
       input, and the showcase running in it. Built and run on macOS and Linux.
@@ -534,17 +539,19 @@ absence of any mobile target in the workspace.
 - [x] **Browsers with WebGPU** — the same showcase on a canvas, with the design
       file fetched in pieces rather than as one download. It still fetches every
       image the file names, one request each, before it draws — see section 6.
-- [x] **Embedding in a real application** — **for the browser and the desktop
-      only**, which is what the current slice covers. Story #741 made
+- [x] **Embedding in a real application** — **for the browser, the desktop and
+      Android**, the third added at v0.19 through the C ABI. Story #741 made
       `crates/dashscene-web` the web integration crate and story #794 added
       `crates/dashscene-desktop`, so an embedder on either target consumes the
       surface handoff, the frame loop, the generation gate, resize rebuilding
       and the document load rather than copying them out of a demonstration.
       `demo/tests/integration_surface.rs` asserts that for both halves, and
       fails in either direction. What an embedder still writes for itself is
-      named in each crate's own module documentation. No mobile target exists,
-      and nothing is published: this slice makes the crates publishable and the
-      publish is a separate decision (epic #793).
+      named in each crate's own module documentation. Nothing is published: epic
+      #793 made these two crates publishable and the publish is a separate
+      decision. **The mobile target this bullet once said did not exist arrived
+      at v0.19** — `crates/dashscene-android` on `aarch64-linux-android`, and
+      the C ABI below is what it sits on.
 - [x] **A C interface for hosts written in other languages** — **built, and used
       by one host.** `crates/dashscene-ffi` (story #840) exports a version to
       negotiate against, the runtime lifecycle, a document load, a second
@@ -552,24 +559,27 @@ absence of any mobile target in the workspace.
       the surface handoff, the tick, resize, a draw call, a surface detach and
       an error channel, with a committed header a C caller compiles against;
       `just c-abi` exercises it as one. No panic crosses the boundary and no
-      failure is reachable only as a formatted string. `dashscene-android`
-      (story #841) drives it through those entry points as a C caller would,
-      which is what established that it was sufficient for layer 0 — and what
-      established that it was not quite: `ds_runtime_detach_surface` was added
-      there, because the destroy handshake needs a call that drops the surface
-      and keeps the document. No iOS or Unity host exists. **Root selection is
-      on the mapped load and on no other** (issue #925):
-      `ds_runtime_load_document_mapped` takes a path and a required ordinal,
-      maps the file, and reads only the assets the named root's subtree draws,
-      which is R5 on this path. The two byte-taking loads keep no selection
-      deliberately — they use the owning loader, which copies every payload
-      whatever is shown, so an ordinal on them would bound nothing while reading
-      as though it did. The root is named once, at load; no entry point changes
-      it afterwards. **No host calls the mapped load yet**: `dashscene-android`
-      still hands over a `byte[]`, which is issue #1035. **A scene built in code
-      cannot be expressed through it at all** — there is no builder entry point,
-      that being layer 2 (D8), so a host wanting one links the crates directly
-      as `demo` and `demo-web` do.
+      failure is reachable only as a formatted string — `docs/design/c-abi.md`
+      carries which entry points hold that how, rather than a count repeated
+      here to drift. `dashscene-android` (story #841) drives it through those
+      entry points as a C caller would, which is what established that it was
+      sufficient for layer 0 — and what established that it was not quite:
+      `ds_runtime_detach_surface` was added there, because the destroy handshake
+      needs a call that drops the surface and keeps the document. No iOS or
+      Unity host exists. **Root selection is on the mapped load and on no
+      other** (issue #925): `ds_runtime_load_document_mapped` takes a path, a
+      required ordinal and the same face array as the load above, maps the file,
+      and reads only the assets the named root's subtree draws, which is R5 on
+      this path. The two byte-taking loads keep no selection deliberately — they
+      use the owning loader, which copies every payload whatever is shown, so an
+      ordinal on them would bound nothing while reading as though it did. The
+      root is named once, at load; no entry point changes it afterwards.
+      **`dashscene-android` calls it**, since issue #1035 closed on 2026-08-16:
+      `nativeSurfaceCreatedMapped` takes a path and an ordinal where the older
+      entry point took a `byte[]`. **A scene built in code cannot be expressed
+      through it at all** — there is no builder entry point, that being layer 2
+      (D8), so a host wanting one links the crates directly as `demo`,
+      `demo-web` and `demo-android` do.
 - [ ] **Android and iOS** — **Android part built; iOS nothing.** The
       `aarch64-linux-android` target, an NDK toolchain and a CI job exist (story
       #839), the painter cross-compiles for it, and the C ABI above builds for
