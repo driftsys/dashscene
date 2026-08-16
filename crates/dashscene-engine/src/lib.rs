@@ -413,10 +413,16 @@ fn atlas_from_bytes(sheet: AtlasBytes, index: usize) -> Result<Atlas, TextResour
 /// life of the scene, so the solver in that box is `'static` and a borrowed
 /// typesetter cannot travel in it. The alternative in the tree before story
 /// #863 was a wrapper type that owned the typesetter and built a fresh
-/// `TaffySolver` per call (`corpus/showcase`'s `ShowcaseSolver`), which works
-/// and **throws the retained tree away on every solve** — issue #164's whole
-/// saving, paid back per frame. Holding the typesetter inside the solver keeps
-/// the tree.
+/// `TaffySolver` per call, which works and **throws the retained tree away on
+/// every solve** — issue #164's whole saving, paid back per frame. Holding the
+/// typesetter inside the solver keeps the tree.
+///
+/// `corpus/showcase` was the last of those wrappers in the tree and is one no
+/// longer: it hands each scene a single `owning` solver (issue #950). What that
+/// cost it is the invariant a retained tree carries — one solver has to see
+/// every commit into the arena, in order, because a commit consumes the
+/// layout-dirty set the next solve would have patched from. See
+/// `docs/decisions/one-solver-per-live-scene.md`.
 #[derive(Debug)]
 enum Text<'a> {
     Lent(&'a mut Typesetter),

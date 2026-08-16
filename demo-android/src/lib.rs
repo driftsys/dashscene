@@ -19,8 +19,9 @@
 //!
 //! # Why the text draws at all
 //!
-//! Each scene builds its own solver. `typography::build` constructs a
-//! `ShowcaseSolver` carrying the fonts and the typesetter, so the `LiveScene`
+//! Each scene builds its own solver. `typography::build` takes the one
+//! `showcase::resources::solver` builds, carrying the fonts and the
+//! typesetter, so the `LiveScene`
 //! this host is handed can already measure and stage glyph runs. That is worth
 //! saying because a **loaded document** needs the same thing supplied to it:
 //! `ds_runtime_load_document` injects a bare `TaffySolver`, which has no

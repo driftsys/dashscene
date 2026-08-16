@@ -107,11 +107,15 @@ node grows taller as the text wraps. A known axis is returned unchanged.
   `an_owning_solver_measures_through_its_\
 typesetter_and_retains_its_tree`,
   which exists to cover the held arm. What the held variant is _not_ is the
-  shape already in the tree: `corpus/showcase`'s `ShowcaseSolver` owns a
-  typesetter and builds a fresh `TaffySolver` inside every call, which starts
-  each solve with no retained tree and so rebuilds it per frame. That is
-  acceptable in a demonstration and is recorded there as a cost; on the product
-  path it would pay back issue #164's whole saving every frame.
+  shape the showcase carried until issue #950: a wrapper owning a typesetter and
+  building a fresh `TaffySolver` inside every call, which starts each solve with
+  no retained tree and so rebuilds it per frame. It was recorded there as a cost
+  rather than hidden, and it was tolerable only in a demonstration — on the
+  product path it pays back issue #164's whole saving every frame. **The
+  showcase now holds too**, one `owning` solver per scene, so no such wrapper is
+  left in the tree. What that move cost is stated in
+  `one-solver-per-live-scene.md`: a retained tree is correct only while one
+  solver sees every commit into the arena, in order.
 
   The reason for lending — one typesetter for the runtime, so layout and paint
   cannot disagree about a glyph's size — is satisfied by the held variant rather

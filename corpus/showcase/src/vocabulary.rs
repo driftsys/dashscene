@@ -27,23 +27,33 @@
 //! operation, and staging it here keeps a scene at one transaction and one
 //! solve rather than two (stories #573, #625).
 //!
-//! # Why it is safe to run after `build_live`
+//! # Why it is safe to run after `build_live`, and what it must not stage
 //!
-//! A `LiveScene` assumes it solely owns the committed **geometry** of its
-//! arena between ticks: a tick that solves nothing replays the retained rect
-//! cache, so a second producer that moved a node would have its move
-//! overwritten. Everything this pass stages — an image fill, a vector
-//! field's coverage mask, a variant-set declaration — is either paint intent
-//! or arena metadata, and none of it resolves through the solver, so
-//! replaying the cache reproduces exactly the geometry this pass committed
-//! against.
+//! **This pass may stage paint intent and arena metadata. It may not stage
+//! layout intent.** Everything it stages today — an image fill, a vector
+//! field's coverage mask, a variant-set declaration — is one of the two, and
+//! that is the whole of what makes it safe. Anything geometric would not be.
+//!
+//! Two retained caches are behind that rule, and only one of them used to be.
+//! A `LiveScene` assumes it solely owns the committed **geometry** of its arena
+//! between ticks: a tick that solves nothing replays the retained rect cache, so
+//! a second producer that moved a node would have its move overwritten. That was
+//! the whole argument until issue #950, and it was one level too shallow — the
+//! scene's solver also keeps Taffy's tree and patches it from each commit's
+//! layout-dirty set, and this pass's commit **consumes** that set. Staging
+//! geometry here would therefore leave the scene's own tree describing a scene
+//! that has moved, silently, whatever the rect cache did.
+//!
+//! `corpus/showcase/tests/retained_tree.rs` checks the consequence and states
+//! what it cannot see; `docs/decisions/one-solver-per-live-scene.md` is the
+//! record.
 //!
 //! The one thing this pass has to protect is the text the first pass already
 //! staged: glyph runs are rebuilt from scratch at every commit rather than
 //! replayed, so a second commit through a solver with no typesetter would
 //! wipe out whatever text the scene already carries. This pass therefore
-//! always commits through the same text-capable solver the first pass used.
-//! See `crate::solver`.
+//! always commits through a text-capable solver — `crate::resources::solver`,
+//! the same constructor the scene's own solver comes from.
 
 use std::collections::HashMap;
 

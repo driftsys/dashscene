@@ -132,6 +132,12 @@ records below. Per-story decisions land here directly:
   the Taffy measure callback borrows one `Typesetter`
   (`TaffySolver::with_typesetter`) so layout and paint read one shaped-run
   cache; text drives hug sizing (#29); binds #30 and #164.
+- [one-solver-per-live-scene.md](one-solver-per-live-scene.md) — a retained
+  Taffy tree is correct only while one solver sees every commit into the arena,
+  in order, because a commit consumes the layout-dirty set the next solve would
+  patch from; `corpus/showcase` therefore keeps one `TaffySolver::owning` per
+  scene and stages its variant switch for `LiveScene::tick` to publish (story
+  #950); binds #164, #771 and #863.
 - [glyph-runs-cross-boundary-b.md](glyph-runs-cross-boundary-b.md) — glyph runs
   cross boundary B as a run table plus a plain-data atlas; painters blit
   positioned quads and never shape (story #30).
