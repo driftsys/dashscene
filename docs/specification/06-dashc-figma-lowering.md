@@ -474,13 +474,23 @@ Verified by `crates/dashc/tests/prototype_lowering.rs` and the unit tests in
     animates reaches a variant table**, which is narrower than the set having a
     plan. A switch reaches a table through its **host** — see rule 15 — and that
     host must carry one: an `INSTANCE` whose own table `emit` accepted, or a
-    **member root** of a set that lowers, whose default transition table `emit`
-    copies into every instance. A switch that **lands in a set** whose host
-    carries no table — an instance whose table `emit` refused, or a member of a
-    set that lowers nothing — reaches nothing, and its refused curve shall be
-    named as a warning saying so rather than as a degrade claiming the switch
-    lands. A switch that lands in no set at all is an omission instead, at the
-    emit policy's severity, and its curve is part of that omission.
+    **member root** of a set **some instance of which emitted**, whose default
+    transition table `emit` copied into that instance. A plan is not a table
+    (debt #1141): `emit` is per instance and refuses one whose baked geometry
+    disagrees with the member it shows, so a set every instance of which was
+    refused ships nothing, and its members' curves shall not be called degrades.
+
+    A switch that **lands in a set** whose host carries no table — an instance
+    whose table `emit` refused, or a member of a set that lowers nothing —
+    reaches nothing, and its refused curve shall be named as a warning saying so
+    rather than as a degrade claiming the switch lands. **This is narrower than
+    "the set ships nothing".** A set no instance shows at all is named for
+    nothing, its members' reactions included: nothing in it reaches the screen,
+    so rule 15's own scope — a node is named exactly where a switch could bring
+    it on screen — excludes it, and naming it would be an error under `Strict`
+    over a layer that cannot appear (issue #1018). A switch that lands in no set
+    at all is an omission instead, at the emit policy's severity, and its curve
+    is part of that omission.
 
     **A switch on a layer below its host still reaches that host's table** (debt
     #1064). The table gathers every `CHANGE_TO` that resolves onto it, not only
