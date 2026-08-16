@@ -207,11 +207,12 @@ be lifted for the duration, deliberately and visibly. The same applies to any
 hotfix.
 
 The tag is the part that does not survive the detour. This repository's merge
-shaping rebases the branch, squashes it and force-pushes, so the commit
-`git std bump` tagged is replaced by one with a different hash, and the tag is
-left pointing at a commit unreachable from `main`. The ruleset does not catch it
-either: it targets branches, so pushing that tag succeeds. A release therefore
-tags **after** the merge, on the commit that actually landed, rather than on the
+shaping squashes the branch, rebases it and force-pushes — that order since
+2026-08-16, and `AGENTS.md` carries the reason — so the commit `git std bump`
+tagged is replaced by one with a different hash, and the tag is left pointing at
+a commit unreachable from `main`. The ruleset does not catch it either: it
+targets branches, so pushing that tag succeeds. A release therefore tags
+**after** the merge, on the commit that actually landed, rather than on the
 branch before it.
 
 It does not upgrade what `ci` means. On a documentation-only diff every compile

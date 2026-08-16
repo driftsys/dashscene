@@ -186,9 +186,11 @@ total, nineteen of them the crates above.
                       + a secret scan of the objects being pushed. Seconds, and
                       it runs NO test tier — `just build` is the thorough local
                       gate, and CI runs the tier on the pull request. `ci.yml`
-                      fires on `pull_request` and on pushes to `main`, so a
-                      push to a branch with no PR open runs nothing at all;
-                      once one is open, every further push re-runs it
+                      fires on four events — `pull_request`, pushes to `main`,
+                      `merge_group` and `workflow_dispatch` — so a push to a
+                      branch with no PR open runs nothing at all; once one is
+                      open, every further push re-runs it. Re-derive the list
+                      from the `on:` block rather than trusting this line
     just wasm         build dashc for wasm32-unknown-unknown
     just wasm-painter build dashscene-gpu for wasm32 — the gate that keeps a
                       blocking wait off the web path, where it would deadlock
@@ -482,10 +484,69 @@ Story workflow — the definition of done for every story:
 
 Merging a PR — how the branch lands on `main`:
 
-- Shape the branch before you merge it, not at the merge button. Rebase onto the
-  latest `main`, squash the branch's commits into one conventional commit, and
-  force-push. The PR then carries exactly one commit, and it applies to `main`
-  without conflict.
+- Shape the branch before you merge it, not at the merge button. The branch ends
+  as one conventional commit, force-pushed, so the PR carries exactly one commit
+  and it applies to `main` without conflict.
+- **Squash first, rebase second, and let git compute both bases.** The order is
+  load-bearing and it is the opposite of what this file said until 2026-08-16:
+
+      git fetch origin
+      git reset --soft "$(git merge-base HEAD origin/main)"
+      git commit -m "<conventional message>"
+      git rebase origin/main
+
+  Fetch **once, first**, and then leave the ref alone. Each of the three
+  commands after it derives its own base from the same snapshot, so neither can
+  be aimed at the wrong commit, and the rebase and the `--stat` check below both
+  see the lanes that have landed. Skipping the fetch is its own defect: the
+  rebase becomes a no-op, the ruleset's `strict` flag refuses the merge as not
+  up to date, and the check below cannot see the lane it exists to catch.
+
+  The old order — rebase, then squash — is safe only while `origin/main` is
+  still the branch's merge base, and a fetch **between** the two steps closes
+  that window silently.
+
+  **Never name `origin/main`, or any other moving ref, as the squash base.**
+  `git fetch && git reset --soft origin/main` conflates the two steps, and when
+  another lane has landed in between it moves HEAD onto a commit this worktree
+  has never seen — so the re-commit records that lane's landed work as a
+  deletion of its own. That is not a hypothetical:
+
+  - **PR #1037** reverted PR #1038 twenty minutes after it merged. #1038 (merge
+    `b9d8451f`) touched **11** files; #1037's branch head `f3a4ab64`, whose
+    single parent is that merge, reverted **10** of them. PR #1063 restored
+    **7** — the code, in `dashpaint`, `dashscene-skia` and
+    `dashscene-validator`. `main` was missing work four issues read as closed
+    for about 90 minutes. **The other three are still reverted today** (issue
+    #1168), and one of them now contradicts the code #1063 put back. Count the
+    restoration against the revert, not against the crates you were thinking
+    about.
+  - **PR #978** did the same to PR #961. Commit `076aebaf` has one parent —
+    `ea63006d`, the #961 merge — and deletes **122 lines** of `justfile` on its
+    own, taking the `android-splitscreen` recipe with it. It took three passes
+    (#1003) to restore.
+
+  Both were read at the time as a merge resolving a file badly. Neither was:
+  each deletion lives in a **single-parent** commit, so the merge button did not
+  create it. The corruption is made by the hand-run re-parenting before the
+  merge, which is why the fix is the order above and not the merge method.
+
+  A merge is not proof against this in general — it does drop content the branch
+  never edited when the branch's own history already records that deletion
+  against the merge base, which `-X ours`, a conflict once resolved by keeping
+  the branch's side, and a criss-cross history all produce. Run the check below
+  rather than trusting the shape of the commit.
+
+  `git rebase -i` is unavailable in the agent harness, which is why
+  `reset --soft` is the squash mechanism here at all. The ordering above is what
+  makes it safe without an interactive rebase.
+- **`git diff origin/main...HEAD --stat` before every push — three dots, every
+  time, not once.** Three dots diffs from the merge base; two dots diffs against
+  the moved ref, which is what shows the phantom deletions. Count the files
+  against what the PR body claims. A mismatch is the whole tell, and in both
+  incidents above it was the **only** signal: `just build` passed, CI passed,
+  and three `/code-review` rounds passed over the reverted state, because an
+  earlier consistent tree still compiles and still passes its own tests.
 - Keep separate commits only when they are separately meaningful — for example a
   preparatory refactor and the behavior change that builds on it, each
   independently reviewable and revertable.
@@ -496,10 +557,10 @@ Merging a PR — how the branch lands on `main`:
   `main`, so a conflict already resolved on the branch can come back during the
   replay (this is what blocked PR #108). A merge commit integrates the branch
   as-is and does not re-raise resolved conflicts.
-- All three merge methods stay enabled, and GitHub has no default-merge-method
-  setting: the merge button preselects whichever method that person used last.
-  Never rely on the preselection — name the method explicitly,
-  `gh pr merge --merge`.
+- **A merge commit is the only method the ruleset allows.** Since 2026-08-16
+  `allowed_merge_methods` on ruleset 20731537 is `["merge"]`, so squash and
+  rebase are refused at the button rather than discouraged in prose. Naming the
+  method explicitly is still the habit — `gh pr merge --merge`.
 
 Plan revision at the end of each phase: story breakdowns for future slices are
 provisional by design. When a slice's epic closes (v0.1, v0.2, …) — the **last**
