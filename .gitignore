@@ -20,6 +20,13 @@ importers/figma/.render-tmp.*
 .DS_Store
 *.swp
 
+# Python bytecode. Five scripts are tracked — the harness's `assert-drew.py`,
+# `demo-web/serve.py` and three in a technote's assets. Running one as a script
+# writes nothing, because CPython does not cache `__main__`; **importing or
+# byte-compiling one does**, which is how PR #1098 committed a `.pyc` while
+# syntax-checking `assert-drew.py` with `python3 -m py_compile`.
+__pycache__/
+
 # Claude Code worktrees (see markspec's deno.json precedent, docs/decisions/house-style.md)
 .claude/worktrees/
 

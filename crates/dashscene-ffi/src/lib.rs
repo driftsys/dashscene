@@ -265,6 +265,28 @@ pub enum DsSurfaceKind {
     AndroidNdk = 0,
 }
 
+// **A false positive** (issue #1086). The initializer below already *is*
+// `const { … }`, which is exactly what `missing_const_for_thread_local` asks
+// for, and clippy fires anyway when the target is `aarch64-linux-android`. The
+// host and `wasm32` runs are clean on the same source, so it is the lint rather
+// than the code.
+//
+// **`allow`, not `expect`, and the reason is measured.** `expect` was written
+// first, because it deletes itself: it errors as "this lint expectation is
+// unfulfilled" once a release stops firing the lint. It does not survive here,
+// because whether the lint fires is not a property of the target alone —
+//
+//     host aarch64-apple-darwin,   target aarch64-linux-android   fires
+//     host x86_64-unknown-linux-gnu, target aarch64-linux-android  does not
+//
+// — both on rustc/clippy 1.97.1 (8bab26f4f 2026-07-14), the same build. So
+// `expect` is fulfilled on a developer's machine and unfulfilled on the runner,
+// and `-D warnings` implies `-D unfulfilled_lint_expectations`: the attribute
+// that silences one turns the other red. That is not a hypothetical — it is how
+// this branch's first CI run failed. `allow` is inert either way.
+//
+// The `cfg_attr` stays: the lint reaches no other target, and an unconditional
+// allowance would silence a real occurrence on the host build.
 thread_local! {
     /// The last failure's message, for [`ds_last_error_message`].
     ///
@@ -272,6 +294,14 @@ thread_local! {
     /// fail before a runtime exists — [`ds_runtime_new`] itself — still need
     /// somewhere to report. A host that calls across threads reads the message
     /// on the thread that failed, which is the only reading that is meaningful.
+    #[cfg_attr(
+        target_os = "android",
+        allow(
+            clippy::missing_const_for_thread_local,
+            reason = "false positive: the initializer below is already \
+                      `const { … }` (issue #1086)"
+        )
+    )]
     static LAST_ERROR: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
@@ -1424,15 +1454,26 @@ mod tests {
     #[test]
     fn a_short_error_buffer_truncates_and_terminates() {
         set_last_error("twelve chars");
-        let mut buf = [0_i8; 5];
+        // `[c_char; 5]`, not `[i8; 5]`: `c_char` is `i8` on this machine and
+        // **`u8` on Android**, so the literal spelling compiled here and
+        // nowhere a platform host runs. Nothing caught that until `just
+        // android-lint` existed (issue #1086) — `just android` builds the lib
+        // and not its tests, so this target was compiled by no gate at all.
+        let mut buf: [c_char; 5] = [0; 5];
         let needed = unsafe { ds_last_error_message(buf.as_mut_ptr(), buf.len()) };
         assert_eq!(needed, "twelve chars".len() + 1);
         assert_eq!(buf[4], 0, "the terminator is written inside the buffer");
-        let text = buf[..4]
-            .iter()
-            .map(|byte| *byte as u8 as char)
-            .collect::<String>();
-        assert_eq!(text, "twel");
+        // Read back as a C string rather than casting each element. `c_char` is
+        // `i8` here and `u8` on Android, so a per-byte `as u8` is a real
+        // conversion on one target and a no-op clippy refuses on the other —
+        // there is no spelling of that cast which passes both. This is also
+        // nearer the contract: what the ABI promises is a NUL-terminated
+        // string, not a byte array.
+        //
+        // SAFETY: the call above wrote into `buf`, and the assertion above says
+        // the terminator is inside it.
+        let text = unsafe { CStr::from_ptr(buf.as_ptr()) };
+        assert_eq!(text.to_bytes(), b"twel");
     }
 
     /// On a host build the Android arm declines rather than failing to compile,

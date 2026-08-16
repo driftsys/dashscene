@@ -9,9 +9,10 @@
 //!
 //! Rename one in `DsFace.java` and every gate stayed green. `just build` cannot
 //! see it, because `host.rs` is behind `#[cfg(target_os = "android")]` and no
-//! test binary links it. `just lint` cannot, because no gate runs clippy for
-//! that triple at all (issue #1086). `just android` and `just android-apk`
-//! compile and package the two halves without comparing them. The failure
+//! test binary links it. `just android-lint` does lint that triple since issue
+//! #1086, but a lint reads one side and cannot compare it with Java. `just
+//! android` and `just android-apk` compile and package the two halves without
+//! comparing them. The failure
 //! arrived at the first `surfaceChanged` as a `NoSuchFieldError`, the handle
 //! came back 0, and the harness fell back to the no-text call and drew no
 //! glyphs.

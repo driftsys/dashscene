@@ -884,6 +884,61 @@ android:
     # nowhere — the same shape as the crate above, one story along (story #842).
     cargo build -p demo-android --target aarch64-linux-android
 
+# Clippy the Android members on their own triple (issue #1086) — five
+# packages, for the reason the note below gives.
+#
+# `android` above is `cargo build`, not `cargo clippy`, so until this recipe
+# existed **nothing linted the code that compiles only on that triple**. That is
+# the platform half of `dashscene-android` (`host.rs`, `loop_.rs`) and
+# `demo-android`'s JNI half — the same code those crates' own module docs
+# describe as reachable by no test. `just wasm-lint` closed the equivalent gap
+# for wasm32 at PR #907; this is the Android half of the same rule, and it is
+# its own recipe for the same reason: CI's `android-build` job runs exactly it,
+# and a second copy of the package list in YAML is the drift issue #903 keeps
+# producing.
+#
+# `--all-targets` rather than `--lib`, unlike `wasm-lint`'s first line: the
+# whole point here is the platform half, and `dashscene-android`'s test module
+# is not behind the `cfg` — linting it on this triple is what says the two
+# halves of that crate still agree. That choice is what found the two defects
+# this recipe's first run caught, both in a test target.
+#
+# **Five packages, not the four `android` builds.** `-D warnings` reaches the
+# selected package and not its path dependencies (issue #903), and `showcase` —
+# which `demo-android` links — carries its own `target_os = "android"` arm in
+# `resources.rs`. The host `clippy` job compiles that arm out and `wasm-lint`
+# does not name it either, so without this line it is denied by nothing.
+#
+# Needs the NDK, like `android`. It does not depend on `android`, because
+# clippy's own check builds what it needs and depending on it would double the
+# compile for no gate.
+android-lint:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # **A third copy of this wiring** — `android` and `android-probe` carry the
+    # other two, so raising `ANDROID_API` is three edits. Issue #1101, not fixed
+    # here because the fix edits both of those recipes as well.
+    bin=$(just _android-ndk-bin)
+    clang="${bin}/aarch64-linux-android{{ ANDROID_API }}-clang"
+    export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="${clang}"
+    export CC_aarch64_linux_android="${clang}"
+    export AR_aarch64_linux_android="${bin}/llvm-ar"
+    # One invocation for the four that take the same flags, rather than one
+    # each: four would re-resolve the graph four times in what is already the
+    # workflow's slowest job.
+    cargo clippy \
+        -p dashscene-gpu -p dashscene-ffi -p dashscene-android -p demo-android \
+        --target aarch64-linux-android --all-targets -- -D warnings
+    # **`showcase` is `--lib`, and that is not tidiness.** Its Android arm is in
+    # `src/resources.rs`, so the lib is the whole of the coverage; its
+    # `examples/still.rs` pulls the `dashscene-skia` dev-dependency, and
+    # `--all-targets` therefore drags Skia into the Android graph — measured, a
+    # 13.4 MB prebuilt `libskia.a` downloaded for `aarch64-linux-android`, or a
+    # from-source Skia build on a release with no prebuilt for the triple. That
+    # is minutes in this job for no lint coverage at all. `wasm-lint` splits its
+    # first line for the same kind of reason.
+    cargo clippy -p showcase --target aarch64-linux-android --lib -- -D warnings
+
 # Package both Android hosts into APKs — the gate that compiles their Java.
 #
 # `android` above cross-compiles the four Android **Rust** members and stops
@@ -1021,9 +1076,31 @@ android-probe:
 # It is a narrow case, and deliberately not the one issue #960 describes: a GPU
 # device that cannot be obtained returns a NON-ZERO handle — #960's own log
 # records `runtime handle -5476376631205712496` — so it takes the handshake
-# branch. `nativeIsRunning` is the call that answers it, and `HarnessActivity`
-# does not make it. Until it does, this recipe cannot tell a hung handshake from
-# a loop that had already ended.
+# branch, and this recipe cannot tell a hung handshake from a loop that had
+# already ended.
+#
+# **`nativeIsRunning` is not what would tell them apart**, and this comment said
+# it was until issue #1080. It reports `Handshake::is_running`, which is true for
+# `Starting` as well as `Running`, and the render thread reports `started()` only
+# once its attach has returned — so a thread wedged *inside* an attach answers
+# `true`, the same answer a drawing loop gives. Adding the call would assert the
+# loop was live at the exact moment it was not.
+#
+# What does distinguish them is the marker pair PR #1077 put around the attach,
+# read together with the failure line. `attaching a WxH surface` is written
+# before every acquisition and `attached a WxH surface` after every one that
+# succeeded; both of this crate's acquisitions write the pair since PR #1092.
+# So, after an `attaching` line:
+#
+#   attached …                          the acquisition finished
+#   attach failed: …                    it finished and failed, and the loop
+#   could not rebuild the surface: …    stopped — NOT a wedge
+#   neither, and nothing after          still inside the call: the wedge
+#
+# The last row — `attaching` with none of the other three after it — is the only
+# one that is issue #960. Reading `attaching` with no `attached` as a wedge on
+# its own would call every failed attach one, which is the same shape of wrong
+# advice issue #1080 was filed to remove.
 #
 # A tablet profile rather than a phone: split-screen is most reliable on a large
 # screen, and a panel form factor is closer to this project's target anyway.
@@ -1132,9 +1209,11 @@ android-splitscreen:
     # falling through to the completion marker, which is what let a callback
     # that handed nothing back still claim a handshake.
     #
-    # This is NOT the no-GPU-device case. That returns a non-zero handle, takes
-    # the handshake branch, and is answered by nativeIsRunning, which the
-    # harness does not call — issue #960.
+    # This is NOT the no-GPU-device case. That returns a non-zero handle and
+    # takes the handshake branch — issue #960. `nativeIsRunning` would not
+    # answer it either, for the reason this recipe's own header now gives
+    # (issue #1080): a thread wedged inside an attach reports `true`. The
+    # `attaching`/`attached` marker pair in logcat is what does.
     if [[ "${log}" == *"no runtime handle, nothing to hand back"* ]]; then
       echo "android-splitscreen: FAIL — reached surfaceDestroyed with no runtime" >&2
       echo "android-splitscreen: handle, so no handshake ran. nativeSurfaceCreated" >&2

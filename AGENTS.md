@@ -191,6 +191,19 @@ total, nineteen of them the crates above.
                       compile gate, and the only one the last two have: their
                       JNI halves compile on no other target. Needs an NDK,
                       which bootstrap does not install
+    just android-lint  clippy those four on that triple plus showcase, which
+                      carries its own android arm and which demo-android links.
+                      Nothing did until issue #1086 — `android` is cargo build,
+                      so the platform half of dashscene-android and
+                      demo-android's JNI half compiled unlinted. The Android
+                      half of the rule wasm-lint carries for wasm32, and its own
+                      recipe because CI's android-build job runs exactly it.
+                      Not redundant with `lint`: that runs on the host triple,
+                      where every cfg(target_os = "android") item is compiled
+                      out. **CI only** — deliberately not in `check` or
+                      `build`, which would give them an NDK prerequisite, so an
+                      Android-only compile error still reaches CI unverified.
+                      Needs the NDK
     just android-apk  package both Android hosts into APKs. Before it, no gate
                       compiled any Java here: demo-android's two files had been
                       compiled by no one, and the harness pair only by whoever
