@@ -95,6 +95,37 @@ carries a guard". `AtlasBuildError::ZeroExtent` refuses it, the two fields are
 private behind accessors, and the painter's guard is gone rather than kept as a
 second line. Every divisor this type owns is now checked at its one constructor.
 
+**Issue #1074 closes the last field, and it is not a divisor.** `Atlas::image`
+stayed `pub` after #1001, so a holder could write a different sheet over the
+payload after construction and leave `width` and `height` describing the old
+one. Nothing then divides by zero; what happens instead is that
+`TexelPayload::of` takes the extent from the decode while `gpu_glyph_run`
+normalises with the metrics extent, so a disagreement samples the wrong texels
+rather than failing — a plausible wrong picture, which is the class P4 refuses.
+The field is private behind `Atlas::image`, and every in-workspace reader calls
+the accessor: `dashscene-skia`'s `MsdfCache::refresh`, `dashscene-gpu`'s
+`PayloadKey::atlas` and `resolve_frame`, and two `dashscene-engine` tests — five
+reading sites across four crates, with `dashpaint`'s own
+`an_atlas_reports_the_payload_it_was_built_with` a sixth. Re-derive with
+`grep -rn 'atlas.image()'` rather than trusting the count.
+
+**The payload is not deliberately replaceable, and that is the decision this
+records.** The alternative #1074 named was to keep it assignable and move an
+extent check to where the two are read together; it is rejected for the reason
+PR #983's review already gave, one field over. An `Atlas` states an extent for
+the payload it was built with, and re-payloading it is not a state this type
+offers.
+
+**What closing it does not establish is that the two agree.** `Atlas::new` takes
+the payload and the extent side by side and compares neither, so a caller
+stating a wrong pair at construction still states one. That check is the
+producer's: `dashscene-engine`'s `atlas_from_bytes` reads the PNG header through
+`image_id::identify` and refuses a sheet whose extent disagrees with the metrics
+blob, before it calls the constructor. Duplicating it here would header-parse
+every atlas a second time and would not reach a baked payload at all, which
+carries no header — the same reason `ImageTable::push_baked` takes the extent
+from its caller.
+
 ## Why not a `Result`
 
 Issue #985 proposed one. It cannot be handled where it would be raised:
@@ -178,8 +209,40 @@ did not have.
   boundary, and the constructor check comes after it. Closing #1002 is more than
   adding a rule: `validate_scene`, the gate whose stated job is to turn these
   panics into named diagnostics, has no production caller at all.
-- **`Atlas::width` and `Atlas::height` are still `pub` and unchecked, and one
-  painter divides by both** (issue #1001).
+- **`Atlas::new` does not compare its payload against the extent stated beside
+  it.** Every field on the type is private since issue #1074, so the pair cannot
+  come apart after construction — but nothing here refuses a pair that was wrong
+  when it arrived. The producer refuses it, one crate up, and only for an
+  encoded sheet with a header to read.
+- **The device quad both painters derive cannot be refused at any seam here, and
+  both keep a local floor for it** (issues #1160 and #1185). The quantity is the
+  plane extent with the node origin added to both ends, and it collapses as a
+  _ratio_ of the two: an origin of `1e8` against an 8-unit field admits, an
+  origin of `65536.0` against a 0.001-unit field does not. No rule over either
+  operand alone expresses that, and the two never meet at one seam — a
+  `PaintTable` never sees a `RectEntry`. Issue #1048's finiteness rule over
+  `RectEntry::x` and `y` covers the NaN route and not this one, so closing it
+  does not make the floors redundant. `dashscene-skia`'s is `field_quad`; the
+  lean painter's is `paint.wgsl`'s vertex stage, added at #1185.
+
+  **A third site derives the same device quad and needs no floor**, which is
+  worth stating because it means the two painters still disagree here.
+  `blur.wgsl`'s masked-backdrop arm builds
+  `quad = vec4f(blur.bounds.xy + blur.plane.xy, blur.plane.zw - blur.plane.xy)`
+  — the extent taken from the plane alone, with the origin in the position term
+  only — so it cannot cancel whatever the origin is. The consequence is that for
+  a masked node at a collapsed origin carrying a backdrop blur, `dashscene-skia`
+  refuses the whole node at its gate and draws nothing while the lean painter's
+  blur pipeline draws its mask. Not a regression — the reference painter refused
+  it inside `field_coverage` before issue #1160 moved the ask up — and it is a
+  divergence #1048 would still leave open.
+
+This list carried a seventh bullet until issue #1074 — "`Atlas::width` and
+`Atlas::height` are still `pub` and unchecked" — which issue #1001 had already
+closed, and which this record's own section above says was closed. It is removed
+rather than corrected: there is nothing left of it to state. The "sixth gap"
+below counts filed gaps rather than positions in this list, and the two
+enumerations have never agreed.
 
 `GlyphRun::size` was filed as a sixth gap (#999) and is not one. It is the third
 operand of `px_range = distance_range_px * size / px_per_em`, and no seam in

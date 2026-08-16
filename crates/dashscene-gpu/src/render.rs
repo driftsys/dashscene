@@ -2496,8 +2496,8 @@ impl Renderer {
                     // an `Atlas` already states its extent, and this runs
                     // once per run per frame.
                     dashpaint::ImageRef {
-                        format: atlas.image.format,
-                        bytes: &atlas.image.bytes,
+                        format: atlas.image().format,
+                        bytes: &atlas.image().bytes,
                         width: atlas.width(),
                         height: atlas.height(),
                     },

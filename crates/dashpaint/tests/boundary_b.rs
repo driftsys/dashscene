@@ -1582,6 +1582,65 @@ fn an_atlas_accepts_a_non_zero_extent_and_reports_each_axis() {
     assert_eq!((smallest.width(), smallest.height()), (1, 1));
 }
 
+/// An atlas hands back the payload it was built with, and only that
+/// (issue #1074).
+///
+/// The last of the five fields to close, and the only one that is not a
+/// divisor: what it carries is the payload `width()` and `height()` *describe*.
+/// While it was `pub`, a holder could write a different sheet over it after
+/// construction and leave the extent describing the old one —
+/// `dashscene-engine`'s own doc records the cost, which is that `TexelPayload`
+/// takes the extent from the decode while `gpu_glyph_run` normalises with the
+/// metrics extent, so a disagreement samples the wrong texels rather than
+/// failing.
+///
+/// **The privacy is what pins it and no test can**: `atlas.image = other` is a
+/// compile error now, and this workspace has no compile-fail harness to state
+/// that as a test. What is testable is the accessor, and this asserts the two
+/// halves it is easy to get wrong — that it reports the payload rather than a
+/// default, and that it reports the payload of *this* atlas rather than of some
+/// other. Two atlases, differing in exactly the bytes.
+///
+/// It deliberately does **not** assert that the extent and the payload agree.
+/// `Atlas::new` does not check that and this test would be false if it claimed
+/// otherwise: the fixtures below carry a one-byte payload at a stated `64 x 32`.
+/// The producer checks it — `dashscene-engine`'s `atlas_from_bytes` reads the
+/// PNG header and refuses a disagreement before calling the constructor.
+#[test]
+fn an_atlas_reports_the_payload_it_was_built_with() {
+    let build = |bytes: Vec<u8>| {
+        Atlas::new(
+            ImageAsset {
+                format: ImageFormat::Png,
+                bytes,
+            },
+            64,
+            32,
+            16,
+            2.0,
+            Vec::new(),
+        )
+        .expect("a 64 x 32 atlas is a valid extent")
+    };
+    let first = build(vec![1]);
+    let second = build(vec![2]);
+    assert_eq!(
+        first.image().bytes,
+        vec![1],
+        "image() must report the payload the atlas was built with"
+    );
+    assert_eq!(
+        second.image().bytes,
+        vec![2],
+        "image() must report this atlas's payload, not another's"
+    );
+    assert_eq!(
+        first.image().format,
+        ImageFormat::Png,
+        "image() must report the payload's format with its bytes"
+    );
+}
+
 /// An atlas refuses a zero distance range (issue #964).
 ///
 /// The other operand of the expression `px_per_em` was guarded in, and the one

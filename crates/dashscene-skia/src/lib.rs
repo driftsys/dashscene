@@ -85,6 +85,30 @@ pub struct SkiaPainter {
     /// [`ImageCache`] for the text half of the painter input, and
     /// [`DirtyMode`]-independent for the same reason.
     msdf: MsdfCache,
+    /// The compiled coverage-mask resolve, compiled on the first frame that
+    /// draws a baked shape and never invalidated (issue #1186).
+    ///
+    /// **Held for the reason [`MsdfCache::effect`] is**, and that field's doc
+    /// states the invariant for both: the shader is a constant, so no input can
+    /// stale it. [`FIELD_MASK_SKSL`] is equally a constant. This was a frame
+    /// local until #1186, so `RuntimeEffect::make_for_shader` ran again on every
+    /// `paint()` call that drew a masked node — about 30 us on this machine,
+    /// measured over 200 iterations against release Skia.
+    ///
+    /// Lazy, so a scene that carries no baked shape compiles nothing, which is
+    /// the posture the frame local had and the one [`MsdfCache::frame`] keeps
+    /// for text.
+    field_effect: Option<RuntimeEffect>,
+    /// The compiled diamond-gradient ramp, on the same terms as
+    /// [`field_effect`](Self::field_effect) — the third constant shader this
+    /// painter runs, and the one that was recompiled most often.
+    ///
+    /// Found reviewing the fix for issue #1186 rather than filed with it, and
+    /// strictly worse than the defect that issue named: `diamond_shader`
+    /// compiled per *draw* where `field_effect` compiled per *frame*, so a scene
+    /// of twenty diamond-gradient nodes paid twenty compiles a frame at about
+    /// 30 us each. `MsdfCache::effect`'s invariant covers this constant too.
+    diamond_effect: Option<RuntimeEffect>,
 }
 
 impl SkiaPainter {
@@ -132,6 +156,8 @@ impl SkiaPainter {
             group_layers: retention::GroupCache::new(),
             images: ImageCache::default(),
             msdf: MsdfCache::default(),
+            field_effect: None,
+            diamond_effect: None,
         }
     }
 
@@ -400,6 +426,8 @@ impl Painter for SkiaPainter {
         let group_layers = &mut self.group_layers;
         let image_cache = &mut self.images;
         let msdf_cache = &mut self.msdf;
+        let field_effect = &mut self.field_effect;
+        let diamond_effect = &mut self.diamond_effect;
 
         let base_canvas = self.surface.canvas();
         base_canvas.clear(skia_safe::colors::TRANSPARENT);
@@ -424,12 +452,12 @@ impl Painter for SkiaPainter {
         let mut next_group = 0usize;
         let mut open_group_ends: Vec<u32> = Vec::new();
         let mut open_layers: Vec<OpenLayer> = Vec::new();
-        // Baked-vector shapes (story B1): the MSDF resolve effect compiles
-        // once (lazily — a vector-free scene pays nothing). The atlas PNG a
-        // field samples is an ordinary `ImageTable` entry, so it comes from
-        // `image_cache` along with every other asset — one cache, one key
-        // space, one decode per asset (issues #101 and #639).
-        let mut field_effect: Option<RuntimeEffect> = None;
+        // Baked-vector shapes (story B1): the atlas PNG a field samples is an
+        // ordinary `ImageTable` entry, so it comes from `image_cache` along with
+        // every other asset — one cache, one key space, one decode per asset
+        // (issues #101 and #639). The resolve effect it is drawn with is
+        // `field_effect` above, on the painter since issue #1186: it compiled
+        // once per `paint()` call while it was a frame local here.
         // The run-by-anchor index, built once, over the atlases and shader
         // the painter already holds — re-decoding and re-compiling only what
         // this frame changed (issue #644). A text-free scene builds nothing.
@@ -561,12 +589,17 @@ impl Painter for SkiaPainter {
             // draw nothing; the lean painter never did, its gate sitting above
             // residency.
             //
-            // Above the loop because neither the shape nor the predicate varies
-            // per blur — a node may carry several backdrops, each over the
-            // result of the last — and because a field that covers nothing
-            // draws no backdrop at all rather than one empty one per blur.
+            // `field_quad` rather than `VectorField::draws` since issue #1160:
+            // the same question with the node origin in it, which the shared
+            // predicate cannot see. A field the origin collapses used to pass
+            // here and be refused inside the draw, below the fetch.
+            //
+            // Above the loop because neither the shape nor the quad varies per
+            // blur — a node may carry several backdrops, each over the result of
+            // the last — and because a field that covers nothing draws no
+            // backdrop at all rather than one empty one per blur.
             let shape = paints.shape(entry);
-            if shape.is_none_or(|field| field.draws()) {
+            if shape.is_none_or(|field| field_quad(rect, field).is_some()) {
                 for blur in paints
                     .blurs(entry)
                     .iter()
@@ -580,10 +613,7 @@ impl Painter for SkiaPainter {
                         // so blurring its whole box would frost a rectangle
                         // where the design has a rounded shape.
                         Some(field) => {
-                            let effect = field_effect.get_or_insert_with(|| {
-                                RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)
-                                    .expect("field-mask resolve SkSL compiles")
-                            });
+                            let effect = field_effect.get_or_insert_with(compile_field_effect);
                             let atlas = image_cache.get(field.image);
                             draw_backdrop_blur_field(
                                 canvas,
@@ -633,13 +663,25 @@ impl Painter for SkiaPainter {
                 // entry whose field covers nothing draws nothing, where the
                 // `else` below would draw its parametric fill over the whole
                 // box.
-                if field.draws() {
-                    let effect = field_effect.get_or_insert_with(|| {
-                        RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)
-                            .expect("field-mask resolve SkSL compiles")
-                    });
+                //
+                // `field_quad` rather than `VectorField::draws` since issue
+                // #1160 — the same question with the node origin in it. See the
+                // backdrop arm above.
+                if field_quad(rect, field).is_some() {
+                    let effect = field_effect.get_or_insert_with(compile_field_effect);
                     let atlas = image_cache.get(field.image);
-                    draw_vector_field(canvas, rect, paints, entry.fill, field, atlas, effect);
+                    draw_vector_field(
+                        canvas,
+                        rect,
+                        paints,
+                        entry.fill,
+                        field,
+                        atlas,
+                        MaskEffects {
+                            coverage: effect,
+                            diamond: diamond_effect,
+                        },
+                    );
                 }
             } else {
                 // A fill-less entry draws nothing (a layout-only node, or a
@@ -684,9 +726,25 @@ impl Painter for SkiaPainter {
                 // nothing, so a fill-less entry still paints exactly nothing
                 // here — the same outcome the old `if let Some(kind)` guard
                 // gave when `fill` was `Option::None`.
-                draw_fill_kind(canvas, rrect, draw_rect, image_cache, paints, entry.fill);
+                draw_fill_kind(
+                    canvas,
+                    rrect,
+                    draw_rect,
+                    image_cache,
+                    paints,
+                    entry.fill,
+                    diamond_effect,
+                );
                 for kind in paints.extra_fills(entry) {
-                    draw_fill_kind(canvas, rrect, draw_rect, image_cache, paints, *kind);
+                    draw_fill_kind(
+                        canvas,
+                        rrect,
+                        draw_rect,
+                        image_cache,
+                        paints,
+                        *kind,
+                        diamond_effect,
+                    );
                 }
                 if let Some(stroke) = paints.stroke(entry) {
                     draw_stroke(canvas, &rrect, stroke, draw_rect.opacity);
@@ -864,6 +922,12 @@ struct MsdfCache {
     /// shader is a constant, so no input can stale it. A scene that never
     /// carries a glyph run never compiles it, which is the posture the old
     /// lazy entry point had.
+    ///
+    /// **The same sentence covers [`SkiaPainter::field_effect`]** since issue
+    /// #1186, which is the coverage-mask half of exactly this: a constant
+    /// shader, compiled once, held for the painter's life. It was a `paint()`
+    /// frame local until then, and this doc is the reason it should not have
+    /// been.
     effect: Option<RuntimeEffect>,
 }
 
@@ -925,7 +989,7 @@ impl MsdfCache {
         if self.source != *atlases {
             self.decoded = atlases
                 .iter()
-                .map(|atlas| decode_image(atlas.image.as_ref()))
+                .map(|atlas| decode_image(atlas.image().as_ref()))
                 .collect();
         }
         self.source = Arc::clone(atlases);
@@ -1114,6 +1178,20 @@ const FIELD_MASK_SKSL: &str = r"
 /// origin at the node box top-left (`device = rect_origin + plane_bounds`).
 /// The quad's margin reads as coverage 0, so drawing over exactly the quad
 /// clips nothing wrongly.
+/// The two compiled shaders a masked draw can need, both the painter's rather
+/// than the frame's (issue #1186).
+///
+/// They arrive in different states, and that is the reason this is a struct
+/// rather than two parameters. `coverage` is already compiled, because the
+/// caller resolved the atlas beside it and reaches this draw only for an entry
+/// that has one. `diamond` is not, because a masked fill reaches it only when
+/// its fill happens to be a diamond gradient — and a scene with none must
+/// compile none.
+struct MaskEffects<'a> {
+    coverage: &'a RuntimeEffect,
+    diamond: &'a mut Option<RuntimeEffect>,
+}
+
 fn draw_vector_field(
     canvas: &Canvas,
     rect: &RectEntry,
@@ -1121,14 +1199,14 @@ fn draw_vector_field(
     fill: PaintKind,
     field: &VectorField,
     atlas: &Image,
-    effect: &RuntimeEffect,
+    effects: MaskEffects<'_>,
 ) {
     // A shape with no fill has no ink to mask — a defensive guard; the
     // lowering always pairs a shape with a fill.
     if fill == PaintKind::NONE {
         return;
     }
-    let Some((dest, coverage)) = field_coverage(rect, field, atlas, effect) else {
+    let Some((dest, coverage)) = field_coverage(rect, field, atlas, effects.coverage) else {
         return;
     };
 
@@ -1156,7 +1234,7 @@ fn draw_vector_field(
             canvas.draw_rect(dest, &paint);
         }
         Fill::Gradient(gradient) => {
-            let mut paint = gradient_paint(gradient, rect);
+            let mut paint = gradient_paint(gradient, rect, effects.diamond);
             apply_opacity(&mut paint, rect.opacity);
             canvas.draw_rect(dest, &paint);
         }
@@ -1173,17 +1251,36 @@ fn draw_vector_field(
     canvas.restore();
 }
 
-/// The device quad a baked-vector shape occupies, and the shader that
-/// resolves its field into a coverage mask over that quad.
-///
-/// Both draws that mask by a baked shape use it: the masked fill
-/// ([`draw_vector_field`]) and the backdrop blur
-/// ([`draw_backdrop_blur_field`], story #393). Stated once so the two cannot
-/// disagree about where the shape is or how sharp its edge resolves.
+/// The device quad a baked-vector shape occupies, or `None` for a shape that
+/// draws nothing.
 ///
 /// The padded field quad (`plane_bounds`) maps to device space at unit scale,
-/// origin at the node box top-left. `None` for a field that draws nothing,
-/// which is two separate answers taken in order.
+/// origin at the node box top-left, so `dest` is the plane bounds offset by
+/// [`RectEntry::x`] and [`RectEntry::y`].
+///
+/// **`None` is two separate answers taken in order**, and the whole reason
+/// this function exists is that they belong in one place (issue #1160). Until
+/// then [`VectorField::draws`] was asked at both of [`Painter::paint`]'s two
+/// masked arms — hoisted above `ImageCache::get` at issue #1044 — while the
+/// device-quad guard stayed inside [`field_coverage`], below the fetch. So a
+/// field the second guard refused still paid for its atlas. Both call sites
+/// now ask `field_quad(rect, field).is_some()`, which is the same question
+/// with the origin in it.
+///
+/// **Both #1044 hoists stay**, and this is what makes that consistent rather
+/// than a reversal: the consolidation is the two guards living in one named
+/// function, not the ask moving back down into the draw. The predicate is
+/// still asked before the fetch, and the device-quad guard has joined it
+/// there.
+///
+/// It runs more than once for a field that draws, and the count differs by
+/// arm. The masked fill asks twice: once at its call site and once inside
+/// [`field_coverage`]. The **backdrop** arm asks once above the blur loop and
+/// then once per blur, because each iteration reaches [`field_coverage`]
+/// through [`draw_backdrop_blur_field`] — so a node carrying three backdrops
+/// asks four times, and the surrounding comment says a node may carry several.
+/// That is about eight arithmetic operations per ask, against a `save_layer`, a
+/// shader construction and a Gaussian blur on the same path.
 ///
 /// # The shared predicate first (issues #1000 and #1144)
 ///
@@ -1192,21 +1289,21 @@ fn draw_vector_field(
 /// out-of-domain one, which is why `PaintTable::push_with` does not refuse it
 /// (`docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md`).
 ///
-/// **The question is settled before this runs** (issue #1044). Neither of this
-/// function's two callers fetches an atlas — both are handed an already-decoded
-/// `&Image` — so the hoist is one level further out, in the two arms of
+/// **It is asked before the atlas is fetched** (issue #1044). Neither
+/// [`field_coverage`] nor either draw fetches an atlas — all three are handed an
+/// already-decoded `&Image` — so the ask belongs in the two arms of
 /// [`Painter::paint`] that own the [`ImageCache`]. `ImageCache::get` decodes on
-/// first request, and asking only here paid a full decode for a field that
-/// paints nothing. This function still asks, because that is what makes "a
-/// degenerate field draws nothing" this painter's own answer rather than a
-/// property of two call sites.
+/// first request, and asking only below the fetch paid a full decode for a field
+/// that paints nothing. [`field_coverage`] calls this function again anyway,
+/// because that is what makes "a degenerate field draws nothing" this painter's
+/// own answer rather than a property of two call sites.
 ///
 /// **Called rather than restated**, which it was until issue #1144.
 /// `dashscene-skia` does not depend on `dashscene-gpu`, so the two carried
 /// byte-identical expressions kept in step by prose — and that convention failed
 /// twice. Issue #1000 was the two painters disagreeing about which fields draw:
-/// without the predicate this function returned `Some` for a field with no atlas
-/// extent and `sx` became an infinity. On the masked-fill path that resolved to
+/// without the predicate [`field_coverage`] returned `Some` for a field with no
+/// atlas extent and `sx` became an infinity. On the masked-fill path that resolved to
 /// zero coverage and drew nothing anyway, so the two agreed by accident. On the
 /// **backdrop-blur** path they did not — `draw_backdrop_blur_field` clips to the
 /// coverage shader and opens a backdrop layer, and with an infinity in the
@@ -1230,10 +1327,28 @@ fn draw_vector_field(
 ///
 /// `dest` is the plane bounds offset by the node origin, and the predicate
 /// above cannot see it: with a large `rect.x` a positive `right - left` can
-/// cancel to a zero-width device quad, which would divide by zero here alone.
-/// `dashscene-gpu` has no such case — it hands `plane_bounds` to the shader and
-/// derives its scale from `right - left` directly — so this second guard is
-/// this painter's and not a restatement of anything.
+/// cancel to a zero-width device quad, which [`field_coverage`] would then
+/// divide by to build its texel-to-device scale.
+///
+/// **`dashscene-gpu` writes the same quantity, and this section said it had no
+/// such case until issue #1185.** `gpu_shape` does derive `px_range` from
+/// `right - left` directly, with no origin in it — but the masked-fill pipeline
+/// builds an origin-offset quad in `paint.wgsl`'s vertex stage
+/// (`lo = inst.bounds.xy + field.plane.xy`,
+/// `hi = inst.bounds.xy + field.plane.zw`, `quad = vec4f(lo, hi - lo)`) and
+/// `msdf_sample` divides by `quad.zw`. Since #1185 that stage refuses a quad
+/// with no area through `params2.w`, so both painters now carry a local floor
+/// and this one is not alone.
+///
+/// **What that pipeline does not reproduce is the cancellation**, at least on
+/// the one adapter this workspace can measure. On Metal, the compiled shader
+/// evaluates the pair to `plane.zw - plane.xy` — the origin folded out of the
+/// subtraction — where an `f32` evaluation of what is written would give zero.
+/// So the lean painter's guard is reachable through its **text** arm, whose
+/// zero-area quad comes from the CPU, and not through the masked arm the issue
+/// was filed for. Issue #1195 carries the measurement and what would settle it.
+/// None of that reaches this function: Skia computes `dest` on the CPU, in
+/// Rust, where the cancellation is exactly what happens.
 ///
 /// # Which half of the shared predicate decides, and which is restatement
 ///
@@ -1260,16 +1375,11 @@ fn draw_vector_field(
 /// positive-extent case is refused twice over, so no test tells which refusal
 /// ran.
 ///
-fn field_coverage(
-    rect: &RectEntry,
-    field: &VectorField,
-    atlas: &Image,
-    effect: &RuntimeEffect,
-) -> Option<(Rect, Shader)> {
-    let [left, top, right, bottom] = field.plane_bounds;
+fn field_quad(rect: &RectEntry, field: &VectorField) -> Option<Rect> {
     if !field.draws() {
         return None;
     }
+    let [left, top, right, bottom] = field.plane_bounds;
     let dest = Rect::from_ltrb(rect.x + left, rect.y + top, rect.x + right, rect.y + bottom);
     // Spelled as a negated positive rather than `<= 0.0`, so a NaN is refused
     // rather than admitted — `NaN <= 0.0` is false and waved the quad through.
@@ -1282,23 +1392,64 @@ fn field_coverage(
     //
     // `dest` adds the **node origin** and nothing refuses a non-finite one:
     // `check_rect_extent` covers a rect's `w` and `h` and not its `x` and `y`,
-    // and it belongs to `validate_scene`, which has no production caller. A NaN
-    // origin — or one large enough that both ends overflow to an infinity,
-    // whose difference is a NaN — reaches this line with a NaN width. Issue
-    // #1048 is the upstream half.
+    // and it belongs to `validate_scene`, which has no production caller. Two
+    // origins reach this line with a width that is not positive, and they are
+    // different mechanisms:
+    //
+    // - A **NaN** origin makes both ends NaN and their difference NaN.
+    // - A **large finite** origin makes them **cancel**. Not overflow, which is
+    //   what four documents said until issue #1160 measured it:
+    //   `3.0e38f32 + 8.0 == 3.0e38` is true and `f32::MAX + 8.0 == f32::MAX` is
+    //   true, so neither end reaches an infinity and there is no `inf - inf`.
+    //   What happens is that the field extent falls below one ulp of the origin,
+    //   so both ends round to the same float and the width is exactly zero.
+    //
+    // The second is a **ratio** of the two operands rather than a property of
+    // either — an origin of `1e8` against an 8-unit field admits, and an origin
+    // of `65536.0` against a 0.001-unit field collapses — which bounds what
+    // issue #1048 can do upstream. A finiteness rule over `RectEntry::x` and
+    // `y` covers the NaN route and not this one, so this floor stays necessary
+    // after #1048 lands.
     //
     // **This changes no picture, and the claim is narrower than it looks.**
     // Measured with the admitting spelling: a NaN device quad reaches the
     // resolve shader and Skia draws nothing regardless, on the masked fill and
     // the backdrop blur alike. So it is not the erasure issue #1000 closed —
     // that needed a *finite* quad and an infinite scale. What this spelling buys
-    // is that "a degenerate quad draws nothing", which this function's contract
+    // is that "a degenerate quad draws nothing", which this painter's contract
     // states, is decided here rather than resting on Skia's undocumented
     // handling of a NaN rectangle. It is the idiom `PaintTable::push_with` uses
     // two seams away, for the same reason.
     if !(dest.width() > 0.0 && dest.height() > 0.0) {
         return None;
     }
+    Some(dest)
+}
+
+/// The device quad a baked-vector shape occupies, and the shader that
+/// resolves its field into a coverage mask over that quad.
+///
+/// Both draws that mask by a baked shape use it: the masked fill
+/// ([`draw_vector_field`]) and the backdrop blur
+/// ([`draw_backdrop_blur_field`], story #393). Stated once so the two cannot
+/// disagree about where the shape is or how sharp its edge resolves.
+///
+/// `None` for a field that draws nothing, which is [`field_quad`]'s answer and
+/// carries that function's whole argument about the two guards behind it. What
+/// is left here is the mapping: the field's atlas sub-rect onto that quad, and
+/// the screen-pixel range its edge resolves over.
+///
+fn field_coverage(
+    rect: &RectEntry,
+    field: &VectorField,
+    atlas: &Image,
+    effect: &RuntimeEffect,
+) -> Option<(Rect, Shader)> {
+    // Both refusals, in one place and already asked at both call sites
+    // (issue #1160). Asking again here is what keeps "a degenerate field draws
+    // nothing" this function's own answer rather than a property of its
+    // callers.
+    let dest = field_quad(rect, field)?;
 
     // texel -> device: the shape's atlas sub-rect maps onto the padded quad.
     let [ax, ay, aw, ah] = field.atlas_rect;
@@ -1474,10 +1625,25 @@ fn backdrop_layer_paint(opacity: f32) -> skia_safe::Paint {
 /// `the_backdrop_blur_reads_past_the_node_box`).
 ///
 /// Nothing is drawn into the layer, so its whole content is the blurred
-/// backdrop and the immediate `restore` composites that over the sharp
-/// original. The node's own shadows, fills and stroke then draw on top
-/// through the ordinary path: a backdrop blur changes what is behind a node,
-/// not how the node paints.
+/// backdrop — and **what the immediate `restore` then does depends on the
+/// node's opacity** (debt #405, and this paragraph said otherwise until debt
+/// #1193). [`backdrop_layer_paint`] sets [`BlendMode::Src`] at full opacity, so
+/// the restore *replaces* the clipped region; below full opacity it takes
+/// `apply_opacity` instead and the restore is an ordinary `SrcOver` composite
+/// at the folded alpha.
+///
+/// `Src` and `SrcOver` are indistinguishable where the backdrop is opaque,
+/// which is every scene measured before #405 and the reason the composite
+/// reading survived. Where it is not, the blurred copy is not opaque either,
+/// the sharp original showed through beneath it, and the blur's alpha falloff
+/// was lost —
+/// `a_backdrop_blur_over_a_transparent_backdrop_softens_its_alpha_edge` is what
+/// sees it. The vector path reaches the same conclusion from a different
+/// starting point; [`draw_backdrop_blur_field`] carries that argument.
+///
+/// The node's own shadows, fills and stroke then draw on top through the
+/// ordinary path: a backdrop blur changes what is behind a node, not how the
+/// node paints.
 ///
 /// **Inside a [`GroupComposite`] the sample reads that group's layer, not the
 /// canvas beneath it.** The layer Skia filters is the innermost open one, so
@@ -1708,6 +1874,7 @@ fn draw_fill_kind(
     image_cache: &mut ImageCache,
     paints: &PaintTable,
     kind: PaintKind,
+    diamond_effect: &mut Option<RuntimeEffect>,
 ) {
     match paints.fill(kind) {
         // The fill-less node (story #578): `entry.fill` reaches here as
@@ -1722,7 +1889,7 @@ fn draw_fill_kind(
             canvas.draw_rrect(rrect, &paint);
         }
         Fill::Gradient(gradient) => {
-            let mut paint = gradient_paint(gradient, rect);
+            let mut paint = gradient_paint(gradient, rect, diamond_effect);
             paint.set_anti_alias(true);
             apply_opacity(&mut paint, rect.opacity);
             canvas.draw_rrect(rrect, &paint);
@@ -1788,7 +1955,11 @@ fn gradient_frame(gradient: &Gradient, rect: &RectEntry) -> Matrix {
 /// Builds the skia paint for a gradient fill. A degenerate frame (no
 /// area) falls back to the first stop's color — deterministic; the
 /// validator owns rejecting it upstream (P4).
-fn gradient_paint(gradient: GradientView<'_>, rect: &RectEntry) -> skia_safe::Paint {
+fn gradient_paint(
+    gradient: GradientView<'_>,
+    rect: &RectEntry,
+    diamond_effect: &mut Option<RuntimeEffect>,
+) -> skia_safe::Paint {
     assert!(
         gradient.stops.len() <= MAX_GRADIENT_STOPS,
         "gradient stop budget exceeded: {} stops, budget {MAX_GRADIENT_STOPS} \
@@ -1835,7 +2006,7 @@ fn gradient_paint(gradient: GradientView<'_>, rect: &RectEntry) -> skia_safe::Pa
             None,
             Some(&frame),
         ),
-        GradientKind::Diamond => diamond_shader(&colors, &positions, &frame),
+        GradientKind::Diamond => diamond_shader(&colors, &positions, &frame, diamond_effect),
     };
 
     match shader {
@@ -1850,19 +2021,26 @@ fn gradient_paint(gradient: GradientView<'_>, rect: &RectEntry) -> skia_safe::Pa
     }
 }
 
-/// Diamond gradient: not a Skia primitive (docs/technotes/rendering-and-painters.md). An SkSL
-/// shader computes t = |x| + |y| in gradient unit space and samples a
+/// Diamond gradient: not a Skia primitive (docs/technotes/rendering-and-painters.md).
+/// [`DIAMOND_SKSL`] computes t = |x| + |y| in gradient unit space and samples a
 /// 1D ramp child — a linear gradient along x — so the stop machinery
 /// stays Skia's.
-fn diamond_shader(colors: &[Color4f], positions: &[f32], frame: &Matrix) -> Option<Shader> {
-    const SKSL: &str = r"
-        uniform shader ramp;
-        half4 main(float2 p) {
-            float t = clamp(abs(p.x) + abs(p.y), 0.0, 1.0);
-            return ramp.eval(float2(t, 0.5));
-        }
-    ";
-    let effect = RuntimeEffect::make_for_shader(SKSL, None).expect("diamond SkSL compiles");
+///
+/// The compiled effect is the painter's and is passed in: it was compiled here
+/// on every call, which is once per diamond-filled node per frame. The ramp
+/// child is genuinely per-call, because it carries this fill's own stops.
+fn diamond_shader(
+    colors: &[Color4f],
+    positions: &[f32],
+    frame: &Matrix,
+    effect: &mut Option<RuntimeEffect>,
+) -> Option<Shader> {
+    // Held on the painter rather than compiled here, on the same terms as
+    // `field_effect` and `MsdfCache::effect`: `DIAMOND_SKSL` is a constant, so
+    // no input can stale it. This one compiled per **draw** until then, where
+    // #1186's did per frame — `gradient_paint` is called once per diamond-filled
+    // node, so a scene of twenty paid twenty compiles a frame.
+    let effect = effect.get_or_insert_with(compile_diamond_effect);
     // The ramp is only sampled, never drawn; t maps along its x axis.
     let ramp = gradient_shader::linear(
         (Point::new(0.0, 0.0), Point::new(1.0, 0.0)),
@@ -1909,6 +2087,50 @@ thread_local! {
     /// otherwise bump a counter this test did not mean to observe, flakily,
     /// whenever tests happen to run concurrently.
     static DECODE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+
+    /// Test-only compile counter for the coverage-mask resolve (issue #1186),
+    /// the sibling of [`DECODE_CALLS`] and thread-local for the same reason.
+    /// `SkiaPainter::field_effect` holds the compiled effect for the painter's
+    /// life, so this reads 1 however many frames draw a masked node, and
+    /// `tests::paint_compiles_the_field_resolve_once_across_frames` is what
+    /// says so.
+    static FIELD_EFFECT_COMPILES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+
+    /// Test-only compile counter for the diamond-gradient ramp sampler, the
+    /// sibling of [`FIELD_EFFECT_COMPILES`] and thread-local for the same
+    /// reason. It counted per *draw* before the effect moved onto the painter.
+    static DIAMOND_EFFECT_COMPILES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Compiles the coverage-mask resolve. Called once per painter, through
+/// `SkiaPainter::field_effect`'s `get_or_insert_with` (issue #1186).
+fn compile_field_effect() -> RuntimeEffect {
+    #[cfg(test)]
+    FIELD_EFFECT_COMPILES.with(|c| c.set(c.get() + 1));
+    RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None).expect("field-mask resolve SkSL compiles")
+}
+
+/// The diamond gradient's ramp sampler: `t = |x| + |y|` in gradient unit space,
+/// sampling a 1D linear ramp child, so the stop machinery stays Skia's.
+///
+/// A module constant rather than a `const` inside [`diamond_shader`] since the
+/// effect moved onto the painter: what makes holding a compiled effect sound is
+/// that its source is a constant, and a source declared inside the function
+/// that no longer compiles it says the opposite.
+const DIAMOND_SKSL: &str = r"
+    uniform shader ramp;
+    half4 main(float2 p) {
+        float t = clamp(abs(p.x) + abs(p.y), 0.0, 1.0);
+        return ramp.eval(float2(t, 0.5));
+    }
+";
+
+/// Compiles the diamond-gradient ramp sampler. Called once per painter, through
+/// `SkiaPainter::diamond_effect`'s `get_or_insert_with`.
+fn compile_diamond_effect() -> RuntimeEffect {
+    #[cfg(test)]
+    DIAMOND_EFFECT_COMPILES.with(|c| c.set(c.get() + 1));
+    RuntimeEffect::make_for_shader(DIAMOND_SKSL, None).expect("diamond SkSL compiles")
 }
 
 /// Decodes an encoded image asset with the Skia build's own codec —
@@ -2497,6 +2719,199 @@ mod tests {
         );
     }
 
+    /// **The coverage-mask resolve compiles once for a painter, not once per
+    /// frame** (issue #1186).
+    ///
+    /// `field_effect` was a `paint()` frame local, so
+    /// `RuntimeEffect::make_for_shader(FIELD_MASK_SKSL, None)` ran again on
+    /// every call that drew a masked node — about 30 us on this machine,
+    /// measured over 200 iterations against release Skia. Its sibling
+    /// `MsdfCache::effect` was already a painter field, and that field's doc
+    /// gives the invariant both rely on: the shader is a constant, so no input
+    /// can stale it.
+    ///
+    /// **Three frames, and the count is what a one-frame test cannot see.** A
+    /// test that painted once would read 1 against the frame local too. It also
+    /// asserts the **third** row: a scene with no masked node compiles nothing,
+    /// which is the lazy posture the frame local had and the property a field
+    /// initialised in `with_mode` would lose.
+    #[test]
+    fn paint_compiles_the_field_resolve_once_across_frames() {
+        let mut images = ImageTable::new();
+        let image = images.push(ImageAsset {
+            format: dashpaint::ImageFormat::Png,
+            bytes: one_pixel_png(RED),
+        });
+        let field = dashpaint::VectorField {
+            image,
+            atlas_rect: [0, 0, 1, 1],
+            plane_bounds: [0.0, 0.0, 8.0, 8.0],
+            distance_range: 4.0,
+        };
+        let mut paints = PaintTable::new();
+        let fill = paints.intern_fill(&dashpaint::FillSpec::Solid { color: RED });
+        let masked = paints.push_with(
+            dashpaint::PaintEntry {
+                fill,
+                ..dashpaint::PaintEntry::default()
+            },
+            dashpaint::EntryParts {
+                shape: Some(field),
+                ..dashpaint::EntryParts::default()
+            },
+        );
+        let plain = paints.push_solid(RED);
+        let rect_at = |paint| {
+            [RectEntry {
+                x: 0.0,
+                y: 0.0,
+                w: 8.0,
+                h: 8.0,
+                paint,
+                clip: dashpaint::ClipIndex::UNCLIPPED,
+                opacity: 1.0,
+                rotation: 0.0,
+                rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
+            }]
+        };
+
+        FIELD_EFFECT_COMPILES.with(|c| c.set(0));
+        let mut painter = SkiaPainter::new(8, 8);
+        for _ in 0..3 {
+            painter.paint(
+                &rect_at(masked),
+                &paints,
+                &images,
+                &ClipTable::new(),
+                &[],
+                &GlyphRunTable::new(),
+                None,
+            );
+        }
+        assert_eq!(
+            FIELD_EFFECT_COMPILES.with(|c| c.get()),
+            1,
+            "three frames drawing a masked node must compile the resolve once: the effect is a \
+             painter field, not a frame local",
+        );
+
+        // A painter that has never drawn a masked node has compiled nothing.
+        FIELD_EFFECT_COMPILES.with(|c| c.set(0));
+        let mut unmasked = SkiaPainter::new(8, 8);
+        unmasked.paint(
+            &rect_at(plain),
+            &paints,
+            &images,
+            &ClipTable::new(),
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        assert_eq!(
+            FIELD_EFFECT_COMPILES.with(|c| c.get()),
+            0,
+            "a scene with no masked node compiles nothing, which is what makes the count above a \
+             statement about caching rather than about eagerness",
+        );
+    }
+
+    /// **The diamond-gradient ramp sampler compiles once for a painter, not
+    /// once per draw** — the third constant shader, found reviewing #1186's fix.
+    ///
+    /// `diamond_shader` held its SkSL in a `const` and compiled it on every
+    /// call, and `gradient_paint` calls it once per diamond-filled node. So this
+    /// was strictly worse than the defect #1186 named: per draw rather than per
+    /// frame, at about the same 30 us.
+    ///
+    /// **Two nodes and two frames**, which is what separates the two axes. One
+    /// node over two frames would read 2 against the old code and so would
+    /// two nodes in one frame; only the product distinguishes a per-draw compile
+    /// from a per-frame one, and it read 4.
+    #[test]
+    fn paint_compiles_the_diamond_ramp_once_across_draws_and_frames() {
+        let mut paints = PaintTable::new();
+        let gradient = dashpaint::Gradient {
+            kind: dashpaint::GradientKind::Diamond,
+            handle_origin: Vec2 { x: 0.5, y: 0.5 },
+            handle_primary: Vec2 { x: 1.0, y: 0.5 },
+            handle_secondary: Vec2 { x: 0.5, y: 1.0 },
+            stops: dashpaint::StopRange::NONE,
+        };
+        let fill = paints.intern_fill(&dashpaint::FillSpec::Gradient {
+            gradient,
+            stops: vec![
+                dashpaint::GradientStop {
+                    offset: 0.0,
+                    color: RED,
+                },
+                dashpaint::GradientStop {
+                    offset: 1.0,
+                    color: RED,
+                },
+            ],
+        });
+        let entry = paints.push(dashpaint::PaintEntry {
+            fill,
+            ..dashpaint::PaintEntry::default()
+        });
+        let rects: Vec<RectEntry> = (0..2u8)
+            .map(|i| RectEntry {
+                x: f32::from(i) * 4.0,
+                y: 0.0,
+                w: 4.0,
+                h: 8.0,
+                paint: entry,
+                clip: dashpaint::ClipIndex::UNCLIPPED,
+                opacity: 1.0,
+                rotation: 0.0,
+                rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
+            })
+            .collect();
+
+        DIAMOND_EFFECT_COMPILES.with(|c| c.set(0));
+        let mut painter = SkiaPainter::new(8, 8);
+        for _ in 0..2 {
+            painter.paint(
+                &rects,
+                &paints,
+                &ImageTable::new(),
+                &ClipTable::new(),
+                &[],
+                &GlyphRunTable::new(),
+                None,
+            );
+        }
+        assert_eq!(
+            DIAMOND_EFFECT_COMPILES.with(|c| c.get()),
+            1,
+            "two diamond-filled nodes over two frames must compile the ramp sampler once: the \
+             effect is a painter field, not a per-call `const`",
+        );
+
+        // And a painter that never draws one has compiled nothing, which is what
+        // makes the count above a statement about caching rather than eagerness.
+        DIAMOND_EFFECT_COMPILES.with(|c| c.set(0));
+        let mut plain = SkiaPainter::new(8, 8);
+        let solid = paints.push_solid(RED);
+        plain.paint(
+            &[RectEntry {
+                paint: solid,
+                ..rects[0]
+            }],
+            &paints,
+            &ImageTable::new(),
+            &ClipTable::new(),
+            &[],
+            &GlyphRunTable::new(),
+            None,
+        );
+        assert_eq!(
+            DIAMOND_EFFECT_COMPILES.with(|c| c.get()),
+            0,
+            "a scene with no diamond gradient compiles nothing",
+        );
+    }
+
     /// A text-free scene compiles no shader and decodes no atlas, which is
     /// the posture the lazy entry point had before the cache moved onto the
     /// painter — worth pinning, because a cache built eagerly in `paint()`
@@ -2550,6 +2965,21 @@ mod tests {
     /// `tests/painter.rs` already assert that such a field paints nothing on
     /// both paths, and `a_sound_coverage_mask_still_draws` that a sound one
     /// does. This adds the cost, which no pixel can show.
+    ///
+    /// # The origin row (issue #1160)
+    ///
+    /// The third row carries a **sound** field at a node origin of `f32::MAX`,
+    /// where the device quad cancels to nothing. `VectorField::draws` accepts
+    /// it — the predicate reads `plane_bounds` alone — and until #1160 only
+    /// `field_coverage`'s own device-quad guard refused it, below the fetch. So
+    /// it paid for its atlas to draw nothing, which is exactly what #1044 fixed
+    /// for the other route.
+    ///
+    /// It reads **1 on `main` and 0 after**, so it falsifies rather than
+    /// decorates. `a_frosted_node_with_an_out_of_domain_origin_draws_nothing` in
+    /// `tests/painter.rs` covers the same origins for the *picture* and cannot
+    /// cover this: `DECODE_CALLS` is a `cfg(test)` thread-local in this file,
+    /// which an integration test cannot see.
     #[test]
     fn a_coverage_field_that_draws_nothing_decodes_no_atlas() {
         let mut images = ImageTable::new();
@@ -2585,7 +3015,16 @@ mod tests {
                 }][..],
             ),
         ] {
-            for (field, expected) in [(sound, 1), (degenerate, 0)] {
+            for (why, field, origin, expected) in [
+                ("draws", sound, 0.0, 1),
+                ("has no atlas extent", degenerate, 0.0, 0),
+                // A sound field whose *device* quad cancels: `f32::MAX + 8.0`
+                // is `f32::MAX`, so both ends of the 8-unit plane round to the
+                // same float and the quad has zero width. Not an overflow to an
+                // infinity, which four documents said until issue #1160
+                // measured it.
+                ("is collapsed by its node origin", sound, f32::MAX, 0),
+            ] {
                 let mut paints = PaintTable::new();
                 let fill = paints.intern_fill(&dashpaint::FillSpec::Solid { color: RED });
                 let entry = paints.push_with(
@@ -2600,8 +3039,8 @@ mod tests {
                     },
                 );
                 let rects = [RectEntry {
-                    x: 0.0,
-                    y: 0.0,
+                    x: origin,
+                    y: origin,
                     w: 8.0,
                     h: 8.0,
                     paint: entry,
@@ -2626,14 +3065,9 @@ mod tests {
                 assert_eq!(
                     DECODE_CALLS.with(|c| c.get()),
                     expected,
-                    "{what} whose coverage field {} must decode {expected} atlas: the predicate is \
-                 asked before `ImageCache::get`, not inside the draw call below it — and the \
-                 drawing case is what says this path decodes at all",
-                    if expected == 0 {
-                        "draws nothing"
-                    } else {
-                        "draws"
-                    },
+                    "{what} whose coverage field {why} must decode {expected} atlas: both refusals \
+                     are asked before `ImageCache::get`, not inside the draw call below it — and \
+                     the drawing case is what says this path decodes at all",
                 );
             }
         }

@@ -260,9 +260,9 @@ impl PayloadKey {
         Self {
             source: Self::GLYPH_ATLAS,
             index,
-            format: atlas.image.format as u32,
+            format: atlas.image().format as u32,
             offset: 0,
-            len: u32::try_from(atlas.image.bytes.len())
+            len: u32::try_from(atlas.image().bytes.len())
                 .expect("a glyph atlas payload exceeds u32::MAX bytes"),
         }
     }

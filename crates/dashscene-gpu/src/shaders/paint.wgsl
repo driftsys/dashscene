@@ -314,6 +314,13 @@ struct VertexOut {
     // here for something else would silently paint every refused mask and every
     // refused glyph.
     //
+    // Since issue #1185 it carries a second reason to draw nothing, and the
+    // vertex stage clears it for both: a quad with no area, which `msdf_sample`
+    // would divide by. The component means "this instance's MSDF sample is
+    // usable", of which residency is one condition and a quad with area is the
+    // other. Nothing downstream distinguishes them — the fragment stage asks
+    // only whether to sample.
+    //
     // Flat, and stated: these are per-instance constants, and a flat varying is
     // exact where an interpolated one is only exact because every vertex agreed.
     @location(6) @interpolate(flat) params0: vec4f,
@@ -409,6 +416,55 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
             inst.corners.zw * run.msdf.uv.zw,
         );
         out.params2 = vec4f(run.msdf.half_uv, run.msdf.px_range, f32(run.msdf.resolved));
+    }
+
+    // A quad with no area is refused here, through the flag the fragment stage
+    // already reads for a payload that could not be made resident (issue
+    // #1185). `msdf_sample` divides by `quad.zw`, and until this line nothing
+    // on either MSDF arm refused a zero.
+    //
+    // Without it the quad still shades. The margin below grows a zero-area quad
+    // into a square two antialiasing widths across, `t` divides by zero, the
+    // clamp takes an edge of the sub-rect, and whatever that edge resolves to is
+    // painted where the ink is not — the shape issue #972 closed for an
+    // unresolved row, reached through a different door. Measured on the text
+    // arm: four pixels of the run's colour, at full alpha, around a glyph's pen.
+    //
+    // **The text arm is the reachable one**, and its zero comes from the CPU:
+    // `pack_run` writes `bounds` as `[x, y, (right - left) * size,
+    // (top - bottom) * size]`, from the atlas row's own `plane_em` and the run's
+    // size. Neither operand is refused, and they are refused in different
+    // places or not at all: `Atlas::new` does not look at a glyph's `plane_em`,
+    // so a row with no area is accepted, and `size` is `GlyphRun::size`, which
+    // no seam in `dashpaint` refuses — `dashscene-validator`'s
+    // `text.style-size-out-of-range` covers only the document path
+    // (`docs/decisions/boundary-b-domain-checks-sit-at-the-table-seam.md`, the
+    // `GlyphRun::size` paragraph). `a_glyph_whose_quad_has_no_area_draws_nothing`
+    // pins the `plane_em` half.
+    //
+    // **The masked arm is the one #1185 was filed for, and it is not observable
+    // on every backend.** Its quad is `hi - lo` with the node origin added to
+    // both ends, which cancels once the plane extent falls below one ulp of the
+    // origin — not by overflowing, which the numbers do not do
+    // (`f32::MAX + 8.0 == f32::MAX`), and as a ratio of the two operands rather
+    // than a property of either, so no single-operand rule upstream expresses it
+    // and neither `VectorField::draws` nor `pack::field_draws` can see the
+    // origin. Measured on Metal with a node at `x = 32.0` and a `1e-6`-unit
+    // plane: an `f32` evaluation of `(32.0 + 1e-6) - (32.0 + 0.0)` gives `0.0`
+    // on x and one ulp of 16 — `1.9073486e-6` — on y, and the shader produces
+    // exactly `1e-6` on both, so that backend reassociates the origin out and
+    // the cancellation never happens. Whether another does is issue #1195. This
+    // line is here so the property holds in the source rather than resting on
+    // that.
+    //
+    // Written unconditionally rather than per arm: `params2` is `vec4f(0.0)` for
+    // every kind that is not masked or text, so for those this writes the zero
+    // they already carry. Spelled as a negated positive so a NaN extent is
+    // refused rather than admitted — `NaN <= 0.0` is false, which would wave it
+    // through. `dashscene-skia`'s `field_quad` refuses the same quantity with
+    // the same spelling.
+    if !(quad.z > 0.0 && quad.w > 0.0) {
+        out.params2.w = 0.0;
     }
 
     // Grown by the antialiasing width so the ramp is not clipped by the
