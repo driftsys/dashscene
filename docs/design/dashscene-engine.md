@@ -328,8 +328,20 @@ one through `from_faces` below.
 (story #947). It takes owned bytes per face — the family name, the CSS weight,
 the font file, the index within a collection, and an optional committed sheet as
 its PNG and metrics blob — and returns the typesetter and the atlas list
-together. Owned rather than borrowed because the caller it exists for is a C
-ABI, whose pointers are valid only for the length of the call.
+together. Owned rather than borrowed because the caller it was written for is a
+C ABI, whose pointers are valid only for the length of the call.
+
+**It is no longer only the C ABI's, and the owned bytes are what let it travel**
+(issue #992). `corpus/showcase` has called it since PR #988, from two places and
+keeping one half of each result, because a cascade and an atlas set have
+different lifetimes there — the atlas set is converted once for the process
+behind a `LazyLock`, and a typesetter is built per scene. Both facades now
+re-export `FaceBytes`, `AtlasBytes` and `TextResourcesError`, so an embedder on
+`dashscene-desktop` or `dashscene-web` reaches it without depending on this
+crate. What that changes here is the audience, not the shape: owned bytes suit a
+caller assembling a descriptor as much as one marshalling across an ABI, and the
+font-slot ordering this function enforces is the reason it stays one call in
+every case. `docs/design/host-integration.md` carries the facade half.
 
 **Both lists come out of one walk, which is the whole point.** Faces are grouped
 into families on `FontFamily::name_matches`, the same predicate that resolves a

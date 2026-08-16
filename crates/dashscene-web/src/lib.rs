@@ -131,11 +131,50 @@ pub use dashbuf::prefetch::ShownRoot;
 
 /// What a load needs to measure and draw text, re-exported for the same reason
 /// [`ShownRoot`] is — so an embedder can name the parameter without declaring a
-/// dependency on the crate that defines it. Building one means assembling a
-/// cascade and its committed atlases; `corpus/showcase/src/resources.rs` is the
-/// worked example (story #863).
+/// dependency on the crate that defines it (story #863).
+///
+/// **Since issue #992 it can also build one.** Naming was as far as this went,
+/// and that left the parameter unconstructible through the facade:
+/// [`TextResources::from_faces`] resolved, and calling it did not, because its
+/// argument is a `Vec` of [`FaceBytes`] and that did not cross. [`AtlasBytes`]
+/// is needed by any face carrying a sheet — `FaceBytes::atlas` is an `Option`,
+/// so a measure-only cascade never names it — so carrying one without the other
+/// would have reached only that half.
+///
+/// [`TextResources::from_faces`] takes the bytes — one [`FaceBytes`] per face:
+/// its font file, the family and CSS weight it stands for, its index within a
+/// collection, and the committed sheet its glyphs sample as an [`AtlasBytes`].
+/// It returns the cascade and the atlas list from one walk, with the font-slot
+/// order enforced rather than assumed, which is why it is one call and not two
+/// (story #947). Nothing bakes a sheet at run time ([`AtlasBytes`] says why), so
+/// a host arrives with a committed PNG and the metrics blob beside it or its
+/// text is measured and never drawn.
+///
+/// [`TextResources::new`] takes the pair already assembled, and is not the
+/// lesser route. `corpus/showcase/src/resources.rs` is the worked example and
+/// uses **both**: the two halves have different lifetimes there — a
+/// [`Typesetter`] is per-scene, because it is not [`Clone`] and the solver
+/// shaping with it needs it exclusively, while the atlas set is converted once
+/// for the process behind a `LazyLock` — so it calls `from_faces` from two
+/// places, keeps `typesetter` from one and `atlases` from the other, and pairs
+/// them with `new`. Read its own doc for why those cannot be one call.
+///
+/// Every type that shape names is re-exported here, [`TextResourcesError`]
+/// included. What is **not** carried is the vocabulary to build a [`Typesetter`]
+/// or an [`Atlas`] from scratch — a cascade of faces, families and weights, or a
+/// sheet with its own metrics — so an embedder assembling either from parts
+/// still depends on `dashscene-typeset` and `dashpaint` directly.
+///
+/// Not gated on `wasm32`, for the reason the two blocks above are not.
+pub use dashscene_engine::{AtlasBytes, FaceBytes, TextResources, TextResourcesError};
+
+/// The committed sheet a staged run samples, and [`TextResources`]'s second
+/// half. Re-exported for the reason [`TextResources`] gives — rustdoc lists
+/// these alphabetically, so that block is not necessarily above this one.
 pub use dashpaint::Atlas;
-pub use dashscene_engine::TextResources;
+
+/// The cascade text is shaped and measured through, and [`TextResources`]'s
+/// first half. Re-exported for the reason [`TextResources`] gives.
 pub use dashscene_typeset::text::Typesetter;
 
 #[cfg(target_arch = "wasm32")]

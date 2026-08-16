@@ -3027,10 +3027,15 @@ impl Atlas {
     /// `dashscene-validator`'s `text.style-size-out-of-range` does, with the
     /// same predicate.
     ///
-    /// An embedder supplying its own font depends on `dashpaint` directly, as
-    /// `dashscene-desktop` and `dashscene-web` both say of their `Atlas`
-    /// re-export: naming is as far as that re-export goes. So the errors are
-    /// nameable wherever the constructor is.
+    /// An embedder that builds its own [`Atlas`] depends on `dashpaint`
+    /// directly, and `dashscene-desktop` and `dashscene-web` both say so of
+    /// their `Atlas` re-export: they carry the name, so a load's parameter can
+    /// be spelled, and not the vocabulary this constructor takes. Since issue
+    /// #992 the facades do carry a route that needs neither — `TextResources`
+    /// with `FaceBytes` and `AtlasBytes`, which converts a committed sheet's two
+    /// files into an `Atlas` inside `dashscene-engine` — so what depends on this
+    /// crate directly is assembling one from parts, not obtaining one. So the
+    /// errors are nameable wherever the constructor is.
     pub fn new(
         image: ImageAsset,
         width: u32,

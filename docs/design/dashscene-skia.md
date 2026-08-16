@@ -154,11 +154,16 @@ All in `crates/dashscene-skia/src/lib.rs`:
   the new layer with the current layer's contents passed through that filter.
   The painter clips to the node's own rounded box, opens such a layer, and
   restores it immediately — nothing is drawn into it, so its whole content is
-  the blurred backdrop and the restore composites that over the sharp original.
-  Skia reads the halo the kernel needs from outside the clip, so the blur is
-  built from the real backdrop rather than from a copy truncated at the node's
-  box. The sigma mapping is `sigma = 0.4375 * radius`, the same one the shadows
-  use (`blur_sigma`, stated once so the two cannot drift — and measured to be
+  the blurred backdrop, and at full opacity the restore **replaces** the clipped
+  region with it rather than compositing it over the sharp original: the layer
+  paint carries `BlendMode::Src` when `RectEntry.opacity` is 1, and the ordinary
+  `SrcOver` with that alpha folded in otherwise (debt #405 — the two agree only
+  where the backdrop is opaque, and a `SrcOver` restore over a transparent one
+  left the sharp copy showing through and lost the blur's alpha falloff). Skia
+  reads the halo the kernel needs from outside the clip, so the blur is built
+  from the real backdrop rather than from a copy truncated at the node's box.
+  The sigma mapping is `sigma = 0.4375 * radius`, the same one the shadows use
+  (`blur_sigma`, stated once so the two cannot drift — and measured to be
   genuinely the same, `docs/decisions/blur-sigma-is-figmas-mapping.md`), and the
   filter clamps at its input edge so a node frosting the canvas edge picks up
   that edge's color instead of darkening. The blur draws **before** the node's

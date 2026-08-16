@@ -94,9 +94,12 @@ const PULSE_INTERVAL: Duration = Duration::from_millis(2500);
 ///
 /// **The deadline is elapsed time, not a count of pulse events.** It was
 /// written that way because [`spawn_pulse_driver`] used to free-run: it slept
-/// and sent whether or not the loop had consumed the last message, so on a slow
-/// frame several pulses queued and arrived together, and counting the events
-/// gave later scenes a single pulse each while the first cycle got four.
+/// and sent whether or not the loop had consumed the last message, so pulses
+/// could queue and arrive together, and counting the events gave later scenes a
+/// single pulse each while the first cycle got four. **Not because of a slow
+/// frame** — [`spawn_pulses`] carries why that explanation names the wrong
+/// quantity, and it takes a stall longer than [`PULSE_INTERVAL`] rather than a
+/// frame longer than the loop's own.
 ///
 /// The driver no longer does that — it is one-shot and rearmed
 /// ([`spawn_pulses`], issue #629) — so counting would now be sound. Elapsed time
@@ -450,18 +453,44 @@ fn spawn_pulse_driver(waker: Waker) -> mpsc::Sender<()> {
 /// then **blocks until the host rearms it**, so a second pulse cannot be queued
 /// while the first is unhandled.
 ///
-/// It used to sleep and send unconditionally. Whenever a frame ran longer than
-/// the interval — routine in a debug build, where the `surfaces` scene costs
-/// about 28 ms per frame at 1920x1200 — the driver ran ahead of the loop and
-/// the queued pulses then arrived together. The scene jumped through its script
-/// instead of stepping through it, and only the first of each burst reported the
-/// park, because the park report is taken once. Issue #628's scene advance is
-/// keyed on elapsed time rather than on a count of pulses precisely because
-/// counting them was unreliable while this stood.
+/// It used to sleep and send unconditionally, so a pulse the loop had not yet
+/// handled did not stop the next one being sent. Queued pulses then arrived
+/// together: the scene jumped through its script instead of stepping through
+/// it, and only the first of each burst reported the park, because the park
+/// report is taken once. Issue #628's scene advance is keyed on elapsed time
+/// rather than on a count of pulses precisely because counting them was
+/// unreliable while this stood.
 ///
 /// The handshake also ties the driver to the loop's state. A free-running thread
 /// kept sending while the loop was deliberately parked; this one cannot get
 /// ahead of what has been applied.
+///
+/// **The rearm bounds the queue to one whatever the timings are, and that is
+/// the whole of why it is correct** (issue #956). No frame cost appears here,
+/// and the reason is not only that the old one was stale.
+///
+/// This comment carried "routine in a debug build, where the `surfaces` scene
+/// costs about 28 ms per frame at 1920x1200" as the justification for
+/// "whenever a frame ran longer than the interval". **Those are two different
+/// intervals.** The only production call is [`spawn_pulse_driver`], which
+/// passes [`PULSE_INTERVAL`] — 2500 ms, chosen so the loop settles and parks
+/// between pulses. The 28 ms figure is evidence about the loop's own
+/// [`FRAME_INTERVAL`](dashscene_desktop::FRAME_INTERVAL) of 16.667 ms, which
+/// this function is never given; `corpus/showcase/README.md` says so where it
+/// records the number. A 28 ms frame does not make a 2500 ms driver run ahead.
+///
+/// So the figure was doing no work for this claim even before it went stale,
+/// and it was stale as well: it timed `SkiaPainter::paint` alone rather than a
+/// frame, it predates issues #639 and #644, which removed per-frame decoding
+/// after it was taken, and it was taken under `cargo run --release`. "In a
+/// debug build" was an inference from the README's note that a debug build
+/// measures within a few per cent, not a debug measurement. Nothing committed replaces it either — the
+/// interactive replay that produced it was instrumented by hand and is not in
+/// this tree, [`Timing`] times `tick` and `present` over a fixed sample of
+/// presents rather than a mean of `paint` over eight scripted phases, and
+/// `docs/technotes/frame-budget.md` is a third harness again. Substituting any
+/// of them would put a different quantity under the old one's name, which is
+/// the error this replaces rather than repeats.
 ///
 /// `send` reports whether the message reached the loop. Both it returning
 /// `false` and the rearm channel closing mean the loop is gone, and the thread
