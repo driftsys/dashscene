@@ -20,7 +20,11 @@ use dashscene_skia::SkiaPainter;
 use dashscene_typeset::atlas::AtlasBundle;
 use dashscene_typeset::text::{Font, FontFamily, Typesetter, WeightedFont};
 
-const FONT_LATIN: &str = concat!(
+/// Public beside [`ATLAS_ASCII_DIR`], which the committed ASCII atlas is
+/// generated from: a caller building its own cascade needs the pair, and a
+/// private font path next to a public atlas path is how the two get copied
+/// apart.
+pub const FONT_LATIN: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../corpus/fonts/noto-sans/NotoSans-Regular.ttf"
 );

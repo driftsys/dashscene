@@ -97,9 +97,20 @@ its P4 self-validation, not a file format.
 
 ### Geometry rules and their gates
 
-- `geometry.rect-invalid-extent` (#128) — a non-finite or negative `RectEntry`
-  extent. Paint gate only: a document carries no resolved extent (P1). It names
-  what `check_stroke_fits_box` only declined to judge.
+- `geometry.rect-invalid-extent` (#128) — a non-finite or negative extent. It
+  names what `check_stroke_fits_box` only declined to judge. Paint gate only
+  until issue #1048, on the reading that "a document carries no resolved extent
+  (P1)": true of the _resolved_ extent, and the reason the paint gate needs the
+  rule, but `FixedSizeLayout` carries an **authored** one and the paint gate is
+  the one with no production caller. It now runs on **both** gates, like the
+  corner radius below.
+- `geometry.rect-invalid-origin` (#1048) — a non-finite `x` or `y`, on both
+  gates. The extent rule's sibling over the other two members of the same box,
+  and a finiteness rule only: a negative origin is an ordinary offset above or
+  left of the parent's, where a negative extent is not. Filed under P4 rather
+  than as a picture defect — measured on both painters, a node with a non-finite
+  origin draws nothing rather than drawing wrongly, and what was missing is that
+  the drop is named.
 - `geometry.corner-radius-invalid` (#128) — a negative or non-finite corner
   radius. Runs on **both** gates, like a stroke width: corners are geometry-free
   authored intent present in the document (`Paint.corners`), and the load gate

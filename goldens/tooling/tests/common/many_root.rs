@@ -199,6 +199,10 @@ fn frame(name: &str, asset: u32, side: f32) -> Node {
 /// Both need the `fn load` definition and the comment lines discounted, which
 /// is why the numbers above are stated as a split rather than as one total.
 ///
+/// The pattern needs no guard against `load_file`, which issue #1015 added
+/// beside `load` as the same harness over a **different** fixture: the
+/// substring `load(` does not occur in `load_file(`, so it never matches one.
+///
 /// **What it buys is CPU, not elapsed time — measure before claiming
 /// otherwise.** `cargo test` runs a binary's tests on parallel threads, so the
 /// redundant builds were already overlapping on separate cores. Measured on
@@ -226,9 +230,9 @@ fn frame(name: &str, asset: u32, side: f32) -> Node {
 /// returned `Vec` is now a clone of the cached one rather than the buffer
 /// `build` moved out, so a nextest process holds about 2 MB twice.
 ///
-/// The cache is a map of per-size cells rather than one lock held across
-/// [`build`], so a `document(0)` caller does not queue behind a 65-root build
-/// it shares nothing with. Same-size callers do wait, which is the point.
+/// The cache itself is [`super::memoised`], shared with [`super::text_root`]:
+/// its locking discipline is written there once rather than copied into each
+/// fixture that wants it.
 ///
 /// Two consequences worth knowing when reading this file's numbers. A test
 /// that waits on another test's build counts that wait in its own elapsed
@@ -240,18 +244,8 @@ fn frame(name: &str, asset: u32, side: f32) -> Node {
 /// non-deterministic builder; nextest still builds independently, which is
 /// where that guard now lives.
 pub fn document(extra: usize) -> Vec<u8> {
-    // The map's lock is released before `build` runs, so a panic in `build`
-    // cannot poison it; `into_inner` is here only so an unrelated poisoning
-    // could not turn every later call into a second failure.
     static BUILT: Mutex<BTreeMap<usize, Arc<OnceLock<Vec<u8>>>>> = Mutex::new(BTreeMap::new());
-
-    let cell = {
-        let mut built = BUILT
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        Arc::clone(built.entry(extra).or_default())
-    };
-    cell.get_or_init(|| build(extra)).clone()
+    super::memoised(&BUILT, extra, || build(extra))
 }
 
 /// Compiles the document [`document`] memoises.

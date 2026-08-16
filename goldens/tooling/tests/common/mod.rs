@@ -15,18 +15,30 @@
 //! the third: the generated block-stress payload the profile-preview oracle
 //! and the perceptual calibration both measure (issue #544). [`many_root`] is
 //! the fourth: the sixty-five-root document the load criterion and the
-//! per-frame criterion are both stated over (story #836).
+//! per-frame criterion are both stated over (story #836). [`text_root`] is the
+//! fifth: the text-carrying document the per-frame band's glyph term is stated
+//! over (issue #1015).
 //!
-//! # Why the three generators stay declared here (issue #932)
+//! # Why the generators stay declared here (issue #932)
 //!
-//! [`manifest`], [`many_root`] and [`stress`] are unrelated to each other, and
-//! every binary declaring `mod common;` compiles all three whether it names
-//! them or not. Eighteen binaries declare it and **eleven name none of the
-//! three**. Issue #932 offered two shapes — a `#[path]` include per fixture in
+//! [`manifest`], [`many_root`], [`stress`] and [`text_root`] are unrelated to
+//! each other, and every binary declaring `mod common;` compiles all of them
+//! whether it names them or not. Eighteen binaries declare it and **eleven name
+//! none of them**. Issue #932 offered two shapes — a `#[path]` include per fixture in
 //! only the binaries that use it, or a split into a sibling `fixtures/`
 //! directory — and asked for the cost to be measured before either was
 //! chosen, saying that under a second the honest answer is to write the reason
 //! down here and close it.
+//!
+//! **The figure below was measured over three generators, before [`text_root`]
+//! was added** (issue #1015). It is left as measured rather than adjusted by
+//! reasoning: a fourth line pulls `dashc_wasm`, `dashscene_engine` and
+//! `dashscene_typeset::text` into every binary declaring `mod common;`, so the
+//! current cost is higher than what is recorded here by an amount nobody has
+//! taken. Re-derive it with the recipe below before citing it as the current
+//! number, and read it meanwhile as the floor it is. Issue #932's own threshold
+//! — under a second — is what the decision rests on, and the three-generator
+//! figure is a third of the way to it.
 //!
 //! Measured 2026-08-16 on macOS aarch64, on an otherwise idle machine: the
 //! serial (`-j1`) rebuild of exactly those eleven binaries, with the three
@@ -72,6 +84,10 @@
 pub mod manifest;
 pub mod many_root;
 pub mod stress;
+pub mod text_root;
+
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use dashpaint::{
     Atlas, AtlasGlyph, ClipIndex, ClipTable, Color, GlyphRange, GlyphRun, GlyphRunTable,
@@ -80,6 +96,33 @@ use dashpaint::{
 use dashscene_core::{Arena, NodeId, TextAlign, TextAlignV, TextStyle};
 use dashscene_skia::SkiaPainter;
 use dashscene_typeset::atlas::AtlasBundle;
+
+/// A document generator memoised per size — the cache both fixture builders
+/// share.
+///
+/// Extracted when [`text_root`] arrived beside [`many_root`] with a
+/// byte-identical copy of it: the locking discipline below is subtle enough
+/// that two copies would be one documented and one not.
+///
+/// The map's lock is released before `build` runs, so a panic in `build` cannot
+/// poison it; `into_inner` is here only so an unrelated poisoning could not turn
+/// every later call into a second failure. The cache is a map of per-size cells
+/// rather than one lock held across `build`, so a caller asking for one size
+/// does not queue behind a build it shares nothing with. Same-size callers do
+/// wait, which is the point.
+pub fn memoised<K: Ord + Copy>(
+    cache: &Mutex<BTreeMap<K, Arc<OnceLock<Vec<u8>>>>>,
+    key: K,
+    build: impl FnOnce() -> Vec<u8>,
+) -> Vec<u8> {
+    let cell = {
+        let mut built = cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        Arc::clone(built.entry(key).or_default())
+    };
+    cell.get_or_init(build).clone()
+}
 
 /// An opaque colour from its RGB channels.
 pub const fn rgb(r: f32, g: f32, b: f32) -> Color {

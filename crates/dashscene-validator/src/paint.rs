@@ -180,10 +180,17 @@ pub(crate) fn check_stroke_width(report: &mut Report, at: &Location, width: f32)
     }
 }
 
-/// An image fill's asset index must resolve.
+/// An asset index into the image table must resolve.
+///
+/// `what` names the reference in the diagnostic — "image fill" or "coverage
+/// field". Two things index that table and both reach an `ImageTable::resolve`
+/// documented as "validated upstream (P4)", so both are checked here rather
+/// than by two copies of one comparison (the coverage field's was added with
+/// issue #1021's rule, which is where its absence was noticed).
 pub(crate) fn check_image_index(
     report: &mut Report,
     at: &Location,
+    what: &str,
     image: u32,
     image_count: usize,
 ) {
@@ -192,8 +199,7 @@ pub(crate) fn check_image_index(
             rule::IMAGE_OUT_OF_RANGE,
             at,
             format!(
-                "image fill references asset {image}, but {image_count} image assets are \
-                 available"
+                "{what} references asset {image}, but {image_count} image assets are available"
             ),
         ));
     }

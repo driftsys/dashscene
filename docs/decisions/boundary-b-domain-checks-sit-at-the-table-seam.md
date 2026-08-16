@@ -198,6 +198,13 @@ did not have.
   arrives from an authored or corrupted `.dsb` rather than from the importer,
   which is the shape this record's own reasoning would put at the seam. That
   remains open.
+
+  Since issue #1021 it is **named** rather than refused, which is a different
+  thing and does not close the above: `dashscene-validator`'s
+  `vector.shape-draws-nothing` warns on a shape whose field draws nothing, at
+  the document gate and the paint gate, by calling `VectorField::draws` instead
+  of restating it. Both members this bullet and the one above it name are
+  covered by that one warning, because one predicate decides both.
 - **`push_with` is not atomic on its other panics** (issue #1012). Only this
   check runs before the five arrays are extended; `push_entry`'s panics do not,
   and the production caller interns the entry's fills into the same table before

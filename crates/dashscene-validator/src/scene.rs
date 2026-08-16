@@ -101,6 +101,7 @@ pub fn validate_scene(
         let at = Location::Node(crate::NodePath::unnamed(i as u32));
 
         check_rect_extent(&mut report, rect, &at);
+        check_rect_origin(&mut report, rect, &at);
 
         if clips.get(rect.clip).is_none() {
             report.push(error(
@@ -158,7 +159,7 @@ fn check_fill_kind(
             check_gradient_stops(report, at, &offsets);
         }
         Fill::Image(image) => {
-            check_image_index(report, at, image.image, image_count);
+            check_image_index(report, at, "image fill", image.image, image_count);
         }
     }
 }
@@ -182,6 +183,8 @@ fn check_paint_entry(
     if let Some(stroke) = paints.stroke(entry) {
         check_stroke_width(report, at, stroke.width);
     }
+
+    check_shape_field(report, paints, entry, at, image_count);
 
     let c = entry.corners;
     check_corners(
@@ -229,6 +232,87 @@ fn check_rect_extent(report: &mut Report, rect: &RectEntry, at: &Location) {
             ));
         }
     }
+}
+
+/// A rect's origin must be finite (issue #1048). Its sign is not checked:
+/// a node above or left of its parent's origin is ordinary, where a negative
+/// extent is not, which is why this is a rule and not two lines added to
+/// `check_rect_extent`.
+///
+/// Both painters add this origin to a coverage field's plane bounds to get the
+/// device quad, and both then divide by that quad's extent —
+/// `dashscene-skia` in `field_coverage`, the lean painter in `paint.wgsl`'s
+/// `msdf_sample` (issue #1185). Both also refuse a quad with no area before
+/// dividing: the reference painter since PR #1038, the lean painter since
+/// #1185. Measured on both at NaN and at the two infinities, such a node draws
+/// **nothing** rather than drawing wrongly.
+///
+/// So this rule names a drop; it does not change a picture, and it is filed
+/// under P4 for that reason. The predicate [`rule::RECT_INVALID_ORIGIN`]
+/// documents is finiteness alone — the large-but-finite origin that collapses
+/// the same quad by cancellation is issue #1185's, and no single-operand rule
+/// can express it.
+fn check_rect_origin(report: &mut Report, rect: &RectEntry, at: &Location) {
+    for (origin, axis) in [(rect.x, "x"), (rect.y, "y")] {
+        if !origin.is_finite() {
+            report.push(error(
+                rule::RECT_INVALID_ORIGIN,
+                at,
+                format!(
+                    "rect {axis} is {origin}; a painter adds it to a coverage field's plane \
+                     bounds to place the node, and a non-finite origin makes that node vanish \
+                     with no other symptom"
+                ),
+            ));
+        }
+    }
+}
+
+/// A resolved coverage field: the atlas it names, and whether it draws at all.
+///
+/// **The index first**, through the same [`check_image_index`] an image fill
+/// goes through rather than a second copy of that comparison.
+/// `ImageTable::resolve` panics on a miss, documented as "validated upstream
+/// (P4)", and `dashscene-gpu`'s `resolve_frame` calls it with `field.image` —
+/// so this gate is that upstream for a coverage mask exactly as it already was
+/// for an image fill. It was not, until issue #1021's rule needed a function
+/// here to put it in: the field is the only index into the image table that no
+/// rule read.
+///
+/// **Then the geometry** (issue #1021). The predicate is
+/// `dashpaint::VectorField::draws` itself — the one both painters take since
+/// issue #1144 — rather than a restatement of it. It is a warning where the
+/// index is an error: a field `draws` rejects is a legal draws-nothing state,
+/// so the scene renders and the node is simply absent.
+fn check_shape_field(
+    report: &mut Report,
+    paints: &PaintTable,
+    entry: &PaintEntry,
+    at: &Location,
+    image_count: usize,
+) {
+    let Some(field) = paints.shape(entry) else {
+        return;
+    };
+
+    check_image_index(report, at, "coverage field", field.image, image_count);
+
+    if field.draws() {
+        return;
+    }
+    let [left, top, right, bottom] = field.plane_bounds;
+    let [_, _, aw, ah] = field.atlas_rect;
+    report.push(warning(
+        rule::VECTOR_SHAPE_DRAWS_NOTHING,
+        at,
+        format!(
+            "this entry's coverage field draws nothing: its atlas sub-rect is {aw}x{ah} texels \
+             and its plane quad is {}x{} (from bounds [{left}, {top}, {right}, {bottom}]); both \
+             extents must be positive, and the quad's finite",
+            right - left,
+            bottom - top
+        ),
+    ));
 }
 
 /// Issue #100: an `Inside` stroke insets the box by half the width per

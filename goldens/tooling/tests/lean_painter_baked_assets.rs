@@ -183,7 +183,7 @@ fn a_dashpack_derivation_uploads_as_blocks_and_draws_what_it_decodes_to() {
     let index = images.push_baked(
         ImageAsset {
             format: ImageFormat::Astc6x6Srgb,
-            bytes: baked.texels.clone(),
+            bytes: baked.texels,
         },
         baked.width,
         baked.height,

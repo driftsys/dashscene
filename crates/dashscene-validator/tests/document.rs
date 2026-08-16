@@ -58,6 +58,10 @@ struct NodeSpec {
     opacity: Option<f32>,
     /// Marks the node a mask (story #44).
     mask: bool,
+    /// `Some((x, y, width, height))` writes a `FixedSizeLayout`; `None` omits
+    /// the struct, which is what almost every test here wants. Added for issue
+    /// #1048's authored-box rules.
+    layout: Option<(f32, f32, f32, f32)>,
 }
 
 #[derive(Clone)]
@@ -185,6 +189,9 @@ impl Doc {
                         },
                     )
                 });
+                let layout = spec
+                    .layout
+                    .map(|(x, y, w, h)| dashbuf::FixedSizeLayout::new(x, y, w, h));
                 Node::create(
                     &mut b,
                     &NodeArgs {
@@ -196,6 +203,7 @@ impl Doc {
                         text_style: spec.text_style.unwrap_or(dashbuf::NO_TEXT_STYLE),
                         opacity: spec.opacity.unwrap_or(1.0),
                         mask: spec.mask,
+                        layout: layout.as_ref(),
                         ..Default::default()
                     },
                 )
@@ -336,6 +344,77 @@ fn a_well_formed_document_produces_no_diagnostics() {
             .paint(PaintSpec::Solid),
     );
     assert!(report.is_empty(), "unexpected diagnostics:\n{report}");
+}
+
+/// Issue #1048. The document carries the authored box, and the solver copies
+/// both members of its origin straight into the rect a painter places the node
+/// with — so a non-finite one arrives at boundary B with nothing having named
+/// it. `validate_scene` carries the same rule over the resolved row, but this
+/// is the gate with production callers.
+#[test]
+fn a_non_finite_authored_origin_is_named() {
+    for (x, y) in [
+        (f32::NAN, 0.0),
+        (0.0, f32::NAN),
+        (f32::INFINITY, 0.0),
+        (0.0, f32::NEG_INFINITY),
+    ] {
+        let report = check(Doc::default().node(NodeSpec {
+            name: "placed",
+            layout: Some((x, y, 100.0, 50.0)),
+            ..Default::default()
+        }));
+        assert!(
+            report.has(rule::RECT_INVALID_ORIGIN),
+            "authored origin ({x}, {y}) must be named:\n{report}"
+        );
+        assert!(report.has_errors());
+    }
+}
+
+/// The authored extent, under the id the paint gate already raises for the
+/// resolved one — the posture `geometry.corner-radius-invalid` takes across the
+/// same two gates. A negative *origin* is ordinary and a negative *extent* is
+/// not, which is the whole reason these are two rules.
+#[test]
+fn a_non_finite_or_negative_authored_extent_is_named() {
+    for (w, h) in [
+        (f32::NAN, 50.0),
+        (100.0, f32::INFINITY),
+        (-10.0, 50.0),
+        (100.0, -0.5),
+    ] {
+        let report = check(Doc::default().node(NodeSpec {
+            name: "sized",
+            layout: Some((0.0, 0.0, w, h)),
+            ..Default::default()
+        }));
+        assert!(
+            report.has(rule::RECT_INVALID_EXTENT),
+            "authored extent {w}x{h} must be named:\n{report}"
+        );
+    }
+}
+
+#[test]
+fn an_ordinary_authored_box_is_clean() {
+    // A negative origin places a node above and left of its parent's origin,
+    // which is ordinary; a zero extent is a legal empty box. Without this the
+    // two tests above would pass against a rule that fires on every layout.
+    for (label, (x, y, w, h)) in [
+        ("a negative origin", (-40.0, -12.5, 100.0, 50.0)),
+        ("a zero extent", (0.0, 0.0, 0.0, 0.0)),
+    ] {
+        let report = check(Doc::default().node(NodeSpec {
+            name: "ordinary",
+            layout: Some((x, y, w, h)),
+            ..Default::default()
+        }));
+        assert!(
+            !report.has(rule::RECT_INVALID_ORIGIN) && !report.has(rule::RECT_INVALID_EXTENT),
+            "{label} is an ordinary authored box:\n{report}"
+        );
+    }
 }
 
 #[test]
