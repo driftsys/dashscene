@@ -37,7 +37,7 @@ use dashscene_core::{
 };
 use dashscene_typeset::atlas::AtlasMetrics;
 use dashscene_typeset::text::{Font, FontFamily, TextShape, Typesetter, WeightedFont};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use taffy::prelude::*;
 use taffy::{AlignContent, AlignItems, AlignSelf, GridPlacement, JustifyContent, Position};
 
@@ -489,6 +489,123 @@ pub struct TaffySolver<'a> {
     solves: u64,
 }
 
+/// The #272 baseline corrections one solve produced: a cross-axis offset for
+/// each child of a baseline-aligned text row, and for no other node.
+///
+/// **Dense and stamped, the shape [`TreeState::on_path`] uses**, and for the
+/// same reasons (issue #1111): nothing is allocated per frame, so the per-frame
+/// band still reads 0 bytes, and a lookup is one indexed read at any scene size.
+///
+/// The sparse `FxHashMap` this replaced allocated nothing on a scene with no
+/// baseline row either — `hashbrown` answers an empty map from a length check
+/// and never hashes — but on a scene carrying one it put a hash and a probe on
+/// the readback path for **every node the readback visits**, where the vector it
+/// had itself replaced cost an index. That is issue #1153: the map did not add
+/// a cost, it moved one, from a per-frame allocation the band could see to a
+/// per-node probe the band cannot. This is the third shape, and it is the only
+/// one with neither. `docs/technotes/frame-budget.md` carries what the probe
+/// measured, which is that it was never visible at the frame level.
+///
+/// **The slots are allocated by the first collection, not by the constructor**,
+/// so a solver with no typesetter keeps the empty map's zero heap. That is not
+/// a corner: `TaffySolver::new()` is what `dashscene-desktop` builds and what
+/// the per-frame band's own fixture runs, and on that path `baseline_pass`
+/// returns before recording anything, so a table sized by the document would be
+/// bytes allocated at every rebuild for a lookup that can only miss.
+///
+/// It is **not** the same mechanism as `on_path` and should not be merged with
+/// it. That one marks and tests for membership with a payload of nothing, this
+/// one carries a value, and the two differ in what a wrapped stamp costs: a
+/// wrapped `on_path` reads every node as marked and the readback over-descends
+/// for one solve, where a wrapped stamp here would answer 0.0 as a real
+/// correction. [`Self::begin`] handles the wrap for that reason and `on_path`
+/// does not need to.
+#[derive(Debug, Default)]
+struct BaselineOffsets {
+    /// `(stamp, offset)` per [`NodeId`] slot, or **empty** until a collection
+    /// sizes it. A slot whose stamp is not [`Self::stamp`] carries no
+    /// correction, and its `f32` is whatever an earlier collection left there.
+    slots: Vec<(u32, f32)>,
+    /// The stamp the collection in progress writes and [`Self::y_or`] compares
+    /// against. Bumped by [`Self::begin`] rather than cleared, so the previous
+    /// collection's entries read as absent without touching them — including
+    /// the **two** collections one [`baseline_pass`] can run.
+    stamp: u32,
+}
+
+impl BaselineOffsets {
+    /// Start a fresh collection over `node_count` nodes: everything the
+    /// previous one wrote reads as absent from here on.
+    ///
+    /// Sizing and bumping are one call because a collection needs both and
+    /// neither is meaningful alone — a stamp bumped over slots that are about
+    /// to be replaced says nothing, and slots sized without a bump would keep
+    /// the last collection's entries live.
+    ///
+    /// **The wrap is handled rather than assumed away.** Zero is what the
+    /// unwritten slots carry, so a stamp that wraps back to it would make every
+    /// node without a correction report one of 0.0 — the whole shown subtree
+    /// placed at local y = 0. It takes 2^32 **collections** to get there, and a
+    /// solve runs one or two of them — two whenever a #322 floor moves, which is
+    /// every frame of an animating HUG baseline row, the shape #322 exists for.
+    /// So the floor is 2^31 solves: about 414 days at 60 Hz rather than never,
+    /// on hardware meant to run for months. The cost of refusing to depend on
+    /// that is one comparison per collection.
+    fn begin(&mut self, node_count: usize) {
+        if self.slots.len() != node_count {
+            // A node count that moved has already forced a rebuild, so this
+            // runs once per tree rather than per frame.
+            self.slots = vec![(0, 0.0); node_count];
+            self.stamp = 0;
+        }
+        self.stamp = self.stamp.wrapping_add(1);
+        if self.stamp == 0 {
+            self.slots.fill((0, 0.0));
+            self.stamp = 1;
+        }
+    }
+
+    /// Record `node`'s corrected cross-axis offset for this collection.
+    fn insert(&mut self, node: NodeId, offset: f32) {
+        self.slots[node.index()] = (self.stamp, offset);
+    }
+
+    /// `node`'s corrected cross-axis offset, or `taffy_y` where it has none.
+    ///
+    /// The readback's whole expression, stated once rather than at each of the
+    /// two call sites — which is the other half of issue #1153.
+    ///
+    /// `get` rather than an index, so a node past the end answers `taffy_y` the
+    /// way an absent key did. That is the state a solver with no typesetter is
+    /// in for its whole life, and it keeps a rect misplaced rather than a panic
+    /// on the frame path if the two ever disagree for another reason.
+    ///
+    /// The `debug_assert` is the tripwire that keeps the release fallback from
+    /// hiding the disagreement, the same posture `taffy_of`'s `UNBUILT` sentinel
+    /// takes: a **sized** table shorter than the arena is a structural bug, and
+    /// this names it where it happened rather than as a row silently placed at
+    /// Taffy's y on every later frame.
+    fn y_or(&self, node: NodeId, taffy_y: f32) -> f32 {
+        debug_assert!(
+            self.slots.is_empty() || node.index() < self.slots.len(),
+            "a sized baseline table must cover every node: {node:?} against {} slots",
+            self.slots.len()
+        );
+        match self.slots.get(node.index()) {
+            Some(&(stamp, offset)) if stamp == self.stamp => offset,
+            _ => taffy_y,
+        }
+    }
+
+    /// Drop the table, so nothing a previous collection recorded reads back.
+    ///
+    /// The zero-heap state a solver with no typesetter stays in, reached from
+    /// wherever a solve ends without collecting.
+    fn forget(&mut self) {
+        self.slots = Vec::new();
+    }
+}
+
 /// The retained Taffy tree plus the maps that let an incremental solve
 /// find each arena node, walk to its ancestors, and tell whether its
 /// resolved rect moved since last time. All the per-node vectors are
@@ -517,6 +634,11 @@ struct TreeState {
     /// needing a floor must have it removed, and the row's own style is not
     /// restyled when only a text child changed.
     baseline_floors: Vec<(NodeId, f32)>,
+    /// The #272 baseline corrections the last solve produced. Retained for the
+    /// same reason `on_path` below is, and — unlike it — **sized by the first
+    /// collection that has a typesetter rather than here**, so a solver with no
+    /// typesetter never allocates it at all (issue #1153).
+    baseline_offsets: BaselineOffsets,
     /// Which nodes are on a path to a changed node, stamped with the solve
     /// that put them there rather than cleared between solves.
     ///
@@ -821,6 +943,146 @@ fn vertical_offset(box_height: f32, content_height: f32, align: TextAlignV) -> f
 }
 
 #[cfg(test)]
+mod baseline_offsets_tests {
+    use super::BaselineOffsets;
+    use dashscene_core::Arena;
+
+    /// Four nodes of a real arena, because [`dashscene_core::NodeId`] has no
+    /// public constructor and the table is indexed by the slot one carries.
+    fn four_nodes() -> (Arena, Vec<dashscene_core::NodeId>) {
+        let mut arena = Arena::new();
+        let ids = {
+            let mut txn = arena.open();
+            let root = txn.add_node(None, None);
+            let ids = vec![
+                root,
+                txn.add_node(Some(root), None),
+                txn.add_node(Some(root), None),
+                txn.add_node(Some(root), None),
+            ];
+            txn.commit();
+            ids
+        };
+        (arena, ids)
+    }
+
+    /// A unit test rather than one beside the others in `tests/`, because
+    /// reaching a wrapped stamp through the solver would take 2^32 solves.
+    ///
+    /// The wrap is the one case where the stamp's own encoding can lie: zero is
+    /// what an unwritten slot carries, so a stamp back at zero makes every node
+    /// without a correction report one of 0.0 — the whole shown subtree placed
+    /// at local y = 0, on a runtime whose hosts are meant to run for weeks.
+    #[test]
+    fn a_wrapped_stamp_does_not_invent_a_correction() {
+        let (_arena, ids) = four_nodes();
+        let mut offsets = BaselineOffsets::default();
+        offsets.begin(ids.len());
+        offsets.insert(ids[1], 12.0);
+
+        // The collection that wraps. Reaching it any other way is the 2^32
+        // solves above.
+        offsets.stamp = u32::MAX;
+        offsets.begin(ids.len());
+
+        assert_eq!(
+            offsets.y_or(ids[2], 17.0),
+            17.0,
+            "a slot no collection has written must keep Taffy's y across the wrap"
+        );
+        assert_eq!(
+            offsets.y_or(ids[1], 17.0),
+            17.0,
+            "and so must one an earlier collection wrote and this one did not"
+        );
+    }
+
+    /// The ordinary case the wrap arm must not disturb: what the collection in
+    /// progress wrote is read back, and what an earlier one wrote is not.
+    #[test]
+    fn a_collection_reads_back_its_own_entries_and_no_earlier_ones() {
+        let (_arena, ids) = four_nodes();
+        let mut offsets = BaselineOffsets::default();
+        offsets.begin(ids.len());
+        offsets.insert(ids[1], 12.0);
+        assert_eq!(offsets.y_or(ids[1], 17.0), 12.0);
+
+        offsets.begin(ids.len());
+        assert_eq!(
+            offsets.y_or(ids[1], 17.0),
+            17.0,
+            "the previous collection's entry must read as absent"
+        );
+        offsets.insert(ids[3], 5.0);
+        assert_eq!(offsets.y_or(ids[3], 17.0), 5.0);
+    }
+
+    /// **A solver with no typesetter sizes no table**, which is the property the
+    /// early return in `baseline_pass` exists for: `TaffySolver::new()` is what
+    /// `dashscene-desktop` builds and what the per-frame band's own fixture
+    /// runs, and sizing there would be 8 bytes per document node at every
+    /// rebuild for a lookup that can only miss.
+    ///
+    /// Reaching into the solver's own state rather than asserting on the rects,
+    /// because there is nothing to see in the rects: the answer is the same
+    /// either way and only the allocation differs. Every other test in the
+    /// workspace is blind to it, the per-frame band included — that one measures
+    /// steady-state frames, where the table is already sized.
+    ///
+    /// **Two things hold the property and this fails only when both go.**
+    /// `begin` sits below the early return, and the return calls `forget`
+    /// first, so moving `begin` above it costs a transient allocate-and-drop at
+    /// rebuild rather than a retained table, and this still passes. Remove
+    /// `forget` as well and it fails. That is the intended order: `forget`
+    /// makes the placement an optimisation rather than the invariant.
+    #[test]
+    fn a_solver_with_no_typesetter_sizes_no_baseline_table() {
+        use crate::TaffySolver;
+        use dashscene_core::{CrossAxisAlign, LayoutMode, Prop};
+
+        let mut arena = Arena::new();
+        let mut solver = TaffySolver::new();
+        {
+            let mut txn = arena.open();
+            // The shape that WOULD record corrections, so the emptiness below is
+            // the missing typesetter and not a scene with nothing to correct.
+            let row = txn.add_node(None, None);
+            txn.set_prop(row, Prop::Mode(LayoutMode::Horizontal));
+            txn.set_prop(row, Prop::CrossAlign(CrossAxisAlign::Baseline));
+            let text = txn.add_node(Some(row), None);
+            txn.set_prop(text, Prop::Text("LARGE".to_string()));
+            txn.commit_with(&mut solver);
+        }
+
+        let state = solver
+            .state
+            .as_ref()
+            .expect("the solve built a retained tree");
+        assert_eq!(
+            state.baseline_offsets.slots.capacity(),
+            0,
+            "a solver with no typesetter corrects nothing, so it must size no table"
+        );
+    }
+
+    /// A node past the end answers with Taffy's y rather than panicking — the
+    /// state a solver with no typesetter is in for its whole life, since
+    /// nothing ever sizes its table.
+    #[test]
+    fn an_unsized_table_answers_every_node_with_taffys_y() {
+        let (_arena, ids) = four_nodes();
+        let offsets = BaselineOffsets::default();
+        assert_eq!(offsets.y_or(ids[0], 17.0), 17.0);
+        assert_eq!(
+            offsets.slots.capacity(),
+            0,
+            "and it allocated nothing to do it — capacity rather than length, because a \
+             reserved-then-cleared table is empty and has still allocated"
+        );
+    }
+}
+
+#[cfg(test)]
 mod atlas_build_tests {
     use super::{AtlasBytes, TextResourcesError, atlas_from_bytes};
     use dashscene_typeset::atlas::AtlasMetrics;
@@ -948,13 +1210,18 @@ fn rebuild(
     // without it text nodes measure to zero and there is no baseline to
     // correct.
     let mut baseline_floors = Vec::new();
-    let cross_offset = baseline_pass(
+    // Declared here rather than with the rest of `TreeState` below, because the
+    // pass that fills it runs before that struct exists. Empty until that pass
+    // sizes it, and it never does on a solver with no typesetter.
+    let mut baseline_offsets = BaselineOffsets::default();
+    baseline_pass(
         &mut tree,
         &taffy_of,
         shown_taffy,
         arena,
         typesetter,
         &mut baseline_floors,
+        &mut baseline_offsets,
         solves,
     );
 
@@ -977,7 +1244,7 @@ fn rebuild(
             &tree,
             &taffy_of,
             &mut prev_rel,
-            &cross_offset,
+            &baseline_offsets,
             arena,
             root,
             (origin.x, origin.y),
@@ -987,6 +1254,7 @@ fn rebuild(
 
     let state = TreeState {
         tree,
+        baseline_offsets,
         // One stamp per node, allocated with the tree and reused by every
         // solve after it. Zero is "never marked", and the first solve stamps
         // with 1 (issue #1111).
@@ -1084,13 +1352,14 @@ fn incremental(
     // children on their glyph baseline. The corrected y is folded into
     // `rel_bits`, so the pruned read-back re-emits a child whose baseline shift
     // moved it — including when a sibling changed the tallest baseline.
-    let cross_offset = baseline_pass(
+    baseline_pass(
         &mut state.tree,
         &state.taffy_of,
         shown_taffy,
         arena,
         typesetter,
         &mut state.baseline_floors,
+        &mut state.baseline_offsets,
         solves,
     );
 
@@ -1142,7 +1411,7 @@ fn incremental(
                 &state.tree,
                 &state.taffy_of,
                 &mut state.prev_rel,
-                &cross_offset,
+                &state.baseline_offsets,
                 arena,
                 root,
                 (origin.x, origin.y),
@@ -1153,7 +1422,7 @@ fn incremental(
                 &state.tree,
                 &state.taffy_of,
                 &mut state.prev_rel,
-                &cross_offset,
+                &state.baseline_offsets,
                 &state.on_path,
                 pass,
                 arena,
@@ -1699,7 +1968,7 @@ fn read_back_full(
     tree: &TaffyTree<TextContext>,
     taffy_of: &[taffy::NodeId],
     prev_rel: &mut [[u32; 4]],
-    cross_offset: &FxHashMap<NodeId, f32>,
+    baseline_offsets: &BaselineOffsets,
     arena: &Arena,
     node: NodeId,
     parent_origin: (f32, f32),
@@ -1709,10 +1978,7 @@ fn read_back_full(
         .layout(taffy_of[node.index()])
         .expect("layout was computed for the whole tree");
     // A baseline-corrected child (#272) overrides Taffy's cross-axis offset.
-    let local_y = cross_offset
-        .get(&node)
-        .copied()
-        .unwrap_or(layout.location.y);
+    let local_y = baseline_offsets.y_or(node, layout.location.y);
     let x = parent_origin.0 + layout.location.x;
     let y = parent_origin.1 + local_y;
     prev_rel[node.index()] = rel_bits(
@@ -1735,7 +2001,7 @@ fn read_back_full(
             tree,
             taffy_of,
             prev_rel,
-            cross_offset,
+            baseline_offsets,
             arena,
             child,
             (x, y),
@@ -1754,7 +2020,7 @@ fn read_back_pruned(
     tree: &TaffyTree<TextContext>,
     taffy_of: &[taffy::NodeId],
     prev_rel: &mut [[u32; 4]],
-    cross_offset: &FxHashMap<NodeId, f32>,
+    baseline_offsets: &BaselineOffsets,
     on_path: &[u32],
     pass: u32,
     arena: &Arena,
@@ -1769,10 +2035,7 @@ fn read_back_pruned(
     // A baseline-corrected child (#272) overrides Taffy's cross-axis offset;
     // the corrected `y` is folded into `rel_bits`, so a change to a sibling's
     // baseline shift is detected and re-emitted like any other move.
-    let local_y = cross_offset
-        .get(&node)
-        .copied()
-        .unwrap_or(layout.location.y);
+    let local_y = baseline_offsets.y_or(node, layout.location.y);
     let x = parent_origin.0 + layout.location.x;
     let y = parent_origin.1 + local_y;
     let cur = rel_bits(
@@ -1813,7 +2076,7 @@ fn read_back_pruned(
                 tree,
                 taffy_of,
                 prev_rel,
-                cross_offset,
+                baseline_offsets,
                 on_path,
                 pass,
                 arena,
@@ -1847,17 +2110,18 @@ fn rel_bits(local_x: f32, local_y: f32, w: f32, h: f32) -> [u32; 4] {
 /// leaf, so Taffy aligns box bottoms (`baseline.unwrap_or(height)`); a text
 /// leaf's real first-line baseline — the `line.baseline_y` the typesetter
 /// already computes — sits a descender above its box bottom, so a mixed-size
-/// row of box-bottom-aligned runs drops the shorter runs too low. This walks the tree and, for every `Horizontal` row whose cross
+/// row of box-bottom-aligned runs drops the shorter runs too low. This walks
+/// the tree and, for every `Horizontal` row whose cross
 /// alignment is `Baseline` and that holds at least one text child, records
 /// each child's corrected cross-axis (local y): the child sits so its
 /// baseline meets the row's baseline line, the content-box top plus the
 /// tallest participating baseline. A non-text child keeps the box bottom
 /// Taffy uses for it (recomputed to the same place). Rows with no text child,
-/// and every other mode or alignment, put nothing in the map at all — an
-/// absent node keeps Taffy's y, so a baseline row of plain boxes solves
-/// exactly as before. The relation is sparse, which is why it is a map and not
-/// a slot per node (issue #1111): a scene with no baseline text row leaves it
-/// empty, and an empty map has allocated nothing.
+/// and every other mode or alignment, record nothing at all — an unrecorded
+/// node keeps Taffy's y, so a baseline row of plain boxes solves
+/// exactly as before. The relation is sparse, and it is nonetheless a slot per
+/// node rather than a map: [`BaselineOffsets`] carries why, and what issue #1153
+/// measured of the map that stood here between issue #1111 and it.
 ///
 /// The walk visits every node, but only shapes at a baseline text row, which
 /// is rare. `baseline_y` is the first line's placed baseline, not a bare font
@@ -1877,7 +2141,7 @@ fn collect_baseline_offsets(
     arena: &Arena,
     typesetter: &mut Typesetter,
     node: NodeId,
-    offsets: &mut FxHashMap<NodeId, f32>,
+    offsets: &mut BaselineOffsets,
     floors: &mut Vec<(NodeId, f32)>,
 ) {
     let layout = arena.layout(node);
@@ -1957,14 +2221,13 @@ fn collect_baseline_offsets(
 
 /// Run the #272 baseline correction over a freshly solved tree, and give
 /// the solver a second turn when the correction needs a HUG row to be
-/// taller than Taffy sized it (#322). Returns the corrected cross-axis offset
-/// of each node that has one; a node absent from the map keeps Taffy's.
+/// taller than Taffy sized it (#322). Records into `offsets` the corrected
+/// cross-axis offset of each node that has one; a node it does not record keeps
+/// Taffy's.
 ///
-/// The map costs the readback a probe per visited node where a dense slot cost
-/// an index. That is unmeasured and issue #1153 carries it: the map is what
-/// makes a scene with no baseline row allocate nothing, and whether the probe
-/// is worth the allocation on a scene that has one is a wall-clock question
-/// this crate has not asked.
+/// `offsets` is retained rather than returned, and stamped rather than cleared
+/// — see [`BaselineOffsets`] for why, and for what issue #1153 found in the
+/// sparse map this replaced.
 ///
 /// The re-solve is what makes #322 a layout fix rather than a rect patch:
 /// the row's cross size feeds its own placement in its parent, its
@@ -1980,6 +2243,12 @@ fn collect_baseline_offsets(
 /// depends on the row's own cross size, so the second solve computes the
 /// same floor the first one did and there is nothing left to iterate on.
 ///
+/// Eight arguments rather than a struct grouping `floors` and `offsets`: both
+/// are fields of [`TreeState`] on the incremental path and locals on the rebuild
+/// path, so a struct here would be one the caller assembles and takes apart
+/// again. The two readbacks below carry the same `allow` for a different reason
+/// — most of their arguments are recursion state.
+///
 /// `shown_taffy` is the Taffy roots standing for `Arena::shown_roots`, not for
 /// every root, and both collection loops below walk the same set. It has to be
 /// the shown set for two reasons and neither is cost: an unshown root's nodes
@@ -1988,6 +2257,7 @@ fn collect_baseline_offsets(
 /// the re-solve would then compute every root in the document, which is the
 /// per-frame cost story #838 exists to remove, on exactly the text scenes the
 /// band cannot see (it runs `TaffySolver::new()` and returns above).
+#[allow(clippy::too_many_arguments)]
 fn baseline_pass(
     tree: &mut TaffyTree<TextContext>,
     taffy_of: &[taffy::NodeId],
@@ -1995,29 +2265,36 @@ fn baseline_pass(
     arena: &Arena,
     typesetter: Option<&mut Typesetter>,
     floors: &mut Vec<(NodeId, f32)>,
+    offsets: &mut BaselineOffsets,
     solves: &mut u64,
-) -> FxHashMap<NodeId, f32> {
-    let mut cross_offset = FxHashMap::default();
+) {
     // Without a typesetter every text node measures to zero, so there is no
-    // glyph baseline to correct and no row to grow.
+    // glyph baseline to correct and no row to grow — and a solver's typesetter
+    // is fixed when it is built, so a solver taking this arm takes it on every
+    // solve and has never recorded a correction to go stale. Returning above
+    // `begin` is what keeps the empty table empty on that path.
     let Some(ts) = typesetter else {
-        return cross_offset;
+        // A no-op on the table this path actually holds, which is the empty
+        // one. It is here so the property does not rest on the sentence above:
+        // a solver that ever went from lending a typesetter to not would
+        // otherwise keep the last correcting solve's offsets readable for the
+        // rest of its life, and nothing would report it.
+        offsets.forget();
+        return;
     };
+    // Once per solve, and before the walk rather than inside it: the case that
+    // needs it is a solve that reaches the walk and records nothing — every
+    // baseline row gone — where the previous solve's corrections would
+    // otherwise still read as present. That is
+    // `a_row_that_stops_being_baseline_aligned_drops_its_corrections`.
+    offsets.begin(arena.node_count());
 
     let mut wanted = Vec::new();
     for &root in arena.shown_roots() {
-        collect_baseline_offsets(
-            tree,
-            taffy_of,
-            arena,
-            ts,
-            root,
-            &mut cross_offset,
-            &mut wanted,
-        );
+        collect_baseline_offsets(tree, taffy_of, arena, ts, root, offsets, &mut wanted);
     }
     if wanted == *floors {
-        return cross_offset;
+        return;
     }
 
     // Put every previously floored row back to its authored min size, then
@@ -2034,24 +2311,24 @@ fn baseline_pass(
 
     let ts = compute_all(tree, shown_taffy, Some(ts), solves)
         .expect("the typesetter was lent, not lost");
-    let mut cross_offset = FxHashMap::default();
+    // A second collection, over the re-solved tree. **Defensive, and no test
+    // can detect its removal**, which is why it says so rather than reading as
+    // load-bearing: which nodes the walk records depends only on arena data —
+    // the row's mode and cross alignment, its children, each child's
+    // `sizing_v`, and whether any child carries text — and the #322 re-solve
+    // changes none of that. So the second walk overwrites every slot the first
+    // wrote and only the values differ. The bump is here because that argument
+    // is about today's collector and the cost of not depending on it is one
+    // increment.
+    offsets.begin(arena.node_count());
     let mut settled = Vec::new();
     for &root in arena.shown_roots() {
-        collect_baseline_offsets(
-            tree,
-            taffy_of,
-            arena,
-            ts,
-            root,
-            &mut cross_offset,
-            &mut settled,
-        );
+        collect_baseline_offsets(tree, taffy_of, arena, ts, root, offsets, &mut settled);
     }
     debug_assert_eq!(
         settled, wanted,
         "the #322 cross-size floor must not depend on the row's own cross size"
     );
-    cross_offset
 }
 
 /// Set — or, with `floor` of `None`, clear — one node's #322 cross-size

@@ -50,9 +50,15 @@ Taffy's evaluation order).
 `TaffySolver` holds a `TreeState` — the persistent `TaffyTree`, a
 `taffy_of: Vec<taffy::NodeId>` map keyed by arena `NodeId` slot (so a `NodeId`
 maps to a stable Taffy node across solves), `parent_of`, the roots, the previous
-relative layouts and root origins for the readback prune, and the #322
-cross-size floors. A `solves` counter is exposed (`solves()`) so a test can
-assert that a paint-only commit performed no solve.
+relative layouts and root origins for the readback prune, the #322 cross-size
+floors, and two per-node vectors that are stamped rather than cleared:
+`on_path`, which marks the ancestors of a dirty node for the pruned readback
+(issue #1111), and `baseline_offsets`, which carries the #272 corrections (issue
+#1153). Both exist to keep a per-frame allocation off the frame path, and each
+pays a document-sized vector for it — `baseline_offsets` only once a solve has a
+typesetter, so a solver built with `TaffySolver::new()` never sizes it. A
+`solves` counter is exposed (`solves()`) so a test can assert that a paint-only
+commit performed no solve.
 
 `taffy_of` is seeded with `NodeId::new(u64::MAX)`, which names no node taffy can
 allocate, and a `debug_assert` after the build says every slot was overwritten
@@ -262,6 +268,13 @@ The measure seam carries no glyph baseline, so under baseline alignment a text
 leaf aligns by its box bottom (Q-4, `docs/technotes/open-questions.md`).
 
 ### The post-solve baseline pass (v0.8 #272, v0.13 #322)
+
+The corrections live in `TreeState::baseline_offsets`, a dense table stamped per
+collection. It has been three shapes: a `vec![None; node_count]` allocated per
+solve, a sparse `FxHashMap` (issue #1111, which took the per-frame band's byte
+term to 0), and this (issue #1153, which took the readback's hash off the frame
+path without putting the allocation back). `docs/technotes/frame-budget.md`
+carries what the middle one cost, measured.
 
 Because the measure seam carries no baseline, Taffy aligns a
 `CrossAxisAlign::Baseline` row on its children's box bottoms. `#272` corrects

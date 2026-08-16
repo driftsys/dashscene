@@ -357,6 +357,83 @@ down, and because it is the reason the ranges above are published rather than
 the means alone. **A before-and-after on a noisy measurement is not evidence
 until it is alternated.**
 
+## The baseline map's probe, at v0.20 (issue #1153)
+
+The one figure here that is **not** a frame time, and it is recorded because
+issue #1153 asked for one before choosing.
+
+PR #1150 made the #272 baseline pass's `cross_offset` a sparse
+`FxHashMap<NodeId, f32>` where it had been `vec![None; node_count]`. That took
+the per-frame band's byte term to 0, which is what issue #1111 existed to do,
+and it moved a cost the band cannot see: `read_back_full` and `read_back_pruned`
+now did `cross_offset.get(&node)` per visited node where they had done an array
+index. Nothing had timed it.
+
+Measured on macos aarch64, over the two lookups alone rather than over a frame:
+one pass over N real `NodeId`s, `black_box` on each input and result, the two
+arms **interleaved** within each round so machine load hits both alike, medians
+over 41 rounds. Taken on a loaded machine (load average 34), which the tight
+per-round spreads say the interleaving absorbed.
+
+    build   release: lto = true, codegen-units = 1 — the workspace profile
+    where   a scratch `#[cfg(test)]` module in `dashscene-engine`, run under
+            `cargo test --release` and removed before commit
+    commit  PR #1209 (issue #1153) — the two arms are the `BaselineOffsets`
+            that pull request adds and the `FxHashMap` it replaces
+    rustc   1.97.1 (8bab26f4f 2026-07-14)
+
+**The build profile is the figure's most consequential variable** and is stated
+for that reason: no test tier runs `--release`, so a harness left in the tree
+would be measured by nothing and a reader re-running it in the default profile
+would be an order of magnitude out. It was not committed because
+`docs/decisions/startup-scaling-is-measured-by-a-counter.md` D1 rules that a
+cost with no visible symptom gets a counter rather than a stopwatch, and a
+timing test no tier runs is neither. Re-deriving it is the six lines the table's
+columns describe.
+
+    offsets  nodes   map ns/node                dense ns/node
+    held             median  (min    max   )     median  (min    max  )
+    0 (none)  4096    0.722  (0.702  1.394 )     0.702  (0.682  0.844)
+    0 (none) 16384    0.727  (0.725  0.954 )     0.715  (0.704  0.908)
+    8         4096    1.200  (1.190  1.343 )     0.712  (0.702  0.732)
+    8        16384    1.266  (1.261  1.422 )     0.710  (0.704  0.727)
+    256       4096    1.180  (1.170  11.597)     0.722  (0.702  4.110)
+    256      16384    1.122  (1.116  1.622 )     0.720  (0.707  0.811)
+
+Ranges, not medians alone, for the reason the section above this one records.
+Both arms' minima sit within a few hundredths of their medians in every row,
+which is what says the interleaving absorbed the load; the two outliers in the
+256/4096 row — 11.597 and 4.110, in the same round — are one scheduler event
+that hit both arms, and are the whole reason the figures are medians.
+
+Three things, and the third is the answer:
+
+- **An empty map really is free.** `hashbrown` answers a lookup from a length
+  check before it hashes, so a scene with no baseline row pays 0.02 ns/node,
+  which is nothing. The issue assumed this and it holds.
+- **The cost does not grow with the map.** The 256-entry arm is nowhere slower
+  than the 8-entry one — at 16 384 nodes it measured 0.144 ns/node _faster_,
+  which is the spread rather than a real ordering — so what a populated map adds
+  is the hash and one probe, not a collision term. Stated as "does not grow"
+  rather than "is the same": the difference column spans 0.402 to 0.557, which
+  is wider than any growth this could have resolved.
+- **It is not visible at the frame level.** At 0.5 ns/node, a full readback over
+  a 16 384-node document pays about 8 µs — 0.05 % of a 16.7 ms frame. Nothing in
+  this note could have seen it, and the `surfaces` column varies by more than
+  that between consecutive samples of the same scene.
+
+The dense stamped table replaced the map anyway, because it costs nothing to
+have: 0.71 ns/node in every configuration above — indistinguishable from the
+empty-map arm, so the lookup does not rise above the loop driving it — no hash
+at any scene size, and one 8-byte slot per node allocated at rebuild rather than
+per frame, so the band's byte term stays at 0. **The measurement did not decide
+it** and is recorded so that nobody spends a second afternoon on the question.
+
+What it does not settle: this times the lookup in isolation, not the readback.
+The real one interleaves a Taffy layout lookup, `rel_bits` and a comparison
+around it, which can hide the probe or evict it from cache; 0.5 ns/node is the
+term's own size, not its share of a frame.
+
 ## What this does not settle
 
 - Why `surfaces` costs 5.0 ms per megapixel is inferred, not proven. The shape
