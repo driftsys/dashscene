@@ -66,9 +66,11 @@ The two reasons this record gave for deferring, and what became of them:
   and it is where a future frame-budget problem should be answered.
 
   One cost that would have been paid per frame was removed rather than accepted:
-  `ShowcaseSolver::stage_text` deep-copied the whole atlas set, about 226 kB of
-  PNG payload, on every call. It shares the `Arc` now, because this change is
-  what moved that call into the frame loop.
+  the showcase's own solver wrapper deep-copied the whole atlas set in
+  `stage_text`, about 226 kB of PNG payload, on every call. It shares the `Arc`
+  now, because this change is what moved that call into the frame loop. The
+  wrapper itself is gone since issue #950 — `showcase::resources::solver` builds
+  one `TaffySolver::owning` per scene, and the `Arc` share is the engine's.
 
 ## Options
 

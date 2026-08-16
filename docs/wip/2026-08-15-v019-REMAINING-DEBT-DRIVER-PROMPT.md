@@ -11,11 +11,14 @@
             — captures have the table, prompts have that file's prose — so
             this commit updates those paragraphs, and the tracked count is
             unchanged because one prompt replaced another.
-    scope   **written for eight issues; two remain.** This prompt was
+    scope   **written for eight issues; one remains.** This prompt was
             written on 2026-08-15 and half its scope was gone inside a
             day, which is itself the most useful thing it records about
-            this milestone. Live: **#944** and **#950**. Landed: #922
-            (PR #1084), then #929, #930 and #932 together (PR #1099).
+            this milestone. Live: **#944**. Landed: #922
+            (PR #1084), then #929, #930 and #932 together (PR #1099),
+            then #950 (2026-08-16) — which took a story to close and
+            left `docs/decisions/one-solver-per-live-scene.md` behind
+            it.
             Moved out on 2026-08-16 after the "decide rather than start"
             call each section argued for: **#828 to v0.21**, where Unity
             is the second painter that can validate a portable suite, and
@@ -32,7 +35,9 @@
 At 2026-08-16 that returns **five rows**: one `epic` (#833), three `story`
 (#842, #843, #950 — relabelled from `debt`), and one `debt` (#944). It returned
 twelve on 2026-08-15, and six earlier on 2026-08-16, before **#885 moved to
-v0.21**. Re-run it rather than reading any figure here.
+v0.21**. **#950 landed later the same day**, which takes it to four. Two of this
+file's figures moved on 2026-08-16 for two unrelated reasons, which is the
+argument for the next line rather than for any number here: re-run the query.
 
 **The milestone's own counts include pull requests, and reading them as issue
 progress overstates it.** `gh api repos/{owner}/{repo}/milestones` reports
@@ -125,14 +130,23 @@ and both are now false. What changed:
 - **#950** turned out not to be debt: the conversion it prescribes regresses
   `demo`'s variant-switch test, because the showcase commits through solvers
   that are not the `LiveScene`'s and a retained tree never sees those dirty
-  sets. See the comment on the issue; it is re-labelled `story`.
+  sets. See the comment on the issue; it was re-labelled `story` and **landed on
+  2026-08-16**, by staging the variant switch for `LiveScene::tick` to publish
+  rather than committing it. `docs/decisions/one-solver-per-live-scene.md` is
+  the record; the detector for the general hazard is issue #1104.
 
 This leaves **#944**, **#828** and **#767** live in this prompt.
 
 This section held five until #922 landed; its bullet is kept below, struck,
 because the reasoning in the ones around it refers to the count.
 
-- **#950 — `ShowcaseSolver` rebuilds Taffy's retained tree per solve.**
+- **#950 — LANDED 2026-08-16, do not start it.** The section below is kept
+  because its site count is what the work was done against, and because one
+  thing in it is wrong in a way worth seeing: the six sites are not one
+  population. Three are the scene's own `build_live` solver and carry the whole
+  saving; three are one-shot commits, and exactly one of those — the variant
+  switch — stages layout intent and so was the correctness problem.
+
   **Premise verified and its site list is correct**, which is worth saying
   because three of the four other issues here are not. `TaffySolver::owning`
   exists in `crates/dashscene-engine/src/lib.rs`, and `ShowcaseSolver::new` has
@@ -307,13 +321,14 @@ because the reasoning in the ones around it refers to the count.
 
 ## What is left, and in what order
 
-1. **#950** — independent, bounded, and it removes a shape three documents call
-   wrong. Note it was **relabelled from `debt` to `story`** on 2026-08-16 by
-   another session, so read it again before scoping: someone has reconsidered
-   its size.
-2. **#944** — the story. Give it its own spec and plan, and start from the ninth
+1. **#944** — the story. Give it its own spec and plan, and start from the ninth
    vector: `painted_extent` is already bounded by the shown-root walk, one line
    below `rect_of_slot`.
+
+**#950 landed on 2026-08-16** and was item 1 here. It was indeed independent and
+bounded, and it was not the shape-removal it reads as: the conversion is correct
+only once nothing but the scene's own solver commits into its arena.
+`docs/decisions/one-solver-per-live-scene.md`.
 
 Everything else in this milestone is either hardware-gated (#842) or the close
 write-up (#843).

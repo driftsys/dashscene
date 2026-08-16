@@ -11,7 +11,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use dashc_wasm::figma::vector_field::{VectorAtlasBaker, VectorPath, WindingRule};
 use dashpaint::{Atlas, ImageAsset, ImageFormat, VectorField};
-use dashscene_engine::{AtlasBytes, FaceBytes, TextResources};
+use dashscene_engine::{AtlasBytes, FaceBytes, TaffySolver, TextResources};
 use dashscene_typeset::text::Typesetter;
 
 /// A path under the repository root, resolved from this crate's manifest
@@ -82,8 +82,10 @@ pub const ARABIC_FAMILY: &str = "Noto Sans Arabic";
 /// Three faces rather than the goldens' eight. A face no scene uses is not
 /// free: its font is parsed again on every scene build, and its sheet is
 /// converted once and then held for the run of the program. It is no longer a
-/// per-frame copy of the payload, which is what the sentence here used to say
-/// — `ShowcaseSolver::stage_text` stopped deep-copying the set at issue #621.
+/// per-frame copy of the payload, which is what the sentence here used to say —
+/// the crate's own solver wrapper stopped deep-copying the set at issue #621,
+/// and since issue #950 there is no wrapper: [`solver`] shares the [`Arc`] the
+/// engine holds.
 ///
 /// **The pairing is the contract.** Families flatten family-major, so a shaped
 /// glyph's font slot is `0` for Inter Regular, `1` for Inter SemiBold and `2`
@@ -175,6 +177,38 @@ pub fn atlases() -> Arc<Vec<Atlas>> {
             .atlases
     });
     Arc::clone(&ATLASES)
+}
+
+/// A solver for one scene: a fresh typesetter, held, paired with the shared
+/// atlas set.
+///
+/// **It retains Taffy's tree.** [`TaffySolver::owning`] is a `'static` solver,
+/// so it goes into the `Box<dyn LayoutSolver>` a `LiveScene` keeps for its
+/// whole life and patches that tree from each commit's dirty set rather than
+/// rebuilding it. The showcase used to hold the typesetter in a wrapper of its
+/// own and construct a `TaffySolver` inside every call, which threw the
+/// retained tree away on every solve — `owning` did not exist when that was
+/// written, and the alternative then was leaking a typesetter per scene
+/// rebuild (issue #950, story #863).
+///
+/// A retained tree is only correct while **one** solver sees every commit into
+/// the arena, in order: a commit consumes the arena's layout-dirty set, so a
+/// second solver committing geometry takes a dirty set this one never sees and
+/// this one then patches a tree that no longer describes the scene.
+///
+/// Each scene therefore builds one of these for `build_live` and commits **no
+/// geometry** through any other. It is not the stronger rule that nothing else
+/// commits at all: `layout::paint` and `surfaces::paint` each call this for a
+/// throwaway solver of their own, because the nodes they address do not exist
+/// until `build_live` has written them, so their staging cannot join that
+/// commit. What keeps those two safe is that they stage paint intent and arena
+/// metadata only — a dirty set they consume is empty of layout, so this solver
+/// misses nothing. A third such pass has to satisfy the same condition, and
+/// `crate::vocabulary` states it where such a pass would be written.
+///
+/// See `docs/decisions/one-solver-per-live-scene.md`.
+pub fn solver() -> TaffySolver<'static> {
+    TaffySolver::owning(TextResources::new(new_typesetter(), atlases()))
 }
 
 /// The corpus photograph, as the payload an image fill references.

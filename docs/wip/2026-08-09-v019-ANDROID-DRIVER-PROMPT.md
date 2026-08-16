@@ -45,11 +45,15 @@ of which wait as above.
 the hardware measurement itself, and **#828** (a portable conformance suite) is
 held by the slice because no second painter has landed. The other ten:
 
-- **#950** — `ShowcaseSolver` rebuilds Taffy's retained tree per solve, which
-  `TaffySolver::owning` made unnecessary. Six sites, three files. **Check its
-  premise first**: #968 landed on 2026-08-14 and changed `with_text` to take
-  anything that becomes an `Arc<Vec<Atlas>>`, so what this issue describes has
-  moved under it.
+- **#950** — **LANDED 2026-08-16**, as a `story` rather than the debt it was
+  filed as. `ShowcaseSolver` rebuilt Taffy's retained tree per solve, which
+  `TaffySolver::owning` made unnecessary — but the rebuild was doing correctness
+  work, not only paying a cost, because the showcase committed the variant
+  switch through a solver that was not the scene's.
+  `docs/decisions/one-solver-per-live-scene.md`. What this prompt said before:
+  six sites, three files, and check the premise first, because #968 landed on
+  2026-08-14 and changed `with_text` to take anything that becomes an
+  `Arc<Vec<Atlas>>`.
 - **#925** — **LANDED.** `ds_runtime_load_document_mapped` takes a path and a
   required `ShownRoot`. The claim below that it "unblocks half of #945" turned
   out to be wrong and #945 is amended with why: the mapped load names the shown

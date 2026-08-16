@@ -25,8 +25,21 @@
 //! demonstration wired into CI becomes a suite whose green state reads as
 //! evidence it never established (epic #568). What the scenes cover is written
 //! down in `corpus/showcase/README.md`, one line per construct, and a person
-//! walks it against the running demonstration. The only automated claim is
-//! that this compiles.
+//! walks it against the running demonstration.
+//!
+//! **The tests here are invariant tests, and the distinction is the rule.** A
+//! coverage test asserts that a construct is drawn, which is what the checklist
+//! is for and what a green run would falsely stand in for. An invariant test
+//! asserts something that has one right answer whatever the scenes look like,
+//! and it stays honest when they change. Two files hold them:
+//! `tests/badge.rs`, which pins the painter label's contract — last root,
+//! invisible until announced, overlapping rather than stacking, exactly one
+//! glyph run added — and `tests/retained_tree.rs`, which compares each scene's
+//! committed rects against a from-scratch solve so a producer that left the
+//! scene's own solver holding a stale tree is caught (issue #950; that file's
+//! header states what the comparison cannot see). Neither says a scene looks
+//! right. A test that would need updating because a scene was re-authored is a
+//! coverage test wearing another name, and belongs in the checklist instead.
 //!
 //! There are no golden images for these scenes either, for the same reason.
 //! `goldens/` holds the frames the project pins; these are frames it shows.
@@ -72,7 +85,6 @@
 pub mod badge;
 pub mod layout;
 pub mod resources;
-pub mod solver;
 pub mod surfaces;
 pub mod typography;
 pub mod vocabulary;

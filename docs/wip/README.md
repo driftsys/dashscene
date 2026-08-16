@@ -129,13 +129,15 @@ landed with the stories and the original stayed here for a few hours, which the
 **Eleven, since the v0.19 debt prompt landed** (2026-08-15). Nine are design
 captures, described below, and **two driver prompts are held**: v0.19's Android
 half, and `2026-08-15-v019-REMAINING-DEBT-DRIVER-PROMPT.md`, which carries the
-issues in that slice needing no hardware — **eight when it landed and two on
+issues in that slice needing no hardware — **eight when it landed and one on
 2026-08-16**: #922 settled that evening, #929, #930 and #932 together overnight,
-and #828 and #767 moved to v0.21 and v1 on the "decide rather than start" call
-their own sections argued for. It replaced
-`2026-08-15-v019-DEBT-DRIVER-PROMPT.md` on the same day, when #925, #945 and
-#946 landed and left that one describing work that was done; the count did not
-move, because one prompt was archived as the other was added.
+#828 and #767 moved to v0.21 and v1 on the "decide rather than start" call their
+own sections argued for, and #950 landed as a story late that day. **This file
+keeps two counts of that prompt, here and at the paragraph below the table, and
+they have gone out of step before** — a change to one is a change to both. It
+replaced `2026-08-15-v019-DEBT-DRIVER-PROMPT.md` on the same day, when #925,
+#945 and #946 landed and left that one describing work that was done; the count
+did not move, because one prompt was archived as the other was added.
 
 **Two prompts for one slice has happened before and is not a supersession.**
 v0.19 held two in August when the Android and shown-root tracks ran on branches
@@ -446,10 +448,10 @@ Two driver prompts are held here now, both v0.19's, as the section above says.
 landed, and `integration/v0.19-android` merged into `main` on 2026-08-09 and is
 history — and leaves at the slice's close.
 `2026-08-15-v019-REMAINING-DEBT-DRIVER-PROMPT.md` carries the debt that does not
-wait on hardware. It named eight; **#944 and #950 are what is left**, and the
-other six are struck in the prompt itself rather than deleted, because the
-corrections it made to their premises are what the work was done against. It
-leaves when those two land or move. It supersedes
+wait on hardware. It named eight; **#944 is what is left**, #950 having landed
+on 2026-08-16, and the other seven are struck in the prompt itself rather than
+deleted, because the corrections it made to their premises are what the work was
+done against. It leaves when that one lands or moves. It supersedes
 `2026-08-15-v019-DEBT-DRIVER-PROMPT.md`, archived 2026-08-15.
 
 **Half its scope was gone inside a day of it landing**, which is worth reading

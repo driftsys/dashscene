@@ -120,16 +120,21 @@ line.
 Two items on the slice's list are **not** shown, and neither is an oversight.
 
 **`VariantFlip`, which animates a variant switch.** The switch itself is line 32
-above and is real. Animating it is not. FLIP needs the before and after rect
-slices around the switch — which `layout::switch_variant` has — plus an
+above and is real. Animating it is not, and what stands in the way is no longer
+the seam. FLIP needs the before and after rect slices around the switch plus an
 `advance(dt)` and a commit composing its samples over the after layout **once
-per frame** (`goldens/tooling/tests/v04_flip.rs` is the worked example). The
-scene seam has no per-frame hook: `LiveScene::tick` is the only thing the host
-calls each frame and it owns the single commit, while `Showcase::action` is
-called once, on the key press. So the switch lands in one frame rather than
-easing. Widening the seam to a per-frame scene driver — issue #625's own sketch,
-a third callback taking `dt`, or a small `Scene` trait — is the change that would
-reach it, and this slice did not make it.
+per frame** (`goldens/tooling/tests/v04_flip.rs` is the worked example), and
+`LiveScene::tick` does all of that: it detects a **staged** `set_variant`,
+re-solves for the after layout, binds the transition the member declares and
+composes the samples on the frames that follow (story #771). Since issue #950
+`layout::switch_variant` stages rather than commits, so the switch goes through
+exactly that path.
+
+What is missing is the declaration. No member of the chip's set carries a
+`Txn::set_variant_transition`, and a member with none starts no track and lands
+whole — which is what the switch does today, one tick after the key. Declaring
+one on a member is now the whole of what animating this would take, where before
+it needed a per-frame scene driver the seam did not have.
 
 **`dashcue` keyframes and tweens.** `dashcue` carries `TransitionSpec::Tween`
 and `TransitionSpec::Keyframes`, and `dashlang::Node::smooth` accepts only a
@@ -164,13 +169,18 @@ reflows. Replaying the host's loop over all three scenes for eight phases at
 both 960x600 and 1920x1200 — 1,200 ticks and around 700 commits each — the
 staged run count never falls below its starting value.
 
-That same property is what makes `layout`'s variant switch safe. The switch
-commits geometry from outside `LiveScene::tick`, and a tick that solves nothing
-replays the retained rect cache, which would revert it. It cannot here: no tick
-in `layout` commits without solving, because `spread` binds `Channel::Gap`
-(always a solve in `dashlang`) and `show_middle` is a visibility binding (always
-a reflow). `demo`'s `input.rs` asserts it against eight scripted phases of real
-ticks rather than leaving it as an argument.
+That same property used to be what made `layout`'s variant switch safe, and it
+is not what makes it safe now. The switch committed geometry from outside
+`LiveScene::tick`, and the argument was that no tick in `layout` commits without
+solving — `spread` binds `Channel::Gap`, always a solve in `dashlang`, and
+`show_middle` is a visibility binding, always a reflow — so no tick could replay
+a stale rect cache over it. The argument was sound for the cache it named and
+too shallow for the one underneath: once each scene retained **one** solver, the
+switch's own commit consumed the arena's layout-dirty set and the scene's solver
+patched a Taffy tree that no longer described the row. The switch stages now and
+`LiveScene::tick` publishes it, so nothing commits into these arenas but the
+scene's own solver (issue #950,
+`docs/decisions/one-solver-per-live-scene.md`).
 
 The fix belongs in `dashlang`: the rect replay should delegate `atlases` and
 `stage_text` to the solver the live scene already owns. It is filed rather than
@@ -207,6 +217,22 @@ it stages is either paint intent or arena metadata, and none of it is resolved
 by a solver: replaying the retained rect cache reproduces exactly the geometry
 the pass committed against. It commits through a text-capable solver rather
 than a rect replay, so the text the first pass already staged is not wiped out.
+
+That safety matters more than it used to, because a retained Taffy tree is only
+correct while nothing else consumes the arena's layout-dirty set, and this is the
+one commit left in these scenes that does not go through the scene's own solver.
+`tests/retained_tree.rs` builds each scene and compares its committed rects
+against a from-scratch solve, at build time and after every scripted phase and
+every variant press.
+
+**It is a check and not a proof, and the file says which.** A stale tree reaches
+the committed table only once some later commit's readback descends to the
+affected node, so the test catches a second pass that stages layout intent on a
+node the scripted phases reflow, and misses one on a node they never touch —
+measured both ways, in `layout` and in `surfaces` respectively. Closing that gap
+needs the detector in issue #1104 rather than a scene-level test; issue #1118
+carries it. Until then, "stage paint intent and arena metadata, never geometry"
+is a rule this pass keeps rather than one the suite enforces.
 
 ## What is reused from the corpus, and what is new
 
@@ -285,8 +311,18 @@ does say:
 - A debug build measures the same, within a few per cent. The cost is in Skia
   and in the per-frame image decode, neither of which is Rust the profile
   affects.
-- `crate::solver` rebuilds Taffy's retained tree on every solve, because
-  `LiveScene` holds a `'static` boxed solver and `TaffySolver` borrows its
-  typesetter. It is a bounded cost, unlike leaking one typesetter per window
-  resize, but it is a cost, and it is inside the tick rather than in the numbers
-  above.
+- The scenes no longer rebuild Taffy's retained tree on every solve. They did
+  until issue #950, because `LiveScene` holds a `'static` boxed solver and
+  `TaffySolver` borrows its typesetter, so the crate owned the typesetter in a
+  wrapper and built a solver inside every call. `TaffySolver::owning` holds the
+  typesetter instead and keeps the tree, which is what
+  `crate::resources::solver` now builds. Measured over 1,200 ticks with a
+  layout-affecting write each, `--release` on macOS aarch64, median tick:
+  `layout` 0.021 ms to 0.006 ms, `typography` 0.037 ms to 0.022 ms, `surfaces`
+  unchanged at 0.010 ms. Roughly half the tick, and invisible against a paint
+  measured in the milliseconds above: the reason to do it was one answer in the
+  tree rather than the clock. Why `surfaces` did not move is **not** explained —
+  the note taken with the measurement said its pulse drives paint channels, and
+  it does not: `sweep` binds `Channel::Width` on the header and `Channel::X` on
+  the frost panel, both of which force a solve. Anyone re-taking these numbers
+  should treat that row as unexplained rather than as accounted for.

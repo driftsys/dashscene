@@ -357,8 +357,11 @@ character with the load reporting success.
 
 Holding it inside the solver rather than in a wrapper is what keeps the retained
 tree. A wrapper that owns the typesetter must build a `TaffySolver` inside every
-call — `corpus/showcase`'s `ShowcaseSolver`, and issue #950 — so every solve
-starts with no tree and rebuilds it, which is #164's saving paid back per frame.
+call, so every solve starts with no tree and rebuilds it, which is #164's saving
+paid back per frame. `corpus/showcase` carried the last such wrapper and was
+moved off it at issue #950; the invariant that move had to satisfy — one solver
+sees every commit into an arena, in order — is
+`docs/decisions/one-solver-per-live-scene.md`.
 `docs/decisions/measure-callback-typesetter-seam.md` carries why lending remains
 the default and why the held arm satisfies its reason rather than waiving it.
 

@@ -324,12 +324,21 @@ mod tests {
     /// the fill the paint table interned — rather than the arena's staged
     /// state, because publishing is the thing that was missing before this
     /// seam existed.
+    ///
+    /// The tick inside `press` is the publishing half: the action stages the
+    /// switch and `LiveScene::tick` commits it (issue #950). One tick is
+    /// enough, and that is itself an assertion — this scene declares no
+    /// transition for any member, so the tick that finds the switch starts no
+    /// track and lands it whole. A member that declared one would need as many
+    /// ticks as its duration, and these assertions would fail on the first
+    /// sample rather than pass late.
     #[test]
     fn the_scenes_action_commits_a_real_variant_switch() {
         let scene = layout_scene();
         let (mut arena, mut live) = build(scene);
         let press = |arena: &mut Arena, live: &mut LiveScene| {
             assert!(key(KeyCode::Space, scene.signal, scene.action, live, arena));
+            live.tick(1.0 / 60.0, arena);
         };
 
         let wide = committed_width(&arena, "reflow-d");
@@ -395,7 +404,10 @@ mod tests {
         let untouched = committed_width(&arena, "reflow-d");
 
         // The action moves the variant, and it is the variant that changes the
-        // chip the scripted phase never reaches.
+        // chip the scripted phase never reaches. The active member moves the
+        // moment the key returns — `set_variant` is staged, and a staged
+        // mutation reads back immediately (P3) — while the committed width
+        // waits for the tick that publishes it (issue #950).
         assert!(key(
             KeyCode::Space,
             scene.signal,
@@ -404,16 +416,21 @@ mod tests {
             &mut arena
         ));
         assert_eq!(arena.active_variant(set), 1);
+        live.tick(1.0 / 60.0, &mut arena);
         assert_ne!(committed_width(&arena, "reflow-d"), untouched);
     }
 
     /// The switch survives every later tick.
     ///
-    /// `LiveScene` replays a retained rect cache on a tick that solves nothing,
-    /// which would revert a second producer's geometry. It cannot here, because
-    /// every signal in this scene drives a layout-affecting channel — but that
-    /// is an argument, so this asserts it against a long run of real ticks and
-    /// real scripted phases instead of trusting it.
+    /// Two retained caches could revert it and this run would catch either.
+    /// `LiveScene` replays its own rect cache on a tick that solves nothing,
+    /// and the scene's solver patches a retained Taffy tree from each commit's
+    /// layout-dirty set rather than rebuilding it. The second is why this test
+    /// is the one that failed when the switch still committed through a solver
+    /// of its own: that commit consumed the dirty set naming the chip, and the
+    /// scene's solver then replayed a tree still holding the authored width
+    /// (issue #950). Both are arguments, so this asserts them against a long
+    /// run of real ticks and real scripted phases instead of trusting them.
     #[test]
     fn the_switch_survives_the_ticks_and_pulses_that_follow_it() {
         let scene = layout_scene();
@@ -427,6 +444,7 @@ mod tests {
             &mut live,
             &mut arena
         ));
+        live.tick(1.0 / 60.0, &mut arena);
         let switched = committed_width(&arena, "reflow-d");
         // Without this the test would pass on a switch that never happened:
         // an unchanged width holds just as steadily as a changed one.

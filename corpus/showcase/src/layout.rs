@@ -23,15 +23,21 @@
 //!
 //! # What this scene still does not do
 //!
-//! **`VariantFlip` does not animate the switch.** FLIP needs the before and
-//! after rect slices around the switch — which [`switch_variant`] has — plus an
+//! **`VariantFlip` does not animate the switch, and the seam is no longer why.**
+//! FLIP needs the before and after rect slices around the switch plus an
 //! `advance(dt)` and a commit composing its samples over the after layout
-//! **once per frame**. The seam has no per-frame hook for a scene:
-//! `LiveScene::tick` is the only thing the host calls per frame and it owns the
-//! single commit, and an action is called once, on the key press. So the switch
-//! lands in one frame rather than easing, and the rect deltas it produces are
-//! not animated. Widening the seam to a per-frame scene driver is the change
-//! issue #625 sketched and this story did not make.
+//! **once per frame**, and `LiveScene::tick` does all of it for a **staged**
+//! switch: it re-solves for the after layout, binds the transition the member
+//! declares and composes the samples on the frames that follow (story #771).
+//! [`switch_variant`] stages rather than commits since issue #950, so it goes
+//! through that path.
+//!
+//! What is missing is one declaration. No member of this set carries a
+//! `Txn::set_variant_transition`, and a member with none starts no track and
+//! lands whole — so the switch still arrives in one frame, one tick after the
+//! key. Declaring a transition on a member is now the whole of what animating it
+//! would take, where before it needed the per-frame scene driver issue #625
+//! sketched.
 
 use std::sync::OnceLock;
 
@@ -43,7 +49,6 @@ use dashscene_core::{Arena, VariantMember, VariantSetId, VariantValue};
 
 use crate::badge;
 use crate::resources;
-use crate::solver::ShowcaseSolver;
 use crate::vocabulary::{Painting, palette};
 use dashpaint::{Stroke, StrokeAlign};
 
@@ -298,13 +303,7 @@ pub fn build(arena: &mut Arena, width: u32, height: u32) -> LiveScene {
 
     let label = badge::badge(&mut scene, width, height);
     scene.roots([root, label]);
-    let live = scene.build_live(
-        arena,
-        Box::new(ShowcaseSolver::new(
-            resources::new_typesetter(),
-            resources::atlases(),
-        )),
-    );
+    let live = scene.build_live(arena, Box::new(resources::solver()));
     paint(arena, unit);
     live
 }
@@ -321,10 +320,7 @@ fn paint(arena: &mut Arena, unit: f32) {
 
     declare_chip_variants(&mut painting, unit);
 
-    painting.commit(&mut ShowcaseSolver::new(
-        resources::new_typesetter(),
-        resources::atlases(),
-    ));
+    painting.commit(&mut resources::solver());
 }
 
 /// Declares the three-member variant set on the reflow row's rightmost chip.
@@ -379,18 +375,34 @@ pub fn variant_set() -> Option<VariantSetId> {
 /// nothing — it holds no `VariantSetId`, no member list, and no node name
 /// (stories #573, #625).
 ///
-/// # Why it commits, and why that is safe against the retained rect cache
+/// # Why it stages and does not commit
 ///
-/// `LiveScene` assumes it solely owns its arena's committed geometry between
-/// ticks: a tick that solves nothing replays a retained rect cache, so a second
-/// producer that moved a node would have the move reverted at the next
-/// paint-only tick. This switch does move nodes, so the guarantee it relies on
-/// is the one this scene is already built around — **every signal here drives a
-/// layout-affecting channel**, so every tick that commits at all is a solving
-/// tick, and a solve reads the arena's live variant overlay. `spread` binds
-/// `Channel::Gap`, which `dashlang` always classifies as a solve, and
-/// `show_middle` is a visibility binding, which always forces one. There is
-/// therefore no tick that could replay a stale cache over this commit.
+/// The switch is published by the **next tick**, through the staged-variant
+/// seam `LiveScene::tick` already carries: it compares each set's active member
+/// against its own snapshot, re-solves through its own solver for the layout the
+/// new members produce, and binds whatever transition the member declares
+/// (story #771). Staging is all a producer owes it — `Txn::set_variant` is
+/// visible to the solver the moment it is staged (P3), and `Txn` has no `Drop`
+/// that reverts, so leaving the transaction uncommitted leaves the switch on the
+/// arena for that tick to find.
+///
+/// It used to commit here, through a solver of its own. That was correct only
+/// while the scene's solver rebuilt Taffy's tree on every solve. A retained
+/// solver patches its tree from the arena's layout-dirty set, and a commit
+/// consumes that set — so this commit took the dirty set naming the chip, and
+/// the scene's own solver then patched nothing and replayed a tree still holding
+/// the pre-switch width. `demo`'s `the_switch_survives_the_ticks_and_pulses_that_follow_it`
+/// is what caught it (issue #950, `docs/decisions/one-solver-per-live-scene.md`).
+///
+/// **What moved and what did not.** The switch is committed one tick later than
+/// it used to be, not one frame slower to appear: this scene declares no
+/// `set_variant_transition`, so the tick that finds it starts no track and lands
+/// it whole, exactly as the commit here did. `demo` is the only host that
+/// reaches this at all — `demo-web` and `demo-android` run the scripted pulse
+/// and take no key — and its handler returns `Reaction::Redraw`, which forces a
+/// frame, which ticks before it presents. So nothing on screen waits. Declaring
+/// a transition on a member is now all it would take for this switch to animate,
+/// which is the point of routing it through the seam rather than around it.
 ///
 /// The active member is **not** carried across a scene rebuild. A resize
 /// rebuilds the arena from scratch and the set comes back with member 0 active,
@@ -407,13 +419,11 @@ pub fn switch_variant(_live: &mut LiveScene, arena: &mut Arena) {
         // an event.
         return;
     };
+    // The staged member, not the committed one, so two presses inside one frame
+    // advance two members rather than landing on the same one twice.
     let next = (arena.active_variant(set) + 1) % CHIP_MEMBERS;
     let mut txn = arena.open();
     txn.set_variant(set, next);
-    txn.commit_with(&mut ShowcaseSolver::new(
-        resources::new_typesetter(),
-        resources::atlases(),
-    ));
 }
 
 /// The scripted phase: widen the gap, then take the middle chip out of the

@@ -536,10 +536,12 @@ fn the_baseline_pass_solves_the_shown_root_and_not_the_document() {
 ///   That is issue #863 itself, and without this assertion the test passes with
 ///   `owning` replaced by `new` — which it did, until a review said so.
 /// - **The retained half** fails for a wrapper that owns the typesetter and
-///   builds a fresh `TaffySolver` inside every call, which is
-///   `corpus/showcase`'s `ShowcaseSolver`. Every solve starts with `state:
-///   None`, so Taffy's tree is rebuilt per frame — issue #164's whole saving,
-///   paid back per frame, on the path a loaded document takes.
+///   builds a fresh `TaffySolver` inside every call. Every solve starts with
+///   `state: None`, so Taffy's tree is rebuilt per frame — issue #164's whole
+///   saving, paid back per frame, on the path a loaded document takes.
+///   `corpus/showcase` carried the last such wrapper and no longer does (issue
+///   #950), so this assertion is now the only thing in the tree standing
+///   between `owning` and that shape coming back.
 ///
 /// The atlas list is empty on purpose: staging glyphs needs one and measuring
 /// does not, so this isolates the measure seam. That the *glyphs* also arrive
