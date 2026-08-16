@@ -39,9 +39,15 @@
 //!
 //! # What the gate asks, and what it deliberately does not
 //!
-//! It asks, of each field this crate reads: **does `DsFace.java` still declare
-//! it, with that type?** That is the whole of the failure issue #1089
-//! describes, and answering it needs no Java grammar — only the file's text.
+//! It asks, of each field this crate reads: **does `DsFace` itself still
+//! declare it, with that type?** That is the whole of the failure issue #1089
+//! describes, and answering it needs no Java grammar — only the file's text,
+//! with the four constructs that can hold text which is not code removed and
+//! the search anchored to that one class's own body (issue #1097). A
+//! declaration that has moved into a nested class, or into a second top-level
+//! class, or that survives only inside a string literal, is not one
+//! `GetFieldID` can resolve on a `DsFace` instance, and is no longer one this
+//! gate accepts.
 //!
 //! It does **not** ask what else the file declares, so a seventh field added to
 //! `DsFace` does not fail it. Such a field is one the native half ignores —
@@ -68,35 +74,99 @@
 
 use std::ffi::CStr;
 
+/// One `DsFace` field: the name `GetFieldID` looks it up by, and the JNI
+/// descriptor it is looked up **with**.
+///
+/// The two travel together because `GetFieldID` resolves a field by both, so
+/// they fail together: a `weight` widened from `int` to `long` throws
+/// `NoSuchFieldError` exactly as a rename does. Splitting them let the name be
+/// pinned to `host.rs` while the descriptor was not, which is issue #1096.
+pub(crate) struct Field {
+    /// NUL-terminated because that is what JNI takes; `host::jni_name`
+    /// converts it in a `const`.
+    pub(crate) name: &'static CStr,
+    /// As written in a JNI signature — `I`, `[B`, `Ljava/lang/String;`.
+    pub(crate) descriptor: &'static str,
+}
+
+/// Whether two JNI descriptors are the same text, in a `const` context.
+///
+/// `str::eq` is not `const`, so the comparison is spelled out. Its only caller
+/// is the `const` assertion inside `host::face_field!`, which is what makes a
+/// descriptor that disagrees with the `jni_sig!` literal beside it a compile
+/// error rather than a `NoSuchFieldError` at the first `surfaceChanged`
+/// (issue #1096).
+///
+/// **A second copy of `dashpack::ktx2::str_eq`**, which exists for the same
+/// shape of assertion — a literal welded to a constant. Not shared: that one is
+/// private to another crate this one does not depend on, and taking a
+/// dependency to reach ten lines would cost more than the duplication. Issue
+/// #1178 carries the question of where a shared home would be. Unlike that
+/// copy, this one is tested — see `same_descriptor_compares_the_whole_string`,
+/// without which a broken comparison would disable the whole #1096 gate in
+/// silence.
+pub(crate) const fn same_descriptor(one: &str, other: &str) -> bool {
+    let (one, other) = (one.as_bytes(), other.as_bytes());
+    if one.len() != other.len() {
+        return false;
+    }
+    let mut at = 0;
+    while at < one.len() {
+        if one[at] != other[at] {
+            return false;
+        }
+        at += 1;
+    }
+    true
+}
+
 /// The family name. `DsFontFace::family` on the C side.
-pub(crate) const FAMILY: &CStr = c"family";
+pub(crate) const FAMILY: Field = Field {
+    name: c"family",
+    descriptor: "Ljava/lang/String;",
+};
 
 /// The CSS weight. The `1..=1000` range is judged by the ABI; `read_face`
 /// refuses only what a `u16` cannot carry to it at all.
-pub(crate) const WEIGHT: &CStr = c"weight";
+pub(crate) const WEIGHT: Field = Field {
+    name: c"weight",
+    descriptor: "I",
+};
 
 /// The face's index inside a font collection — the field the descriptor class
 /// exists for, and the one five parallel arrays could not carry.
-pub(crate) const FACE_INDEX: &CStr = c"faceIndex";
+pub(crate) const FACE_INDEX: Field = Field {
+    name: c"faceIndex",
+    descriptor: "I",
+};
 
 /// The font file's bytes.
-pub(crate) const FONT: &CStr = c"font";
+pub(crate) const FONT: Field = Field {
+    name: c"font",
+    descriptor: "[B",
+};
 
 /// The committed MSDF sheet, or an empty array for none.
-pub(crate) const ATLAS_PNG: &CStr = c"atlasPng";
+pub(crate) const ATLAS_PNG: Field = Field {
+    name: c"atlasPng",
+    descriptor: "[B",
+};
 
 /// The sheet's metrics blob, under the same rule as [`ATLAS_PNG`].
-pub(crate) const ATLAS_METRICS: &CStr = c"atlasMetrics";
+pub(crate) const ATLAS_METRICS: Field = Field {
+    name: c"atlasMetrics",
+    descriptor: "[B",
+};
 
-/// Every field the JNI half reads, with the descriptor it reads each one with.
+/// Every field the JNI half reads.
 ///
-/// The names are the six constants above rather than written again, so there is
-/// one spelling of each in this crate. The descriptors are written here and
-/// **are not mechanically tied to the `jni_sig!` literals in `host.rs`** — that
-/// macro takes a literal, so the two sit adjacent at each call site and agree
-/// by review, and issue #1096 carries what a gate for it would look like. What
-/// this pins is the pair against `DsFace.java`, which is where the drift issue
-/// #1089 describes actually happens.
+/// The six constants above rather than written again, so each name and each
+/// descriptor has one spelling in this crate. Since issue #1096 the descriptors
+/// are **also** tied to the `jni_sig!` literals in `host.rs`: that macro takes
+/// a literal and cannot read a constant, so `host::face_field!` writes the
+/// literal once and asserts it against [`Field::descriptor`] in a `const`
+/// block. What *this* table pins is the pair against `DsFace.java`, which is
+/// where the drift issue #1089 describes actually happens.
 ///
 /// `#[cfg(test)]` because the test below is its only reader: `host.rs` uses the
 /// six constants directly. Without it this is dead code on Android, where this
@@ -105,13 +175,13 @@ pub(crate) const ATLAS_METRICS: &CStr = c"atlasMetrics";
 /// the crate invites a second consumer that would then have to be kept in step
 /// with the gate.
 #[cfg(test)]
-const FACE_FIELDS: [(&CStr, &str); 6] = [
-    (FAMILY, "Ljava/lang/String;"),
-    (WEIGHT, "I"),
-    (FACE_INDEX, "I"),
-    (FONT, "[B"),
-    (ATLAS_PNG, "[B"),
-    (ATLAS_METRICS, "[B"),
+const FACE_FIELDS: [&Field; 6] = [
+    &FAMILY,
+    &WEIGHT,
+    &FACE_INDEX,
+    &FONT,
+    &ATLAS_PNG,
+    &ATLAS_METRICS,
 ];
 
 #[cfg(test)]
@@ -144,49 +214,166 @@ mod tests {
         }
     }
 
-    /// `source` with comments removed and whitespace collapsed.
+    /// `source` with everything that is not code removed and whitespace
+    /// collapsed.
+    ///
+    /// Four constructs, recognised in one pass because each can hold text that
+    /// reads as a declaration or as a brace and is neither: a block comment, a
+    /// line comment, a string literal and a character literal. The literals are
+    /// what issue #1097's second case turns on — a field holding the text
+    /// `"public final int weight;"` satisfied a gate that stripped only
+    /// comments — and the character literal matters to
+    /// [`ds_face_body`] rather than here, since a `'{'`
+    /// would miscount the depth.
     ///
     /// **Deliberately approximate, and safe because of which way it errs.**
-    /// This is not a Java lexer: it does not know about string literals, so a
-    /// `//` inside one truncates that line, and a `/*` written inside a line
-    /// comment opens a block. Both make it remove *too much*.
+    /// One pass rather than three is also what makes it *less* wrong than
+    /// before: a `/*` inside a string no longer opens a comment, and a `//`
+    /// inside one no longer truncates the line. What remains approximate is
+    /// unterminated constructs, which swallow the rest of the file.
     ///
     /// Removing too much can only make the assertion below fail, because that
     /// assertion asks whether a declaration is *present*. Removing too little
-    /// is the direction that could pass wrongly — a field commented out but
-    /// still matched — and stripping comments at all is what closes it. So
-    /// every way this can be wrong is a loud failure rather than a silent one,
-    /// which is the property a drift gate needs and the reason it is not worth
-    /// a real lexer.
-    fn source_without_comments(source: &str) -> String {
+    /// is the direction that could pass wrongly. So every way this can be
+    /// wrong is a loud failure rather than a silent one, which is the property
+    /// a drift gate needs and the reason it is not worth a real lexer.
+    fn code_only(source: &str) -> String {
+        let chars: Vec<char> = source.chars().collect();
         let mut out = String::with_capacity(source.len());
-        let mut rest = source;
-        while let Some(start) = rest.find("/*") {
-            out.push_str(&rest[..start]);
-            out.push(' ');
-            match rest[start + 2..].find("*/") {
-                Some(end) => rest = &rest[start + 2 + end + 2..],
-                // An unterminated block comment is not valid Java; the rest of
-                // the file is comment either way.
-                None => rest = "",
+        let mut at = 0;
+        while at < chars.len() {
+            let this = chars[at];
+            let next = chars.get(at + 1).copied();
+            if this == '/' && next == Some('*') {
+                // A space in place of each construct, so the tokens either side
+                // of it cannot join into a declaration written nowhere.
+                out.push(' ');
+                at += 2;
+                while at < chars.len() && !(chars[at] == '*' && chars.get(at + 1) == Some(&'/')) {
+                    at += 1;
+                }
+                at += 2;
+            } else if this == '/' && next == Some('/') {
+                out.push(' ');
+                while at < chars.len() && chars[at] != '\n' {
+                    at += 1;
+                }
+            } else if this == '"' || this == '\'' {
+                // **A quote pair, not a space**, for the reason `ds_face_body`
+                // uses `{}`: a literal never sits between the tokens of a
+                // declaration, so what is on either side of one was never
+                // adjacent, and a space joins them. `public final int"x"weight;`
+                // declares nothing and collapsed to exactly the text this gate
+                // looks for. A quote pair cannot appear inside a declaration, so
+                // it cannot complete one.
+                //
+                // Not `{}` here: that would feed a brace to `ds_face_body`'s
+                // depth counter and move the class body's boundaries.
+                out.push_str("\"\"");
+                at += 1;
+                while at < chars.len() && chars[at] != this {
+                    // A backslash escapes the next character, the closing quote
+                    // included.
+                    at += if chars[at] == '\\' { 2 } else { 1 };
+                }
+                at += 1;
+            } else {
+                out.push(this);
+                at += 1;
             }
         }
-        out.push_str(rest);
 
         let mut collapsed = String::with_capacity(out.len());
-        for line in out.lines() {
-            let code = match line.find("//") {
-                Some(at) => &line[..at],
-                None => line,
-            };
-            for word in code.split_whitespace() {
-                if !collapsed.is_empty() {
-                    collapsed.push(' ');
-                }
-                collapsed.push_str(word);
+        for word in out.split_whitespace() {
+            if !collapsed.is_empty() {
+                collapsed.push(' ');
             }
+            collapsed.push_str(word);
         }
         collapsed
+    }
+
+    /// The text **directly inside `DsFace`'s own class body**, with everything
+    /// nested inside a further brace dropped (issue #1097).
+    ///
+    /// `GetFieldID` is asked of a `DsFace` instance, so only what that class
+    /// declares can answer it. The gate matched anywhere in the file, which two
+    /// measured cases satisfied while the field was not where JNI looks: one
+    /// moved into a nested `public static final class Inner`, and one into a
+    /// second top-level class.
+    ///
+    /// **Depth, not brace matching.** A nested class is *between*
+    /// `class DsFace {` and its closing brace, so matching that pair is not
+    /// enough — everything below depth 1 has to go. Dropping the nested text
+    /// also drops the constructor body, which is exactly right: `this.weight =
+    /// weight;` is not a declaration of anything.
+    ///
+    /// `None` when the class header is not found, when what follows it is not a
+    /// class body, or when the body never closes. [`gate`] reports that as
+    /// [`Gate::NoBody`] rather than folding it into a missing field: an empty
+    /// body reports the *first* entry of [`FACE_FIELDS`] missing, which is
+    /// exactly what a genuine `family` rename reports, and points the reader at
+    /// the wrong repair.
+    fn ds_face_body(code: &str) -> Option<String> {
+        const HEADER: &str = "class DsFace";
+        let mut from = 0;
+        let open = loop {
+            let at = from + code[from..].find(HEADER)?;
+            let after = code[at + HEADER.len()..].chars().next();
+            // `class DsFaceInner` is a different class. Nothing needs checking
+            // on the left: the `class` keyword is part of the needle.
+            if after.is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '$') {
+                from = at + HEADER.len();
+                continue;
+            }
+            // The brace need not be adjacent — `class DsFace implements Foo {`
+            // — but only an `extends`/`implements` clause may sit between, and
+            // that carries neither `;` nor `}`. Without this check a class whose
+            // own opening brace is missing matches the **constructor's**
+            // brace several declarations later and reports that body as the
+            // class's, which reads as `family` having gone missing.
+            let rest = &code[at + HEADER.len()..];
+            let brace = rest.find('{')?;
+            if rest[..brace].contains(';') || rest[..brace].contains('}') {
+                return None;
+            }
+            break at + HEADER.len() + brace;
+        };
+
+        let mut depth = 0_u32;
+        let mut body = String::new();
+        for character in code[open..].chars() {
+            match character {
+                '{' => {
+                    depth += 1;
+                    if depth == 2 {
+                        // **Braces, not a space**, and the difference is a false
+                        // pass. `code_only` elides something that sits *where a
+                        // token could*, so a space there keeps two real tokens
+                        // apart. Here a whole nested construct is elided and the
+                        // text either side of it was never adjacent, so a space
+                        // *joins* them: `public final int{ }weight;` collapsed
+                        // to `public final int weight;` and the gate reported a
+                        // field that nothing declares as declared. A brace pair
+                        // cannot appear inside a declaration, so it cannot
+                        // complete one.
+                        body.push_str("{}");
+                    }
+                }
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(body);
+                    }
+                }
+                _ if depth == 1 => body.push(character),
+                _ => {}
+            }
+        }
+        // Unbalanced braces are not valid Java. Reported as no body at all
+        // rather than as a truncated one, so nothing is searched that was not
+        // read to its end.
+        None
     }
 
     /// The exact text `DsFace.java` must contain for one field.
@@ -195,20 +382,67 @@ mod tests {
     /// thing this gate compares, and the shape of the match is the thing most
     /// likely to change. Four spellings of it would mean four edits, with the
     /// ones in the tests below quietly still checking the old shape.
-    fn declaration(name: &CStr, descriptor: &str) -> String {
-        let name = name
+    fn declaration(field: &Field) -> String {
+        let name = field
+            .name
             .to_str()
             .expect("every DsFace field name is ASCII, so it is UTF-8");
-        format!("public final {} {name};", java_type(descriptor))
+        format!("public final {} {name};", java_type(field.descriptor))
     }
 
-    /// The first field of [`FACE_FIELDS`] that `source` does not declare.
-    fn missing_from(source: &str) -> Option<String> {
-        let source = source_without_comments(source);
-        FACE_FIELDS
+    /// What the gate found when it read `source`.
+    ///
+    /// Three outcomes rather than an `Option`, because "no `DsFace` body could
+    /// be read" and "the body does not declare `family`" are different repairs
+    /// and were previously the same value: `unwrap_or_default()` turned a
+    /// renamed class into an empty body, which reports the *first* field of
+    /// [`FACE_FIELDS`] missing — byte for byte what a genuine `family` rename
+    /// reports.
+    #[derive(Debug)]
+    enum Gate {
+        /// The body was read and declares every field.
+        Declared,
+        /// The body was read; this declaration is not in it.
+        Missing(String),
+        /// No `class DsFace { … }` body could be read at all.
+        NoBody,
+    }
+
+    impl Gate {
+        /// The declaration reported missing.
+        ///
+        /// **Panics on [`Gate::NoBody`]**, which is what the mutation tests
+        /// below want: a mutation meant to move one field, that instead makes
+        /// the class unreadable, would otherwise report that field missing and
+        /// be recorded as caught for entirely the wrong reason.
+        fn missing(self) -> Option<String> {
+            match self {
+                Gate::Missing(declaration) => Some(declaration),
+                Gate::Declared => None,
+                Gate::NoBody => panic!(
+                    "this case expects a readable DsFace body, and the mutation \
+                     removed one — so it proves nothing about the field it moved"
+                ),
+            }
+        }
+    }
+
+    /// Reads `source` once and answers for every field of [`FACE_FIELDS`].
+    ///
+    /// Searched over `DsFace`'s own body rather than the whole file (issue
+    /// #1097).
+    fn gate(source: &str) -> Gate {
+        let Some(body) = ds_face_body(&code_only(source)) else {
+            return Gate::NoBody;
+        };
+        match FACE_FIELDS
             .iter()
-            .map(|(name, descriptor)| declaration(name, descriptor))
-            .find(|declaration| !source.contains(declaration.as_str()))
+            .map(|field| declaration(field))
+            .find(|declaration| !body.contains(declaration.as_str()))
+        {
+            Some(declaration) => Gate::Missing(declaration),
+            None => Gate::Declared,
+        }
     }
 
     /// **Every field the JNI half reads is declared by `DsFace`, with the type
@@ -240,14 +474,25 @@ mod tests {
     ///
     /// It also does not read `host.rs`, which is behind the platform `cfg` and
     /// links into no test binary: that `read_face` reads these six and only
-    /// these is held by review, as is the agreement between each descriptor
-    /// here and the `jni_sig!` literal beside it (issue #1096). The match is
-    /// also unanchored, so a declaration that has left the class body still
-    /// satisfies it (issue #1097).
+    /// these is held by review. The **descriptors** it reads them with are no
+    /// longer held that way — `host::face_field!` pins each one against this
+    /// module's own table with a `const` assertion (issue #1096) — but that
+    /// assertion fires only where `host.rs` compiles, which is `just android`
+    /// and `just android-lint` and no test tier.
     #[test]
     fn every_field_the_jni_half_reads_is_declared_by_dsface() {
-        if let Some(declaration) = missing_from(DS_FACE_JAVA) {
-            panic!(
+        match gate(DS_FACE_JAVA) {
+            Gate::Declared => {}
+            Gate::NoBody => panic!(
+                "no `class DsFace {{ … }}` body could be read in DsFace.java at \
+                 all, so this gate compared against nothing. Three causes: the \
+                 class was renamed, its braces do not balance, or a string \
+                 literal or block comment anywhere in the file is unterminated \
+                 — the last swallows the rest of the file, so it need not be \
+                 near the class. Fix that first: it is not a field problem, \
+                 and reading it as one would name a field that is fine."
+            ),
+            Gate::Missing(declaration) => panic!(
                 "DsFace.java does not declare `{declaration}`, which is what \
                  this crate reads that field as.\n\n\
                  Either the field was renamed, removed or retyped — which \
@@ -258,6 +503,73 @@ mod tests {
                  initializer, `final public` in the other order, a space before \
                  the `;`, or `byte font[]`). Check which before changing \
                  anything."
+            ),
+        }
+    }
+
+    /// **`same_descriptor` is the whole of the #1096 gate, and nothing else
+    /// runs it.**
+    ///
+    /// Its only other caller is a `const` assertion behind
+    /// `#[cfg(target_os = "android")]`, evaluated there only on inputs that
+    /// agree — so a broken implementation is never exercised by a build that
+    /// could notice. Weakening it to `while at < 0`, or dropping the length
+    /// guard so `"I"` matches `"II"`, would leave every tier green while the
+    /// descriptor gate accepted any mismatch.
+    #[test]
+    fn same_descriptor_compares_the_whole_string() {
+        assert!(same_descriptor("I", "I"));
+        assert!(same_descriptor("Ljava/lang/String;", "Ljava/lang/String;"));
+        assert!(same_descriptor("", ""));
+        assert!(!same_descriptor("I", "J"), "same length, different byte");
+        assert!(!same_descriptor("I", "II"), "a prefix is not a match");
+        assert!(!same_descriptor("[B", "B"), "nor is a suffix");
+        // Over every pair of the six, including the five that share a
+        // descriptor: `weight` and `faceIndex` are both `I`, and the three
+        // arrays are all `[B`. So this asserts that `same_descriptor` agrees
+        // with `==` on equal pairs as well as unequal ones — a comparison
+        // answering `false` for everything would satisfy the cases above.
+        //
+        // That sharing is also why `host::read_face` builds each `Bound` at the
+        // read rather than binding six locals: a descriptor two fields share
+        // makes them interchangeable to the `const` assertion.
+        for (index, one) in FACE_FIELDS.iter().enumerate() {
+            for other in FACE_FIELDS.iter().skip(index + 1) {
+                assert_eq!(
+                    same_descriptor(one.descriptor, other.descriptor),
+                    one.descriptor == other.descriptor,
+                    "{:?} against {:?}",
+                    one.descriptor,
+                    other.descriptor
+                );
+            }
+        }
+    }
+
+    /// **A renamed class is reported as a renamed class**, not as the first
+    /// field of [`FACE_FIELDS`] going missing (issue #1097).
+    ///
+    /// The two were the same value until this change: `unwrap_or_default()` on
+    /// an unreadable body searched an empty string, which reports `family`
+    /// missing — byte for byte what a genuine `family` rename reports, and the
+    /// wrong thing to fix.
+    #[test]
+    fn a_body_that_cannot_be_read_is_not_reported_as_a_missing_field() {
+        for broken in [
+            // The class renamed.
+            ("class DsFace", "class DsFaceV2"),
+            // Its opening brace gone, so the body never closes.
+            ("public final class DsFace {", "public final class DsFace"),
+        ] {
+            let mutated = DS_FACE_JAVA.replace(broken.0, broken.1);
+            assert_ne!(
+                mutated, DS_FACE_JAVA,
+                "the mutation {broken:?} did not apply"
+            );
+            assert!(
+                matches!(gate(&mutated), Gate::NoBody),
+                "{broken:?} leaves no readable DsFace body, and reporting it as \
+                 a missing field points the next reader at the wrong file"
             );
         }
     }
@@ -278,24 +590,20 @@ mod tests {
             (
                 "public final byte[] atlasPng;",
                 "public final byte[] atlasPNG;",
-                declaration(ATLAS_PNG, "[B"),
+                declaration(&ATLAS_PNG),
             ),
-            (
-                "public final byte[] atlasPng;",
-                "",
-                declaration(ATLAS_PNG, "[B"),
-            ),
+            ("public final byte[] atlasPng;", "", declaration(&ATLAS_PNG)),
             (
                 "public final int weight;",
                 "public final long weight;",
-                declaration(WEIGHT, "I"),
+                declaration(&WEIGHT),
             ),
         ];
         for (from, to, expected) in cases {
             let mutated = DS_FACE_JAVA.replace(from, to);
             assert_ne!(mutated, DS_FACE_JAVA, "the mutation {from:?} did not apply");
             assert_eq!(
-                missing_from(&mutated).as_deref(),
+                gate(&mutated).missing().as_deref(),
                 Some(expected.as_str()),
                 "the gate did not report {expected:?} missing after {from:?} \
                  became {to:?}"
@@ -311,7 +619,7 @@ mod tests {
     /// exactly that case.
     #[test]
     fn a_commented_out_declaration_does_not_count_as_a_declaration() {
-        let expected = declaration(WEIGHT, "I");
+        let expected = declaration(&WEIGHT);
         for commented in [
             "// public final int weight;",
             "/* public final int weight; */",
@@ -319,11 +627,128 @@ mod tests {
             let mutated = DS_FACE_JAVA.replace(&expected, commented);
             assert_ne!(mutated, DS_FACE_JAVA, "the mutation did not apply");
             assert_eq!(
-                missing_from(&mutated).as_deref(),
+                gate(&mutated).missing().as_deref(),
                 Some(expected.as_str()),
                 "a declaration inside {commented:?} was read as a declaration"
             );
         }
+    }
+
+    /// **A declaration that has left `DsFace`'s own body is not a
+    /// declaration of `DsFace`** (issue #1097).
+    ///
+    /// `GetFieldID` is asked of a `DsFace` instance, so a field that moved into
+    /// a nested type — or into a second top-level class in the same file —
+    /// throws `NoSuchFieldError` exactly as a rename does. The match was
+    /// unanchored and found the text wherever it sat.
+    #[test]
+    fn a_declaration_outside_the_dsface_body_is_not_found() {
+        let expected = declaration(&WEIGHT);
+
+        // Nested inside `DsFace`, which brace *matching* alone does not
+        // exclude: it sits between `class DsFace {` and its closing brace, so
+        // only tracking depth keeps it out.
+        let nested = DS_FACE_JAVA.replace(
+            &expected,
+            "public static final class Inner { public final int weight; }",
+        );
+        assert_ne!(
+            nested, DS_FACE_JAVA,
+            "the nested-class mutation did not apply"
+        );
+        assert_eq!(
+            gate(&nested).missing().as_deref(),
+            Some(expected.as_str()),
+            "a field declared by a nested class is not one `GetFieldID` can \
+             resolve on a DsFace instance"
+        );
+
+        // A second **top-level** class, appended after `DsFace`'s own closing
+        // brace. Built by removing the declaration and adding a whole class,
+        // rather than by injecting a stray `}` mid-body: that shape truncates
+        // `DsFace`'s body at the injection point, so the assertion would hold
+        // for an implementation that stopped at the first `}` and tracked no
+        // depth at all — and would hold only because `weight` happens to sit
+        // second in `FACE_FIELDS`.
+        let sibling = format!(
+            "{}\nfinal class Other {{ {expected} }}\n",
+            DS_FACE_JAVA.replace(&expected, "")
+        );
+        assert!(
+            sibling.contains(&expected),
+            "the declaration must still be in the file, or this proves only \
+             that a deleted field is missing"
+        );
+        assert_eq!(
+            gate(&sibling).missing().as_deref(),
+            Some(expected.as_str()),
+            "a field declared by a sibling top-level class is not one \
+             `GetFieldID` can resolve on a DsFace instance"
+        );
+    }
+
+    /// **Text either side of an elided nested block does not join into a
+    /// declaration.**
+    ///
+    /// The false pass this gate's design says is impossible, and it was real:
+    /// `ds_face_body` pushed a *space* where it dropped a nested block, so
+    /// `public final int{ }weight;` — which declares nothing — collapsed to
+    /// exactly the text the gate looks for, and `weight` was reported as
+    /// declared. A brace pair cannot appear inside a declaration, so it cannot
+    /// complete one.
+    ///
+    /// Contrived, like the two cases above. It is here because the module's
+    /// standing claim is that every way the stripping can be wrong is a loud
+    /// failure, and each of these was a counterexample.
+    ///
+    /// **Every construct that gets elided, not only the nested block.** The
+    /// block was fixed first and the two literal forms were left, which is the
+    /// same defect surviving in the sibling branch of the same function — so
+    /// each elided construct is driven here.
+    #[test]
+    fn an_elided_construct_does_not_join_the_text_around_it() {
+        let expected = declaration(&WEIGHT);
+        for joiner in [
+            // A nested block, elided by `ds_face_body`.
+            "public final int{ }weight;",
+            // A string and a character literal, elided by `code_only`.
+            "public final int\"x\"weight;",
+            "public final int'x'weight;",
+        ] {
+            let joined = DS_FACE_JAVA.replace(&expected, joiner);
+            assert_ne!(
+                joined, DS_FACE_JAVA,
+                "the mutation {joiner:?} did not apply"
+            );
+            assert_eq!(
+                gate(&joined).missing().as_deref(),
+                Some(expected.as_str()),
+                "{joiner:?} declares nothing, and reporting it as a declaration \
+                 is the one direction this gate must never fail in"
+            );
+        }
+    }
+
+    /// **A declaration inside a string literal is not a declaration** (issue
+    /// #1097).
+    ///
+    /// Comments were stripped and literals were not, so a field holding the
+    /// text of another field's declaration satisfied the gate for a field that
+    /// no longer existed.
+    #[test]
+    fn a_declaration_inside_a_string_literal_is_not_found() {
+        let expected = declaration(&WEIGHT);
+        let mutated = DS_FACE_JAVA.replace(
+            &expected,
+            "public final String note = \"public final int weight;\";",
+        );
+        assert_ne!(mutated, DS_FACE_JAVA, "the mutation did not apply");
+        assert_eq!(
+            gate(&mutated).missing().as_deref(),
+            Some(expected.as_str()),
+            "the needle was found inside a string literal, so the gate passed \
+             for a field that is not declared"
+        );
     }
 
     /// Whitespace **between tokens** is collapsed, so a declaration split
@@ -335,7 +760,7 @@ mod tests {
     /// rather than a false pass, and the assertion message says so.
     #[test]
     fn a_declaration_is_found_however_it_is_spaced() {
-        let expected = declaration(WEIGHT, "I");
+        let expected = declaration(&WEIGHT);
         for spelling in [
             "public  final  int  weight;",
             "public final int\n            weight;",
@@ -348,7 +773,7 @@ mod tests {
                  case tested nothing"
             );
             assert_eq!(
-                missing_from(&mutated),
+                gate(&mutated).missing(),
                 None,
                 "this spelling was not found: {spelling:?}"
             );

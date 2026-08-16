@@ -285,11 +285,30 @@ left to be discovered:
   found and the next finding more. Asking whether a known declaration is present
   needs no grammar.
 - **It does not read `host.rs`**, which is behind the platform `cfg` and links
-  into no test binary. That `read_face` reads those six and only those, and that
-  each descriptor matches the `jni_sig!` literal beside it, are held by review —
-  issue #1096 carries what a gate for the second would look like, and it
-  matters: a type changed in `DsFace.java` and `face.rs` but not in `host.rs`
-  passes this check and still fails on the device.
+  into no test binary. That `read_face` reads those six and only those is held
+  by review. That each descriptor matches the `jni_sig!` literal beside it is
+  **not**, since issue #1096: `host::face_field!` writes that literal once and
+  asserts it against `face`'s own entry in a `const` block, so a type changed in
+  `DsFace.java` and `face.rs` but not in `host.rs` is a compile error rather
+  than a device failure.
+
+  **Two gates, and neither covers every permutation.** The `const` assertion
+  fires only where `host.rs` compiles, which is `just android` and
+  `just
+  android-lint` and no test tier; the comparison against `DsFace.java`
+  runs in `just test` on every platform. So a type changed in `face.rs` and
+  `host.rs` but not in `DsFace.java` is a failing test and not a compile error,
+  and "it compiled" is not the same claim as "the three agree". `DsFace.java`'s
+  own javadoc carries the three permutations.
+
+- **The search is anchored to `DsFace`'s own class body**, at brace depth 1
+  (issue #1097). Depth rather than brace matching, because a nested class sits
+  between `class DsFace {` and its closing brace. Comments, string literals and
+  character literals are removed first, and each removed construct leaves a
+  separator that cannot complete a declaration — a brace pair for a nested
+  block, a quote pair for a literal. A space there joined the text either side
+  into a declaration the file did not contain, which was a false pass in the one
+  direction the check is meant to be unable to fail in.
 
 `DsFontFace` carries those six Java fields as **nine** C members: each of the
 three byte arrays crosses as a pointer plus a length. "Field for field" is true
