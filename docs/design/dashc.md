@@ -406,43 +406,29 @@ on one layer to one destination then reported only the first, which debt #149
 forbids.
 
 The message decides the collapse but is **not stored in the key** (debt #1142).
-Cloning the rendered prose for every diagnostic paid a heap allocation per
-finding to key a map whose entries are almost all singletons. `Collapse` buckets
+Cloning the rendered prose to key that map paid a heap allocation on every
+report, the overwhelming majority of which never collapse. `Collapse` buckets
 the indices under `(authored layer, rule)` instead and compares the rendering
 through the findings it already owns.
 
-Two costs move and one goes. The **message clone** is traded for a smaller
-allocation rather than removed: each bucket's first push allocates, so a file
-whose findings are all singletons makes the same number of allocations, while
-what is allocated becomes a short vector of indices rather than a copy of the
-prose. The **lookup** gains a scan rather than trading one: the map search on
-`(authored layer, rule)` survives, and beneath it the bucket is scanned for a
-matching rendering — over how many different things one authored layer says
-under one rule, R, which is small but rarely one, since a single switch that
-lowers nowhere and declares a refused curve already puts two sentences under one
-rule. Filling that bucket costs O(R²) sentence comparisons and each echoed copy
-costs up to R, where the replaced map was logarithmic in the document's whole
-key set. The **`Location`** is no longer built for a finding that folds:
+Three things change, and the record deliberately states mechanisms rather than
+counts — every attempt to quote a figure for this change has been wrong in a new
+way. The **message clone** is gone from the key: the replaced code cloned the
+rendered prose on every `report` call, folded copies included, where a bucket
+allocates on its first push and then holds a short vector of indices. The
+**lookup** gains a scan beneath the surviving map search on
+`(authored layer,
+rule)`, over how many different things one authored layer says
+under one rule — small, but rarely one, since a single switch that lowers
+nowhere and declares a refused curve already puts two sentences under one rule.
+The **`Location`** is no longer built for a finding that folds:
 `Collapse::report` takes a closure and calls it only on the branch that keeps
 one, so a copy folding into an earlier finding builds no path and a node
-producing no finding builds none either. Allocations strictly fall — K path
-clones for K kept findings where the replaced code made K + 1 — while
-`index_of_id` lookups rise, one per kept finding rather than one per node; what
-the closure buys is the folded copies, 49 of the 50 on the file the collapse
-exists for. The pending contention findings carry no location at all, since both
-passes walk the nodes in the same order and the naming pass rebuilds what the
-emit pass would have handed it. Their **message** is still rendered per copy,
-one `Echoable` per contended member per emitted instance, of which `report`
-keeps the first — deferring that needs the plan at replay time, which the naming
-pass does not have.
-
-Exact byte and comparison counts are deliberately not quoted here. They depend
-on `Vec`'s growth policy — its first push takes capacity 4, not 1 — on whether
-the cost is counted per copy or per distinct rendering, and on the target's
-pointer width, `dashc` being built for `wasm32` as well. The change is justified
-by the shape above and by the byte-identity below rather than by a figure that
-needs re-deriving per target. What decides the collapse is unchanged throughout,
-so the findings and their order are byte-identical.
+producing no finding builds none either. The pending contention findings carry
+no location at all, since both passes walk the nodes in the same order and the
+naming pass rebuilds what the emit pass would have handed it. Messages are still
+rendered per copy on both paths, since the prose is built before `report` sees
+it.
 
 Severity is **not** compared, and adding it was tried and reverted.
 `06-dashc-figma-lowering.md` says findings agreeing in "rule, message, and the
@@ -459,10 +445,10 @@ sentence rather than quietly disagreeing with one.
 between the code and that sentence, since no fixture distinguishes the two
 readings.
 
-**What keeps a message from varying per copy is a test per shape, and the
-`echoable` module.** The collapse holds only while every copy of one authored
-reaction renders the same message; a message naming the node it was found on
-takes a distinct key per copy, the collapse silently stops, and the
+**Nothing keeps a message from varying per copy across the class, and a new
+message shape arrives unguarded.** The collapse holds only while every copy of
+one authored reaction renders the same message; a message naming the node it was
+found on takes a distinct key per copy, the collapse silently stops, and the
 fifty-one-findings shape debt #1056 removed comes back. Nothing detects that —
 the surviving finding is still correct, there are simply N of it again.
 
@@ -471,8 +457,10 @@ produces all nine, and adding a per-copy token to each in turn is caught for
 **two** — the `NotAMember` omission and the one-frame degrade, each by the one
 test written for it.
 `one_authored_reaction_inside_a_master_is_one_finding_however_many_instances_show_it`,
-`a_refused_curve_echoed_onto_two_instances_is_one_finding` and
-`a_contention_echoed_onto_two_instances_is_reported_once` are those tests.
+and `a_refused_curve_echoed_onto_two_instances_is_one_finding` are those two
+tests. `a_contention_echoed_onto_two_instances_is_reported_once` pins a third
+shape, the contention sentence, which `contended_transition` writes rather than
+`interaction_diagnostics` — so it is outside the nine that figure counts.
 
 A runtime assertion covering all nine was built and removed: it compared the
 message against the node's path, and a node path and a Figma member name are
@@ -480,8 +468,8 @@ both designer-controlled, so it aborted debug builds on valid documents — a
 top-level instance `/Left` beside a member `icon=arrow/Left`. Debt #1212 carries
 the measurement and why anchoring the match does not save it.
 
-**The `echoable` module is the second half, and the smaller one.** It is a
-private module in its own file holding every part of the collapse: the two
+**The `echoable` module is what does hold, and it holds less than it looks.** It
+is a private module in its own file holding every part of the collapse: the two
 functions that write echoable prose, neither handed a node `Location`, the
 `Echoable` they return with private fields, `Echoable::at`, private, and
 `Collapse`, which owns the findings and the collapse state together. Nothing
@@ -494,29 +482,34 @@ attempt to state a wider property — that the fields are private, that
 `Echoable::at` is, that `contended_transition` supplies its own text, that
 `Interactions` cannot be fabricated — closes one route and leaves the next. What
 the module buys is that the set of places an echoed message is written stays
-small enough to read; what the assertion buys is the class.
+small enough to read. Nothing covers the class; the attempt that did is on debt
+#1212.
 
 Four inputs still sit outside the compile-checked part, and are checked by
-reading. **`source`**, the collapse's other key half, is chosen by `apply`;
-`authored_source` answers the layer a reaction was authored on, and both
-entrances fall back to the node's own path where a node carries no id —
-deliberately, so a finding with no authored layer collapses with nothing.
-**`Set::at`** is a `Location` reachable through `Landing::Set`, and locates the
-set, which every copy of a reaction into that set shares. **`Reach`** is decided
-per copy and selects between message shapes: `carrying` holds the instances
-whose table `emit` accepted, so one instance can answer `Reach::Table` and
-another `Reach::Named`. Those copies render different sentences and do not
-collapse, which is correct — they report different outcomes, and the
-per-instance `UNLOWERABLE_SET` on the refused instance is left uncollapsed for
-the same reason. **`read`** is assumed identical on every copy, which is Figma's
-behaviour rather than this crate's: every refusal string `prototype::read`
-builds comes from the reaction payload — the trigger, action, navigation,
-transition and easing kinds, and nothing else — but whether the payload repeats
-verbatim is not checkable here. REST reports a component's interaction on an
-instance verbatim, which `instance-inherited` pins for a reaction on an instance
-root, while the same claim for a layer _inside_ a master is inference from the
-baked subtree being the resolved content. Debt #1067 is open for the capture
-that would pin it.
+reading. **`source`**, the collapse's other key half, is chosen by `apply`.
+`authored_source` answers the layer a reaction was authored on and falls back to
+the node's own path where the node carries no id, which is deliberate: a finding
+with no authored layer then collapses with nothing. The contention entrance has
+a fallback of its own that is **not** the same thing — it reads the shown
+member's id and would fall back to the _instance_ path, which differs per copy
+and would stop the collapse rather than opt out of it. It is unreachable,
+because `active` came from `plan.member_of`, which matched on that id; the code
+comment beside it says so. **`Set::at`** is a `Location` reachable through
+`Landing::Set`, and locates the set, which every copy of a reaction into that
+set shares. **`Reach`** is decided per copy and selects between message shapes:
+`carrying` holds the instances whose table `emit` accepted, so one instance can
+answer `Reach::Table` and another `Reach::Named`. Those copies render different
+sentences and do not collapse, which is correct — they report different
+outcomes, and the per-instance `UNLOWERABLE_SET` on the refused instance is left
+uncollapsed for the same reason. **`read`** is assumed identical on every copy,
+which is Figma's behaviour rather than this crate's: every refusal string
+`prototype::read` builds comes from the reaction payload — the trigger, action,
+navigation, transition and easing kinds, and nothing else — but whether the
+payload repeats verbatim is not checkable here. REST reports a component's
+interaction on an instance verbatim, which `instance-inherited` pins for a
+reaction on an instance root, while the same claim for a layer _inside_ a master
+is inference from the baked subtree being the resolved content. Debt #1067 is
+open for the capture that would pin it.
 
 `figma.unsupported` is deliberately left alone: it skips the node's subtree, so
 its copies are separate omissions rather than repetitions of one.
