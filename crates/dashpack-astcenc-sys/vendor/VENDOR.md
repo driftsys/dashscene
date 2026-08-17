@@ -23,6 +23,15 @@ command line tool does, and the command line tool is not vendored — so those t
 constants are a record of this vendoring step, not a value read back out of the
 compiled code. Update them in the same commit that replaces the sources.
 
+**Re-check the dismissed CodeQL alerts in that same commit.** Two
+`cpp/integer-multiplication-cast-to-long` findings against these sources —
+alerts 1 and 2, `astcenc_compute_variance.cpp` and `astcenc_entry.cpp` — are
+dismissed as `won't fix` on reasoning that is specific to this pin: the lines
+are byte-identical to upstream 5.7.0, and the operands are bounded before they
+arrive (by the ASTC format for the block dimensions, and by `texel_bytes`'s
+`checked_mul` for the image extent). A new pin can move those lines or add
+others, and a dismissal does not follow the code.
+
 ## What was copied
 
 From the archive's `Source/` directory, every file matching `astcenc*.h` or

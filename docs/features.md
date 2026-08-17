@@ -5,6 +5,14 @@
                screen can be built on this today
     method     every claim below was checked against the code, not against
                another document. See "How this file is kept honest".
+    re-checked v0.20 slice close, 2026-08-17. Scoped to sections 11 and
+               12 — the gates and the delivery claims — because the pass
+               below had already covered 5, 9 and 10 and v0.20 was a
+               hardening slice that moved gates rather than features. One
+               claim corrected: the dependency audit read "has never been a
+               continuous-integration job" when `ci.yml` has run an `audit`
+               job since the pre-push hook stopped being the whole gate.
+               Sections 1-8 were not re-read and are the standing gap.
     re-checked v0.19 phase-end, 2026-08-16. The pass was scoped, not
                exhaustive: sections 5, 9 and 10, which are what v0.19
                and v0.20 moved, the C ABI bullets among them. Two claims were corrected here: device
@@ -740,9 +748,14 @@ Checked against `crates/dashbuf/src/container.rs`, `prefix.rs`,
 - [ ] **Signing** — the format reserves the header fields for a signature and
       refuses any file that uses them today. No signing tool, key handling or
       verification policy exists. The largest gap in this section.
-- [ ] **An automated dependency audit** — the audit exists as a local command
-      and runs from a developer's push hook. It has never been a
-      continuous-integration job, so nothing checks it centrally.
+- [x] **An automated dependency audit** — `cargo audit` runs as its own
+      continuous-integration job, and is deliberately ungated by the path
+      filter: a newly published advisory fails a dependency that did not change,
+      so gating it on a diff would run the one job no diff can predict only when
+      some diff predicts it. It remains a local command and a pre-push hook step
+      as well. Local-only enforcement was the wrong shape once the repository
+      went public, because a pull request from a fork runs whatever automation
+      runs and nothing else.
 - [ ] **Over-the-air delivery, and remote or streamed screens** — v2. The
       architecture is shaped for streaming and today's interfaces are
       constrained so it does not become a breaking change.
