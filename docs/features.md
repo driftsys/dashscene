@@ -610,25 +610,29 @@ sentence.
       `android.view.Surface` reaches the painter, an `AChoreographer` loop on
       its own thread ticks and draws, and `surfaceDestroyed` blocks until that
       loop has stopped and the surface has been dropped — which rotation,
-      backgrounding and split-screen have each confirmed.
+      backgrounding and split-screen have each confirmed, the third only since
+      2026-08-15.
 
       **It has run on an emulator and not on a device**, and the distinction is
       the whole of what is unresolved. A compiled `.dsb` draws, rotation and
       backgrounding each run the destroy handshake without a crash, and both
       were observed on the automotive emulator — which is interim evidence and
-      is labelled as such, not the D3a measurement. **Split-screen has since
-      been exercised, and it did not pass**: the automotive image declares no
-      multi-window, freeform or split-screen feature at all, so D4's third case
-      was run on 2026-08-14 against a handheld emulator image instead, where
-      the harness entered the destroy handshake and never returned (issue
-      #960). **On 2026-08-15 that was re-derived and explained**: the render
-      thread never returned from its attach, and the cause is the build rather
-      than the transition — 0.74 s from cold launch to first frame for a
-      release build against over 218 s for a debug one, on the same emulator,
-      and `just android` builds debug. With a release library the split-screen
+      is labelled as such, not the D3a measurement. **Split-screen took two
+      attempts, and only the second passed** — the sentence above counts the
+      second. The automotive image declares no multi-window, freeform or
+      split-screen feature at all, so D4's third case was run against a handheld
+      emulator image instead: on **2026-08-14** the harness entered the destroy
+      handshake and never returned (issue #960). **On 2026-08-15 that was
+      re-derived and explained**: the render thread never returned from its
+      attach, and the cause is the build rather than the transition — 0.74 s
+      from cold launch to first frame for a release build against over 218 s for
+      a debug one, on the same emulator. With a release library the split-screen
       case passes end to end and the handshake completes in 27 ms.
-      `just android-splitscreen` is that run, and it packages what
-      `just android` built. **The release library is necessary and not
+      `just android-splitscreen` is that run, and it packages the profile
+      `DASHSCENE_ANDROID_PROFILE` names — **defaulted to `debug`, which is what
+      `just android` builds**, so the passing run is the one that sets it to
+      `release` (issue #1057 made the profile named rather than guessed).
+      **The release library is necessary and not
       sufficient**: the emulator also has to be started with `-gpu host`, or the
       painter obtains no device, the harness draws black and the run fails at
       `assert-drew` (issue #1158). The D3a measurement that
