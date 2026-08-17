@@ -185,12 +185,13 @@ rules.
   first time.
 
   **What that does and does not say.** It is measured on the **layout** frame.
-  The paint-only frame is still document-scaled, at about 162 bytes per extra
-  root from a cause nothing has attributed (issue #1146), so the guarded claim
-  is "a steady-state layout frame costs the shown root and not the document" and
-  not the unqualified sentence. This entry states the narrower one on purpose:
-  reading it as the general claim is the same over-reading issue #944 filed
-  against this paragraph the first time.
+  The paint-only frame is still document-scaled at about 162 bytes per extra
+  root — on the frame that interns a fill the paint table has not seen, which
+  issue #1146 attributes to `intern_paint`'s `Arc::make_mut` and leaves open —
+  so the guarded claim is "a steady-state layout frame costs the shown root and
+  not the document" and not the unqualified sentence. This entry states the
+  narrower one on purpose: reading it as the general claim is the same
+  over-reading issue #944 filed against this paragraph the first time.
 
   The before-numbers are still measured rather than remembered:
   `the_confinement_is_what_makes_the_number_one` clears the shown root on every
