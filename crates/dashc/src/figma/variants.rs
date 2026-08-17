@@ -1567,9 +1567,8 @@ impl<'a> Plan<'a> {
                 // member root, so the two declarations that disagree can be two
                 // layers inside one member as easily as two member roots.
                 //
-                // Its instance-level twin is `echoable::contended_transition`,
-                // differing only in the noun. An edit to the wording here
-                // belongs there too; nothing compares them.
+                // The sentence itself is written once for both scopes, in
+                // `echoable`; only the scope is chosen here.
                 message: contention_sentence(Contention::AcrossTheSet, member),
             }
         }));

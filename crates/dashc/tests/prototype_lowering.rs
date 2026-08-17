@@ -1070,6 +1070,23 @@ fn two_members_declaring_a_different_transition_to_one_destination_are_named() {
         named.message.contains("state=done"),
         "the diagnostic names the destination whose transition was contended: {named:?}",
     );
+    // The scope noun, asserted where it is meant rather than as a side effect.
+    // Both sentences now come from one writer picking between
+    // `Contention::AcrossTheSet` and `WithinAnInstance`, so the arm is no
+    // longer a literal visible in a diff of this line.
+    //
+    // Swapping it does already fail
+    // `a_contention_echoed_onto_two_instances_is_reported_once` — measured —
+    // because that fixture's members collide at set level too and its filter
+    // on "of this instance" then admits one finding too many. What it reports
+    // is a count in a test about echoing, which sends the diagnosis at the
+    // collapse. This says which noun was wrong.
+    assert!(
+        named
+            .message
+            .contains("more than one layer of this component set declares"),
+        "and says the contention is the set's, not one instance's: {named:?}",
+    );
 
     // And the diagnostic is right not to say which one survives: each
     // instance ships the transition its own echoed reaction declares, so the

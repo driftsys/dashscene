@@ -36,8 +36,8 @@ use super::*;
 /// > handed the node's [`Location`].
 ///
 /// **It says nothing about where those functions' other inputs came from,
-/// and deliberately so.** Five review rounds each found a wider reading
-/// short by one term — the fields were visible, then [`Self::at`] was, then
+/// and deliberately so.** Four wider properties were asserted in turn and each
+/// turned out false — the fields were visible, then [`Self::at`] was, then
 /// `contended_transition` took caller-chosen text, then `Interactions`'
 /// own fields turned out to be reachable from `crate::figma`. That sequence
 /// does not terminate, because message inputs are ordinary data and no
@@ -53,8 +53,8 @@ use super::*;
 /// Measured before it existed: of the nine message shapes
 /// [`interaction_diagnostics`] writes, all nine are produced by the test suite
 /// and only two — the `NotAMember` omission and the one-frame degrade — had a
-/// test that failed when a per-copy token was added. The other seven left all
-/// 335 `dashc` tests green, which is what a guard per message shape costs.
+/// test that failed when a per-copy token was added. The other seven left the
+/// whole `dashc` suite green, which is what a guard per message shape costs.
 pub(super) struct Echoable {
     rule: &'static str,
     severity: Severity,
@@ -429,20 +429,26 @@ pub(super) fn interaction_diagnostics(
 /// passing them separately would leave that a comment rather than a fact.
 /// Nothing outside can hold one without the other, or reach the bucket
 /// representation — [`Self::finish`] is what applies the copy counts.
+///
+/// **Dropping one without calling [`Self::finish`] discards every finding it
+/// holds.** No *static* check stops that: `#[must_use]` fires on a discarded
+/// expression statement, never on a value bound to a local, which is the only
+/// shape `apply` has — measured with a standalone probe, which is why the
+/// attribute is not here. The suite would notice, since most of
+/// `prototype_lowering.rs` asserts on diagnostics that would all vanish.
 pub(super) struct Collapse<'a> {
     diagnostics: Vec<Diagnostic>,
     /// For each authored layer and rule, one entry per distinct **rendering**
     /// — see [`Echoable::renders_as`] — holding where the first copy landed
     /// in `diagnostics` and how many copies there were.
     ///
-    /// The message is deliberately not part of the key: keying on it cloned
-    /// the rendered prose for every diagnostic, the overwhelming majority of
-    /// which never collapse. Each bucket's first `push` allocates, so a file
-    /// whose findings are all singletons makes the same number of
-    /// allocations, each a short vector of indices instead of a copy of the
-    /// prose. Exact byte counts are not quoted here: they depend on `Vec`'s
-    /// growth policy and the target's pointer width, and `dashc` is built
-    /// for `wasm32` as well.
+    /// The message is deliberately not part of the key. Keying on it cloned the
+    /// rendered prose on **every** call, folded copies included; a bucket
+    /// allocates on its first push and then holds, and what it holds is a short
+    /// vector of indices rather than a copy of the prose. Counts and byte sizes
+    /// are not quoted: they depend on how many renderings share a key, on
+    /// `Vec`'s growth policy and on the target's pointer width, and every
+    /// attempt to state one on this change has been wrong in a new way.
     echoed: BTreeMap<(&'a str, &'static str), Vec<(usize, usize)>>,
 }
 
@@ -546,6 +552,35 @@ impl<'a> Collapse<'a> {
 mod tests {
     use super::*;
 
+    /// The one location both collapse tests place their findings at. Written
+    /// once: the path is a fixture value, and two copies of it drift.
+    fn somewhere() -> Location {
+        Location::Node(NodePath {
+            index: 0,
+            path: "/card (1:14)/bar".to_string(),
+        })
+    }
+
+    /// Which noun each [`Contention`] scope selects, pinned where the mapping
+    /// lives.
+    ///
+    /// The call sites are pinned by lowering fixtures — swapping either arm
+    /// fails one — but they report a count or a substring in a test about
+    /// something else. This names the wrong noun directly.
+    #[test]
+    fn each_contention_scope_names_its_own_noun() {
+        assert!(
+            contention_sentence(Contention::WithinAnInstance, "state=done")
+                .starts_with("more than one layer of this instance declares"),
+            "the instance scope says instance",
+        );
+        assert!(
+            contention_sentence(Contention::AcrossTheSet, "state=done")
+                .starts_with("more than one layer of this component set declares"),
+            "and the set scope says component set",
+        );
+    }
+
     /// The collapse folds on the specification's key — rule, message and the
     /// authored layer — and on **nothing else**.
     ///
@@ -568,12 +603,6 @@ mod tests {
             rule: rule::UNSUPPORTED_INTERACTION,
             severity,
             message: sentence.to_string(),
-        };
-        let somewhere = || {
-            Location::Node(NodePath {
-                index: 0,
-                path: "/card (1:14)/bar".to_string(),
-            })
         };
 
         let mut collapse = Collapse::new();
@@ -600,20 +629,25 @@ mod tests {
             "and `finish` names what the collapse cost the reader: {:?}",
             folded[0].message,
         );
+    }
 
-        // The other half of the same rule: two different things to say about
-        // one layer stay two findings (debt #149).
+    /// The other half of the same rule: two different things to say about one
+    /// authored layer stay two findings (debt #149).
+    ///
+    /// Its own test rather than a second half of the severity one, so that a
+    /// `renders_as` that stopped comparing the **message** fails under a name
+    /// pointing at debt #149 rather than at #1219's severity question.
+    #[test]
+    fn two_different_messages_on_one_layer_are_two_findings() {
+        let saying = |what: &str| Echoable {
+            rule: rule::UNSUPPORTED_INTERACTION,
+            severity: Severity::Warning,
+            message: what.to_string(),
+        };
+
         let mut collapse = Collapse::new();
-        collapse.report("1:3", finding(Severity::Warning), somewhere);
-        collapse.report(
-            "1:3",
-            Echoable {
-                rule: rule::UNSUPPORTED_INTERACTION,
-                severity: Severity::Warning,
-                message: "a different refusal entirely".to_string(),
-            },
-            somewhere,
-        );
+        collapse.report("1:3", saying("one refusal"), somewhere);
+        collapse.report("1:3", saying("a different refusal entirely"), somewhere);
         assert_eq!(
             collapse.finish().len(),
             2,
