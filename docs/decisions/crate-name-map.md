@@ -437,3 +437,31 @@ a crate name is chosen rather than when someone notices.
   squatted out from under the project.
 - The staged-mutation API's assignment to `dashscene-core` (not `dashcue`) is
   elaborated in `docs/decisions/staged-mutation-v01-scope.md`.
+
+## No shared-utility crate for a ten-line `const fn` (issue #1178)
+
+**Ruled 2026-08-16, and recorded here because this record governs the
+alternative**: a shared home would be a new crates.io name.
+
+Two crates carry the same ten-line `const fn` comparing two `&str` in a `const`
+context, which the standard library does not yet offer — `dashpack`'s
+`ktx2::str_eq`, welding the vendored astcenc version to the string `WRITER`
+spells, and `dashscene-android`'s `face::same_descriptor`, welding a JNI
+descriptor to its `jni_sig!` literal. Same algorithm, same reason.
+
+**The duplication is accepted.** `dashscene-android` does not depend on
+`dashpack` and should not start to for ten lines, so sharing means a workspace
+utility crate: another reserved name, another publish-order entry, another row
+in every registry `demo/tests/registry_consistency.rs` checks — for a function
+that `str::eq` becoming `const` in a future toolchain deletes from both.
+
+**What is not accepted is two copies with neither checked nor pointing at the
+other**, which is the state issue #1178 found. Both are checked now and each
+names the other. The mechanisms differ because the two pins differ:
+`dashscene-android`'s sits behind `#[cfg(target_os = "android")]`, so no host
+build evaluates it and a runtime test is the only thing that can, while
+`dashpack`'s is unconditional and its checks are `const` assertions that fail
+the build on every target.
+
+Revisit if a third copy appears. Two with a pointer between them is a
+duplication; three is a pattern, and the crate becomes the cheaper answer.

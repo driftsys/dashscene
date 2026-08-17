@@ -101,10 +101,16 @@ pub(crate) struct Field {
 /// shape of assertion — a literal welded to a constant. Not shared: that one is
 /// private to another crate this one does not depend on, and taking a
 /// dependency to reach ten lines would cost more than the duplication. Issue
-/// #1178 carries the question of where a shared home would be. Unlike that
-/// copy, this one is tested — see `same_descriptor_compares_the_whole_string`,
-/// without which a broken comparison would disable the whole #1096 gate in
-/// silence.
+/// #1178 settled that as the ruling and
+/// `docs/decisions/crate-name-map.md` records it.
+///
+/// **Both copies are checked now**, which they were not when this comment was
+/// written: this one by `same_descriptor_compares_the_whole_string`, without
+/// which a broken comparison would disable the whole #1096 gate in silence, and
+/// that one by `const` assertions beside its own pin. The mechanisms differ for
+/// a reason — this crate's pin is behind `#[cfg(target_os = "android")]`, so no
+/// host build evaluates it and a runtime test is the only thing that can, where
+/// `dashpack`'s is unconditional and can fail the build itself.
 pub(crate) const fn same_descriptor(one: &str, other: &str) -> bool {
     let (one, other) = (one.as_bytes(), other.as_bytes());
     if one.len() != other.len() {
