@@ -5,6 +5,17 @@
                screen can be built on this today
     method     every claim below was checked against the code, not against
                another document. See "How this file is kept honest".
+    re-checked 2026-08-18 for epic #951's Track C gate, scoped to what
+               Track C touched (#802, #916, #634). Four corrections, all
+               one fact: a construct listed in `blockers` in
+               crates/dashc/src/figma/mod.rs makes the importer skip the
+               whole layer, and four bullets described only the property
+               being refused. Letter case, a stroke on text, a shadow on
+               text or vector artwork, and several styles in one text
+               block each cost the layer. #916's severity ground and
+               #634's cost claim were read and needed nothing. Not
+               checked: the eleven ticked claims in sections 11 and 12,
+               and sections 1, 4, 6, 7 and 8 — the standing gap.
     re-checked 2026-08-17, before the v0.20 close — the epic is still
                open, and docs/roadmap.md remains the authority on that.
                Narrow by design: the five absence claims in sections 11 and
@@ -160,10 +171,15 @@ Checked against `crates/dashscene-typeset/src/text/mod.rs`,
       shapes rather than fixed-size images. Below 14 pixels per em they smear,
       and the import warns. Recording a decision to accept that is designed but
       not usable yet — see the waiver item in section 8.
-- [ ] **Several styles inside one text block** — planned (v1). A text element
-      carries one style, so bold-inside-a-sentence needs separate elements.
-- [ ] **Letter case applied as a property** — refused. There is no vocabulary
-      for it anywhere in the system. Type the text in the case you want.
+- [ ] **Several styles inside one text block** — planned (v1), and **a text
+      layer that has them is dropped, not flattened to one style**. Bold inside
+      a sentence needs separate elements today.
+- [ ] **Letter case applied as a property** — refused, and **the layer is
+      dropped rather than drawn in its authored case**. There is no case
+      vocabulary anywhere in the system, so this is unbuilt rather than broken.
+      Clearing the property is part of the workaround, not optional: type the
+      text in the case you want **and** return the case control to `ORIGINAL`,
+      or the layer does not appear.
 - [ ] **Scripts beyond Latin and Arabic** — planned (v1) as one piece of work,
       because the glyph-storage design cannot be settled without knowing which
       scripts it must hold. Arabic ships in one weight against Latin's four.
@@ -178,10 +194,15 @@ Checked against `crates/dashc/src/figma/mod.rs`,
       is what makes a gauge sweep possible) and diamond. Images fill a shape in
       four modes — fill, fit, crop and tile — with a crop transform.
 - [x] **Strokes and corners** — one width per shape, aligned inside, centred or
-      outside the edge, with each corner rounded independently.
+      outside the edge, with each corner rounded independently. **Not on text**:
+      a text layer carrying any stroke is reported and **dropped**, whatever the
+      stroke's weight — the check reads the strokes list, not the width, so a
+      zero-weight stroke costs the layer too. Bake the outline, or place a shape
+      behind the text.
 - [x] **Shadows** — drop and inner, any number on one element, each with its own
       colour, offset, blur and spread. Not available on text or on imported
-      vector artwork: a shadow there is reported at import.
+      vector artwork, and **the layer is dropped there, not merely the shadow**
+      — reported by name at import.
 - [x] **Backdrop blur** — frosted-glass panels that blur what is behind them,
       and keep doing so while they move.
 - [x] **Masks and opacity** — a shape stencils the shapes after it; an element
