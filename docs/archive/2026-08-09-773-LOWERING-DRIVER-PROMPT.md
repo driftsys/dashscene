@@ -22,7 +22,7 @@ This prompt and the decision-record amendment it refers to are **on `main`**.
 Start a fresh worktree and branch the way `AGENTS.md` asks — `git worktree add`
 before the first edit, then `./bootstrap`.
 
-The worktree at `/Users/sebastientasson/Workspace/driftsys/wt-773-prototype`
+The worktree at `<worktrees>/wt-773-prototype`
 was where this was written; it holds nothing the branch does not, so reuse it
 or remove it as you prefer.
 

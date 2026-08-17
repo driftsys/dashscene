@@ -24,7 +24,7 @@ method and the five principles, and it is authoritative over anything here.
 ## Where to work
 
 The branch is `story/771-motion-rows`, pushed, with its worktree already at
-`/Users/sebastientasson/Workspace/driftsys/wt-771-motion-rows`. Run
+`<worktrees>/wt-771-motion-rows`. Run
 `./bootstrap` there if the hooks are not installed. Do not start a new
 worktree — this one is clean and matches what is pushed.
 
