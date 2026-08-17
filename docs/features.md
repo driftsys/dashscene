@@ -5,14 +5,18 @@
                screen can be built on this today
     method     every claim below was checked against the code, not against
                another document. See "How this file is kept honest".
-    re-checked v0.20 slice close, 2026-08-17. Scoped to sections 11 and
-               12 — the gates and the delivery claims — because the pass
-               below had already covered 5, 9 and 10 and v0.20 was a
-               hardening slice that moved gates rather than features. One
-               claim corrected: the dependency audit read "has never been a
-               continuous-integration job" when `ci.yml` has run an `audit`
-               job since the pre-push hook stopped being the whole gate.
-               Sections 1-8 were not re-read and are the standing gap.
+    re-checked 2026-08-17, before the v0.20 close — the epic is still
+               open, and docs/roadmap.md remains the authority on that.
+               Narrow by design: the five absence claims in sections 11 and
+               12, not those sections entire, because an absence is the
+               claim nobody re-derives. Two corrections: the dependency
+               audit read "has never been a continuous-integration job"
+               when ci.yml has run an `audit` job since the pre-push hook
+               stopped being the whole gate, and the tier bullet still had
+               a 33-second tier running "before pushing" when the pre-push
+               gate runs no tier at all. The eleven ticked claims in those
+               two sections were not re-derived; sections 1-4 and 6-8 were
+               not re-read at all. Those are the standing gap.
     re-checked v0.19 phase-end, 2026-08-16. The pass was scoped, not
                exhaustive: sections 5, 9 and 10, which are what v0.19
                and v0.20 moved, the C ABI bullets among them. Two claims were corrected here: device
@@ -707,11 +711,14 @@ Checked against `goldens/`, `.github/workflows/ci.yml`, `justfile`,
       already caught two real bugs on first measurement.
 - [x] **Every tolerance ships with the change that breaks it** — the same
       discipline as the asset quality bands, for the same reason.
-- [x] **Three test tiers and one gate** — about five seconds between edits,
-      thirty-three before pushing, and fifty-four for the run that re-derives
-      the asset tables; plus a single check asserting all seven qualification
-      criteria on one commit, with its membership pinned by name so a renamed
-      test cannot leave the gate silently.
+- [x] **Three test tiers and one gate** — seconds between edits, under a minute
+      for the tier a developer runs before pushing, and about a minute for the
+      run that re-derives the asset tables; plus a single check asserting all
+      seven qualification criteria on one commit, with its membership pinned by
+      name so a renamed test cannot leave the gate silently. **Nothing runs a
+      tier automatically on push**: the pre-push hook is bounded at seconds and
+      runs none of them, so the middle tier is a developer typing `just build`,
+      and the automation that does run one is the pull request.
 - [x] **Glyph preparation is checked on two processor architectures** — within a
       measured tolerance, not byte for byte: the tool's arithmetic differs
       between architectures by about one step per channel, and the check admits
@@ -726,7 +733,8 @@ Checked against `goldens/`, `.github/workflows/ci.yml`, `justfile`,
 ## 12. Build, delivery and integrity
 
 Checked against `crates/dashbuf/src/container.rs`, `prefix.rs`,
-`crates/dashscene-gpu/Cargo.toml`, `Cargo.lock`, `.github/workflows/ci.yml`.
+`crates/dashscene-gpu/Cargo.toml`, `Cargo.lock`, `.github/workflows/ci.yml`,
+`justfile`.
 
 - [x] **Reproducible builds** — the same design always produces a byte-identical
       file. Everything below depends on this holding.
@@ -748,14 +756,11 @@ Checked against `crates/dashbuf/src/container.rs`, `prefix.rs`,
 - [ ] **Signing** — the format reserves the header fields for a signature and
       refuses any file that uses them today. No signing tool, key handling or
       verification policy exists. The largest gap in this section.
-- [x] **An automated dependency audit** — `cargo audit` runs as its own
-      continuous-integration job, and is deliberately ungated by the path
-      filter: a newly published advisory fails a dependency that did not change,
-      so gating it on a diff would run the one job no diff can predict only when
-      some diff predicts it. It remains a local command and a pre-push hook step
-      as well. Local-only enforcement was the wrong shape once the repository
-      went public, because a pull request from a fork runs whatever automation
-      runs and nothing else.
+- [x] **An automated dependency audit** — `cargo audit` runs on every pull
+      request, and on every commit rather than only on those that change a
+      dependency, because a newly published advisory can affect code nobody
+      touched. It is also a local command and a pre-push hook step. Why it runs
+      centrally rather than only locally: `docs/decisions/test-tiers.md`.
 - [ ] **Over-the-air delivery, and remote or streamed screens** — v2. The
       architecture is shaped for streaming and today's interfaces are
       constrained so it does not become a breaking change.
