@@ -31,13 +31,21 @@ export interface FigmaClientOptions {
 }
 
 /**
- * The one field the capture flow reads from a file-metadata response,
- * narrowed from the official `GetFileMetaResponse`. A missing or
- * non-string version reads as absent, which makes the caller fall back to
- * the full file fetch — the runtime guard in `fileMeta` keeps that true
- * even when the wire body lies about the type.
+ * The two fields the capture flow reads from a file-metadata response,
+ * narrowed from the official `GetFileMetaResponse`. A missing or non-string
+ * value reads as absent, which makes the caller fall back to the full file
+ * fetch — the runtime guard in `fileMeta` keeps that true even when the wire
+ * body lies about the type.
+ *
+ * `last_touched_at` is the UTC ISO 8601 time the file's **content** was last
+ * modified. It is read because `version` alone is not a content identity: the
+ * capture flow observed a fixture whose committed content was two frames
+ * behind at a version identical to the live file's (issue #965), so a check on
+ * `version` alone reported it unchanged and could never refresh it.
  */
-export type FileMeta = Readonly<Pick<GetFileMetaResponse["file"], "version">>;
+export type FileMeta = Readonly<
+  Partial<Pick<GetFileMetaResponse["file"], "version" | "last_touched_at">>
+>;
 
 /**
  * A `GET /v1/images` server-side render response, narrowed to the two fields
@@ -118,8 +126,13 @@ export class FigmaClient {
 
   fileMeta(fileKey: string): Promise<FileMeta> {
     return this.#request(`/v1/files/${fileKey}/meta`).then((body) => {
-      const version = (body as GetFileMetaResponse | null)?.file?.version;
-      return { version: typeof version === "string" ? version : undefined };
+      const file = (body as GetFileMetaResponse | null)?.file;
+      const version = file?.version;
+      const touched = file?.last_touched_at;
+      return {
+        version: typeof version === "string" ? version : undefined,
+        last_touched_at: typeof touched === "string" ? touched : undefined,
+      };
     });
   }
 

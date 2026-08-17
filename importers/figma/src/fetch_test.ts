@@ -65,13 +65,30 @@ Deno.test("file() hits /v1/files/:key with plugin_data=shared and the PAT header
   assertEquals(sawHeader, "test-token");
 });
 
-Deno.test("fileMeta() hits /v1/files/:key/meta and returns the version", async () => {
+Deno.test("fileMeta() hits /v1/files/:key/meta and returns both fields", async () => {
   const { client, requests } = scriptedClient([
-    () => jsonResponse({ file: { version: "7" } }),
+    () =>
+      jsonResponse({
+        file: { version: "7", last_touched_at: "2026-08-16T12:00:00Z" },
+      }),
   ]);
   const meta = await client.fileMeta("KEYA");
   assertEquals(meta.version, "7");
+  // The field the unchanged-fixture skip turns on (issue #965).
+  assertEquals(meta.last_touched_at, "2026-08-16T12:00:00Z");
   assertEquals(requests, ["https://api.figma.com/v1/files/KEYA/meta"]);
+});
+
+Deno.test("fileMeta() reads a non-string last_touched_at as absent", async () => {
+  // The runtime guard, which the type alone does not give: a wire body is not
+  // bound by the declared type, and an absent timestamp must read as absent so
+  // the caller re-captures rather than comparing against a number (issue #965).
+  const { client } = scriptedClient([
+    () => jsonResponse({ file: { version: "7", last_touched_at: 1234 } }),
+  ]);
+  const meta = await client.fileMeta("KEYA");
+  assertEquals(meta.version, "7");
+  assertEquals(meta.last_touched_at, undefined);
 });
 
 Deno.test("fileMeta() treats a null body as an unknown version, not a crash", async () => {

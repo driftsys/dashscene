@@ -44,15 +44,26 @@ capture` in `importers/figma/`.
 A capture is the raw response minus its non-deterministic fields: the
 top-level `thumbnailUrl` is a presigned URL that Figma regenerates on
 every fetch, so the capture tool strips it before writing (issue #141).
-Beside each capture sits `<name>.receipt.json` — the captured `version`,
-the `refsContract` it was derived under, and the image refs that capture
-resolved — which is what the capture tool's unchanged-fixture pre-check
-reads instead of parsing the whole capture (issue #91). The receipt
-caches `dashc`'s ref answer, keyed on the `REFS_CONTRACT` constant in
-`importers/figma/src/capture.ts`: when the lowering widens what it can
-name, that constant is bumped, every committed receipt stops matching,
-and the next capture run re-derives them from the committed captures
-without any `GET /file` spend.
+Beside each capture sits `<name>.receipt.json` — the captured `version`
+and `lastTouchedAt`, the `refsContract` it was derived under, and the
+image refs that capture resolved — which is what the capture tool's
+unchanged-fixture pre-check reads instead of parsing the whole capture
+(issue #91). The receipt caches `dashc`'s ref answer, keyed on the
+`REFS_CONTRACT` constant in `importers/figma/src/capture.ts`: when the
+lowering widens what it can name, that constant is bumped, every
+committed receipt stops matching, and the next capture run re-derives
+them from the committed captures without any `GET /file` spend.
+
+**The skip needs `lastTouchedAt` as well as `version`, and the committed
+receipts do not carry it yet** (issue #965). A `version` that matched
+across a real change is what that issue records, so a version-only skip
+reported a fixture current while it was two frames behind, permanently.
+Every receipt here predates the field, so **the next capture run
+re-fetches each fixture once** — that is the migration, and it is a
+one-off. Deleting a receipt does not shortcut it and makes it worse: the
+observed pair goes with it and cannot be re-derived from a capture, which
+carries a `version` field and no timestamp. Bump `REFS_CONTRACT` when the
+refs need re-deriving; that invalidates the refs and only the refs.
 
 After a full capture of a fixture, its `<name>.images/` directory is
 pruned to exactly the image refs that capture resolved, so a re-authored

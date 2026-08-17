@@ -351,6 +351,11 @@ against the committed 21 — which is the half a committed capture cannot show.
 stale fixture, since an unequal version re-captures either way; it is recorded
 because it rules out "`version` only fails to advance" as the description of the
 fault. Note the field that behaved in all three captures measured:
-`lastModified` moved forwards every time. The pre-check is unchanged here; a
-fixture refreshed only when `version` moves is refreshed on Figma's terms rather
-than on the corpus's.
+`lastModified` moved forwards every time. **The pre-check changed at issue
+#965** — it now compares `/meta`'s `last_touched_at` beside the version, because
+a version that matched over changed content is what that issue records. Note
+that the field measured to move in that case was the `GET /file` body's
+`lastModified`, and the field the check reads is `/meta`'s `last_touched_at`;
+whether the two are the same instant is not established here. Before that, the
+pre-check was unchanged here; a fixture refreshed only when `version` moves is
+refreshed on Figma's terms rather than on the corpus's.
