@@ -105,10 +105,21 @@ produced that outcome; a term allowed to report zero early would have had
 nothing left to measure when the engine's turn came.
 
 **The rule applies again immediately.** The term is on the **layout** frame, and
-the paint-only frame is still document-scaled at about 162 bytes per extra root
-from a cause nothing has attributed. That is issue #1146, named here and in the
-constant's documentation rather than left to be inferred from a term that does
-not cover it.
+the paint-only frame is still document-scaled at about 162 bytes per extra root.
+That is issue #1146, named here and in the constant's documentation rather than
+left to be inferred from a term that does not cover it.
+
+**Its cause is no longer unattributed, which D2 said would have to come first.**
+`intern_paint`'s `Arc::make_mut` clones the whole paint table, whose row count
+is the document's, because `commit_with` starts it as
+`Arc::clone(&previous.paints)`. D2 put the term on the layout frame because the
+paint-only frame's level drifts over repeats and "a term over the paint frame
+would need to separate them first"; that separation is now made, and it is the
+interner hit — a frame re-staging a fill the table already holds clones nothing
+and costs 236 bytes on either document.
+`a_repeated_fill_costs_the_same_on_both_documents` asserts that half. **D2 is
+unchanged**: the slope term stays on the layout frame, because the half that is
+still document-scaled is the defect rather than a quantity to bound.
 
 ## Consequences
 

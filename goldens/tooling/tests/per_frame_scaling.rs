@@ -119,13 +119,80 @@
 //! separate changes to the engine's scratch, which is what says it is
 //! document-scaled rather than noise. That is not the same as calling the row
 //! *stable*: its **level** does move between repeats over one unchanged
-//! document (884, 884, 1284, 1172 below), which is why the term is taken on the
-//! layout row and why nothing here asserts on this one. Both readings are
-//! needed, and issue #1146 carries the unattributed cause.
+//! document (884, 884, 1284, 1172 below), which is why the **slope term** is
+//! taken on the layout row. One property of this row is asserted, and it is the
+//! one the section below shows is flat:
+//! [`a_repeated_fill_costs_the_same_on_both_documents`].
 //!
-//! The byte levels are stated for completeness and asserted on nowhere. What is
-//! asserted is the many-root layout frame's own figure against the one-root
-//! frame's plus the slope times the extra roots — which at a slope of 0 is the
+//! # What the paint-only row is measuring (issue #1146)
+//!
+//! Both readings above have one cause, and it is not in the engine's scratch at
+//! all. **`Arc::make_mut` on the paint table, inside `dashscene-core`'s
+//! `intern_paint`.** `Txn::commit_with` starts the new table as
+//! `Arc::clone(&previous.paints)`, so the previous committed scene's reference
+//! keeps the count at two; the first `intern_fill` on a frame therefore clones
+//! the **whole** table, whose row count is the document's and not the shown
+//! root's.
+//!
+//! Attributed with a size-multiset diff of one paint-only frame between the two
+//! documents, and a `Backtrace` on the sizes only the many-root frame allocates.
+//! Both frames make exactly **24** allocations; three of them differ, and they
+//! account for the whole gap:
+//!
+//! ```text
+//! size        small    many    delta   what
+//!   4160        x0      x2     +8320   Vec<PaintEntry>, twice — see below
+//!   2340        x0      x1     +2340   Vec<ImageFill>   — PaintTable::clone
+//!   36/64/192   x4      x1      -292   (the one-root table's own smaller rows)
+//! ```
+//!
+//! 10368 bytes over 64 extra roots is 162 per root exactly, which is where that
+//! figure comes from.
+//!
+//! **Only one of the two 4160s is the clone**, and reading both as one would
+//! send a reader looking for a second `make_mut` that does not exist.
+//! `PaintTable` holds one `Vec<PaintEntry>` and the clone runs once, allocating
+//! capacity equal to length — 65 entries at 64 bytes. `push_with` then appends
+//! the 66th into a vector at capacity 65, which reallocates to 130, and the
+//! `realloc` arm of [`Counting`] records the **growth**: 8320 − 4160, which is
+//! 4160 again by coincidence of the doubling.
+//!
+//! **A frame that clones nothing costs 236 bytes on either document.**
+//! `intern_paint` returns on the interner hit *before* `make_mut`, so a frame
+//! re-staging a fill the table already holds neither clones nor grows:
+//!
+//! ```text
+//! frame                 1      2      3      4      5      6
+//! 1 root,  same fill    892    236    236    236    236    236
+//! 65 root, same fill  11260    236    236    236    236    236
+//! 1 root,  new fill     892    892   1292   1180   1340   1500
+//! 65 root, new fill   11260  11388  11516  11676  11836  11996
+//! ```
+//!
+//! So the row is **not** document-scaled per se: it is document-scaled on a
+//! frame that interns a fill the table has not seen, and flat at 236 bytes
+//! otherwise, on both documents.
+//! [`a_repeated_fill_costs_the_same_on_both_documents`] pins that second half,
+//! which is the half a band can be stated over.
+//!
+//! **What this does not do is reproduce the 884, 884, 1284, 1172 series above.**
+//! Those were recorded before the measurements here and this harness no longer
+//! produces them: `paint_only_frame` stages one constant colour, so its repeats
+//! are interner hits and read 892, 236, 236, 236. The "new fill" row is the one
+//! whose shape they match, and nothing in this file stages it. What is claimed
+//! is the mechanism by which this row can move where the layout row cannot —
+//! not those four numbers, which are left as the record of what was seen at the
+//! time.
+//!
+//! What stays open on #1146 is the remedy rather than the cause. Removing the
+//! clone means changing how the double buffer shares the table — the previous
+//! committed scene has to stay valid because a painter may still be reading it,
+//! which is what forces the copy on write — and that is a design change with a
+//! consumer question behind it, not a scratch-vector fix like #944 and #1111.
+//!
+//! The byte levels are stated for completeness, and no **level** is asserted on.
+//! What the slope term asserts is the many-root layout frame's own figure
+//! against the one-root frame's plus the slope times the extra roots — which at a slope of 0 is the
 //! byte identity above, and is why the row reads 1.00x. See
 //! [`BYTES_PER_EXTRA_ROOT`] for why it is stated per root and why the
 //! comparison is not a per-root quotient. The paint-only row's figures are the ones
@@ -179,7 +246,20 @@
 //! one element takes a larger minimum allocation than a one-element reserve,
 //! then 297 to 280 under issue #1111, because the vectors that frame still
 //! allocated became either a map that stays empty or a stamp on a vector the
-//! solver already retains. The term is a difference precisely so that a level
+//! solver already retains.
+//!
+//! **That map is gone, and the term reads 0 for a third reason now** (issue
+//! #1211). Issue #1153 replaced `baseline_pass`'s `FxHashMap` with
+//! `BaselineOffsets`, a dense `(stamp, f32)` table sized at **rebuild** and
+//! stamped per collection, because the map put a hash probe on the per-frame
+//! readback path. Neither allocates per frame, which is what this term
+//! measures, so the 0 did not move across that change — but a reader auditing
+//! it goes looking for the map, finds none, and cannot tell whether the number
+//! is stale or the prose is. `BaselineOffsets` in
+//! `crates/dashscene-engine/src/lib.rs` carries the reasoning, including why a
+//! solver with no typesetter never sizes it at all.
+//!
+//! The term is a difference precisely so that a level
 //! moving either way in the small case cannot be mistaken for the
 //! document-scaled cost it measures — over the same two changes the
 //! sixty-five-root document went 4705 bytes to 280.
@@ -442,9 +522,10 @@ const MANY_RECT_ROWS: usize = 1;
 /// at its strongest.
 ///
 /// **This is the layout frame.** The paint-only frame is still document-scaled
-/// at about 162 bytes per extra root, from a cause nothing has attributed —
-/// issue #1146. That is why the sentence above says "steady-state layout frame"
-/// and not "a frame".
+/// on the frame that interns a fill the paint table has not seen — about 162
+/// bytes per extra root, attributed to `Arc::make_mut` on that table by issue
+/// #1146 and unfixed there. That is why the sentence above says "steady-state
+/// layout frame" and not "a frame".
 ///
 /// # Why a slope where the other two terms are levels
 ///
@@ -465,11 +546,18 @@ const MANY_RECT_ROWS: usize = 1;
 /// # Why the layout frame and not the paint-only one
 ///
 /// The paint-only frame's byte count moves across repeats over one unchanged
-/// document — 884, 884, 1284, 1172 on the small one — because the paint table's
-/// own interning and its pooled-entry compaction (issue #197) move with it, and
-/// neither is a document-scaled cost. The layout frame repeats
-/// bit-identically: 289, 1393 and 4705 bytes over the one, seventeen and
+/// document — 884, 884, 1284, 1172 on the small one — where the layout frame
+/// repeats bit-identically: 289, 1393 and 4705 bytes over the one, seventeen and
 /// sixty-five-root documents, which is 69 per extra root at all three sizes.
+///
+/// **The cause is `Arc::make_mut` on the paint table**, not the pooled-entry
+/// compaction (issue #197) this comment named until issue #1146 measured it.
+/// Compaction is ruled out by a number rather than by an argument:
+/// `should_compact` needs a table above `COMPACT_FLOOR`, which is 256, and this
+/// fixture's holds 66. The module documentation above carries the attribution.
+/// It does not change this choice — the layout frame is still the one a term
+/// can be stated over, and now for a reason rather than for an unattributed
+/// wobble.
 ///
 /// # Why bytes and not an allocation count
 ///
@@ -1310,5 +1398,111 @@ fn the_confinement_is_what_makes_the_number_one() {
         (many.roots, many.roots, many.roots),
         "unconfined, both terms are the document's root count exactly — which is what story #836 \
          measured at 65 and what this story removed"
+    );
+}
+
+/// **A paint-only frame that re-stages a fill the table already holds costs the
+/// same on both documents** (issue #1146).
+///
+/// The half of the paint-only row that a band can be stated over, and the half
+/// that says where the other half's cost comes from. `dashscene-core`'s
+/// `intern_paint` returns on the interner hit **before** `Arc::make_mut`, so
+/// such a frame clones nothing; the first frame to intern a fill the table has
+/// not seen clones the whole `PaintTable`, whose row count is the document's.
+///
+/// Measured, per frame, over six consecutive paint-only frames after the
+/// warm-up:
+///
+/// ```text
+/// frame                 1      2      3      4      5      6
+/// 1 root,  same fill    892    236    236    236    236    236
+/// 65 root, same fill  11260    236    236    236    236    236
+/// ```
+///
+/// So this asserts frames 2 onward, and deliberately not frame 1: that one is
+/// the interner miss, is document-scaled, and is what issue #1146 leaves open.
+///
+/// **Why an equality and not a slope.** The other byte term is a slope because
+/// its quantity legitimately grows with the document and the question is by how
+/// much. Here the claim is that the quantity does not depend on the document at
+/// all, which an equality states directly — and, unlike the paint-only *level*,
+/// this figure repeats bit-identically because no clone and no growth is in it.
+///
+/// It would fail if a later change moved an allocation onto the steady paint
+/// path that is sized by the document, which is the regression the module
+/// documentation's series would otherwise only describe.
+#[test]
+fn a_repeated_fill_costs_the_same_on_both_documents() {
+    /// Bytes each of [`FRAMES`] consecutive paint-only frames asks for, all
+    /// staging the same fill, after the warm-up.
+    ///
+    /// The count is the constant and not a parameter: every assertion below
+    /// reads `[1..]`, so a caller passing 1 would leave no tail and index out
+    /// of bounds rather than fail with a diagnosis.
+    fn steady_paint_bytes(extra: usize) -> Vec<u64> {
+        let mut loaded = load(extra);
+        let (mut solver, _x, _first) = warm_up(&mut loaded);
+        (0..FRAMES)
+            .map(|_| paint_only_frame(&mut loaded, &mut solver).bytes)
+            .collect()
+    }
+
+    /// Enough to show the tail is flat rather than merely equal at one point.
+    const FRAMES: usize = 6;
+
+    let started = Instant::now();
+    let small = steady_paint_bytes(0);
+    let many = steady_paint_bytes(EXTRA_FRAMES);
+    // The machine, for the reason the module documentation gives: a byte figure
+    // is exact on one target and moves with type layout and `Vec` growth
+    // elsewhere. D6 of `startup-scaling-is-measured-by-a-counter.md`.
+    println!(
+        "PER-FRAME SCALING — repeated fill: 1 root {small:?}, {} roots {many:?}, {} on {}, \
+         {:.2} s wall",
+        EXTRA_FRAMES + 1,
+        std::env::consts::ARCH,
+        std::env::consts::OS,
+        started.elapsed().as_secs_f64(),
+    );
+
+    // The tail: every frame after the interner miss.
+    let (small_tail, many_tail) = (&small[1..], &many[1..]);
+    assert_eq!(
+        small_tail, many_tail,
+        "a paint-only frame re-staging a fill the table already holds should cost the same \
+         whatever the document's root count. It does not, which means an allocation sized by the \
+         document has moved onto the steady paint path (issue #1146)"
+    );
+    assert!(
+        small_tail.iter().all(|&b| b == small_tail[0]),
+        "and each such frame should cost the same as the last: {small_tail:?}. A level that \
+         climbs means something is still growing per frame, which is what the interner hit is \
+         supposed to avoid"
+    );
+    // Guards the fixture rather than the property: a warm-up that already
+    // staged this fill would make every frame a hit and the assertions above
+    // vacuous, and a `frames` of 1 would leave no tail at all.
+    assert!(
+        small[0] > small_tail[0] && many[0] > many_tail[0],
+        "the first frame must be the interner miss — {} and {} against tails of {} and {}. If it \
+         is not, the warm-up already staged this fill and this test is comparing two hits",
+        small[0],
+        many[0],
+        small_tail[0],
+        many_tail[0]
+    );
+    // **Delete this one when issue #1146 lands, and keep the three above.**
+    // It asserts the defect rather than the property: a remedy that stops the
+    // paint table being copied on write makes these two equal, and this line
+    // then fails reading like a regression. The band's own panic and the glyph
+    // guard both carry the same kind of note where they pin a state that is
+    // meant to change.
+    assert!(
+        many[0] > small[0],
+        "and that miss must be document-scaled — {} against {} — which is the half issue #1146 \
+         leaves open and the reason this test asserts on the tail. If issue #1146 has landed, \
+         this assertion is what it was supposed to break: delete it",
+        many[0],
+        small[0]
     );
 }

@@ -403,8 +403,14 @@ live nodes:
   17 that remained were the engine's rather than the arena's, and issue #1111
   closed them, so **the term is 0**: a steady-state layout frame allocates
   byte-identically over a sixty-five-root document and a one-root one, 280 bytes
-  each. That is the layout frame; the paint-only frame is still document-scaled
-  and unattributed (issue #1146).
+  each. That is the layout frame. The paint-only frame is still document-scaled
+  on the frame that interns a fill the paint table has not seen, and issue #1146
+  attributes it: `intern_paint`'s `Arc::make_mut` clones the whole table,
+  because `commit_with` starts it as `Arc::clone(&previous.paints)` and the
+  previous committed scene's reference keeps the count at two. A frame that
+  re-stages a fill the table already holds returns on the interner hit before
+  that and costs 236 bytes on either document. The remedy is open; the cause is
+  not.
 
 `rustc-hash` (`FxHashMap`) is the one crate #164 adds: an internal interner
 keyed by color/geometry bits needs neither SipHash's DoS resistance nor its
