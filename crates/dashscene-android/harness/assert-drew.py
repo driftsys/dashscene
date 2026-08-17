@@ -22,8 +22,30 @@ and the GPU device, 3 points at the text path (issue #1100).
 
 Reads PNG directly: the SDK's Python has no PIL, and adding a dependency for one
 assertion would be the wrong trade.
+
+## The rect, and why it is not optional in multi-window (issue #1191)
+
+`screencap` captures the whole display. With no `--rect` this surveys all of it
+minus a fraction of the top and bottom, which is roughly the painter's area **in
+the fullscreen phase only**. In multi-window the painter owns about half the
+screen and another window owns the rest, so a colourful second pane can supply
+the distinct colours, the light ground and the ink while the painter's own pane
+is black — a false PASS by a route no exclusion fraction can close, because the
+region to exclude is wherever the window manager put the other window.
+
+`--rect X,Y,W,H` is the answer, and `HarnessActivity` logs exactly that. Measured
+on the API 35 emulator on 2026-08-17, where the display is 2560x1600 and the
+status and title bars take the first 176 rows:
+
+    I dashscene: harness: window bounds 0,176 2560x1360
+
+The exclusion fractions do **not** apply inside that rect — see `survey`, which
+carries the reason and the measurement. The whole-display path is kept and is
+unchanged, because a run that cannot read the bounds must still be able to check
+the fullscreen phase.
 """
 
+import argparse
 import struct
 import sys
 import zlib
@@ -271,23 +293,69 @@ def read_png_rgba(path):
     return width, height, bytes(out)
 
 
-def survey(width, height, pixels):
+def clamp_rect(rect, width, height):
+    """The intersection of `rect` with the image, or None when it is empty.
+
+    **Clamped rather than trusted** (issue #1191). The rect comes from a logcat
+    line, and a window can be reported partly offscreen, or a screenshot can be
+    taken at a different rotation from the one the bounds were logged at. An
+    unclamped rect walks off the pixel buffer, and the row arithmetic below would
+    then read the *next* row's pixels rather than raising — sampling a region
+    that is not the painter's and reporting a verdict about it.
+    """
+    x, y, w, h = rect
+    left, top = max(0, x), max(0, y)
+    right, bottom = min(width, x + w), min(height, y + h)
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right - left, bottom - top
+
+
+def survey(width, height, pixels, rect=None):
     """Return (colours, ink, sampled) over the client area.
 
     `light` is not returned because it is not a second measurement: it is
     `sampled - ink` by definition, and returning both invited the two to be
     compared over different regions, which is exactly how a 38%-black frame
     passed review round two.
+
+    **`rect` is the painter's own window when it is known** (issue #1191), so in
+    multi-window the survey covers the painter's pane and not the neighbour that
+    happens to be colourful. With `rect` absent this is the whole display,
+    unchanged.
+
+    **The exclusions do not apply inside a rect, and that is the point rather
+    than an omission.** They exist to remove *system chrome* — the status bar, the
+    activity's title bar, the multi-window caption and the gesture-navigation bar
+    — every one of which is **outside** the painter's window. The rect has already
+    removed them, so applying the fractions again would throw away 26% of the
+    painter's own pane, and it would throw away the wrong 26%: measured on the API
+    35 emulator on 2026-08-17, the window is `0,176 2560x1360` and an 18% top
+    fraction of *that* starts the survey at row 420, where the harness's document
+    is drawn in rows 176 to 300. The whole of what the painter drew fell inside
+    the exclusion, and the script reported one distinct colour — "the painter drew
+    nothing" — about a frame that had drawn.
     """
-    start = int(height * SKIP_TOP_FRACTION)
-    stop = height - int(height * SKIP_BOTTOM_FRACTION)
+    if rect is None:
+        left, top = 0, 0
+        region_width, region_height = width, height
+        start = int(height * SKIP_TOP_FRACTION)
+        stop = height - int(height * SKIP_BOTTOM_FRACTION)
+    else:
+        left, top, region_width, region_height = rect
+        start, stop = top, top + region_height
     seen, ink, sampled = set(), 0, 0
     for y in range(start, stop):
         row = y * width * 4
         # Every 7th pixel: enough to find a gradient, cheap on a 2560-wide
         # frame, and coprime with any plausible repeating pattern. The ink
         # bounds are fractions of this same grid, so they move with it.
-        for x in range(0, width, 7):
+        #
+        # **Stepped from the region's own left edge**, so the phase of the grid
+        # is the same whether or not a rect was given — a grid anchored at the
+        # display's origin would sample different columns of the same window
+        # depending on where the window manager put it.
+        for x in range(left, left + region_width, 7):
             i = row + x * 4
             red, green, blue = pixels[i], pixels[i + 1], pixels[i + 2]
             seen.add(pixels[i : i + 3])
@@ -297,34 +365,115 @@ def survey(width, height, pixels):
     return seen, ink, sampled
 
 
-def main(argv):
-    if len(argv) != 2:
-        print("usage: assert-drew.py <screenshot.png>", file=sys.stderr)
-        return 2
+def parse_rect(text):
+    """`X,Y,W,H` into four ints, for argparse.
+
+    Refused rather than partly parsed: a rect that arrived as three numbers, or
+    with a stray character from a logcat line, would otherwise become a survey
+    over the wrong region — and this script's whole job is to report what is in a
+    region.
+    """
+    parts = text.split(",")
+    if len(parts) != 4:
+        raise argparse.ArgumentTypeError(f"expected X,Y,W,H, got {text!r}")
     try:
-        width, height, pixels = read_png_rgba(argv[1])
+        x, y, w, h = (int(part) for part in parts)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected four integers, got {text!r}") from None
+    if w <= 0 or h <= 0:
+        raise argparse.ArgumentTypeError(f"a rect must have a positive extent, got {text!r}")
+    return x, y, w, h
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(
+        description="Assert a screenshot shows a drawn scene, not a black frame.",
+    )
+    parser.add_argument("screenshot")
+    parser.add_argument(
+        "--rect",
+        type=parse_rect,
+        default=None,
+        metavar="X,Y,W,H",
+        help=(
+            "the painter's own window in the screenshot, from HarnessActivity's "
+            "'window bounds' line. Required to judge the multi-window phase "
+            "(issue #1191); without it the whole display is surveyed."
+        ),
+    )
+    # argparse exits 2 on a usage error, which is this script's own "ask me again"
+    # status — so the two already agree and nothing is remapped here.
+    args = parser.parse_args(argv[1:])
+    path = args.screenshot
+    try:
+        width, height, pixels = read_png_rgba(path)
     except Unreadable as error:
-        print(f"assert-drew: cannot read {argv[1]}: {error}", file=sys.stderr)
+        print(f"assert-drew: cannot read {path}: {error}", file=sys.stderr)
         return 2
 
-    seen, ink, sampled = survey(width, height, pixels)
+    rect = None
+    if args.rect is not None:
+        rect = clamp_rect(args.rect, width, height)
+        if rect is None:
+            print(
+                f"assert-drew: cannot judge {path}: the rect "
+                f"{','.join(str(v) for v in args.rect)} does not intersect the "
+                f"{width}x{height} screenshot. A rotation between the logged "
+                f"bounds and the capture does this.",
+                file=sys.stderr,
+            )
+            return 2
+        if rect != args.rect:
+            print(
+                f"assert-drew: the rect was clamped to the screenshot: "
+                f"{','.join(str(v) for v in rect)}",
+                file=sys.stderr,
+            )
+
+    seen, ink, sampled = survey(width, height, pixels, rect)
 
     # **No sampled pixels is "cannot judge", not "drew nothing".** A 0x0 frame,
     # or any height whose exclusions leave no rows, otherwise reported zero
     # colours and the no-GPU-device diagnosis — the exit-1-for-exit-2 confusion
     # issue #1029 §2 exists to remove, reached by a different route.
     if sampled == 0:
-        print(
-            f"assert-drew: cannot judge {argv[1]}: {width}x{height} leaves no "
-            f"client area after excluding the top {SKIP_TOP_FRACTION:.0%} and "
-            f"bottom {SKIP_BOTTOM_FRACTION:.0%}.",
-            file=sys.stderr,
-        )
+        # **The two messages name different causes, because the causes are
+        # different.** Without a rect this is the exclusions leaving no rows. With
+        # one it cannot be: `clamp_rect` returns None for an empty intersection
+        # and otherwise guarantees at least one row and column, and no exclusion
+        # applies inside a rect — so naming the fractions here would point a
+        # reader at arithmetic that did not run. The branch is kept for the rect
+        # path rather than assumed unreachable: it is one line, and a future edit
+        # relaxing `clamp_rect` would otherwise reach a message that is wrong.
+        if rect is None:
+            print(
+                f"assert-drew: cannot judge {path}: {width}x{height} leaves no "
+                f"client area after excluding the top {SKIP_TOP_FRACTION:.0%} and "
+                f"bottom {SKIP_BOTTOM_FRACTION:.0%}.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"assert-drew: cannot judge {path}: the rect "
+                f"{rect[0]},{rect[1]} {rect[2]}x{rect[3]} sampled no pixels of the "
+                f"{width}x{height} screenshot.",
+                file=sys.stderr,
+            )
         return 2
 
+    # **The region is named in every verdict**, passing or failing. A PASS over
+    # the whole display and a PASS over the painter's own window are different
+    # claims — issue #1191 is the record of the first being read as the second —
+    # and a transcript is usually all that is left of a run.
     where = (
         f"in the client area of {width}x{height} "
         f"(top {SKIP_TOP_FRACTION:.0%} and bottom {SKIP_BOTTOM_FRACTION:.0%} excluded)"
+        if rect is None
+        else (
+            f"in the whole of the painter's window at {rect[0]},{rect[1]} "
+            f"{rect[2]}x{rect[3]} of a {width}x{height} screenshot "
+            f"(no chrome exclusion: the window has none in it)"
+        )
     )
     inked = ink / sampled
 

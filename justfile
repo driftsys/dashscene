@@ -1258,6 +1258,19 @@ harness-tests:
     set -euo pipefail
     ./crates/dashscene-android/harness/verdict-test.sh
     ./crates/dashscene-android/harness/assert-drew-test.py
+    # The frame-sample parser and the attach verdict (story #1229), here for the
+    # same reason as the two above: both are reachable only through recipes that
+    # need an attached device, so a defect in either is discovered at the device —
+    # which is the one place this apparatus exists to keep clear. Neither needs a
+    # device, an SDK or an NDK.
+    #
+    # The attach verdict is the sharper case: four of its five outcomes cannot be
+    # produced on an emulator whose painter works, and a short timeout does not
+    # produce them either — `am start -W` blocks until the activity is displayed,
+    # by which time the marker has been written. Synthetic markers are the only
+    # way to reach them.
+    ./measure/android/frame-table-test.py
+    ./measure/android/attach-outcome-test.sh
 
 # Succeed when adb reports at least one attached device.
 #
@@ -1286,30 +1299,57 @@ _android-has-device:
 # Plain cargo with the NDK linker wired from the environment, rather than
 # `cargo-ndk`. It matches how every other target in this repository is built and
 # adds no tool to install.
+# **The profile is a parameter, defaulted to `debug`** (story #1229). `just
+# android` is unchanged and every existing caller — CI's `android-build`,
+# `_apk-harness`, `_apk-demo` — still gets debug.
+#
+# `just android release` exists because story #1229's attach procedure has to
+# build both halves of the comparison issue #960 records: 0.74 s to first frame
+# in release against over 218 s in debug, abandoned before it completed. Until
+# this parameter there was no recipe for the release half at all, so the one
+# measurement in `docs/design/android-toolchain.md` was taken by hand — which is
+# how a number gets into a record with no way to re-derive it.
+#
+# A parameter rather than a second recipe, because the alternative is a second
+# copy of the four `cargo build` lines below. Issue #1101 is the record of what
+# three copies of a five-line block cost here.
+#
 # Cross-compile the four Android members for aarch64-linux-android.
-android:
+android profile="debug":
     #!/usr/bin/env bash
     set -euo pipefail
     # Assigned, then evalled — never `eval "$(just _android-env)"`, which
     # swallows a missing NDK and compiles unwired. See `_android-env`.
     android_env=$(just _android-env {{ ANDROID_API }})
     eval "${android_env}"
-    cargo build -p dashscene-gpu --target aarch64-linux-android
+    # **Refused rather than passed through.** cargo takes `--release` and not
+    # `--profile debug`, so the two names are translated here; anything else is
+    # a typo that would otherwise reach cargo as an unknown profile and build
+    # nothing recognisable.
+    case "{{ profile }}" in
+      debug) flag="" ;;
+      release) flag="--release" ;;
+      *)
+        echo "android: profile must be debug or release, not '{{ profile }}'" >&2
+        exit 1
+        ;;
+    esac
+    cargo build ${flag} -p dashscene-gpu --target aarch64-linux-android
     # And the ABI, which is what a platform host actually links. Building the
     # painter alone would leave the crate a host embeds verified on no target
     # but this machine's — story #840's Android build existed only in a
     # developer's shell until this line.
-    cargo build -p dashscene-ffi --target aarch64-linux-android
+    cargo build ${flag} -p dashscene-ffi --target aarch64-linux-android
     # And the integration crate over it, which is what a Kotlin host loads.
     # It is the only member whose JNI half compiles on no other target, so
     # nothing else in the workspace would catch a break in it (story #841).
-    cargo build -p dashscene-android --target aarch64-linux-android
+    cargo build ${flag} -p dashscene-android --target aarch64-linux-android
     # And the showcase host, which is a second such member: its `Frames`
     # implementation and its four JNI entry points are behind
     # `cfg(target_os = "android")` and compile in no other gate. It was absent
     # from this list when it landed, so several hundred lines cross-compiled
     # nowhere — the same shape as the crate above, one story along (story #842).
-    cargo build -p demo-android --target aarch64-linux-android
+    cargo build ${flag} -p demo-android --target aarch64-linux-android
 
 # Clippy the Android members on their own triple (issue #1086) — five
 # packages, for the reason the note below gives.
@@ -1421,10 +1461,30 @@ android-lint:
 # from neither: it is a system utility, and a slim image without it gets
 # through aapt2, javac and d8 before failing. `bootstrap` installs none of the
 # three, the same trade `android` makes for the NDK.
+# **The profile threads through to both halves** (story #1229), so
+# `just android-apk release` cross-compiles release and packages the release
+# library. `just android-apk` is unchanged and is what CI runs.
+#
+# **The cross-compile happens once, here, and the halves are told so.** It cannot
+# be a `just` dependency for the reason `_apk-harness` gives — a dependency's
+# arguments are evaluated before the body that resolves the profile — and it must
+# not be left to both halves either: a warm no-op `just android` was **measured at
+# 10.2 s** on 2026-08-17, so letting each half call it added about twenty seconds
+# to what `android-lint`'s own comment calls the workflow's slowest job, for two
+# cargo invocations that compile nothing.
+#
+# `DASHSCENE_ANDROID_BUILT` is what carries that fact, and it names the profile
+# rather than being a bare flag, so a mismatch still builds. A developer who
+# exports it by hand is opting out of the cross-compile, which is why it is
+# compared rather than merely tested for presence.
+#
 # Package both Android hosts into APKs — the gate that compiles their Java.
-android-apk: android
+android-apk profile="debug":
     #!/usr/bin/env bash
     set -euo pipefail
+    export DASHSCENE_ANDROID_PROFILE="${DASHSCENE_ANDROID_PROFILE:-{{ profile }}}"
+    just android "${DASHSCENE_ANDROID_PROFILE}"
+    export DASHSCENE_ANDROID_BUILT="${DASHSCENE_ANDROID_PROFILE}"
     # **Both halves run, and one run reports both** (issue #1058 §1). Under
     # `set -euo pipefail` a harness failure meant `demo-android`'s Java was
     # never compiled in that run, so breaking both hosts at once had the
@@ -1438,8 +1498,8 @@ android-apk: android
     # message names which half went wrong: a red step whose last line is the
     # other half's success is the ambiguity this section set out to remove.
     failed=""
-    just _apk-harness || failed="the harness host"
-    just _apk-demo || failed="${failed:+${failed} and }the showcase host"
+    just _apk-harness {{ profile }} || failed="the harness host"
+    just _apk-demo {{ profile }} || failed="${failed:+${failed} and }the showcase host"
     if [ -n "${failed}" ]; then
       echo "android-apk: FAILED — ${failed}. Both halves ran; each reported above." >&2
       exit 1
@@ -1456,19 +1516,43 @@ android-apk: android
 # it is honoured, where an unconditional `export` would silently package
 # something other than what was asked — issue #1057 inverted. The default is
 # `debug` because that is what `android` builds.
+#
+# **The parameter sets that default, and the environment still wins** (story
+# #1229). Both orders were written and this is the one that keeps issue #1057's
+# ruling: a caller who exports the variable is honoured. What the parameter adds
+# is that `just android-apk release` cross-compiles release *and* packages it.
+#
+# **The cross-compile is called from the body rather than declared as a
+# dependency**, and the reason is the precedence above: a `just` dependency's
+# arguments are evaluated before the body runs, so a dependency cannot be given a
+# profile that the body is what resolves. Declaring `(android profile)` and
+# exporting the resolved value instead is the shape that lets cargo build one
+# profile while `build.sh` packages the other — issue #1057's defect with the two
+# profiles swapped, and an APK shipping a library that is not the one under test
+# reads as a successful build.
 [private]
-_apk-harness: android
+_apk-harness profile="debug":
     #!/usr/bin/env bash
     set -euo pipefail
-    export DASHSCENE_ANDROID_PROFILE="${DASHSCENE_ANDROID_PROFILE:-debug}"
+    export DASHSCENE_ANDROID_PROFILE="${DASHSCENE_ANDROID_PROFILE:-{{ profile }}}"
+    # Skipped only when `android-apk` above has already cross-compiled *this*
+    # profile in this process tree; called alone, this still builds.
+    if [ "${DASHSCENE_ANDROID_BUILT:-}" != "${DASHSCENE_ANDROID_PROFILE}" ]; then
+      just android "${DASHSCENE_ANDROID_PROFILE}"
+    fi
     ./crates/dashscene-android/harness/build.sh
 
 # The showcase APK, on the same terms as `_apk-harness` above.
 [private]
-_apk-demo: android
+_apk-demo profile="debug":
     #!/usr/bin/env bash
     set -euo pipefail
-    export DASHSCENE_ANDROID_PROFILE="${DASHSCENE_ANDROID_PROFILE:-debug}"
+    export DASHSCENE_ANDROID_PROFILE="${DASHSCENE_ANDROID_PROFILE:-{{ profile }}}"
+    # Skipped only when `android-apk` above has already cross-compiled *this*
+    # profile in this process tree; called alone, this still builds.
+    if [ "${DASHSCENE_ANDROID_BUILT:-}" != "${DASHSCENE_ANDROID_PROFILE}" ]; then
+      just android "${DASHSCENE_ANDROID_PROFILE}"
+    fi
     ./demo-android/android/build.sh
 
 # Build the D3a probe, push it to an attached device and run it.
@@ -1510,6 +1594,96 @@ android-probe:
       /data/local/tmp/adapter_report
     "${adb}" shell chmod 755 /data/local/tmp/adapter_report
     "${adb}" shell /data/local/tmp/adapter_report
+
+# Q-6: what one more mid-frame render-target switch costs on the attached device
+# (issue #1128, story #1229).
+#
+# `dashscene_validator::RENDER_TARGET_BUDGET_PLACEHOLDER` is 8 and is a stand-in
+# for a number nobody has measured — which is why `paint.render-target-budget` is
+# a warning. R-T1 makes every mid-frame render-target switch a tile-memory flush,
+# and the cost of that flush is a property of the target GPU, so a desktop cannot
+# answer it.
+#
+# **Windowless, and the same shape as `android-probe` above** for the same
+# reason: a plain executable pushed to `/data/local/tmp` needs no APK, no Java
+# and no Activity, so it runs before anything else is installed. The two recipes
+# differ only in which example they carry, and both are release builds because a
+# debug one measures rustc's optimizer rather than the device.
+#
+# **Read the slope and never the absolute.** Every frame is read back through a
+# staging buffer — the same cost at every layer count — so the per-frame figures
+# carry a constant term no device frame pays. The probe fits a line over the
+# sweep and prints "BELOW THIS PROBE'S RESOLUTION" rather than a number when the
+# slope does not clear its own residual, which is what keeps a noise figure from
+# being recorded as the Q-6 measurement. It was measured doing exactly that: at
+# 30 frames per point the marginal column swung ±1.3 ms with no trend in it.
+#
+# **An emulator result describes the host machine's GPU** behind a translation
+# layer, and is not the Q-6 measurement.
+# Build the render-target cost probe, push it to a device and run it.
+android-layer-cost:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Assigned, then evalled — never `eval "$(just _android-env)"`, which
+    # swallows a missing NDK and compiles unwired. See `_android-env`.
+    android_env=$(just _android-env {{ ANDROID_API }})
+    eval "${android_env}"
+    cargo build -p dashscene-gpu --example layer_cost --release \
+      --target aarch64-linux-android
+    adb=$(just _android-adb)
+    if ! just _android-has-device; then
+      echo "android-layer-cost: no device attached — start an emulator with" >&2
+      echo "android-layer-cost: -gpu host, or plug one in. Under the default GPU" >&2
+      echo "android-layer-cost: mode the painter obtains no device at all and this" >&2
+      echo "android-layer-cost: probe reports that rather than a cost (issue #1158)." >&2
+      exit 1
+    fi
+    "${adb}" push target/aarch64-linux-android/release/examples/layer_cost \
+      /data/local/tmp/layer_cost
+    "${adb}" shell chmod 755 /data/local/tmp/layer_cost
+    # **The two sweep bounds are forwarded explicitly**, because `adb shell` does
+    # not carry the host's environment. Without this the probe's own
+    # `DS_LAYER_MAX` and `DS_LAYER_FRAMES` overrides are unreachable through the
+    # only recipe that runs it, which makes them documentation for a bound nobody
+    # can apply — and they are the sole limit on this probe's duration, since every
+    # other step of `android-measure` takes a timeout and a plain executable under
+    # `adb shell` cannot. Empty is passed as empty, which the probe reads as "use
+    # the default" rather than as zero.
+    "${adb}" shell "DS_LAYER_MAX='${DS_LAYER_MAX:-}' \
+      DS_LAYER_FRAMES='${DS_LAYER_FRAMES:-}' /data/local/tmp/layer_cost"
+
+# The whole Android measurement apparatus, into one evidence bundle (story
+# #1229).
+#
+# Five things in an order that requires the operator to decide nothing: the
+# adapter probe (#885), the render-target probe (#1128), the showcase frame
+# capture with its CPU sampler (#842), the vendor-neutral GPU pass, and the
+# attach procedure (#960). `measure/android/run.sh` carries why that order.
+#
+# **It takes no measurement this repository may record.** Every number it
+# produces belongs to one of those issues, and each closes when a **device** has
+# run this — an emulator result describes the machine running the emulator, and
+# the bundle says so in its own README rather than leaving it to whoever reads
+# the directory later.
+#
+# **Start the emulator with `-gpu host`** (issue #1158). Under the default mode
+# the painter obtains no device, every frame is black, and the frame capture
+# reports no samples after minutes. The adapter probe runs first precisely so
+# that failure surfaces in seconds.
+#
+# Not in `check` and not in CI: it needs an attached device, and a runner has
+# none. `harness-tests` is what CI runs of this apparatus — the parser's own
+# cases, which need no device.
+#
+# Run the whole Android measurement apparatus and write one evidence bundle.
+android-measure:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The one adb lookup, exported for the scripts. They deliberately have no
+    # lookup of their own: issue #1007 is the record of a second one honouring a
+    # variable the first did not, and failing to find adb while everything else
+    # succeeded.
+    ADB=$(just _android-adb) ./measure/android/run.sh
 
 # `docs/decisions/host-integration-in-three-layers.md` D4 names three cases that
 # get the surface handshake wrong: rotation, backgrounding and split-screen. The
@@ -1681,15 +1855,55 @@ android-splitscreen: harness-tests _apk-harness
     # animation reads as "drew nothing" and an interrupted `exec-out screencap`
     # is a truncated PNG — both transient. A missing interpreter cannot improve
     # by waiting.
+    # **The painter's own window, from the harness's own log line** (issue
+    # #1191). `screencap` captures the whole display; in multi-window the painter
+    # owns about half of it and another window owns the rest, so a verdict over
+    # the display is a verdict about both. `HarnessActivity.logWindowBounds`
+    # writes `window bounds X,Y WxH` on every `surfaceChanged`, and the **last**
+    # one is the current layout — the cold `--windowingMode 6` launch and the
+    # Settings launch each resize the window, so an earlier line describes a
+    # layout that is gone.
+    #
+    # Empty when the harness could not report them, which is what the script's
+    # whole-display path is still there for: this must degrade to the old
+    # behaviour rather than become unrunnable.
+    # **`sed -n ... p`, never a bare substitution.** sed prints a line it did not
+    # match, so a substitution here passes anything through: the harness logs
+    # `window bounds unavailable — the view is not laid out` when the view is not
+    # laid out yet, that line matches the grep, and the substitution then emitted
+    # it verbatim as the rect. `assert-drew.py` exits 2 on it, which this
+    # recipe's poll does not treat as terminal, so the run spent twenty
+    # screenshots and then failed — instead of falling back to the whole display
+    # the way the comment above promises. Verified against that exact line.
+    #
+    # The numeric shape is required by the grep as well, so a negative origin —
+    # which `getLocationOnScreen` reports for a partly-offscreen window, and
+    # which `[0-9]+` cannot match — takes the fallback rather than the failure.
+    painter_rect() {
+      "${adb}" logcat -d 2>/dev/null | tr -d '\r' \
+        | grep -E "I dashscene: harness: window bounds [0-9]+,[0-9]+ [0-9]+x[0-9]+" \
+        | tail -1 \
+        | sed -nE 's/.*window bounds ([0-9]+),([0-9]+) ([0-9]+)x([0-9]+).*/\1,\2,\3,\4/p' \
+        || true
+    }
+
     assert_drew() {
-      local shot out rc
+      local shot out rc rect
       shot="target/android-harness/screen-$1.png"
       out=""
       rc=1
       for _ in $(seq 1 20); do
         "${adb}" exec-out screencap -p > "${shot}" || true
+        # Re-read per iteration rather than once: the window can still be
+        # settling while this polls, and a rect from before the transition would
+        # survey where the window used to be.
+        rect="$(painter_rect)"
         set +e
-        out=$(python3 "${script}" "${shot}" 2>&1)
+        if [ -n "${rect}" ]; then
+          out=$(python3 "${script}" "${shot}" --rect="${rect}" 2>&1)
+        else
+          out=$(python3 "${script}" "${shot}" 2>&1)
+        fi
         rc=$?
         set -e
         # Only 0 and 127 end the loop. 3 looks final — "the text did not

@@ -121,13 +121,45 @@ def write(data, name, tmp):
     return path
 
 
-def run(data, name, tmp):
+def run(data, name, tmp, *args):
     done = subprocess.run(
-        [sys.executable, SCRIPT, write(data, name, tmp)],
+        [sys.executable, SCRIPT, write(data, name, tmp), *args],
         capture_output=True,
         text=True,
     )
     return done.returncode, (done.stdout + done.stderr).strip()
+
+
+def split_screen(painter_drew, neighbour_drew, boundary=0.5):
+    """A display holding two windows side by side, top and bottom.
+
+    The shape of issue #1191: `screencap` captures the whole display, the painter
+    owns one pane and another window owns the other. The parameters are which
+    pane drew, so the false PASS — the painter's pane black, the neighbour's
+    colourful — is one call.
+
+    Split horizontally because that is the axis `am start --windowingMode 6` splits
+    on the tablet image `just android-splitscreen` uses. The geometry measured
+    there on 2026-08-17 is a 2560x1600 display whose harness window is
+    `0,176 2560x1360` when it has the screen to itself; the half-and-half split
+    below is the shape of the two-pane case rather than a transcription of that
+    measurement, and the fractions are what the cases turn on.
+    """
+    edge = int(H * boundary)
+    ink = drawn(H - edge)
+    wash = light_over_black(1.0)
+
+    def rows(x, y):
+        if y < edge:
+            # The neighbour: the launcher, the recents picker, or Settings.
+            return wash(x, y) if neighbour_drew else BLACK
+        if not painter_drew:
+            return BLACK
+        # The painter's pane, drawn — its own coordinates, so its ink band falls
+        # inside the pane rather than at the display's midpoint.
+        return ink(x, y - edge)
+
+    return rows
 
 
 def chrome_stripe(y0, y1):
@@ -257,6 +289,110 @@ def main():
         # of the display can bound — that is issue #1191.
         case("light wash, a 4% undrawn strip is tolerated", DREW,
              png(W, H, light_over_black(0.89)), "lob89")
+
+        # --- issue #1191: the painter owns half the display -----------------
+        #
+        # **A correction, established here by construction rather than assumed.**
+        # That issue describes a false PASS: a colourful neighbour supplying
+        # `MIN_DISTINCT`, the light ground `MIN_LIGHT_FRACTION` asks for, and the
+        # ink, while the painter's pane is black. **That mechanism is not
+        # reachable in the code PR #1188 shipped.** The issue was written against
+        # an intermediate revision of that very pull request — it names
+        # `MIN_LIGHT_FRACTION`, which the final revision replaced with
+        # `MAX_INK_FRACTION` — and the ceiling closes it: a black pane occupying
+        # about half the survey is about half its ink, five times over a 10%
+        # ceiling. The first case below is that, measured.
+        #
+        # **What is real is the mirror image, and it is arguably worse for a
+        # gate**: the painter draws correctly, the neighbour is dark, and the
+        # display survey fails — a false FAIL, which reads as a painter
+        # regression in the one check that witnesses the painter at all. A
+        # dark-themed launcher, the recents backdrop, or a second app in dark
+        # mode all produce it.
+        #
+        # The rect closes **both** directions, because it stops the verdict
+        # depending on the neighbour at all. That is why it is the fix for this
+        # issue whichever way the panes are coloured.
+        pane = (0, int(H * 0.5), W, H - int(H * 0.5))
+        rect_arg = "--rect=" + ",".join(str(v) for v in pane)
+        black_pane = png(W, H, split_screen(painter_drew=False, neighbour_drew=True))
+        cases.append((
+            "split: painter black, light neighbour — the ceiling already catches it",
+            DID_NOT_DRAW,
+            run(black_pane, "splitfalse", tmp),
+        ))
+        cases.append((
+            "split: painter black — the rect agrees, for the right reason",
+            DID_NOT_DRAW,
+            run(black_pane, "splitfalse", tmp, rect_arg),
+        ))
+        # The false FAIL, and the fix for it. Same screenshot, two verdicts,
+        # because they are two different claims — which is the whole argument for
+        # the rect.
+        dark_neighbour = png(W, H, split_screen(painter_drew=True, neighbour_drew=False))
+        cases.append((
+            "split: painter DREW, dark neighbour — the display survey false-FAILS",
+            DID_NOT_DRAW,
+            run(dark_neighbour, "splittrue", tmp),
+        ))
+        cases.append((
+            "split: the same frame PASSES over the painter's own rect",
+            DREW,
+            run(dark_neighbour, "splittrue", tmp, rect_arg),
+        ))
+        # The configuration `android-splitscreen` actually produces today, with
+        # Settings in the other half: both panes light, and both readings agree.
+        # It is here so a change that only ever fixes the disagreeing cases
+        # cannot break the agreeing one.
+        both_light = png(W, H, split_screen(painter_drew=True, neighbour_drew=True))
+        cases.append((
+            "split: painter drew, light neighbour — the display survey passes",
+            DREW,
+            run(both_light, "splitboth", tmp),
+        ))
+        cases.append((
+            "split: painter drew, light neighbour — and so does its rect",
+            DREW,
+            run(both_light, "splitboth", tmp, rect_arg),
+        ))
+        painter_only = dark_neighbour
+        # The verdict names which region it judged, because a transcript is
+        # usually all that survives a run and the two verdicts are not the same
+        # claim.
+        status, output = run(painter_only, "splittrue", tmp, rect_arg)
+        cases.append((
+            "the verdict names the painter's window",
+            True,
+            ("the painter's window at 0," in output, output),
+        ))
+        cases.append((
+            "and says no chrome was excluded from it",
+            True,
+            ("no chrome exclusion" in output, output),
+        ))
+
+        # A rect is clamped to the screenshot rather than read past its end. A
+        # rotation between the logged bounds and the capture does this, and an
+        # unclamped rect reads the next row's pixels rather than raising.
+        cases.append((
+            "a rect wider than the screenshot is clamped, not fatal",
+            DREW,
+            run(painter_only, "splittrue", tmp, f"--rect=0,{pane[1]},{W * 3},{pane[3]}"),
+        ))
+        cases.append((
+            "a rect that misses the screenshot cannot judge",
+            UNREADABLE,
+            run(painter_only, "splittrue", tmp, f"--rect={W * 2},0,{W},{H}"),
+        ))
+        # Malformed rects are refused rather than partly parsed: a survey over
+        # the wrong region is exactly what this script must not do.
+        for bad, key in (("0,0,100", "three"), ("a,b,c,d", "words"),
+                         ("0,0,0,100", "zerowide"), ("0,0,100,-5", "negative")):
+            cases.append((
+                f"a malformed rect {bad!r} is refused",
+                UNREADABLE,
+                run(painter_only, "splittrue", tmp, f"--rect={bad}"),
+            ))
 
         # --- issue #1029 §2 and §3: unreadable is 2, never 1 ----------------
         good = png(W, 64, small)
