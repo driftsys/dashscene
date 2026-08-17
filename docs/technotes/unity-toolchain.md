@@ -1,14 +1,22 @@
 # Technote — the Unity build environment, and the C ABI seam proven
 
 Informative. **Measured 2026-08-17**, story #1230 under epic #1106. Nothing
-depends on this note. It exists because epic #1106 has three entry conditions
-that are all the repository owner's, and two of them are cheaper to decide with
-evidence that a Unity project can reach `dashscene-ffi` at all than without it.
+depends on this note. It exists because epic #1106's entry conditions are all
+the repository owner's — three on the day this was measured, two after the
+ruling recorded below — and they are cheaper to decide with evidence that a
+Unity project can reach `dashscene-ffi` at all than without it.
 
 **Written for someone deciding, not for someone repeating.** The commands are
 here so a claim can be checked, but the audience is
-`docs/decisions/unity-separate-repo-deferred.md` — still open on whether that
-repository is created — and issue #1125, the packaging and deployment spike.
+`docs/decisions/unity-separate-repo-deferred.md` and issue #1125, the packaging
+and deployment spike.
+
+**The first of those two was decided later the same day, partly on this note.**
+The C# package is sited in this repository under `unity/` rather than in a
+separate repository, so the question described above as "still open on whether
+that repository is created" is closed, and one of epic #1106's entry conditions
+went with it. What this note contributed is below and is unchanged. Issue #1125
+is still open and this note is still its input.
 
 **What was proven is narrow, and the narrowness is the point.** A Unity project
 called `ds_abi_version` and got back the value the committed header declares, in

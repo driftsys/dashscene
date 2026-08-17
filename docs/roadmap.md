@@ -1237,7 +1237,13 @@ the same treatment in a shape the epic settles, and the workspace learns what
 
 The rest of this entry is the survey the v0.15 revision wrote, kept because the
 five-target picture is what the split was cut from. **Android, iOS and Unity
-below are v0.19, v1 and v0.21, not this slice.**
+below are v0.19, v1 and v0.21, not this slice.** Read it as the state on that
+date, not as a claim about today: Android's "nothing" row was overtaken by
+v0.19, and the Unity row's separate repository was **reversed on 2026-08-17** —
+the C# package is sited in this repository under `unity/`
+([`decisions/unity-separate-repo-deferred.md`](decisions/unity-separate-repo-deferred.md)),
+which also renames `dashscene-unity` to `dashpaint-abi` (issue #1239). The
+survey below is left as written rather than corrected in place.
 
 Delivers, as first written: **platform reach — web, desktop and Android.** iOS
 and the Unity host follow in v1. Everything below boundary B is a library;
@@ -1837,9 +1843,9 @@ all four are absent from the schema and from the workspace. Story #1126 on this
 slice is what builds them. Corrected, and the issue is now labelled `debt`.
 
 **The MVP pair are two epics because the halves gate on different kinds of
-thing** — #1106 on three owner-supplied **decisions**, #1107 on a **device**.
-One epic would have made the whole slice read as blocked whenever either half
-was.
+thing** — #1106 on owner-supplied **decisions**, three when this was written and
+two since 2026-08-17, #1107 on a **device**. One epic would have made the whole
+slice read as blocked whenever either half was.
 
 **A third epic, #1120, holds what is not MVP.** #1106 and #1107 are MVP epics by
 the owner's ruling of 2026-08-16: a working embedded Unity host, and a measured
@@ -1953,6 +1959,14 @@ artifacts, and a target device is an artifact of the same kind, so the three add
 no new class of blocker. Epic #951 records the ruling and the three placements
 it did not take.
 
+**That comparison lost its other term on 2026-08-17 and the placement still
+holds.** The artifact it pointed at was the Unity C# repository, and siting the
+package under `unity/` turned it into work this repository can do. What remains
+is two rulings and a device — so the shared property is that all three are
+**owner-supplied and none is work a coding session can finish**, which is the
+property epic #951's ruling actually turned on. The narrower "artifact of the
+same kind" reading is what stopped being available.
+
 **What this buys.** **v0.19 and v0.20 are both left with no hardware-gated issue
 at all.** For v0.20 that was true from the first move; for v0.19 it took two,
 because the first pass moved only the debt and left story #842 behind, and #842
@@ -1969,24 +1983,33 @@ target hardware.
 describe Android as working until that measurement is taken, and emulator
 results stay labelled as emulator results.
 
-**Four entry conditions, all owner-supplied**, which is why this slice cannot
+**Three entry conditions, all owner-supplied**, which is why this slice cannot
 simply be started: the layer question of
 [`decisions/host-integration-in-three-layers.md`](decisions/host-integration-in-three-layers.md)
-settled for a Unity host, the BRG record moved from proposed to accepted, the
-Unity C# repository created — it does not exist, and `dashscene-unity` in this
-workspace is Rust-side bindings only — and, for the Android half, a target
-device available. **The fourth gates only the Android half**, and the first
-three only the Unity half, so neither half waits on the other's conditions.
-**The fourth is also the one that is not a decision**: the first three are
-settleable at will, and hardware was expected roughly 2026-08-23.
+settled for a Unity host, the BRG record moved from proposed to accepted, and,
+for the Android half, a target device available. **The third gates only the
+Android half**, and the first two only the Unity half, so neither half waits on
+the other's conditions. **The third is also the one that is not a decision**:
+the first two are settleable at will, and hardware was expected roughly
+2026-08-23.
 
-**Only the second of the four has an issue of its own: #171**, moved here from
+**It was four until 2026-08-17.** "The Unity C# repository created" was the
+third, and the owner's ruling that day sited the C# package in this repository
+under `unity/` instead, which turned it from an artifact only the owner could
+supply into work this repository can do
+([`decisions/unity-separate-repo-deferred.md`](decisions/unity-separate-repo-deferred.md),
+reversed in place). Issue #1239 carries it, together with the rename of
+`dashscene-unity` to `dashpaint-abi` ruled the same day. Epic #1106's body still
+states three and is corrected by a comment on it, which is how this repository
+amends an issue.
+
+**Only the second of the three has an issue of its own: #171**, moved here from
 v1 on 2026-08-16. It holds three records still marked `proposed` and only
 `unity-painter-uses-brg.md` is this slice's, so ratifying that one alone lifts
 the condition. **The first is tracked, though not by an issue of its own** — it
 is open question 4 on #851, "which of the three layers a Unity host occupies",
-recorded there as never settled during the discussion. The third and fourth are
-an artifact and a delivery, with nothing tracking them but this paragraph.
+recorded there as never settled during the discussion. The third is a delivery,
+with nothing tracking it but this paragraph.
 
 **The Unity half's first build step is the data plane.** `dashscene-ffi` is
 shaped around a surface handle: a host gives dashscene a surface and dashscene
@@ -1996,8 +2019,8 @@ today. Boundary B was made FFI-representable at v0.15 by story #600, and has had
 no consumer since.
 
 Depends on: v0.19 for the C ABI it extends, and on v0.20 for the failure
-reporting that ABI gains there. Its first three entry conditions are independent
-of both and can be settled at any time; the fourth is hardware.
+reporting that ABI gains there. Its first two entry conditions are independent
+of both and can be settled at any time; the third is hardware.
 
 **#1107's Track A is not uniform, and the difference is worth planning around.**
 Three of its four items — #885, #960, #969 — exist as code and owe only the run:

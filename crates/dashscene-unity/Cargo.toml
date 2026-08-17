@@ -5,9 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Rust-side FFI bindings consumed by the Unity painter's C# projection layer; the Unity project itself lives in a separate repo, later (docs/decisions/unity-separate-repo-deferred.md)."
-keywords = ["unity", "ffi", "bindings", "rendering", "graphics"]
-categories = ["external-ffi-bindings", "graphics"]
+description = "The C representation of dashscene's painter boundary: an extern \"C\" surface holding dashpaint's value types FFI-representable, with layout pins and round-trip functions a non-Rust painter checks its own declarations against."
+keywords = ["ffi", "abi", "layout", "rendering", "graphics"]
+categories = ["development-tools::ffi", "graphics"]
 
 [lib]
 name = "dashscene_unity"

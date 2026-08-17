@@ -198,9 +198,12 @@ so a one-bit change in a coordinate changes the line.
 is the translation _from_ boundary B, so boundary B is the input. A document
 would put the compiler, the solver and the typesetter upstream of the assertion,
 and a golden that moved would no longer say which of them moved it. The cost is
-that the fixtures are Rust rather than data, so a Unity painter in its own repo
-ports them rather than loading them; the golden text itself is data and does
-transfer.
+that the fixtures are Rust rather than data, so a painter written in C# ports
+them rather than loading them; the golden text itself is data and does transfer.
+Siting that package in this repository under `unity/`
+(`docs/decisions/unity-separate-repo-deferred.md`, ruled 2026-08-17 and not yet
+carried out) does not change the cost: what makes a Rust fixture unloadable is
+the language, not the repository.
 
 ## What the packer deliberately does not emit
 

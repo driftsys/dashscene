@@ -553,8 +553,9 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       read. That is issue #859, now the first story of epic #1106. Boundary B
       itself has two consumers, both Rust painters; it is the **C#** projection
       of it that has had none since story #600 built it. The renderer, its
-      shader library and the C# projection are planned (v0.21), in a separate
-      repository that does not exist yet.
+      shader library and the C# projection are planned (v0.21), as a UPM package
+      in this repository under `unity/`, which does not exist yet (ruled
+      2026-08-17, reversing a separate repository).
 - [ ] **Browsers without WebGPU** — WebGPU is the newer browser graphics
       standard the lean renderer needs. A browser lacking it is told so and
       draws nothing. Supporting the older standard is a redesign, and a v1

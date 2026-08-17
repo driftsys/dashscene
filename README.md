@@ -146,8 +146,12 @@ Not built:
 
 - **The Unity painter.** `crates/dashscene-unity` holds the `extern "C"` surface
   that keeps boundary B representable from C#, and the build enforces it; the
-  painter itself, and the Unity and C# project it will bind to, are a separate
-  repository that does not exist yet.
+  painter itself and the C# package are not written. Two rulings of 2026-08-17
+  decide where they go and are **not yet carried out** (issue #1239): the C#
+  package is sited in this repository under `unity/`, which does not exist, and
+  this crate is to be renamed `dashpaint-abi`, which has not moved
+  (`docs/decisions/unity-separate-repo-deferred.md`,
+  `docs/decisions/crate-name-map.md`).
 - **The umbrella crate.** `crates/dashscene` is a stub; code in this repository
   depends on the individual crates, not on a facade.
 
