@@ -205,7 +205,11 @@ total, nineteen of them the crates above.
                       dashscene-android and demo-android. The second platform's
                       compile gate, and the only one the last two have: their
                       JNI halves compile on no other target. Needs an NDK,
-                      which bootstrap does not install
+                      which bootstrap does not install. **Takes a profile**,
+                      defaulted to debug: `just android release` is what an
+                      attach measurement needs, since issue #960's comparison
+                      is release against debug and nothing built the release
+                      half until story #1229
     just android-lint  clippy those four on that triple plus showcase, which
                       carries its own android arm and which demo-android links,
                       and since issue #1109 the intra-doc-link pass for the
@@ -230,10 +234,35 @@ total, nineteen of them the crates above.
                       Needs no device: both scripts package from the
                       cross-built .so and committed inputs. Needs the SDK
                       build-tools, a JDK and zip, none of which bootstrap
-                      installs. Runs last in CI's android-build job
+                      installs. Runs last in CI's android-build job. Takes the
+                      same profile parameter as `android`, and cross-compiles
+                      **once** for both halves — a warm no-op `just android` was
+                      measured at 10.2 s, so letting each half call it added
+                      about twenty seconds to the slowest CI job.
+                      `DASHSCENE_ANDROID_PROFILE` still wins over the parameter,
+                      which is issue #1057's ruling
     just android-probe  cross-compile the D3a probe, push it to an attached
                       device and run it: what the painter's own device request
                       reports on that adapter (docs/design/android-toolchain.md)
+    just android-layer-cost  the same shape, for Q-6: sweep the number of
+                      mid-frame render-target switches and fit the cost of one
+                      (issue #1128). Windowless, so it needs no APK. It prints
+                      "below this probe's resolution" rather than a slope that
+                      does not clear three standard errors — the first draft's
+                      threshold was 1.12 of them and declared 32% of pure noise
+                      resolved
+    just android-measure  the whole measurement apparatus into one evidence
+                      bundle under target/android-measure/: the adapter probe,
+                      the render-target sweep, the showcase frame capture with
+                      its CPU sampler, the compositor's frame statistics and the
+                      attach procedure, in an order that requires no decision
+                      (story #1229, docs/design/android-toolchain.md). Needs a
+                      device, and **an emulator must be started with `-gpu
+                      host`** or the painter obtains none (issue #1158). It
+                      takes no measurement this repository may record: every
+                      number belongs to #885, #960, #969, #842 or #1128, and
+                      the bundle's own README says whether it is an emulator
+                      result. Not in check and not in CI, which has no device
     just android-splitscreen  build, install and cold-launch the lifecycle
                       harness in split-screen, screenshot it to check the
                       painter drew at all, then assert from logcat that the

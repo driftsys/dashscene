@@ -239,6 +239,239 @@ device goes on running the **previous** build. A test then reads as a working
 build that ignores its own changes. The keystore lives outside the directory the
 script wipes.
 
+## The measurement apparatus, and the procedure at the device
+
+    status  as-built at story #1229 (v0.21, epic #1107). The apparatus is built
+            and verified on an emulator; **no measurement in this section is a
+            device measurement**, and every one of #885, #960, #969, #842 and
+            #1128 stays open until a device has run it.
+
+**One command.** `just android-measure` runs everything below in an order that
+requires no decision, and writes one directory a reader who was not there can
+follow:
+
+    target/android-measure/<device timestamp>/
+      README.md            what this is, which issue each file belongs to, and
+                           whether it is an emulator result
+      environment.md       the device, its properties, and the commit
+      adapter-report.txt   the D3a probe — #885's measurement in full
+      layer-cost.txt       the render-target sweep — Q-6, #1128
+      frames.md            one row per 240 drawn frames, with CPU beside it
+      frames-<scene>.log   the raw logcat each row is derived from
+      attach.md            cold launch to first frame, release against debug
+      sf-timestats.txt     the compositor's own frame statistics over a window
+      sf-latency.txt       superseded on Android 15 — see below
+      gfxinfo.txt          HWUI's view of the same process — see the caveat
+      perfetto-*.md/pbtx   the trace configuration and the command that uses it
+
+**Start the emulator with `-gpu host`, and check the adapter before anything
+else.** The bundle runs the adapter probe first for exactly that reason: under
+the default GPU mode the painter obtains no device, every frame is black, and
+the cost of discovering that from a frame capture is minutes rather than seconds
+(issue #1158). The section above records what each mode reports.
+
+### The five parts, and what each can and cannot say
+
+**The adapter probe (#885)** is unchanged and is described below. It is the
+first step because its verdict decides whether anything after it is a
+measurement or an absence.
+
+**The frame capture (#842)** launches the showcase host once per scene and reads
+the lines `demo-android/src/timing.rs` has printed since 2026-08-09 and which
+nothing read until now. One launch per scene is not a choice: `ShowcaseFrames`
+takes its scene once, from the intent's `--es scene` extra, and nothing switches
+it at run time. The capture asserts that the scene which drew is the scene that
+was asked for, because `select` falls back to the first scene for an unknown
+name rather than failing the launch — so a stale scene list would otherwise
+produce three rows that all secretly measure `surfaces`.
+
+Three properties of that table are easy to misread, and it states all three in
+its own header:
+
+- **`fps if unpaced` is not the frame rate.** The loop is paced by vsync;
+  `Sample::fps_if_unpaced` is the rate the measured work alone would allow,
+  which is what says how much headroom there is.
+- **A sample of 240 drawn frames is not 240 vsyncs**, and on the showcase it is
+  far more. The pulse advances every 2.5 s and the loop skips every frame that
+  would draw nothing, so `advanced()` is false for most vsyncs — measured on
+  2026-08-17, one sample spanned between 10 s and 57 s of wall time. The
+  `wall s` column is what exposes it.
+- **The first sample of a scene carries pipeline warm-up.** Measured, a first
+  sample reported `max 349 ms` against a `p50` of 19 ms. Rows are numbered and
+  never averaged, so the reader drops what they judge to be warm-up rather than
+  having it folded in.
+
+**CPU (#842's other half)** is `utime + stime` from `/proc/<pid>/stat`, over the
+interval **each sample covers** rather than over the session. The alignment is
+what makes the column mean anything: `Timing` clears its buffers on every
+report, so consecutive sample lines partition the drawn frames exactly. The
+sampler writes its readings **into logcat**, through the device's own `log`
+command, so both line kinds carry one clock and one ordering — the alternative
+needs the device epoch mapped onto the host's, and `date +%s` on the device is
+whole seconds, a ±1 s error on an interval of a few seconds.
+
+**GPU, vendor-neutral.** `dumpsys SurfaceFlinger --timestats` is the source that
+describes this painter's frames, because the painter's output _is_ a composited
+layer: total frames, missed frames, a present-to-present histogram, a
+frame-duration histogram, and per-layer jank payloads. It is enabled,
+**cleared**, collected over a window the script names, and then dumped. The
+clear is what bounds the window and it is not optional: `-enable` on an
+already-enabled SurfaceFlinger resets nothing, and a dump taken without it
+reported a `statsStart`/`statsEnd` 161 s apart for a 12 s collection — an
+unbounded interval that looks exactly like a bounded one. `statsStart` and
+`statsEnd` are in the bundle, so the window can be checked rather than assumed.
+
+**Two other sources are captured and neither is the painter's frames.** Both are
+stated here rather than left to be discovered at the device:
+
+- `dumpsys SurfaceFlinger --latency` **returns nothing on Android 15.** Measured
+  on 2026-08-17 against all four layers this process has — the
+  `SurfaceView[...]` container, its `(BLAST)` child that actually receives the
+  buffers, a background layer and an input sink — it gives the refresh period
+  and zero frame rows. The timeline sources superseded it. It is still captured,
+  because the API floor is 33 and it does work on older releases, and because a
+  recorded empty result is what stops the next person trying it.
+- `dumpsys gfxinfo <pkg> framestats` reports HWUI's rendering of the **View
+  hierarchy**, and this host's hierarchy is one `SurfaceView` that draws nothing
+  after layout — the painter draws into that surface directly through wgpu, so
+  its frames never enter that pipeline. On the same run it reported
+  `Total frames rendered: 2` while the compositor counted 192 frames of the same
+  process over 12 s. That contrast is why it is captured at all.
+
+Vendor counters are **deliberately absent** from the committed Perfetto
+configuration. The counter ids differ between Adreno, Mali and PowerVR, and the
+adapter is unknown until the probe reports it on first contact; a guessed id
+yields a silently empty track, which is worse than a configuration that does not
+claim to hold counters. `adb shell perfetto --query` on the device names what it
+actually offers, and that is the second pass.
+
+**The attach procedure (#960)** times a cold launch to its first drawn frame,
+per profile, **with a timeout** — so "no completion observed within N seconds"
+is a recorded outcome rather than a developer waiting. Two intervals are
+reported from `machine.rs`'s own markers: `attaching` to `attached` is the
+acquisition, which is what #960 says is unmeasured, and `attaching` to
+`first frame` adds the first tick and draw. `am start -W`'s `TotalTime` is
+recorded beside them and is a different quantity: a window can be displayed with
+nothing drawn in it, which is exactly what issue #1158 produces.
+
+Four outcomes are distinguished and not two, on the reading issue #1080
+established: `attached` is a finished acquisition; `attach failed:` or
+`could not rebuild the surface:` is one that finished and failed; `attaching`
+with none of those after it is the wedge; and no `attaching` at all means the
+loop never started. Reading "no `attached`" as a wedge on its own calls every
+failed attach one.
+
+`just android release` exists for this, and is new at this story: the profile is
+a parameter on `android`, `android-apk` and both `_apk-*` recipes, defaulted to
+`debug` so every existing caller is unchanged. Before it there was no recipe for
+the release half of #960's comparison at all, which is why the figure below it
+was taken by hand.
+
+### The witness, and which window it judges (issue #1191)
+
+`assert-drew.py` is the only evidence that the Android painter drew anything,
+and until story #1229 it surveyed the **whole display** minus a fraction of the
+top and bottom. That is roughly the painter's area in the fullscreen phase and
+it is not in multi-window, where the painter owns about half the screen and
+another window owns the rest — so the verdict was partly about the neighbour.
+
+It now takes `--rect X,Y,W,H`, and `HarnessActivity` logs exactly that on every
+`surfaceChanged`, from `View.getLocationOnScreen`:
+
+    I dashscene: harness: window bounds 0,176 2560x1360
+
+`just android-splitscreen` reads the **last** such line — the cold launch and
+the Settings launch each resize the window — and passes it. With no line the
+script surveys the display exactly as before, so a run that cannot read the
+bounds is degraded rather than broken.
+
+**The chrome fractions do not apply inside a rect**, and that is the part the
+issue did not anticipate. They exist to remove the status bar, the title bar,
+the multi-window caption and the gesture-navigation bar, every one of which is
+outside the painter's window — so applying them again would discard 26% of the
+pane, and on this emulator it discarded the wrong 26%: an 18% top fraction of
+the window above starts the survey at row 420, and the harness's document is
+drawn in rows 176 to 300. The whole of what the painter drew fell inside the
+exclusion, and the script reported "the painter drew nothing" about a frame that
+had drawn.
+
+**Two corrections to what that issue says**, both established by construction
+rather than argued:
+
+- Its stated defect is a false **PASS**, with a colourful neighbour supplying
+  the colours and the light ground while the painter's pane is black. That
+  mechanism is not reachable in the code PR #1188 shipped: the issue names
+  `MIN_LIGHT_FRACTION`, which that pull request's final revision replaced with
+  `MAX_INK_FRACTION`, and a black pane filling half the survey is about half its
+  ink — five times over a 10% ceiling.
+- What is real is the mirror image, and for a gate it is worse: the painter
+  draws correctly, the neighbour is dark, and the display survey **fails**. A
+  false FAIL in the one check that witnesses the painter reads as a painter
+  regression.
+
+The rect closes both directions, because the verdict stops depending on the
+neighbour at all. `assert-drew-test.py` carries all four combinations.
+
+**What it does not close is the calibration, and that needs a device (issue
+#1232).** The three thresholds are derived from a host render of the fixture
+filling the frame. The harness draws its document at the document's own size, so
+on this emulator's 2560x1360 surface the drawn content is about 1% of the pane —
+79 distinct colours, and 98.8% of the pane dark. Both bounds lose their meaning
+together: the ceiling refuses a frame that did draw, and the floor, which exists
+to say the glyphs drew, is satisfied by the emptiness alone.
+
+So `just android-splitscreen` does not pass on this AVD today. **That is not a
+regression from story #1229**: `origin/main`'s own script, run on the same
+screenshot, gives the same FAIL with a worse diagnosis. It does contradict the
+2026-08-16 line above recording an end-to-end pass on the same AVD, and this
+record does not claim to know which run was anomalous.
+
+### What an emulator run showed, and what it does not settle
+
+**All of these are emulator results on the API 35 `medium_tablet` image with
+`-gpu host`, on 2026-08-17. None of them is a device measurement, and none of
+them closes any issue.** They are recorded because two of them contradict what
+this file said, which is a fact about the records rather than about a device.
+
+**The debug attach completed.** 2.37 s to first frame in debug against 1.50 s in
+release — a ratio of about 1.6, not a hang. This file and issue #960 both say
+"over 218 s for a debug one, abandoned before it completed", and that figure was
+taken on the **automotive** image in its **default GPU mode**. So "a debug
+attach never completes" is not a property of the debug build on its own. Which
+of the two variables explains the earlier result is **not settled by this run**
+— one measurement in one configuration cannot refute a class — and #960's device
+half is what settles it.
+
+**The render-target sweep resolves on this GPU.** `just android-layer-cost` fits
+a line over 0 to 12 layers at 1920x1080 and reported **+0.198 ms per layer, with
+a standard error of 0.005 ms**, on the host's Metal backend. An earlier run of
+the same sweep on the same machine gave **+0.427 ms** — the difference is what
+else the machine was doing, which is precisely why the figure is reported with
+its own uncertainty and why neither number is a fact about anything but that
+host. Q-6 is about a tiling GPU, so both are quoted only as evidence that the
+probe produces a resolvable answer rather than noise.
+
+**It produced noise first, twice, and both fixes are the interesting part.** At
+30 frames per point the marginal column swung ±1.3 ms with no trend in it;
+taking the **minimum** per point fixed that, since every source of error in this
+measurement makes a frame slower and none makes one faster. Then the test
+deciding whether the slope meant anything compared it against the residual
+spread over the sweep — which reads as honest and is a **1.12-sigma** test.
+Simulated over 20000 sweeps at a true slope of zero, that form declared **32%**
+of pure noise resolved, at every noise level, since it is scale-free. It is now
+three standard errors of the slope, which the same simulation puts at 1.1%, and
+the probe prints "BELOW THIS PROBE'S RESOLUTION" with both figures rather than a
+number. A six-point sweep on this host demonstrates it: `+0.0717 ms` against a
+0.165 ms threshold is refused, where the old rule would have printed it as a
+per-layer cost.
+
+**The sweep is the one step of the bundle with no timeout**, because it is a
+plain executable under `adb shell` with no host-side loop to bound it.
+`DS_LAYER_MAX` and `DS_LAYER_FRAMES` are what bound it instead, and a first run
+on unknown hardware should lower both — a shorter sweep is a weaker measurement
+rather than a broken one, and the resolution test above reports the weakness
+instead of hiding it.
+
 ## The probe
 
 `crates/dashscene-gpu/examples/adapter_report.rs`, run by `just android-probe`,
@@ -319,12 +552,38 @@ failed and the storage-buffer limit is zero; the request did not fail _because
 of_ the storage-buffer limit specifically, and this record does not claim it
 did.
 
-### The emulator cannot be made to use the host GPU for Vulkan
+### The automotive emulator cannot be made to use the host GPU for Vulkan
 
-Worth recording so it is not retried. The emulator ships `Vulkan = off` in its
-own `lib/advancedFeatures.ini`, which reads like the reason its Vulkan adapter
-is a CPU rasteriser. It is not. Setting `Vulkan = on` in
-`~/.android/advancedFeatures.ini` and restarting applies the flag —
+**This heading said "the emulator" until 2026-08-17, and as a general claim that
+is false.** What is recorded below holds for the automotive image launched in
+its default GPU mode, and it does not generalise: on the API 35 `medium_tablet`
+image started with **`-gpu host`**, `just android-probe` reports the guest's
+Vulkan adapter as the host GPU behind MoltenVK, and the painter's device request
+succeeds on it. Measured on 2026-08-17, story #1229:
+
+    adapter 0  Vulkan, Apple M3, IntegratedGpu
+               driver MoltenVK 1.4.0
+               max_storage_buffers_per_shader_stage 31
+               device request OK
+
+    adapter 1  Gl, Android Emulator OpenGL ES Translator (Apple M3), IntegratedGpu
+               driver OpenGL ES 3.0 (4.1 Metal - 89.4)
+               max_storage_buffers_per_shader_stage 0
+               device request FAILED — max_compute_workgroups_per_dimension
+
+That is still an **emulator** result and still describes this machine's GPU
+rather than a device, so it changes nothing about D3a or #885. What it does
+change is the reading two paragraphs below: the emulator's only painter-capable
+adapter is a CPU rasteriser **in that configuration**, and with `-gpu host` on a
+handheld image it is not. It is also the mechanism behind issue #1158 — the flag
+does not merely make the emulator faster, it is what gets the painter an adapter
+it can use at all.
+
+The rest of this section is the automotive-image measurement, unchanged. The
+emulator ships `Vulkan = off` in its own `lib/advancedFeatures.ini`, which reads
+like the reason its Vulkan adapter is a CPU rasteriser. It is not. Setting
+`Vulkan = on` in `~/.android/advancedFeatures.ini` and restarting applies the
+flag —
 
     Feature 'Vulkan' (21) is overridden to 'enabled'
 

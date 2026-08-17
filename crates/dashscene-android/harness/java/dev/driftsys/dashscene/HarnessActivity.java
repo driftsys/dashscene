@@ -5,6 +5,7 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.view.View;
 import android.view.ViewGroup;
 
 import java.io.ByteArrayOutputStream;
@@ -126,9 +127,61 @@ public final class HarnessActivity extends Activity implements SurfaceHolder.Cal
         Log.i(TAG, "harness: surfaceCreated");
     }
 
+    /**
+     * Logs where on the display this window actually is (issue #1191).
+     *
+     * <p>{@code adb exec-out screencap -p} captures the <b>whole display</b>, and
+     * {@code assert-drew.py} surveyed all of it minus a fraction of the top and
+     * bottom. In the fullscreen phase that is roughly the painter's area. In
+     * multi-window it is not: {@code am start --windowingMode 6} gives this
+     * activity about half the screen, and the other half belongs to another
+     * window — so a colourful second pane can supply the distinct colours, the
+     * light ground and the ink while this pane is black. That is a false PASS by
+     * a route <b>no exclusion fraction can close</b>, because the region to
+     * exclude is not a fraction of the display; it is wherever the window manager
+     * put the other window.
+     *
+     * <p>{@code surfaceChanged} carries an extent and no position, which is the
+     * missing half. Issue #1191 lists three ways to supply the origin and calls
+     * this one "the honest one and the only one that cannot be defeated by a
+     * coincidence": searching the screenshot for a region matching the logged
+     * size is wrong whenever two windows share a size, which split-screen makes
+     * ordinary rather than exotic.
+     *
+     * <p>The bounds are the <b>SurfaceView's</b> and not the window's, because
+     * the painter owns the surface and not the caption bar above it — so what is
+     * logged is exactly the region a screenshot should be surveyed over.
+     *
+     * <p>Physical pixels, matching what {@code surfaceChanged} reports and what a
+     * screenshot holds. {@code getLocationOnScreen} is already in those units, so
+     * nothing is scaled here.
+     *
+     * <p>Best-effort by construction: a view that is not laid out yet reports a
+     * zero size, and that is logged as a refusal rather than as a rect. A missing
+     * line is what {@code assert-drew.py} falls back to the whole display for, so
+     * the check never becomes unrunnable because of this.
+     */
+    private void logWindowBounds() {
+        // The SurfaceView is the only child of the content view this activity
+        // set. Reached that way because a SurfaceHolder exposes no View.
+        View view = findViewById(android.R.id.content);
+        if (view instanceof ViewGroup && ((ViewGroup) view).getChildCount() > 0) {
+            view = ((ViewGroup) view).getChildAt(0);
+        }
+        if (view == null || view.getWidth() <= 0 || view.getHeight() <= 0) {
+            Log.i(TAG, "harness: window bounds unavailable — the view is not laid out");
+            return;
+        }
+        int[] at = new int[2];
+        view.getLocationOnScreen(at);
+        Log.i(TAG, "harness: window bounds " + at[0] + "," + at[1]
+                + " " + view.getWidth() + "x" + view.getHeight());
+    }
+
     @Override
     public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
         Log.i(TAG, "harness: surfaceChanged " + width + "x" + height);
+        logWindowBounds();
         if (document == null) {
             return;
         }
