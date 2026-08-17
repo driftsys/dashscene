@@ -21,17 +21,38 @@
  * does not leave its old asset behind (issue #156).
  *
  * Each capture also writes `corpus/figma-fixtures/<name>.receipt.json`: the
- * captured `version` plus the image refs it resolved. The unchanged-fixture
- * pre-check reads that small receipt instead of parsing the whole multi-MB
- * capture for one field (issue #91). The receipt caches `dashc`'s ref answer,
- * so after the lowering widens what it can name, delete the receipts and
- * re-run the capture: they re-derive from the committed captures without any
- * `GET /file` spend.
+ * `version` and `last_touched_at` Figma reported when the capture was fetched,
+ * plus the image refs it resolved. The unchanged-fixture pre-check reads that
+ * small receipt instead of parsing the whole multi-MB capture for one field
+ * (issue #91). The receipt caches `dashc`'s ref answer, so after the lowering
+ * widens what it can name, **bump `REFS_CONTRACT`** and re-run the capture: the
+ * refs re-derive from the committed captures without any `GET /file` spend.
+ * **Do not delete the receipts to achieve that** — a deleted receipt takes the
+ * observed pair with it, which cannot be re-derived, so every fixture then costs
+ * a full fetch (issue #965). The contract bump is what invalidates the refs and
+ * only the refs.
+ *
+ * **The skip needs both halves of that pair, and `version` alone is not a
+ * content identity** (issue #965). `prototype-refused` was reported "unchanged"
+ * at a version identical to the live file's while its committed content was two
+ * frames and a frame rebuild behind — a cache keyed on a value this tool itself
+ * wrote, which once right beside wrong content made the fixture permanently
+ * stale and reported it as current. `last_touched_at` is Figma's own statement
+ * about when the file's content last moved, and it moved in that case where the
+ * version did not.
+ *
+ * Two consequences, both deliberate. The metadata read that precedes a capture
+ * is the one whose answer is recorded, so a receipt claims a moment no newer
+ * than the body beside it. And a receipt with no readable pair — one written
+ * before this field existed — cannot be re-derived from a committed capture,
+ * which carries a `version` field and no timestamp, so it costs one `GET /file`
+ * per fixture, once. Inventing a timestamp nobody observed is the fault this
+ * closes.
  *
  * HTTP, auth, and rate limiting are delegated to the REST client in
  * `fetch.ts`, which enforces the docs/decisions/figma-access-plan-and-pat-policy.md access rules. This
- * tool adds the capture policy on top: a metadata version check runs first,
- * so the full `GET /file` is skipped when the file is unchanged.
+ * tool adds the capture policy on top: a metadata check runs first, so the full
+ * `GET /file` is skipped when the file is unchanged.
  *
  * Run via `deno task capture` with FIGMA_TOKEN set to a PAT carrying
  * the scopes file_content:read, file_metadata:read, and
@@ -41,6 +62,7 @@
 import {
   createFigmaClient,
   type FigmaClient,
+  type FileMeta,
   requireFigmaToken,
 } from "./fetch.ts";
 import { resolveImages } from "./images.ts";
@@ -188,6 +210,36 @@ export const REFS_CONTRACT = 2;
  */
 export interface CaptureReceipt {
   readonly version: string;
+  /**
+   * The file's `last_touched_at` when this capture was fetched — the UTC
+   * ISO 8601 time Figma reports the file's **content** was last modified.
+   *
+   * **Required, and that is the migration** (issue #965). A receipt written
+   * before this field existed is rejected by {@link parseReceipt}, which sends
+   * the pre-check down the re-derive path; that path cannot recover a
+   * timestamp from a committed capture, so it falls through to a full
+   * `GET /file`. Every fixture therefore re-captures once, which is the right
+   * answer given the fault this closes: a capture that has been reported
+   * unchanged under the old rule may genuinely be stale.
+   */
+  readonly lastTouchedAt: string;
+  /**
+   * The `lastModified` the captured `GET /file` body carried — **recorded and
+   * never compared**.
+   *
+   * It is the field this repository has actually measured moving:
+   * `docs/technotes/figma-rest-shapes.md` records it advancing across all three
+   * re-captures taken on 2026-08-15, including `prototype-refused`'s, where the
+   * `version` did not move at all. The skip compares `lastTouchedAt` instead,
+   * because that comes from the same endpoint on both sides and comparing two
+   * fields of two endpoints would assume they are the same instant.
+   *
+   * So this is written to settle that assumption with data rather than
+   * inference: one real `just deno-capture` run makes every receipt carry both,
+   * and whether they agree is then readable from the corpus instead of argued
+   * about. Optional, because a metadata-only skip never sees a body.
+   */
+  readonly lastModified?: string;
   readonly imageRefs: readonly string[];
 }
 
@@ -197,16 +249,41 @@ export interface CaptureReceipt {
  * Null sends the caller down the re-derive path.
  */
 export function parseReceipt(text: string): CaptureReceipt | null {
+  const observed = observedPair(text);
+  if (observed === null) return null;
+  const parsed = JSON.parse(text) as { refsContract?: unknown };
+  return parsed.refsContract === REFS_CONTRACT ? observed : null;
+}
+
+/**
+ * The **observed** half of a receipt — the pair this tool watched Figma report
+ * when it captured — with the refs contract deliberately not checked.
+ *
+ * Separate from {@link parseReceipt} so a refs-contract bump keeps costing
+ * nothing (issue #91): that bump invalidates the `imageRefs` list, which is
+ * re-derived locally from the committed capture, and it says nothing about
+ * `version` or `lastTouchedAt`, which cannot be re-derived at all. A capture
+ * carries its own `version` field and **no** timestamp, so a receipt rebuilt
+ * from one would have to invent the half that decides the skip — which is the
+ * shape of the fault issue #965 closes.
+ *
+ * Null for anything this cannot read: a parse failure, or either half of the
+ * pair missing or not a string. That sends the caller to a full capture, which
+ * is the safe direction — a wrong skip cannot be recovered from and a wrong
+ * fetch costs one request.
+ */
+function observedPair(text: string): CaptureReceipt | null {
   try {
     const parsed = JSON.parse(text) as {
       version?: unknown;
-      refsContract?: unknown;
+      lastTouchedAt?: unknown;
+      lastModified?: unknown;
       imageRefs?: unknown;
     } | null;
     if (
       parsed === null || typeof parsed !== "object" ||
       typeof parsed.version !== "string" ||
-      parsed.refsContract !== REFS_CONTRACT ||
+      typeof parsed.lastTouchedAt !== "string" ||
       !Array.isArray(parsed.imageRefs) ||
       parsed.imageRefs.some((ref) => typeof ref !== "string")
     ) {
@@ -214,6 +291,12 @@ export function parseReceipt(text: string): CaptureReceipt | null {
     }
     return {
       version: parsed.version,
+      lastTouchedAt: parsed.lastTouchedAt,
+      // Carried when present and never required: it is an observation, not a
+      // term of the skip.
+      ...(typeof parsed.lastModified === "string"
+        ? { lastModified: parsed.lastModified }
+        : {}),
       imageRefs: parsed.imageRefs as string[],
     };
   } catch {
@@ -225,27 +308,16 @@ export function formatReceipt(receipt: CaptureReceipt): string {
   return JSON.stringify(
     {
       version: receipt.version,
+      lastTouchedAt: receipt.lastTouchedAt,
+      ...(receipt.lastModified === undefined
+        ? {}
+        : { lastModified: receipt.lastModified }),
       refsContract: REFS_CONTRACT,
       imageRefs: receipt.imageRefs,
     },
     null,
     2,
   ) + "\n";
-}
-
-/**
- * The `version` a captured fixture records, or null when it carries none.
- *
- * A capture with no readable version cannot be compared against the file's
- * metadata, so it is re-fetched rather than trusted.
- */
-function versionOf(captured: string): string | null {
-  try {
-    const version = (JSON.parse(captured) as { version?: unknown }).version;
-    return typeof version === "string" ? version : null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -317,26 +389,62 @@ export async function captureFixtures(
       // The receipt is what makes the unchanged path cheap (issue #91): a
       // few bytes instead of a multi-MB parse. It only speaks for a capture
       // that exists — a receipt whose capture was deleted is ignored.
-      let receipt = (await hasCapture(name))
-        ? parseReceipt((await readReceipt(name)) ?? "")
+      // Read once each, and both decisions made from the same bytes: the
+      // re-derive path below asks a second question of this text, and two reads
+      // could answer about two different files.
+      const receiptText = (await hasCapture(name))
+        ? ((await readReceipt(name)) ?? "")
         : null;
+      let receipt = receiptText === null ? null : parseReceipt(receiptText);
       if (receipt === null) {
-        // No receipt (or a stale-format one): derive it from the committed
-        // capture, spending no GET /file budget, and self-heal for next run.
-        const captured = await readCapture(name);
-        const capturedVersion = captured === null ? null : versionOf(captured);
-        if (captured !== null && capturedVersion !== null) {
+        // A receipt rejected only for its refs contract still holds an observed
+        // `version` and `lastTouchedAt`, and those are the two the skip below
+        // turns on. So the refs list is re-derived from the committed capture
+        // through the current wasm module — one local parse, no `GET /file`
+        // spend, which is the whole point of `REFS_CONTRACT` (issue #91) — and
+        // the pair is carried across rather than invented.
+        //
+        // **What is deliberately not done is deriving the pair itself** (issue
+        // #965). A committed capture carries a `version` field and no
+        // timestamp, so a receipt rebuilt from one would claim a moment nobody
+        // observed. A receipt with no readable pair therefore falls through to
+        // a full capture, exactly as a missing one does.
+        const observed = receiptText === null
+          ? null
+          : observedPair(receiptText);
+        const captured = observed === null ? null : await readCapture(name);
+        if (observed !== null && captured !== null) {
           receipt = {
-            version: capturedVersion,
+            version: observed.version,
+            lastTouchedAt: observed.lastTouchedAt,
+            lastModified: observed.lastModified,
             imageRefs: imageRefsOf(dashc, name, captured, log),
           };
           await writeReceipt(name, formatReceipt(receipt));
         }
       }
 
+      // Read once and reused below, so a fixture that goes on to capture pays
+      // one metadata request and not two.
+      let meta: FileMeta | null = null;
       if (receipt !== null) {
-        const meta = await client.fileMeta(fileKey);
-        if (meta.version === receipt.version) {
+        meta = await client.fileMeta(fileKey);
+        // **Both, and that is the whole of issue #965.** `version` alone is not
+        // a content identity: `prototype-refused` was reported unchanged at a
+        // version identical to the live file's while its committed content was
+        // two frames and a frame rebuild behind, so no number of re-runs could
+        // ever have refreshed it. `last_touched_at` is Figma's own statement
+        // about when the file's content last moved, and it moved in that case
+        // where the version did not.
+        //
+        // An absent `last_touched_at` — a response that carried none, or one
+        // that lied about the type — reads as a mismatch and re-captures. That
+        // is the safe direction: this check exists because a skip cannot be
+        // recovered from, while a re-capture only costs a request.
+        if (
+          meta.version === receipt.version &&
+          meta.last_touched_at === receipt.lastTouchedAt
+        ) {
           // The JSON is current. Its image bytes may not be — a fixture
           // captured before image capture existed, or one whose asset file was
           // deleted, has a current JSON and no bytes. Checking the version
@@ -348,7 +456,10 @@ export async function captureFixtures(
           }
 
           if (absent.length === 0) {
-            log(`${name}: unchanged at version ${receipt.version}, skipping`);
+            log(
+              `${name}: unchanged at version ${receipt.version} and ` +
+                `last_touched_at ${receipt.lastTouchedAt}, skipping`,
+            );
             results.push(
               { name, fileKey, action: "unchanged", version: receipt.version },
             );
@@ -373,6 +484,31 @@ export async function captureFixtures(
           );
           continue;
         }
+      }
+      // **The metadata before the file, not after.** The pair written to the
+      // receipt has to describe content no newer than what is captured: an edit
+      // landing between these two calls should make the next run re-capture,
+      // which a timestamp read first produces and a timestamp read last hides.
+      // The receipt then claims a moment slightly before the body it describes,
+      // and erring that way costs one request where the other way costs a
+      // fixture that reports itself current forever (issue #965).
+      //
+      // `??=` rather than a second read: the pre-check above already made this
+      // call whenever there was a receipt to check, and its answer is the one
+      // that precedes the fetch.
+      const before = (meta ??= await client.fileMeta(fileKey));
+      // **A metadata response with no timestamp is refused, not written as a
+      // sentinel.** An empty string would parse, compare unequal against every
+      // real timestamp, and re-capture this fixture on every run from then on —
+      // a silent loop against a serialised limiter, indistinguishable in the log
+      // from a fixture that genuinely keeps changing. Failing here says so once.
+      const touched = before.last_touched_at;
+      if (touched === undefined) {
+        throw new Error(
+          `${name}: GET /v1/files/${fileKey}/meta answered no last_touched_at, ` +
+            `which the unchanged-fixture check needs (issue #965). The capture ` +
+            `is not written: a receipt without it would re-capture forever.`,
+        );
       }
       const file = await client.file(fileKey);
       // The capture is the raw response minus its non-deterministic fields:
@@ -402,7 +538,19 @@ export async function captureFixtures(
       }
       await writeReceipt(
         name,
-        formatReceipt({ version: file.version, imageRefs: [...refs] }),
+        formatReceipt({
+          version: file.version,
+          lastTouchedAt: touched,
+          // The body's own field, beside the metadata endpoint's. See
+          // `CaptureReceipt.lastModified`: recorded so the next real capture
+          // run says whether the two are the same instant.
+          lastModified:
+            typeof (file as { lastModified?: unknown }).lastModified ===
+                "string"
+              ? (file as { lastModified: string }).lastModified
+              : undefined,
+          imageRefs: [...refs],
+        }),
       );
 
       // The refs just resolved are the fixture's whole live set, so anything

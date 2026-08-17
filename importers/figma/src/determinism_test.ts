@@ -246,7 +246,11 @@ Deno.test("the capture receipt is byte-identical, with refs anchored sorted", ()
       [...imageRefs].sort(),
       "image refs come back sorted",
     );
-    return formatReceipt({ version, imageRefs });
+    return formatReceipt({
+      version,
+      lastTouchedAt: "2026-08-16T12:00:00Z",
+      imageRefs,
+    });
   };
 
   assertEquals(receiptFrom(), receiptFrom());

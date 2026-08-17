@@ -19,6 +19,7 @@ import {
   parseManifest,
   parseReceipt,
   PLACEHOLDER_FILE_KEY,
+  REFS_CONTRACT,
 } from "./capture.ts";
 import { createFigmaClient } from "./fetch.ts";
 import { loadDashc } from "./wasm.ts";
@@ -84,6 +85,11 @@ const emptyCorpus: Omit<CaptureFixturesOptions, "manifest" | "client"> = {
   removeImage: () => Promise.resolve(),
 };
 
+/// One `last_touched_at`, shared by every scripted `/meta` response and every
+/// receipt fixture below, so a test that means "unchanged" says so with both
+/// halves of the pair and not just one (issue #965).
+const TOUCHED = "2026-08-16T12:00:00Z";
+
 Deno.test("parseManifest returns the fixture entries", () => {
   const manifest = parseManifest(MANIFEST_TEXT);
   assertEquals(manifest.fixtures.length, 2);
@@ -122,9 +128,33 @@ Deno.test('parseManifest rejects the reserved name "manifest"', () => {
 });
 
 Deno.test("parseReceipt round-trips and refuses what is not a receipt", () => {
-  const receipt = { version: "5", imageRefs: ["aaa"] };
+  const receipt = { version: "5", lastTouchedAt: TOUCHED, imageRefs: ["aaa"] };
   assertEquals(parseReceipt(formatReceipt(receipt)), receipt);
   assertEquals(parseReceipt("not json"), null);
+  // Reaches the `imageRefs` guard, which a receipt missing an earlier required
+  // field short-circuits past — so this states the whole shape and not the
+  // first field that happens to be checked.
+  assertEquals(
+    parseReceipt(JSON.stringify({
+      version: "5",
+      lastTouchedAt: TOUCHED,
+      refsContract: REFS_CONTRACT,
+      imageRefs: [7],
+    })),
+    null,
+    "a non-string ref is refused",
+  );
+  // And the timestamp guard itself, which the whole migration turns on: a
+  // receipt written before that field existed must not be trusted.
+  assertEquals(
+    parseReceipt(JSON.stringify({
+      version: "5",
+      refsContract: REFS_CONTRACT,
+      imageRefs: [],
+    })),
+    null,
+    "a receipt with no lastTouchedAt is not one this tool trusts (issue #965)",
+  );
   assertEquals(parseReceipt(JSON.stringify({ version: 5 })), null);
   assertEquals(
     parseReceipt(JSON.stringify({ version: "5", imageRefs: [7] })),
@@ -143,13 +173,20 @@ Deno.test("a receipt from an older refs contract is ignored and re-derived", asy
   // subtree. A receipt stamped with it must no longer be trusted.
   const stale = JSON.stringify({
     version: "5",
+    // The observed pair survives a contract bump and is carried across: the
+    // contract invalidates the refs list, and says nothing about when Figma
+    // last touched the file (issue #965).
+    lastTouchedAt: TOUCHED,
     refsContract: 1,
     imageRefs: [],
   });
   assertEquals(parseReceipt(stale), null);
 
   const { client, requests } = scriptedClient({
-    "/v1/files/KEYA/meta": () => jsonResponse({ file: { version: "5" } }),
+    "/v1/files/KEYA/meta": () =>
+      jsonResponse({
+        file: { version: "5", last_touched_at: TOUCHED },
+      }),
   });
   const receiptWrites: string[] = [];
   const results = await captureFixtures({
@@ -169,14 +206,21 @@ Deno.test("a receipt from an older refs contract is ignored and re-derived", asy
   assertEquals(receiptWrites.length, 1);
   assertEquals(parseReceipt(receiptWrites[0]), {
     version: "5",
+    lastTouchedAt: TOUCHED,
     imageRefs: [],
   });
 });
 
 Deno.test("captureFixtures skips the full fetch when the receipt version matches", async () => {
   const { client, requests } = scriptedClient({
-    "/v1/files/KEYA/meta": () => jsonResponse({ file: { version: "5" } }),
-    "/v1/files/KEYB/meta": () => jsonResponse({ file: { version: "6" } }),
+    "/v1/files/KEYA/meta": () =>
+      jsonResponse({
+        file: { version: "5", last_touched_at: TOUCHED },
+      }),
+    "/v1/files/KEYB/meta": () =>
+      jsonResponse({
+        file: { version: "6", last_touched_at: TOUCHED },
+      }),
     "/v1/files/KEYB?plugin_data=shared&geometry=paths": () =>
       jsonResponse({ version: "6", document: { id: "0:0" } }),
   });
@@ -184,8 +228,16 @@ Deno.test("captureFixtures skips the full fetch when the receipt version matches
   // The receipts, as they sit in the corpus beside the captures. Their
   // `version` is what the fixture's metadata is compared against.
   const receipts: Record<string, string> = {
-    "grid-basic": formatReceipt({ version: "5", imageRefs: [] }), // matches meta -> skip
-    "effects-2025": formatReceipt({ version: "4", imageRefs: [] }), // stale -> re-capture
+    "grid-basic": formatReceipt({
+      version: "5",
+      lastTouchedAt: TOUCHED,
+      imageRefs: [],
+    }), // matches meta -> skip
+    "effects-2025": formatReceipt({
+      version: "4",
+      lastTouchedAt: TOUCHED,
+      imageRefs: [],
+    }), // stale -> re-capture
   };
   const results = await captureFixtures({
     ...emptyCorpus,
@@ -215,13 +267,109 @@ Deno.test("captureFixtures skips the full fetch when the receipt version matches
   assert(writes[0].text.endsWith("\n"), "capture should end with a newline");
 });
 
-Deno.test("a missing receipt is re-derived from the capture, not a re-fetch", async () => {
-  // The migration/self-heal path: a capture committed before receipts
-  // existed (or whose receipt was deleted after the lowering widened) costs
-  // one local parse, a receipt write, and the cheap meta check — never a
-  // GET /file.
+Deno.test("a version that matches while the content moved is re-captured", async () => {
+  // **The fault issue #965 records, as a test.** `prototype-refused`'s receipt
+  // held the file's *current* version while the committed capture was two
+  // frames and a frame rebuild behind, so the pre-check reported
+  // "unchanged at version 2385782740689572770, skipping" — correctly by its own
+  // rule and wrongly in fact. No number of re-runs could refresh it: the skip
+  // was a cache keyed on a value the tool itself wrote, and once that value was
+  // right while the content beside it was wrong, the fixture was permanently
+  // stale and reported itself current.
+  //
+  // `last_touched_at` is what moves in that case and `version` is what does
+  // not, so the skip needs both.
   const { client, requests } = scriptedClient({
+    "/v1/files/KEYA/meta": () =>
+      jsonResponse({
+        // The same version the receipt records...
+        file: { version: "5", last_touched_at: "2026-08-16T18:00:00Z" },
+      }),
+    "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
+      jsonResponse({ version: "5", document: { id: "0:0" } }),
+  });
+  const writes: string[] = [];
+  const results = await captureFixtures({
+    ...emptyCorpus,
+    manifest: { fixtures: [{ name: "grid-basic", fileKey: "KEYA" }] },
+    client,
+    hasCapture: () => Promise.resolve(true),
+    // ...and a timestamp that does not.
+    readReceipt: () =>
+      Promise.resolve(
+        formatReceipt({ version: "5", lastTouchedAt: TOUCHED, imageRefs: [] }),
+      ),
+    writeCapture: (name) => {
+      writes.push(name);
+      return Promise.resolve();
+    },
+  });
+  assertEquals(
+    results[0].action,
+    "captured",
+    "the version matches and the content moved, so this must not be skipped",
+  );
+  assertEquals(writes, ["grid-basic"]);
+  assertEquals(requests, [
+    "https://api.figma.com/v1/files/KEYA/meta",
+    "https://api.figma.com/v1/files/KEYA?plugin_data=shared&geometry=paths",
+  ]);
+});
+
+Deno.test("a metadata response with no timestamp fails the fixture", async () => {
+  // **Loudly, once — not a sentinel that re-captures forever.** An absent
+  // `last_touched_at` never compares equal to a recorded one, so the pre-check
+  // correctly declines to skip; what it must not then do is write a receipt
+  // whose timestamp nobody observed, because that receipt mismatches on every
+  // future run and the fixture re-fetches on each one, indistinguishable in the
+  // log from a file that genuinely keeps changing.
+  //
+  // So the capture is refused instead, with the reason named. The corpus keeps
+  // the capture it had rather than gaining a receipt that lies about what was
+  // seen.
+  const { client } = scriptedClient({
     "/v1/files/KEYA/meta": () => jsonResponse({ file: { version: "5" } }),
+    "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
+      jsonResponse({ version: "5", document: { id: "0:0" } }),
+  });
+  const results = await captureFixtures({
+    ...emptyCorpus,
+    manifest: { fixtures: [{ name: "grid-basic", fileKey: "KEYA" }] },
+    client,
+    hasCapture: () => Promise.resolve(true),
+    readReceipt: () =>
+      Promise.resolve(
+        formatReceipt({ version: "5", lastTouchedAt: TOUCHED, imageRefs: [] }),
+      ),
+    writeCapture: () => Promise.resolve(),
+  });
+  assertEquals(results[0].action, "failed");
+  assert(
+    (results[0] as { error?: string }).error?.includes("last_touched_at"),
+    "and the reason names the field, so an operator is not left reading a bare \
+     failure: got {results[0]}",
+  );
+});
+
+Deno.test("a receipt with no observed pair costs a full capture", async () => {
+  // **The self-heal reaches a stale refs contract and not a missing receipt**,
+  // and that split is issue #965's price. A receipt rejected for its contract
+  // still holds the `version` and `lastTouchedAt` this tool watched Figma
+  // report, so the refs list is re-derived locally and those are carried across
+  // — the test above. A receipt that is absent, or that predates
+  // `lastTouchedAt`, holds neither, and a committed capture carries a `version`
+  // field and no timestamp at all. Rebuilding one from it would mean writing a
+  // moment nobody observed, which is exactly how `prototype-refused` came to
+  // report itself current while two frames behind.
+  //
+  // So it costs one `GET /file`, once, per fixture. That is the migration.
+  const { client, requests } = scriptedClient({
+    "/v1/files/KEYA/meta": () =>
+      jsonResponse({
+        file: { version: "5", last_touched_at: TOUCHED },
+      }),
+    "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
+      jsonResponse({ version: "5", document: { id: "0:0" } }),
   });
   const receiptWrites: Array<{ name: string; text: string }> = [];
   const results = await captureFixtures({
@@ -230,18 +378,28 @@ Deno.test("a missing receipt is re-derived from the capture, not a re-fetch", as
       fixtures: [{ name: "grid-basic", fileKey: "KEYA" }],
     },
     client,
+    // A capture on disk and no receipt beside it: the shape a corpus committed
+    // before receipts existed has.
     hasCapture: () => Promise.resolve(true),
     readCapture: () => Promise.resolve(JSON.stringify({ version: "5" })),
+    readReceipt: () => Promise.resolve(null),
+    writeCapture: () => Promise.resolve(),
     writeReceipt: (name, text) => {
       receiptWrites.push({ name, text });
       return Promise.resolve();
     },
   });
-  assertEquals(results[0].action, "unchanged");
-  assertEquals(requests, ["https://api.figma.com/v1/files/KEYA/meta"]);
+  assertEquals(results[0].action, "captured");
+  assertEquals(requests, [
+    "https://api.figma.com/v1/files/KEYA/meta",
+    "https://api.figma.com/v1/files/KEYA?plugin_data=shared&geometry=paths",
+  ]);
+  // And the receipt it writes carries a pair that was observed on this run,
+  // both halves from the metadata read that preceded the fetch.
   assertEquals(receiptWrites.length, 1);
   assertEquals(parseReceipt(receiptWrites[0].text), {
     version: "5",
+    lastTouchedAt: TOUCHED,
     imageRefs: [],
   });
 });
@@ -251,6 +409,10 @@ Deno.test("a receipt without its capture is ignored", async () => {
   // trusting the receipt would skip the fixture forever with no JSON in the
   // corpus at all.
   const { client, requests } = scriptedClient({
+    "/v1/files/KEYA/meta": () =>
+      jsonResponse({
+        file: { version: "1", last_touched_at: TOUCHED },
+      }),
     "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       jsonResponse({ version: "5", document: { id: "0:0" } }),
   });
@@ -261,7 +423,9 @@ Deno.test("a receipt without its capture is ignored", async () => {
     client,
     hasCapture: () => Promise.resolve(false),
     readReceipt: () =>
-      Promise.resolve(formatReceipt({ version: "5", imageRefs: [] })),
+      Promise.resolve(
+        formatReceipt({ version: "5", lastTouchedAt: TOUCHED, imageRefs: [] }),
+      ),
     writeCapture: (name) => {
       writes.push(name);
       return Promise.resolve();
@@ -270,12 +434,21 @@ Deno.test("a receipt without its capture is ignored", async () => {
   assertEquals(results[0].action, "captured");
   assertEquals(writes, ["grid-basic"]);
   assertEquals(requests, [
+    "https://api.figma.com/v1/files/KEYA/meta",
     "https://api.figma.com/v1/files/KEYA?plugin_data=shared&geometry=paths",
   ]);
 });
 
 Deno.test("captureFixtures captures when no previous capture exists", async () => {
   const { client, requests } = scriptedClient({
+    "/v1/files/KEYA/meta": () =>
+      jsonResponse({
+        file: { version: "1", last_touched_at: TOUCHED },
+      }),
+    "/v1/files/KEYB/meta": () =>
+      jsonResponse({
+        file: { version: "1", last_touched_at: TOUCHED },
+      }),
     "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       jsonResponse({ version: "3", document: {} }),
     "/v1/files/KEYB?plugin_data=shared&geometry=paths": () =>
@@ -296,7 +469,9 @@ Deno.test("captureFixtures captures when no previous capture exists", async () =
   // no previous capture exists, so the cheap meta check is skipped entirely
   // and only the two full GET /file requests are made.
   assertEquals(requests, [
+    "https://api.figma.com/v1/files/KEYA/meta",
     "https://api.figma.com/v1/files/KEYA?plugin_data=shared&geometry=paths",
+    "https://api.figma.com/v1/files/KEYB/meta",
     "https://api.figma.com/v1/files/KEYB?plugin_data=shared&geometry=paths",
   ]);
 });
@@ -306,6 +481,10 @@ Deno.test("a capture strips the presigned thumbnailUrl", async () => {
   // fetch: committing it would rewrite every fixture on every capture and
   // land a credential-shaped string in git (issue #141).
   const { client } = scriptedClient({
+    "/v1/files/KEYA/meta": () =>
+      jsonResponse({
+        file: { version: "1", last_touched_at: TOUCHED },
+      }),
     "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       jsonResponse({
         name: "grid-basic",
@@ -335,6 +514,10 @@ Deno.test("a capture prunes image assets its file no longer references", async (
   // committed forever (issue #156). The refs a full capture resolves are the
   // fixture's whole live set, so anything else on disk goes.
   const { client } = scriptedClient({
+    "/v1/files/KEYA/meta": () =>
+      jsonResponse({
+        file: { version: "1", last_touched_at: TOUCHED },
+      }),
     "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       jsonResponse({ version: "3", document: {} }),
   });
@@ -356,7 +539,10 @@ Deno.test("a skipped fixture never has its images pruned", async () => {
   // The images directory is only authoritative when the fixture was actually
   // captured: an unchanged, skipped, or failed fixture proves nothing.
   const { client, requests } = scriptedClient({
-    "/v1/files/KEYA/meta": () => jsonResponse({ file: { version: "5" } }),
+    "/v1/files/KEYA/meta": () =>
+      jsonResponse({
+        file: { version: "5", last_touched_at: TOUCHED },
+      }),
   });
   const removed: string[] = [];
   const results = await captureFixtures({
@@ -365,7 +551,9 @@ Deno.test("a skipped fixture never has its images pruned", async () => {
     client,
     hasCapture: () => Promise.resolve(true),
     readReceipt: () =>
-      Promise.resolve(formatReceipt({ version: "5", imageRefs: [] })),
+      Promise.resolve(
+        formatReceipt({ version: "5", lastTouchedAt: TOUCHED, imageRefs: [] }),
+      ),
     listImages: () => Promise.resolve(["stale-ref"]),
     removeImage: (_name, ref) => {
       removed.push(ref);
@@ -389,6 +577,10 @@ Deno.test("captureFixtures skips a fixture whose fileKey is the placeholder", as
     ],
   });
   const { client, requests } = scriptedClient({
+    "/v1/files/KEYA/meta": () =>
+      jsonResponse({
+        file: { version: "1", last_touched_at: TOUCHED },
+      }),
     "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       jsonResponse({ version: "9", document: {} }),
   });
@@ -414,6 +606,7 @@ Deno.test("captureFixtures skips a fixture whose fileKey is the placeholder", as
   ]);
   // no request carries the placeholder, and no capture file is written for it.
   assertEquals(requests, [
+    "https://api.figma.com/v1/files/KEYA/meta",
     "https://api.figma.com/v1/files/KEYA?plugin_data=shared&geometry=paths",
   ]);
   assertEquals(writes, ["grid-basic"]);
@@ -428,6 +621,14 @@ Deno.test("captureFixtures skips a fixture whose fileKey is the placeholder", as
 
 Deno.test("captureFixtures records a failing fixture without blocking the rest", async () => {
   const { client } = scriptedClient({
+    "/v1/files/KEYA/meta": () =>
+      jsonResponse({
+        file: { version: "1", last_touched_at: TOUCHED },
+      }),
+    "/v1/files/KEYB/meta": () =>
+      jsonResponse({
+        file: { version: "1", last_touched_at: TOUCHED },
+      }),
     "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       new Response("server error", { status: 500 }),
     "/v1/files/KEYB?plugin_data=shared&geometry=paths": () =>
@@ -479,6 +680,10 @@ Deno.test("a captured fixture also captures its image-fill bytes", async () => {
   // is a presigned URL on Figma's asset host, so it arrives through the
   // separate fetchFn.
   const { client } = scriptedClient({
+    "/v1/files/KEYA/meta": () =>
+      jsonResponse({
+        file: { version: "1", last_touched_at: TOUCHED },
+      }),
     "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       new Response(V03_PAINT, { status: 200 }),
     "/v1/files/KEYA/images": () =>
@@ -531,6 +736,10 @@ Deno.test("a failed image download writes nothing at all", async () => {
   // hand. The next run's version check would then call the fixture unchanged,
   // skip it, and never fetch the bytes — a permanently silent gap.
   const { client } = scriptedClient({
+    "/v1/files/KEYA/meta": () =>
+      jsonResponse({
+        file: { version: "1", last_touched_at: TOUCHED },
+      }),
     "/v1/files/KEYA?plugin_data=shared&geometry=paths": () =>
       new Response(V03_PAINT, { status: 200 }),
     "/v1/files/KEYA/images": () =>
@@ -573,7 +782,10 @@ Deno.test("an unchanged fixture whose image bytes are absent still resolves them
   // were never captured — or were deleted — could never get them back. A capture
   // is current only when all of it is.
   const { client, requests } = scriptedClient({
-    "/v1/files/KEYA/meta": () => jsonResponse({ file: { version: "9" } }),
+    "/v1/files/KEYA/meta": () =>
+      jsonResponse({
+        file: { version: "9", last_touched_at: TOUCHED },
+      }),
     "/v1/files/KEYA/images": () =>
       jsonResponse({
         error: false,
@@ -599,7 +811,11 @@ Deno.test("an unchanged fixture whose image bytes are absent still resolves them
     hasCapture: () => Promise.resolve(true),
     readReceipt: () =>
       Promise.resolve(
-        formatReceipt({ version: "9", imageRefs: [V03_PAINT_REF] }),
+        formatReceipt({
+          version: "9",
+          lastTouchedAt: TOUCHED,
+          imageRefs: [V03_PAINT_REF],
+        }),
       ),
     hasImage: () => Promise.resolve(false),
     writeCapture: (name) => {
