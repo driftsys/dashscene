@@ -984,6 +984,71 @@ c-abi:
       -Wl,-rpath,"$(cd target/debug && pwd)"
     "${out}"
 
+# The host dynamic library — the one an editor-side host loads on this machine.
+#
+# **The gap is narrower than "nothing builds one", and stating it precisely is
+# what says why this recipe exists.** `crates/dashscene-ffi` has declared
+# `cdylib` since story #840, and a *debug* library already falls out of two
+# recipes: `assemble` builds the whole workspace, and `c-abi` links its C caller
+# against exactly that file and fails if it is absent. What no recipe produced
+# is the **release** library — the one a host actually loads — and no recipe
+# named the path, so a host author read it out of someone's shell history.
+#
+# `just android` is the other half of the same seam and cross-compiles for
+# `aarch64-linux-android` only. That is not a substitute here: an editor-side
+# host loads a library for *this* triple into its own process, so the Android
+# `.so` is unreachable from it. Story #1230 measured that with a headless
+# `-executeMethod` run rather than a play-mode test, and
+# `docs/technotes/unity-toolchain.md` says which.
+#
+# **Not in `check` or `build`, and that leaves a real gap rather than a covered
+# one.** `c-abi` links this crate in **debug** on every one of those runs, so
+# nothing in any gate links it in release — where `[profile.release]` turns on
+# `lto = true` and `codegen-units = 1`. A release-only link failure in the one
+# library a host is told to load reaches nobody until someone runs this recipe.
+# Adding it would put a full-LTO link into every local `check`, which is a
+# scheduling decision rather than this story's to take: issue #1233.
+# Build the release host dynamic library and print where it landed.
+host-lib:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # **The path comes from cargo, not from a `uname` mapping plus a test that
+    # the file exists.** That is a correctness difference, not a tidier
+    # spelling. `cargo build` does not delete the artifacts of a crate type
+    # that has been removed — drop `cdylib` from `[lib] crate-type`, rebuild,
+    # and the previous `libdashscene_ffi.dylib` is still on disk, which was
+    # measured on a throwaway crate rather than assumed. So a `[ ! -f … ]`
+    # guard passes over a stale library, and this recipe would print the path
+    # of something this run did not produce. That is the shape of issue #1057,
+    # where a stale release `.so` was packaged into an APK and announced as the
+    # release library. `compiler-artifact.filenames` lists only what this
+    # invocation emitted, so a missing cdylib is missing here.
+    #
+    # `jq` is a bootstrap-installed dependency, so this adds no prerequisite.
+    #
+    # **Built first, then asked** — two invocations rather than one, and the
+    # second is a cache hit costing well under a second. `--message-format=json`
+    # puts cargo's diagnostics on stdout as JSON instead of rendering them, so a
+    # single json-mode build that failed would print nothing a reader could act
+    # on. The plain build below keeps that output; the query below it runs
+    # against a tree cargo has already finished with.
+    cargo build -p dashscene-ffi --release
+    lib=$(cargo build -p dashscene-ffi --release --message-format=json | jq -r '
+        select(.reason == "compiler-artifact")
+        | select(.target.name == "dashscene_ffi")
+        | .filenames[]
+        | select(endswith(".dylib") or endswith(".so") or endswith(".dll"))
+      ' | tail -n 1)
+    if [ -z "${lib}" ]; then
+      echo "host-lib: cargo emitted no dynamic library for dashscene-ffi." >&2
+      echo "host-lib: is crate-type cdylib still set in its Cargo.toml?" >&2
+      exit 1
+    fi
+    # cargo reports an absolute path already, and that is what a caller needs:
+    # a Unity project copies this file into its own `Assets/` from outside this
+    # repository, where a path relative to the workspace root is not usable.
+    echo "host-lib: ${lib}"
+
 # The Android API level this repository links against.
 #
 # A floor rather than a target: the NDK ships wrappers from 21 up, and this is

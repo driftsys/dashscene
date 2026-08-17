@@ -87,12 +87,21 @@ Notes:
   reproduction, the margin sweep, and the suggested fix. The reproduction also
   lives as a canary test, so a taffy upgrade that fixes the defect names the
   workarounds to retire.
+- [unity-toolchain.md](unity-toolchain.md) — what it took to get a Unity build
+  environment onto the development machine and prove the C ABI seam from C#: the
+  editor and module versions, the two Android toolchains that do not agree, the
+  `just host-lib` gap, and `ds_abi_version` answering in the editor and in an
+  Android player. Informative, and as much about what is still unknown —
+  packaging, the data plane, target hardware — as about what worked (story
+  #1230).
 
-The four notes above were captured from a 2026-07-13 design discussion and carry
-DECISION / CANDIDATE / OPEN tags. Every `DECISION` and `DECISION
-direction` item
-now links to the `docs/decisions/` record that holds it; `CANDIDATE` and `OPEN`
-items stay here until they harden into one.
+Four of the notes above — `producers-and-ir.md`, `rendering-and-painters.md`,
+`runtime-content.md` and `glossary.md`, named here because "the four above" has
+not meant the last four entries since the list passed eight — were captured from
+a 2026-07-13 design discussion and carry DECISION / CANDIDATE / OPEN tags. Every
+`DECISION` item, and every `DECISION direction` one, now links to the
+`docs/decisions/` record that holds it; `CANDIDATE` and `OPEN` items stay here
+until they harden into one.
 
 See the `sdd-working-memory-lifecycle` rule.
 
