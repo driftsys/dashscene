@@ -24,7 +24,7 @@ host's event loop). Task runner is `just`; tests run under
 - The design record this implements is
   `docs/wip/2026-08-04-demo-backend-badge-design.md`. Read it first.
 - Work in the worktree
-  `/Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge`, on
+  `<worktrees>/dashscene-backend-badge`, on
   branch `story/demo-backend-badge`. Never edit the primary checkout at
   `.../dashscene-staging`.
 - Run `just test` before every commit. It takes about 5 seconds.
@@ -178,7 +178,7 @@ fn the_badge_overlaps_the_content_rather_than_stacking_below_it() {
 Run:
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 cargo test -p showcase --test badge
 ```
 
@@ -303,7 +303,7 @@ pub mod vocabulary;
 Run:
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 cargo test -p showcase --test badge
 ```
 
@@ -335,7 +335,7 @@ Revert both mutations and re-run to confirm PASS again.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 just test
 git add corpus/showcase/src/badge.rs corpus/showcase/src/lib.rs corpus/showcase/tests/badge.rs
 git commit -m "feat(showcase): add the painter badge and its signal"
@@ -398,7 +398,7 @@ fn every_showcase_scene_carries_the_badge_as_its_last_root() {
 Run:
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 cargo test -p showcase --test badge every_showcase_scene
 ```
 
@@ -433,7 +433,7 @@ Make the identical change in `corpus/showcase/src/typography.rs` and
 Run:
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 cargo test -p showcase --test badge
 ```
 
@@ -458,7 +458,7 @@ the assertion.
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 just test
 git add corpus/showcase/src corpus/showcase/tests/badge.rs
 git commit -m "feat(showcase): carry the painter badge in every scene"
@@ -520,7 +520,7 @@ Add to the existing `mod tests` at the bottom of `demo/src/painter.rs`:
 Run:
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 cargo test -p demo painter::tests
 ```
 
@@ -551,7 +551,7 @@ pub fn badge_value(self) -> f32 {
 Run:
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 cargo test -p demo painter::tests
 ```
 
@@ -620,7 +620,7 @@ self.announce_painter();
 Run:
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 just test
 ```
 
@@ -632,7 +632,7 @@ already lists the `showcase` dependency — it does, as
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 git add demo/src/painter.rs demo/src/shell.rs
 git commit -m "feat(demo): announce the drawing painter to the scene badge"
 ```
@@ -659,7 +659,7 @@ This is the check that protects the repository README's picture.
 Run:
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 cargo run -p showcase --example still -- surfaces /tmp/badge-check.png 1600 1000 0 0
 ```
 
@@ -673,7 +673,7 @@ Regenerate the committed image with the exact command
 `corpus/showcase/README.md` records, then check git sees no change:
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 cargo run -p showcase --example still -- surfaces docs/images/showcase-surfaces.png 1600 1000 0 0
 git status --short docs/images/showcase-surfaces.png
 ```
@@ -741,7 +741,7 @@ checklist a person walks, not a test". Add row 34, immediately after row
 - [ ] **Step 8: Run the regression tier and commit**
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 just build
 git add corpus/showcase/README.md
 git commit -m "docs(showcase): record the painter badge in the coverage checklist"
@@ -790,7 +790,7 @@ them.
 Run:
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 ls docs/wip/
 ```
 
@@ -814,7 +814,7 @@ Rebase onto the latest `main`, squash into one conventional commit, and
 force-push.
 
 ```bash
-cd /Users/sebastientasson/Workspace/driftsys/dashscene-backend-badge
+cd <worktrees>/dashscene-backend-badge
 git fetch origin
 git rebase -i origin/main
 git push --force-with-lease -u origin story/demo-backend-badge
