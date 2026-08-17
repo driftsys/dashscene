@@ -23,6 +23,29 @@ command line tool does, and the command line tool is not vendored — so those t
 constants are a record of this vendoring step, not a value read back out of the
 compiled code. Update them in the same commit that replaces the sources.
 
+**Re-check the dismissed CodeQL alerts in that same commit.** Two
+`cpp/integer-multiplication-cast-to-long` findings against these sources are
+dismissed as `won't fix`, each on its own reasoning, and a dismissal does not
+follow the code — a new pin can move these lines or add others.
+
+- **Alert 2**, `astcenc_entry.cpp`, `block_x * block_y * block_z`. Bounded twice
+  over: by the ASTC format, whose largest block is 12x12 in 2D and 6x6x6 in 3D,
+  and more tightly by this build — "Build configuration" below sets
+  `ASTCENC_BLOCK_MAX_TEXELS=144`, so only 2D sizes are compiled and the product
+  cannot exceed 144. Raising that define is what would weaken this one.
+- **Alert 1**, `astcenc_compute_variance.cpp`, `dim_x * dim_y`. Bounded by the
+  size of buffer a caller must supply, **not** by `texel_bytes`. That check
+  multiplies in 64-bit `usize` and so does not constrain this 32-bit multiply at
+  all: `width = height = 2^17` passes it and wraps here. What makes it
+  unreachable is that `Rgba8::new` requires `texels.len() == width * height * 4`
+  exactly, so reaching `w * h >= 2^32` means handing over a slice of at least 16
+  GiB. An earlier version of this note and of the alert's own comment gave the
+  `texel_bytes` reason; both were wrong and are corrected.
+
+Neither line changed between the vendored 5.6.0 and upstream 5.7.0 — checked by
+fetching both files at that tag — so at this pin a version bump does not remove
+either alert. **5.7.0 is not what is vendored here**; see the pin above.
+
 ## What was copied
 
 From the archive's `Source/` directory, every file matching `astcenc*.h` or
@@ -91,3 +114,6 @@ they are made:
 5. Re-run every band and golden check that depends on encoder output. An encoder
    upgrade can change which encoding it picks for a block, so treat it as a
    re-baseline, not a maintenance bump.
+6. Re-check the two dismissed CodeQL alerts, for the same reason as step 4: a
+   dismissal is attached to a line, not to the argument that justified it. "The
+   pin" above records what each one rests on.
