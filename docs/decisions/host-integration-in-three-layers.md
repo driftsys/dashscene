@@ -198,6 +198,32 @@ split-screen.
 destruction says tear the renderer down. The former is a measurement and
 scheduling concern (story #586), the latter a lifetime one.
 
+**Amended 2026-08-16 (issue #1187): built as stated, and the rule holds. What
+this clause still owes is a run on target hardware, and that is the whole of
+it.**
+
+Three things bear on whether D4 holds, and none of them is a measurement — the
+measurements and the emulator conditions are `../design/android-toolchain.md`'s,
+which is where they are stated once, and this record deliberately does not
+restate them.
+
+- **The ordering is a type, so it is asserted without a device.**
+  `crates/dashscene-android/src/handshake.rs` compiles on every target and its
+  tests drive the ordering the callback depends on. That was written because the
+  platform half of that crate is `#[cfg(target_os = "android")]` and no test
+  tier reaches it — the same reason `machine` was later lifted out beside it.
+- **All three of the cases this clause names have now been exercised**, the
+  third only since 2026-08-15. Nothing about the handshake had to change for it:
+  the run that failed before then failed on the build profile, not on the
+  transition. The runs, their dates and what each needed are in
+  `../design/android-toolchain.md`.
+- **None of them has run on target hardware.** That is what stays open, and it
+  is not the same gap as D3a's. D3a owes a **measurement** of the fragment-stage
+  storage-buffer limit (issue #885); this clause owes a **run** of the three
+  transitions on a device (issue #874, retitled on 2026-08-16 because its own
+  title said the split-screen case had never been exercised, which had stopped
+  being true).
+
 **D5 — v0.19 is `SurfaceView` semantics only. `TextureView` is v1.**
 
 A `SurfaceView` is its own layer, composited by SurfaceFlinger and able to land
@@ -220,6 +246,28 @@ deferred to v1 with the case that motivates it: a scene the composition has to
 transform, clip or z-order. Deferring it costs nothing structurally, because
 both arrive at the same `android.view.Surface` and therefore at the same D3
 handle type.
+
+**Amended 2026-08-16 (issue #1187): built as stated, and the deferral still
+holds.** Both Android hosts construct a plain `SurfaceView` and hand its
+`SurfaceHolder` to a callback — `HarnessActivity` and `DemoActivity`, whose two
+`.java` files are the whole of the View layer here. Re-derive over those two
+files rather than over the tree: `wgpu::TextureView` is an unrelated type and a
+bare `grep -rn TextureView` is full of it.
+
+**The TextureView half is unbuilt**, which is what this clause defers, and
+nothing has met the case that motivates it. That is why it is still a deferral
+rather than a gap.
+
+`AndroidExternalSurface` is not built either, **and that is not evidence about
+this clause in either direction.** It gives SurfaceView semantics, which the
+paragraph above says explicitly; a Compose host on it would satisfy D5 exactly
+as these two do, because this clause's axis is SurfaceView-versus-TextureView
+and not View-versus-Compose. `HarnessActivity`'s own header names it as the
+alternative it declined, on grounds that belong to a harness rather than to this
+decision.
+
+Nothing has met the case that motivates the deferral, which is why it is still a
+deferral rather than a gap.
 
 **D6 — the runtime keeps the frame loop (P3), so vsync is taken natively.**
 

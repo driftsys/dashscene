@@ -49,11 +49,19 @@ use std::time::{Duration, Instant};
 /// debug, first teardown     1.15 s
 /// ```
 ///
-/// The debug figure is the one that sets it. `just android` builds debug, so
-/// that is the build every Android exercise of this repository has used, and an
-/// interval of one second would report on an ordinary debug teardown. Two
-/// clears it with room and still catches a wait that will not end inside the
-/// first few seconds of it.
+/// The debug figure is the one that sets it, and it is still the one to set it:
+/// `just android` builds debug and `_apk-harness` defaults
+/// `DASHSCENE_ANDROID_PROFILE` to it, so debug is what an ordinary run packages
+/// unless a caller names otherwise. An interval of one second would report on an
+/// ordinary debug teardown; two clears it with room and still catches a wait
+/// that will not end inside the first few seconds of it.
+///
+/// **It is no longer the build every Android exercise has used**, which this
+/// comment said until issue #1187: the split-screen run that passes needs a
+/// release library, because a debug one takes over 218 s from cold launch to
+/// first frame (issue #960). That does not move the interval — a release
+/// teardown is faster and clears two seconds by more — but it is why the debug
+/// figure is now the slowest case rather than the only one.
 ///
 /// **It is not a caller's to choose** (issue #1082).
 /// [`Handshake::request_teardown`] reads this; the interval is an argument only
