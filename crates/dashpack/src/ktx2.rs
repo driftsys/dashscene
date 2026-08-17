@@ -152,8 +152,62 @@ const _: () = assert!(
     "the astcenc version in WRITER no longer matches the vendored pin"
 );
 
+// **`WRITER` actually carries that version**, which nothing checked until issue
+// #1178: the assertion above welds the literal `"5.6.0"` to the vendored pin and
+// never reads `WRITER`, so changing `WRITER` alone left the file misnaming its
+// own encoder with every assertion green.
+const _: () = assert!(
+    str_eq(WRITER, "dashpack gen1 astcenc 5.6.0",),
+    "WRITER no longer spells the version the assertion above pins"
+);
+
+// **`str_eq` itself, pinned in both length directions** (issue #1178).
+//
+// Its only non-test caller is the assertion above, which evaluates it on a pair
+// that agrees — so a weakened comparison is never exercised on one it would get
+// wrong. A body returning `true` unconditionally lets the version pin accept
+// **any** version, with every tier green. `dashscene-android`'s twin gained a
+// test for exactly that in PR #1163.
+//
+// **`const` rather than a `#[test]`**, which is where this side differs from the
+// twin and why: that copy's own pin sits behind `#[cfg(target_os = "android")]`,
+// so no host build evaluates it and a runtime test is the only thing that can.
+// This one is unconditional, so an assertion here fails the **build** on every
+// target and every tier — `just wasm` and `just android` included — rather than
+// only where a tier runs.
+//
+// Both orderings, which is the case a single direction misses: a guard weakened
+// to `a.len() < b.len()` with the loop bounded by `b.len()` passes every
+// shorter-first case while `str_eq("5.6.0.1", "5.6.0")` answers true, and the
+// pin then accepts any version starting with 5.6.0.
+const _: () = assert!(str_eq("5.6.0", "5.6.0"), "equal strings compare equal");
+const _: () = assert!(str_eq("", ""), "and so do two empty ones");
+const _: () = assert!(
+    !str_eq("5.6.0", "5.6.1"),
+    "same length, different byte: what a length-only comparison would accept"
+);
+const _: () = assert!(!str_eq("5.6", "5.6.0"), "a prefix is not a match");
+const _: () = assert!(
+    !str_eq("5.6.0.1", "5.6.0"),
+    "nor is it one with the longer string first, which is the direction a \
+     one-sided length guard admits"
+);
+const _: () = assert!(!str_eq("6.0", "5.6.0"), "nor is a suffix");
+const _: () = assert!(!str_eq("5.6.0", "6.0"), "in either order");
+
 /// `&str` equality in a const context, which the standard library does not yet
 /// offer. Exists only for the assertion above.
+///
+/// **A second copy of this exists**, in `dashscene-android`'s
+/// `face::same_descriptor`, welding a JNI descriptor to a `jni_sig!` literal
+/// inside the same `const _: () = assert!(..)` shape. Same algorithm, same
+/// length-guard-then-byte-loop, same reason.
+///
+/// **They are deliberately not shared** (issue #1178, and
+/// `docs/decisions/crate-name-map.md` records the ruling). The duplication is
+/// accepted; what is not accepted is two copies with no check and no pointer
+/// between them, which is what that issue was filed for. The assertions below
+/// close this side.
 const fn str_eq(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
     if a.len() != b.len() {
