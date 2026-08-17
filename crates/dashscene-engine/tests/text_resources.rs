@@ -166,6 +166,42 @@ fn an_unselectable_family_name_is_named_rather_than_silently_kept() {
     }
 }
 
+/// **A CSS weight outside `1..=1000` is refused here, not only at the C ABI**
+/// (issue #1206).
+///
+/// `dashscene-ffi` refused this descriptor by name while this constructor took
+/// the value as given and handed it to `WeightedFont::new`, so the same face
+/// was refused on one route and accepted on the other. PR #1197 re-exported
+/// `FaceBytes` from `dashscene-desktop` and `dashscene-web`, which made the
+/// unchecked route the one an ordinary Rust embedder meets.
+///
+/// Refused rather than clamped: 0 is what an uninitialised descriptor carries,
+/// and a face declared at it resolves against every request as if the caller
+/// had meant it — a repaired weight would draw the wrong face silently.
+///
+/// The ends are accepted, so this is a range and not a lower bound alone.
+#[test]
+fn a_weight_outside_the_css_range_is_refused_by_index() {
+    for weight in [0, 1001, u16::MAX] {
+        assert!(
+            matches!(
+                TextResources::from_faces(vec![
+                    face("Inter", 400, INTER_REGULAR, None),
+                    face("Inter", weight, INTER_REGULAR, None),
+                ]),
+                Err(TextResourcesError::Weight { index: 1, weight: w }) if w == weight
+            ),
+            "weight {weight} is outside 1..=1000 and the face that carries it is face 1"
+        );
+    }
+    for weight in [1, 1000] {
+        assert!(
+            TextResources::from_faces(vec![face("Inter", weight, INTER_REGULAR, None)]).is_ok(),
+            "weight {weight} is inside 1..=1000, so the faces assemble"
+        );
+    }
+}
+
 #[test]
 fn bytes_that_are_not_a_face_are_named_with_their_index() {
     let error = TextResources::from_faces(vec![

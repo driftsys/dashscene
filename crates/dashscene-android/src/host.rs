@@ -770,8 +770,10 @@ fn read_face<'frame, 'array>(
         return Ok(None);
     }
     let family = family.try_to_string(env)?;
-    // The CSS range is **not** checked here. `DsFontFace::weight` is where a
-    // weight is judged, and one rule in one place is why: this clamped as well
+    // The CSS range is **not** checked here, and since issue #1206 it is not
+    // checked at the ABI either — `dashscene_engine::TextResources::from_faces`
+    // is where a weight is judged, below both. One rule in one place is why,
+    // and it is why this moved once already: this clamped as well
     // until story #947's review, so a Kotlin host and a C host got different
     // answers to the same question. What is refused is only what a `u16` cannot
     // carry to the ABI at all — a truncating cast would turn 65 936 into 400

@@ -36,7 +36,7 @@ document, a surface, a clock and a status. No entry point takes or returns a
 boundary-B row, so a host that wants to draw the frame itself has nothing to
 call — that is issue #859, named here rather than left to be discovered.
 
-## The twelve entry points
+## The entry points
 
 Four groups, and the grouping is the lifecycle:
 
@@ -140,26 +140,42 @@ the next one.
 ## The panic boundary
 
 **Every entry point that can panic catches the unwind**, because one crossing
-`extern "C"` is undefined behaviour. Eleven of the twelve wrap their body in
-`catch_unwind`; `ds_abi_version` is the twelfth and returns a constant.
+`extern "C"` is undefined behaviour. `ds_abi_version` is the single exception
+and returns a constant.
+
+**That is a test now, not a claim** (issue #1190).
+`every_entry_point_but_the_version_is_guarded` enumerates the `extern "C"` items
+in `crates/dashscene-ffi/src/lib.rs` and asserts each body reaches `guard` or
+`catch_unwind`, with `ds_abi_version` as the one name on the exception list. It
+guards its own matcher, so a signature style it stopped recognising fails rather
+than reporting nothing. What it does not check is that the guard wraps the
+**whole** body; what it catches is an entry point with no guard at all, which is
+the omission that has happened.
 
 They do not all do it the same way, and the difference is what they can say
 afterwards:
 
-- The **nine returning a `DsStatus`** use the `guard` helper, which turns an
-  unwind into `DsStatus::Panic`. **The panic payload is deliberately not
-  formatted into the message** — that would run arbitrary `Display` code on the
-  way out of a panic — so the text is fixed and the payload is lost.
+- Those **returning a `DsStatus`** use the `guard` helper, which turns an unwind
+  into `DsStatus::Panic`. **The panic payload is deliberately not formatted into
+  the message** — that would run arbitrary `Display` code on the way out of a
+  panic — so the text is fixed and the payload is lost.
 - **`ds_runtime_free`** and **`ds_last_error_message`** catch one directly.
   Neither has a status to report it in, so each swallows it: the free returns,
   the message call answers 0.
 
-**Do not re-derive this by counting calls to `guard`.** Story #843 did, read
-"nine of twelve" as "three unguarded", and put that in this record, in
-`architecture.md`, in `docs/features.md` and in the crate's own rule 1 before
-the review caught it. Two entry points hold the property without the helper, and
-`ds_last_error_message`'s own comment records that it was made to hold it
-precisely because rule 1 had claimed it already did.
+**The counts are gone from this section on purpose** (issue #1190). It said
+"eleven of the twelve" and "the nine returning a `DsStatus`", in a record that
+relays `crates/dashscene-ffi/tests/abi.c`'s own request not to be described by a
+count — because three successive comments claimed a correspondence and each was
+wrong. A thirteenth entry point falsified four numbers across two files and no
+gate read any of them. The test above is what reads them now.
+
+**Do not re-derive the property by counting calls to `guard`** either. Story
+#843 did, read "nine of twelve" as "three unguarded", and put that in this
+record, in `architecture.md`, in `docs/features.md` and in the crate's own rule
+1 before the review caught it. Two entry points hold the property without the
+helper, and `ds_last_error_message`'s own comment records that it was made to
+hold it precisely because rule 1 had claimed it already did.
 
 A caught panic leaves the runtime alive, and **every load accounts for that**,
 through one function. `drop_document` clears `runtime.scene` and replaces the

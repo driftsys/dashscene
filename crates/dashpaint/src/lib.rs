@@ -2466,16 +2466,33 @@ impl PaintTable {
     /// anything.
     ///
     /// That is a statement about this method, not about a commit. **The
-    /// production caller has already mutated this table by the time it calls
-    /// here**: `intern_paint` in `dashscene-core` takes `Arc::make_mut` and
-    /// interns the entry's own fill and every stacked layer through
+    /// production callers have already mutated this table by the time they call
+    /// here, and there are two of them** (issue #1213, which corrected the
+    /// singular).
+    ///
+    /// `intern_paint` in `dashscene-core` takes `Arc::make_mut` and interns the
+    /// entry's own fill — when it carries one; a fill-less entry interns
+    /// nothing — and every stacked layer through
     /// [`intern_fill`](Self::intern_fill), growing `solids`, `gradients`,
-    /// `stops` and `images` first. A refusal here leaves those interned rows
-    /// behind. They are inert — an interned fill is deduplicated by content, so
-    /// the next commit that stages the same fill reuses the row rather than
-    /// appending beside it — and `dashscene-core`'s `compact_paints` rebuilds
-    /// the table from the entries that survived. What is gone is the claim that
-    /// a refusal *here* is what leaves the table grown.
+    /// `stops` and `images` first. A refusal here leaves those rows behind.
+    ///
+    /// `compact_paints` is the other, and **its refusal is worse than leftover
+    /// rows**: it renumbers `rects` in place as it walks and installs the
+    /// rebuilt table only at the end, so an unwind part-way leaves rects naming
+    /// rows of a table that is then dropped, against the old one still in
+    /// `paints`. That is a half-renumbered rect table rather than inert rows.
+    ///
+    /// **Neither residue is collected by a later rebuild, and they are not
+    /// uncollected for the same reason.** `intern_paint`'s leftover fill rows
+    /// are missed because `should_compact` reads the *entry* count and a
+    /// refusal grows the fill arrays without adding an entry.
+    /// `compact_paints`' half-renumbered `rects` is not a threshold question at
+    /// all and is worse than uncollected: the next rebuild resolves those
+    /// indices — which name the discarded table — against the old one still in
+    /// `paints`, so it re-homes the wrong entry or panics in `resolve`.
+    ///
+    /// What is gone is the claim that a refusal *here* is what leaves the table
+    /// grown.
     pub fn push_with(&mut self, mut entry: PaintEntry, parts: EntryParts<'_>) -> PaintIndex {
         assert_eq!(
             (

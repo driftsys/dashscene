@@ -131,7 +131,8 @@ typedef enum DsSurfaceKind {
  * weight must be in 1..=1000, the CSS range. Outside it is DS_FONT_FACE,
  * naming the face's index and the value — including 0, which is what an
  * uninitialised struct carries and which no CSS weight can be. This is the
- * only place the range is enforced: a host that binds to this ABI inherits
+ * one place the range is enforced — inside the library, below this ABI, since
+ * issue #1206 — so a host that binds to this ABI inherits
  * the rule rather than repairing the value in its own way.
  */
 typedef struct DsFontFace {

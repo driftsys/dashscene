@@ -70,7 +70,7 @@ public final class DsFace {
     /** Family name. Faces sharing one become a family however they are ordered. */
     public final String family;
 
-    /** CSS weight, 1..=1000. Checked by the ABI and by nothing here. */
+    /** CSS weight, 1..=1000. Checked below the ABI and by nothing here. */
     public final int weight;
 
     /**

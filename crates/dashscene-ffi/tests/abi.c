@@ -125,7 +125,9 @@ int main(void) {
                                            3) == DS_NULL_ARGUMENT,
         "a null face array with a count is a status, not a crash");
 
-  /* The weight range, which only this ABI enforces. 0 is what an
+  /* The weight range, enforced once inside the library rather than at this
+     ABI since issue #1206. What a C caller sees is unchanged, which is what
+     this asserts. 0 is what an
    * uninitialised struct carries. */
   DsFontFace zero_weight = face;
   zero_weight.weight = 0;

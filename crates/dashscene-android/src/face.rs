@@ -132,7 +132,9 @@ pub(crate) const FAMILY: Field = Field {
     descriptor: "Ljava/lang/String;",
 };
 
-/// The CSS weight. The `1..=1000` range is judged by the ABI; `read_face`
+/// The CSS weight. The `1..=1000` range is judged inside the library, below the
+/// ABI, since issue #1206 — this crate still refuses nothing but what a `u16`
+/// cannot carry, which is what matters here. `read_face`
 /// refuses only what a `u16` cannot carry to it at all.
 pub(crate) const WEIGHT: Field = Field {
     name: c"weight",
