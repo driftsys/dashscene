@@ -370,10 +370,18 @@ a mis-ordered list samples the wrong face rather than failing.
 
 What is refused rather than assembled, each error naming the descriptor it came
 from: no faces at all, a family name that is empty once trimmed and so could
-never be requested, bytes that are not a parseable face, metrics that do not
-decode, a sheet whose PNG header does not parse or does not carry the extent its
-metrics declare, a glyph in those metrics described by exactly one of its two
-quads, and a set where some faces carry a sheet and some do not.
+never be requested, **a CSS weight outside `1..=1000`**, bytes that are not a
+parseable face, metrics that do not decode, a sheet whose PNG header does not
+parse or does not carry the extent its metrics declare, a glyph in those metrics
+described by exactly one of its two quads, and a set where some faces carry a
+sheet and some do not.
+
+The weight refusal arrived at issue #1206 and is the one that moved rather than
+being written here. `dashscene-ffi` carried it and this constructor did not, so
+the same descriptor was refused on the C route and accepted on the Rust one —
+which PR #1197 widened the audience for by re-exporting `FaceBytes` from both
+facades. It is here because this is the constructor every route reaches, and the
+ABI's copy is gone rather than kept as a second statement of the predicate.
 `TextResourcesError` carries `Display` and `Error` so that each of those reads
 as a sentence: `dashscene-ffi` puts the string straight into
 `ds_last_error_message`, where every other message on that path is prose.

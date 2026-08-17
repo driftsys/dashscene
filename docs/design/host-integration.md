@@ -194,10 +194,23 @@ reason `TextResources` gives: the atlas list is indexed by the font slot of the
 face that shaped a glyph, so a list in any other order samples the wrong face
 rather than failing. One walk that emits both lists cannot disagree with itself.
 
-The CSS weight range is decided here and in no host: a `weight` outside
-`1..=1000` is `DS_FONT_FACE`, naming the face's index and the value. 0 is what
-an uninitialised descriptor carries, so refusing it is what keeps a host from
-declaring a face at a weight it never chose.
+The CSS weight range is decided in **one** place and no host, and since issue
+#1206 that place is `dashscene_engine::TextResources::from_faces` rather than
+this ABI. A `weight` outside `1..=1000` is `TextResourcesError::Weight`, naming
+the face's index and the value, and a C caller still sees `DS_FONT_FACE` with
+the same sentence — the status did not change, the layer that produces it did.
+
+It moved because this record's previous claim was true of the ABI and not of the
+route beside it: `from_faces` performed no such check, so the same descriptor
+was refused through `ds_runtime_load_document_with_text` and accepted through
+the `FaceBytes` that `dashscene-desktop` and `dashscene-web` re-export. Putting
+the rule at the constructor every route reaches is what makes "in no host" true
+of all of them rather than of one.
+
+0 is what an uninitialised descriptor carries, so refusing it is what keeps a
+host from declaring a face at a weight it never chose. Refused rather than
+repaired, because a clamped weight resolves against every request as if the
+caller had meant it.
 
 **No entry point can bake a sheet.** The MSDF generator is an external pinned
 binary that reads its font from a path, so a host arrives with a committed PNG

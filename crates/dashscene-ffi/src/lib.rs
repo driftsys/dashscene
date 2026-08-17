@@ -125,7 +125,7 @@
 //!    named here rather than left to be discovered, and it is the only body in
 //!    this crate simple enough to earn that.
 //!
-//!    The nine returning a [`DsStatus`] use `guard`, which turns an unwind
+//!    Those returning a [`DsStatus`] use `guard`, which turns an unwind
 //!    into [`DsStatus::Panic`]. [`ds_runtime_free`] and
 //!    [`ds_last_error_message`] catch one directly instead, because neither
 //!    has a status to report it in — the first returns `void` and the second a
@@ -740,6 +740,7 @@ unsafe fn text_from_c(
                 }
                 TextResourcesError::NoFaces
                 | TextResourcesError::EmptyFamily { .. }
+                | TextResourcesError::Weight { .. }
                 | TextResourcesError::Font { .. } => DsStatus::FontFace,
                 _ => DsStatus::FontFace,
             })
@@ -770,7 +771,10 @@ pub struct DsFontFace {
     pub family: *const c_char,
     /// The CSS weight this face stands for, in `1..=1000`.
     ///
-    /// **Validated here and nowhere else.** A value outside that range is
+    /// **Validated once, in `dashscene_engine::TextResources::from_faces`**
+    /// since issue #1206 — not here, and not in a host. It was here and that
+    /// constructor did not check, so the same descriptor was refused on this
+    /// route and accepted on the Rust one. A value outside that range is
     /// [`DsStatus::FontFace`], naming the face's index and the value —
     /// including 0, which is what an uninitialised descriptor carries and
     /// which no CSS weight can be. Every host on this ABI inherits the one
@@ -818,18 +822,27 @@ unsafe fn faces_from_c(
                 return Err(DsStatus::FontFace);
             }
         };
-        // The CSS range, checked here so that this is the only place any host
-        // on this ABI gets an answer about it. 0 is the value an
-        // uninitialised descriptor carries, which is why refusing beats
-        // repairing: a face declared at weight 0 resolves against every
-        // request as if the host had meant it.
-        if !(1..=1000).contains(&face.weight) {
-            set_last_error(format!(
-                "face {index}: weight {} is outside the CSS range 1..=1000",
-                face.weight
-            ));
-            return Err(DsStatus::FontFace);
-        }
+        // **The CSS range is not checked here** (issue #1206). It was, and
+        // `dashscene_engine::TextResources::from_faces` did not — so the same
+        // descriptor was refused on this route and accepted on the Rust one,
+        // which PR #1197 widened the audience for by re-exporting `FaceBytes`
+        // from both facades. The rule moved to that constructor, which every
+        // route reaches, and a second copy here would be the predicate drift
+        // this repository keeps paying for.
+        //
+        // A weight outside it is still `DsStatus::FontFace` with the same
+        // sentence — `TextResourcesError::Weight` maps to it below — but **the
+        // precedence changed and that is observable**. The refusal now runs
+        // after every check in this loop rather than in the middle of it, so a
+        // descriptor that is wrong in two ways at once reports the other one: a
+        // face carrying both weight 0 and a half-null atlas pair answered
+        // `DsStatus::FontFace` before and answers `DsStatus::Atlas` now.
+        //
+        // Accepted rather than repaired. Reporting the first fault found is
+        // arbitrary whichever order it is in, and the alternative is a second
+        // copy of the range predicate here — the drift issue #1206 exists to
+        // remove. `a_face_wrong_in_two_ways_reports_the_atlas` pins it so the
+        // order is a decision rather than a side effect.
         // Both null is the measure-only cascade. Exactly one null is a face
         // that half-described its atlas — silently falling back to
         // measure-only there would draw no glyphs for it while reporting
@@ -1411,6 +1424,204 @@ fn attach_android(
 mod tests {
     use super::*;
 
+    /// A live runtime behind an opaque parameter, for
+    /// `rust/access-invalid-pointer` (issue #979).
+    ///
+    /// **This exists for the query and not for the code.** The dereference is
+    /// sound either way: `ds_runtime_new` writes `Box::into_raw`, the caller
+    /// asserts it answered [`DsStatus::Ok`] and wrote a non-null handle, and
+    /// nothing frees it before the read. What CodeQL cannot model is the FFI
+    /// out-pointer write — the local starts as `std::ptr::null_mut()` and is
+    /// passed by `&mut` into an `extern "C"` function, so the query watches it
+    /// get initialised to null and never learns what came back.
+    ///
+    /// Alerts 4 and 5 were dismissed as false positives on PR #978 and PR
+    /// #1054. Issue #979 predicted a third, on the grounds that the alert is a
+    /// property of the **shape** rather than of any one test, and named the
+    /// shape that would close it: the `&mut *runtime` dereferences in the entry
+    /// points are **not** flagged, because there the pointer is an opaque
+    /// parameter behind an early return rather than a local the query watched.
+    /// (That issue counted seven of them and there are eight — it was written
+    /// before `ds_runtime_load_document_mapped` landed. Re-derive rather than
+    /// trusting either number.)
+    /// This is that shape, and it is the thing that issue said to try first.
+    ///
+    /// **It does not clear the alert, and that is measured rather than
+    /// predicted.** CodeQL re-ran on the pull request that added this and
+    /// raised alert 10 — `rust/access-invalid-pointer`, on the dereference
+    /// *inside* this function. So the query follows the local across a call in
+    /// the same file, and what protects the eight `&mut *runtime` dereferences
+    /// in the entry points is not "the pointer is a parameter" but that it
+    /// arrives from **outside the analysed body** — a C caller's, which the
+    /// query cannot see initialised at all.
+    ///
+    /// The function is kept anyway: it moves one dismissal to one site instead
+    /// of one per test, which is the practical half of what issue #979 asked
+    /// for. That issue stays open for the remaining half, with this measurement
+    /// on it, and its third option — that a dismissal is the right permanent
+    /// answer here — is now the live one.
+    ///
+    /// It weakens no assertion: both callers keep their status checks against
+    /// the real exported symbols, and what moves behind this function is only
+    /// the read.
+    ///
+    /// **The borrow is bounded by a caller-chosen lifetime, not `'static`.**
+    /// An unbounded one compiles `let a = &live(r).arena; ds_runtime_free(r);
+    /// a.roots();` in silence, and both call sites read up to the statement
+    /// before their `ds_runtime_free`. A generic parameter costs nothing and
+    /// takes the constraint back.
+    ///
+    /// # Safety
+    ///
+    /// `runtime` is non-null and points at a live `DsRuntime` that outlives
+    /// `'a`.
+    unsafe fn live<'a>(runtime: *mut DsRuntime) -> &'a DsRuntime {
+        assert!(!runtime.is_null(), "a live runtime is never null here");
+        // SAFETY: the caller promises a live, non-null handle that outlives
+        // `'a`.
+        unsafe { &*runtime }
+    }
+
+    /// **Every `extern "C"` entry point runs inside `catch_unwind`, and
+    /// `ds_abi_version` is the one exception** — rule 1 of
+    /// `docs/design/c-abi.md`, asserted rather than asserted about (issue
+    /// #1190).
+    ///
+    /// # Why prose was not enough
+    ///
+    /// That rule has been wrong in each direction already. `ds_last_error_message`
+    /// was unguarded while the rule claimed it was guarded, which its own
+    /// comment records; story #843 then read "nine calls to `guard`" as "three
+    /// unguarded" and wrote that into four documents. Neither is a subtle
+    /// mistake and neither was caught, because nothing read the code.
+    ///
+    /// # Why over the source text
+    ///
+    /// A panic that crosses `extern "C"` is undefined behaviour, so the
+    /// property cannot be exercised by calling the entry points and panicking
+    /// inside them — the test for a missing guard is the thing the guard
+    /// exists to prevent. What can be checked is that each body reaches
+    /// `guard`, and that is a fact about the text.
+    ///
+    /// `include_str!` on this crate's own source is the same technique
+    /// `dashscene-android`'s `entry` module uses to compare its JNI names
+    /// against `demo-android`'s, for the same reason.
+    ///
+    /// # What it does not check
+    ///
+    /// - That the guard **wraps the whole body**. A `guard` call after an
+    ///   unguarded dereference would pass. What it catches is the omission that
+    ///   has actually happened twice, which is an entry point with no guard at
+    ///   all.
+    /// - An entry point exported under a name that is not `ds_`-prefixed. Every
+    ///   one is, and `dashscene.h` is where that convention is stated; a
+    ///   symbol breaking it is invisible here.
+    ///
+    /// It **does** check the two holes a first cut left. A `guard(` inside a
+    /// comment no longer satisfies it, because comment lines are stripped
+    /// before the body is searched — an entry point saying "not wrapped in
+    /// `guard(` because this cannot panic" would otherwise pass with no guard,
+    /// which is `ds_last_error_message`'s original failure exactly. And the
+    /// signature must be unindented, so an `extern "C" fn ds_*` nested in a
+    /// `mod` cannot borrow a sibling's `guard` call by running its "body" to
+    /// the enclosing module's brace.
+    #[test]
+    fn every_entry_point_but_the_version_is_guarded() {
+        /// The one entry point that is deliberately not guarded: it reads a
+        /// constant and cannot panic, and a host calls it before it has a
+        /// runtime to report an error through.
+        const UNGUARDED: &str = "ds_abi_version";
+
+        let source = include_str!("lib.rs");
+        let mut entry_points = Vec::new();
+        let mut unguarded = Vec::new();
+
+        let lines: Vec<&str> = source.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            // A top-level entry point: unindented, and the signature line
+            // carries both `extern "C"` and the name. `#[unsafe(no_mangle)]`
+            // and the doc comment sit above it and are not read.
+            // Unindented, so a nested item cannot take the enclosing module's
+            // closing brace as its own and sweep a sibling's `guard` call into
+            // its body.
+            if line.starts_with([' ', '\t', '#']) || !line.contains("extern \"C\" fn ds_") {
+                continue;
+            }
+            let name = line
+                .split("extern \"C\" fn ")
+                .nth(1)
+                .and_then(|rest| rest.split(['(', '<']).next())
+                .expect("a name follows `extern \"C\" fn`");
+            entry_points.push(name);
+
+            // The body: to the first unindented `}`, which is where rustfmt
+            // puts a top-level item's closing brace.
+            let body: String = lines[i + 1..]
+                .iter()
+                .take_while(|line| !line.starts_with('}'))
+                // Comments stripped, so a body that only *mentions* `guard(`
+                // does not satisfy the search. `//` inside a string literal
+                // would strip too much and is worth nothing here: over-stripping
+                // can only report a guarded entry point as unguarded, which
+                // fails loudly rather than passing quietly.
+                .map(|line| line.split("//").next().unwrap_or(""))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !body.contains("guard(") && !body.contains("catch_unwind") {
+                unguarded.push(name);
+            }
+        }
+
+        // Guards the matcher, not the property. A signature style this stopped
+        // recognising would find no entry points and report none unguarded,
+        // which is the failure this test exists to be immune to.
+        //
+        // Against the header rather than a number, so it cannot go stale the
+        // way a `>= 12` would: a floor equal to today's count passes a matcher
+        // that finds twelve of thirteen, and the missed one is then reported as
+        // neither an entry point nor unguarded — which is exactly the shape of
+        // the miscount this test was written to end.
+        // The distinct `ds_*(` names the header declares. Distinct rather than
+        // a line count, because a name appears in prose above its declaration
+        // as often as in it.
+        let mut declared: Vec<&str> = include_str!("../include/dashscene.h")
+            .split("ds_")
+            .skip(1)
+            .filter_map(|rest| {
+                let name = rest.split('(').next()?;
+                (rest.len() > name.len()
+                    && !name.is_empty()
+                    && name.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+                .then_some(name)
+            })
+            .collect();
+        declared.sort_unstable();
+        declared.dedup();
+        assert!(
+            entry_points.len() >= declared.len(),
+            "the committed header declares {} `ds_` functions and this test found {} \
+             `extern \"C\"` items, so its matcher is missing some rather than the ABI having \
+             shrunk. Header: {declared:?}. Found: {entry_points:?}",
+            declared.len(),
+            entry_points.len()
+        );
+        assert!(
+            entry_points.contains(&UNGUARDED),
+            "{UNGUARDED} was not found at all, so the exception below cannot be the one this rule \
+             names"
+        );
+
+        assert_eq!(
+            unguarded,
+            vec![UNGUARDED],
+            "rule 1 of `docs/design/c-abi.md` says every entry point runs inside `catch_unwind` \
+             with {UNGUARDED} as the single exception. These do not reach `guard`: {unguarded:?}. \
+             A panic crossing `extern \"C\"` is undefined behaviour, so an entry point that can \
+             panic needs the guard; one that provably cannot needs this test's exception list \
+             widened and the record amended with it."
+        );
+    }
+
     /// The version is readable without a runtime, which is the property a host
     /// depends on when it decides whether to go on.
     #[test]
@@ -1835,8 +2046,9 @@ mod tests {
                 DsStatus::Ok
             );
             // SAFETY: `ds_runtime_new` answered Ok and wrote a non-null handle,
-            // asserted above, and nothing has freed it yet.
-            let out = measured(unsafe { &*runtime });
+            // asserted above, and nothing has freed it yet. Through `live` for
+            // the reason that function gives (issue #979).
+            let out = measured(unsafe { live(runtime) });
             unsafe { ds_runtime_free(runtime) };
             out
         };
@@ -1922,9 +2134,16 @@ mod tests {
     ///
     /// 0 is the value an uninitialised descriptor carries, and a face
     /// declared at it resolves against every request as if the host had meant
-    /// it. **This is the only place the range is decided**: the JNI half in
-    /// `dashscene-android` clamped it as well until story #947's review,
-    /// which gave one question two answers.
+    /// it.
+    ///
+    /// **The range is decided one layer down since issue #1206**, in
+    /// `dashscene_engine::TextResources::from_faces`, and this test asserts the
+    /// status a C caller sees rather than where it is produced. That is the
+    /// point of the move: `from_faces` is what every route reaches, and it
+    /// accepted the descriptor this ABI refused until the check moved. Two
+    /// earlier attempts to hold the rule elsewhere are why it is stated
+    /// this way — the JNI half in `dashscene-android` clamped it as well until
+    /// story #947's review, which gave one question two answers.
     ///
     /// The font bytes are real, so nothing but the weight can be what is
     /// refused.
@@ -1963,7 +2182,7 @@ mod tests {
                     )
                 },
                 DsStatus::FontFace,
-                "weight {weight} is outside 1..=1000 and the ABI is what says so"
+                "weight {weight} is outside 1..=1000, so the load is refused as FontFace"
             );
             unsafe { ds_runtime_free(runtime) };
         }
@@ -2159,6 +2378,66 @@ mod tests {
                 )
             },
             DsStatus::Atlas
+        );
+        unsafe { ds_runtime_free(runtime) };
+    }
+
+    /// **A descriptor wrong in two ways reports the atlas, not the weight**,
+    /// and that is a change issue #1206 made rather than an accident.
+    ///
+    /// The CSS range moved to `TextResources::from_faces`, which runs after
+    /// `faces_from_c` has walked every descriptor — so a face carrying both
+    /// weight 0 and a half-null atlas pair answered `DsStatus::FontFace`
+    /// before and answers `DsStatus::Atlas` now.
+    ///
+    /// Pinned rather than repaired. Reporting the first fault found is
+    /// arbitrary whichever order it is in, and repairing it would mean a second
+    /// copy of the range predicate at the ABI — the drift #1206 exists to
+    /// remove. What is not acceptable is the order being unrecorded, which is
+    /// how a host branching on the status learns it changed from a support
+    /// thread.
+    #[test]
+    fn a_face_wrong_in_two_ways_reports_the_atlas() {
+        let font = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/fonts/inter/Inter-Regular.otf"
+        ))
+        .expect("the corpus font is present");
+        let png = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/atlas/inter-ascii/atlas.png"
+        ))
+        .expect("the committed sheet is present");
+
+        let family = std::ffi::CString::new("Inter").expect("no interior nul");
+        let face = DsFontFace {
+            family: family.as_ptr(),
+            // Outside 1..=1000, which `from_faces` refuses.
+            weight: 0,
+            face_index: 0,
+            font_bytes: font.as_ptr(),
+            font_len: font.len(),
+            // And a half-described atlas, which `faces_from_c` refuses first.
+            atlas_png: png.as_ptr(),
+            atlas_png_len: png.len(),
+            atlas_metrics: std::ptr::null(),
+            atlas_metrics_len: 0,
+        };
+        let not_a_document = [0_u8; 32];
+        let mut runtime = std::ptr::null_mut();
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_with_text(
+                    runtime,
+                    not_a_document.as_ptr(),
+                    not_a_document.len(),
+                    &face,
+                    1,
+                )
+            },
+            DsStatus::Atlas,
+            "the atlas pair is judged in `faces_from_c` and the weight in `from_faces` after it"
         );
         unsafe { ds_runtime_free(runtime) };
     }
@@ -2474,7 +2753,8 @@ mod tests {
         // document's first. A prefetch bounded correctly while the traversal is
         // confined to the wrong root would draw the wrong artboard with nothing
         // to report it, which is the conflation issue #943 records.
-        let arena = &unsafe { &*runtime }.arena;
+        // Through `live` for the reason that function gives (issue #979).
+        let arena = &unsafe { live(runtime) }.arena;
         let shown = arena
             .committed()
             .shown_root()

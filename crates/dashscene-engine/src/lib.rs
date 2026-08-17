@@ -120,14 +120,19 @@ pub struct FaceBytes {
     /// ASCII-case-insensitive, the same test a document's `TextStyle::family`
     /// is resolved by — and the family takes the first spelling to appear.
     pub family: String,
-    /// The CSS weight this face stands for.
+    /// The CSS weight this face stands for, in `1..=1000`.
     ///
-    /// **Unchecked here.** A CSS weight is `1..=1000` and `dashscene-ffi`
-    /// refuses one outside it by name, but this constructor does not: the value
-    /// reaches `WeightedFont::new` as given, and a face declared at 0 then
-    /// resolves against every request as if the caller had meant it. So the
-    /// same descriptor is refused on the C route and accepted on this one.
-    /// Which side should hold the rule is issue #1206.
+    /// **Refused outside that range** by
+    /// [`TextResources::from_faces`](TextResources::from_faces), as
+    /// [`TextResourcesError::Weight`] (issue #1206). The rule lives here rather
+    /// than in a host because this is the constructor every route reaches:
+    /// `dashscene-ffi` used to carry its own copy and no longer does, so the
+    /// same descriptor cannot be refused on the C route and accepted on the
+    /// Rust one.
+    ///
+    /// 0 is the value an uninitialised descriptor carries, and refusing beats
+    /// repairing: a face declared at 0 resolves against every request as if the
+    /// caller had meant it.
     pub weight: u16,
     /// The font file's bytes.
     pub font: Vec<u8>,
@@ -186,6 +191,18 @@ pub enum TextResourcesError {
     /// Not a panic guard; the assertion in `with_named_font_families`
     /// inspects a family's faces, never its name.
     EmptyFamily { index: usize },
+    /// A face declared a CSS weight outside `1..=1000` (issue #1206).
+    ///
+    /// The range is CSS's and every route into this constructor is held to it,
+    /// which is the point: `dashscene-ffi` refused the same descriptor by name
+    /// while this constructor accepted it, so an ordinary Rust embedder met an
+    /// unchecked route where a C one did not.
+    ///
+    /// Refused rather than clamped. 0 is what an uninitialised descriptor
+    /// carries and `WeightedFont::new` takes the value as given, so a repaired
+    /// weight would resolve against every request as if the caller had meant
+    /// it.
+    Weight { index: usize, weight: u16 },
     /// A face's bytes are not a parseable font.
     Font { index: usize, message: String },
     /// A face's sheet is unusable: the metrics did not decode, the PNG's
@@ -206,6 +223,10 @@ impl std::fmt::Display for TextResourcesError {
                 f,
                 "face {index}: the family name is empty once trimmed, so no document could \
                  ever request it"
+            ),
+            Self::Weight { index, weight } => write!(
+                f,
+                "face {index}: weight {weight} is outside the CSS range 1..=1000"
             ),
             Self::Font { index, message } => {
                 write!(f, "face {index}: the font bytes are unusable: {message}")
@@ -250,6 +271,16 @@ impl TextResources {
             // comparing: a name of only spaces is as unselectable as "".
             if face.family.trim().is_empty() {
                 return Err(TextResourcesError::EmptyFamily { index });
+            }
+            // The CSS range, checked here so that every route gets one answer
+            // about it (issue #1206). Before this the C ABI refused it and this
+            // constructor did not, and PR #1197 re-exported `FaceBytes` from
+            // both facades, so an ordinary Rust embedder met the unchecked one.
+            if !(1..=1000).contains(&face.weight) {
+                return Err(TextResourcesError::Weight {
+                    index,
+                    weight: face.weight,
+                });
             }
             // Grouped on the predicate the typesetter SELECTS with, not on
             // string equality. `Typesetter::probe_order` promotes only the
