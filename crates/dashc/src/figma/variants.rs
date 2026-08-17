@@ -86,6 +86,13 @@ use crate::figma::bindings::IndexOfId;
 use crate::figma::prototype::{self, Interactions, Switch};
 use crate::figma::rest::{FigmaFile, Node, Paint, carries_its_angle, has_area, same_orientation};
 
+/// The only place an echoed finding is written or placed. See [`Echoable`].
+mod echoable;
+use echoable::{
+    Collapse, Contention, Echoable, contended_transition, contention_sentence,
+    interaction_diagnostics,
+};
+
 /// The diagnostic rules this producer assembles for the variant table and the
 /// prototype interactions that animate it.
 pub mod rule {
@@ -140,7 +147,7 @@ pub(super) fn apply(
     index_of_id: &IndexOfId,
     policy: crate::EmitPolicy,
 ) -> Vec<Diagnostic> {
-    let mut diagnostics = Vec::new();
+    let mut findings = Collapse::new();
     let nodes = paths(file);
 
     // Every node's interactions, read **once for the whole pass** (debt #1066).
@@ -294,9 +301,9 @@ pub(super) fn apply(
         match &set.state {
             SetState::Lowers(plan) => {
                 let (_, collisions) = &defaults[index];
-                diagnostics.extend(plans[*plan].diagnostics(&set.at, animates[index], collisions));
+                findings.extend(plans[*plan].diagnostics(&set.at, animates[index], collisions));
             }
-            SetState::NamedItsLoss(why) => diagnostics.push(Diagnostic {
+            SetState::NamedItsLoss(why) => findings.push(Diagnostic {
                 rule: rule::UNLOWERABLE_SET,
                 severity: Severity::Warning,
                 at: set.at.clone(),
@@ -405,11 +412,6 @@ pub(super) fn apply(
     // The hosts whose variant table lowered, as positions in `nodes`: the
     // answer a switch needs about the host it travels through.
     let mut carrying: BTreeSet<usize> = BTreeSet::new();
-    // One authored reaction's findings, by the layer it was authored on: where
-    // the first copy landed in `diagnostics`, and how many copies there were
-    // (debt #1056).
-    let mut echoed: Echoed = BTreeMap::new();
-
     // **Emit first, name second** (debt #1141). Whether a *member root* carries
     // a transition is not a fact about its set having a plan — it is whether any
     // instance of that set actually shipped a `VariantSet`, and `emit` refuses
@@ -482,32 +484,37 @@ pub(super) fn apply(
                 // contention, and reporting it once per instance would re-create
                 // inside one pass the multiplicity that collapse exists to
                 // remove.
-                if plan.animatable() {
+                // `!contended.is_empty()`: with no contention the loop below
+                // ran zero times and left an empty bucket behind, one per
+                // animatable instance. Absent and empty read the same to
+                // `pending.remove(..).unwrap_or_default()`, so this changes no
+                // output.
+                if plan.animatable() && !contended.is_empty() {
+                    // The fallback is unreachable: `active` came from
+                    // `plan.member_of`, which matches on the member's own id, so
+                    // that id is `Some` by construction. Left as it was rather
+                    // than removed — but note what it would mean if a change
+                    // made it reachable. `source` is the other half of the
+                    // collapse key and is chosen here, outside the guard
+                    // `echoable` puts on the message, and `walked.path` is the
+                    // *instance* path: a per-copy value there stops the collapse
+                    // exactly as a per-copy message would (debt #1056, #1137).
                     let source = plan.members[active].id.as_deref().unwrap_or(&walked.path);
                     let bucket = pending.entry(at).or_default();
-                    for member in contended.iter().map(|m| plan.members[*m].name.as_str()) {
-                        bucket.push(Pending {
-                            echo: Some(source),
-                            diagnostic: Diagnostic {
-                                rule: rule::UNSUPPORTED_MOTION,
-                                severity: Severity::Warning,
-                                at: location(),
-                                message: format!(
-                                    "more than one layer of this instance declares a CHANGE_TO to \
-                                     \"{member}\" with a different transition, and the document \
-                                     carries one transition per destination, so only one of them \
-                                     lowers",
-                                ),
-                            },
+                    for member in contended.iter().copied() {
+                        bucket.push(Pending::Echoed {
+                            source,
+                            finding: contended_transition(plan, member),
                         });
                     }
                 }
             }
             // Per instance, and deliberately not collapsed: each refused
             // instance lost its own table, so the count is the finding.
-            Err(why) => pending.entry(at).or_default().push(Pending {
-                echo: None,
-                diagnostic: Diagnostic {
+            Err(why) => pending
+                .entry(at)
+                .or_default()
+                .push(Pending::PerInstance(Diagnostic {
                     rule: rule::UNLOWERABLE_SET,
                     severity: Severity::Warning,
                     at: location(),
@@ -515,8 +522,7 @@ pub(super) fn apply(
                         "{why}, so this instance lowers no variant table; its baked subtree still \
                          paints",
                     ),
-                },
-            }),
+                })),
         }
     }
 
@@ -573,12 +579,16 @@ pub(super) fn apply(
         let node = walked.node;
         let read = &reads[at];
         let location = || located(index_of_id, walked);
-        // The emit pass's findings for this node, replayed in node order so the
-        // diagnostics read exactly as one interleaved loop produced them.
+        // Replayed **in node order, above the `names_here` gate below**, so the
+        // diagnostics read exactly as the single interleaved loop this replaced
+        // produced them: every node drains its own findings, including one whose
+        // own interactions are named nowhere.
         for found in pending.remove(&at).unwrap_or_default() {
-            match found.echo {
-                Some(source) => report(&mut diagnostics, &mut echoed, source, found.diagnostic),
-                None => diagnostics.push(found.diagnostic),
+            match found {
+                Pending::Echoed { source, finding } => {
+                    findings.report(source, finding, location);
+                }
+                Pending::PerInstance(diagnostic) => findings.push(diagnostic),
             }
         }
 
@@ -629,32 +639,13 @@ pub(super) fn apply(
             // instance: a design-system file with fifty instances reported
             // fifty-one errors for one thing to fix.
             let source = authored_source(node, &walked.path);
-            for diagnostic in interaction_diagnostics(read, &resolved, &location(), policy) {
-                report(&mut diagnostics, &mut echoed, source, diagnostic);
+            for finding in interaction_diagnostics(read, &resolved, policy) {
+                findings.report(source, finding, location);
             }
         }
     }
 
-    // What the copies cost the reader, said on the one finding that survived
-    // them rather than by repeating it. The count is deliberately on the
-    // message and not on the `Location`: which node a finding sits at is
-    // `dashscene-validator`'s vocabulary, and one producer's echo is not a
-    // reason to widen it.
-    for (index, copies) in echoed.into_values() {
-        if copies > 1 {
-            // "further copies of the same reaction", not "of this layer": the
-            // usual source is one layer echoed onto many instances, but two
-            // identical reactions on one node fold together here too, and
-            // naming a layer would be wrong for that one.
-            diagnostics[index].message.push_str(&format!(
-                " (and {} further {} of the same reaction, not listed separately)",
-                copies - 1,
-                if copies == 2 { "copy" } else { "copies" },
-            ));
-        }
-    }
-
-    diagnostics
+    findings.finish()
 }
 
 /// The layer a reaction was **authored** on, as a key for "these findings are
@@ -682,10 +673,6 @@ fn authored_source<'a>(node: &'a Node, path: &'a str) -> &'a str {
         .map_or(path, |id| id.rsplit(';').next().unwrap_or(id))
 }
 
-/// One authored layer's findings: where the first copy landed in `diagnostics`,
-/// and how many copies there were.
-type Echoed<'a> = BTreeMap<(&'a str, &'static str, String), (usize, usize)>;
-
 /// A finding the emit pass produced, held until the naming pass reaches its node
 /// (debt #1141).
 ///
@@ -693,32 +680,20 @@ type Echoed<'a> = BTreeMap<(&'a str, &'static str, String), (usize, usize)>;
 /// carries a table needs every instance walked first — and splitting them would
 /// otherwise have moved every instance-level finding ahead of every
 /// interaction-level one.
-struct Pending<'a> {
-    /// The authored layer this collapses onto, or `None` for a finding that is
-    /// genuinely per instance and must keep its count.
-    echo: Option<&'a str>,
-    diagnostic: Diagnostic,
-}
-
-/// Reports `diagnostic`, or folds it into an identical one already reported for
-/// the same authored layer (debt #1056).
-///
-/// Every echoed finding goes through here, the per-instance contention warning
-/// included: a diagnostic pushed straight onto `diagnostics` would keep the
-/// multiplicity this exists to remove.
-fn report<'a>(
-    diagnostics: &mut Vec<Diagnostic>,
-    echoed: &mut Echoed<'a>,
-    source: &'a str,
-    diagnostic: Diagnostic,
-) {
-    let key = (source, diagnostic.rule, diagnostic.message.clone());
-    if let Some((_, copies)) = echoed.get_mut(&key) {
-        *copies += 1;
-    } else {
-        echoed.insert(key, (diagnostics.len(), 1));
-        diagnostics.push(diagnostic);
-    }
+enum Pending<'a> {
+    /// Collapses onto the authored layer named by `source` (debt #1056). Its
+    /// prose is an [`Echoable`], which is the only shape the collapse accepts
+    /// (debt #1137).
+    ///
+    /// **No location travels with it.** Both passes walk `nodes` in the same
+    /// order and this is replayed at the index it was filed under, so the
+    /// naming pass's own `location()` is the one the emit pass would have
+    /// built — and a copy that folds never reaches a [`Diagnostic`], so
+    /// carrying one allocated a path per copy only to drop it (debt #1142).
+    Echoed { source: &'a str, finding: Echoable },
+    /// Genuinely per instance, so it keeps its count and never enters the
+    /// collapse.
+    PerInstance(Diagnostic),
 }
 
 /// Where one `CHANGE_TO` lands, as the **file** answers it.
@@ -895,221 +870,6 @@ fn omission_severity(policy: crate::EmitPolicy) -> Severity {
         crate::EmitPolicy::Strict => Severity::Error,
         crate::EmitPolicy::Partial => Severity::Warning,
     }
-}
-
-/// One node's read interactions, as diagnostics at `at`.
-///
-/// `resolved` runs parallel to `read.switches`: for each one, where it lands
-/// ([`Landing`]) and how far it got ([`Reach`]). Both are what `prototype::read`
-/// cannot work out on its own, and together they decide what the reader used to
-/// guess from a `destinationId`'s presence: whether a refused curve is a degrade
-/// or part of an omission (issue #1017), and which of the two omissions a switch
-/// that lands nowhere earns (issue #1016). A set that plans does not guarantee a
-/// table — `emit` refuses an instance whose geometry disagrees with the member
-/// it shows — so `Reach` is what separates a curve that degrades a shipped state
-/// change from one that names a loss, and both from a switch nothing else
-/// reports.
-///
-/// Both are per **switch** rather than per node (debt #1064, #1065). One node
-/// can declare two switches landing in two different sets, and a layer's switch
-/// travels through whichever host belongs to its destination's set, so neither
-/// question has a per-node answer.
-fn interaction_diagnostics(
-    read: &Interactions,
-    resolved: &[(Landing<'_>, Reach)],
-    at: &Location,
-    policy: crate::EmitPolicy,
-) -> Vec<Diagnostic> {
-    let by_policy = omission_severity(policy);
-    let mut out: Vec<Diagnostic> = read
-        .unsupported
-        .iter()
-        .map(|what| Diagnostic {
-            rule: rule::UNSUPPORTED_INTERACTION,
-            severity: by_policy,
-            at: at.clone(),
-            message: format!("{what} is not in the document vocabulary"),
-        })
-        .collect();
-
-    for (switch, (landing, reach)) in read.switches.iter().zip(resolved) {
-        let omission = match landing {
-            // The destination is a member of a set one of this node's hosts
-            // belongs to, so the switch is expressible — but only a set that
-            // lowers a table actually ships it.
-            Landing::Set(set) => {
-                match set.state {
-                    // It ships, so only its curve was ever at risk — unless
-                    // this node is not the one that shipped it.
-                    SetState::Lowers(_) if matches!(reach, Reach::Table) => None,
-                    // No host of this layer belongs to the set at all, and
-                    // nothing else in the pass will say so. The layer sits
-                    // inside a component of its own, which reaches the screen
-                    // independently of this set, so no switch into the set
-                    // replaces it — the destination is real and unreachable
-                    // from here. Naming it is what keeps the definition
-                    // boundary in `hosting` from being a silent drop
-                    // (P4): the boundary is right, and its refusal has to be
-                    // said out loud.
-                    SetState::Lowers(_) if matches!(reach, Reach::Nowhere) => Some((
-                        by_policy,
-                        format!(
-                            "a CHANGE_TO names destination {}, a member of a component set this \
-                             layer sits inside — but the layer belongs to a nested component of \
-                             its own, which no switch into that set replaces, so the switch \
-                             lowers nowhere",
-                            switch.destination,
-                        ),
-                    )),
-                    // No switch reaches the document from here, and something
-                    // else has already named why: `UNLOWERABLE_SET`, on the
-                    // set or on this instance. The curve must not be called a
-                    // degrade — "the switch lands in one frame" would claim a
-                    // state change no table carries, which is issue #1017's
-                    // defect on the neighbouring path — but it must still be
-                    // named, because every finding survives one pass (debt
-                    // #149) and a curve dropped here would surface for the
-                    // first time on the compile after the set is repaired. It
-                    // takes the warning that neighbour carries, so the whole
-                    // loss stays a degrade end to end.
-                    SetState::Lowers(_) | SetState::NamedItsLoss(_) => {
-                        if let Some(what) = &switch.refused_motion {
-                            // The message names no vehicle. This branch fires
-                            // for a set that lowers nothing and for a layer
-                            // whose switches reach no table, and an earlier
-                            // draft that picked between "this instance" and
-                            // "this component set" put the wrong noun on both
-                            // — on a member root, which is no instance, and on
-                            // a baked child of an instance whose table shipped
-                            // perfectly well. What is true in every case is
-                            // the thing worth saying.
-                            out.push(Diagnostic {
-                                rule: rule::UNSUPPORTED_MOTION,
-                                severity: Severity::Warning,
-                                at: at.clone(),
-                                message: format!(
-                                    "{what}, and no variant table carries the switch it would \
-                                     animate, so nothing is left for it to degrade",
-                                ),
-                            });
-                        }
-                        continue;
-                    }
-                    // Nothing named it: a set of fewer than two members has no
-                    // alternative state, so a `CHANGE_TO` into it is an
-                    // omission like any other and this is the only place that
-                    // will say so.
-                    SetState::Silent => Some((
-                        by_policy,
-                        format!(
-                            "a CHANGE_TO names destination {}, whose component set has no second \
-                             member to switch to, so the switch lowers nowhere",
-                            switch.destination,
-                        ),
-                    )),
-                }
-            }
-            // The file carries a set this node belongs to and the destination
-            // is a member of none of them: a `destinationId` the export closure
-            // trimmed, or one naming a member of a different set. That is a
-            // broken file, and under `Strict` handing over its bytes ships a
-            // button whose click does nothing (issue #976).
-            Landing::NotAMember => Some((
-                by_policy,
-                format!(
-                    "a CHANGE_TO names destination {}, which is not a member of the component set \
-                     this layer belongs to, so the switch lowers nowhere",
-                    switch.destination,
-                ),
-            )),
-            // No set, and no missing library either — a plain frame, or an
-            // instance of a standalone local `COMPONENT`. There is no variant
-            // to switch to and the file is present in full, so this is a
-            // broken switch rather than an export that left a library out, and
-            // it takes the same severity as one.
-            Landing::NoSet => Some((
-                by_policy,
-                format!(
-                    "a CHANGE_TO names destination {}, and this layer belongs to no component set, \
-                     so the switch lowers nowhere",
-                    switch.destination,
-                ),
-            )),
-            // The node shows a component the file does not contain — the
-            // ordinary shape of an instance of a published-library component
-            // set, which every real Figma file is full of. A **warning in
-            // both policies**
-            // (issue #1016), on the neighbouring severity rather than on a new
-            // judgement: `UNLOWERABLE_SET` is a warning in both policies for a
-            // set the file *carries* and this pass cannot express, because
-            // refusing would withhold a document that renders correctly. A set
-            // the export never included loses the same variant table and its
-            // baked subtree paints the same, so making the absent set the error
-            // and the present-but-unlowerable one the warning inverts the two.
-            // `figma-component-lowering.md` ("Severity") carries the argument
-            // in full, including what the closure independently decided about
-            // the same population.
-            //
-            // What stays at the policy's severity is a construct with no
-            // lowering **anywhere** — a refused trigger, action or navigation
-            // above. Those are vocabulary gaps whatever file carries the set;
-            // this one is a set the export did not include.
-            Landing::LibraryAbsent => Some((
-                Severity::Warning,
-                format!(
-                    "a CHANGE_TO names destination {}, and this file does not contain the component \
-                     whose instance this layer belongs to, so the switch lowers nowhere",
-                    switch.destination,
-                ),
-            )),
-        };
-
-        match omission {
-            None => {
-                if let Some(what) = &switch.refused_motion {
-                    out.push(Diagnostic {
-                        rule: rule::UNSUPPORTED_MOTION,
-                        severity: Severity::Warning,
-                        at: at.clone(),
-                        message: format!("{what}; the switch lands in one frame"),
-                    });
-                }
-            }
-            Some((earned, message)) => {
-                out.push(Diagnostic {
-                    rule: rule::UNSUPPORTED_INTERACTION,
-                    severity: earned,
-                    at: at.clone(),
-                    message,
-                });
-                // The curve is part of that omission rather than a degrade:
-                // "the switch lands in one frame" claims a state change the
-                // document does not carry (issue #1017). It is still named,
-                // because every finding survives one pass (debt #149).
-                //
-                // It takes the omission's severity rather than the policy's,
-                // and the reading that says otherwise is worth answering: a
-                // `DISSOLVE` has no `dashcue` spelling whatever file carries
-                // the set, so it looks like a vocabulary gap that should be an
-                // error under `Strict`. What makes it not one here is that
-                // there is no switch for it to animate — the curve's loss
-                // costs nothing beyond the omission already named. Giving it
-                // the policy's severity would also make a library instance
-                // withhold the document again whenever its switch declared a
-                // curve, which is the whole of what issue #1016 is about.
-                if let Some(what) = &switch.refused_motion {
-                    out.push(Diagnostic {
-                        rule: rule::UNSUPPORTED_INTERACTION,
-                        severity: earned,
-                        at: at.clone(),
-                        message: format!("{what}, and the switch it would animate lowers nowhere"),
-                    });
-                }
-            }
-        }
-    }
-
-    out
 }
 
 /// The document index a Figma node lowered to, or `0` when it lowered to none
@@ -1806,11 +1566,11 @@ impl<'a> Plan<'a> {
                 // #1064 this table gathers every switch that resolves onto a
                 // member root, so the two declarations that disagree can be two
                 // layers inside one member as easily as two member roots.
-                message: format!(
-                    "more than one layer of this component set declares a CHANGE_TO to \
-                     \"{member}\" with a different transition, and the document carries one \
-                     transition per destination, so only one of them lowers",
-                ),
+                //
+                // Its instance-level twin is `echoable::contended_transition`,
+                // differing only in the noun. An edit to the wording here
+                // belongs there too; nothing compares them.
+                message: contention_sentence(Contention::AcrossTheSet, member),
             }
         }));
         out

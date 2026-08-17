@@ -2888,10 +2888,15 @@ fn a_contention_echoed_onto_two_instances_is_reported_once() {
         instance("1:15", 300.0),
     ])));
 
-    let per_instance: Vec<&str> = diagnostics
+    let per_instance: Vec<(&str, &str)> = diagnostics
         .iter()
         .filter(|d| d.message.contains("layer of this instance declares"))
-        .map(|d| d.message.as_str())
+        .map(|d| {
+            let Location::Node(at) = &d.at else {
+                panic!("located at a node");
+            };
+            (at.path.as_str(), d.message.as_str())
+        })
         .collect();
     assert_eq!(
         per_instance.len(),
@@ -2899,9 +2904,22 @@ fn a_contention_echoed_onto_two_instances_is_reported_once() {
         "one authored contention, one finding, whatever it is echoed onto: {diagnostics:?}",
     );
     assert!(
-        per_instance[0].contains("1 further copy of the same reaction"),
+        per_instance[0]
+            .1
+            .contains("1 further copy of the same reaction"),
         "and it says how many instances it stands for: {:?}",
         per_instance[0],
+    );
+    // The emit pass files this finding under a node index and the naming pass
+    // replays it there, building the `Location` itself rather than carrying one
+    // (debt #1142). That is only right while the two passes walk `nodes` in the
+    // same order, and nothing else asserts it. A change that dropped the finding
+    // instead is caught by the count above; what only this line catches is the
+    // two passes disagreeing on which node an index means, which reports every
+    // contention at another node's path with the count still 1.
+    assert_eq!(
+        per_instance[0].0, "/card (1:14)",
+        "and it is located at the instance the emit pass filed it under",
     );
 }
 

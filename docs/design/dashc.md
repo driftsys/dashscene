@@ -397,22 +397,126 @@ component's interaction onto every instance, so a mistake authored once inside a
 master arrived once per instance; findings agreeing in rule, message and the
 layer the reaction was authored on — the `<source>` half of the synthetic
 `I<instance>;<source>` id — collapse onto the first, which names how many
-further copies there were. The **message** is part of that key deliberately: it
-is the faithful summary of what distinguishes one finding from another, naming
-the refused construct as well as the destination. A key built from structured
-parts instead was tried and reverted for losing the construct — two different
-refused curves on one layer to one destination then reported only the first,
-which debt #149 forbids.
+further copies there were. Those three are the specification's key, and the
+collapse compares nothing else. The **message** is what distinguishes one
+finding from another, deliberately: it is the faithful summary of the refused
+construct as well as the destination. A key built from structured parts instead
+was tried and reverted for losing the construct — two different refused curves
+on one layer to one destination then reported only the first, which debt #149
+forbids.
 
-**What that costs is a guard per message shape** (debt #1137, still open). The
-collapse holds only while every copy of one authored reaction renders the same
-message, and nothing in the type system keeps it — so each shape that can echo
-needs a test, and a new message shape arrives unguarded. Two are pinned:
-`one_authored_reaction_inside_a_master_is_one_finding_however_many_instances_show_it`
-for the omission shape and
-`a_refused_curve_echoed_onto_two_instances_is_one_finding` for the degrade
-shape, the second added after measurement showed a per-copy token in that
-message left the whole suite green.
+The message decides the collapse but is **not stored in the key** (debt #1142).
+Cloning the rendered prose for every diagnostic paid a heap allocation per
+finding to key a map whose entries are almost all singletons. `Collapse` buckets
+the indices under `(authored layer, rule)` instead and compares the rendering
+through the findings it already owns.
+
+Two costs move and one goes. The **message clone** is traded for a smaller
+allocation rather than removed: each bucket's first push allocates, so a file
+whose findings are all singletons makes the same number of allocations, while
+what is allocated becomes a short vector of indices rather than a copy of the
+prose. The **lookup** gains a scan rather than trading one: the map search on
+`(authored layer, rule)` survives, and beneath it the bucket is scanned for a
+matching rendering — over how many different things one authored layer says
+under one rule, R, which is small but rarely one, since a single switch that
+lowers nowhere and declares a refused curve already puts two sentences under one
+rule. Filling that bucket costs O(R²) sentence comparisons and each echoed copy
+costs up to R, where the replaced map was logarithmic in the document's whole
+key set. The **`Location`** is no longer built for a finding that folds:
+`Collapse::report` takes a closure and calls it only on the branch that keeps
+one, so a copy folding into an earlier finding builds no path and a node
+producing no finding builds none either. Allocations strictly fall — K path
+clones for K kept findings where the replaced code made K + 1 — while
+`index_of_id` lookups rise, one per kept finding rather than one per node; what
+the closure buys is the folded copies, 49 of the 50 on the file the collapse
+exists for. The pending contention findings carry no location at all, since both
+passes walk the nodes in the same order and the naming pass rebuilds what the
+emit pass would have handed it. Their **message** is still rendered per copy,
+one `Echoable` per contended member per emitted instance, of which `report`
+keeps the first — deferring that needs the plan at replay time, which the naming
+pass does not have.
+
+Exact byte and comparison counts are deliberately not quoted here. They depend
+on `Vec`'s growth policy — its first push takes capacity 4, not 1 — on whether
+the cost is counted per copy or per distinct rendering, and on the target's
+pointer width, `dashc` being built for `wasm32` as well. The change is justified
+by the shape above and by the byte-identity below rather than by a figure that
+needs re-deriving per target. What decides the collapse is unchanged throughout,
+so the findings and their order are byte-identical.
+
+Severity is **not** compared, and adding it was tried and reverted.
+`06-dashc-figma-lowering.md` says findings agreeing in "rule, message, and the
+layer the reaction was authored on … shall be reported once", and two copies of
+one authored reaction can earn different severities: the follow-up refusal names
+no landing, so a copy landing on an absent library earns `Warning` while one
+landing on no member earns the policy's, which under `Strict` is `Error`.
+Comparing severity reports those twice, against that sentence, and changes what
+`Strict` does with the bytes — a file that compiled would stop compiling. Which
+severity the survivor should take is a real question the specification does not
+answer; debt #1219 carries it, because settling it means amending a normative
+sentence rather than quietly disagreeing with one.
+`two_copies_differing_only_in_severity_are_still_one_finding` is what stands
+between the code and that sentence, since no fixture distinguishes the two
+readings.
+
+**What keeps a message from varying per copy is a test per shape, and the
+`echoable` module.** The collapse holds only while every copy of one authored
+reaction renders the same message; a message naming the node it was found on
+takes a distinct key per copy, the collapse silently stops, and the
+fifty-one-findings shape debt #1056 removed comes back. Nothing detects that —
+the surviving finding is still correct, there are simply N of it again.
+
+Measured: of the nine message shapes `interaction_diagnostics` writes, the suite
+produces all nine, and adding a per-copy token to each in turn is caught for
+**two** — the `NotAMember` omission and the one-frame degrade, each by the one
+test written for it.
+`one_authored_reaction_inside_a_master_is_one_finding_however_many_instances_show_it`,
+`a_refused_curve_echoed_onto_two_instances_is_one_finding` and
+`a_contention_echoed_onto_two_instances_is_reported_once` are those tests.
+
+A runtime assertion covering all nine was built and removed: it compared the
+message against the node's path, and a node path and a Figma member name are
+both designer-controlled, so it aborted debug builds on valid documents — a
+top-level instance `/Left` beside a member `icon=arrow/Left`. Debt #1212 carries
+the measurement and why anchoring the match does not save it.
+
+**The `echoable` module is the second half, and the smaller one.** It is a
+private module in its own file holding every part of the collapse: the two
+functions that write echoable prose, neither handed a node `Location`, the
+`Echoable` they return with private fields, `Echoable::at`, private, and
+`Collapse`, which owns the findings and the collapse state together. Nothing
+outside can construct an `Echoable` (`error[E0451]`) or place one
+(`error[E0624]`).
+
+That is all it guarantees, and every wider reading of it is false: message
+inputs are ordinary data, and no visibility rule makes data copy-invariant. Each
+attempt to state a wider property — that the fields are private, that
+`Echoable::at` is, that `contended_transition` supplies its own text, that
+`Interactions` cannot be fabricated — closes one route and leaves the next. What
+the module buys is that the set of places an echoed message is written stays
+small enough to read; what the assertion buys is the class.
+
+Four inputs still sit outside the compile-checked part, and are checked by
+reading. **`source`**, the collapse's other key half, is chosen by `apply`;
+`authored_source` answers the layer a reaction was authored on, and both
+entrances fall back to the node's own path where a node carries no id —
+deliberately, so a finding with no authored layer collapses with nothing.
+**`Set::at`** is a `Location` reachable through `Landing::Set`, and locates the
+set, which every copy of a reaction into that set shares. **`Reach`** is decided
+per copy and selects between message shapes: `carrying` holds the instances
+whose table `emit` accepted, so one instance can answer `Reach::Table` and
+another `Reach::Named`. Those copies render different sentences and do not
+collapse, which is correct — they report different outcomes, and the
+per-instance `UNLOWERABLE_SET` on the refused instance is left uncollapsed for
+the same reason. **`read`** is assumed identical on every copy, which is Figma's
+behaviour rather than this crate's: every refusal string `prototype::read`
+builds comes from the reaction payload — the trigger, action, navigation,
+transition and easing kinds, and nothing else — but whether the payload repeats
+verbatim is not checkable here. REST reports a component's interaction on an
+instance verbatim, which `instance-inherited` pins for a reaction on an instance
+root, while the same claim for a layer _inside_ a master is inference from the
+baked subtree being the resolved content. Debt #1067 is open for the capture
+that would pin it.
 
 `figma.unsupported` is deliberately left alone: it skips the node's subtree, so
 its copies are separate omissions rather than repetitions of one.
@@ -425,6 +529,33 @@ chain C levels deep C+1 full scans — measured at 9 rounds over 39 nodes for C 
 way across every fixture in `corpus/figma-fixtures/`. Each node's `interactions`
 is read once for the whole pass, into a vector parallel to the walk, rather than
 once by the set planning and again by the naming loop.
+
+**A switch reaching both passes has its host chain walked twice** — once while
+gathering, once while resolving — and that stands, measured (debt #1142). Not
+every switch does. A destination naming no set the file carries is walked by
+neither: gathering skips it, and resolution answers from `unlanded`, which reads
+one step of the chain rather than walking it. What separates the two populations
+is that resolution runs only where the node names its own findings, so its
+switches are a **subset** of gathering's rather than a second set beside it.
+Carrying the first answer to the second means holding gathering's per-switch
+answers until resolution runs, which couples two passes that are deliberately
+separate — gathering runs before the reachability fixed point, resolution during
+naming — and it was measured before being written rather than after. Across the
+whole of `corpus/figma-fixtures/` the pass makes **20 walks, of which 9 repeat
+an earlier one** — 11 distinct chains, 9 of them walked twice — and every one of
+those walks visits exactly one host, so a cache would save **9 host visits**.
+The deep case is quoted in the same unit rather than in walks, since that is
+what makes it look larger: on a synthetic file with instances nested 16 deep, a
+shape no capture resembles, only **2** walks repeat, and since `hosting` stops
+at the first belonging host rather than walking to the end, the saving there is
+at most 2 × 17 = **34** host visits — an upper bound from the chain length, not
+a count, the counter for that column having measured full chains rather than the
+visits actually made. That is the larger number the decision is argued against,
+and it still holds: 34 chain steps against an allocation per switch-carrying
+node, on a file no real capture resembles. How many walks repeat is how many
+switches both passes reach; depth only makes each repeated walk longer. Against
+debt #1066's 351 node tests for 15 instance visits, which is the evidence that
+justified the worklist, the saving is smaller than the allocation it would add.
 
 ## Bindings (v0.7, story #167)
 
