@@ -4,7 +4,12 @@
     date     2026-08-09
     scope    the whole workspace; docs/decisions/house-style.md (which
              recorded MIT), LICENSE, NOTICE, Cargo.toml's
-             `[workspace.package]`
+             `[workspace.package]`; **and the published crates.io
+             placeholders, added 2026-08-18** — see "What this record did
+             not reach"
+    amended  2026-08-18: the reserved names on crates.io were all MIT,
+             including three reserved after this decision. Every one now
+             carries Apache-2.0
 
 ## Context
 
@@ -58,17 +63,59 @@ Option 3, Apache-2.0 alone.
   Both halves are now one licence, so the compound expression is gone and
   `NOTICE` carries the attribution that Apache-2.0 §4(d) gives force to.
 
+## What this record did not reach, and now does (2026-08-18)
+
+**The scope line said "the whole workspace" and the registry is not the
+workspace.** Every reserved name on crates.io was published `0.1.0` under MIT
+and stayed there — 21 of them. **Two were reserved on the day this record was
+accepted**: `dashscene-ffi` and `dashscene-android`, both 2026-08-09. Everything
+else predates it. So the ruling was not ignored so much as never pointed at the
+registry: it named no artifact outside the workspace, and the reservation
+procedure in [`crate-name-map.md`](crate-name-map.md) mentioned no licence at
+all.
+
+**Dates in these records are local, and crates.io reports UTC.** The three
+2026-08-08 reservations were made at 23:27 UTC on 2026-08-07 — the same moment,
+one day apart in the two conventions. A reader comparing a record against the
+registry finds that offset on every name reserved late in the evening, and it is
+not drift.
+
+**A published version cannot be edited**, so the correction is additive: each of
+the 21 gained a `0.1.1` carrying `license = "Apache-2.0"`, with `LICENSE` and
+`NOTICE` inside the package as §4 requires, and each MIT `0.1.0` was yanked. The
+metadata is otherwise preserved verbatim — only the licence and the version
+moved. `dashpaint-abi`, reserved the same day, was published Apache-2.0 from the
+start, and so has no MIT version to yank and no 0.1.1.
+
+**The first real version is unaffected**, and that is worth saying because it
+was nearly recorded wrongly.
+[`publishable-and-the-first-version.md`](publishable-and-the-first-version.md)
+rules it **0.2.0**, on the reasoning that 0.2.0 clears the whole 0.1.x band. A
+0.1.1 placeholder sits inside that band, so it changes nothing — and it makes
+that record's own argument stronger rather than weaker: "0.1.1 would clear the
+floor and read as a patch on a 0.1.0 release that never existed" was
+hypothetical when written, and 0.1.1 now exists as a placeholder on 21 names.
+
+**What does follow is a rule for the next reservation**: it is published under
+this record's licence. The yanked MIT versions stay downloadable for anything
+that already resolved them, which is nothing — every name held one placeholder
+and no dependants.
+
 ## Consequences
 
 - Every crate inherits `license = "Apache-2.0"` from `[workspace.package]`.
   `dashpack-astcenc-sys` no longer overrides it.
-- **The 0.1.0 name reservations on crates.io stay MIT permanently.** All 21
-  reserved names were published at 0.1.0 under MIT — twelve on 2026-03-18 and
-  nine as the crates arrived, the most recent on 2026-08-09. A published
-  version's licence cannot be changed, and those MIT grants are irrevocable.
-  Each 0.1.0 is an empty stub — no implementation was distributed — so the grant
-  covers no working code. The first Apache-2.0 release is **0.2.0**, which is
-  already the planned first real version (issue #795).
+- **The 0.1.0 name reservations on crates.io stay MIT permanently — accepted
+  here, and superseded by the owner's ruling of 2026-08-18.** The reasoning
+  holds and is why this was defensible for nine days: a published version's
+  licence cannot be changed, those MIT grants are irrevocable, and each 0.1.0 is
+  an empty stub, so the grant covers no working code. What the ruling changed is
+  that "harmless" is not the same as "what the project says it is licensed
+  under", and a reader querying crates.io saw MIT on every name. Each of the 21
+  now carries a 0.1.1 under Apache-2.0 with the MIT 0.1.0 yanked; the
+  irrevocable grant on the yanked versions is untouched, because nothing can
+  touch it. See "What this record did not reach" above. The first real release
+  is **0.2.0** either way (issue #795).
 - `docs/decisions/house-style.md` recorded MIT as the house default. This record
   supersedes it for this repository; the house style itself is driftsys-wide and
   is not changed here.

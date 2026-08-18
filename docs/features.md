@@ -792,12 +792,12 @@ Checked against `crates/dashbuf/src/container.rs`, `prefix.rs`,
 ## Two things worth stating plainly
 
 **Nothing here is released.** This repository is public, which is not the same
-thing: all 21 public package names are reserved on crates.io at `0.1.0`, and
-none holds code from this repository. **Nine of the twenty-one were reserved
+thing: all 22 public package names are reserved on crates.io as placeholders,
+and none holds code from this repository. **Ten of the twenty-two were reserved
 after development started**, not before it, as the crates that need them arrived
-— the most recent two on 2026-08-09. The other twelve come from the family
-reserved on 2026-03-18, before this repository's first commit, and they are
-exactly the twelve stubs in the archived
+— the most recent on 2026-08-18. Every one is Apache-2.0 since that day. The
+other twelve come from the family reserved on 2026-03-18, before this
+repository's first commit, and they are exactly the twelve stubs in the archived
 [`driftsys/dashscene-name-reservations`](https://github.com/driftsys/dashscene-name-reservations)
 ([`docs/decisions/crate-name-map.md`](decisions/crate-name-map.md) is the list;
 re-derive from it rather than from a count in prose).

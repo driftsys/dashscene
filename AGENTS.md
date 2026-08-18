@@ -37,23 +37,32 @@ This is `driftsys/dashscene`, and it is **public**. It was `dashscene-staging`
 until 2026-08-11; the rename kept its history, its 501 issues and its 21
 milestones, which is why every `#N` in these records still resolves.
 
-There are **21** reserved crates.io names: the 12 taken on 2026-03-18, before
-this repo's first commit, plus 9 reserved during development as the crates
-needing them arrived. **Eighteen of the 21 are this workspace's crates since
-story #1239**, which renamed `dashscene-unity` to `dashpaint-abi`: the old name
-stays reserved and now describes nothing, and the new one is not reserved at
-all, so three are parked rather than two — `dashscore`, `dashscene-compose` and
-`dashscene-unity` — and one workspace crate holds a name the project does not
-own. These counts have been wrong before, having not moved when `dashscene-ffi`
-was reserved, so re-derive them from `docs/decisions/crate-name-map.md` rather
-than trusting the number here. Beware `demo`: a crate of that name has existed
-on crates.io since 2018 and is not ours, so querying the 25 workspace member
-names against crates.io returns 19 — the 18 reserved crates plus that one.
-Neither 19 nor 25 is the reservation count.
+There are **22** reserved crates.io names: the 12 taken on 2026-03-18, before
+this repo's first commit, plus 10 reserved during development as the crates
+needing them arrived. **Nineteen are this workspace's crates — every one of
+them** — and `dashscore`, `dashscene-compose` and `dashscene-unity` stay parked;
+the last of those was `dashpaint-abi`'s name until story #1239 and now describes
+nothing. These counts have been wrong before, having not moved when
+`dashscene-ffi` was reserved, so re-derive them from
+`docs/decisions/crate-name-map.md` rather than trusting the number here. Beware
+`demo`: a crate of that name has existed on crates.io since 2018 and is not
+ours, so querying the 25 workspace member names against crates.io returns 20 —
+the 19 crates plus that one. Neither 20 nor 25 is the reservation count.
+
+**Every reserved name is Apache-2.0 as of 2026-08-18.** All 21 that existed
+before that day were published MIT, two of them reserved on the very day the
+licence was decided, so each gained a `0.1.1` carrying Apache-2.0 and had its
+MIT `0.1.0` yanked — a published version cannot be edited. **The first real
+version is still `0.2.0`**, which clears the whole `0.1.x` band and is unchanged
+by this (`docs/decisions/publishable-and-the-first-version.md`,
+`docs/decisions/apache-2-0-for-the-patent-grant.md`).
 
 The repository that made those reservations is archived as
-`driftsys/dashscene-name-reservations`, kept because every published stub points
-its `repository` field there. **The visibility flip has happened** —
+`driftsys/dashscene-name-reservations`. **It is not what the stubs point at**:
+all 22 carry `repository = https://github.com/driftsys/dashscene`, which was
+that repo's URL when the twelve were published and has been this one's since the
+2026-08-11 rename. It is kept as the record of how the reservations were made.
+**The visibility flip has happened** —
 `gh repo view driftsys/dashscene --json visibility` returns `PUBLIC`, and that
 was the last step this record was waiting on
 (`docs/decisions/repo-staging-and-public-facade.md`). One consequence is already
