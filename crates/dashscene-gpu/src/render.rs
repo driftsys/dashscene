@@ -594,6 +594,11 @@ struct GpuClipBox {
 
 /// A device, a queue, the one pipeline, and the buffers a frame reuses.
 pub struct Renderer {
+    /// The frame's GPU timestamps, when the `gpu-timing` Cargo feature is on
+    /// and the adapter offered the queries. `None` for either reason, which
+    /// [`Renderer::last_gpu_time`] reports honestly rather than as a zero.
+    #[cfg(feature = "gpu-timing")]
+    timing: Option<GpuTiming>,
     /// Held because a [`wgpu::Surface`] is created from it and must not outlive
     /// it. The offscreen path needs it only to build the adapter, but keeping
     /// it here means there is one lifetime rule rather than two.
@@ -905,6 +910,153 @@ pub const TARGET_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// would charge every document for the one that needed it.
 pub const ATLAS_EXTENT: u32 = 2048;
 
+/// Which timestamp features to ask the device for.
+///
+/// **Empty unless the `gpu-timing` Cargo feature is on**, so the default build's
+/// device request is unchanged — see that feature's comment in `Cargo.toml` for
+/// why that matters more than the convenience of always having timings.
+///
+/// Intersected with what the adapter offers rather than demanded: a requested
+/// feature the adapter lacks fails `request_device` outright, and a painter that
+/// refused to start because it could not be *instrumented* would be worse than
+/// one that starts without instruments. [`Renderer::last_gpu_time`] answers
+/// `None` in that case, which is the honest report.
+#[cfg(feature = "gpu-timing")]
+fn timing_features(adapter: &wgpu::Adapter) -> wgpu::Features {
+    adapter.features() & timing_bits()
+}
+
+#[cfg(not(feature = "gpu-timing"))]
+fn timing_features(_adapter: &wgpu::Adapter) -> wgpu::Features {
+    timing_bits()
+}
+
+/// The bits `gpu-timing` adds to the device request, independent of any adapter.
+///
+/// Separate from [`timing_features`] so the invariant the whole feature rests on
+/// — that a default build's device request is byte-for-byte what it was — is a
+/// pure function a test can assert without a GPU. `timing_features` needs an
+/// adapter, and the test tier builds no device.
+#[cfg(feature = "gpu-timing")]
+const fn timing_bits() -> wgpu::Features {
+    wgpu::Features::TIMESTAMP_QUERY.union(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
+}
+
+#[cfg(not(feature = "gpu-timing"))]
+const fn timing_bits() -> wgpu::Features {
+    wgpu::Features::empty()
+}
+
+/// The query set a frame's two timestamps are written into, with the buffers
+/// they are resolved and read back through.
+///
+/// **One pair per frame, written into the encoder rather than into passes.** A
+/// frame encodes a variable number of passes — one per render-target layer, two
+/// more per backdrop blur — so per-pass timing would have to be summed, and
+/// sums over passes that the GPU may overlap do not add up to a frame's cost.
+/// Bracketing the whole encoder measures what a frame actually costs the device.
+#[cfg(feature = "gpu-timing")]
+struct GpuTiming {
+    set: wgpu::QuerySet,
+    resolved: wgpu::Buffer,
+    readback: wgpu::Buffer,
+    /// Nanoseconds the GPU spent on the last frame, once read back.
+    last: Option<std::time::Duration>,
+}
+
+#[cfg(feature = "gpu-timing")]
+impl GpuTiming {
+    fn new(device: &wgpu::Device) -> Self {
+        let set = device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("dashscene-gpu frame timing"),
+            ty: wgpu::QueryType::Timestamp,
+            count: 2,
+        });
+        let resolved = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("timing resolve"),
+            size: 16,
+            usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("timing readback"),
+            size: 16,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        Self {
+            set,
+            resolved,
+            readback,
+            last: None,
+        }
+    }
+
+    /// Reads the two timestamps back and records their difference.
+    ///
+    /// **Called after the frame's submission has been waited on**, which the
+    /// offscreen path already does for its pixel readback — so this adds a map
+    /// and 16 bytes rather than a second synchronisation point.
+    ///
+    /// **Returns `false` when the instrument has to be retired**, and the
+    /// caller drops it. Both degraded paths below leave state that a later
+    /// frame cannot recover from: a failed wait leaves `map_async` outstanding,
+    /// and wgpu refuses a submit touching a buffer that is not `Idle`, so
+    /// continuing would turn one transient failure into a fatal validation
+    /// error several rows later, far from its cause. An instrument that stops
+    /// measuring is the correct outcome here; one that stops the process is
+    /// not.
+    #[must_use]
+    fn collect(&mut self, device: &wgpu::Device, period_ns: f32) -> bool {
+        self.last = None;
+        let slice = self.readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        if device.poll(wgpu::PollType::wait_indefinitely()).is_err() {
+            // The map cannot be cancelled, so this buffer can never be
+            // submitted against again.
+            return false;
+        }
+        // `get_mapped_range` is fallible in wgpu 30. A failure means the map
+        // did not complete, so the buffer is **not mapped** and must not be
+        // unmapped: `unmap` on an unmapped buffer is itself a fatal wgpu error,
+        // which is what an earlier revision of this function did on exactly
+        // this path.
+        let Ok(view) = slice.get_mapped_range() else {
+            return false;
+        };
+        // `from_le_bytes` on the two halves rather than `bytemuck::cast_slice`,
+        // which is the crate's only widening cast and panics with
+        // `TargetAlignmentGreaterAndInputNotAligned` on a mapped range that is
+        // not 8-byte aligned. Aborting the process is the one outcome this
+        // function was rewritten to avoid, and an alignment it does not control
+        // is a poor reason to do it.
+        let ticks: Vec<u64> = view
+            .chunks_exact(8)
+            .map(|c| u64::from_le_bytes(c.try_into().expect("chunks_exact(8) is 8 bytes")))
+            .collect();
+        drop(view);
+        self.readback.unmap();
+        // A strict `>` rather than a subtraction: a timestamp pair is not
+        // guaranteed monotonic across a device reset, and a wrapped subtraction
+        // would report an enormous frame rather than an absent one. So a pair
+        // that resolved but did not increase is absent too — one more cause of
+        // `None` than the three a reader might expect, and the one case that is
+        // genuinely indistinguishable from "the GPU did no work".
+        // `period_ns` is guarded because wgpu documents `get_timestamp_period`
+        // as returning zero when timestamp queries are unsupported. Without the
+        // guard a zero period multiplies out to `Some(Duration::ZERO)` — a
+        // reported zero, which is precisely what this instrument promises never
+        // to produce.
+        self.last = match (ticks.first(), ticks.get(1)) {
+            (Some(&start), Some(&end)) if end > start && period_ns > 0.0 => Some(
+                std::time::Duration::from_nanos(((end - start) as f64 * period_ns as f64) as u64),
+            ),
+            _ => None,
+        };
+        true
+    }
+}
+
 impl Renderer {
     /// Acquires an adapter and builds the pipeline, drawing offscreen.
     ///
@@ -967,10 +1119,21 @@ impl Renderer {
         // advertises and the device did not ask for is not a feature the device
         // has, and the atlas texture is created on the device.
         let baked = adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_ASTC;
+        // **The `gpu-timing` feature's whole effect on the device request**, and
+        // it is intersected for the same reason `baked` is: a requested feature
+        // the adapter lacks fails the request outright, and this painter must
+        // still start on an adapter without timestamps. With the Cargo feature
+        // off this is empty and the request is byte-for-byte what it was.
+        //
+        // Both bits, because whole-frame timing writes its timestamps into the
+        // encoder rather than into a pass — one query pair per frame instead of
+        // one per pass, which is what makes the number a frame's GPU time rather
+        // than a sum over passes that may overlap.
+        let timing = timing_features(&adapter);
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("dashscene-gpu"),
-                required_features: baked,
+                required_features: baked | timing,
                 // Downlevel defaults, so this painter runs on the entry-tier
                 // class of device R3 names rather than only on a desktop one —
                 // but with the adapter's own resolution limits rather than
@@ -1428,6 +1591,20 @@ impl Renderer {
 
         let frame = Frame::new(&device, &layout, &sampler, &msdf_sampler, &placeholder);
         Ok(Self {
+            #[cfg(feature = "gpu-timing")]
+            // **Both bits, because the implementation writes into the encoder.**
+            // Gating on `TIMESTAMP_QUERY` alone built the query set on an
+            // adapter that offered it without
+            // `TIMESTAMP_QUERY_INSIDE_ENCODERS` — an Apple M3 is one — and the
+            // first `write_timestamp` then failed validation at run time. The
+            // gate has to name every feature the code below uses.
+            timing: device
+                .features()
+                .contains(
+                    wgpu::Features::TIMESTAMP_QUERY
+                        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
+                )
+                .then(|| GpuTiming::new(&device)),
             _instance: instance,
             device,
             queue,
@@ -1700,6 +1877,14 @@ impl Renderer {
         width: u32,
         height: u32,
     ) -> Result<Vec<u8>, RendererError> {
+        // The previous frame's reading is dropped here rather than in `collect`,
+        // which a frame that fails before `draw` never reaches. Without this,
+        // `last_gpu_time` answers a rejected render with the last successful
+        // frame's cost — a number for a frame that was never drawn.
+        #[cfg(feature = "gpu-timing")]
+        if let Some(timing) = self.timing.as_mut() {
+            timing.last = None;
+        }
         // Before the assert, and before anything is allocated: an over-large
         // extent reaches `Device::create_texture` two statements below, and a
         // caller cannot be told about a validation error that panicked.
@@ -1782,6 +1967,22 @@ impl Renderer {
         drop(data);
         offscreen.readback.unmap();
         self.offscreen = Some(offscreen);
+        // **After the frame has been waited on**, so the timestamps are
+        // resolved: the pixel readback above is that wait, which is why this
+        // costs a map of 16 bytes rather than a second synchronisation.
+        #[cfg(feature = "gpu-timing")]
+        {
+            let period = self.queue.get_timestamp_period();
+            // `self.timing` and `self.device` are different fields, so these
+            // borrows are disjoint and no clone is needed.
+            let retire = self
+                .timing
+                .as_mut()
+                .is_some_and(|timing| !timing.collect(&self.device, period));
+            if retire {
+                self.timing = None;
+            }
+        }
         unpremultiply(&mut pixels);
         Ok(pixels)
     }
@@ -1983,6 +2184,14 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("dashscene-gpu frame"),
             });
+        // **The frame's opening timestamp**, written into the encoder rather
+        // than into a pass: a frame encodes a variable number of passes and the
+        // device may overlap them, so a sum over per-pass timings is not a
+        // frame's cost. See `GpuTiming`.
+        #[cfg(feature = "gpu-timing")]
+        if let Some(timing) = self.timing.as_ref() {
+            encoder.write_timestamp(&timing.set, 0);
+        }
         let mut draws = 0usize;
         // Consumed one entry per planned backdrop as the loop reaches it, so
         // that taking an entry and advancing past it are one step. See the
@@ -2189,6 +2398,14 @@ impl Renderer {
             pass.draw(0..4, 0..1);
             drop(pass);
             draws += 1;
+        }
+        // The closing timestamp, and the resolve that makes both readable. Both
+        // are encoded before the submit so they belong to this frame's work.
+        #[cfg(feature = "gpu-timing")]
+        if let Some(timing) = self.timing.as_ref() {
+            encoder.write_timestamp(&timing.set, 1);
+            encoder.resolve_query_set(&timing.set, 0..2, &timing.resolved, 0);
+            encoder.copy_buffer_to_buffer(&timing.resolved, 0, &timing.readback, 0, 16);
         }
         self.queue.submit([encoder.finish()]);
         self.frame.last_runs = draws;
@@ -2763,6 +2980,36 @@ impl Renderer {
     /// property R-T2 cares about.
     pub fn last_draw_runs(&self) -> usize {
         self.frame.last_runs
+    }
+
+    /// GPU nanoseconds the last [`Renderer::render`] cost, when the `gpu-timing`
+    /// Cargo feature is on and the adapter offered timestamp queries.
+    ///
+    /// **`None` is the ordinary answer, and never means zero.** It covers:
+    ///
+    /// - the `gpu-timing` feature is off, so nothing was ever encoded;
+    /// - the adapter offers no timestamp queries, so no `QuerySet` was built;
+    /// - the pair did not read back, or read back without increasing;
+    /// - the instrument was retired after a failed map — see
+    ///   `GpuTiming::collect`, which returns `false` to ask for exactly that;
+    /// - **this is a `SurfaceRenderer`**. `collect` is called only from
+    ///   [`Renderer::render_dirty`], the offscreen path, because it is the only
+    ///   one that already waits on the submission. A windowed host therefore
+    ///   gets `None` on every frame, and with the feature on it still pays for
+    ///   the two writes and the resolve that `draw` encodes. That is why the
+    ///   probe is offscreen and why the feature is off by default.
+    ///
+    /// An instrument reporting zero for any of those would be
+    /// indistinguishable from a device that did no work.
+    ///
+    /// This is the device's own execution time, which nothing else in this
+    /// workspace measures: wall-clock around `present` spans the swapchain
+    /// acquire and the buffer handoff, and on a retail Android device neither
+    /// Perfetto's `gpu.counters` nor the `kgsl` tracepoints nor `/sys/class/kgsl`
+    /// is reachable — see the `gpu-timing` feature's comment in `Cargo.toml`.
+    #[cfg(feature = "gpu-timing")]
+    pub fn last_gpu_time(&self) -> Option<std::time::Duration> {
+        self.timing.as_ref().and_then(|t| t.last)
     }
 
     /// Payloads evicted from the atlases to make room, since this renderer was
@@ -5187,6 +5434,32 @@ const _: () = assert!(size_of::<GpuComposite>() == 16);
 
 #[cfg(test)]
 mod tests {
+    /// The invariant `gpu-timing` exists to protect: **a default build adds
+    /// nothing to the device request.**
+    ///
+    /// Every D3a statement about what this painter asks a device for is
+    /// conditional on that, and nothing else in the suite observes it — the
+    /// feature's code is compiled out here, so a bit that escaped its `cfg`
+    /// would change the shipped request with no test failing.
+    #[test]
+    #[cfg(not(feature = "gpu-timing"))]
+    fn a_default_build_adds_no_device_features() {
+        assert_eq!(super::timing_bits(), wgpu::Features::empty());
+    }
+
+    /// And with the feature on it adds exactly the two the encoder bracketing
+    /// needs — not one, which an earlier revision of this crate's own prose
+    /// claimed in four places, and which panics in wgpu validation because
+    /// `write_timestamp` into an encoder needs the second.
+    #[test]
+    #[cfg(feature = "gpu-timing")]
+    fn the_feature_adds_exactly_the_two_bits_the_bracketing_needs() {
+        assert_eq!(
+            super::timing_bits(),
+            wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
+        );
+    }
+
     use super::{
         BLUR_BINDINGS, BLUR_WGSL, DrawRun, GRADIENT_WORDS, GpuGlyphRun, GpuImage, GpuMsdfRow,
         GpuShape, MINIMUM_CAPACITY, Offscreen, PAINT_WGSL, PaintHeap, Renderer, Resolved,

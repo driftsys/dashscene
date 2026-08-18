@@ -579,6 +579,15 @@ jobs:
       # dependencies. A job of its own would rebuild the third-party graph too,
       # which is the larger half.
       - run: just doc-links
+      # The `gpu-timing` cfg population, which the workspace pass above cannot
+      # see: `--all-targets` does not imply `--all-features`, and nothing else
+      # in this workspace enables that feature. Without this job step the
+      # query-set code in `dashscene-gpu` and `examples/gpu_time.rs` compile in
+      # no CI job at all, which is issue #1108's shape — a gate that cannot see
+      # the code it covers. `just gpu-timing-lint` rather than the two commands,
+      # so this file does not become the second copy that drifts; the recipe
+      # carries clippy and the feature's own intra-doc-link pass together.
+      - run: just gpu-timing-lint
 
   test:
     # Compile-heavy: skipped when the diff is documentation only

@@ -1,0 +1,164 @@
+# Perfetto configuration for attributing a frame's cost (issue #1107, v0.21).
+#
+# **The question this exists to answer, and nothing else.** The frame instrument
+# reports `submit` at 9-12 ms on a Pixel 5, flat across scenes that differ
+# wildly, with its mean below its median. That shape says most of it is waiting
+# rather than work — but wall-clock around `SurfaceRenderer::present` cannot say
+# **what** it waits on, and the difference decides whether a GPU budget is
+# threatened at all:
+#
+#     waiting on a fence          the GPU is the constraint
+#     waiting on a buffer/vsync   pacing; the GPU has headroom
+#     on-CPU in the driver        neither; it is CPU cost in submit
+#
+#     adb push measure/android/perfetto-attribution.pbtx /data/misc/perfetto-configs/
+#     adb shell perfetto --txt -c /data/misc/perfetto-configs/perfetto-attribution.pbtx \
+#         -o /data/misc/perfetto-traces/attribution.perfetto-trace
+#     adb pull /data/misc/perfetto-traces/attribution.perfetto-trace
+#
+# ## Why this is not the GPU-counter config the record anticipated
+#
+# `docs/design/android-toolchain.md` said vendor GPU counters were a second pass
+# once the adapter was known. **On this device class they are not available at
+# all**: `adb shell perfetto --query` on a Pixel 5 (Android 14, retail user
+# build) registers `android.gpu.memory` from `gpuservice` and **no
+# `gpu.counters` and no `gpu.renderstages`** — Qualcomm does not ship the
+# Perfetto GPU producer there. Snapdragon Profiler is the vendor route.
+#
+# ## RESULT, 2026-08-18: the tracepoint half of this config produced nothing
+#
+# **Read this before spending a device window on it.** Everything below about
+# `kgsl` and `dma_fence` describes what those tracepoints would answer, not what
+# this device returned. On a Pixel 5 they **exist and do not enable under
+# `traced_probes`**: a 20 s trace taken while the painter drew recorded **zero**
+# events from either group, against about 75 000 `sched_switch`. `/sys/class/kgsl`
+# is refused to `shell`, and there is no `su`.
+#
+# What this config did settle, and what it is still worth running for, is the
+# scheduler half: `sched_switch` plus `sched_blocked_reason` showed the render
+# thread about 84% asleep with no uninterruptible time, which is what
+# established that `submit` is pacing rather than GPU work.
+#
+# GPU execution time came from timestamp queries inside the painter instead —
+# `just android-gpu-time`, and the "What the GPU costs" section of
+# `docs/design/android-toolchain.md`. Keep the groups below for a device whose
+# vendor does enable them.
+#
+# What the kernel exposes on a device where they do enable, and what this config
+# asks for, is the Adreno driver's own tracepoints. They would answer the
+# question better than counters: counters give utilisation, and these give what
+# the thread is blocked on.
+#
+# ## What each group is for
+#
+# **`dma_fence_wait_start` / `wait_end` — the discriminator.** A render thread
+# sitting between these is waiting for the GPU. Descheduled *outside* a fence
+# wait is pacing. Without these the two are indistinguishable, and every reading
+# of `submit` so far has had to guess between them.
+#
+# **`kgsl` `adreno_cmdbatch_queued` / `submitted` / `retired`** — the Adreno
+# driver bracketing each command batch. `submitted` to `retired` is GPU
+# execution time, per submission, from the driver rather than inferred.
+#
+# **`sched_switch` **and** `sched_waking`** — Perfetto derives its thread-state
+# track from both; with only `sched_switch`, which is what
+# `perfetto-frames.pbtx` asks for, the states are materially poorer.
+# `sched_blocked_reason` adds the kernel function a thread blocked in, which is
+# what separates a fence wait from a buffer wait when the slices do not.
+#
+# **`atrace_apps` on the showcase host** — without it the trace holds the
+# system's view and not the app's own slices, so `dequeueBuffer` and
+# `queueBuffer` never appear and the pacing case cannot be named.
+#
+# ## What is deliberately left out
+#
+# `linux.perf`, the sampling profiler, is registered on this device and is not
+# here: it answers "where does CPU time go", which is the *next* question and
+# only if this one says the thread is on-CPU. Enabling it now would add sampling
+# overhead to the very intervals being measured.
+#
+# Buffers are sized for 20 s. A config that enables everything produces a trace
+# too large to open, which is the failure this comment exists to prevent.
+
+buffers {
+  size_kb: 131072
+  fill_policy: DISCARD
+}
+
+buffers {
+  size_kb: 4096
+  fill_policy: RING_BUFFER
+}
+
+data_sources {
+  config {
+    name: "linux.ftrace"
+    target_buffer: 0
+    ftrace_config {
+      # Thread state: switch and waking together, plus the blocked reason.
+      ftrace_events: "sched/sched_switch"
+
+      # Kept in step with `perfetto-frames.pbtx`: without the thread-exit
+
+      # event, a reused tid over a 20 s trace is attributed to the dead
+
+      # thread and its lifetime runs to the end of the trace. The
+
+      # scheduler half is the half of this config that produced findings,
+
+      # so it must not be the weaker of the two.
+
+      ftrace_events: "sched/sched_process_free"
+      ftrace_events: "sched/sched_waking"
+      ftrace_events: "sched/sched_wakeup"
+      ftrace_events: "sched/sched_blocked_reason"
+      ftrace_events: "sched/sched_process_exit"
+      ftrace_events: "task/task_newtask"
+      ftrace_events: "task/task_rename"
+
+      # The discriminator: is a block a GPU fence wait or not.
+      ftrace_events: "dma_fence/dma_fence_wait_start"
+      ftrace_events: "dma_fence/dma_fence_wait_end"
+      ftrace_events: "dma_fence/dma_fence_signaled"
+
+      # The Adreno driver's own view of GPU execution.
+      ftrace_events: "kgsl/adreno_cmdbatch_queued"
+      ftrace_events: "kgsl/adreno_cmdbatch_submitted"
+      ftrace_events: "kgsl/adreno_cmdbatch_retired"
+
+      atrace_categories: "gfx"
+      atrace_categories: "view"
+      atrace_categories: "sched"
+      atrace_categories: "freq"
+      atrace_apps: "dev.driftsys.dashscene.demo"
+      atrace_apps: "dev.driftsys.dashscene.harness"
+    }
+  }
+}
+
+data_sources {
+  config {
+    name: "android.surfaceflinger.frametimeline"
+    target_buffer: 0
+  }
+}
+
+data_sources {
+  config {
+    name: "android.surfaceflinger.frame"
+    target_buffer: 0
+  }
+}
+
+data_sources {
+  config {
+    name: "linux.process_stats"
+    target_buffer: 1
+    process_stats_config {
+      scan_all_processes_on_start: true
+      proc_stats_poll_ms: 500
+    }
+  }
+}
+
+duration_ms: 20000

@@ -33,11 +33,19 @@
 # ## What is deliberately NOT in it
 #
 # **Vendor GPU counters.** `gpu.counters` needs counter ids that differ between
-# Adreno, Mali and PowerVR, and the adapter this project will meet is unknown
-# until `just android-probe` reports it on the device. A guessed id produces a
-# trace with a silently empty track, which is worse than a trace that does not
-# claim to hold GPU counters. Add them in a second pass, after
-# `adb shell perfetto --query` has said what the device offers.
+# Adreno, Mali and PowerVR, and a guessed id produces a trace with a silently
+# empty track, which is worse than a trace that does not claim to hold GPU
+# counters.
+#
+# This comment used to say to add them in a second pass once
+# `adb shell perfetto --query` had reported what the device offers. **That was
+# done on 2026-08-18, and the answer is that this route is closed**: a Pixel 5
+# registers no `gpu.counters` data source at all, its `kgsl` and `dma_fence`
+# ftrace tracepoints do not enable, and `/sys/class/kgsl` is refused to
+# `shell`. GPU time on that device comes from timestamp queries inside the
+# painter instead — `just android-gpu-time`, and the "What the GPU costs"
+# section of `docs/design/android-toolchain.md`. Keep the paragraph above for
+# an adapter that does register the producer.
 #
 # **A long duration.** 20 s at these buffer sizes, because the showcase's pulse
 # advances every 2.5 s and 20 s covers eight phases — enough to see the shape

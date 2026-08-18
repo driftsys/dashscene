@@ -381,19 +381,144 @@ The compositor agrees from the other side: over a 15 s window it counted **532
 frames and 5 missed — 0.94%**. A frame path that misses one deadline in a
 hundred is not one that is short of GPU time.
 
-**What this record still does not claim** is the exact split between GPU work
-and waiting. Wall-clock around `present` cannot separate them, and no
-measurement here has timed the GPU at all. The vendor-neutral configuration in
-`measure/android/perfetto-frames.pbtx` plus Adreno counters — now nameable,
-since the adapter is known — is what would settle it. Until it does, **no
-statement about GPU headroom on this device is supported by anything in this
-file.**
+**The split between GPU work and waiting was open when this section was written,
+and it is still open for the frames in the table above.** Wall-clock around
+`present` cannot separate them. The section below prices GPU work on this
+adapter, but it does not decompose these rows: it runs at a different extent
+(1280x720 against 2340x805, on a record whose own finding is that cost is
+fill-rate-bound), on a different scene (solid quads rather than the showcase's
+text, which that section says it does not price), and offscreen rather than to a
+live surface. What it lifts is the earlier bar on saying anything at all about
+GPU cost on this device; what it does not do is subtract a term from these
+measurements. The route this paragraph named at the time — the vendor-neutral
+Perfetto configuration plus Adreno counters — **was tried and does not work on
+this device**; what replaced it is timestamp queries inside the painter. "What
+the GPU costs" below carries both the result and why the prescribed route was
+abandoned.
 
 **Read against a CPU budget**, which is the one thing these numbers do support:
 the app's own per-frame CPU is `tick + paint`, so **0.19 ms for `layout`, 0.45
 ms for `typography` and 0.28 ms for `surfaces`** — the sums of the table's own
 two columns, which an earlier revision got wrong for `typography` by carrying
 run 1's terms against run 2's table.
+
+### What the GPU costs (2026-08-18)
+
+`crates/dashscene-gpu/examples/gpu_time.rs`, built with the `gpu-timing` feature
+and run by `just android-gpu-time`, brackets the frame's command encoder with a
+wgpu `QuerySet` and converts the two timestamps with `get_timestamp_period()`.
+The Adreno 620 offers `TIMESTAMP_QUERY`, `TIMESTAMP_QUERY_INSIDE_ENCODERS`,
+`TIMESTAMP_QUERY_INSIDE_PASSES` and `PIPELINE_STATISTICS_QUERY` —
+`just android-probe` prints all four — so the figures below are the device's own
+GPU clock rather than wall-clock around a submit.
+
+Offscreen at 1280x720, release, 60 frames per row after 10 discarded:
+
+    rects  layers    gpu min ms   gpu p50 ms   gpu max ms
+        0       0         1.805        4.083       19.906
+        8       0         3.144        6.714       43.168
+       32       0         7.105        7.480       25.525
+       32       1         7.983       10.086       38.359
+       32       4        10.632       10.879       74.527
+       32       8        14.172       17.816      106.760
+
+**Only the minimum reproduces, which is why every reading below uses it.** The
+sweep was run twice, from two separate builds. The six minima came back as
+1.804, 3.144, 7.104, 7.980, 10.641 and 14.156 ms against the table's 1.805,
+3.144, 7.105, 7.983, 10.632 and 14.172 — **within 0.016 ms on every row**. The
+p50 and max columns did not: row one's p50 moved from 4.083 to 2.814 ms and row
+five's from 10.879 to 23.759, a factor of 2.2. Those two columns record what
+else the device was doing, so **no conclusion here is drawn from them**; they
+are printed because a row whose minimum and maximum differ by a factor of 8 is a
+row worth distrusting.
+
+**Provenance.** Both runs predate a later revision of the probe that added the
+`DS_GPU_FRAMES` and `DS_GPU_WARMUP` overrides and made a failed map retire the
+instrument rather than abort the process. Neither touches the path a successful
+frame takes — the same encode, the same wait, the same strict `>` on the pair —
+and the defaults are the same 60 and 10. The figures were not re-derived on
+hardware afterwards, because the device was disconnected by then; re-run
+`just android-gpu-time` on the next device contact and expect the minima to land
+within the spread above.
+
+**The `0 rects` row is not an empty frame.** The probe's scene always lays a
+full-screen background quad, so row one is one 1280x720 quad and the `rects`
+column counts what is drawn on top of it.
+
+**The cost is fill rate.** Reading the minima against the area each row shades —
+the background quad is 0.9216 Mpx, each content rect is 300x300 px, and every
+rect is fully inside the target at both counts:
+
+    row                     shaded area    gpu min    ms per Mpx
+    one full-screen quad     0.9216 Mpx    1.805 ms          1.96
+    plus 8 rects             1.6416 Mpx    3.144 ms          1.92
+    plus 32 rects            3.8016 Mpx    7.105 ms          1.87
+
+**1.87 to 1.96 ms per megapixel over a four-fold range of shaded area**, and
+that is the rate of **one pipeline**, not of the GPU — see the layers below,
+which shade through a cheaper one.
+
+The instance count moves 1 to 9 to 33 across those rows while the per-megapixel
+figure does not, so what a frame pays for is fragments shaded rather than
+instances packed. **The draw-call count does not move at all**: with solid paint
+and no groups, `draw_runs` takes its early return and each of these three rows
+encodes exactly one `pass.draw`, as `Renderer::last_draw_runs` documents ("One
+for an ordinary frame"). An earlier revision of this paragraph claimed draw
+calls moved with the rest, which was wrong and, if it had been true, would have
+left the reading ambiguous between per-call and per-fragment cost. One draw call
+throughout is what removes that ambiguity.
+
+**A render-target layer costs 0.88 ms, and that figure does not vary with the
+layer count**: 0.878 ms for one layer, 0.882 for each of four, 0.883 for each of
+eight. Two 320x320 quads account for 0.2048 Mpx of it, about 0.39 ms at the rate
+above; **the remaining 0.49 ms is a residual over three terms, not a blit rate**
+— and it is the reason the fill rate above is a property of one pipeline rather
+than of the device. A full-target composite shaded at the SDF pipeline's 1.9 ms
+per megapixel would cost about 1.75 ms on its own, which is twice the whole
+per-layer figure. It does not, because the composite is a different and much
+cheaper pipeline: `self.composite_pipeline`, one textured quad, against
+`self.pipeline`'s analytic SDF evaluation. Each layer pass is a `LoadOp::Clear`
+and a `StoreOp::Store` over a full-extent target, so that 0.49 ms covers a
+full-target clear, a full-target store — the tile-memory traffic R-T1 and Q-6
+exist to price — and the composite draw. Divided by the target's 0.9216 Mpx it
+is 0.53 ms per megapixel for the three together, which is usable for planning
+and is **not** a measurement of the composite alone. Separating them needs a
+sweep that varies one at a time.
+
+What is established rather than inferred is that the pass is full-extent:
+`crates/dashscene-gpu/src/render.rs` draws one quad over the whole target per
+layer, and its own "Why full extent, and one per layer" records the choice.
+
+**Why not Adreno counters, which this record previously prescribed.** Three
+routes were tried on this device and all three are closed to a retail build with
+no `su`:
+
+- `adb shell perfetto --query` lists the registered data sources, and
+  **`gpu.counters` is not among them**. This device's `traced_probes` exposes no
+  GPU counter producer.
+- The `kgsl` and `dma_fence` ftrace tracepoints **exist and do not enable**.
+  `measure/android/perfetto-attribution.pbtx` requests them by name, and a 20 s
+  trace taken while the painter drew recorded **zero** events from either group
+  against about 75 000 `sched_switch`.
+- `/sys/class/kgsl` is **refused to the `shell` user**.
+
+Timestamp queries are what remains, and they sit inside the painter rather than
+beside it — which is why the `gpu-timing` feature exists rather than a second
+Perfetto configuration.
+
+**What this excludes: the swapchain.** The probe is offscreen and windowless, so
+no image acquire and no present fall inside the timestamps. That is the point of
+it. Those terms are what the windowed measurements earlier in this section
+already contained, and this is the term they did not.
+
+**What it still does not settle.** The 1.9 ms per megapixel is measured on rows
+that shade through the SDF fragment path with solid paint and no texture
+sampling, so that rate prices neither the glyph atlas path nor a gradient. The
+three layer rows are not among them: each adds one composite pass per layer that
+binds the layer texture and samples it, through a different pipeline — which is
+why the per-layer figure is quoted separately and never at the SDF rate. It is
+one adapter. And because it is offscreen, it cannot be added to the windowed
+figures above to produce a frame total — the two share no common frame.
 
 ### Q-6 — the render-target budget (#1128)
 
@@ -650,7 +775,12 @@ configuration. The counter ids differ between Adreno, Mali and PowerVR, and the
 adapter is unknown until the probe reports it on first contact; a guessed id
 yields a silently empty track, which is worse than a configuration that does not
 claim to hold counters. `adb shell perfetto --query` on the device names what it
-actually offers, and that is the second pass.
+actually offers.
+
+**That query was run, and it closed the route rather than opening it** — see
+"What the GPU costs" above, which supersedes this paragraph for the Pixel 5 and
+records what replaced it. The paragraph stands only for an adapter whose vendor
+does register the producer.
 
 **The attach procedure (#960)** times a cold launch to its first drawn frame,
 per profile, **with a timeout** — so "no completion observed within N seconds"
