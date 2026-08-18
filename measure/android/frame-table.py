@@ -65,7 +65,38 @@ import sys
 # `-v epoch` right-pads the timestamp column, so a real line begins with
 # whitespace. Leading `\s*` rather than a `strip()` at the call site, because the
 # trailing anchor has to keep meaning "the line ends here".
-SAMPLE = re.compile(
+#
+# **Two shapes, both anchored, and neither optional in its own tail.** The
+# instrument gained a paint/present split and glyph counts on 2026-08-17, so
+# every capture taken before that reads `draw mean` and every one after reads
+# `paint mean … present mean … — N run(s), M glyph(s)`. Both are accepted,
+# because `run.sh` writes into every bundle's README that its tables can be
+# re-derived from its captures — a promise that a regex replacement rather than a
+# widening would have broken for every bundle already taken.
+#
+# The glyph suffix is **required** in the new shape rather than optional. It was
+# optional for one revision, on two justifications that were both false: a
+# pre-split capture is rejected by the `paint mean` prefix whatever the tail
+# does, and a frame with no text still emits `— 0 run(s), 0 glyph(s)`. What
+# optional actually bought was accepting a line the logcat ring had cut at
+# `(52.5 fps if unpaced)`, which is the truncation the whole-line anchor exists
+# to reject.
+SAMPLE_SPLIT = re.compile(
+    r"^\s*(?P<epoch>\d+\.\d+)\s+(?P<pid>\d+)\s+(?P<tid>\d+)\s+I\s+dashscene:\s+"
+    r"(?P<scene>\S+) over (?P<frames>\d+) frames — "
+    r"tick (?P<tick>[\d.]+) ms, "
+    r"paint mean (?P<paint>[\d.]+) p50 (?P<paint50>[\d.]+), "
+    r"submit mean (?P<mean>[\d.]+) p50 (?P<p50>[\d.]+) p95 (?P<p95>[\d.]+) "
+    r"max (?P<max>[\d.]+) ms "
+    r"\((?P<fps>[\d.]+) fps if unpaced\)"
+    r" — (?P<runs>\d+) run\(s\), (?P<quads>\d+) glyph\(s\)\s*$"
+)
+
+# The shape every capture before 2026-08-17 carries. `draw` spanned paint and
+# present together, so it is read into the present column and the paint columns
+# report `—`: reporting a zero there would claim a measurement that instrument
+# never took.
+SAMPLE_COMBINED = re.compile(
     r"^\s*(?P<epoch>\d+\.\d+)\s+(?P<pid>\d+)\s+(?P<tid>\d+)\s+I\s+dashscene:\s+"
     r"(?P<scene>\S+) over (?P<frames>\d+) frames — "
     r"tick (?P<tick>[\d.]+) ms, "
@@ -154,9 +185,14 @@ def read(paths):
             # `adb` on a host with CRLF line endings, and `﻿` from a
             # capture that went through a tool that added one.
             line = line.replace("\r", "").lstrip("﻿")
-            found = SAMPLE.match(line)
+            found = SAMPLE_SPLIT.match(line) or SAMPLE_COMBINED.match(line)
             if found:
                 row = found.groupdict()
+                # The combined shape has no paint and no glyph counts; `—` says
+                # not measured, where a zero would say measured as nothing.
+                row.setdefault("paint", None)
+                row.setdefault("paint50", None)
+                row.setdefault("quads", None)
                 row["epoch"] = float(row["epoch"])
                 row["pid"] = int(row["pid"])
                 row["frames"] = int(row["frames"])
@@ -288,6 +324,21 @@ def emit(table, source, describe, clk_tck, out):
     print(SOURCES[source], file=out)
     print(file=out)
     print(
+        "`paint` is this project's own instance packing, pure CPU. `submit` is "
+        "the upload, the encode, the submit and the swapchain — named `submit` "
+        "rather than `present` because `demo`'s desktop host prints `present` "
+        "for paint plus present, and one word must not name two quantities. "
+        "They are reported apart "
+        "because they are different optimisation targets. `glyphs` is the "
+        "glyph-quad count of the frame that **closed** the sample — a snapshot "
+        "rather than a per-sample constant, since a scene whose text changes "
+        "moves it: consecutive samples of `typography` reported 444 and 446. "
+        "Read it as the order of magnitude the sample was drawing, never as a "
+        "denominator exact for every frame in it.",
+        file=out,
+    )
+    print(file=out)
+    print(
         "One row per reported sample of 240 **drawn** frames "
         "(`demo-android/src/timing.rs`). Rows are not averaged: the first "
         "sample of a scene carries pipeline warm-up, which reaches `max` and "
@@ -305,12 +356,13 @@ def emit(table, source, describe, clk_tck, out):
     )
     print(file=out)
     print(
-        "| scene | # | pid | frames | tick ms | draw mean | p50 | p95 | max | "
-        "fps if unpaced | wall s | cpu % of one core |",
+        "| scene | # | pid | frames | tick ms | paint mean | paint p50 "
+        "| submit mean | p50 | p95 | max | glyphs | fps if unpaced | wall s "
+        "| cpu % of one core |",
         file=out,
     )
     print(
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         file=out,
     )
     for row in table:
@@ -322,8 +374,10 @@ def emit(table, source, describe, clk_tck, out):
         cpu = "—" if row["cpu"] is None else f"{row['cpu']:.0f}"
         print(
             f"| {row['scene']} | {row['index']} | {row['pid']} | {row['frames']} "
-            f"| {row['tick']} | {row['mean']} | {row['p50']} | {row['p95']} "
-            f"| {row['max']} | {row['fps']} | {span} | {cpu} |",
+            f"| {row['tick']} | {row['paint'] or '—'} | {row['paint50'] or '—'} "
+            f"| {row['mean']} "
+            f"| {row['p50']} | {row['p95']} | {row['max']} "
+            f"| {row.get('quads') or '—'} | {row['fps']} | {span} | {cpu} |",
             file=out,
         )
     print(file=out)

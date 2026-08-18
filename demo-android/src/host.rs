@@ -226,7 +226,13 @@ impl Frames for ShowcaseFrames {
             return Step::Continue;
         }
 
-        let before_draw = Instant::now();
+        // **Two timers, not one** (2026-08-17). `paint` is this project's own
+        // instance packing and is pure CPU; `present` is the upload, the command
+        // encoding, the submit and the swapchain. A single figure around both
+        // cannot say which of them a frame's cost is, and they have nothing in
+        // common as optimisation targets — the device measurement that motivated
+        // the split is in `docs/design/android-toolchain.md`.
+        let before_paint = Instant::now();
         let committed = self.arena.committed();
         let changes = Changes {
             rects: committed.dirty(),
@@ -241,6 +247,9 @@ impl Frames for ShowcaseFrames {
             committed.glyphs(),
             Some(changes.rects),
         );
+        let paint_took = before_paint.elapsed();
+
+        let before_present = Instant::now();
         let presented = renderer.present(
             self.painter.instances(),
             committed.paints(),
@@ -249,7 +258,21 @@ impl Frames for ShowcaseFrames {
             committed.glyphs(),
             Some(changes),
         );
-        let draw_took = before_draw.elapsed();
+        let present_took = before_present.elapsed();
+
+        // What **this frame's** text amounts to, so a cost per glyph is
+        // arithmetic rather than an inference from which scene was running.
+        // Counted here because `committed` is borrowed for the paint anyway.
+        //
+        // **A snapshot of the reporting frame, not a property of the sample.**
+        // Only the closing frame's values reach the line, and a showcase scene's
+        // text is not static — `typography` binds a formatted speed and the badge
+        // binds a label — so the count can move within one sample. It moved:
+        // consecutive samples of `typography` reported 444 and 446. Read it as
+        // the order of magnitude the sample was drawing, never as a denominator
+        // exact for every frame in it.
+        let runs = committed.glyphs().runs().len();
+        let quads = committed.glyphs().all_quads().len();
 
         match presented {
             Ok(_) => {
@@ -275,8 +298,14 @@ impl Frames for ShowcaseFrames {
             }
         }
 
-        if let Some(sample) = self.timing.push(self.scene.name, tick_took, draw_took) {
-            log(&sample.line());
+        if let Some(sample) = self
+            .timing
+            .push(self.scene.name, tick_took, paint_took, present_took)
+        {
+            log(&format!(
+                "{} — {runs} run(s), {quads} glyph(s)",
+                sample.line()
+            ));
         }
         Step::Continue
     }

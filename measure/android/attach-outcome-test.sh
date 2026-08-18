@@ -43,7 +43,7 @@ check() {
 check "attached and drew" "drew" \
     "100.0" "101.5" "101.7" ""
 
-# **Issue #960's outcome, and the reason the timeout exists.** The acquisition
+# **The wedge, and the reason the timeout exists.** The acquisition
 # was entered and never returned; nothing here says it ever would, which is why
 # the wording is a bound rather than a duration.
 check "attaching, nothing after it — the wedge" "NO COMPLETION OBSERVED in 90 s" \

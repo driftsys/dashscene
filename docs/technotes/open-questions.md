@@ -15,7 +15,7 @@ example, `Q-4` still resolves once `specs/` is gone. It decides nothing.
 | Q-3 declared state-machine layer for plugin producers | open — no tracking issue                              |
 | Q-4 Taffy baseline alignment behavior                 | **resolved** — story #43, see below                   |
 | Q-5 remote producer admission scope                   | open — no tracking issue                              |
-| Q-6 group-opacity RT budget value on target hardware  | open — #44                                            |
+| Q-6 group-opacity RT budget value on target hardware  | **measured** — #1128, see below                       |
 
 - **Q-1** — resolved for v0: MSDF-only, no per-size bitmap atlases.
   `docs/decisions/q1-msdf-below-14px.md`.
@@ -39,8 +39,22 @@ example, `Q-4` still resolves once `specs/` is gone. It decides nothing.
   `docs/decisions/dsb-format-and-one-schema.md` and
   `docs/technotes/runtime-content.md`, but neither is a tracking issue.
 - **Q-6** — the group-opacity render-target budget value on target hardware.
-  Tracked by story #44, "masks + group opacity", which uses a placeholder budget
-  in profile config until this is measured.
+  **Measured 2026-08-17** on a Pixel 5 (Adreno 620, a tiling GPU): one more
+  mid-frame render-target switch costs **1.95 ms ± 0.29 ms** at 1920x1080,
+  against 0.20-0.43 ms for the same sweep on an Apple M3.
+  `docs/design/android-toolchain.md` carries the run.
+
+  **The placeholder is unchanged, and that is the finding rather than a
+  shortfall.** `RENDER_TARGET_BUDGET_PLACEHOLDER` is a **count** and what was
+  measured is a **cost**; converting one to the other needs a frame budget, and
+  no display geometry is pinned (#549). What the number does settle is that a
+  fixed count cannot be right at any value — the affordable number of switches
+  is `budget / cost` and both terms belong to the target — and that eight is not
+  a conservative choice: at this cost it is about 15.6 ms, a whole 60 Hz frame.
+
+  **This row pointed at #44 until 2026-08-17**, a closed v0.8 story that built
+  the feature the budget bounds and never addressed the value, which is how the
+  question stayed invisible. It is #1128 that measured it.
 
 ## Later-raised questions
 

@@ -310,15 +310,20 @@ Checked against `crates/dashscene-core/src/arena.rs`,
       only the one being shown, so a browser — which has no bytes it did not
       download — can skip a screen's images only when no other screen uses any.
       See section 6.
-- [ ] **Tuned against the target device** — **the first measurements are
-      v0.21**, the tuning they would justify is v1. Epic #1107 carries "Android
-      and Unity on target hardware: integration and performance", with D3a's
-      Vulkan measurement (#885) and the on-device frame rate (#842) under it —
-      both moved there from v0.19, which closed having never run on the target
-      device class. The roughly twenty specific improvements stay held on v1
-      (epic #476): none has a frame budget or a device measurement behind it, so
-      fixing one now would produce a change whose only success criterion is that
-      the tests still pass.
+- [ ] **Tuned against the target device** — **the first measurements were taken
+      on 2026-08-17** (a Pixel 5; `docs/design/android-toolchain.md`), and the
+      tuning they would justify is v1. D3a's Vulkan measurement (#885), the
+      on-device frame rate (#842) and Q-6's render-target cost (#1128) are done.
+      What they establish, at 1280x445: this project's own instance packing
+      costs 0.01-0.10 ms a frame, 446 glyphs cost 0.09 ms more than none, and
+      one mid-frame render-target switch costs about 1.9 ms. **They establish
+      nothing about whether a 60 Hz budget is held** — the per-frame figure is
+      dominated by waiting on the swapchain, which no measurement here separates
+      from GPU work. **No tuning has been done against them**, which is what
+      keeps this box unticked. The roughly twenty specific improvements stay
+      held on v1 (epic #476): none has a frame budget or a device measurement
+      behind it, so fixing one now would produce a change whose only success
+      criterion is that the tests still pass.
 
 ## 6. The design file format
 
@@ -678,20 +683,24 @@ sentence.
       the `corpus/atlas/inter-ascii` sheet) beside a text-carrying document and
       calls `nativeSurfaceCreatedWithText`, and the glyphs are drawn. That was
       not true until 2026-08-15: the JNI half had been compiled and never
-      executed, which is what issue #969 records. **No device has run it**, so
-      the measurement issue #885 owes is unchanged, and #969 stays open for
-      that half. A document loaded through `nativeSurfaceCreated` — the
+      executed, which is what issue #969 records. **A device ran it on
+      2026-08-17**: the harness took the one-face entry point on a Pixel 5 and
+      the fixture's text rendered as legible glyphs
+      (`docs/design/android-toolchain.md`). Its automated witness reported FAIL
+      on that same frame, which is #1232 — the ink ceiling assumes the fixture
+      fills the frame and it fills about 2% of that surface — so the run is
+      judged by the frame rather than by the gate. A document loaded through `nativeSurfaceCreated` — the
       no-faces call, which is what an embedder supplying no cascade gets —
       still draws no glyphs **and lays its text nodes out as empty leaves**,
       which moves their siblings too.
 
-      **On an emulator, and the frame rate is not a device measurement.** The
-      instrument reports in the desktop host's units — one sample read
-      `typography over 240 frames — tick 0.19 ms, draw mean 32.89 p50 32.01
-      p95 62.46 max 81.85 ms (30.2 fps if unpaced)` — but the only
-      painter-capable adapter there is SwiftShader on the CPU, so that
-      describes a development machine. Story #842's own deliverable, a
-      frame-rate number for a named device, is still owed.
+      **Story #842's deliverable was taken on 2026-08-17**, on a Pixel 5, and
+      `docs/design/android-toolchain.md` holds it. The emulator figure this
+      paragraph used to quote described a development machine, since the only
+      painter-capable adapter there is a CPU rasteriser — and it was printed by
+      an instrument that has since been split, so its `draw mean` line is a
+      shape nothing emits. Read the device table rather than reproducing that
+      one.
 
       iOS and the Unity host
       have no target, no toolchain and no automation. The Unity host is v0.21

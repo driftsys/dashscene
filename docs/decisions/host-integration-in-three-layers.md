@@ -48,11 +48,16 @@
     ratified unchanged; only which slice builds them moved.
 
     What ratification commits to, and what it does not: the structure, so a
-    story breaks against it rather than inventing one. **D3a is a risk to
-    check, not a measured fact** — that a device without Vulkan meets the same
-    four-fragment-storage-buffer wall that made WebGL2 unbuildable — and the
-    first Android story confirms the target device class exposes Vulkan before
-    anything is built on it. Ratifying does not make that measurement.
+    story breaks against it rather than inventing one. **D3a was a risk to
+    check rather than a measured fact, and it is now measured** (2026-08-17,
+    issue #885): on a Pixel 5 the Vulkan adapter exposes 32 fragment-stage
+    storage buffers and the painter's device request succeeds, and the GLES 3.2
+    adapter exposes exactly the four it needs. So the wall that made WebGL2
+    unbuildable is not hit on that device by either backend — on one device,
+    which is what a measurement of one device says.
+    `../design/android-toolchain.md` carries the run under "What the device
+    measured". The risk the clause named is retired for that device and remains
+    a property to check per device class.
 
 ## Context
 
@@ -142,6 +147,14 @@ platform-general; nothing in v0.19 depends on it.
 
 **D3a — Android means Vulkan, and the GLES fallback carries the same exposure
 that made WebGL2 unbuildable. Verify it before the slice commits.**
+
+**Verified on 2026-08-17** (issue #885, `../design/android-toolchain.md`): a
+Pixel 5's Adreno 620 exposes Vulkan with 32 storage buffers per shader stage,
+and its GLES 3.2 adapter exposes **exactly four** — the number the painter
+binds, with no headroom. The exposure this clause names is therefore real and
+narrowly survived on the GLES path: one more fragment-stage storage buffer would
+put that adapter outside the contract. The reasoning below is unchanged and is
+what the measurement confirms.
 
 All of this project's targets draw through `dashscene-gpu`, so there is one
 painter and one shader library; what differs is the backend. Web is WebGPU,

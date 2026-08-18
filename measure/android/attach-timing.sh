@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Time a cold launch to its first drawn frame, per build profile, with a timeout.
 #
-# Deliverable 4 of story #1229, and the timeout is the whole point. Issue #960's
-# standing measurement is **0.74 s in release against no observed completion in
-# debug** — a debug attach was abandoned after 218 s rather than seen to finish.
-# So "did not complete" has to be a recorded outcome with a bound on it, or the
-# procedure is a developer waiting and then guessing.
+# Deliverable 4 of story #1229, and the timeout is the whole point. When this was
+# written the standing figure was **0.74 s in release against no observed
+# completion in debug** — abandoned after 218 s on an emulator rather than seen to
+# finish — so "did not complete" had to be a recorded outcome with a bound on it,
+# or the procedure is a developer waiting and then guessing.
+#
+# **A device has since completed both** (2026-08-17): release 0.27-0.31 s and
+# debug 0.93-14.57 s across two runs, the spread itself being the finding —
+# `docs/design/android-toolchain.md` records that the larger figure was a first
+# launch after install. The bound stays, because an unbounded wait is what it
+# exists to prevent and nothing says the emulator case cannot recur.
 #
 # `just android` builds debug, so debug is the path a developer meets first.
 #
@@ -16,8 +22,9 @@
 #     attaching a WxH surface -> attached a WxH surface     the acquisition
 #     attaching a WxH surface -> first frame                to the first frame
 #
-# The **acquisition** is what issue #960 says is unmeasured: the adapter, the
-# device and the whole pipeline set. The second interval adds the first tick and
+# The **acquisition** is the adapter, the device and the whole pipeline set.
+# (This was described as issue #960's subject; it is not — that issue is a
+# silent-failure defect, per its own 2026-08-14 comment.) The second interval adds the first tick and
 # the first draw over it.
 #
 # `am start -W` reports `TotalTime` beside them, which is the framework's own
@@ -36,7 +43,7 @@
 #
 #     attached                            the acquisition finished
 #     attach failed: / could not rebuild  it finished and FAILED — not a wedge
-#     neither, and nothing after          still inside the call: issue #960
+#     neither, and nothing after          still inside the call: the wedge
 #     no `attaching` at all               the loop never started
 #
 # Reading "no `attached`" as a wedge on its own calls every failed attach one,
@@ -46,8 +53,7 @@
 #
 #     ADB=$(just _android-adb) ./measure/android/attach-timing.sh OUTDIR [profile...]
 #
-# With no profiles named it does release then debug, which is issue #960's
-# comparison. Each profile is cross-compiled and packaged through
+# With no profiles named it does release then debug. Each profile is cross-compiled and packaged through
 # `just _apk-demo <profile>`, so the library in the APK is the profile named —
 # issue #1057 is the record of an APK shipping the other one and reporting
 # success.
@@ -65,10 +71,11 @@ ACT="${PKG}/dev.driftsys.dashscene.demo.DemoActivity"
 
 # How long to wait for a first frame before recording that none was observed.
 #
-# **90 s by default, against a measured 218 s that never completed.** The bound
-# is deliberately shorter than the failure it is bounding: the outcome being
-# recorded is "not within this many seconds", which is a fact, where waiting for
-# a debug attach to finish is not known to terminate at all. Raise it with
+# **90 s by default, against an emulator run abandoned at 218 s.** The bound is
+# deliberately shorter than the failure it is bounding: the outcome recorded is
+# "not within this many seconds", which is a fact, where waiting for an attach
+# that may not terminate is not. A device has since completed in 0.93-14.57 s, so
+# 90 s is generous for hardware and still bounds the emulator case. Raise it with
 # `DS_ATTACH_TIMEOUT` when the question is how long rather than whether.
 TIMEOUT="${DS_ATTACH_TIMEOUT:-90}"
 
@@ -102,12 +109,16 @@ source_label=$(ds_source "${adb}")
     echo
     if [ "${source_label}" = "emulator" ]; then
         echo "**EMULATOR RESULT — NOT A DEVICE MEASUREMENT.** Every figure below"
-        echo "describes this host machine. It closes none of #960's device half."
+        echo "describes this host machine, not a device."
         echo
     fi
-    echo "Issue #960's standing measurement is 0.74 s in release against no"
-    echo "observed completion in debug, abandoned after 218 s. \`just android\`"
-    echo "builds debug, so debug is the path a developer meets first."
+    echo "Release against debug, because \`just android\` builds debug and that"
+    echo "is the path a developer meets first. Measured on a Pixel 5 on"
+    echo "2026-08-17: release 0.27-0.31 s to a first frame, debug 0.93-14.57 s"
+    echo "across two runs — the spread is a first-launch-after-install effect"
+    echo "rather than steady-state, and \`docs/design/android-toolchain.md\` says"
+    echo "so. An emulator run was once abandoned at 218 s, which is what the"
+    echo "timeout below exists for."
     echo
     echo "\`acquire\` is \`attaching\` to \`attached\` — the adapter, the device and the"
     echo "pipelines. \`to first frame\` adds the first tick and draw. \`TotalTime\` is"

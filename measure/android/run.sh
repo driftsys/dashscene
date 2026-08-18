@@ -192,7 +192,7 @@ sleep 5
 # ---------------------------------------------------------------------------
 # 5. The attach procedure, last.
 # ---------------------------------------------------------------------------
-ds_note "attach procedure (#960) — release, then debug"
+ds_note "attach procedure — release, then debug"
 "${here}/attach-timing.sh" "${out}" 2>&1 | tee "${out}/attach-timing.log" || \
     ds_warn "the attach procedure reported a failure; see ${out}/attach-timing.log"
 
@@ -247,7 +247,7 @@ ds_note "attach procedure (#960) — release, then debug"
     echo "| --- | --- |"
     echo "| \`adapter-report.txt\` | #885 — D3a, the Vulkan measurement |"
     echo "| \`frames.md\`, \`frames-*.log\` | #842 — the showcase on device |"
-    echo "| \`attach.md\` | #960 — whether a debug attach ever completes |"
+    echo "| \`attach.md\` | #842, and the debug-versus-release cost of reaching a frame |"
     echo "| \`sf-timestats.txt\` | #842, and the GPU half of #1107 |"
     echo "| \`sf-latency.txt\`, \`gfxinfo.txt\` | neither is the painter's frames — read their own headers |"
     echo "| \`layer-cost.txt\` | #1128 — Q-6, the render-target budget |"

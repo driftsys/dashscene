@@ -336,8 +336,12 @@ stages a committed cascade — Inter at weight 400, its font file and the
 `corpus/atlas/inter-ascii` sheet — beside a text-carrying document and calls
 `nativeSurfaceCreatedWithText`, and the glyphs are drawn (issue #969). Before
 that nothing in this repository called it at all, so what a device would have
-run was the path that draws no glyphs. There is still no device, which is the
-measurement issue #885 owes, so #969 stays open for that half.
+run was the path that draws no glyphs. **A device ran the harness on 2026-08-17
+and the glyphs drew** (`android-toolchain.md`): the one-face entry point, the
+face cascade and the committed MSDF sheet, on a Pixel 5. Its automated witness
+reported FAIL on that same frame, which is #1232 — the ink ceiling assumes the
+fixture fills the frame and it fills about 2% of that surface — so the run is
+judged by the frame rather than by the gate.
 
 ### The same route, through the Rust facades (issue #992)
 

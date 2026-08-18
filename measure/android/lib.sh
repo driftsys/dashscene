@@ -188,7 +188,7 @@ ds_pid() {
 #
 #     attached                            the acquisition finished
 #     attach failed: / could not rebuild  it finished and FAILED — not a wedge
-#     neither, and nothing after          still inside the call: issue #960
+#     neither, and nothing after          still inside the call: the wedge
 #     no `attaching` at all               the loop never started
 #
 # Reading "no `attached`" as a wedge on its own calls every failed attach one,

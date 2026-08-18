@@ -1,10 +1,14 @@
 # The Android toolchain, and the D3a probe
 
-    status  as-built at story #839 (v0.19, epic #833). The toolchain and the
-            probe are built; **the D3a measurement on target hardware is not
-            taken** — no device was available, and the deferral is recorded
-            under "What is not measured" below.
-    source  story #839
+    status  as-built at story #839 (v0.19, epic #833), and **the D3a
+            measurement is taken**: 2026-08-17, on a Pixel 5, under "What the
+            device measured" below. That section is the evidence #885, #842 and
+            #1128 close against; whether they are closed is the tracker's to
+            say, and this record does not assert it. The emulator figures
+            elsewhere in this file are kept as emulator figures and are
+            labelled as such.
+    source  story #839, and story #1229 for the apparatus that took the
+            measurement
     why     [`../decisions/host-integration-in-three-layers.md`](../decisions/host-integration-in-three-layers.md)
             carries the decisions; D3a is the one this record exists to serve.
 
@@ -238,6 +242,306 @@ then refuses the update with `INSTALL_FAILED_UPDATE_INCOMPATIBLE` while the
 device goes on running the **previous** build. A test then reads as a working
 build that ignores its own changes. The keystore lives outside the directory the
 script wipes.
+
+## What the device measured
+
+    status  taken 2026-08-17 with `just android-measure` (story #1229's
+            apparatus). **This is a device measurement**, and it is the first
+            in this project. It closes #885, #842 and #1128.
+
+**The device.** Google Pixel 5 (`redfin`), Android 14 / API 34, `arm64-v8a`,
+over USB. Adreno 620 — a **tiling** GPU, which is the class R-T1's tile-memory
+argument is about, and the reason the render-target figure below could not have
+come from a desktop.
+
+It is one mid-range 2020 handset and not the target fleet. Every number here is
+a number about **this** device: the shape of the answers is what generalises,
+not the values.
+
+### D3a — the Vulkan measurement (#885)
+
+`just android-probe`, which is the painter's own `request_device` replicated:
+
+    adapter 0  Vulkan, Adreno (TM) 620, IntegratedGpu
+               driver Qualcomm Technologies Inc. Adreno Vulkan Driver
+                      (build 4783c89, 2020-11-30, EV031.31.04.01, QPR2)
+               max_storage_buffers_per_shader_stage 32
+               device request OK
+
+    adapter 1  Gl, Adreno (TM) 620, IntegratedGpu
+               driver OpenGL ES 3.2 V@0490.0 (GIT@4783c89)
+               max_storage_buffers_per_shader_stage 4
+               device request OK
+
+**D3a's risk does not materialise on this device, and the GLES row is the more
+interesting half.** The painter asks for `downlevel_defaults`, which allows four
+storage buffers per stage, and it binds four in the fragment stage — so it has
+no headroom there by construction. Vulkan offers **32**, eight times what is
+asked. The GLES 3.2 adapter offers **exactly 4** and therefore also passes: the
+painter fits it with nothing to spare, and one more fragment-stage storage
+buffer would put this device's GLES path outside the contract.
+
+That is the opposite of the emulator, where the GLES translator was 3.0 and
+reported **0**. Both are correct: shader storage buffers arrived in GLES 3.1.
+
+**What this still does not cover** is unchanged and is the list under "What is
+not measured": which adapter a host picks, whether a surface offers a format the
+painter can blend in, and everything after the device request. What the frame
+measurements below add is that on this device a real host got past all three —
+they were taken through `SurfaceRenderer::for_android_ndk` on a live surface.
+
+### Frame costs (#842)
+
+`demo-android` running each showcase scene under its own `pulse`, **release**
+build, three reported samples of 240 drawn frames per scene, at **2340x805**:
+
+    scene       tick   draw mean   p50    p95    max    fps if unpaced   cpu
+    surfaces    1.05   26.4-27.6   24.5-26.4   47-60   75    ~35         37%
+    typography  1.50   14.6-15.1   11.6        ~19.6   54    ~62         35%
+    layout      1.08    5.4- 8.4    4.6- 5.9   11.5-14 31    105-155     15%
+
+`max` excludes each scene's first sample, whose maximum is pipeline warm-up —
+227 ms for `surfaces` and 160 ms for `typography`, against p50s of 25 and 12.
+The instrument reports per sample and the table is not averaged precisely so
+that warm-up is visible rather than folded in.
+
+**Read against a 16.67 ms budget** — which is a 60 Hz budget and **not** a
+requirement this project has set; nothing in the specification pins display
+geometry, and #549 is open against exactly that:
+
+- `surfaces` spends about 25 ms at p50 and reaches 60 at p95.
+- `typography` spends 11.6 at p50 and 19.6 at p95.
+- `layout` spends 4.6.
+
+**None of those is a statement about whether the device can hold 60 Hz, and an
+earlier revision of this section said they were.** It argued that `surfaces`
+"does not hold it" because `fps_if_unpaced` of ~35 showed "real work rather than
+the idle skip". That argument does not survive the split below: `fps_if_unpaced`
+sums tick, paint and present, and present is mostly **waiting** on the swapchain
+— so the figure counts blocking as work, and a scene that presents in 2.5 ms
+when unblocked can report 35. The compositor's own count over the same host is 5
+missed frames in 532.
+
+What the figures above are is **wall-clock per drawn frame from the combined
+instrument**, useful for ranking the three scenes against each other and not for
+judging a budget.
+
+**The solve is not where the time goes**, which does survive: `tick` is 1.0-1.7
+ms against 5-27 ms of everything else. Where the rest goes needed the split to
+answer, and the answer is not the paint path — an earlier revision said "the
+paint path is the whole question" and the split measured paint at 0.01-0.10 ms.
+
+**Orientation changes the workload materially**, which is worth recording
+because it is not a fill-rate story. The same three scenes in portrait at
+1080x~2000 — _more_ pixels than 2340x805 — measured `typography` at 3.8-4.3 ms
+against 14.6-15.1 in landscape, a 3.5x difference on fewer pixels. A wider box
+lays out more text. Any frame figure from this host has to name its extent, and
+a set taken across mixed orientations cannot be compared.
+
+### Where a frame's time actually goes (2026-08-17, later the same day)
+
+**The figures above come from an instrument that timed `paint` and `present`
+together, and that turned out to hide the answer.** `demo-android`'s instrument
+now times them apart, and the numbers below are from the split one — at
+1280x445, release, on the same Pixel 5. Both sets are real; they are reported
+separately because the line format differs and mixing them would be comparing
+two instruments.
+
+    scene       tick   paint mean/p50   present mean/p50/p95/max   glyphs   cpu
+    surfaces    0.25   0.03  0.03       11.7  11.9  12.8  21.7     32       18%
+    typography  0.36   0.09  0.09        7.2   9.4  10.7  14.0     446      14%
+    layout      0.18   0.01  0.01        7.1   9.6  10.9  17.5     0         8%
+
+**Three findings, and two of them retract an earlier reading in this record.**
+
+**Text is not expensive.** `typography` draws **446 glyphs** and `layout` draws
+none, at the same extent in the same run: 0.09 ms of paint against 0.01, and no
+measurable difference in present. An earlier reading here — that `typography`
+cost 7 ms more than `layout` and that text was therefore the dominant
+per-element cost — was an artifact of one combined timer, and it is withdrawn.
+
+**This project's own instance packing is not expensive either.** `paint` is
+**0.01 to 0.10 ms** across all three scenes. Whatever a frame costs, it is not
+the packing.
+
+**`present` is mostly pacing, and a second run proved it.** Across scenes it
+looked like a flat floor — 9.6 ms for thirty rects and no text, 9.4 ms for 446
+glyphs, 11.9 ms for the stress scene — and a cost that barely moves across
+frames that different is not content cost. Its **mean sits below its median**,
+which is a bimodal distribution rather than a floor.
+
+The confirmation came from repeating the run: `layout` reported **present p50 of
+2.86 and 2.52 ms** in two of three samples and 10.08 in the third, in one
+capture, at one extent, on one process. **The same scene presents in 2.5 ms when
+it does not block and 10 ms when it does**, so the 9-10 ms is not work — it is
+waiting, and `layout`'s real cost is at most 2.5 ms.
+
+The compositor agrees from the other side: over a 15 s window it counted **532
+frames and 5 missed — 0.94%**. A frame path that misses one deadline in a
+hundred is not one that is short of GPU time.
+
+**What this record still does not claim** is the exact split between GPU work
+and waiting. Wall-clock around `present` cannot separate them, and no
+measurement here has timed the GPU at all. The vendor-neutral configuration in
+`measure/android/perfetto-frames.pbtx` plus Adreno counters — now nameable,
+since the adapter is known — is what would settle it. Until it does, **no
+statement about GPU headroom on this device is supported by anything in this
+file.**
+
+**Read against a CPU budget**, which is the one thing these numbers do support:
+the app's own per-frame CPU is `tick + paint`, so **0.19 ms for `layout`, 0.45
+ms for `typography` and 0.28 ms for `surfaces`** — the sums of the table's own
+two columns, which an earlier revision got wrong for `typography` by carrying
+run 1's terms against run 2's table.
+
+### Q-6 — the render-target budget (#1128)
+
+`just android-layer-cost`, sweeping 0 to 12 mid-frame render-target switches at
+1920x1080 offscreen, 120 frames per point after 5 discarded:
+
+    run 1   +1.9526 ms ± 0.2919 ms (1 s.e.), 13 points, residual 3.6228 ms
+    run 2   +1.7676 ms ± 0.3801 ms (1 s.e.), 13 points
+
+**Two independent runs, agreeing inside their own error bars**, which is what
+makes this figure worth quoting at all — the probe reports an uncertainty
+precisely so a second run can be checked against the first rather than replacing
+it.
+
+The slope is **6.7 standard errors** in run 1 and **4.7** in run 2, against a
+threshold of three, so both are measurements rather than noise. An earlier
+revision said "a factor of about seven", which conflated the slope's size in
+standard errors with its ratio to the threshold — that ratio is 2.2 and 1.6 —
+and quoted only the better of the two runs. The same probe on an Apple M3
+reports **0.20-0.43 ms**, so a tile-based deferred renderer pays roughly five to
+ten times what an immediate-mode desktop GPU does for the same switch — which is
+the R-T1 argument, measured for the first time.
+
+**The constant does not change, and this is why.**
+`dashscene_validator::RENDER_TARGET_BUDGET_PLACEHOLDER` is a **count**, and what
+was measured is a **cost**. Turning one into the other needs a frame budget, and
+this project deliberately has none: no display geometry is pinned (#549), so any
+count written here would be derived from an invented budget. What the
+measurement does settle is the shape of the answer:
+
+- **A fixed count cannot be right at any value.** 1.95 ms is a cost per switch
+  at one resolution on one GPU; the affordable number of switches is
+  `budget / cost`, and both terms are properties of the target rather than of
+  the document.
+- **Eight is not conservative.** At this cost eight switches is about **15.6
+  ms** — a whole 60 Hz frame before anything else is drawn. If the placeholder
+  was ever read as "eight is fine", that reading is now measured to be wrong.
+- **`paint.render-target-budget` stays a warning**, for the same reason: an
+  error would enforce a threshold nobody has derived. It becomes an error when a
+  frame budget exists to derive one from.
+
+### The attach, and what it does and does not say
+
+Recorded because the apparatus takes it and it is the first such figure from
+hardware. **It does not close #960**, whose subject is a different thing — see
+the note below.
+
+    run   profile   acquire   to first frame   am start -W TotalTime
+    1     release   0.27 s    0.31 s           188 ms
+    1     debug     1.85 s    14.57 s          227 ms
+    2     release   0.31 s    0.34 s           222 ms
+    2     debug     0.69 s     0.93 s          183 ms
+
+`acquire` is `attaching a WxH surface` to `attached a WxH surface` — the
+adapter, the device and the pipeline set. **A debug build completes**, which is
+the part both runs agree on.
+
+**They disagree about how much it costs, by a factor of fifteen, so the figure
+is not stable.** Run 1 was the first launch after installing that build and run
+2 a later one, which makes one-time cost the likeliest reading — ART optimising
+a freshly installed package — rather than steady-state debug slowness. That
+would put the steady-state penalty at about **2.7x** rather than 47x. This
+record does not settle it: separating the two needs runs deliberately labelled
+first-launch-after-install and later, which neither of these was.
+
+**`just android` builds debug**, so this is the path a developer meets first,
+and a first launch after install can cost many seconds — 14.6 s in run 1.
+
+### The text path (#969), and D4's two remaining cases
+
+Taken on the same device later the same day, with the harness host — the one
+that drives the C ABI and calls `nativeSurfaceCreatedWithText`.
+`just android-measure` does not cover these: it exercises the showcase host,
+which builds scenes in code and never takes the text path.
+
+**The text drew.** The harness staged its cascade (`Inter 400`, font 258 992 B,
+sheet 63 940 B, metrics 4 448 B), took the `1 face(s)` entry point, attached a
+2340x805 surface in 0.32 s and reached its first frame 20 ms later. The
+screenshot shows `hug inside fill` rendered as dark glyphs on the orange chip
+inside the lavender panel — correct shaping, correct colour, legible. **That is
+the JNI text entry point, the face cascade and the committed MSDF sheet working
+on hardware**, which is the half of #969 that only a device could give.
+
+**Its automated witness said the opposite, and was wrong** — the false FAIL
+#1232 predicted, now confirmed on hardware:
+
+    assert-drew: FAIL — 83 distinct colour(s) in the whole of the painter's
+    window at 0,209 2340x805 … but 97.8% of it is dark, above the 10% ceiling
+
+Both halves of that sentence are true and the verdict does not follow from them.
+The document is a fixed-size `.dsb` drawn at its own size, so on a 2340x805
+surface it occupies about 2%; the ceiling was calibrated against a host render
+where the fixture fills the frame. **#969 is measured by looking at the frame,
+not by the gate**, and the gate stays wrong until #1232 is settled.
+
+**D4's backgrounding case, on hardware.** Home, then relaunch:
+`surfaceDestroyed — entering the handshake` to `handshake complete, returning`
+took **27 ms**, and the re-attach reached a new frame 0.27 s later. Against 80
+ms on the emulator for a release build and 1.15 s for a debug one, the UI-thread
+block D4 bounds is smaller on the device than anywhere it had been measured.
+
+**D4's split-screen case, on hardware, and it passes.** A cold
+`--windowingMode 6` launch landed in `mWindowingMode=multi-window`; putting
+Settings in the other half destroyed one surface and every entry returned —
+`entering=1, complete=1`, no wedge. **That is the transition #960 was originally
+filed against**, as a 150 s deadlock on an emulator. It corroborates that
+issue's own 2026-08-14 correction: the emulator's painter had no GPU device, and
+`surfaceDestroyed` blocks for a frame loop that never started. With a device
+that draws, the handshake returns.
+
+### What this run does not settle
+
+- **#874's third case is exercised but not closed here**: one clean split
+  transition is evidence, not the repeated run that recipe performs, and
+  `android-splitscreen` itself cannot pass while #1232 stands.
+- **#960** is, since its own 2026-08-14 comment, "a painter that cannot obtain a
+  device must say so" — a silent-failure defect, not a measurement. It is
+  untouched by this run, and in fact this device obtains a device, so the
+  failure path was not exercised at all. The epic's one-line summary of #960 as
+  "whether a debug attach ever completes" does not match the issue.
+- **No frame budget is established.** The 16.67 ms above is a reference point
+  for reading the table, not a requirement.
+- **One device.** Nothing here says what a different Adreno, a Mali or a PowerVR
+  does, and the GLES row's zero headroom is the figure most likely to differ.
+
+### What the first device contact cost, recorded so it is not re-paid
+
+**Rotation does not stay where it is put.**
+`settings put system user_rotation 1` applies only while an app that permits
+rotation is in front, and the capture force-stops between scenes — which returns
+to the portrait-locked launcher and **resets the setting to 0**. The first
+bundle therefore measured two scenes in landscape and one in portrait, with that
+scene rotating part-way through its own capture. `adb shell wm size 2340x1080`
+is the lever that survives, because it overrides the logical display rather than
+asking the window manager for a rotation; `adb shell wm size reset` restores the
+device afterwards.
+
+**`frames.md` does not record the extent**, which is how the above went
+unnoticed until the raw captures were grepped. The table names the device, the
+build profile and whether the source is an emulator, and a reader comparing rows
+cannot see that they describe different geometries. That is a gap in story
+#1229's apparatus rather than in this measurement, and it is issue **#1236**:
+the `attached a WxH surface` line sits in the same capture the samples come
+from, so the extent can be attributed per row by the join the parser already
+does for CPU.
+
+**The device clock read 2023-12-29** — 2.6 years behind — so the bundle
+directory is stamped `20231229T060616Z`. Every interval in it is device-clock to
+device-clock and is therefore correct; only the provenance line is misleading.
 
 ## The measurement apparatus, and the procedure at the device
 
@@ -608,8 +912,11 @@ for hardware rather than being approximated here.
 
 ### What is not measured
 
-**Whether the target device class exposes Vulkan.** That is the D3a question and
-it needs hardware, which was not available (expected roughly 2026-08-23).
+**Whether the target device class exposes Vulkan** — **answered on 2026-08-17
+for one device**, and the answer is above: an Adreno 620 exposes Vulkan with 32
+storage buffers per stage. That is the D3a question settled for a Pixel 5 and
+not for a class; the rest of this list is unchanged, because a device figure
+does not extend the probe's reach.
 
 **Which adapter the host would actually pick (issue #890).** The probe passes if
 **any** enumerated adapter satisfies the device request.
@@ -648,8 +955,13 @@ through Vulkan end to end, pipelines and text and blur, rather than only
 `request_device` (stories #841 and #842). Blocking a slice on a measurement
 nobody can take stalls work the answer does not invalidate.
 
-**What is not relaxed:** nothing describes Android as working until #885 is
-measured, and emulator results stay labelled as emulator results.
+**That condition is now discharged** (2026-08-17): #885 is measured, on a Pixel
+5, under "What the device measured" above. The rule it stated was "nothing
+describes Android as working until #885 is measured", and what the measurement
+licenses is narrow — the painter obtains a Vulkan device on that device and
+draws the showcase at the rates recorded there. **Emulator results stay labelled
+as emulator results**, which was always the other half of the rule and is not
+affected by having a device figure to sit beside them.
 
 ### The emulator numbers depend on how the emulator was launched
 
