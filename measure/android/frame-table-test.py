@@ -32,12 +32,14 @@ TABLE, NO_SAMPLE, UNREADABLE = 0, 1, 2
 
 # One real sample line, captured. Everything else is built from it.
 def sample(epoch, pid, scene="surfaces", frames=240, tick="0.26", mean="18.80",
-           p50="14.33", p95="34.73", top="369.01", fps="52.5"):
+           p50="14.33", p95="34.73", top="369.01", fps="52.5",
+           paint="1.20", paint50="1.10", runs=8, quads=97):
     return (
         f"         {epoch}  {pid}  {pid + 43} I dashscene: "
         f"{scene} over {frames} frames — tick {tick} ms, "
-        f"draw mean {mean} p50 {p50} p95 {p95} max {top} ms "
-        f"({fps} fps if unpaced)"
+        f"paint mean {paint} p50 {paint50}, "
+        f"submit mean {mean} p50 {p50} p95 {p95} max {top} ms "
+        f"({fps} fps if unpaced) — {runs} run(s), {quads} glyph(s)"
     )
 
 
@@ -87,6 +89,50 @@ def span_cell(out, scene="surfaces", index=1):
         if len(cells) > 3 and cells[1] == scene and cells[2] == str(index):
             return cells[-3]
     return None
+
+
+def paint_cell(out, scene="surfaces", index=1):
+    """The `paint mean` cell of one row."""
+    for line in out.splitlines():
+        cells = [cell.strip() for cell in line.split("|")]
+        if len(cells) > 3 and cells[1] == scene and cells[2] == str(index):
+            return cells[6]
+    return None
+
+
+def glyph_cell(out, scene="surfaces", index=1):
+    """The `glyphs` cell of one row.
+
+    A helper for the same reason `cpu_cell` and `span_cell` are, and it was
+    needed for the same reason: the first version of the no-suffix case asserted
+    `"| — |" in out`, which the `wall s` and `cpu` columns already satisfy in a
+    fixture with no CPU lines. Mutating the glyph cell to a literal left all 45
+    cases green. That is the third time this file has been caught by a
+    whole-output substring check.
+    """
+    for line in out.splitlines():
+        cells = [cell.strip() for cell in line.split("|")]
+        if len(cells) > 3 and cells[1] == scene and cells[2] == str(index):
+            # -1 is the empty tail, then cpu, wall, fps, glyphs.
+            return cells[-5]
+    return None
+
+
+def combined(epoch, pid, scene="surfaces", tick="0.26", mean="18.80",
+             p50="14.33", p95="34.73", top="369.01", fps="52.5"):
+    """The pre-split line shape, which every capture before 2026-08-17 carries.
+
+    `run.sh` promises in every bundle README that its tables can be re-derived
+    from its captures, so the parser has to keep reading these — a promise a
+    regex replacement rather than a widening would have broken for every bundle
+    already taken.
+    """
+    return (
+        f"         {epoch}  {pid}  {pid + 43} I dashscene: "
+        f"{scene} over 240 frames — tick {tick} ms, "
+        f"draw mean {mean} p50 {p50} p95 {p95} max {top} ms "
+        f"({fps} fps if unpaced)"
+    )
 
 
 def run(lines, args, tmp, key):
@@ -147,6 +193,72 @@ def main():
             True,
             "| 7.5 |" in out,
         )
+
+        # --- the paint/present split, and the glyph counts -------------------
+        #
+        # The split exists because a single figure could not say whether a
+        # frame's cost was this project's packing or the submit path. A parser
+        # that dropped either half, or swapped them, would hide exactly that.
+        status, out = table(
+            [sample("1786963759.840", 4014, paint="4.44", paint50="4.11",
+                    mean="9.99", quads=123)],
+            "split",
+        )
+        case("paint mean reaches the table", True, "| 4.44 |" in out)
+        case("paint p50 reaches the table", True, "| 4.11 |" in out)
+        case("submit mean is still its own column", True, "| 9.99 |" in out)
+        case("the glyph count reaches the table", True, "| 123 |" in out)
+        case(
+            "paint is left of present, not swapped",
+            True,
+            out.index("4.44") < out.index("9.99"),
+        )
+        case(
+            "the header says what paint and submit are",
+            True,
+            "instance packing" in out and "swapchain" in out,
+        )
+
+        # **A new-shape line whose glyph suffix is missing is a truncation, and is
+        # rejected.** It was accepted for one revision, on two justifications
+        # that were both false: a pre-split capture is rejected by the
+        # `paint mean` prefix whatever its tail does, and a frame with no text
+        # still emits `— 0 run(s), 0 glyph(s)`. What optional actually bought was
+        # accepting a line the ring had cut.
+        #
+        # The cut is derived from the helper rather than written out: hardcoding
+        # `" — 8 run(s)"` coupled this to the helper's default, and changing that
+        # default made the split match nothing, so the case tested a line that
+        # still had its suffix and stayed green.
+        full = sample("1786963759.840", 4014)
+        truncated = full[: full.index(" fps if unpaced)") + len(" fps if unpaced)")]
+        assert "run(s)" not in truncated, "the fixture must actually be truncated"
+        status, _ = table([truncated], "cutsuffix")
+        case("a new-shape line cut before its glyph suffix is rejected", NO_SAMPLE, status)
+
+        # **A zero-glyph frame is a real row**, and it is what `layout` emits.
+        status, out = table(
+            [sample("1786963759.840", 4014, runs=0, quads=0)], "zeroglyphs"
+        )
+        case("a zero-glyph frame is a row, not a rejection", TABLE, status)
+        case("and its glyph cell is 0, not an em dash", "0", glyph_cell(out))
+
+        # --- the pre-split shape, which every earlier bundle holds -----------
+        status, out = table([combined("1786963759.840", 4014)], "legacy")
+        case("a pre-split capture still parses", TABLE, status)
+        case("its draw figure lands in the present column", True, "| 18.80 |" in out)
+        case("its paint cell is an em dash, not a zero", "—", paint_cell(out))
+        case("and its glyph cell is an em dash", "—", glyph_cell(out))
+
+        # **The header names as many columns as the rows carry.** It did not:
+        # the split added three columns to every row and to the separator, and
+        # the header line was edited by a replacement that silently matched
+        # nothing — so a real device table shipped with twelve names over fifteen
+        # columns, and every column right of `paint` was mislabelled.
+        status, out = table([sample("1786963759.840", 4014)], "widths")
+        rows = [line for line in out.splitlines() if line.startswith("| ")]
+        widths = {line.count("|") for line in rows}
+        case("header, separator and data rows have equal column counts", 1, len(widths))
 
         # --- the provenance label, which is not optional --------------------
         #
