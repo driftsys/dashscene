@@ -117,6 +117,15 @@ the next one.
 
 ## What a caller must guarantee
 
+This section describes the ABI as built. An accepted decision changes what the
+runtime handle is and **narrows this section** —
+[`../decisions/the-c-abi-runtime-handle-is-generational.md`](../decisions/the-c-abi-runtime-handle-is-generational.md),
+landing in v0.21 under issue #1226. The first rule below forbids concurrency,
+not thread migration, so a host may create a runtime on one thread and call it
+from another as long as the calls are serialised; under a thread-affine table it
+may not. What that ruling settles and what it leaves to the implementing pull
+request are both stated there.
+
 - **No other call may be in flight on the same runtime.** The header states this
   on `ds_runtime_detach_surface` and on `ds_runtime_tick`, and nowhere else —
   **not** on `ds_runtime_attach_surface`, whose block says nothing about
