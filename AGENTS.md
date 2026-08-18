@@ -396,8 +396,9 @@ precedent, and they are different reasons:
   split is drawn by what a branch owns.
 - **By what gates the parts**, so one blocked half does not make the whole slice
   read as blocked. This is v0.13's #474, "the inputs and rulings this slice
-  waits on", and v0.21's #1106 (two owner decisions, three until 2026-08-17)
-  against #1107 (target hardware).
+  waits on", and v0.21's #1106 (**no owner decisions left since 2026-08-18** —
+  three of them until 2026-08-17, then two) against #1107 (target hardware, met
+  on 2026-08-17).
 - **By MVP against the rest**, so a slice cannot be held open by optimization.
   This is v0.21's #1120, and it comes with a rule: an epic split off this way
   **declares that it does not gate the slice**, and what it still holds at the

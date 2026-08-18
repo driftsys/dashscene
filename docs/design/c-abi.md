@@ -60,7 +60,11 @@ Four groups, and the grouping is the lifecycle:
 Android host must drop its surface and keep its document when `surfaceDestroyed`
 arrives, and freeing the runtime would drop both. Story #841 found that by
 driving the ABI as a C caller, which is also what established the rest of it was
-sufficient for layer 0.
+sufficient for layer 0 **in its runtime-draws form**. The qualifier is load
+bearing since 2026-08-18: `../decisions/host-integration-in-three-layers.md` D1
+now states layer 0 in two forms, and this ABI serves only the one where the
+runtime draws. The host-draws form needs the data plane of issue #859, which is
+what the paragraph above says this ABI does not have.
 
 ## Three loaders, and why they are three rather than one
 

@@ -108,9 +108,11 @@ APK is a compile check and is not a claim that it runs.
 host to sit **on** `dashscene-ffi` rather than beside it: it drives the C ABI
 through its own entry points as a C caller would, which is what D2 says every
 platform host does. Driving it that way is also what established the ABI was
-sufficient for layer 0 — and that it was not quite. `ds_runtime_detach_surface`
-was added there, because D4 needs a call that drops the surface and keeps the
-document, and freeing the whole runtime would drop the document with it.
+sufficient for layer 0 **in its runtime-draws form** — the form D1 states this
+host in, and since 2026-08-18 not the only one — and that it was not quite.
+`ds_runtime_detach_surface` was added there, because D4 needs a call that drops
+the surface and keeps the document, and freeing the whole runtime would drop the
+document with it.
 
 Two threads, and the split is D4's and D6's between them. The **UI thread**
 receives the lifecycle callbacks and is the only one that may call

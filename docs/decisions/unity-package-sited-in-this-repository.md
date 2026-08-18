@@ -6,7 +6,9 @@
              written to make is superseded and kept below as the reasoning
              that was overtaken.
     date     2026-07-11; schedule corrected in place 2026-08-13; the siting
-             reversed 2026-08-17
+             reversed 2026-08-17; **Consequences updated 2026-08-18**, when the
+             two entry conditions this record left on epic #1106 were both
+             ruled and the epic was left with none
     scope    where the Unity C# code lives — the painter and its producer
              front end. The crate that gates boundary B is
              `docs/decisions/crate-name-map.md`'s, not this record's
@@ -147,9 +149,12 @@ is still that issue's to settle and story #1239 did not pre-empt it.
 - **Entry condition 3 of epic #1106 is lifted.** "The Unity C# repository
   created" was one of three owner-supplied conditions and it was the only one
   that required an artifact outside this repository. Creating a directory is
-  work this repository can do, so the epic is gated on two conditions: the layer
-  question of `docs/decisions/host-integration-in-three-layers.md`, and
+  work this repository can do, so the epic was gated on two conditions: the
+  layer question of `docs/decisions/host-integration-in-three-layers.md`, and
   `docs/decisions/unity-painter-uses-brg.md` moving to `accepted` (issue #171).
+  **Both were ruled by the owner on 2026-08-18, so the epic has no entry
+  condition left** — recorded in this record's `status` line as well, since a
+  reader checking whether it knows about that ruling reads the header.
   **`docs/roadmap.md` and `AGENTS.md` are corrected in the commit that adds this
   record** — no count of the places is given, because three earlier drafts of
   this PR each gave a different one. Epic #1106's body still says three and is

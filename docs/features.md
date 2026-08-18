@@ -616,7 +616,9 @@ sentence.
       carries which entry points hold that how, rather than a count repeated
       here to drift. `dashscene-android` (story #841) drives it through those
       entry points as a C caller would, which is what established that it was
-      sufficient for layer 0 — and what established that it was not quite:
+      sufficient for layer 0 **in its runtime-draws form** — the only form this
+      ABI serves, the host-draws form added on 2026-08-18 needing issue #859's
+      data plane — and what established that it was not quite:
       `ds_runtime_detach_surface` was added there, because the destroy handshake
       needs a call that drops the surface and keeps the document. No iOS or
       Unity host exists. **Root selection is on the mapped load and on no
