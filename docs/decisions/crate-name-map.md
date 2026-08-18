@@ -211,16 +211,29 @@ published — and the answer taken here is the one the original twelve took:
 publish a placeholder version now, promote it later.
 
 Reserved 2026-08-01 as `dashscene-gpu` 0.1.0: a standalone placeholder built to
-the same shape as the twelve, **not** the workspace crate. Two properties follow
-from that, and both are deliberate. Its `repository` was the public reservation
-repo rather than the private working one, so the reservation did not publish the
-working repo's name. Those are now the same repository — renamed 2026-08-11,
-with the reservation repo archived as `driftsys/dashscene-name-reservations` —
-so the distinction is historical. And the workspace crate stays at `0.0.0` like
-every other crate here, so the reservation does not drag the workspace out of
-the shared version flow — the same split the twelve are already in, where a
-reserved 0.1.0 sits above a workspace 0.0.0 and the real first real release is
-what closes the gap.
+the same shape as the twelve, **not** the workspace crate.
+
+Two properties follow from that, and both are deliberate. Its `repository` was
+the public reservation repo rather than the private working one, so the
+reservation did not publish the working repo's name. Those are now the same
+repository — renamed 2026-08-11, with the reservation repo archived as
+`driftsys/dashscene-name-reservations` — so the distinction is historical, and
+every stub's `repository` now resolves to this repository rather than to the
+archive. And the workspace crate stays at `0.0.0` like every other crate here,
+so the reservation does not drag the workspace out of the shared version flow —
+the same split the twelve are already in, where a reserved placeholder sits
+above a workspace `0.0.0` and the real first release is what closes the gap.
+That first release is `0.2.0`
+([`publishable-and-the-first-version.md`](publishable-and-the-first-version.md)),
+which clears the whole `0.1.x` band.
+
+**A placeholder carries the workspace's licence**, which these terms did not say
+until 2026-08-18 — and not saying it is why every name reserved before that day
+went out MIT, two of them on the very day the workspace moved to Apache-2.0. All
+21 were corrected by a `0.1.1` and their MIT versions yanked
+([`apache-2-0-for-the-patent-grant.md`](apache-2-0-for-the-patent-grant.md)).
+`LICENSE` and `NOTICE` travel inside the package, as §4 requires of any
+distribution.
 
 ## `dashpack-astcenc-sys`, recorded late (story #430, v0.12; recorded 2026-08-08)
 
@@ -352,21 +365,22 @@ described `dashscene-web` as a retired stub — a claim story #741 had falsified
 day earlier. A registry nobody enumerated is a registry nobody updates, which is
 the #445 pattern with a different set of files.
 
-**Eighteen of the 19 are reserved, and the exception is `dashpaint-abi`** — see
-the rename section below, which records why the move landed ahead of the
-reservation. `dashscene-android` was the earlier exception for the length of
-story #841 and was held on 2026-08-09, the same day the directory landed. It is
-worth stating how the gap read while it was open, because the sentence here
-described the set as complete while the count moved underneath it — which is the
-failure this paragraph is otherwise about, one crate along. Checking issue
-#803's premise that `dashscene-desktop` was the unreserved name found two more —
-`dashpack` and `dashpack-astcenc-sys`. Both are real workspace crates that build
-and are depended on today, which is what separates them from a name held for
-work not yet done; neither is released, because nothing here is. Those two were
-also the pair missing from `.git-std.toml`'s `[[version_files]]`, so one pass
-missed both registries at once. Story #795 closed that half and made it
-checkable: `demo/tests/registry_consistency.rs` now fails when any crate is
-absent from any of the machine-readable registries.
+**All 19 are reserved**, `dashpaint-abi` since 2026-08-18 — see the rename
+section below, where the move landed ahead of its reservation and the
+reservation followed the same day. `dashscene-android` was the earlier exception
+for the length of story #841 and was held on 2026-08-09, the same day the
+directory landed. It is worth stating how the gap read while it was open,
+because the sentence here described the set as complete while the count moved
+underneath it — which is the failure this paragraph is otherwise about, one
+crate along. Checking issue #803's premise that `dashscene-desktop` was the
+unreserved name found two more — `dashpack` and `dashpack-astcenc-sys`. Both are
+real workspace crates that build and are depended on today, which is what
+separates them from a name held for work not yet done; neither is released,
+because nothing here is. Those two were also the pair missing from
+`.git-std.toml`'s `[[version_files]]`, so one pass missed both registries at
+once. Story #795 closed that half and made it checkable:
+`demo/tests/registry_consistency.rs` now fails when any crate is absent from any
+of the machine-readable registries.
 
 When checking this against crates.io, send a `User-Agent` header: the API
 rejects requests without one, and a check that does not distinguish that
@@ -507,27 +521,29 @@ is what issue #859 exists to change — and story #1239 took it in the same comm
 as the package rename, immediately before `unity/abi-check` became the first
 caller.
 
-**Availability.** `dashscene-unity` holds a 0.1.0 placeholder pointing at this
+**Availability.** `dashscene-unity` holds a placeholder pointing at this
 repository, one of the 12 reserved on 2026-03-18. **`dashpaint-abi` was to be
-reserved before the move, and the move landed first.** Story #1239 took the
-rename and left the reservation, deliberately: reserving a name is a publish, it
-cannot be undone, and it was not among this story's stated conditions for being
-done. So the exposure the `dashscene-android` paragraph above describes is open
-on this name — the repository is public, the name is in `Cargo.toml` and in the
-`publish` recipe, and nothing holds it. The terms the `dashscene-gpu` section
-sets are what it should be reserved on. The old name stays held and describing
-nothing, which that section records as the cheap state for a reserved name —
-`dashscene-web` is the precedent. The workspace crate is `0.0.0` and has never
-been released, so nothing migrates.
+reserved before the move, and the move landed first**: story #1239 took the
+rename and left the reservation, on the grounds that reserving a name is a
+publish that cannot be undone and was not among that story's stated conditions
+for being done. **The reservation was made the same day**, on the owner's
+direction, so the exposure the `dashscene-android` paragraph above describes was
+open for hours rather than indefinitely. `dashpaint-abi` 0.1.0 is a standalone
+placeholder on the terms the `dashscene-gpu` section sets, `repository` pointing
+here. The old name stays held and describing nothing, which that section records
+as the cheap state for a reserved name — `dashscene-web` is the precedent. The
+workspace crate is `0.0.0` and has never been released, so nothing migrates.
 
-**`AGENTS.md` was corrected by story #1239 and is not waiting on the
-reservation.** The rename alone moved it: 21 names stay reserved and only 18 of
-them are workspace crates, with `dashscene-unity` parked beside `dashscore` and
-`dashscene-compose` — three. Reserving `dashpaint-abi` moves the first number
-again, to 22 with 19 of them workspace crates. Re-derive from this record rather
-than editing either number in place, and note that the earlier version of this
-paragraph deferred the whole correction to the reservation, which was wrong in
-the direction that leaves a false count standing.
+**The order is worth keeping rather than smoothing over.** A reservation that
+follows its rename is not the rule this record states, and the gap is exactly
+what the `dashscene-android` paragraph warns about. What made it acceptable was
+that it was recorded as a divergence at the time rather than described as
+compliance.
+
+**22 names are reserved and 19 of them are this workspace's crates**, with
+`dashscore`, `dashscene-compose` and `dashscene-unity` parked. `AGENTS.md`
+carries the same figures; re-derive from this record rather than editing either
+number in place.
 
 ## Why
 

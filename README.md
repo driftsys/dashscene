@@ -207,21 +207,24 @@ tooling).
 ## Status
 
 This is `driftsys/dashscene`, a **public working repository — nothing in it is
-released**. All 21 crate names on crates.io are placeholder reservations at
-`0.1.0`, and no code from this repository has been released under any of them.
-The repository being readable is not the same as the crates being published, and
-only the first has happened. Twelve were reserved on 2026-03-18, before this
-repository's first commit; the other nine as the crates that need them arrived,
-the most recent two on 2026-08-09
-([`docs/decisions/crate-name-map.md`](docs/decisions/crate-name-map.md) is the
-list — re-derive from it rather than trusting a count in prose, which has
+released**. All 22 crate names on crates.io are placeholder reservations, and no
+code from this repository has been released under any of them. The repository
+being readable is not the same as the crates being published, and only the first
+has happened. Twelve were reserved on 2026-03-18, before this repository's first
+commit; the other ten as the crates that need them arrived, the most recent on
+2026-08-18. Every one is Apache-2.0: the 21 reserved before that day went out
+MIT and each gained a `0.1.1` carrying the right licence, with the MIT `0.1.0`
+yanked ([`docs/decisions/crate-name-map.md`](docs/decisions/crate-name-map.md)
+is the list — re-derive from it rather than trusting a count in prose, which has
 drifted before).
 
 The reservations were made from a second repository, now archived as
 [`driftsys/dashscene-name-reservations`](https://github.com/driftsys/dashscene-name-reservations).
-It is kept rather than deleted because every published stub carries a
-`repository` field pointing at it, and a published version's metadata cannot be
-changed
+It is kept as the record of how the reservations were made. **It is not what the
+stubs point at**: all 22 carry
+`repository = https://github.com/driftsys/dashscene`, which was that
+repository's URL when the twelve were published and has been this one's since
+the 2026-08-11 rename, and a published version's metadata cannot be changed
 ([`docs/decisions/repo-staging-and-public-facade.md`](docs/decisions/repo-staging-and-public-facade.md)).
 
 v0 is built one slice at a time. Slices v0.1 to v0.18 have closed, the last of

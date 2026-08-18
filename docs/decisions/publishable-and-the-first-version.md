@@ -25,15 +25,24 @@ hold a version of its own to drift, because it does not hold one.
 
 Ruled by the owner on 2026-08-08.
 
-All 21 crate names are reserved on crates.io at **0.1.0** as standalone
+All 21 crate names were reserved on crates.io at **0.1.0** as standalone
 placeholders, on the terms `dashscene-gpu` set at the v0.15 open. Because the
 workspace moves as one, the first real release must clear **every** placeholder,
 so 0.1.0 is not available for any crate.
 
 0.1.1 would clear the floor and read as a patch on a 0.1.0 release that never
-existed. **0.2.0 clears the whole 0.1.x band**, which leaves every 0.1.0 on
-crates.io reading as what it is and makes the first real release visibly the
+existed. **0.2.0 clears the whole 0.1.x band**, which leaves every placeholder
+on crates.io reading as what it is and makes the first real release visibly the
 first.
+
+**This ruling is unchanged and its argument got stronger on 2026-08-18**, when
+each of those 21 gained a `0.1.1` placeholder carrying Apache-2.0 and had its
+MIT `0.1.0` yanked
+([`apache-2-0-for-the-patent-grant.md`](apache-2-0-for-the-patent-grant.md)).
+0.1.1 was hypothetical when this was written and now exists on 21 names, so a
+first release inside the 0.1.x band would read as a patch on placeholders rather
+than on one. The count is 22 names since that day, `dashpaint-abi` being the
+twenty-second and the only one with no 0.1.1.
 
 ## Two defects this found, and why the second is not one line
 
