@@ -55,15 +55,15 @@ use std::sync::Arc;
 use dashbuf::cost::LoadCost;
 use dashbuf::prefetch::ShownRoot;
 use dashbuf::{
-    BindingTransform, Document, Fill, NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE,
-    VariantPropValue, Wanted,
+    BindingTransform, Document, Fill, NO_CONTRIBUTION, NO_FIELD, NO_FRAGMENT, NO_PAINT, NO_PARENT,
+    NO_TEXT, NO_TEXT_STYLE, VariantPropValue, Wanted,
 };
 use dashpaint::Region;
 
 use crate::arena::{
     Arena, AxisSizing, CrossAxisAlign, Easing, GridTrack, Keyframe, LayoutMode, LoopTrack,
-    MainAxisAlign, NodeId, Prop, PropTransition, TextAlign, TextAlignV, TextStyle, TransitionSpec,
-    VariantMember, VariantTransition, VariantValue,
+    MainAxisAlign, NodeId, Placeholder, Prop, PropTransition, TextAlign, TextAlignV, TextStyle,
+    TransitionSpec, VariantMember, VariantTransition, VariantValue,
 };
 use crate::bindings::{Channel, ScalarTransform, SignalId};
 use crate::committed::{
@@ -641,6 +641,29 @@ fn load_inner(
             txn.set_prop(id, Prop::Fill(color_of(color)));
         }
 
+        // Story #1126: the placeholder surface. Presence of the table is
+        // what makes the node a placeholder, so an absent one stages nothing
+        // and the node reads back as ordinary. Nothing resolves it — carried
+        // intent, like `Prop::Text` at v0.5.
+        if let Some(declared) = node.placeholder() {
+            // Each index read once and named: the guard and the lookup must be
+            // the same field, and two reads of two accessors is exactly the
+            // shape where editing one leaves the other behind.
+            let contribution = declared.contribution_id();
+            let fragment = declared.fragment_ref();
+            txn.set_prop(
+                id,
+                Prop::Placeholder(Placeholder {
+                    contribution_id: (contribution != NO_CONTRIBUTION)
+                        .then(|| strings.get(contribution as usize).to_owned()),
+                    fragment_ref: (fragment != NO_FRAGMENT)
+                        .then(|| strings.get(fragment as usize).to_owned()),
+                    declared_size: declared.declared_size().map(|v| (v.x(), v.y())),
+                    interim_fill: fill_spec_of(&declared, &image_of),
+                }),
+            );
+        }
+
         if node.text() != NO_TEXT {
             txn.set_prop(id, Prop::Text(strings.get(node.text() as usize).to_owned()));
         }
@@ -1013,24 +1036,70 @@ fn image_fill_of(f: &dashbuf::ImageFill<'_>, image_of: &[u32]) -> dashpaint::Ima
     }
 }
 
-/// The `FillSpec` a stacked-fill layer's `Fill` union resolves to (story C1,
-/// debt #146), or `None` for `Fill::NONE` — a malformed layer (a stacked
-/// layer with no fill has no meaning, unlike the primary `Paint.fill`, which
-/// legitimately can be absent for a stroke-only entry), so it is dropped
-/// here the same way `load_paint`'s own primary-fill match tolerates an
-/// unrecognized value: this function assumes a validated document (P4),
-/// same contract as the rest of this module.
-fn fill_layer_kind_of(layer: &dashbuf::FillLayer<'_>, image_of: &[u32]) -> Option<FillSpec> {
-    match layer.fill_type() {
-        Fill::SolidFill => layer
+/// The `Fill` union as its carriers expose it. `flatc` names a union's
+/// accessors after the field, so a stacked layer's `fill_as_gradient` and a
+/// placeholder's `interim_fill_as_gradient` are different methods over the
+/// same union — this trait is what lets one reader serve both, the same shape
+/// `dashscene_validator`'s own `FillUnion` uses to hold every carrier to one
+/// set of rules.
+trait FillUnion<'a> {
+    fn fill_type(&self) -> Fill;
+    fn fill_as_solid_fill(&self) -> Option<dashbuf::SolidFill<'a>>;
+    fn fill_as_gradient(&self) -> Option<dashbuf::Gradient<'a>>;
+    fn fill_as_image_fill(&self) -> Option<dashbuf::ImageFill<'a>>;
+}
+
+impl<'a> FillUnion<'a> for dashbuf::FillLayer<'a> {
+    fn fill_type(&self) -> Fill {
+        dashbuf::FillLayer::fill_type(self)
+    }
+    fn fill_as_solid_fill(&self) -> Option<dashbuf::SolidFill<'a>> {
+        dashbuf::FillLayer::fill_as_solid_fill(self)
+    }
+    fn fill_as_gradient(&self) -> Option<dashbuf::Gradient<'a>> {
+        dashbuf::FillLayer::fill_as_gradient(self)
+    }
+    fn fill_as_image_fill(&self) -> Option<dashbuf::ImageFill<'a>> {
+        dashbuf::FillLayer::fill_as_image_fill(self)
+    }
+}
+
+impl<'a> FillUnion<'a> for dashbuf::Placeholder<'a> {
+    fn fill_type(&self) -> Fill {
+        dashbuf::Placeholder::interim_fill_type(self)
+    }
+    fn fill_as_solid_fill(&self) -> Option<dashbuf::SolidFill<'a>> {
+        dashbuf::Placeholder::interim_fill_as_solid_fill(self)
+    }
+    fn fill_as_gradient(&self) -> Option<dashbuf::Gradient<'a>> {
+        dashbuf::Placeholder::interim_fill_as_gradient(self)
+    }
+    fn fill_as_image_fill(&self) -> Option<dashbuf::ImageFill<'a>> {
+        dashbuf::Placeholder::interim_fill_as_image_fill(self)
+    }
+}
+
+/// One `Fill` union, as the spec a producer staged. Serves a stacked
+/// `FillLayer` (story C1, debt #146) and a placeholder's `interim_fill`
+/// (story #1126) alike.
+///
+/// `None` for `Fill::NONE`, which means different things to the two carriers
+/// and is dropped the same way for both: a stacked layer with no fill is
+/// malformed, where a placeholder with no interim fill is the ordinary case —
+/// the schema's own default, a box that reserves space and shows nothing
+/// while it waits. Neither is diagnosed here; this assumes a validated
+/// document (P4), the same contract as the rest of this module.
+fn fill_spec_of<'a>(fill: &impl FillUnion<'a>, image_of: &[u32]) -> Option<FillSpec> {
+    match fill.fill_type() {
+        Fill::SolidFill => fill
             .fill_as_solid_fill()
             .and_then(|s| s.color())
             .map(|c| FillSpec::Solid { color: color_of(c) }),
-        Fill::Gradient => layer.fill_as_gradient().map(|g| FillSpec::Gradient {
+        Fill::Gradient => fill.fill_as_gradient().map(|g| FillSpec::Gradient {
             gradient: gradient_of(&g),
             stops: gradient_stops_of(&g),
         }),
-        Fill::ImageFill => layer
+        Fill::ImageFill => fill
             .fill_as_image_fill()
             .map(|f| FillSpec::Image(image_fill_of(&f, image_of))),
         _ => None,
@@ -1090,7 +1159,7 @@ fn load_paint(
             Prop::ExtraFills(
                 layers
                     .iter()
-                    .filter_map(|layer| fill_layer_kind_of(&layer, image_of))
+                    .filter_map(|layer| fill_spec_of(&layer, image_of))
                     .collect(),
             ),
         );

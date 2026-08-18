@@ -444,6 +444,26 @@ pub enum Prop {
     Text(String),
     /// Set/replace the node's text style.
     TextStyle(TextStyle),
+    /// Set/replace the node's declared placeholder (story #1126). Intent
+    /// only, with no effect on committed output — the same posture
+    /// [`Prop::Text`] shipped with at v0.5, and for the same reason: what
+    /// consumes it does not exist yet. Placeholder activation is v1
+    /// (`docs/specification/05-qualification.md`).
+    ///
+    /// **Two limits activation must resolve, both filed as debt rather than
+    /// guessed at here** (issue #1259):
+    ///
+    /// - *Set-only, no clear* — the same gap [`Prop::ShapeField`] names, but
+    ///   sharper, because presence is this vocabulary's predicate: a node
+    ///   staged as a placeholder cannot stop being one, and
+    ///   `Placeholder::default()` still reads back as `Some`. The loader never
+    ///   needs a clear, which is why it is not invented now.
+    /// - *One class for two kinds of intent* — `declared_size` is
+    ///   measured-size intent and `interim_fill` is paint intent, and
+    ///   `PropClass` (private) has no arm feeding both cascades. It is classed
+    ///   `Layout`, so once a painter reads `interim_fill` a change to it alone
+    ///   would not feed the paint re-intern.
+    Placeholder(Placeholder),
     Mode(LayoutMode),
     Gap(f32),
     Padding {
@@ -585,6 +605,34 @@ pub struct TextStyle {
     /// Standard ligatures forced off (story #341: Figma's OpenType
     /// `LIGA: 0`). `false` is the default.
     pub ligatures_off: bool,
+}
+
+/// A declared placeholder — the box a document reserves for content a host
+/// contributes at runtime (node replacement,
+/// `docs/technotes/runtime-content.md` §7). Mirrors the `dashbuf`
+/// `Placeholder` table without linking the generated code, the same way
+/// [`TextStyle`] mirrors its own.
+///
+/// **Carried, not resolved.** Nothing reads a placeholder yet: story #1126
+/// builds the surface, and placeholder *activation* — binding a contribution
+/// and measuring against `declared_size` — stays in v1
+/// (`docs/specification/05-qualification.md`).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Placeholder {
+    /// The id a runtime producer binds a contribution against. `None` is a
+    /// box that reserves space without naming a binding.
+    pub contribution_id: Option<String>,
+    /// An external dashscene subtree to stream in. `None` when the
+    /// contribution is drawn by the host rather than streamed.
+    pub fragment_ref: Option<String>,
+    /// What a measure callback will report while no contribution is bound;
+    /// `None` is undeclared. This is neither the node's own box nor its
+    /// sizing mode — those state the box, this states what to measure in the
+    /// absence of content, so a contribution arriving at a different size
+    /// cannot reflow the scene.
+    pub declared_size: Option<(f32, f32)>,
+    /// Shown while the contribution loads or resolves.
+    pub interim_fill: Option<FillSpec>,
 }
 
 /// One prop value a variant member can override — the slice of `Prop`'s
@@ -858,6 +906,14 @@ struct NodeData {
     rotation_anchor: (f32, f32),
     text: Option<String>,
     text_style: Option<TextStyle>,
+    /// The node's declared placeholder — intent, resolved by nothing
+    /// (story #1126). Its presence is what makes the node a placeholder.
+    ///
+    /// Boxed because it is `None` on every node of every document that
+    /// exists: inline it costs 128 bytes on every `NodeData` (544 -> 672,
+    /// +23.5%), which a 20 000-node arena pays as 2.6 MB of nothing on the
+    /// memory-constrained panels this repository is defined by.
+    placeholder: Option<Box<Placeholder>>,
 }
 
 /// The semantic model: the node tree with layout + paint intent, and
@@ -1028,6 +1084,19 @@ impl Arena {
     /// Panics if `node` is out of range for this arena.
     pub fn text_style(&self, node: NodeId) -> Option<&TextStyle> {
         self.node_data(node).text_style.as_ref()
+    }
+
+    /// The node's declared placeholder, or `None` for an ordinary node.
+    ///
+    /// **Presence is the predicate**: a node carrying one is a declared
+    /// placeholder, which is what story #1127's diagnostic reads. No field
+    /// of the placeholder decides it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `node` is out of range for this arena.
+    pub fn placeholder(&self, node: NodeId) -> Option<&Placeholder> {
+        self.node_data(node).placeholder.as_deref()
     }
 
     /// The node's layout intent (authored fixed geometry + flex
@@ -1503,6 +1572,7 @@ impl Txn<'_> {
             mask: false,
             text: None,
             text_style: None,
+            placeholder: None,
         });
         match parent {
             Some(p) => self.arena.nodes[p.index()].children.push(id),
@@ -1788,6 +1858,24 @@ impl Txn<'_> {
             Prop::Clip(v) => data.clip = v,
             Prop::Text(s) => data.text = Some(s),
             Prop::TextStyle(ts) => data.text_style = Some(ts),
+            Prop::Placeholder(p) => {
+                // The same guard `Opacity` and `Rotation` carry, and the
+                // same predicate the load gate applies to an authored box
+                // (`geometry.rect-invalid-extent`) and to this field
+                // (`placeholder.declared-size-invalid`): `declared_size` is
+                // what a measure callback reports, so it reaches the solve
+                // the moment activation lands. A document cannot arrive here
+                // holding one — the gate names it first — so this catches a
+                // producer staging directly through the arena.
+                if let Some((w, h)) = p.declared_size {
+                    assert!(
+                        w.is_finite() && h.is_finite() && w >= 0.0 && h >= 0.0,
+                        "{node:?}: Prop::Placeholder declared_size ({w}, {h}) must be \
+                         finite and non-negative"
+                    );
+                }
+                data.placeholder = Some(Box::new(p));
+            }
             Prop::Mode(m) => data.layout.mode = m,
             Prop::Gap(v) => data.layout.gap = v,
             Prop::Padding {
@@ -3049,13 +3137,17 @@ fn prop_class(prop: &Prop) -> PropClass {
         // Everything else is layout or measured-size intent. Text and
         // TextStyle change the shaped run a measuring solver sizes to, so
         // they are layout-affecting even though they touch no rect field
-        // directly.
+        // directly. A Placeholder is classed here for the same reason: its
+        // `declared_size` is what a measure callback will report once
+        // activation lands, so it is measured-size intent even though
+        // nothing reads it today.
         Prop::X(_)
         | Prop::Y(_)
         | Prop::Width(_)
         | Prop::Height(_)
         | Prop::Text(_)
         | Prop::TextStyle(_)
+        | Prop::Placeholder(_)
         | Prop::Mode(_)
         | Prop::Gap(_)
         | Prop::Padding { .. }

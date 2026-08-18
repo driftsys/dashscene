@@ -51,7 +51,7 @@ struct PoolSizes {
 /// which let a caller pair one field's name with another field's value —
 /// it compiled, and checked the wrong field.
 macro_rules! check_enum {
-    ($report:expr, $at:expr, $field:literal, $value:expr) => {{
+    ($report:expr, $at:expr, $field:expr, $value:expr) => {{
         let value = $value;
         if value.variant_name().is_none() {
             $report.push(error(
@@ -549,6 +549,64 @@ fn check_node_links(
         ));
     }
 
+    // Story #1126. Both indices resolve through `Document.strings` in the
+    // loader, and `interim_fill` is a third `Fill` union carrier — exempting
+    // it here would leave `dashscene-core` indexing an unchecked asset, which
+    // is the panic this gate exists to turn into a named diagnostic (P4).
+    if let Some(placeholder) = node.placeholder() {
+        for (field, index, absent) in [
+            (
+                "contribution_id",
+                placeholder.contribution_id(),
+                dashbuf::NO_CONTRIBUTION,
+            ),
+            (
+                "fragment_ref",
+                placeholder.fragment_ref(),
+                dashbuf::NO_FRAGMENT,
+            ),
+        ] {
+            if index != absent && index as usize >= sizes.strings {
+                report.push(error(
+                    rule::PLACEHOLDER_STRING_OUT_OF_RANGE,
+                    &at(),
+                    format!(
+                        "placeholder {field} references string {index}, but the string pool \
+                         holds {} entries",
+                        sizes.strings
+                    ),
+                ));
+            }
+        }
+        // The same shape `geometry.rect-invalid-extent` applies to an
+        // authored box. Without it the arena's own assertion is the first
+        // thing to see a NaN, which is a panic on the load path rather than a
+        // named diagnostic (P4).
+        if let Some(size) = placeholder.declared_size() {
+            for (extent, axis) in [(size.x(), "width"), (size.y(), "height")] {
+                if !extent.is_finite() || extent < 0.0 {
+                    report.push(error(
+                        rule::PLACEHOLDER_DECLARED_SIZE_INVALID,
+                        &at(),
+                        format!(
+                            "placeholder declared_size {axis} is {extent}; a declared size \
+                             must be finite and non-negative. It is what a measure callback \
+                             reports while no contribution is bound"
+                        ),
+                    ));
+                }
+            }
+        }
+
+        check_fill(
+            report,
+            &at(),
+            "Placeholder.interim_fill",
+            &placeholder,
+            sizes,
+        );
+    }
+
     let text_style = node.text_style();
     if text_style != NO_TEXT_STYLE && text_style as usize >= sizes.text_styles {
         report.push(error(
@@ -854,6 +912,18 @@ impl<'a> FillUnion<'a> for FillLayer<'a> {
     }
 }
 
+impl<'a> FillUnion<'a> for dashbuf::Placeholder<'a> {
+    fn fill_type(&self) -> Fill {
+        dashbuf::Placeholder::interim_fill_type(self)
+    }
+    fn fill_as_gradient(&self) -> Option<dashbuf::Gradient<'a>> {
+        dashbuf::Placeholder::interim_fill_as_gradient(self)
+    }
+    fn fill_as_image_fill(&self) -> Option<dashbuf::ImageFill<'a>> {
+        dashbuf::Placeholder::interim_fill_as_image_fill(self)
+    }
+}
+
 /// One `Fill` union's vocabulary rules: its own enum range, a gradient's
 /// stops, an image fill's scale mode and asset index. Shared by the primary
 /// `Paint.fill` and every stacked `FillLayer` in `Paint.extra_fills` (story
@@ -862,10 +932,11 @@ impl<'a> FillUnion<'a> for FillLayer<'a> {
 fn check_fill<'a>(
     report: &mut Report,
     at: &Location,
+    field: &str,
     fill: &impl FillUnion<'a>,
     sizes: &PoolSizes,
 ) {
-    check_enum!(report, at, "Paint.fill", fill.fill_type());
+    check_enum!(report, at, field, fill.fill_type());
 
     if fill.fill_type() == Fill::Gradient
         && let Some(gradient) = fill.fill_as_gradient()
@@ -889,13 +960,13 @@ fn check_fill<'a>(
 /// One paint-pool entry: its fill union (and any stacked fills over it), its
 /// stroke, and its image reference.
 fn check_paint_entry(report: &mut Report, paint: &Paint<'_>, at: &Location, sizes: &PoolSizes) {
-    check_fill(report, at, paint, sizes);
+    check_fill(report, at, "Paint.fill", paint, sizes);
 
     // Stacked fills (story C1, debt #146): each layer's own vocabulary rules,
     // the same posture as the shadows loop below — one field label for every
     // layer, `at` naming the paint entry rather than the individual layer.
     for layer in paint.extra_fills().unwrap_or_default().iter() {
-        check_fill(report, at, &layer, sizes);
+        check_fill(report, at, "Paint.extra_fills", &layer, sizes);
     }
 
     if let Some(stroke) = paint.stroke() {

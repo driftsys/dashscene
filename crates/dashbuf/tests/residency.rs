@@ -482,3 +482,83 @@ fn the_two_readers_name_the_same_payloads() {
 
     assert_eq!(by_open, plan.wanted(), "the two readers must not disagree");
 }
+
+/// A document whose only route to an asset is a placeholder's interim fill
+/// (story #1126): one root node with **no paint entry at all**, carrying a
+/// placeholder whose `interim_fill` is an image fill over asset 0.
+///
+/// Built standalone rather than added to [`ui_section`]'s fixture, whose asset
+/// sets several tests assert exactly.
+fn placeholder_only_document() -> Vec<u8> {
+    let mut builder = FlatBufferBuilder::new();
+
+    let hash = builder.create_vector(&[0u8; 32]);
+    let entry = AssetEntry::create(
+        &mut builder,
+        &AssetEntryArgs {
+            hash: Some(hash),
+            format: ImageFormat::Png,
+            kind: AssetKind::Image,
+            width: 16,
+            height: 16,
+        },
+    );
+    let assets = builder.create_vector(&[entry]);
+
+    let interim = ImageFill::create(
+        &mut builder,
+        &ImageFillArgs {
+            image: 0,
+            ..Default::default()
+        },
+    );
+    let placeholder = dashbuf::Placeholder::create(
+        &mut builder,
+        &dashbuf::PlaceholderArgs {
+            interim_fill_type: Fill::ImageFill,
+            interim_fill: Some(interim.as_union_value()),
+            ..Default::default()
+        },
+    );
+    let node = Node::create(
+        &mut builder,
+        &NodeArgs {
+            parent: NO_PARENT,
+            paint_entry: dashbuf::NO_PAINT,
+            placeholder: Some(placeholder),
+            ..Default::default()
+        },
+    );
+    let nodes = builder.create_vector(&[node]);
+
+    let document = Document::create(
+        &mut builder,
+        &DocumentArgs {
+            nodes: Some(nodes),
+            assets: Some(assets),
+            ..Default::default()
+        },
+    );
+    builder.finish(document, None);
+    builder.finished_data().to_vec()
+}
+
+/// An asset reachable only through a placeholder's interim fill is in the
+/// prefetch set.
+///
+/// A placeholder need not carry a paint entry — reserving a box and showing an
+/// interim picture is the whole point — so a walk that reached fills only
+/// through `Node.paint_entry` would `continue` past this node and leave the
+/// asset unfetched and unverified on the bounded load path (R5). The host then
+/// binds a payload it never touched.
+#[test]
+fn assets_of_root_follows_a_placeholders_interim_fill() {
+    let bytes = placeholder_only_document();
+    let document = dashbuf::root_as_document(&bytes).expect("a valid document");
+
+    assert_eq!(
+        assets_of_root(&document, 0),
+        vec![0],
+        "the interim fill's asset is the only one, and it must be wanted"
+    );
+}

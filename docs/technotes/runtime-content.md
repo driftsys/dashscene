@@ -171,10 +171,23 @@ render path.
 All three buckets fill a placeholder (§10.2) under one contract: a
 **declared-size** box (never hug — lazy content must not reflow the scene), an
 `interim_fill` shown while content loads/resolves, and a `contribution_id` the
-runtime producer binds against. Then either a streamed dashscene subtree (§3), a
-decoded image texture (§2), or a ThorVG texture (§5) drops in. Buckets 1–2
-preserve cross-backend identity; bucket 3 is engine-clock, tier-specific, and
-budgeted.
+runtime producer binds against.
+
+**The schema surface for those three now exists and nothing resolves it.** Story
+#1126 added `table Placeholder` and `Node.placeholder`, which `dashc`'s emitter
+lowers and `dashscene-core` reads back. **No producer lowers one** — the `dashc`
+CLI only has `check`, so a `.dsb` carrying a placeholder is authored by building
+a `dashc::Document` in code. Figma's annotation vocabulary does have a
+`dashscene/role = placeholder`, which the importer recognises and whose sample
+children it trims; the lowering drops it and sets `placeholder: None`. And
+nothing resolves one: no measure callback reads `declared_size`, no host binds a
+`contribution_id`, and no painter draws an `interim_fill`. The contract below is
+what activation will implement, and activation stays in v1
+([`../specification/05-qualification.md`](../specification/05-qualification.md),
+[`../decisions/a-placeholder-is-a-table-and-declares-its-measure-size.md`](../decisions/a-placeholder-is-a-table-and-declares-its-measure-size.md)).
+Then either a streamed dashscene subtree (§3), a decoded image texture (§2), or
+a ThorVG texture (§5) drops in. Buckets 1–2 preserve cross-backend identity;
+bucket 3 is engine-clock, tier-specific, and budgeted.
 
 ## 8. Open items
 

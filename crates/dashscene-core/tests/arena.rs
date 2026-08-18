@@ -8,7 +8,8 @@ use std::mem::{align_of, size_of};
 use dashpaint::{Vec2, VectorField};
 use dashscene_core::{
     Arena, ClipBox, ClipIndex, Color, CornerRadii, Fill, FillSpec, LayoutMode, PaintEntry,
-    PaintIndex, PaintTable, Prop, RectEntry, Stroke, StrokeAlign, TextAlign, TextAlignV, TextStyle,
+    PaintIndex, PaintTable, Placeholder, Prop, RectEntry, Stroke, StrokeAlign, TextAlign,
+    TextAlignV, TextStyle,
 };
 
 const RED: Color = Color {
@@ -3884,5 +3885,42 @@ fn a_rect_for_a_root_added_since_the_map_was_built_is_skipped_too() {
         None,
         "and the root added after the map was built resolves to no row, rather than being \
          rejected as though it were not a node of this arena"
+    );
+}
+
+/// A staged `declared_size` must be finite. The guard exists because the
+/// value is what a measure callback reports, so it reaches the solve once
+/// activation lands — and without a test nothing fails if the guard is
+/// dropped or inverted, which is the state `Opacity` and `Rotation` are not
+/// in (story #1126).
+#[test]
+#[should_panic(expected = "must be finite and non-negative")]
+fn a_non_finite_declared_size_is_refused() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = txn.add_node(None, Some("gauge-slot"));
+    txn.set_prop(
+        node,
+        Prop::Placeholder(Placeholder {
+            declared_size: Some((f32::NAN, 32.0)),
+            ..Placeholder::default()
+        }),
+    );
+}
+
+/// And must be non-negative, for the same reason and by the same rule the
+/// load gate applies to an authored box.
+#[test]
+#[should_panic(expected = "must be finite and non-negative")]
+fn a_negative_declared_size_is_refused() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let node = txn.add_node(None, Some("gauge-slot"));
+    txn.set_prop(
+        node,
+        Prop::Placeholder(Placeholder {
+            declared_size: Some((64.0, -32.0)),
+            ..Placeholder::default()
+        }),
     );
 }

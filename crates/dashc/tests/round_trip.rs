@@ -19,9 +19,9 @@ mod common;
 // bin compile to a same-named output file, which cargo flags as a collision
 // (see the crate manifest).
 use dashc_wasm::{
-    BindingChannel, Box2D, Document, Easing, LoopTrack, Node, Paint, PaintEntry, PropTransition,
-    TransitionSpec, VariantMember, VariantOverride, VariantSet, VariantTransition, VariantValue,
-    compile, emit,
+    BindingChannel, Box2D, Document, Easing, LoopTrack, Node, Paint, PaintEntry, Placeholder,
+    PropTransition, TransitionSpec, VariantMember, VariantOverride, VariantSet, VariantTransition,
+    VariantValue, compile, emit,
 };
 use dashpaint::{
     Blur, BlurKind, Color, FillSpec, GlyphRunTable, Gradient, GradientKind, GradientStop,
@@ -1662,4 +1662,233 @@ fn a_loopless_document_writes_no_loop_table() {
         bytes, carried,
         "a document carrying a loop must encode differently from one without",
     );
+}
+
+/// The document a declared placeholder compiles from (story #1126): one node
+/// reserving a box for content a host contributes at runtime, taking the
+/// placeholder itself as an argument so the same document can be compiled with
+/// and without the vocabulary — which is what the R7 check below needs.
+fn slot_document(placeholder: Option<Placeholder>) -> Document {
+    let mut doc = Document::new();
+    doc.push(Node {
+        name: Some("gauge-slot".to_owned()),
+        parent: None,
+        box2d: Box2D {
+            x: 4.0,
+            y: 2.0,
+            width: 64.0,
+            height: 32.0,
+        },
+        placeholder,
+        ..Node::default()
+    });
+    doc
+}
+
+/// A placeholder with every field set to a value distinguishable from its
+/// schema default, so a field-id shift cannot read back as a pass.
+fn declared_slot() -> Placeholder {
+    Placeholder {
+        contribution_id: Some("cluster.speedo".to_owned()),
+        fragment_ref: Some("gauge.dsb".to_owned()),
+        declared_size: Some((48.0, 24.0)),
+        interim_fill: Some(FillSpec::Solid { color: BLUE }),
+    }
+}
+
+#[test]
+fn a_declared_placeholder_survives_the_round_trip() {
+    // Story #1126 builds the surface node replacement binds to, and stops
+    // there: all four values are carried by the document and read back by the
+    // loader, and nothing resolves them. Placeholder *activation* is v1
+    // (docs/specification/05-qualification.md).
+    let arena = load(&slot_document(Some(declared_slot())));
+    let node = arena.roots()[0];
+
+    let declared = arena
+        .placeholder(node)
+        .expect("the node is a declared placeholder");
+
+    assert_eq!(
+        declared.contribution_id.as_deref(),
+        Some("cluster.speedo"),
+        "the id a runtime producer binds a contribution against",
+    );
+    assert_eq!(
+        declared.fragment_ref.as_deref(),
+        Some("gauge.dsb"),
+        "the external subtree to stream in",
+    );
+    assert_eq!(
+        declared.declared_size,
+        Some((48.0, 24.0)),
+        "the size a measure callback will report while nothing is bound — \
+         not the node's own box, which is 64 x 32 here so the two cannot be \
+         confused for one another",
+    );
+    assert_eq!(
+        declared.interim_fill,
+        Some(FillSpec::Solid { color: BLUE }),
+        "shown while the contribution loads; the whole fill vocabulary, \
+         not a bare color",
+    );
+}
+
+#[test]
+fn an_ordinary_node_declares_no_placeholder() {
+    let arena = load(&slot_document(None));
+
+    assert!(
+        arena.placeholder(arena.roots()[0]).is_none(),
+        "presence of the table is the predicate story #1127 reads, so a node \
+         without one must read back as not a placeholder",
+    );
+}
+
+#[test]
+fn a_node_with_no_placeholder_writes_no_placeholder_table() {
+    // The R7 append check for this vocabulary, in the shape story #770's
+    // rotation check uses: the table is absent on an ordinary node, so flatc
+    // omits it and a document written before story #1126 encodes
+    // byte-identically.
+    let bytes = compile(&slot_document(None)).expect("validates");
+    let document =
+        dashbuf::root_as_document(dashbuf::container::ui_document(&bytes).expect("a .dsb file"))
+            .expect("valid buffer");
+    let node = document.nodes().expect("nodes present").get(0);
+
+    assert!(
+        node.placeholder().is_none(),
+        "an ordinary node carries no Placeholder table",
+    );
+
+    // The same document carrying a placeholder must differ, or the assertion
+    // above would pass on a producer that never writes the table at all.
+    let declared = compile(&slot_document(Some(declared_slot()))).expect("validates");
+    assert_ne!(
+        bytes, declared,
+        "a declared placeholder must encode differently from an ordinary node",
+    );
+}
+
+/// A placeholder whose every field is at its schema default — the third shape
+/// the vocabulary documents, after "fully populated" and "absent": a box that
+/// reserves space without naming a binding.
+///
+/// Its table has an empty vtable, so it is the one input for which an emitter
+/// that learned to skip an all-default nested table — the optimisation
+/// `flex`/`constraints` already apply through `.map` — would silently flip the
+/// node back to ordinary. Presence is the predicate story #1127 reads, so that
+/// would make an unfilled placeholder report as an ordinary node.
+#[test]
+fn an_all_default_placeholder_still_reads_back_as_declared() {
+    let arena = load(&slot_document(Some(Placeholder::default())));
+
+    let declared = arena
+        .placeholder(arena.roots()[0])
+        .expect("an all-default placeholder is still a declared placeholder");
+
+    assert_eq!(declared.contribution_id, None, "names no binding");
+    assert_eq!(declared.fragment_ref, None, "streams no fragment");
+    assert_eq!(declared.declared_size, None, "declares no measure size");
+    assert_eq!(declared.interim_fill, None, "shows nothing meanwhile");
+}
+
+/// A gradient interim fill round-trips, which the solid case cannot prove:
+/// `flatc` names a union's accessors after its field, so `Placeholder`'s
+/// `interim_fill_as_gradient` is a different method from `FillLayer`'s
+/// `fill_as_gradient` and is wired by hand in `load.rs`'s `FillUnion` impl.
+#[test]
+fn a_gradient_interim_fill_round_trips() {
+    let arena = load(&slot_document(Some(Placeholder {
+        interim_fill: Some(gradient()),
+        ..Placeholder::default()
+    })));
+
+    let declared = arena
+        .placeholder(arena.roots()[0])
+        .expect("the node is a declared placeholder");
+
+    match declared.interim_fill.as_ref().expect("an interim fill") {
+        FillSpec::Gradient { gradient: g, stops } => {
+            assert_eq!(g.kind, GradientKind::Linear);
+            assert_eq!(stops.len(), 2, "both stops survived");
+            assert_eq!(stops[0].color, RED);
+            assert_eq!(stops[1].color, BLUE);
+        }
+        other => panic!("the interim fill read back as {other:?}, not a gradient"),
+    }
+}
+
+/// An image interim fill round-trips, and its asset index is remapped through
+/// the load's own asset table rather than carried through raw.
+///
+/// This is the arm that indexes `image_of[..]` in the loader, so it is also
+/// the one a wrong index panics in.
+#[test]
+fn an_image_interim_fill_round_trips_through_the_asset_table() {
+    let mut doc = Document::new();
+    let image = doc.push_asset(dashc_wasm::Asset {
+        format: ImageFormat::Png,
+        kind: dashc_wasm::AssetKind::Image,
+        bytes: png_pixel(),
+        width: 1,
+        height: 1,
+    });
+    doc.push(Node {
+        name: Some("gauge-slot".to_owned()),
+        parent: None,
+        box2d: Box2D {
+            x: 0.0,
+            y: 0.0,
+            width: 64.0,
+            height: 32.0,
+        },
+        placeholder: Some(Placeholder {
+            interim_fill: Some(FillSpec::Image(ImageFill {
+                image,
+                scale_mode: ScaleMode::Fill,
+                transform: Mat23::IDENTITY,
+                tile_scale: 1.0,
+            })),
+            ..Placeholder::default()
+        }),
+        ..Node::default()
+    });
+
+    // Loaded twice into one arena, because a fresh arena hands out the same
+    // indices the document uses — so index 0 would equal row 0 and the
+    // assertion would hold with the remap deleted. The second load's rows
+    // start at 1, which is what makes this bite.
+    let mut arena = Arena::new();
+    let bytes = compile(&doc).expect("validates");
+    let (document, payloads) = dashbuf::open_verified(&bytes).expect("a valid .dsb file");
+    load_document(&document, &payloads, &mut arena);
+    load_document(&document, &payloads, &mut arena);
+
+    let roots = arena.roots().to_vec();
+    assert_eq!(roots.len(), 2, "both loads staged their own node");
+    assert_eq!(
+        arena.committed().images().len(),
+        2,
+        "both loads staged their own copy of the asset"
+    );
+
+    for (root, expected) in roots.iter().zip([0u32, 1]) {
+        let declared = arena
+            .placeholder(*root)
+            .expect("the node is a declared placeholder");
+        match declared.interim_fill.as_ref().expect("an interim fill") {
+            FillSpec::Image(fill) => {
+                assert_eq!(fill.scale_mode, ScaleMode::Fill, "the scale mode survived");
+                assert_eq!(
+                    fill.image, expected,
+                    "the interim fill's asset index is the arena's row, not the \
+                     document's — the second load must point at the second asset, \
+                     or it repaints with the first document's picture",
+                );
+            }
+            other => panic!("the interim fill read back as {other:?}, not an image"),
+        }
+    }
 }
