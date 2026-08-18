@@ -219,11 +219,13 @@ than a step inside a revision.
   two, from 2026-08-16; as this revision closes there are **ten** on that
   milestone and eleven in the repository, two of them put there by this revision
   — which is why the entry now prints the query instead of a number.
-- v0.21's nine unanchored issues are placed, and **#1226 is raised to a gate on
-  epic #1106** rather than sitting beside it: it asks whether the C ABI's
+- v0.21's nine unanchored issues are placed, and **#1226 was raised to a gate on
+  epic #1106** rather than sitting beside it: it asked whether the C ABI's
   runtime handle stays a raw pointer, which changes the signature of every entry
-  point and so every P/Invoke declaration a C# host writes. It is owed before
-  #859 adds entry points and before #1121 writes that host.
+  point and so every P/Invoke declaration a C# host writes. **It was ruled on
+  2026-08-18** —
+  [`the-c-abi-runtime-handle-is-generational.md`](the-c-abi-runtime-handle-is-generational.md)
+  — and #1226 now carries the build, ahead of #859 and #1121.
 - v0.22's four items are all filed as issues. Two of them — the SVG vocabulary
   profile and the census harness, now #1242 and #1243 — were carried as prose in
   `docs/roadmap.md` and filed as no issue at all. That is a **fourth** way work
