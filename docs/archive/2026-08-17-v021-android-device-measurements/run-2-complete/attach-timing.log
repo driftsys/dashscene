@@ -1,0 +1,29 @@
+attach-timing: building and packaging the release showcase host
+    Finished `release` profile [optimized] target(s) in 0.29s
+   Compiling dashscene-ffi v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-ffi)
+    Finished `release` profile [optimized] target(s) in 1.82s
+   Compiling dashscene-ffi v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-ffi)
+   Compiling dashscene-android v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-android)
+    Finished `release` profile [optimized] target(s) in 1.81s
+   Compiling dashscene-ffi v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-ffi)
+   Compiling dashscene-android v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-android)
+   Compiling demo-android v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/demo-android)
+    Finished `release` profile [optimized] target(s) in 2.77s
+All files should be loaded. Notifying the device.
+attach-timing: release: cold launch, waiting up to 90 s for a first frame
+attach-timing: release: drew
+attach-timing: building and packaging the debug showcase host
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.11s
+   Compiling dashscene-ffi v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-ffi)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.42s
+   Compiling dashscene-ffi v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-ffi)
+   Compiling dashscene-android v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-android)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.55s
+   Compiling dashscene-ffi v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-ffi)
+   Compiling dashscene-android v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-android)
+   Compiling demo-android v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/demo-android)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.50s
+All files should be loaded. Notifying the device.
+attach-timing: debug: cold launch, waiting up to 90 s for a first frame
+attach-timing: debug: drew
+attach-timing: -> target/android-measure/20231229T090010Z/attach.md

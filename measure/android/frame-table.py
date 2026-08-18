@@ -86,7 +86,14 @@ SAMPLE_SPLIT = re.compile(
     r"(?P<scene>\S+) over (?P<frames>\d+) frames — "
     r"tick (?P<tick>[\d.]+) ms, "
     r"paint mean (?P<paint>[\d.]+) p50 (?P<paint50>[\d.]+), "
-    r"submit mean (?P<mean>[\d.]+) p50 (?P<p50>[\d.]+) p95 (?P<p95>[\d.]+) "
+    # **`submit` or `present`, because the label was renamed after captures
+    # existed.** The split instrument printed `present mean` for one day before
+    # that word was found to name a different quantity on the desktop host; the
+    # captures archived under
+    # `docs/archive/2026-08-17-v021-android-device-measurements/` carry the old
+    # label, and the README there promises they can be re-derived. Accepting both
+    # is what keeps that true — a rename is not a reason to orphan evidence.
+    r"(?:submit|present) mean (?P<mean>[\d.]+) p50 (?P<p50>[\d.]+) p95 (?P<p95>[\d.]+) "
     r"max (?P<max>[\d.]+) ms "
     r"\((?P<fps>[\d.]+) fps if unpaced\)"
     r" — (?P<runs>\d+) run\(s\), (?P<quads>\d+) glyph\(s\)\s*$"

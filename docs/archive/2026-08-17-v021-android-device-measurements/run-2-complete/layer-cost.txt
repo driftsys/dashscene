@@ -1,0 +1,40 @@
+    Finished `release` profile [optimized] target(s) in 0.08s
+target/aarch64-linux-android/release/examples/layer_cost: 1 file pushed, 0 skipped. 103.1 MB/s (4723088 bytes in 0.044s)
+layer_cost: Adreno (TM) 620 | backend Vulkan | device_type IntegratedGpu | driver Qualcomm Technologies Inc. Adreno Vulkan Driver Driver Build: 4783c89, I46ff5fc46f, 1606807783
+Date: 11/30/20
+Compiler Version: EV031.31.04.01
+Driver Branch: QPR2
+
+layer_cost: 1920x1080, 120 frames per point after 5 discarded, sweeping 0..=12 layers
+
+layers   min ms   p50 ms   max ms   marginal min ms
+     0   21.375   23.325   33.254           —
+     1   25.192   27.683   39.083      +3.817
+     2   25.528   32.399   42.180      +0.335
+     3   31.243   42.984   47.764      +5.716
+     4   43.706   49.077  130.739     +12.463
+     5   37.870   50.378  134.816      -5.836
+     6   40.347   53.918  138.393      +2.477
+     7   44.846   50.589  140.626      +4.500
+     8   46.498   53.460  144.603      +1.652
+     9   39.967   62.836  148.979      -6.531
+    10   40.820   65.707  152.362      +0.853
+    11   42.817   62.451  155.037      +1.996
+    12   43.655   74.760  161.437      +0.839
+
+layer_cost: one more render-target layer costs +1.7676 ms ± 0.3801 ms (1 s.e., fit over 13 points; residual 4.7171 ms)
+layer_cost: 12 layers were swept, against dashscene_validator::RENDER_TARGET_BUDGET_PLACEHOLDER = 8
+layer_cost: allocations across the sweep: 340
+
+Read the SLOPE, never the absolute. Every frame here is read back through a
+staging buffer — a full-target copy, the same cost at every layer count — so the
+per-frame figures carry a constant term no device frame pays. The marginal
+column is the measurement; the mean column is not a frame cost.
+
+This is an offscreen target and not a swapchain, and `Renderer::new` asks for an
+adapter with no compatible surface, so it need not be the adapter a windowed host
+picks (issue #890).
+
+An emulator result describes the host machine's GPU behind a translation layer.
+It is NOT the Q-6 measurement (issue #1128) and must not be recorded as one.
+

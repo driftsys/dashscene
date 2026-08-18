@@ -1,0 +1,1712 @@
+--------- beginning of main
+         1703830667.538  1086  1254 I ASH     : @ 1538.347: tcs3701: stop power rail pending_off timer
+         1703830667.538  1086  1254 D ASH     : @ 1538.348: tcs3701: start power rail timer, state:3
+--------- beginning of system
+         1703830667.562  1785  3761 W ActivityTaskManager: callingPackage for (uid=2000, pid=8711) has no WPC
+         1703830667.563  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 265464455; UID 10267; state: DISABLED
+         1703830667.563  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 265452344; UID 10267; state: DISABLED
+         1703830667.563  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 266124927; UID 10267; state: DISABLED
+         1703830667.563  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 265451093; UID 10267; state: DISABLED
+         1703830667.564  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 265456536; UID 10267; state: DISABLED
+         1703830667.564  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 255940284; UID 10267; state: DISABLED
+         1703830667.564  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 236283604; UID 10267; state: DISABLED
+         1703830667.564  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 263959004; UID 10267; state: DISABLED
+         1703830667.565  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 264304459; UID 10267; state: DISABLED
+         1703830667.565  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 264301586; UID 10267; state: DISABLED
+         1703830667.565  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 254631730; UID 10267; state: DISABLED
+         1703830667.565  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 273509367; UID 10267; state: DISABLED
+         1703830667.566  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 263259275; UID 10267; state: DISABLED
+         1703830667.566  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 174042980; UID 10267; state: DISABLED
+         1703830667.566  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 174042936; UID 10267; state: DISABLED
+         1703830667.566  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 181136395; UID 10267; state: DISABLED
+         1703830667.567  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 194480991; UID 10267; state: ENABLED
+         1703830667.571  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 184838306; UID 10267; state: DISABLED
+         1703830667.572  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 185004937; UID 10267; state: DISABLED
+         1703830667.573  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 197654537; UID 10267; state: ENABLED
+         1703830667.575  1785  3761 D CompatibilityChangeReporter: Compat change id reported: 205907456; UID 10267; state: ENABLED
+         1703830667.577  1785  3761 I ActivityTaskManager: Add Task{76d87d #56 type=standard A=10267:dev.driftsys.dashscene.demo} to hidden list because adding Task{7299cc0 #57 type=standard A=10267:dev.driftsys.dashscene.demo}
+         1703830667.578  1086  1254 I ASH     : @ 1538.387: tcs3701: stop power rail pending_off timer
+         1703830667.578  1086  1254 D ASH     : @ 1538.388: tcs3701: start power rail timer, state:3
+         1703830667.578  1785  3761 I ActivityTaskManager: START u0 {flg=0x10000000 cmp=dev.driftsys.dashscene.demo/.DemoActivity (has extras)} with LAUNCH_MULTIPLE from uid 2000 (BAL_ALLOW_PERMISSION) result code=0
+         1703830667.579  2565  2589 V WindowManagerShell: Transition requested: android.os.BinderProxy@71a491e TransitionRequestInfo { type = OPEN, triggerTask = TaskInfo{userId=0 taskId=57 displayId=0 isRunning=true baseIntent=Intent { flg=0x10000000 cmp=dev.driftsys.dashscene.demo/.DemoActivity } baseActivity=ComponentInfo{dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity} topActivity=ComponentInfo{dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity} origActivity=null realActivity=ComponentInfo{dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity} numActivities=1 lastActiveTime=1535524 supportsMultiWindow=true resizeMode=2 isResizeable=true minWidth=-1 minHeight=-1 defaultMinSize=220 token=WCT{android.window.IWindowContainerToken$Stub$Proxy@3ac75ff} topActivityType=1 pictureInPictureParams=null shouldDockBigOverlays=false launchIntoPipHostTaskId=-1 lastParentTaskIdBeforePip=-1 displayCutoutSafeInsets=Rect(0, 42 - 0, 0) topActivityInfo=ActivityInfo{e9c1fcc dev.driftsys.dashscene.demo.DemoActivity} launchCookies=[] positionInParent=Point(0, 0) parentTaskId=-1 isFocused=false isVisible=false isVisibleRequested=false isSleeping=false topActivityInSizeCompat=false topActivityEligibleForLetterboxEducation= false topActivityLetterboxed= false isFromDoubleTap= false topActivityLetterboxVerticalPosition= -1 topActivityLetterboxHorizontalPosition= -1 topActivityLetterboxWidth=-1 topActivityLetterboxHeight=-1 locusId=null displayAreaFeatureId=1 cameraCompatControlState=hidden}, remoteTransition = null, displayChange = null }
+         1703830667.580  1785  2098 D CompatibilityChangeReporter: Compat change id reported: 135634846; UID 10267; state: DISABLED
+         1703830667.580  1785  2098 D CompatibilityChangeReporter: Compat change id reported: 177438394; UID 10267; state: DISABLED
+         1703830667.580  1785  2098 D CompatibilityChangeReporter: Compat change id reported: 135772972; UID 10267; state: DISABLED
+         1703830667.580  1785  2098 D CompatibilityChangeReporter: Compat change id reported: 135754954; UID 10267; state: ENABLED
+         1703830667.581  1785  2125 D CompatibilityChangeReporter: Compat change id reported: 143937733; UID 10267; state: ENABLED
+         1703830667.585  1041  1041 D Zygote  : Forked child process 8714
+         1703830667.585  1785  2125 I ActivityManager: Start proc 8714:dev.driftsys.dashscene.demo/u0a267 for next-top-activity {dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity}
+         1703830667.586  2565  2603 W Parcel  : Expecting binder but got null!
+         1703830667.586  1785  4033 D CompatibilityChangeReporter: Compat change id reported: 168419799; UID 10267; state: DISABLED
+         1703830667.586  1785  4033 D CompatibilityChangeReporter: Compat change id reported: 273564678; UID 10267; state: DISABLED
+         1703830667.590  1785  2380 D CompatibilityChangeReporter: Compat change id reported: 265195908; UID 10267; state: ENABLED
+         1703830667.596  1785  3762 D CoreBackPreview: Window{16bc4ec u0 Splash Screen dev.driftsys.dashscene.demo}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@f7cbf97, mPriority=0, mIsAnimationCallback=false}
+         1703830667.597  2565  2599 E OpenGLRenderer: Unable to match the desired swap behavior.
+         1703830667.601  8714  8714 I .dashscene.demo: Using CollectorTypeCC GC.
+         1703830667.602  1785  2100 W WindowManager: Failed to deliver inset control state change to w=Window{e090c17 u0 dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity EXITING}
+         1703830667.602  1785  2100 W WindowManager: android.os.DeadObjectException
+         1703830667.602  1785  2100 W WindowManager: 	at android.os.BinderProxy.transactNative(Native Method)
+         1703830667.602  1785  2100 W WindowManager: 	at android.os.BinderProxy.transact(BinderProxy.java:584)
+         1703830667.602  1785  2100 W WindowManager: 	at android.view.IWindow$Stub$Proxy.insetsControlChanged(IWindow.java:479)
+         1703830667.602  1785  2100 W WindowManager: 	at com.android.server.wm.WindowState.notifyInsetsControlChanged(WindowState.java:3802)
+         1703830667.602  1785  2100 W WindowManager: 	at com.android.server.wm.InsetsStateController.lambda$notifyPendingInsetsControlChanged$3(InsetsStateController.java:343)
+         1703830667.602  1785  2100 W WindowManager: 	at com.android.server.wm.InsetsStateController.$r8$lambda$8yykPRG1GyNq_J17QvL9d5xANMc(InsetsStateController.java:0)
+         1703830667.602  1785  2100 W WindowManager: 	at com.android.server.wm.InsetsStateController$$ExternalSyntheticLambda2.run(R8$$SyntheticClass:0)
+         1703830667.602  1785  2100 W WindowManager: 	at com.android.server.wm.WindowAnimator.executeAfterPrepareSurfacesRunnables(WindowAnimator.java:294)
+         1703830667.602  1785  2100 W WindowManager: 	at com.android.server.wm.RootWindowContainer.performSurfacePlacementNoTrace(RootWindowContainer.java:811)
+         1703830667.602  1785  2100 W WindowManager: 	at com.android.server.wm.RootWindowContainer.performSurfacePlacement(RootWindowContainer.java:756)
+         1703830667.602  1785  2100 W WindowManager: 	at com.android.server.wm.WindowSurfacePlacer.performSurfacePlacementLoop(WindowSurfacePlacer.java:177)
+         1703830667.602  1785  2100 W WindowManager: 	at com.android.server.wm.WindowSurfacePlacer.performSurfacePlacement(WindowSurfacePlacer.java:126)
+         1703830667.602  1785  2100 W WindowManager: 	at com.android.server.wm.WindowSurfacePlacer.performSurfacePlacement(WindowSurfacePlacer.java:115)
+         1703830667.602  1785  2100 W WindowManager: 	at com.android.server.wm.WindowSurfacePlacer$Traverser.run(WindowSurfacePlacer.java:57)
+         1703830667.602  1785  2100 W WindowManager: 	at android.os.Handler.handleCallback(Handler.java:958)
+         1703830667.602  1785  2100 W WindowManager: 	at android.os.Handler.dispatchMessage(Handler.java:99)
+         1703830667.602  1785  2100 W WindowManager: 	at android.os.Looper.loopOnce(Looper.java:205)
+         1703830667.602  1785  2100 W WindowManager: 	at android.os.Looper.loop(Looper.java:294)
+         1703830667.602  1785  2100 W WindowManager: 	at android.os.HandlerThread.run(HandlerThread.java:67)
+         1703830667.602  1785  2100 W WindowManager: 	at com.android.server.ServiceThread.run(ServiceThread.java:46)
+         1703830667.602  1785  2095 V WindowManager: Sent Transition #21 createdAt=12-29 07:17:47.567 via request=TransitionRequestInfo { type = OPEN, triggerTask = TaskInfo{userId=0 taskId=57 displayId=0 isRunning=true baseIntent=Intent { flg=0x10000000 cmp=dev.driftsys.dashscene.demo/.DemoActivity } baseActivity=ComponentInfo{dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity} topActivity=ComponentInfo{dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity} origActivity=null realActivity=ComponentInfo{dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity} numActivities=1 lastActiveTime=1535524 supportsMultiWindow=true resizeMode=2 isResizeable=true minWidth=-1 minHeight=-1 defaultMinSize=220 token=WCT{RemoteToken{3a581a2 Task{7299cc0 #57 type=standard A=10267:dev.driftsys.dashscene.demo}}} topActivityType=1 pictureInPictureParams=null shouldDockBigOverlays=false launchIntoPipHostTaskId=-1 lastParentTaskIdBeforePip=-1 displayCutoutSafeInsets=Rect(0, 42 - 0, 0) topActivityInfo=ActivityInfo{f3db5f0 dev.driftsys.dashscene.demo.DemoActivity} launchCookies=[] positionInParent=Point(0, 0) parentTaskId=-1 isFocused=false isVisible=false isVisibleRequested=false isSleeping=false topActivityInSizeCompat=false topActivityEligibleForLetterboxEducation= false topActivityLetterboxed= false isFromDoubleTap= false topActivityLetterboxVerticalPosition= -1 topActivityLetterboxHorizontalPosition= -1 topActivityLetterboxWidth=-1 topActivityLetterboxHeight=-1 locusId=null displayAreaFeatureId=1 cameraCompatControlState=hidden}, remoteTransition = null, displayChange = null }
+         1703830667.602  1785  2095 V WindowManager:     startWCT=WindowContainerTransaction { changes = {} hops = [] errorCallbackToken=null taskFragmentOrganizer=null }
+         1703830667.602  1785  2095 V WindowManager:     info={id=21 t=OPEN f=0x0 trk=0 r=[0@Point(0, 0)] c=[{WCT{RemoteToken{3a581a2 Task{7299cc0 #57 type=standard A=10267:dev.driftsys.dashscene.demo}}} m=OPEN f=NONE leash=Surface(name=Task=57)/@0x47c584 sb=Rect(0, 0 - 1280, 720) eb=Rect(0, 0 - 1280, 720) d=0},{WCT{RemoteToken{b323a89 Task{bfe9da4 #1 type=home}}} m=TO_BACK f=SHOW_WALLPAPER leash=Surface(name=Task=1)/@0xbe01ecc sb=Rect(0, 0 - 1280, 720) eb=Rect(0, 0 - 1280, 720) d=0}]}
+         1703830667.603  2565  2589 V WindowManagerShell: onTransitionReady android.os.BinderProxy@71a491e: {id=21 t=OPEN f=0x0 trk=0 r=[0@Point(0, 0)] c=[{WCT{android.window.IWindowContainerToken$Stub$Proxy@d9c2a93} m=OPEN f=NONE leash=Surface(name=Task=57)/@0x60c9c64 sb=Rect(0, 0 - 1280, 720) eb=Rect(0, 0 - 1280, 720) d=0},{WCT{android.window.IWindowContainerToken$Stub$Proxy@1291ad0} m=TO_BACK f=SHOW_WALLPAPER leash=Surface(name=Task=1)/@0x45d3ecd sb=Rect(0, 0 - 1280, 720) eb=Rect(0, 0 - 1280, 720) d=0}]}
+         1703830667.603  2565  2589 V WindowManagerShell: Transition (#21)android.os.BinderProxy@71a491e@0 ready while (#20)android.os.BinderProxy@2ca53e9@0 is still animating. Notify the animating transition in case they can be merged
+         1703830667.604  2565  2589 V WindowManagerShell: Transition animation finished (aborted=false), notifying core (#20)android.os.BinderProxy@2ca53e9@0
+         1703830667.605  1785  2100 W WindowManager: Failed to deliver inset control state change to w=Window{e090c17 u0 dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity EXITING}
+         1703830667.605  1785  2100 W WindowManager: android.os.DeadObjectException
+         1703830667.605  1785  2100 W WindowManager: 	at android.os.BinderProxy.transactNative(Native Method)
+         1703830667.605  1785  2100 W WindowManager: 	at android.os.BinderProxy.transact(BinderProxy.java:584)
+         1703830667.605  1785  2100 W WindowManager: 	at android.view.IWindow$Stub$Proxy.insetsControlChanged(IWindow.java:479)
+         1703830667.605  1785  2100 W WindowManager: 	at com.android.server.wm.WindowState.notifyInsetsControlChanged(WindowState.java:3802)
+         1703830667.605  1785  2100 W WindowManager: 	at com.android.server.wm.InsetsStateController.lambda$notifyPendingInsetsControlChanged$3(InsetsStateController.java:343)
+         1703830667.605  1785  2100 W WindowManager: 	at com.android.server.wm.InsetsStateController.$r8$lambda$8yykPRG1GyNq_J17QvL9d5xANMc(InsetsStateController.java:0)
+         1703830667.605  1785  2100 W WindowManager: 	at com.android.server.wm.InsetsStateController$$ExternalSyntheticLambda2.run(R8$$SyntheticClass:0)
+         1703830667.605  1785  2100 W WindowManager: 	at com.android.server.wm.WindowAnimator.executeAfterPrepareSurfacesRunnables(WindowAnimator.java:294)
+         1703830667.605  1785  2100 W WindowManager: 	at com.android.server.wm.RootWindowContainer.performSurfacePlacementNoTrace(RootWindowContainer.java:811)
+         1703830667.605  1785  2100 W WindowManager: 	at com.android.server.wm.RootWindowContainer.performSurfacePlacement(RootWindowContainer.java:756)
+         1703830667.605  1785  2100 W WindowManager: 	at com.android.server.wm.WindowSurfacePlacer.performSurfacePlacementLoop(WindowSurfacePlacer.java:177)
+         1703830667.605  1785  2100 W WindowManager: 	at com.android.server.wm.WindowSurfacePlacer.performSurfacePlacement(WindowSurfacePlacer.java:126)
+         1703830667.605  1785  2100 W WindowManager: 	at com.android.server.wm.WindowSurfacePlacer.performSurfacePlacement(WindowSurfacePlacer.java:115)
+         1703830667.605  1785  2100 W WindowManager: 	at com.android.server.wm.WindowSurfacePlacer$Traverser.run(WindowSurfacePlacer.java:57)
+         1703830667.605  1785  2100 W WindowManager: 	at android.os.Handler.handleCallback(Handler.java:958)
+         1703830667.605  1785  2100 W WindowManager: 	at android.os.Handler.dispatchMessage(Handler.java:99)
+         1703830667.605  1785  2100 W WindowManager: 	at android.os.Looper.loopOnce(Looper.java:205)
+         1703830667.605  1785  2100 W WindowManager: 	at android.os.Looper.loop(Looper.java:294)
+         1703830667.605  1785  2100 W WindowManager: 	at android.os.HandlerThread.run(HandlerThread.java:67)
+         1703830667.605  1785  2100 W WindowManager: 	at com.android.server.ServiceThread.run(ServiceThread.java:46)
+         1703830667.605  8714  8714 E .dashscene.demo: Not starting debugger since process cannot load the jdwp agent.
+         1703830667.606  1785  2095 V WindowManager: Finish Transition #20: created at 12-29 07:17:47.407 collect-started=0.09ms request-sent=0.243ms started=10.806ms ready=10.763ms sent=44.314ms finished=199.254ms
+         1703830667.607  1785  3762 W WindowManager: Exception thrown during dispatchAppVisibility Window{e090c17 u0 dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity EXITING}
+         1703830667.607  1785  3762 W WindowManager: android.os.DeadObjectException
+         1703830667.607  1785  3762 W WindowManager: 	at android.os.BinderProxy.transactNative(Native Method)
+         1703830667.607  1785  3762 W WindowManager: 	at android.os.BinderProxy.transact(BinderProxy.java:584)
+         1703830667.607  1785  3762 W WindowManager: 	at android.view.IWindow$Stub$Proxy.dispatchAppVisibility(IWindow.java:546)
+         1703830667.607  1785  3762 W WindowManager: 	at com.android.server.wm.WindowState.sendAppVisibilityToClients(WindowState.java:3271)
+         1703830667.607  1785  3762 W WindowManager: 	at com.android.server.wm.WindowContainer.sendAppVisibilityToClients(WindowContainer.java:1221)
+         1703830667.607  1785  3762 W WindowManager: 	at com.android.server.wm.WindowToken.setClientVisible(WindowToken.java:409)
+         1703830667.607  1785  3762 W WindowManager: 	at com.android.server.wm.ActivityRecord.setClientVisible(ActivityRecord.java:6946)
+         1703830667.607  1785  3762 W WindowManager: 	at com.android.server.wm.ActivityRecord.postApplyAnimation(ActivityRecord.java:5637)
+         1703830667.607  1785  3762 W WindowManager: 	at com.android.server.wm.ActivityRecord.commitVisibility(ActivityRecord.java:5580)
+         1703830667.607  1785  3762 W WindowManager: 	at com.android.server.wm.Transition.finishTransition(Transition.java:1151)
+         1703830667.607  1785  3762 W WindowManager: 	at com.android.server.wm.TransitionController.finishTransition(TransitionController.java:875)
+         1703830667.607  1785  3762 W WindowManager: 	at com.android.server.wm.WindowOrganizerController.finishTransition(WindowOrganizerController.java:396)
+         1703830667.607  1785  3762 W WindowManager: 	at android.window.IWindowOrganizerController$Stub.onTransact(IWindowOrganizerController.java:286)
+         1703830667.607  1785  3762 W WindowManager: 	at com.android.server.wm.WindowOrganizerController.onTransact(WindowOrganizerController.java:181)
+         1703830667.607  1785  3762 W WindowManager: 	at android.os.Binder.execTransactInternal(Binder.java:1339)
+         1703830667.607  1785  3762 W WindowManager: 	at android.os.Binder.execTransact(Binder.java:1275)
+         1703830667.608  1785  3762 I Process : Sending signal. PID: 8468 SIG: 9
+         1703830667.614  2565  2589 V WindowManagerShell: Playing animation for (#21)android.os.BinderProxy@71a491e@0
+         1703830667.614  2565  2589 V WindowManagerShell:  try handler com.android.wm.shell.transition.DefaultMixedHandler@83c3803
+         1703830667.614  2565  2589 V WindowManagerShell:  try handler com.android.wm.shell.keyguard.KeyguardTransitionHandler@6f380
+         1703830667.614  2565  2589 V WindowManagerShell:  try handler com.android.wm.shell.activityembedding.ActivityEmbeddingController@626ddb9
+         1703830667.614  2565  2589 V WindowManagerShell:  try handler com.android.wm.shell.recents.RecentsTransitionHandler@c30f5fe
+         1703830667.614  2565  2589 V ShellRecents: RecentsTransitionHandler.startAnimation: no controller found
+         1703830667.614  2565  2589 V WindowManagerShell:  try handler com.android.wm.shell.pip.PipTransition@c40515f
+         1703830667.614  2565  2589 V WindowManagerShell:  try handler com.android.wm.shell.splitscreen.StageCoordinator@ea7c7ac
+         1703830667.614  2565  2589 V WindowManagerShell:  try handler com.android.wm.shell.transition.RemoteTransitionHandler@74e9c75
+         1703830667.614  2565  2589 V WindowManagerShell: Transition doesn't have explicit remote, search filters for match for {id=21 t=OPEN f=0x0 trk=0 r=[0@Point(0, 0)] c=[{WCT{android.window.IWindowContainerToken$Stub$Proxy@d9c2a93} m=OPEN f=NONE leash=Surface(name=Task=57)/@0x60c9c64 sb=Rect(0, 0 - 1280, 720) eb=Rect(0, 0 - 1280, 720) d=0},{WCT{android.window.IWindowContainerToken$Stub$Proxy@1291ad0} m=TO_BACK f=SHOW_WALLPAPER leash=Surface(name=Task=1)/@0x45d3ecd sb=Rect(0, 0 - 1280, 720) eb=Rect(0, 0 - 1280, 720) d=0}]}
+         1703830667.614  2565  2589 V WindowManagerShell:  Checking filter Pair{{types=[] flags=0x0] notFlags=0x0 checks=[{atype=dream independent=true modes=[OPEN,TO_FRONT] flags=NONE mustBeTask=false order=ANY topActivity=null},{atype=home independent=true modes=[CLOSE,TO_BACK] flags=NONE mustBeTask=false order=ANY topActivity=null}]} RemoteTransition { remoteTransition = android.window.IRemoteTransition$Stub$Proxy@7a2740a, appThread = android.app.IApplicationThread$Stub$Proxy@942a47b, debugName = LauncherToDream }}
+         1703830667.614  2565  2589 V WindowManagerShell:  Checking filter Pair{{types=[] flags=0x0] notFlags=0x100 checks=[{atype=home independent=true modes=[OPEN,TO_FRONT] flags=NONE mustBeTask=false order=TOP topActivity=ComponentInfo{com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity}},{atype=standard independent=true modes=[CLOSE,TO_BACK] flags=NONE mustBeTask=false order=ANY topActivity=null}]} RemoteTransition { remoteTransition = android.window.IRemoteTransition$Stub$Proxy@19fb298, appThread = android.app.IApplicationThread$Stub$Proxy@2f98af1, debugName = QuickstepLaunchHome }}
+         1703830667.614  2565  2589 V WindowManagerShell:  Delegate animation for #21 to null
+         1703830667.614  2565  2589 V WindowManagerShell:  try handler com.android.wm.shell.transition.DefaultTransitionHandler@3fbc6d6
+         1703830667.614  2565  2589 V WindowManagerShell: start default transition animation, info = {id=21 t=OPEN f=0x0 trk=0 r=[0@Point(0, 0)] c=[{WCT{android.window.IWindowContainerToken$Stub$Proxy@d9c2a93} m=OPEN f=NONE leash=Surface(name=Task=57)/@0x60c9c64 sb=Rect(0, 0 - 1280, 720) eb=Rect(0, 0 - 1280, 720) d=0},{WCT{android.window.IWindowContainerToken$Stub$Proxy@1291ad0} m=TO_BACK f=SHOW_WALLPAPER leash=Surface(name=Task=1)/@0x45d3ecd sb=Rect(0, 0 - 1280, 720) eb=Rect(0, 0 - 1280, 720) d=0}]}
+         1703830667.614  2565  2589 V WindowManagerShell: loadAnimation: anim=android.view.animation.AnimationSet@d07a85 animAttr=0x13 type=OPEN isEntrance=false
+         1703830667.615  2565  2589 V WindowManagerShell: loadAnimation: anim=android.view.animation.AnimationSet@6233a01 animAttr=0x12 type=OPEN isEntrance=true
+         1703830667.615  2565  2589 V WindowManagerShell:  animated by com.android.wm.shell.transition.DefaultTransitionHandler@3fbc6d6
+         1703830667.618  1086  1254 I ASH     : @ 1538.427: tcs3701: stop power rail pending_off timer
+         1703830667.618  1086  1254 D ASH     : @ 1538.428: tcs3701: start power rail timer, state:3
+         1703830667.618  1785  2098 W ActivityManager: setHasOverlayUi called on unknown pid: 8468
+         1703830667.618  8714  8714 D CompatibilityChangeReporter: Compat change id reported: 171979766; UID 10267; state: ENABLED
+         1703830667.618  8714  8714 D CompatibilityChangeReporter: Compat change id reported: 242716250; UID 10267; state: ENABLED
+         1703830667.621  1785  4033 D CompatibilityChangeReporter: Compat change id reported: 170503758; UID 10267; state: ENABLED
+         1703830667.622  8714  8714 W ziparchive: Unable to open '/data/app/~~jHfRNUa4qklHPdQfQumtuw==/dev.driftsys.dashscene.demo-fpN3yXM9f1zguA_1uoKBTA==/base.dm': No such file or directory
+         1703830667.622  8714  8714 W ziparchive: Unable to open '/data/app/~~jHfRNUa4qklHPdQfQumtuw==/dev.driftsys.dashscene.demo-fpN3yXM9f1zguA_1uoKBTA==/base.dm': No such file or directory
+         1703830667.623  8714  8714 D nativeloader: Configuring clns-4 for other apk /data/app/~~jHfRNUa4qklHPdQfQumtuw==/dev.driftsys.dashscene.demo-fpN3yXM9f1zguA_1uoKBTA==/base.apk. target_sdk_version=34, uses_libraries=, library_path=/data/app/~~jHfRNUa4qklHPdQfQumtuw==/dev.driftsys.dashscene.demo-fpN3yXM9f1zguA_1uoKBTA==/lib/arm64:/data/app/~~jHfRNUa4qklHPdQfQumtuw==/dev.driftsys.dashscene.demo-fpN3yXM9f1zguA_1uoKBTA==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand:/data/user/0/dev.driftsys.dashscene.demo
+         1703830667.629  8714  8714 V GraphicsEnvironment: Currently set values for:
+         1703830667.629  8714  8714 V GraphicsEnvironment:   angle_gl_driver_selection_pkgs=[]
+         1703830667.629  8714  8714 V GraphicsEnvironment:   angle_gl_driver_selection_values=[]
+         1703830667.629  8714  8714 V GraphicsEnvironment: ANGLE GameManagerService for dev.driftsys.dashscene.demo: false
+         1703830667.629  8714  8714 V GraphicsEnvironment: dev.driftsys.dashscene.demo is not listed in per-application setting
+         1703830667.629  8714  8714 V GraphicsEnvironment: Updatable production driver is not supported on the device.
+         1703830667.631  1785  1849 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10267. pid: 8714
+         1703830667.637   665   665 E BpTransactionCompletedListener: Failed to transact (-32)
+         1703830667.638   665   665 E BpTransactionCompletedListener: Failed to transact (-32)
+         1703830667.639  8714  8714 I dashscene: demo: scene extra = typography
+         1703830667.649  8714  8714 D CompatibilityChangeReporter: Compat change id reported: 210923482; UID 10267; state: ENABLED
+         1703830667.651  8714  8714 D CompatibilityChangeReporter: Compat change id reported: 237531167; UID 10267; state: DISABLED
+         1703830667.653  8714  8736 W Parcel  : Expecting binder but got null!
+         1703830667.658  1785  3762 D CoreBackPreview: Window{762ed95 u0 dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@8308e38, mPriority=0, mIsAnimationCallback=false}
+         1703830667.658  1086  1254 I ASH     : @ 1538.467: tcs3701: stop power rail pending_off timer
+         1703830667.658  1086  1254 D ASH     : @ 1538.468: tcs3701: start power rail timer, state:3
+         1703830667.665  8714  8732 I AdrenoGLES-0: QUALCOMM build                   : 4783c89, I46ff5fc46f
+         1703830667.665  8714  8732 I AdrenoGLES-0: Build Date                       : 11/30/20
+         1703830667.665  8714  8732 I AdrenoGLES-0: OpenGL ES Shader Compiler Version: EV031.31.04.01
+         1703830667.665  8714  8732 I AdrenoGLES-0: Local Branch                     : QPR2
+         1703830667.665  8714  8732 I AdrenoGLES-0: Remote Branch                    : 
+         1703830667.665  8714  8732 I AdrenoGLES-0: Remote Branch                    : 
+         1703830667.665  8714  8732 I AdrenoGLES-0: Reconstruct Branch               : 
+         1703830667.665  8714  8732 I AdrenoGLES-0: Build Config                     : S P 10.0.4 AArch64
+         1703830667.665  8714  8732 I AdrenoGLES-0: Driver Path                      : /vendor/lib64/egl/libGLESv2_adreno.so
+         1703830667.667  8714  8714 I dashscene: demo: surfaceCreated
+         1703830667.667  8714  8714 I dashscene: demo: surfaceChanged 1280x445
+         1703830667.667  8714  8714 I dashscene: scene typography — MSDF text in Latin and Arabic, with one string driven by a signal
+         1703830667.667  8714  8714 I dashscene: demo: handle -5476376668486869872
+         1703830667.667  8714  8737 I dashscene: attaching a 1280x445 surface
+         1703830667.669  8714  8732 I AdrenoGLES-0: PFP: 0x016dd093, ME: 0x00000000
+         1703830667.670  8714  8732 W AdrenoUtils: <ReadGpuID_from_sysfs:197>: Failed to open /sys/class/kgsl/kgsl-3d0/gpu_model
+         1703830667.670  8714  8732 W AdrenoUtils: <ReadGpuID:221>: Failed to read chip ID from gpu_model. Fallback to use the GSL path
+         1703830667.670  8714  8737 D vulkan  : searching for layers in '/data/app/~~jHfRNUa4qklHPdQfQumtuw==/dev.driftsys.dashscene.demo-fpN3yXM9f1zguA_1uoKBTA==/lib/arm64'
+         1703830667.671  8714  8737 D vulkan  : searching for layers in '/data/app/~~jHfRNUa4qklHPdQfQumtuw==/dev.driftsys.dashscene.demo-fpN3yXM9f1zguA_1uoKBTA==/base.apk!/lib/arm64-v8a'
+         1703830667.674  8714  8737 I AdrenoVK-0: ===== BEGIN DUMP OF OVERRIDDEN SETTINGS =====
+         1703830667.674  8714  8737 I AdrenoVK-0: ===== END DUMP OF OVERRIDDEN SETTINGS =====
+         1703830667.674  8714  8737 I AdrenoVK-0: QUALCOMM build          : 4783c89, I46ff5fc46f
+         1703830667.674  8714  8737 I AdrenoVK-0: Build Date              : 11/30/20
+         1703830667.674  8714  8737 I AdrenoVK-0: Shader Compiler Version : EV031.31.04.01
+         1703830667.674  8714  8737 I AdrenoVK-0: Local Branch            : QPR2
+         1703830667.674  8714  8737 I AdrenoVK-0: Remote Branch           : 
+         1703830667.674  8714  8737 I AdrenoVK-0: Remote Branch           : 
+         1703830667.674  8714  8737 I AdrenoVK-0: Reconstruct Branch      : 
+         1703830667.674  8714  8737 I AdrenoVK-0: Build Config            : S P 10.0.4 AArch64
+         1703830667.674  8714  8737 I AdrenoVK-0: Driver Path             : /vendor/lib64/hw/vulkan.adreno.so
+         1703830667.677  8714  8732 E OpenGLRenderer: Unable to match the desired swap behavior.
+         1703830667.680  8714  8737 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830667.680  8714  8737 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.680  8714  8737 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.680  8714  8737 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.680  8714  8737 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830667.680   668   668 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830667.680   668   668 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.680   668   668 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.680   668   668 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.680  8714  8737 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830667.680  8714  8737 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830667.680  8714  8737 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830667.680  8714  8737 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.680  8714  8737 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.680  8714  8737 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.680  8714  8737 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830667.680   668   668 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830667.680   668   668 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.680   668   668 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.680   668   668 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.680  8714  8737 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830667.680  8714  8737 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830667.680  8714  8737 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830667.680  8714  8737 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.680  8714  8737 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.680  8714  8737 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.680  8714  8737 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830667.680   668   668 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830667.680   668   668 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.680   668   668 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.680   668   668 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.681  8714  8737 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830667.681  8714  8737 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830667.681  8714  8737 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830667.681  8714  8737 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.681  8714  8737 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.681  8714  8737 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.681  8714  8737 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830667.681   668   668 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830667.681   668   668 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.681   668   668 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.681   668   668 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.681  8714  8737 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830667.681  8714  8737 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830667.686  1785  2095 W ziparchive: Unable to open '/data/app/~~jHfRNUa4qklHPdQfQumtuw==/dev.driftsys.dashscene.demo-fpN3yXM9f1zguA_1uoKBTA==/base.dm': No such file or directory
+         1703830667.689  1785  2095 I ActivityTaskManager: Displayed dev.driftsys.dashscene.demo/.DemoActivity for user 0: +124ms
+         1703830667.694  1785  1849 D CompatibilityChangeReporter: Compat change id reported: 214016041; UID 10267; state: ENABLED
+         1703830667.694  1785  1849 I ImeTracker: dev.driftsys.dashscene.demo:78cd5979: onRequestHide at ORIGIN_SERVER_HIDE_INPUT reason HIDE_UNSPECIFIED_WINDOW
+         1703830667.694  1785  1849 I ImeTracker: dev.driftsys.dashscene.demo:78cd5979: onCancelled at PHASE_SERVER_SHOULD_HIDE
+         1703830667.697  3450  3450 I GoogleInputMethodService: GoogleInputMethodService.onFinishInput():3227 
+         1703830667.698  3450  3450 I GoogleInputMethodService: GoogleInputMethodService.updateDeviceLockedStatus():2087 repeatCheckTimes = 0, unlocked = true
+         1703830667.698  1086  1254 I ASH     : @ 1538.507: tcs3701: stop power rail pending_off timer
+         1703830667.698  1086  1254 D ASH     : @ 1538.508: tcs3701: start power rail timer, state:3
+         1703830667.698  3450  3450 I GoogleInputMethodService: GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.driftsys.dashscene.demo fieldId=0 fieldName=null extras=null}, false)
+         1703830667.698  3450  3450 I GoogleInputMethodService: GoogleInputMethodService.shouldHideHeaderOnInitialState():4008 ShouldHideHeaderOnInitialState = false
+         1703830667.698  3450  3450 I GoogleInputMethodService: GoogleInputMethodService.updateDeviceLockedStatus():2087 repeatCheckTimes = 2, unlocked = true
+         1703830667.712  8714  8737 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830667.712  8714  8737 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.712  8714  8737 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.712  8714  8737 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.712  8714  8737 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830667.712   668   668 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830667.712   668   668 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.712   668   668 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.712   668   668 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.712  8714  8737 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830667.712  8714  8737 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830667.712  8714  8737 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830667.712  8714  8737 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.712  8714  8737 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.713  8714  8737 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.713  8714  8737 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830667.713   668   668 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830667.713   668   668 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.713   668   668 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.713   668   668 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.713  8714  8737 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830667.713  8714  8737 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830667.713  8714  8737 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830667.713  8714  8737 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.713  8714  8737 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.713  8714  8737 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.713  8714  8737 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830667.713   668   668 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830667.713   668   668 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.713   668   668 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.713   668   668 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.713  8714  8737 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830667.713  8714  8737 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830667.713  8714  8737 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830667.713  8714  8737 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.713  8714  8737 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.713  8714  8737 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.713  8714  8737 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830667.713   668   668 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830667.713   668   668 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.713   668   668 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.713   668   668 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.713  8714  8737 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830667.713  8714  8737 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830667.738  1086  1254 I ASH     : @ 1538.547: tcs3701: stop power rail pending_off timer
+         1703830667.738  1086  1254 D ASH     : @ 1538.548: tcs3701: start power rail timer, state:3
+         1703830667.778  1086  1254 I ASH     : @ 1538.587: tcs3701: stop power rail pending_off timer
+         1703830667.778  1086  1254 D ASH     : @ 1538.588: tcs3701: start power rail timer, state:3
+         1703830667.782  1785  2388 D ActivityManager: freezing 3407 com.google.android.permissioncontroller
+         1703830667.784  8749  8749 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 5694 0 0 0 12 6 0 0 10 -10 21 0 153553 15708737536 36444 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830667.818  1086  1254 I ASH     : @ 1538.627: tcs3701: stop power rail pending_off timer
+         1703830667.818  1086  1254 D ASH     : @ 1538.627: tcs3701: start power rail timer, state:3
+         1703830667.858  1086  1254 I ASH     : @ 1538.667: tcs3701: stop power rail pending_off timer
+         1703830667.858  1086  1254 D ASH     : @ 1538.668: tcs3701: start power rail timer, state:3
+         1703830667.898  1086  1254 I ASH     : @ 1538.707: tcs3701: stop power rail pending_off timer
+         1703830667.898  1086  1254 D ASH     : @ 1538.707: tcs3701: start power rail timer, state:3
+         1703830667.907  2565  2589 V WindowManagerShell: Transition animation finished (aborted=false), notifying core (#21)android.os.BinderProxy@71a491e@0
+         1703830667.909  1785  2095 V WindowManager: Finish Transition #21: created at 12-29 07:17:47.567 collect-started=0.087ms request-sent=10.812ms started=11.827ms ready=32.669ms sent=34.22ms finished=341.482ms
+         1703830667.909  8714  8737 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830667.909  8714  8737 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.909  8714  8737 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.909  8714  8737 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.909  8714  8737 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830667.909   668   668 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830667.909   668   668 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.909   668   668 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.909   668   668 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.909  8714  8737 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830667.910  8714  8737 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830667.910  8714  8737 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830667.910  8714  8737 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.910  8714  8737 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.910  8714  8737 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.910  8714  8737 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830667.910   668   668 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830667.910   668   668 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.910   668   668 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.910   668   668 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.910  8714  8737 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830667.910  8714  8737 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830667.910  8714  8737 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830667.910  8714  8737 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.910  8714  8737 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.910  8714  8737 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.910  8714  8737 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830667.910   668   668 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830667.910   668   668 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.910   668   668 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.910   668   668 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.910  8714  8737 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830667.910  8714  8737 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830667.910  8714  8737 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830667.910  8714  8737 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.910  8714  8737 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.910  8714  8737 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.910  8714  8737 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830667.910   668   668 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830667.910   668   668 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830667.910   668   668 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830667.910   668   668 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830667.910  8714  8737 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830667.910  8714  8737 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830667.911  8714  8737 I dashscene: dashscene-gpu (Adreno (TM) 620, Vulkan, Rgba8Unorm) — 1280x445, scene typography
+         1703830667.911  2658  2658 I WallpaperService: engine paused
+         1703830667.912  1086  1086 I sensors-hal: [hal]activate_physical_sensor:251, android.sensor.gyroscope/41 en=0
+         1703830667.913  2565  2589 V WindowManagerShell: Track 0 became idle
+         1703830667.913  2565  2589 V WindowManagerShell: All active transition animations finished
+         1703830667.914  8714  8737 I dashscene: attached a 1280x445 surface
+         1703830667.914  1086  1086 D Diag_Lib: diag: Diag_LSM_DeInit: invoked for pid: 1086
+         1703830667.914  1086  1086 D Diag_Lib: diag: Diag_LSM_DeInit: done for pid: 1086
+         1703830667.915  1086  1086 D Diag_Lib: diag: Diag_LSM_DeInit: invoked for pid: 1086
+         1703830667.915  1086  1086 D Diag_Lib: diag: Diag_LSM_DeInit: done for pid: 1086
+         1703830667.915  1086  1086 I sensors-hal: [hal]activate_physical_sensor:262, android.sensor.gyroscope/41 en=0 completed
+         1703830667.923  8714  8737 I dashscene: first vsync callback
+         1703830667.930  8714  8737 I dashscene: first frame
+         1703830667.932  2992  3926 D OneSearchSuggestProvider: Shut down the binder channel
+         1703830667.932  2992  3053 I ImeTracker: com.google.android.apps.nexuslauncher:be3f78fd: onRequestHide at ORIGIN_CLIENT_HIDE_SOFT_INPUT reason HIDE_SOFT_INPUT
+         1703830667.932  2992  3053 I ImeTracker: com.google.android.apps.nexuslauncher:be3f78fd: onFailed at PHASE_CLIENT_VIEW_SERVED
+         1703830667.938  1086  1254 I ASH     : @ 1538.747: tcs3701: stop power rail pending_off timer
+         1703830667.938  1086  1254 D ASH     : @ 1538.748: tcs3701: start power rail timer, state:3
+         1703830667.977  2565  2595 W WindowOnBackDispatcher: sendCancelIfRunning: isInProgress=falsecallback=android.view.ViewRootImpl$$ExternalSyntheticLambda17@95c731b
+         1703830667.977  1785  1849 D CoreBackPreview: Window{16bc4ec u0 Splash Screen dev.driftsys.dashscene.demo EXITING}: Setting back callback null
+         1703830667.978  1086  1254 I ASH     : @ 1538.787: tcs3701: stop power rail pending_off timer
+         1703830667.978  1086  1254 D ASH     : @ 1538.788: tcs3701: start power rail timer, state:3
+         1703830667.979  1785  3762 W InputManager-JNI: Input channel object '16bc4ec Splash Screen dev.driftsys.dashscene.demo (client)' was disposed without first being removed with the input manager!
+         1703830668.018  1086  1254 I ASH     : @ 1538.827: tcs3701: stop power rail pending_off timer
+         1703830668.018  1086  1254 D ASH     : @ 1538.828: tcs3701: start power rail timer, state:3
+         1703830668.059  1086  1254 I ASH     : @ 1538.867: tcs3701: stop power rail pending_off timer
+         1703830668.059  1086  1254 D ASH     : @ 1538.868: tcs3701: start power rail timer, state:3
+         1703830668.098  1086  1254 I ASH     : @ 1538.907: tcs3701: stop power rail pending_off timer
+         1703830668.098  1086  1254 D ASH     : @ 1538.908: tcs3701: start power rail timer, state:3
+         1703830668.138  1086  1254 I ASH     : @ 1538.947: tcs3701: stop power rail pending_off timer
+         1703830668.138  1086  1254 D ASH     : @ 1538.948: tcs3701: start power rail timer, state:3
+         1703830668.178  1086  1254 I ASH     : @ 1538.987: tcs3701: stop power rail pending_off timer
+         1703830668.178  1086  1254 D ASH     : @ 1538.988: tcs3701: start power rail timer, state:3
+         1703830668.218  1086  1254 I ASH     : @ 1539.027: tcs3701: stop power rail pending_off timer
+         1703830668.218  1086  1254 D ASH     : @ 1539.028: tcs3701: start power rail timer, state:3
+         1703830668.258  1086  1254 I ASH     : @ 1539.068: tcs3701: stop power rail pending_off timer
+         1703830668.258  1086  1254 D ASH     : @ 1539.068: tcs3701: start power rail timer, state:3
+         1703830668.298  1086  1254 I ASH     : @ 1539.107: tcs3701: stop power rail pending_off timer
+         1703830668.298  1086  1254 D ASH     : @ 1539.108: tcs3701: start power rail timer, state:3
+         1703830668.310  8753  8753 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 7885 0 14 0 25 7 0 0 10 -10 21 0 153553 15731437568 38994 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830668.338  1086  1254 I ASH     : @ 1539.147: tcs3701: stop power rail pending_off timer
+         1703830668.338  1086  1254 D ASH     : @ 1539.148: tcs3701: start power rail timer, state:3
+         1703830668.379  1086  1254 I ASH     : @ 1539.187: tcs3701: stop power rail pending_off timer
+         1703830668.379  1086  1254 D ASH     : @ 1539.188: tcs3701: start power rail timer, state:3
+         1703830668.419  1086  1254 I ASH     : @ 1539.227: tcs3701: stop power rail pending_off timer
+         1703830668.419  1086  1254 D ASH     : @ 1539.228: tcs3701: start power rail timer, state:3
+         1703830668.459  1086  1254 I ASH     : @ 1539.267: tcs3701: stop power rail pending_off timer
+         1703830668.460  1086  1254 D ASH     : @ 1539.268: tcs3701: start power rail timer, state:3
+         1703830668.500  1086  1254 I ASH     : @ 1539.307: tcs3701: stop power rail pending_off timer
+         1703830668.500  1086  1254 D ASH     : @ 1539.308: tcs3701: start power rail timer, state:3
+         1703830668.538  1086  1254 I ASH     : @ 1539.347: tcs3701: stop power rail pending_off timer
+         1703830668.539  1086  1254 D ASH     : @ 1539.348: tcs3701: start power rail timer, state:3
+         1703830668.579  1086  1254 I ASH     : @ 1539.387: tcs3701: stop power rail pending_off timer
+         1703830668.580  1086  1254 D ASH     : @ 1539.388: tcs3701: start power rail timer, state:3
+         1703830668.620  1086  1254 I ASH     : @ 1539.427: tcs3701: stop power rail pending_off timer
+         1703830668.620  1086  1254 D ASH     : @ 1539.428: tcs3701: start power rail timer, state:3
+         1703830668.659  1086  1254 I ASH     : @ 1539.467: tcs3701: stop power rail pending_off timer
+         1703830668.659  1086  1254 D ASH     : @ 1539.468: tcs3701: start power rail timer, state:3
+         1703830668.699  1086  1254 I ASH     : @ 1539.507: tcs3701: stop power rail pending_off timer
+         1703830668.700  1086  1254 D ASH     : @ 1539.508: tcs3701: start power rail timer, state:3
+         1703830668.739  1086  1254 I ASH     : @ 1539.547: tcs3701: stop power rail pending_off timer
+         1703830668.739  1086  1254 D ASH     : @ 1539.548: tcs3701: start power rail timer, state:3
+         1703830668.780  1086  1254 I ASH     : @ 1539.587: tcs3701: stop power rail pending_off timer
+         1703830668.780  1086  1254 D ASH     : @ 1539.588: tcs3701: start power rail timer, state:3
+         1703830668.820  1086  1254 I ASH     : @ 1539.627: tcs3701: stop power rail pending_off timer
+         1703830668.820  1086  1254 D ASH     : @ 1539.628: tcs3701: start power rail timer, state:3
+         1703830668.838  8756  8756 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 7885 0 14 0 26 8 0 0 10 -10 21 0 153553 15731437568 38994 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830668.858  1086  1254 I ASH     : @ 1539.667: tcs3701: stop power rail pending_off timer
+         1703830668.859  1086  1254 D ASH     : @ 1539.668: tcs3701: start power rail timer, state:3
+         1703830668.900  1086  1254 I ASH     : @ 1539.707: tcs3701: stop power rail pending_off timer
+         1703830668.900  1086  1254 D ASH     : @ 1539.708: tcs3701: start power rail timer, state:3
+         1703830668.938  1086  1254 I ASH     : @ 1539.747: tcs3701: stop power rail pending_off timer
+         1703830668.938  1086  1254 D ASH     : @ 1539.748: tcs3701: start power rail timer, state:3
+         1703830668.980  1086  1254 I ASH     : @ 1539.787: tcs3701: stop power rail pending_off timer
+         1703830668.980  1086  1254 D ASH     : @ 1539.788: tcs3701: start power rail timer, state:3
+         1703830669.020  1086  1254 I ASH     : @ 1539.827: tcs3701: stop power rail pending_off timer
+         1703830669.020  1086  1254 D ASH     : @ 1539.828: tcs3701: start power rail timer, state:3
+         1703830669.059  1086  1254 I ASH     : @ 1539.867: tcs3701: stop power rail pending_off timer
+         1703830669.059  1086  1254 D ASH     : @ 1539.868: tcs3701: start power rail timer, state:3
+         1703830669.100  1086  1254 I ASH     : @ 1539.907: tcs3701: stop power rail pending_off timer
+         1703830669.100  1086  1254 D ASH     : @ 1539.908: tcs3701: start power rail timer, state:3
+         1703830669.139  1086  1254 I ASH     : @ 1539.947: tcs3701: stop power rail pending_off timer
+         1703830669.139  1086  1254 D ASH     : @ 1539.948: tcs3701: start power rail timer, state:3
+         1703830669.180  1086  1254 I ASH     : @ 1539.987: tcs3701: stop power rail pending_off timer
+         1703830669.180  1086  1254 D ASH     : @ 1539.988: tcs3701: start power rail timer, state:3
+         1703830669.220  1086  1254 I ASH     : @ 1540.027: tcs3701: stop power rail pending_off timer
+         1703830669.220  1086  1254 D ASH     : @ 1540.028: tcs3701: start power rail timer, state:3
+         1703830669.260  1086  1254 I ASH     : @ 1540.067: tcs3701: stop power rail pending_off timer
+         1703830669.260  1086  1254 D ASH     : @ 1540.068: tcs3701: start power rail timer, state:3
+         1703830669.300  1086  1254 I ASH     : @ 1540.107: tcs3701: stop power rail pending_off timer
+         1703830669.300  1086  1254 D ASH     : @ 1540.108: tcs3701: start power rail timer, state:3
+         1703830669.339  1086  1254 I ASH     : @ 1540.147: tcs3701: stop power rail pending_off timer
+         1703830669.339  1086  1254 D ASH     : @ 1540.148: tcs3701: start power rail timer, state:3
+         1703830669.373  8759  8759 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 7885 0 14 0 27 9 0 0 10 -10 21 0 153553 15731437568 38994 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830669.378  1086  1254 I ASH     : @ 1540.187: tcs3701: stop power rail pending_off timer
+         1703830669.379  1086  1254 D ASH     : @ 1540.188: tcs3701: start power rail timer, state:3
+         1703830669.419  1086  1254 I ASH     : @ 1540.227: tcs3701: stop power rail pending_off timer
+         1703830669.419  1086  1254 D ASH     : @ 1540.228: tcs3701: start power rail timer, state:3
+         1703830669.444  2658  6750 W OpenGLRenderer: Surface doesn't have any previously queued frames, nothing to readback from
+         1703830669.460  1086  1254 I ASH     : @ 1540.267: tcs3701: stop power rail pending_off timer
+         1703830669.460  1086  1254 D ASH     : @ 1540.268: tcs3701: start power rail timer, state:3
+         1703830669.500  1086  1254 I ASH     : @ 1540.307: tcs3701: stop power rail pending_off timer
+         1703830669.500  1086  1254 D ASH     : @ 1540.308: tcs3701: start power rail timer, state:3
+         1703830669.539  1086  1254 I ASH     : @ 1540.347: tcs3701: stop power rail pending_off timer
+         1703830669.539  1086  1254 D ASH     : @ 1540.348: tcs3701: start power rail timer, state:3
+         1703830669.580  1086  1254 I ASH     : @ 1540.387: tcs3701: stop power rail pending_off timer
+         1703830669.580  1086  1254 D ASH     : @ 1540.388: tcs3701: start power rail timer, state:3
+         1703830669.620  1086  1254 I ASH     : @ 1540.427: tcs3701: stop power rail pending_off timer
+         1703830669.620  1086  1254 D ASH     : @ 1540.428: tcs3701: start power rail timer, state:3
+         1703830669.660  1086  1254 I ASH     : @ 1540.467: tcs3701: stop power rail pending_off timer
+         1703830669.660  1086  1254 D ASH     : @ 1540.468: tcs3701: start power rail timer, state:3
+         1703830669.700  1086  1254 I ASH     : @ 1540.507: tcs3701: stop power rail pending_off timer
+         1703830669.700  1086  1254 D ASH     : @ 1540.508: tcs3701: start power rail timer, state:3
+         1703830669.739  1086  1254 I ASH     : @ 1540.547: tcs3701: stop power rail pending_off timer
+         1703830669.739  1086  1254 D ASH     : @ 1540.548: tcs3701: start power rail timer, state:3
+         1703830669.780  1086  1254 I ASH     : @ 1540.587: tcs3701: stop power rail pending_off timer
+         1703830669.780  1086  1254 D ASH     : @ 1540.588: tcs3701: start power rail timer, state:3
+         1703830669.820  1086  1254 I ASH     : @ 1540.627: tcs3701: stop power rail pending_off timer
+         1703830669.820  1086  1254 D ASH     : @ 1540.628: tcs3701: start power rail timer, state:3
+         1703830669.860  1086  1254 I ASH     : @ 1540.667: tcs3701: stop power rail pending_off timer
+         1703830669.860  1086  1254 D ASH     : @ 1540.668: tcs3701: start power rail timer, state:3
+         1703830669.898  1086  1254 I ASH     : @ 1540.707: tcs3701: stop power rail pending_off timer
+         1703830669.898  1086  1254 D ASH     : @ 1540.708: tcs3701: start power rail timer, state:3
+         1703830669.901  8762  8762 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 7885 0 14 0 28 10 0 0 10 -10 21 0 153553 15731437568 38994 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830669.938  1086  1254 I ASH     : @ 1540.747: tcs3701: stop power rail pending_off timer
+         1703830669.938  1086  1254 D ASH     : @ 1540.748: tcs3701: start power rail timer, state:3
+         1703830669.980  1086  1254 I ASH     : @ 1540.788: tcs3701: stop power rail pending_off timer
+         1703830669.980  1086  1254 D ASH     : @ 1540.788: tcs3701: start power rail timer, state:3
+         1703830670.020  1086  1254 I ASH     : @ 1540.827: tcs3701: stop power rail pending_off timer
+         1703830670.020  1086  1254 D ASH     : @ 1540.828: tcs3701: start power rail timer, state:3
+         1703830670.059  1086  1254 I ASH     : @ 1540.867: tcs3701: stop power rail pending_off timer
+         1703830670.059  1086  1254 D ASH     : @ 1540.868: tcs3701: start power rail timer, state:3
+         1703830670.100  1086  1254 I ASH     : @ 1540.907: tcs3701: stop power rail pending_off timer
+         1703830670.100  1086  1254 D ASH     : @ 1540.908: tcs3701: start power rail timer, state:3
+         1703830670.139  1086  1254 I ASH     : @ 1540.947: tcs3701: stop power rail pending_off timer
+         1703830670.139  1086  1254 D ASH     : @ 1540.948: tcs3701: start power rail timer, state:3
+         1703830670.150  2828  3507 I QcrilOemhookMsgTunnel: [0]processOemHookIndication length=21
+         1703830670.151  2828  2828 D QcrilMsgTunnelIfaceManager: handleMessage what = 0
+         1703830670.178  1086  1254 I ASH     : @ 1540.988: tcs3701: stop power rail pending_off timer
+         1703830670.178  1086  1254 D ASH     : @ 1540.988: tcs3701: start power rail timer, state:3
+         1703830670.214  1785  4033 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendBroadcastMultiplePermissions:1270 android.content.Context.sendBroadcastMultiplePermissions:2476 com.android.server.TelephonyRegistry.broadcastServiceStateChanged:3581 com.android.server.TelephonyRegistry.notifyServiceStateForPhoneId:1728 com.android.internal.telephony.ITelephonyRegistry$Stub.onTransact:534 
+         1703830670.215  1785  4033 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendBroadcastMultiplePermissions:1303 com.android.server.TelephonyRegistry.broadcastServiceStateChanged:3585 com.android.server.TelephonyRegistry.notifyServiceStateForPhoneId:1728 com.android.internal.telephony.ITelephonyRegistry$Stub.onTransact:534 android.os.Binder.execTransactInternal:1339 
+         1703830670.217  1785  4033 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendBroadcastMultiplePermissions:1303 com.android.server.TelephonyRegistry.broadcastServiceStateChanged:3594 com.android.server.TelephonyRegistry.notifyServiceStateForPhoneId:1728 com.android.internal.telephony.ITelephonyRegistry$Stub.onTransact:534 android.os.Binder.execTransactInternal:1339 
+         1703830670.218  1086  1254 I ASH     : @ 1541.027: tcs3701: stop power rail pending_off timer
+         1703830670.219  1086  1254 D ASH     : @ 1541.028: tcs3701: start power rail timer, state:3
+         1703830670.219  1785  4033 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendBroadcastMultiplePermissions:1303 com.android.server.TelephonyRegistry.broadcastServiceStateChanged:3600 com.android.server.TelephonyRegistry.notifyServiceStateForPhoneId:1728 com.android.internal.telephony.ITelephonyRegistry$Stub.onTransact:534 android.os.Binder.execTransactInternal:1339 
+         1703830670.222  2909  2909 D ServiceStateProvider: subId=-1
+         1703830670.224  1785  2124 D ActivityManager: sync unfroze 3094 com.google.android.cellbroadcastreceiver for 3
+         1703830670.224  2565  2565 W KeyguardUpdateMonitorLog: invalid subId in handleServiceStateChange()
+         1703830670.226  3094  3094 D CellBroadcastReceiver: onReceive Intent { act=android.intent.action.SERVICE_STATE flg=0x1000010 cmp=com.google.android.cellbroadcastreceiver/com.android.cellbroadcastreceiver.CellBroadcastReceiver (has extras) }
+         1703830670.226  3094  3094 D CellBroadcastReceiver: onServiceStateChanged, ss: 1
+         1703830670.258  1086  1254 I ASH     : @ 1541.067: tcs3701: stop power rail pending_off timer
+         1703830670.258  1086  1254 D ASH     : @ 1541.068: tcs3701: start power rail timer, state:3
+         1703830670.300  1086  1254 I ASH     : @ 1541.107: tcs3701: stop power rail pending_off timer
+         1703830670.300  1086  1254 D ASH     : @ 1541.108: tcs3701: start power rail timer, state:3
+         1703830670.339  1086  1254 I ASH     : @ 1541.147: tcs3701: stop power rail pending_off timer
+         1703830670.339  1086  1254 D ASH     : @ 1541.148: tcs3701: start power rail timer, state:3
+         1703830670.380  1086  1254 I ASH     : @ 1541.187: tcs3701: stop power rail pending_off timer
+         1703830670.380  1086  1254 D ASH     : @ 1541.188: tcs3701: start power rail timer, state:3
+         1703830670.418  1086  1254 I ASH     : @ 1541.227: tcs3701: stop power rail pending_off timer
+         1703830670.418  1086  1254 D ASH     : @ 1541.228: tcs3701: start power rail timer, state:3
+         1703830670.434  8768  8768 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 7903 0 14 0 28 12 0 0 10 -10 21 0 153553 15731503104 39026 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830670.458  1086  1254 I ASH     : @ 1541.267: tcs3701: stop power rail pending_off timer
+         1703830670.458  1086  1254 D ASH     : @ 1541.268: tcs3701: start power rail timer, state:3
+         1703830670.498  1086  1254 I ASH     : @ 1541.307: tcs3701: stop power rail pending_off timer
+         1703830670.498  1086  1254 D ASH     : @ 1541.308: tcs3701: start power rail timer, state:3
+         1703830670.538  1086  1254 I ASH     : @ 1541.347: tcs3701: stop power rail pending_off timer
+         1703830670.538  1086  1254 D ASH     : @ 1541.348: tcs3701: start power rail timer, state:3
+         1703830670.578  1086  1254 I ASH     : @ 1541.387: tcs3701: stop power rail pending_off timer
+         1703830670.578  1086  1254 D ASH     : @ 1541.388: tcs3701: start power rail timer, state:3
+         1703830670.618  1086  1254 I ASH     : @ 1541.427: tcs3701: stop power rail pending_off timer
+         1703830670.619  1086  1254 D ASH     : @ 1541.428: tcs3701: start power rail timer, state:3
+         1703830670.658  1086  1254 I ASH     : @ 1541.467: tcs3701: stop power rail pending_off timer
+         1703830670.658  1086  1254 D ASH     : @ 1541.468: tcs3701: start power rail timer, state:3
+         1703830670.698  1086  1254 I ASH     : @ 1541.507: tcs3701: stop power rail pending_off timer
+         1703830670.698  1086  1254 D ASH     : @ 1541.508: tcs3701: start power rail timer, state:3
+         1703830670.738  1086  1254 I ASH     : @ 1541.547: tcs3701: stop power rail pending_off timer
+         1703830670.738  1086  1254 D ASH     : @ 1541.548: tcs3701: start power rail timer, state:3
+         1703830670.778  1086  1254 I ASH     : @ 1541.587: tcs3701: stop power rail pending_off timer
+         1703830670.778  1086  1254 D ASH     : @ 1541.588: tcs3701: start power rail timer, state:3
+         1703830670.818  1086  1254 I ASH     : @ 1541.627: tcs3701: stop power rail pending_off timer
+         1703830670.818  1086  1254 D ASH     : @ 1541.628: tcs3701: start power rail timer, state:3
+         1703830670.858  1086  1254 I ASH     : @ 1541.667: tcs3701: stop power rail pending_off timer
+         1703830670.858  1086  1254 D ASH     : @ 1541.668: tcs3701: start power rail timer, state:3
+         1703830670.898  1086  1254 I ASH     : @ 1541.707: tcs3701: stop power rail pending_off timer
+         1703830670.898  1086  1254 D ASH     : @ 1541.708: tcs3701: start power rail timer, state:3
+         1703830670.938  1086  1254 I ASH     : @ 1541.747: tcs3701: stop power rail pending_off timer
+         1703830670.938  1086  1254 D ASH     : @ 1541.748: tcs3701: start power rail timer, state:3
+         1703830670.962  8772  8772 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8105 0 14 0 36 14 0 0 10 -10 22 0 153553 15750234112 38985 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830670.978  1086  1254 I ASH     : @ 1541.787: tcs3701: stop power rail pending_off timer
+         1703830670.978  1086  1254 D ASH     : @ 1541.788: tcs3701: start power rail timer, state:3
+         1703830671.018  1086  1254 I ASH     : @ 1541.827: tcs3701: stop power rail pending_off timer
+         1703830671.018  1086  1254 D ASH     : @ 1541.828: tcs3701: start power rail timer, state:3
+         1703830671.058  1086  1254 I ASH     : @ 1541.867: tcs3701: stop power rail pending_off timer
+         1703830671.058  1086  1254 D ASH     : @ 1541.868: tcs3701: start power rail timer, state:3
+         1703830671.098  1086  1254 I ASH     : @ 1541.907: tcs3701: stop power rail pending_off timer
+         1703830671.098  1086  1254 D ASH     : @ 1541.908: tcs3701: start power rail timer, state:3
+         1703830671.138  1086  1254 I ASH     : @ 1541.948: tcs3701: stop power rail pending_off timer
+         1703830671.138  1086  1254 D ASH     : @ 1541.948: tcs3701: start power rail timer, state:3
+         1703830671.178  1086  1254 I ASH     : @ 1541.987: tcs3701: stop power rail pending_off timer
+         1703830671.178  1086  1254 D ASH     : @ 1541.988: tcs3701: start power rail timer, state:3
+         1703830671.218  1086  1254 I ASH     : @ 1542.027: tcs3701: stop power rail pending_off timer
+         1703830671.218  1086  1254 D ASH     : @ 1542.028: tcs3701: start power rail timer, state:3
+         1703830671.258  1086  1254 I ASH     : @ 1542.067: tcs3701: stop power rail pending_off timer
+         1703830671.258  1086  1254 D ASH     : @ 1542.068: tcs3701: start power rail timer, state:3
+         1703830671.298  1086  1254 I ASH     : @ 1542.107: tcs3701: stop power rail pending_off timer
+         1703830671.298  1086  1254 D ASH     : @ 1542.108: tcs3701: start power rail timer, state:3
+         1703830671.338  1086  1254 I ASH     : @ 1542.147: tcs3701: stop power rail pending_off timer
+         1703830671.338  1086  1254 D ASH     : @ 1542.148: tcs3701: start power rail timer, state:3
+         1703830671.378  1086  1254 I ASH     : @ 1542.187: tcs3701: stop power rail pending_off timer
+         1703830671.378  1086  1254 D ASH     : @ 1542.188: tcs3701: start power rail timer, state:3
+         1703830671.418  1086  1254 I ASH     : @ 1542.227: tcs3701: stop power rail pending_off timer
+         1703830671.418  1086  1254 D ASH     : @ 1542.228: tcs3701: start power rail timer, state:3
+         1703830671.458  1086  1254 I ASH     : @ 1542.267: tcs3701: stop power rail pending_off timer
+         1703830671.458  1086  1254 D ASH     : @ 1542.268: tcs3701: start power rail timer, state:3
+         1703830671.498  8775  8775 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8170 0 14 0 45 16 0 0 10 -10 22 0 153553 15750234112 38985 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830671.498  1086  1254 I ASH     : @ 1542.307: tcs3701: stop power rail pending_off timer
+         1703830671.498  1086  1254 D ASH     : @ 1542.308: tcs3701: start power rail timer, state:3
+         1703830671.538  1086  1254 I ASH     : @ 1542.347: tcs3701: stop power rail pending_off timer
+         1703830671.538  1086  1254 D ASH     : @ 1542.348: tcs3701: start power rail timer, state:3
+         1703830671.578  1086  1254 I ASH     : @ 1542.387: tcs3701: stop power rail pending_off timer
+         1703830671.578  1086  1254 D ASH     : @ 1542.388: tcs3701: start power rail timer, state:3
+         1703830671.618  1086  1254 I ASH     : @ 1542.427: tcs3701: stop power rail pending_off timer
+         1703830671.618  1086  1254 D ASH     : @ 1542.428: tcs3701: start power rail timer, state:3
+         1703830671.658  1086  1254 I ASH     : @ 1542.467: tcs3701: stop power rail pending_off timer
+         1703830671.658  1086  1254 D ASH     : @ 1542.468: tcs3701: start power rail timer, state:3
+         1703830671.698  1086  1254 I ASH     : @ 1542.507: tcs3701: stop power rail pending_off timer
+         1703830671.698  1086  1254 D ASH     : @ 1542.508: tcs3701: start power rail timer, state:3
+         1703830671.738  1086  1254 I ASH     : @ 1542.547: tcs3701: stop power rail pending_off timer
+         1703830671.738  1086  1254 D ASH     : @ 1542.548: tcs3701: start power rail timer, state:3
+         1703830671.778  1086  1254 I ASH     : @ 1542.587: tcs3701: stop power rail pending_off timer
+         1703830671.778  1086  1254 D ASH     : @ 1542.588: tcs3701: start power rail timer, state:3
+         1703830671.818  1086  1254 I ASH     : @ 1542.627: tcs3701: stop power rail pending_off timer
+         1703830671.818  1086  1254 D ASH     : @ 1542.628: tcs3701: start power rail timer, state:3
+         1703830671.858  1086  1254 I ASH     : @ 1542.667: tcs3701: stop power rail pending_off timer
+         1703830671.858  1086  1254 D ASH     : @ 1542.668: tcs3701: start power rail timer, state:3
+         1703830671.899  1086  1254 I ASH     : @ 1542.707: tcs3701: stop power rail pending_off timer
+         1703830671.899  1086  1254 D ASH     : @ 1542.708: tcs3701: start power rail timer, state:3
+         1703830671.927  8714  8737 I dashscene: 240 frames over 240 vsyncs
+         1703830671.938  1086  1254 I ASH     : @ 1542.747: tcs3701: stop power rail pending_off timer
+         1703830671.939  1086  1254 D ASH     : @ 1542.748: tcs3701: start power rail timer, state:3
+         1703830671.979  1086  1254 I ASH     : @ 1542.788: tcs3701: stop power rail pending_off timer
+         1703830671.979  1086  1254 D ASH     : @ 1542.788: tcs3701: start power rail timer, state:3
+         1703830672.018  1086  1254 I ASH     : @ 1542.827: tcs3701: stop power rail pending_off timer
+         1703830672.018  1086  1254 D ASH     : @ 1542.828: tcs3701: start power rail timer, state:3
+         1703830672.029  8779  8779 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8207 0 14 0 49 19 0 0 10 -10 22 0 153553 15750234112 38985 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830672.058  1086  1254 I ASH     : @ 1542.867: tcs3701: stop power rail pending_off timer
+         1703830672.058  1086  1254 D ASH     : @ 1542.868: tcs3701: start power rail timer, state:3
+         1703830672.099  1086  1254 I ASH     : @ 1542.907: tcs3701: stop power rail pending_off timer
+         1703830672.099  1086  1254 D ASH     : @ 1542.908: tcs3701: start power rail timer, state:3
+         1703830672.138  1086  1254 I ASH     : @ 1542.947: tcs3701: stop power rail pending_off timer
+         1703830672.139  1086  1254 D ASH     : @ 1542.948: tcs3701: start power rail timer, state:3
+         1703830672.178  1086  1254 I ASH     : @ 1542.987: tcs3701: stop power rail pending_off timer
+         1703830672.179  1086  1254 D ASH     : @ 1542.988: tcs3701: start power rail timer, state:3
+         1703830672.219  1086  1254 I ASH     : @ 1543.027: tcs3701: stop power rail pending_off timer
+         1703830672.220  1086  1254 D ASH     : @ 1543.028: tcs3701: start power rail timer, state:3
+         1703830672.260  1086  1254 I ASH     : @ 1543.067: tcs3701: stop power rail pending_off timer
+         1703830672.260  1086  1254 D ASH     : @ 1543.068: tcs3701: start power rail timer, state:3
+         1703830672.300  1086  1254 I ASH     : @ 1543.107: tcs3701: stop power rail pending_off timer
+         1703830672.300  1086  1254 D ASH     : @ 1543.108: tcs3701: start power rail timer, state:3
+         1703830672.340  1086  1254 I ASH     : @ 1543.147: tcs3701: stop power rail pending_off timer
+         1703830672.340  1086  1254 D ASH     : @ 1543.148: tcs3701: start power rail timer, state:3
+         1703830672.378  1086  1254 I ASH     : @ 1543.187: tcs3701: stop power rail pending_off timer
+         1703830672.379  1086  1254 D ASH     : @ 1543.188: tcs3701: start power rail timer, state:3
+         1703830672.419  1086  1254 I ASH     : @ 1543.227: tcs3701: stop power rail pending_off timer
+         1703830672.420  1086  1254 D ASH     : @ 1543.228: tcs3701: start power rail timer, state:3
+         1703830672.460  1086  1254 I ASH     : @ 1543.267: tcs3701: stop power rail pending_off timer
+         1703830672.460  1086  1254 D ASH     : @ 1543.268: tcs3701: start power rail timer, state:3
+         1703830672.500  1086  1254 I ASH     : @ 1543.307: tcs3701: stop power rail pending_off timer
+         1703830672.500  1086  1254 D ASH     : @ 1543.308: tcs3701: start power rail timer, state:3
+         1703830672.540  1086  1254 I ASH     : @ 1543.347: tcs3701: stop power rail pending_off timer
+         1703830672.540  1086  1254 D ASH     : @ 1543.348: tcs3701: start power rail timer, state:3
+         1703830672.558  8782  8782 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8207 0 14 0 50 20 0 0 10 -10 22 0 153553 15750234112 38985 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830672.578  1086  1254 I ASH     : @ 1543.387: tcs3701: stop power rail pending_off timer
+         1703830672.578  1086  1254 D ASH     : @ 1543.388: tcs3701: start power rail timer, state:3
+         1703830672.618  1086  1254 I ASH     : @ 1543.427: tcs3701: stop power rail pending_off timer
+         1703830672.618  1086  1254 D ASH     : @ 1543.428: tcs3701: start power rail timer, state:3
+         1703830672.660  1086  1254 I ASH     : @ 1543.467: tcs3701: stop power rail pending_off timer
+         1703830672.660  1086  1254 D ASH     : @ 1543.468: tcs3701: start power rail timer, state:3
+         1703830672.700  1086  1254 I ASH     : @ 1543.507: tcs3701: stop power rail pending_off timer
+         1703830672.700  1086  1254 D ASH     : @ 1543.508: tcs3701: start power rail timer, state:3
+         1703830672.740  1086  1254 I ASH     : @ 1543.547: tcs3701: stop power rail pending_off timer
+         1703830672.740  1086  1254 D ASH     : @ 1543.548: tcs3701: start power rail timer, state:3
+         1703830672.779  1086  1254 I ASH     : @ 1543.587: tcs3701: stop power rail pending_off timer
+         1703830672.779  1086  1254 D ASH     : @ 1543.588: tcs3701: start power rail timer, state:3
+         1703830672.818  1086  1254 I ASH     : @ 1543.627: tcs3701: stop power rail pending_off timer
+         1703830672.818  1086  1254 D ASH     : @ 1543.628: tcs3701: start power rail timer, state:3
+         1703830672.858  1086  1254 I ASH     : @ 1543.667: tcs3701: stop power rail pending_off timer
+         1703830672.859  1086  1254 D ASH     : @ 1543.668: tcs3701: start power rail timer, state:3
+         1703830672.900  1086  1254 I ASH     : @ 1543.707: tcs3701: stop power rail pending_off timer
+         1703830672.900  1086  1254 D ASH     : @ 1543.708: tcs3701: start power rail timer, state:3
+         1703830672.938  1086  1254 I ASH     : @ 1543.747: tcs3701: stop power rail pending_off timer
+         1703830672.938  1086  1254 D ASH     : @ 1543.748: tcs3701: start power rail timer, state:3
+         1703830672.978  1086  1254 I ASH     : @ 1543.787: tcs3701: stop power rail pending_off timer
+         1703830672.978  1086  1254 D ASH     : @ 1543.788: tcs3701: start power rail timer, state:3
+         1703830673.018  1086  1254 I ASH     : @ 1543.827: tcs3701: stop power rail pending_off timer
+         1703830673.018  1086  1254 D ASH     : @ 1543.828: tcs3701: start power rail timer, state:3
+         1703830673.058  1086  1254 I ASH     : @ 1543.867: tcs3701: stop power rail pending_off timer
+         1703830673.058  1086  1254 D ASH     : @ 1543.868: tcs3701: start power rail timer, state:3
+         1703830673.089  8788  8788 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8409 0 14 0 54 22 0 0 10 -10 18 0 153553 15683682304 39275 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830673.098  1086  1254 I ASH     : @ 1543.907: tcs3701: stop power rail pending_off timer
+         1703830673.098  1086  1254 D ASH     : @ 1543.908: tcs3701: start power rail timer, state:3
+         1703830673.138  1086  1254 I ASH     : @ 1543.947: tcs3701: stop power rail pending_off timer
+         1703830673.138  1086  1254 D ASH     : @ 1543.948: tcs3701: start power rail timer, state:3
+         1703830673.178  1086  1254 I ASH     : @ 1543.987: tcs3701: stop power rail pending_off timer
+         1703830673.178  1086  1254 D ASH     : @ 1543.988: tcs3701: start power rail timer, state:3
+         1703830673.218  1086  1254 I ASH     : @ 1544.027: tcs3701: stop power rail pending_off timer
+         1703830673.218  1086  1254 D ASH     : @ 1544.028: tcs3701: start power rail timer, state:3
+         1703830673.258  1086  1254 I ASH     : @ 1544.067: tcs3701: stop power rail pending_off timer
+         1703830673.258  1086  1254 D ASH     : @ 1544.068: tcs3701: start power rail timer, state:3
+         1703830673.298  1086  1254 I ASH     : @ 1544.107: tcs3701: stop power rail pending_off timer
+         1703830673.298  1086  1254 D ASH     : @ 1544.108: tcs3701: start power rail timer, state:3
+         1703830673.338  1086  1254 I ASH     : @ 1544.147: tcs3701: stop power rail pending_off timer
+         1703830673.338  1086  1254 D ASH     : @ 1544.148: tcs3701: start power rail timer, state:3
+         1703830673.378  1086  1254 I ASH     : @ 1544.187: tcs3701: stop power rail pending_off timer
+         1703830673.378  1086  1254 D ASH     : @ 1544.188: tcs3701: start power rail timer, state:3
+         1703830673.418  1086  1254 I ASH     : @ 1544.227: tcs3701: stop power rail pending_off timer
+         1703830673.418  1086  1254 D ASH     : @ 1544.228: tcs3701: start power rail timer, state:3
+         1703830673.458  1086  1254 I ASH     : @ 1544.267: tcs3701: stop power rail pending_off timer
+         1703830673.458  1086  1254 D ASH     : @ 1544.268: tcs3701: start power rail timer, state:3
+         1703830673.498  1086  1254 I ASH     : @ 1544.307: tcs3701: stop power rail pending_off timer
+         1703830673.498  1086  1254 D ASH     : @ 1544.308: tcs3701: start power rail timer, state:3
+         1703830673.538  1086  1254 I ASH     : @ 1544.347: tcs3701: stop power rail pending_off timer
+         1703830673.538  1086  1254 D ASH     : @ 1544.348: tcs3701: start power rail timer, state:3
+         1703830673.578  1086  1254 I ASH     : @ 1544.387: tcs3701: stop power rail pending_off timer
+         1703830673.578  1086  1254 D ASH     : @ 1544.388: tcs3701: start power rail timer, state:3
+         1703830673.618  1086  1254 I ASH     : @ 1544.427: tcs3701: stop power rail pending_off timer
+         1703830673.618  1086  1254 D ASH     : @ 1544.428: tcs3701: start power rail timer, state:3
+         1703830673.619  8791  8791 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8473 0 14 0 63 23 0 0 10 -10 18 0 153553 15683682304 39275 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830673.658  1086  1254 I ASH     : @ 1544.467: tcs3701: stop power rail pending_off timer
+         1703830673.658  1086  1254 D ASH     : @ 1544.468: tcs3701: start power rail timer, state:3
+         1703830673.698  1086  1254 I ASH     : @ 1544.507: tcs3701: stop power rail pending_off timer
+         1703830673.698  1086  1254 D ASH     : @ 1544.508: tcs3701: start power rail timer, state:3
+         1703830673.738  1086  1254 I ASH     : @ 1544.547: tcs3701: stop power rail pending_off timer
+         1703830673.738  1086  1254 D ASH     : @ 1544.548: tcs3701: start power rail timer, state:3
+         1703830673.778  1086  1254 I ASH     : @ 1544.587: tcs3701: stop power rail pending_off timer
+         1703830673.778  1086  1254 D ASH     : @ 1544.588: tcs3701: start power rail timer, state:3
+         1703830673.818  1086  1254 I ASH     : @ 1544.627: tcs3701: stop power rail pending_off timer
+         1703830673.818  1086  1254 D ASH     : @ 1544.628: tcs3701: start power rail timer, state:3
+         1703830673.858  1086  1254 I ASH     : @ 1544.667: tcs3701: stop power rail pending_off timer
+         1703830673.858  1086  1254 D ASH     : @ 1544.668: tcs3701: start power rail timer, state:3
+         1703830673.900  1086  1254 I ASH     : @ 1544.707: tcs3701: stop power rail pending_off timer
+         1703830673.900  1086  1254 D ASH     : @ 1544.708: tcs3701: start power rail timer, state:3
+         1703830673.938  1086  1254 I ASH     : @ 1544.747: tcs3701: stop power rail pending_off timer
+         1703830673.938  1086  1254 D ASH     : @ 1544.748: tcs3701: start power rail timer, state:3
+         1703830673.978  1086  1254 I ASH     : @ 1544.787: tcs3701: stop power rail pending_off timer
+         1703830673.978  1086  1254 D ASH     : @ 1544.788: tcs3701: start power rail timer, state:3
+         1703830674.018  1086  1254 I ASH     : @ 1544.827: tcs3701: stop power rail pending_off timer
+         1703830674.018  1086  1254 D ASH     : @ 1544.828: tcs3701: start power rail timer, state:3
+         1703830674.058  1086  1254 I ASH     : @ 1544.867: tcs3701: stop power rail pending_off timer
+         1703830674.058  1086  1254 D ASH     : @ 1544.868: tcs3701: start power rail timer, state:3
+         1703830674.098  1086  1254 I ASH     : @ 1544.907: tcs3701: stop power rail pending_off timer
+         1703830674.098  1086  1254 D ASH     : @ 1544.908: tcs3701: start power rail timer, state:3
+         1703830674.138  1086  1254 I ASH     : @ 1544.947: tcs3701: stop power rail pending_off timer
+         1703830674.138  1086  1254 D ASH     : @ 1544.948: tcs3701: start power rail timer, state:3
+         1703830674.149  8794  8794 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8539 0 14 0 72 26 0 0 10 -10 18 0 153553 15683682304 39276 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830674.178  1086  1254 I ASH     : @ 1544.988: tcs3701: stop power rail pending_off timer
+         1703830674.178  1086  1254 D ASH     : @ 1544.988: tcs3701: start power rail timer, state:3
+         1703830674.218  1086  1254 I ASH     : @ 1545.027: tcs3701: stop power rail pending_off timer
+         1703830674.218  1086  1254 D ASH     : @ 1545.028: tcs3701: start power rail timer, state:3
+         1703830674.258  1086  1254 I ASH     : @ 1545.067: tcs3701: stop power rail pending_off timer
+         1703830674.259  1086  1254 D ASH     : @ 1545.068: tcs3701: start power rail timer, state:3
+         1703830674.298  1086  1254 I ASH     : @ 1545.107: tcs3701: stop power rail pending_off timer
+         1703830674.298  1086  1254 D ASH     : @ 1545.108: tcs3701: start power rail timer, state:3
+         1703830674.338  1086  1254 I ASH     : @ 1545.147: tcs3701: stop power rail pending_off timer
+         1703830674.338  1086  1254 D ASH     : @ 1545.148: tcs3701: start power rail timer, state:3
+         1703830674.379  1086  1254 I ASH     : @ 1545.187: tcs3701: stop power rail pending_off timer
+         1703830674.379  1086  1254 D ASH     : @ 1545.188: tcs3701: start power rail timer, state:3
+         1703830674.418  1086  1254 I ASH     : @ 1545.227: tcs3701: stop power rail pending_off timer
+         1703830674.419  1086  1254 D ASH     : @ 1545.228: tcs3701: start power rail timer, state:3
+         1703830674.460  1086  1254 I ASH     : @ 1545.267: tcs3701: stop power rail pending_off timer
+         1703830674.460  1086  1254 D ASH     : @ 1545.268: tcs3701: start power rail timer, state:3
+         1703830674.499  1086  1254 I ASH     : @ 1545.307: tcs3701: stop power rail pending_off timer
+         1703830674.499  1086  1254 D ASH     : @ 1545.308: tcs3701: start power rail timer, state:3
+         1703830674.540  1086  1254 I ASH     : @ 1545.347: tcs3701: stop power rail pending_off timer
+         1703830674.540  1086  1254 D ASH     : @ 1545.348: tcs3701: start power rail timer, state:3
+         1703830674.580  1086  1254 I ASH     : @ 1545.387: tcs3701: stop power rail pending_off timer
+         1703830674.580  1086  1254 D ASH     : @ 1545.388: tcs3701: start power rail timer, state:3
+         1703830674.618  1086  1254 I ASH     : @ 1545.427: tcs3701: stop power rail pending_off timer
+         1703830674.618  1086  1254 D ASH     : @ 1545.428: tcs3701: start power rail timer, state:3
+         1703830674.660  1086  1254 I ASH     : @ 1545.467: tcs3701: stop power rail pending_off timer
+         1703830674.660  1086  1254 D ASH     : @ 1545.468: tcs3701: start power rail timer, state:3
+         1703830674.684  8797  8797 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8551 0 14 0 74 28 0 0 10 -10 18 0 153553 15683682304 39276 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830674.698  1086  1254 I ASH     : @ 1545.507: tcs3701: stop power rail pending_off timer
+         1703830674.698  1086  1254 D ASH     : @ 1545.508: tcs3701: start power rail timer, state:3
+         1703830674.738  1086  1254 I ASH     : @ 1545.547: tcs3701: stop power rail pending_off timer
+         1703830674.739  1086  1254 D ASH     : @ 1545.548: tcs3701: start power rail timer, state:3
+         1703830674.780  1086  1254 I ASH     : @ 1545.587: tcs3701: stop power rail pending_off timer
+         1703830674.780  1086  1254 D ASH     : @ 1545.588: tcs3701: start power rail timer, state:3
+         1703830674.820  1086  1254 I ASH     : @ 1545.627: tcs3701: stop power rail pending_off timer
+         1703830674.820  1086  1254 D ASH     : @ 1545.628: tcs3701: start power rail timer, state:3
+         1703830674.860  1086  1254 I ASH     : @ 1545.667: tcs3701: stop power rail pending_off timer
+         1703830674.860  1086  1254 D ASH     : @ 1545.668: tcs3701: start power rail timer, state:3
+         1703830674.898  1086  1254 I ASH     : @ 1545.707: tcs3701: stop power rail pending_off timer
+         1703830674.898  1086  1254 D ASH     : @ 1545.708: tcs3701: start power rail timer, state:3
+         1703830674.940  1086  1254 I ASH     : @ 1545.747: tcs3701: stop power rail pending_off timer
+         1703830674.940  1086  1254 D ASH     : @ 1545.748: tcs3701: start power rail timer, state:3
+         1703830674.980  1086  1254 I ASH     : @ 1545.787: tcs3701: stop power rail pending_off timer
+         1703830674.980  1086  1254 D ASH     : @ 1545.788: tcs3701: start power rail timer, state:3
+         1703830675.020  1086  1254 I ASH     : @ 1545.827: tcs3701: stop power rail pending_off timer
+         1703830675.020  1086  1254 D ASH     : @ 1545.828: tcs3701: start power rail timer, state:3
+         1703830675.060  1086  1254 I ASH     : @ 1545.867: tcs3701: stop power rail pending_off timer
+         1703830675.060  1086  1254 D ASH     : @ 1545.868: tcs3701: start power rail timer, state:3
+         1703830675.098  1086  1254 I ASH     : @ 1545.907: tcs3701: stop power rail pending_off timer
+         1703830675.098  1086  1254 D ASH     : @ 1545.908: tcs3701: start power rail timer, state:3
+         1703830675.140  1086  1254 I ASH     : @ 1545.947: tcs3701: stop power rail pending_off timer
+         1703830675.140  1086  1254 D ASH     : @ 1545.948: tcs3701: start power rail timer, state:3
+         1703830675.180  1086  1254 I ASH     : @ 1545.987: tcs3701: stop power rail pending_off timer
+         1703830675.180  1086  1254 D ASH     : @ 1545.988: tcs3701: start power rail timer, state:3
+         1703830675.214  8800  8800 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8551 0 14 0 75 29 0 0 10 -10 18 0 153553 15683682304 39276 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830675.218  1086  1254 I ASH     : @ 1546.027: tcs3701: stop power rail pending_off timer
+         1703830675.218  1086  1254 D ASH     : @ 1546.028: tcs3701: start power rail timer, state:3
+         1703830675.258  1086  1254 I ASH     : @ 1546.067: tcs3701: stop power rail pending_off timer
+         1703830675.258  1086  1254 D ASH     : @ 1546.068: tcs3701: start power rail timer, state:3
+         1703830675.268  2828  3507 I QcrilOemhookMsgTunnel: [0]processOemHookIndication length=21
+         1703830675.269  2828  2828 D QcrilMsgTunnelIfaceManager: handleMessage what = 0
+         1703830675.298  1086  1254 I ASH     : @ 1546.107: tcs3701: stop power rail pending_off timer
+         1703830675.298  1086  1254 D ASH     : @ 1546.108: tcs3701: start power rail timer, state:3
+         1703830675.331  1785  1849 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendBroadcastMultiplePermissions:1270 android.content.Context.sendBroadcastMultiplePermissions:2476 com.android.server.TelephonyRegistry.broadcastServiceStateChanged:3581 com.android.server.TelephonyRegistry.notifyServiceStateForPhoneId:1728 com.android.internal.telephony.ITelephonyRegistry$Stub.onTransact:534 
+         1703830675.333  1785  1849 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendBroadcastMultiplePermissions:1303 com.android.server.TelephonyRegistry.broadcastServiceStateChanged:3585 com.android.server.TelephonyRegistry.notifyServiceStateForPhoneId:1728 com.android.internal.telephony.ITelephonyRegistry$Stub.onTransact:534 android.os.Binder.execTransactInternal:1339 
+         1703830675.334  1785  1849 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendBroadcastMultiplePermissions:1303 com.android.server.TelephonyRegistry.broadcastServiceStateChanged:3594 com.android.server.TelephonyRegistry.notifyServiceStateForPhoneId:1728 com.android.internal.telephony.ITelephonyRegistry$Stub.onTransact:534 android.os.Binder.execTransactInternal:1339 
+         1703830675.337  1785  1849 W ContextImpl: Calling a method in the system process without a qualified user: android.app.ContextImpl.sendBroadcastMultiplePermissions:1303 com.android.server.TelephonyRegistry.broadcastServiceStateChanged:3600 com.android.server.TelephonyRegistry.notifyServiceStateForPhoneId:1728 com.android.internal.telephony.ITelephonyRegistry$Stub.onTransact:534 android.os.Binder.execTransactInternal:1339 
+         1703830675.338  1086  1254 I ASH     : @ 1546.147: tcs3701: stop power rail pending_off timer
+         1703830675.338  1086  1254 D ASH     : @ 1546.148: tcs3701: start power rail timer, state:3
+         1703830675.339  2909  2909 D ServiceStateProvider: subId=-1
+         1703830675.341  2565  2565 W KeyguardUpdateMonitorLog: invalid subId in handleServiceStateChange()
+         1703830675.341  3094  3094 D CellBroadcastReceiver: onReceive Intent { act=android.intent.action.SERVICE_STATE flg=0x1000010 cmp=com.google.android.cellbroadcastreceiver/com.android.cellbroadcastreceiver.CellBroadcastReceiver (has extras) }
+         1703830675.342  3094  3094 D CellBroadcastReceiver: onServiceStateChanged, ss: 1
+         1703830675.380  1086  1254 I ASH     : @ 1546.187: tcs3701: stop power rail pending_off timer
+         1703830675.380  1086  1254 D ASH     : @ 1546.188: tcs3701: start power rail timer, state:3
+         1703830675.420  1086  1254 I ASH     : @ 1546.227: tcs3701: stop power rail pending_off timer
+         1703830675.420  1086  1254 D ASH     : @ 1546.228: tcs3701: start power rail timer, state:3
+         1703830675.458  1086  1254 I ASH     : @ 1546.267: tcs3701: stop power rail pending_off timer
+         1703830675.459  1086  1254 D ASH     : @ 1546.268: tcs3701: start power rail timer, state:3
+         1703830675.498  1086  1254 I ASH     : @ 1546.307: tcs3701: stop power rail pending_off timer
+         1703830675.498  1086  1254 D ASH     : @ 1546.308: tcs3701: start power rail timer, state:3
+         1703830675.538  1086  1254 I ASH     : @ 1546.347: tcs3701: stop power rail pending_off timer
+         1703830675.538  1086  1254 D ASH     : @ 1546.348: tcs3701: start power rail timer, state:3
+         1703830675.578  1086  1254 I ASH     : @ 1546.387: tcs3701: stop power rail pending_off timer
+         1703830675.578  1086  1254 D ASH     : @ 1546.388: tcs3701: start power rail timer, state:3
+         1703830675.618  1086  1254 I ASH     : @ 1546.427: tcs3701: stop power rail pending_off timer
+         1703830675.618  1086  1254 D ASH     : @ 1546.428: tcs3701: start power rail timer, state:3
+         1703830675.658  1086  1254 I ASH     : @ 1546.467: tcs3701: stop power rail pending_off timer
+         1703830675.659  1086  1254 D ASH     : @ 1546.468: tcs3701: start power rail timer, state:3
+         1703830675.698  1086  1254 I ASH     : @ 1546.507: tcs3701: stop power rail pending_off timer
+         1703830675.698  1086  1254 D ASH     : @ 1546.508: tcs3701: start power rail timer, state:3
+         1703830675.738  1086  1254 I ASH     : @ 1546.547: tcs3701: stop power rail pending_off timer
+         1703830675.738  1086  1254 D ASH     : @ 1546.548: tcs3701: start power rail timer, state:3
+         1703830675.743  8805  8805 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8598 0 14 0 80 31 0 0 10 -10 18 0 153553 15683682304 39286 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830675.778  1086  1254 I ASH     : @ 1546.587: tcs3701: stop power rail pending_off timer
+         1703830675.778  1086  1254 D ASH     : @ 1546.588: tcs3701: start power rail timer, state:3
+         1703830675.818  1086  1254 I ASH     : @ 1546.627: tcs3701: stop power rail pending_off timer
+         1703830675.818  1086  1254 D ASH     : @ 1546.628: tcs3701: start power rail timer, state:3
+         1703830675.858  1086  1254 I ASH     : @ 1546.667: tcs3701: stop power rail pending_off timer
+         1703830675.858  1086  1254 D ASH     : @ 1546.668: tcs3701: start power rail timer, state:3
+         1703830675.898  1086  1254 I ASH     : @ 1546.707: tcs3701: stop power rail pending_off timer
+         1703830675.898  1086  1254 D ASH     : @ 1546.708: tcs3701: start power rail timer, state:3
+         1703830675.938  1086  1254 I ASH     : @ 1546.747: tcs3701: stop power rail pending_off timer
+         1703830675.938  1086  1254 D ASH     : @ 1546.748: tcs3701: start power rail timer, state:3
+         1703830675.957  8714  8737 I dashscene: 480 frames over 480 vsyncs
+         1703830675.978  1086  1254 I ASH     : @ 1546.787: tcs3701: stop power rail pending_off timer
+         1703830675.978  1086  1254 D ASH     : @ 1546.788: tcs3701: start power rail timer, state:3
+         1703830676.018  1086  1254 I ASH     : @ 1546.827: tcs3701: stop power rail pending_off timer
+         1703830676.018  1086  1254 D ASH     : @ 1546.828: tcs3701: start power rail timer, state:3
+         1703830676.058  1086  1254 I ASH     : @ 1546.867: tcs3701: stop power rail pending_off timer
+         1703830676.058  1086  1254 D ASH     : @ 1546.868: tcs3701: start power rail timer, state:3
+         1703830676.098  1086  1254 I ASH     : @ 1546.907: tcs3701: stop power rail pending_off timer
+         1703830676.098  1086  1254 D ASH     : @ 1546.908: tcs3701: start power rail timer, state:3
+         1703830676.138  1086  1254 I ASH     : @ 1546.947: tcs3701: stop power rail pending_off timer
+         1703830676.138  1086  1254 D ASH     : @ 1546.948: tcs3701: start power rail timer, state:3
+         1703830676.178  1086  1254 I ASH     : @ 1546.987: tcs3701: stop power rail pending_off timer
+         1703830676.178  1086  1254 D ASH     : @ 1546.988: tcs3701: start power rail timer, state:3
+         1703830676.218  1086  1254 I ASH     : @ 1547.027: tcs3701: stop power rail pending_off timer
+         1703830676.218  1086  1254 D ASH     : @ 1547.028: tcs3701: start power rail timer, state:3
+         1703830676.258  1086  1254 I ASH     : @ 1547.067: tcs3701: stop power rail pending_off timer
+         1703830676.258  1086  1254 D ASH     : @ 1547.068: tcs3701: start power rail timer, state:3
+         1703830676.274  8808  8808 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8662 0 14 0 88 34 0 0 10 -10 18 0 153553 15683682304 39286 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830676.298  1086  1254 I ASH     : @ 1547.107: tcs3701: stop power rail pending_off timer
+         1703830676.298  1086  1254 D ASH     : @ 1547.108: tcs3701: start power rail timer, state:3
+         1703830676.338  1086  1254 I ASH     : @ 1547.147: tcs3701: stop power rail pending_off timer
+         1703830676.338  1086  1254 D ASH     : @ 1547.148: tcs3701: start power rail timer, state:3
+         1703830676.378  1086  1254 I ASH     : @ 1547.187: tcs3701: stop power rail pending_off timer
+         1703830676.378  1086  1254 D ASH     : @ 1547.188: tcs3701: start power rail timer, state:3
+         1703830676.418  1086  1254 I ASH     : @ 1547.227: tcs3701: stop power rail pending_off timer
+         1703830676.418  1086  1254 D ASH     : @ 1547.228: tcs3701: start power rail timer, state:3
+         1703830676.458  1086  1254 I ASH     : @ 1547.267: tcs3701: stop power rail pending_off timer
+         1703830676.458  1086  1254 D ASH     : @ 1547.268: tcs3701: start power rail timer, state:3
+         1703830676.498  1086  1254 I ASH     : @ 1547.307: tcs3701: stop power rail pending_off timer
+         1703830676.498  1086  1254 D ASH     : @ 1547.308: tcs3701: start power rail timer, state:3
+         1703830676.538  1086  1254 I ASH     : @ 1547.347: tcs3701: stop power rail pending_off timer
+         1703830676.538  1086  1254 D ASH     : @ 1547.348: tcs3701: start power rail timer, state:3
+         1703830676.578  1086  1254 I ASH     : @ 1547.387: tcs3701: stop power rail pending_off timer
+         1703830676.578  1086  1254 D ASH     : @ 1547.388: tcs3701: start power rail timer, state:3
+         1703830676.618  1086  1254 I ASH     : @ 1547.427: tcs3701: stop power rail pending_off timer
+         1703830676.618  1086  1254 D ASH     : @ 1547.428: tcs3701: start power rail timer, state:3
+         1703830676.658  1086  1254 I ASH     : @ 1547.467: tcs3701: stop power rail pending_off timer
+         1703830676.658  1086  1254 D ASH     : @ 1547.468: tcs3701: start power rail timer, state:3
+         1703830676.698  1086  1254 I ASH     : @ 1547.507: tcs3701: stop power rail pending_off timer
+         1703830676.698  1086  1254 D ASH     : @ 1547.508: tcs3701: start power rail timer, state:3
+         1703830676.738  1086  1254 I ASH     : @ 1547.547: tcs3701: stop power rail pending_off timer
+         1703830676.738  1086  1254 D ASH     : @ 1547.548: tcs3701: start power rail timer, state:3
+         1703830676.778  1086  1254 I ASH     : @ 1547.587: tcs3701: stop power rail pending_off timer
+         1703830676.778  1086  1254 D ASH     : @ 1547.588: tcs3701: start power rail timer, state:3
+         1703830676.806  8811  8811 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8716 0 14 0 95 38 0 0 10 -10 18 0 153553 15683682304 39286 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830676.818  1086  1254 I ASH     : @ 1547.627: tcs3701: stop power rail pending_off timer
+         1703830676.818  1086  1254 D ASH     : @ 1547.628: tcs3701: start power rail timer, state:3
+         1703830676.858  1086  1254 I ASH     : @ 1547.667: tcs3701: stop power rail pending_off timer
+         1703830676.858  1086  1254 D ASH     : @ 1547.668: tcs3701: start power rail timer, state:3
+         1703830676.898  1086  1254 I ASH     : @ 1547.707: tcs3701: stop power rail pending_off timer
+         1703830676.899  1086  1254 D ASH     : @ 1547.708: tcs3701: start power rail timer, state:3
+         1703830676.940  1086  1254 I ASH     : @ 1547.747: tcs3701: stop power rail pending_off timer
+         1703830676.940  1086  1254 D ASH     : @ 1547.748: tcs3701: start power rail timer, state:3
+         1703830676.980  1086  1254 I ASH     : @ 1547.787: tcs3701: stop power rail pending_off timer
+         1703830676.980  1086  1254 D ASH     : @ 1547.788: tcs3701: start power rail timer, state:3
+         1703830677.020  1086  1254 I ASH     : @ 1547.827: tcs3701: stop power rail pending_off timer
+         1703830677.020  1086  1254 D ASH     : @ 1547.828: tcs3701: start power rail timer, state:3
+         1703830677.059  1086  1254 I ASH     : @ 1547.867: tcs3701: stop power rail pending_off timer
+         1703830677.059  1086  1254 D ASH     : @ 1547.868: tcs3701: start power rail timer, state:3
+         1703830677.099  1086  1254 I ASH     : @ 1547.907: tcs3701: stop power rail pending_off timer
+         1703830677.099  1086  1254 D ASH     : @ 1547.908: tcs3701: start power rail timer, state:3
+         1703830677.140  1086  1254 I ASH     : @ 1547.947: tcs3701: stop power rail pending_off timer
+         1703830677.140  1086  1254 D ASH     : @ 1547.948: tcs3701: start power rail timer, state:3
+         1703830677.180  1086  1254 I ASH     : @ 1547.987: tcs3701: stop power rail pending_off timer
+         1703830677.180  1086  1254 D ASH     : @ 1547.988: tcs3701: start power rail timer, state:3
+         1703830677.220  1086  1254 I ASH     : @ 1548.027: tcs3701: stop power rail pending_off timer
+         1703830677.220  1086  1254 D ASH     : @ 1548.028: tcs3701: start power rail timer, state:3
+         1703830677.260  1086  1254 I ASH     : @ 1548.067: tcs3701: stop power rail pending_off timer
+         1703830677.260  1086  1254 D ASH     : @ 1548.068: tcs3701: start power rail timer, state:3
+         1703830677.299  1086  1254 I ASH     : @ 1548.107: tcs3701: stop power rail pending_off timer
+         1703830677.299  1086  1254 D ASH     : @ 1548.108: tcs3701: start power rail timer, state:3
+         1703830677.338  1086  1254 I ASH     : @ 1548.147: tcs3701: stop power rail pending_off timer
+         1703830677.338  1086  1254 D ASH     : @ 1548.148: tcs3701: start power rail timer, state:3
+         1703830677.339  8814  8814 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8716 0 14 0 96 38 0 0 10 -10 18 0 153553 15683682304 39286 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830677.378  1086  1254 I ASH     : @ 1548.187: tcs3701: stop power rail pending_off timer
+         1703830677.379  1086  1254 D ASH     : @ 1548.188: tcs3701: start power rail timer, state:3
+         1703830677.420  1086  1254 I ASH     : @ 1548.227: tcs3701: stop power rail pending_off timer
+         1703830677.420  1086  1254 D ASH     : @ 1548.228: tcs3701: start power rail timer, state:3
+         1703830677.458  1086  1254 I ASH     : @ 1548.267: tcs3701: stop power rail pending_off timer
+         1703830677.459  1086  1254 D ASH     : @ 1548.268: tcs3701: start power rail timer, state:3
+         1703830677.498  1086  1254 I ASH     : @ 1548.307: tcs3701: stop power rail pending_off timer
+         1703830677.498  1086  1254 D ASH     : @ 1548.308: tcs3701: start power rail timer, state:3
+         1703830677.540  1086  1254 I ASH     : @ 1548.347: tcs3701: stop power rail pending_off timer
+         1703830677.540  1086  1254 D ASH     : @ 1548.348: tcs3701: start power rail timer, state:3
+         1703830677.580  1086  1254 I ASH     : @ 1548.387: tcs3701: stop power rail pending_off timer
+         1703830677.580  1086  1254 D ASH     : @ 1548.388: tcs3701: start power rail timer, state:3
+         1703830677.620  1086  1254 I ASH     : @ 1548.427: tcs3701: stop power rail pending_off timer
+         1703830677.620  1086  1254 D ASH     : @ 1548.428: tcs3701: start power rail timer, state:3
+         1703830677.660  1086  1254 I ASH     : @ 1548.467: tcs3701: stop power rail pending_off timer
+         1703830677.660  1086  1254 D ASH     : @ 1548.468: tcs3701: start power rail timer, state:3
+         1703830677.699  1086  1254 I ASH     : @ 1548.507: tcs3701: stop power rail pending_off timer
+         1703830677.699  1086  1254 D ASH     : @ 1548.508: tcs3701: start power rail timer, state:3
+         1703830677.740  1086  1254 I ASH     : @ 1548.547: tcs3701: stop power rail pending_off timer
+         1703830677.740  1086  1254 D ASH     : @ 1548.548: tcs3701: start power rail timer, state:3
+         1703830677.780  1086  1254 I ASH     : @ 1548.587: tcs3701: stop power rail pending_off timer
+         1703830677.780  1086  1254 D ASH     : @ 1548.588: tcs3701: start power rail timer, state:3
+         1703830677.818  1086  1254 I ASH     : @ 1548.627: tcs3701: stop power rail pending_off timer
+         1703830677.819  1086  1254 D ASH     : @ 1548.628: tcs3701: start power rail timer, state:3
+         1703830677.858  1086  1254 I ASH     : @ 1548.667: tcs3701: stop power rail pending_off timer
+         1703830677.858  1086  1254 D ASH     : @ 1548.668: tcs3701: start power rail timer, state:3
+         1703830677.863  8820  8820 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8716 0 14 0 96 40 0 0 10 -10 18 0 153553 15683682304 39286 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830677.899  1086  1254 I ASH     : @ 1548.707: tcs3701: stop power rail pending_off timer
+         1703830677.899  1086  1254 D ASH     : @ 1548.708: tcs3701: start power rail timer, state:3
+         1703830677.938  1086  1254 I ASH     : @ 1548.747: tcs3701: stop power rail pending_off timer
+         1703830677.938  1086  1254 D ASH     : @ 1548.748: tcs3701: start power rail timer, state:3
+         1703830677.971  8714  8737 I dashscene: typography over 240 frames — tick 0.39 ms, paint mean 0.10 p50 0.09, present mean 7.24 p50 9.52 p95 10.49 max 27.99 ms (129.5 fps if unpaced) — 8 run(s), 444 glyph(s)
+         1703830677.978  1086  1254 I ASH     : @ 1548.787: tcs3701: stop power rail pending_off timer
+         1703830677.979  1086  1254 D ASH     : @ 1548.788: tcs3701: start power rail timer, state:3
+         1703830678.018  1086  1254 I ASH     : @ 1548.827: tcs3701: stop power rail pending_off timer
+         1703830678.018  1086  1254 D ASH     : @ 1548.828: tcs3701: start power rail timer, state:3
+         1703830678.058  1086  1254 I ASH     : @ 1548.867: tcs3701: stop power rail pending_off timer
+         1703830678.058  1086  1254 D ASH     : @ 1548.868: tcs3701: start power rail timer, state:3
+         1703830678.098  1086  1254 I ASH     : @ 1548.907: tcs3701: stop power rail pending_off timer
+         1703830678.098  1086  1254 D ASH     : @ 1548.908: tcs3701: start power rail timer, state:3
+         1703830678.138  1086  1254 I ASH     : @ 1548.947: tcs3701: stop power rail pending_off timer
+         1703830678.138  1086  1254 D ASH     : @ 1548.948: tcs3701: start power rail timer, state:3
+         1703830678.178  1086  1254 I ASH     : @ 1548.987: tcs3701: stop power rail pending_off timer
+         1703830678.178  1086  1254 D ASH     : @ 1548.988: tcs3701: start power rail timer, state:3
+         1703830678.218  1086  1254 I ASH     : @ 1549.027: tcs3701: stop power rail pending_off timer
+         1703830678.218  1086  1254 D ASH     : @ 1549.028: tcs3701: start power rail timer, state:3
+         1703830678.258  1086  1254 I ASH     : @ 1549.067: tcs3701: stop power rail pending_off timer
+         1703830678.258  1086  1254 D ASH     : @ 1549.068: tcs3701: start power rail timer, state:3
+         1703830678.298  1086  1254 I ASH     : @ 1549.107: tcs3701: stop power rail pending_off timer
+         1703830678.298  1086  1254 D ASH     : @ 1549.108: tcs3701: start power rail timer, state:3
+         1703830678.338  1086  1254 I ASH     : @ 1549.147: tcs3701: stop power rail pending_off timer
+         1703830678.338  1086  1254 D ASH     : @ 1549.148: tcs3701: start power rail timer, state:3
+         1703830678.378  1086  1254 I ASH     : @ 1549.187: tcs3701: stop power rail pending_off timer
+         1703830678.378  1086  1254 D ASH     : @ 1549.188: tcs3701: start power rail timer, state:3
+         1703830678.393  8823  8823 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8771 0 14 0 106 42 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830678.418  1086  1254 I ASH     : @ 1549.227: tcs3701: stop power rail pending_off timer
+         1703830678.418  1086  1254 D ASH     : @ 1549.228: tcs3701: start power rail timer, state:3
+         1703830678.458  1086  1254 I ASH     : @ 1549.267: tcs3701: stop power rail pending_off timer
+         1703830678.458  1086  1254 D ASH     : @ 1549.268: tcs3701: start power rail timer, state:3
+         1703830678.498  1086  1254 I ASH     : @ 1549.307: tcs3701: stop power rail pending_off timer
+         1703830678.498  1086  1254 D ASH     : @ 1549.308: tcs3701: start power rail timer, state:3
+         1703830678.538  1086  1254 I ASH     : @ 1549.347: tcs3701: stop power rail pending_off timer
+         1703830678.538  1086  1254 D ASH     : @ 1549.348: tcs3701: start power rail timer, state:3
+         1703830678.578  1086  1254 I ASH     : @ 1549.387: tcs3701: stop power rail pending_off timer
+         1703830678.578  1086  1254 D ASH     : @ 1549.388: tcs3701: start power rail timer, state:3
+         1703830678.618  1086  1254 I ASH     : @ 1549.427: tcs3701: stop power rail pending_off timer
+         1703830678.618  1086  1254 D ASH     : @ 1549.428: tcs3701: start power rail timer, state:3
+         1703830678.658  1086  1254 I ASH     : @ 1549.467: tcs3701: stop power rail pending_off timer
+         1703830678.658  1086  1254 D ASH     : @ 1549.468: tcs3701: start power rail timer, state:3
+         1703830678.698  1086  1254 I ASH     : @ 1549.507: tcs3701: stop power rail pending_off timer
+         1703830678.698  1086  1254 D ASH     : @ 1549.508: tcs3701: start power rail timer, state:3
+         1703830678.739  1086  1254 I ASH     : @ 1549.547: tcs3701: stop power rail pending_off timer
+         1703830678.739  1086  1254 D ASH     : @ 1549.548: tcs3701: start power rail timer, state:3
+         1703830678.778  1086  1254 I ASH     : @ 1549.587: tcs3701: stop power rail pending_off timer
+         1703830678.778  1086  1254 D ASH     : @ 1549.588: tcs3701: start power rail timer, state:3
+         1703830678.818  1086  1254 I ASH     : @ 1549.627: tcs3701: stop power rail pending_off timer
+         1703830678.818  1086  1254 D ASH     : @ 1549.628: tcs3701: start power rail timer, state:3
+         1703830678.858  1086  1254 I ASH     : @ 1549.667: tcs3701: stop power rail pending_off timer
+         1703830678.858  1086  1254 D ASH     : @ 1549.668: tcs3701: start power rail timer, state:3
+         1703830678.898  1086  1254 I ASH     : @ 1549.707: tcs3701: stop power rail pending_off timer
+         1703830678.898  1086  1254 D ASH     : @ 1549.708: tcs3701: start power rail timer, state:3
+         1703830678.925  8826  8826 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8835 0 14 0 115 45 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830678.938  1086  1254 I ASH     : @ 1549.747: tcs3701: stop power rail pending_off timer
+         1703830678.938  1086  1254 D ASH     : @ 1549.748: tcs3701: start power rail timer, state:3
+         1703830678.978  1086  1254 I ASH     : @ 1549.787: tcs3701: stop power rail pending_off timer
+         1703830678.978  1086  1254 D ASH     : @ 1549.788: tcs3701: start power rail timer, state:3
+         1703830679.018  1086  1254 I ASH     : @ 1549.827: tcs3701: stop power rail pending_off timer
+         1703830679.018  1086  1254 D ASH     : @ 1549.828: tcs3701: start power rail timer, state:3
+         1703830679.058  1086  1254 I ASH     : @ 1549.867: tcs3701: stop power rail pending_off timer
+         1703830679.058  1086  1254 D ASH     : @ 1549.868: tcs3701: start power rail timer, state:3
+         1703830679.098  1086  1254 I ASH     : @ 1549.907: tcs3701: stop power rail pending_off timer
+         1703830679.098  1086  1254 D ASH     : @ 1549.908: tcs3701: start power rail timer, state:3
+         1703830679.138  1086  1254 I ASH     : @ 1549.947: tcs3701: stop power rail pending_off timer
+         1703830679.138  1086  1254 D ASH     : @ 1549.948: tcs3701: start power rail timer, state:3
+         1703830679.178  1086  1254 I ASH     : @ 1549.987: tcs3701: stop power rail pending_off timer
+         1703830679.178  1086  1254 D ASH     : @ 1549.988: tcs3701: start power rail timer, state:3
+         1703830679.218  1086  1254 I ASH     : @ 1550.027: tcs3701: stop power rail pending_off timer
+         1703830679.218  1086  1254 D ASH     : @ 1550.028: tcs3701: start power rail timer, state:3
+         1703830679.258  1086  1254 I ASH     : @ 1550.067: tcs3701: stop power rail pending_off timer
+         1703830679.258  1086  1254 D ASH     : @ 1550.068: tcs3701: start power rail timer, state:3
+         1703830679.298  1086  1254 I ASH     : @ 1550.107: tcs3701: stop power rail pending_off timer
+         1703830679.298  1086  1254 D ASH     : @ 1550.108: tcs3701: start power rail timer, state:3
+         1703830679.338  1086  1254 I ASH     : @ 1550.147: tcs3701: stop power rail pending_off timer
+         1703830679.338  1086  1254 D ASH     : @ 1550.148: tcs3701: start power rail timer, state:3
+         1703830679.378  1086  1254 I ASH     : @ 1550.187: tcs3701: stop power rail pending_off timer
+         1703830679.378  1086  1254 D ASH     : @ 1550.188: tcs3701: start power rail timer, state:3
+         1703830679.418  1086  1254 I ASH     : @ 1550.227: tcs3701: stop power rail pending_off timer
+         1703830679.418  1086  1254 D ASH     : @ 1550.228: tcs3701: start power rail timer, state:3
+         1703830679.458  8829  8829 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8885 0 14 0 121 47 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830679.458  1086  1254 I ASH     : @ 1550.267: tcs3701: stop power rail pending_off timer
+         1703830679.458  1086  1254 D ASH     : @ 1550.268: tcs3701: start power rail timer, state:3
+         1703830679.499  1086  1254 I ASH     : @ 1550.307: tcs3701: stop power rail pending_off timer
+         1703830679.499  1086  1254 D ASH     : @ 1550.308: tcs3701: start power rail timer, state:3
+         1703830679.540  1086  1254 I ASH     : @ 1550.347: tcs3701: stop power rail pending_off timer
+         1703830679.540  1086  1254 D ASH     : @ 1550.348: tcs3701: start power rail timer, state:3
+         1703830679.580  1086  1254 I ASH     : @ 1550.387: tcs3701: stop power rail pending_off timer
+         1703830679.580  1086  1254 D ASH     : @ 1550.388: tcs3701: start power rail timer, state:3
+         1703830679.619  1086  1254 I ASH     : @ 1550.427: tcs3701: stop power rail pending_off timer
+         1703830679.619  1086  1254 D ASH     : @ 1550.428: tcs3701: start power rail timer, state:3
+         1703830679.660  1086  1254 I ASH     : @ 1550.467: tcs3701: stop power rail pending_off timer
+         1703830679.660  1086  1254 D ASH     : @ 1550.468: tcs3701: start power rail timer, state:3
+         1703830679.700  1086  1254 I ASH     : @ 1550.507: tcs3701: stop power rail pending_off timer
+         1703830679.700  1086  1254 D ASH     : @ 1550.508: tcs3701: start power rail timer, state:3
+         1703830679.740  1086  1254 I ASH     : @ 1550.547: tcs3701: stop power rail pending_off timer
+         1703830679.740  1086  1254 D ASH     : @ 1550.548: tcs3701: start power rail timer, state:3
+         1703830679.780  1086  1254 I ASH     : @ 1550.587: tcs3701: stop power rail pending_off timer
+         1703830679.780  1086  1254 D ASH     : @ 1550.588: tcs3701: start power rail timer, state:3
+         1703830679.818  1086  1254 I ASH     : @ 1550.627: tcs3701: stop power rail pending_off timer
+         1703830679.819  1086  1254 D ASH     : @ 1550.628: tcs3701: start power rail timer, state:3
+         1703830679.860  1086  1254 I ASH     : @ 1550.667: tcs3701: stop power rail pending_off timer
+         1703830679.860  1086  1254 D ASH     : @ 1550.668: tcs3701: start power rail timer, state:3
+         1703830679.900  1086  1254 I ASH     : @ 1550.707: tcs3701: stop power rail pending_off timer
+         1703830679.900  1086  1254 D ASH     : @ 1550.708: tcs3701: start power rail timer, state:3
+         1703830679.940  1086  1254 I ASH     : @ 1550.747: tcs3701: stop power rail pending_off timer
+         1703830679.940  1086  1254 D ASH     : @ 1550.748: tcs3701: start power rail timer, state:3
+         1703830679.951  8714  8737 I dashscene: 720 frames over 720 vsyncs
+         1703830679.978  1086  1254 I ASH     : @ 1550.787: tcs3701: stop power rail pending_off timer
+         1703830679.978  1086  1254 D ASH     : @ 1550.788: tcs3701: start power rail timer, state:3
+         1703830679.988  8832  8832 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8885 0 14 0 122 48 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830680.010  3591  3823 I AiAiEcho: Predicting[0]: 
+         1703830680.011  3591  3823 I AiAiEcho: EchoTargets: 
+         1703830680.011  3591  3823 I AiAiEcho: Filtered by AiAi flag check: 
+         1703830680.012  3591  3823 I AiAiEcho: Ranked targets strategy: SORT, count: 0, ranking metadata: 
+         1703830680.017  3591  3823 I AiAiEcho: #postPredictionTargets: Sending updates to UISurface lockscreen with targets# 0 (types=[])
+         1703830680.019  1086  1254 I ASH     : @ 1550.827: tcs3701: stop power rail pending_off timer
+         1703830680.019  1086  1254 D ASH     : @ 1550.828: tcs3701: start power rail timer, state:3
+         1703830680.041  2565  2565 W PageIndicator: Total number of pages invalid: 0. Assuming 1 page.
+         1703830680.058  1086  1254 I ASH     : @ 1550.867: tcs3701: stop power rail pending_off timer
+         1703830680.058  1086  1254 D ASH     : @ 1550.868: tcs3701: start power rail timer, state:3
+         1703830680.098  1086  1254 I ASH     : @ 1550.907: tcs3701: stop power rail pending_off timer
+         1703830680.098  1086  1254 D ASH     : @ 1550.908: tcs3701: start power rail timer, state:3
+         1703830680.138  1086  1254 I ASH     : @ 1550.947: tcs3701: stop power rail pending_off timer
+         1703830680.138  1086  1254 D ASH     : @ 1550.948: tcs3701: start power rail timer, state:3
+         1703830680.178  1086  1254 I ASH     : @ 1550.987: tcs3701: stop power rail pending_off timer
+         1703830680.178  1086  1254 D ASH     : @ 1550.988: tcs3701: start power rail timer, state:3
+         1703830680.220  1086  1254 I ASH     : @ 1551.027: tcs3701: stop power rail pending_off timer
+         1703830680.220  1086  1254 D ASH     : @ 1551.028: tcs3701: start power rail timer, state:3
+         1703830680.260  1086  1254 I ASH     : @ 1551.067: tcs3701: stop power rail pending_off timer
+         1703830680.260  1086  1254 D ASH     : @ 1551.068: tcs3701: start power rail timer, state:3
+         1703830680.298  1086  1254 I ASH     : @ 1551.107: tcs3701: stop power rail pending_off timer
+         1703830680.298  1086  1254 D ASH     : @ 1551.108: tcs3701: start power rail timer, state:3
+         1703830680.340  1086  1254 I ASH     : @ 1551.147: tcs3701: stop power rail pending_off timer
+         1703830680.340  1086  1254 D ASH     : @ 1551.148: tcs3701: start power rail timer, state:3
+         1703830680.380  1086  1254 I ASH     : @ 1551.188: tcs3701: stop power rail pending_off timer
+         1703830680.380  1086  1254 D ASH     : @ 1551.188: tcs3701: start power rail timer, state:3
+         1703830680.420  1086  1254 I ASH     : @ 1551.227: tcs3701: stop power rail pending_off timer
+         1703830680.420  1086  1254 D ASH     : @ 1551.228: tcs3701: start power rail timer, state:3
+         1703830680.458  1086  1254 I ASH     : @ 1551.267: tcs3701: stop power rail pending_off timer
+         1703830680.459  1086  1254 D ASH     : @ 1551.268: tcs3701: start power rail timer, state:3
+         1703830680.498  1086  1254 I ASH     : @ 1551.307: tcs3701: stop power rail pending_off timer
+         1703830680.498  1086  1254 D ASH     : @ 1551.308: tcs3701: start power rail timer, state:3
+         1703830680.518  8835  8835 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8895 0 14 0 125 49 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830680.538  1086  1254 I ASH     : @ 1551.347: tcs3701: stop power rail pending_off timer
+         1703830680.538  1086  1254 D ASH     : @ 1551.348: tcs3701: start power rail timer, state:3
+         1703830680.578  1086  1254 I ASH     : @ 1551.387: tcs3701: stop power rail pending_off timer
+         1703830680.578  1086  1254 D ASH     : @ 1551.388: tcs3701: start power rail timer, state:3
+         1703830680.618  1086  1254 I ASH     : @ 1551.427: tcs3701: stop power rail pending_off timer
+         1703830680.618  1086  1254 D ASH     : @ 1551.428: tcs3701: start power rail timer, state:3
+         1703830680.618  3652  3968 W TimedProcessReaper: Memory state is: 125
+         1703830680.658  1086  1254 I ASH     : @ 1551.467: tcs3701: stop power rail pending_off timer
+         1703830680.658  1086  1254 D ASH     : @ 1551.468: tcs3701: start power rail timer, state:3
+         1703830680.698  1086  1254 I ASH     : @ 1551.507: tcs3701: stop power rail pending_off timer
+         1703830680.698  1086  1254 D ASH     : @ 1551.508: tcs3701: start power rail timer, state:3
+         1703830680.738  1086  1254 I ASH     : @ 1551.547: tcs3701: stop power rail pending_off timer
+         1703830680.739  1086  1254 D ASH     : @ 1551.548: tcs3701: start power rail timer, state:3
+         1703830680.778  1086  1254 I ASH     : @ 1551.587: tcs3701: stop power rail pending_off timer
+         1703830680.778  1086  1254 D ASH     : @ 1551.588: tcs3701: start power rail timer, state:3
+         1703830680.818  1086  1254 I ASH     : @ 1551.627: tcs3701: stop power rail pending_off timer
+         1703830680.818  1086  1254 D ASH     : @ 1551.628: tcs3701: start power rail timer, state:3
+         1703830680.858  1086  1254 I ASH     : @ 1551.667: tcs3701: stop power rail pending_off timer
+         1703830680.858  1086  1254 D ASH     : @ 1551.668: tcs3701: start power rail timer, state:3
+         1703830680.898  1086  1254 I ASH     : @ 1551.707: tcs3701: stop power rail pending_off timer
+         1703830680.898  1086  1254 D ASH     : @ 1551.708: tcs3701: start power rail timer, state:3
+         1703830680.938  1086  1254 I ASH     : @ 1551.747: tcs3701: stop power rail pending_off timer
+         1703830680.938  1086  1254 D ASH     : @ 1551.748: tcs3701: start power rail timer, state:3
+         1703830680.978  1086  1254 I ASH     : @ 1551.787: tcs3701: stop power rail pending_off timer
+         1703830680.978  1086  1254 D ASH     : @ 1551.788: tcs3701: start power rail timer, state:3
+         1703830681.018  1086  1254 I ASH     : @ 1551.827: tcs3701: stop power rail pending_off timer
+         1703830681.018  1086  1254 D ASH     : @ 1551.828: tcs3701: start power rail timer, state:3
+         1703830681.053  8838  8838 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 8959 0 14 0 132 55 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830681.058  1086  1254 I ASH     : @ 1551.867: tcs3701: stop power rail pending_off timer
+         1703830681.058  1086  1254 D ASH     : @ 1551.868: tcs3701: start power rail timer, state:3
+         1703830681.098  1086  1254 I ASH     : @ 1551.907: tcs3701: stop power rail pending_off timer
+         1703830681.098  1086  1254 D ASH     : @ 1551.908: tcs3701: start power rail timer, state:3
+         1703830681.139  1086  1254 I ASH     : @ 1551.947: tcs3701: stop power rail pending_off timer
+         1703830681.139  1086  1254 D ASH     : @ 1551.948: tcs3701: start power rail timer, state:3
+         1703830681.178  1086  1254 I ASH     : @ 1551.987: tcs3701: stop power rail pending_off timer
+         1703830681.178  1086  1254 D ASH     : @ 1551.988: tcs3701: start power rail timer, state:3
+         1703830681.218  1086  1254 I ASH     : @ 1552.027: tcs3701: stop power rail pending_off timer
+         1703830681.218  1086  1254 D ASH     : @ 1552.028: tcs3701: start power rail timer, state:3
+         1703830681.258  1086  1254 I ASH     : @ 1552.067: tcs3701: stop power rail pending_off timer
+         1703830681.258  1086  1254 D ASH     : @ 1552.068: tcs3701: start power rail timer, state:3
+         1703830681.298  1086  1254 I ASH     : @ 1552.107: tcs3701: stop power rail pending_off timer
+         1703830681.298  1086  1254 D ASH     : @ 1552.108: tcs3701: start power rail timer, state:3
+         1703830681.338  1086  1254 I ASH     : @ 1552.147: tcs3701: stop power rail pending_off timer
+         1703830681.338  1086  1254 D ASH     : @ 1552.148: tcs3701: start power rail timer, state:3
+         1703830681.378  1086  1254 I ASH     : @ 1552.187: tcs3701: stop power rail pending_off timer
+         1703830681.378  1086  1254 D ASH     : @ 1552.188: tcs3701: start power rail timer, state:3
+         1703830681.388  1785  2388 D ActivityManager: freezing 3467 com.google.android.apps.wellbeing
+         1703830681.389  1785  2388 D ActivityManager: freezing 3865 com.android.keychain
+         1703830681.390  1785  2388 D ActivityManager: freezing 6938 com.android.settings
+         1703830681.418  1086  1254 I ASH     : @ 1552.227: tcs3701: stop power rail pending_off timer
+         1703830681.418  1086  1254 D ASH     : @ 1552.228: tcs3701: start power rail timer, state:3
+         1703830681.458  1086  1254 I ASH     : @ 1552.267: tcs3701: stop power rail pending_off timer
+         1703830681.458  1086  1254 D ASH     : @ 1552.268: tcs3701: start power rail timer, state:3
+         1703830681.498  1086  1254 I ASH     : @ 1552.307: tcs3701: stop power rail pending_off timer
+         1703830681.498  1086  1254 D ASH     : @ 1552.308: tcs3701: start power rail timer, state:3
+         1703830681.538  1086  1254 I ASH     : @ 1552.347: tcs3701: stop power rail pending_off timer
+         1703830681.538  1086  1254 D ASH     : @ 1552.348: tcs3701: start power rail timer, state:3
+         1703830681.578  1086  1254 I ASH     : @ 1552.387: tcs3701: stop power rail pending_off timer
+         1703830681.578  1086  1254 D ASH     : @ 1552.388: tcs3701: start power rail timer, state:3
+         1703830681.580  8841  8841 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9023 0 14 0 138 58 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830681.618  1086  1254 I ASH     : @ 1552.428: tcs3701: stop power rail pending_off timer
+         1703830681.618  1086  1254 D ASH     : @ 1552.428: tcs3701: start power rail timer, state:3
+         1703830681.658  1086  1254 I ASH     : @ 1552.467: tcs3701: stop power rail pending_off timer
+         1703830681.658  1086  1254 D ASH     : @ 1552.468: tcs3701: start power rail timer, state:3
+         1703830681.698  1086  1254 I ASH     : @ 1552.507: tcs3701: stop power rail pending_off timer
+         1703830681.698  1086  1254 D ASH     : @ 1552.508: tcs3701: start power rail timer, state:3
+         1703830681.738  1086  1254 I ASH     : @ 1552.547: tcs3701: stop power rail pending_off timer
+         1703830681.738  1086  1254 D ASH     : @ 1552.548: tcs3701: start power rail timer, state:3
+         1703830681.778  1086  1254 I ASH     : @ 1552.587: tcs3701: stop power rail pending_off timer
+         1703830681.778  1086  1254 D ASH     : @ 1552.588: tcs3701: start power rail timer, state:3
+         1703830681.818  1086  1254 I ASH     : @ 1552.627: tcs3701: stop power rail pending_off timer
+         1703830681.819  1086  1254 D ASH     : @ 1552.628: tcs3701: start power rail timer, state:3
+         1703830681.858  1086  1254 I ASH     : @ 1552.667: tcs3701: stop power rail pending_off timer
+         1703830681.858  1086  1254 D ASH     : @ 1552.668: tcs3701: start power rail timer, state:3
+         1703830681.898  1086  1254 I ASH     : @ 1552.707: tcs3701: stop power rail pending_off timer
+         1703830681.898  1086  1254 D ASH     : @ 1552.708: tcs3701: start power rail timer, state:3
+         1703830681.938  1086  1254 I ASH     : @ 1552.747: tcs3701: stop power rail pending_off timer
+         1703830681.938  1086  1254 D ASH     : @ 1552.748: tcs3701: start power rail timer, state:3
+         1703830681.979  1086  1254 I ASH     : @ 1552.787: tcs3701: stop power rail pending_off timer
+         1703830681.979  1086  1254 D ASH     : @ 1552.788: tcs3701: start power rail timer, state:3
+         1703830682.019  1086  1254 I ASH     : @ 1552.827: tcs3701: stop power rail pending_off timer
+         1703830682.019  1086  1254 D ASH     : @ 1552.828: tcs3701: start power rail timer, state:3
+         1703830682.059  1086  1254 I ASH     : @ 1552.867: tcs3701: stop power rail pending_off timer
+         1703830682.059  1086  1254 D ASH     : @ 1552.868: tcs3701: start power rail timer, state:3
+         1703830682.098  1086  1254 I ASH     : @ 1552.907: tcs3701: stop power rail pending_off timer
+         1703830682.098  1086  1254 D ASH     : @ 1552.908: tcs3701: start power rail timer, state:3
+         1703830682.110  8844  8844 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9049 0 14 0 142 59 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830682.138  1086  1254 I ASH     : @ 1552.947: tcs3701: stop power rail pending_off timer
+         1703830682.139  1086  1254 D ASH     : @ 1552.948: tcs3701: start power rail timer, state:3
+         1703830682.180  1086  1254 I ASH     : @ 1552.987: tcs3701: stop power rail pending_off timer
+         1703830682.180  1086  1254 D ASH     : @ 1552.988: tcs3701: start power rail timer, state:3
+         1703830682.219  1086  1254 I ASH     : @ 1553.027: tcs3701: stop power rail pending_off timer
+         1703830682.219  1086  1254 D ASH     : @ 1553.028: tcs3701: start power rail timer, state:3
+         1703830682.260  1086  1254 I ASH     : @ 1553.067: tcs3701: stop power rail pending_off timer
+         1703830682.260  1086  1254 D ASH     : @ 1553.068: tcs3701: start power rail timer, state:3
+         1703830682.300  1086  1254 I ASH     : @ 1553.107: tcs3701: stop power rail pending_off timer
+         1703830682.300  1086  1254 D ASH     : @ 1553.108: tcs3701: start power rail timer, state:3
+         1703830682.339  1086  1254 I ASH     : @ 1553.147: tcs3701: stop power rail pending_off timer
+         1703830682.339  1086  1254 D ASH     : @ 1553.148: tcs3701: start power rail timer, state:3
+         1703830682.380  1086  1254 I ASH     : @ 1553.187: tcs3701: stop power rail pending_off timer
+         1703830682.380  1086  1254 D ASH     : @ 1553.188: tcs3701: start power rail timer, state:3
+         1703830682.419  1086  1254 I ASH     : @ 1553.227: tcs3701: stop power rail pending_off timer
+         1703830682.419  1086  1254 D ASH     : @ 1553.228: tcs3701: start power rail timer, state:3
+         1703830682.460  1086  1254 I ASH     : @ 1553.267: tcs3701: stop power rail pending_off timer
+         1703830682.460  1086  1254 D ASH     : @ 1553.268: tcs3701: start power rail timer, state:3
+         1703830682.498  1086  1254 I ASH     : @ 1553.307: tcs3701: stop power rail pending_off timer
+         1703830682.498  1086  1254 D ASH     : @ 1553.308: tcs3701: start power rail timer, state:3
+         1703830682.538  1086  1254 I ASH     : @ 1553.347: tcs3701: stop power rail pending_off timer
+         1703830682.538  1086  1254 D ASH     : @ 1553.348: tcs3701: start power rail timer, state:3
+         1703830682.580  1086  1254 I ASH     : @ 1553.387: tcs3701: stop power rail pending_off timer
+         1703830682.580  1086  1254 D ASH     : @ 1553.388: tcs3701: start power rail timer, state:3
+         1703830682.618  1086  1254 I ASH     : @ 1553.427: tcs3701: stop power rail pending_off timer
+         1703830682.618  1086  1254 D ASH     : @ 1553.428: tcs3701: start power rail timer, state:3
+         1703830682.641  8847  8847 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9049 0 14 0 142 61 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830682.658  1086  1254 I ASH     : @ 1553.467: tcs3701: stop power rail pending_off timer
+         1703830682.658  1086  1254 D ASH     : @ 1553.468: tcs3701: start power rail timer, state:3
+         1703830682.699  1086  1254 I ASH     : @ 1553.507: tcs3701: stop power rail pending_off timer
+         1703830682.700  1086  1254 D ASH     : @ 1553.508: tcs3701: start power rail timer, state:3
+         1703830682.740  1086  1254 I ASH     : @ 1553.547: tcs3701: stop power rail pending_off timer
+         1703830682.740  1086  1254 D ASH     : @ 1553.548: tcs3701: start power rail timer, state:3
+         1703830682.780  1086  1254 I ASH     : @ 1553.587: tcs3701: stop power rail pending_off timer
+         1703830682.780  1086  1254 D ASH     : @ 1553.588: tcs3701: start power rail timer, state:3
+         1703830682.819  1086  1254 I ASH     : @ 1553.627: tcs3701: stop power rail pending_off timer
+         1703830682.819  1086  1254 D ASH     : @ 1553.628: tcs3701: start power rail timer, state:3
+         1703830682.860  1086  1254 I ASH     : @ 1553.667: tcs3701: stop power rail pending_off timer
+         1703830682.860  1086  1254 D ASH     : @ 1553.668: tcs3701: start power rail timer, state:3
+         1703830682.898  1086  1254 I ASH     : @ 1553.707: tcs3701: stop power rail pending_off timer
+         1703830682.898  1086  1254 D ASH     : @ 1553.708: tcs3701: start power rail timer, state:3
+         1703830682.938  1086  1254 I ASH     : @ 1553.747: tcs3701: stop power rail pending_off timer
+         1703830682.938  1086  1254 D ASH     : @ 1553.748: tcs3701: start power rail timer, state:3
+         1703830682.978  1086  1254 I ASH     : @ 1553.787: tcs3701: stop power rail pending_off timer
+         1703830682.978  1086  1254 D ASH     : @ 1553.788: tcs3701: start power rail timer, state:3
+         1703830683.018  1086  1254 I ASH     : @ 1553.827: tcs3701: stop power rail pending_off timer
+         1703830683.018  1086  1254 D ASH     : @ 1553.828: tcs3701: start power rail timer, state:3
+         1703830683.058  1086  1254 I ASH     : @ 1553.867: tcs3701: stop power rail pending_off timer
+         1703830683.058  1086  1254 D ASH     : @ 1553.868: tcs3701: start power rail timer, state:3
+         1703830683.098  1086  1254 I ASH     : @ 1553.907: tcs3701: stop power rail pending_off timer
+         1703830683.098  1086  1254 D ASH     : @ 1553.908: tcs3701: start power rail timer, state:3
+         1703830683.138  1086  1254 I ASH     : @ 1553.947: tcs3701: stop power rail pending_off timer
+         1703830683.139  1086  1254 D ASH     : @ 1553.948: tcs3701: start power rail timer, state:3
+         1703830683.171  8853  8853 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9075 0 14 0 147 63 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830683.178  1086  1254 I ASH     : @ 1553.987: tcs3701: stop power rail pending_off timer
+         1703830683.178  1086  1254 D ASH     : @ 1553.988: tcs3701: start power rail timer, state:3
+         1703830683.218  1086  1254 I ASH     : @ 1554.027: tcs3701: stop power rail pending_off timer
+         1703830683.218  1086  1254 D ASH     : @ 1554.028: tcs3701: start power rail timer, state:3
+         1703830683.258  1086  1254 I ASH     : @ 1554.067: tcs3701: stop power rail pending_off timer
+         1703830683.258  1086  1254 D ASH     : @ 1554.068: tcs3701: start power rail timer, state:3
+         1703830683.298  1086  1254 I ASH     : @ 1554.107: tcs3701: stop power rail pending_off timer
+         1703830683.298  1086  1254 D ASH     : @ 1554.108: tcs3701: start power rail timer, state:3
+         1703830683.338  1086  1254 I ASH     : @ 1554.147: tcs3701: stop power rail pending_off timer
+         1703830683.338  1086  1254 D ASH     : @ 1554.148: tcs3701: start power rail timer, state:3
+         1703830683.378  1086  1254 I ASH     : @ 1554.187: tcs3701: stop power rail pending_off timer
+         1703830683.378  1086  1254 D ASH     : @ 1554.188: tcs3701: start power rail timer, state:3
+         1703830683.418  1086  1254 I ASH     : @ 1554.227: tcs3701: stop power rail pending_off timer
+         1703830683.418  1086  1254 D ASH     : @ 1554.228: tcs3701: start power rail timer, state:3
+         1703830683.458  1086  1254 I ASH     : @ 1554.267: tcs3701: stop power rail pending_off timer
+         1703830683.458  1086  1254 D ASH     : @ 1554.268: tcs3701: start power rail timer, state:3
+         1703830683.498  1086  1254 I ASH     : @ 1554.307: tcs3701: stop power rail pending_off timer
+         1703830683.498  1086  1254 D ASH     : @ 1554.308: tcs3701: start power rail timer, state:3
+         1703830683.538  1086  1254 I ASH     : @ 1554.347: tcs3701: stop power rail pending_off timer
+         1703830683.538  1086  1254 D ASH     : @ 1554.348: tcs3701: start power rail timer, state:3
+         1703830683.578  1086  1254 I ASH     : @ 1554.387: tcs3701: stop power rail pending_off timer
+         1703830683.578  1086  1254 D ASH     : @ 1554.388: tcs3701: start power rail timer, state:3
+         1703830683.618  1086  1254 I ASH     : @ 1554.427: tcs3701: stop power rail pending_off timer
+         1703830683.618  1086  1254 D ASH     : @ 1554.428: tcs3701: start power rail timer, state:3
+         1703830683.658  1086  1254 I ASH     : @ 1554.467: tcs3701: stop power rail pending_off timer
+         1703830683.658  1086  1254 D ASH     : @ 1554.468: tcs3701: start power rail timer, state:3
+         1703830683.698  1086  1254 I ASH     : @ 1554.507: tcs3701: stop power rail pending_off timer
+         1703830683.698  1086  1254 D ASH     : @ 1554.508: tcs3701: start power rail timer, state:3
+         1703830683.701  8856  8856 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9139 0 14 0 156 64 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830683.738  1086  1254 I ASH     : @ 1554.547: tcs3701: stop power rail pending_off timer
+         1703830683.738  1086  1254 D ASH     : @ 1554.548: tcs3701: start power rail timer, state:3
+         1703830683.778  1086  1254 I ASH     : @ 1554.587: tcs3701: stop power rail pending_off timer
+         1703830683.778  1086  1254 D ASH     : @ 1554.588: tcs3701: start power rail timer, state:3
+         1703830683.818  1086  1254 I ASH     : @ 1554.627: tcs3701: stop power rail pending_off timer
+         1703830683.818  1086  1254 D ASH     : @ 1554.628: tcs3701: start power rail timer, state:3
+         1703830683.858  1086  1254 I ASH     : @ 1554.667: tcs3701: stop power rail pending_off timer
+         1703830683.858  1086  1254 D ASH     : @ 1554.668: tcs3701: start power rail timer, state:3
+         1703830683.898  1086  1254 I ASH     : @ 1554.707: tcs3701: stop power rail pending_off timer
+         1703830683.899  1086  1254 D ASH     : @ 1554.708: tcs3701: start power rail timer, state:3
+         1703830683.938  1086  1254 I ASH     : @ 1554.747: tcs3701: stop power rail pending_off timer
+         1703830683.938  1086  1254 D ASH     : @ 1554.748: tcs3701: start power rail timer, state:3
+         1703830683.964  8714  8737 I dashscene: 960 frames over 960 vsyncs
+         1703830683.978  1086  1254 I ASH     : @ 1554.787: tcs3701: stop power rail pending_off timer
+         1703830683.978  1086  1254 D ASH     : @ 1554.788: tcs3701: start power rail timer, state:3
+         1703830684.018  1086  1254 I ASH     : @ 1554.827: tcs3701: stop power rail pending_off timer
+         1703830684.018  1086  1254 D ASH     : @ 1554.828: tcs3701: start power rail timer, state:3
+         1703830684.058  1086  1254 I ASH     : @ 1554.867: tcs3701: stop power rail pending_off timer
+         1703830684.058  1086  1254 D ASH     : @ 1554.868: tcs3701: start power rail timer, state:3
+         1703830684.098  1086  1254 I ASH     : @ 1554.907: tcs3701: stop power rail pending_off timer
+         1703830684.098  1086  1254 D ASH     : @ 1554.908: tcs3701: start power rail timer, state:3
+         1703830684.138  1086  1254 I ASH     : @ 1554.947: tcs3701: stop power rail pending_off timer
+         1703830684.138  1086  1254 D ASH     : @ 1554.948: tcs3701: start power rail timer, state:3
+         1703830684.178  1086  1254 I ASH     : @ 1554.987: tcs3701: stop power rail pending_off timer
+         1703830684.178  1086  1254 D ASH     : @ 1554.988: tcs3701: start power rail timer, state:3
+         1703830684.214  8714  8737 I dashscene: typography over 240 frames — tick 0.36 ms, paint mean 0.09 p50 0.09, present mean 7.26 p50 9.43 p95 10.71 max 13.96 ms (129.6 fps if unpaced) — 8 run(s), 446 glyph(s)
+         1703830684.218  1086  1254 I ASH     : @ 1555.027: tcs3701: stop power rail pending_off timer
+         1703830684.218  1086  1254 D ASH     : @ 1555.028: tcs3701: start power rail timer, state:3
+         1703830684.229  8859  8859 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9203 0 14 0 164 68 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830684.258  1086  1254 I ASH     : @ 1555.067: tcs3701: stop power rail pending_off timer
+         1703830684.258  1086  1254 D ASH     : @ 1555.068: tcs3701: start power rail timer, state:3
+         1703830684.298  1086  1254 I ASH     : @ 1555.107: tcs3701: stop power rail pending_off timer
+         1703830684.298  1086  1254 D ASH     : @ 1555.108: tcs3701: start power rail timer, state:3
+         1703830684.338  1086  1254 I ASH     : @ 1555.147: tcs3701: stop power rail pending_off timer
+         1703830684.338  1086  1254 D ASH     : @ 1555.148: tcs3701: start power rail timer, state:3
+         1703830684.378  1086  1254 I ASH     : @ 1555.187: tcs3701: stop power rail pending_off timer
+         1703830684.378  1086  1254 D ASH     : @ 1555.188: tcs3701: start power rail timer, state:3
+         1703830684.418  1086  1254 I ASH     : @ 1555.227: tcs3701: stop power rail pending_off timer
+         1703830684.419  1086  1254 D ASH     : @ 1555.228: tcs3701: start power rail timer, state:3
+         1703830684.460  1086  1254 I ASH     : @ 1555.267: tcs3701: stop power rail pending_off timer
+         1703830684.460  1086  1254 D ASH     : @ 1555.268: tcs3701: start power rail timer, state:3
+         1703830684.499  1086  1254 I ASH     : @ 1555.307: tcs3701: stop power rail pending_off timer
+         1703830684.499  1086  1254 D ASH     : @ 1555.308: tcs3701: start power rail timer, state:3
+         1703830684.538  1086  1254 I ASH     : @ 1555.347: tcs3701: stop power rail pending_off timer
+         1703830684.538  1086  1254 D ASH     : @ 1555.348: tcs3701: start power rail timer, state:3
+         1703830684.580  1086  1254 I ASH     : @ 1555.387: tcs3701: stop power rail pending_off timer
+         1703830684.580  1086  1254 D ASH     : @ 1555.388: tcs3701: start power rail timer, state:3
+         1703830684.620  1086  1254 I ASH     : @ 1555.427: tcs3701: stop power rail pending_off timer
+         1703830684.620  1086  1254 D ASH     : @ 1555.428: tcs3701: start power rail timer, state:3
+         1703830684.660  1086  1254 I ASH     : @ 1555.467: tcs3701: stop power rail pending_off timer
+         1703830684.660  1086  1254 D ASH     : @ 1555.468: tcs3701: start power rail timer, state:3
+         1703830684.700  1086  1254 I ASH     : @ 1555.507: tcs3701: stop power rail pending_off timer
+         1703830684.700  1086  1254 D ASH     : @ 1555.508: tcs3701: start power rail timer, state:3
+         1703830684.738  1086  1254 I ASH     : @ 1555.547: tcs3701: stop power rail pending_off timer
+         1703830684.739  1086  1254 D ASH     : @ 1555.548: tcs3701: start power rail timer, state:3
+         1703830684.762  8862  8862 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9207 0 14 0 166 68 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830684.778  1086  1254 I ASH     : @ 1555.587: tcs3701: stop power rail pending_off timer
+         1703830684.778  1086  1254 D ASH     : @ 1555.588: tcs3701: start power rail timer, state:3
+         1703830684.820  1086  1254 I ASH     : @ 1555.627: tcs3701: stop power rail pending_off timer
+         1703830684.820  1086  1254 D ASH     : @ 1555.628: tcs3701: start power rail timer, state:3
+         1703830684.860  1086  1254 I ASH     : @ 1555.667: tcs3701: stop power rail pending_off timer
+         1703830684.860  1086  1254 D ASH     : @ 1555.668: tcs3701: start power rail timer, state:3
+         1703830684.900  1086  1254 I ASH     : @ 1555.707: tcs3701: stop power rail pending_off timer
+         1703830684.900  1086  1254 D ASH     : @ 1555.708: tcs3701: start power rail timer, state:3
+         1703830684.939  1086  1254 I ASH     : @ 1555.747: tcs3701: stop power rail pending_off timer
+         1703830684.939  1086  1254 D ASH     : @ 1555.748: tcs3701: start power rail timer, state:3
+         1703830684.980  1086  1254 I ASH     : @ 1555.787: tcs3701: stop power rail pending_off timer
+         1703830684.980  1086  1254 D ASH     : @ 1555.788: tcs3701: start power rail timer, state:3
+         1703830685.020  1086  1254 I ASH     : @ 1555.827: tcs3701: stop power rail pending_off timer
+         1703830685.020  1086  1254 D ASH     : @ 1555.828: tcs3701: start power rail timer, state:3
+         1703830685.059  1086  1254 I ASH     : @ 1555.867: tcs3701: stop power rail pending_off timer
+         1703830685.059  1086  1254 D ASH     : @ 1555.868: tcs3701: start power rail timer, state:3
+         1703830685.100  1086  1254 I ASH     : @ 1555.907: tcs3701: stop power rail pending_off timer
+         1703830685.100  1086  1254 D ASH     : @ 1555.908: tcs3701: start power rail timer, state:3
+         1703830685.139  1086  1254 I ASH     : @ 1555.947: tcs3701: stop power rail pending_off timer
+         1703830685.139  1086  1254 D ASH     : @ 1555.948: tcs3701: start power rail timer, state:3
+         1703830685.180  1086  1254 I ASH     : @ 1555.987: tcs3701: stop power rail pending_off timer
+         1703830685.180  1086  1254 D ASH     : @ 1555.988: tcs3701: start power rail timer, state:3
+         1703830685.220  1086  1254 I ASH     : @ 1556.027: tcs3701: stop power rail pending_off timer
+         1703830685.220  1086  1254 D ASH     : @ 1556.028: tcs3701: start power rail timer, state:3
+         1703830685.260  1086  1254 I ASH     : @ 1556.067: tcs3701: stop power rail pending_off timer
+         1703830685.260  1086  1254 D ASH     : @ 1556.068: tcs3701: start power rail timer, state:3
+         1703830685.291  8865  8865 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9207 0 14 0 167 69 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830685.298  1086  1254 I ASH     : @ 1556.107: tcs3701: stop power rail pending_off timer
+         1703830685.298  1086  1254 D ASH     : @ 1556.108: tcs3701: start power rail timer, state:3
+         1703830685.339  1086  1254 I ASH     : @ 1556.148: tcs3701: stop power rail pending_off timer
+         1703830685.339  1086  1254 D ASH     : @ 1556.148: tcs3701: start power rail timer, state:3
+         1703830685.359  1785  2388 D ActivityManager: freezing 3094 com.google.android.cellbroadcastreceiver
+         1703830685.378  1086  1254 I ASH     : @ 1556.187: tcs3701: stop power rail pending_off timer
+         1703830685.378  1086  1254 D ASH     : @ 1556.188: tcs3701: start power rail timer, state:3
+         1703830685.420  1086  1254 I ASH     : @ 1556.227: tcs3701: stop power rail pending_off timer
+         1703830685.420  1086  1254 D ASH     : @ 1556.228: tcs3701: start power rail timer, state:3
+         1703830685.458  1086  1254 I ASH     : @ 1556.267: tcs3701: stop power rail pending_off timer
+         1703830685.458  1086  1254 D ASH     : @ 1556.268: tcs3701: start power rail timer, state:3
+         1703830685.498  1086  1254 I ASH     : @ 1556.307: tcs3701: stop power rail pending_off timer
+         1703830685.498  1086  1254 D ASH     : @ 1556.308: tcs3701: start power rail timer, state:3
+         1703830685.538  1086  1254 I ASH     : @ 1556.347: tcs3701: stop power rail pending_off timer
+         1703830685.538  1086  1254 D ASH     : @ 1556.348: tcs3701: start power rail timer, state:3
+         1703830685.578  1086  1254 I ASH     : @ 1556.387: tcs3701: stop power rail pending_off timer
+         1703830685.578  1086  1254 D ASH     : @ 1556.388: tcs3701: start power rail timer, state:3
+         1703830685.618  1086  1254 I ASH     : @ 1556.427: tcs3701: stop power rail pending_off timer
+         1703830685.618  1086  1254 D ASH     : @ 1556.428: tcs3701: start power rail timer, state:3
+         1703830685.658  1086  1254 I ASH     : @ 1556.467: tcs3701: stop power rail pending_off timer
+         1703830685.658  1086  1254 D ASH     : @ 1556.468: tcs3701: start power rail timer, state:3
+         1703830685.698  1086  1254 I ASH     : @ 1556.507: tcs3701: stop power rail pending_off timer
+         1703830685.698  1086  1254 D ASH     : @ 1556.508: tcs3701: start power rail timer, state:3
+         1703830685.738  1086  1254 I ASH     : @ 1556.547: tcs3701: stop power rail pending_off timer
+         1703830685.738  1086  1254 D ASH     : @ 1556.548: tcs3701: start power rail timer, state:3
+         1703830685.778  1086  1254 I ASH     : @ 1556.587: tcs3701: stop power rail pending_off timer
+         1703830685.778  1086  1254 D ASH     : @ 1556.588: tcs3701: start power rail timer, state:3
+         1703830685.818  1086  1254 I ASH     : @ 1556.627: tcs3701: stop power rail pending_off timer
+         1703830685.818  1086  1254 D ASH     : @ 1556.628: tcs3701: start power rail timer, state:3
+         1703830685.822  8868  8868 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9251 0 14 0 174 71 0 0 10 -10 18 0 153553 15683682304 39287 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830685.858  1086  1254 I ASH     : @ 1556.667: tcs3701: stop power rail pending_off timer
+         1703830685.858  1086  1254 D ASH     : @ 1556.668: tcs3701: start power rail timer, state:3
+         1703830685.898  1086  1254 I ASH     : @ 1556.707: tcs3701: stop power rail pending_off timer
+         1703830685.898  1086  1254 D ASH     : @ 1556.708: tcs3701: start power rail timer, state:3
+         1703830685.938  1086  1254 I ASH     : @ 1556.747: tcs3701: stop power rail pending_off timer
+         1703830685.938  1086  1254 D ASH     : @ 1556.748: tcs3701: start power rail timer, state:3
+         1703830685.978  1086  1254 I ASH     : @ 1556.787: tcs3701: stop power rail pending_off timer
+         1703830685.978  1086  1254 D ASH     : @ 1556.788: tcs3701: start power rail timer, state:3
+         1703830686.018  1086  1254 I ASH     : @ 1556.827: tcs3701: stop power rail pending_off timer
+         1703830686.018  1086  1254 D ASH     : @ 1556.828: tcs3701: start power rail timer, state:3
+         1703830686.058  1086  1254 I ASH     : @ 1556.867: tcs3701: stop power rail pending_off timer
+         1703830686.058  1086  1254 D ASH     : @ 1556.868: tcs3701: start power rail timer, state:3
+         1703830686.098  1086  1254 I ASH     : @ 1556.907: tcs3701: stop power rail pending_off timer
+         1703830686.098  1086  1254 D ASH     : @ 1556.908: tcs3701: start power rail timer, state:3
+         1703830686.138  1086  1254 I ASH     : @ 1556.947: tcs3701: stop power rail pending_off timer
+         1703830686.138  1086  1254 D ASH     : @ 1556.948: tcs3701: start power rail timer, state:3
+         1703830686.178  1086  1254 I ASH     : @ 1556.987: tcs3701: stop power rail pending_off timer
+         1703830686.178  1086  1254 D ASH     : @ 1556.988: tcs3701: start power rail timer, state:3
+         1703830686.218  1086  1254 I ASH     : @ 1557.027: tcs3701: stop power rail pending_off timer
+         1703830686.218  1086  1254 D ASH     : @ 1557.028: tcs3701: start power rail timer, state:3
+         1703830686.258  1086  1254 I ASH     : @ 1557.067: tcs3701: stop power rail pending_off timer
+         1703830686.258  1086  1254 D ASH     : @ 1557.068: tcs3701: start power rail timer, state:3
+         1703830686.298  1086  1254 I ASH     : @ 1557.107: tcs3701: stop power rail pending_off timer
+         1703830686.298  1086  1254 D ASH     : @ 1557.108: tcs3701: start power rail timer, state:3
+         1703830686.338  1086  1254 I ASH     : @ 1557.147: tcs3701: stop power rail pending_off timer
+         1703830686.338  1086  1254 D ASH     : @ 1557.148: tcs3701: start power rail timer, state:3
+         1703830686.352  8871  8871 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9316 0 14 0 180 74 0 0 10 -10 18 0 153553 15683682304 39288 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830686.378  1086  1254 I ASH     : @ 1557.187: tcs3701: stop power rail pending_off timer
+         1703830686.378  1086  1254 D ASH     : @ 1557.188: tcs3701: start power rail timer, state:3
+         1703830686.418  1086  1254 I ASH     : @ 1557.227: tcs3701: stop power rail pending_off timer
+         1703830686.418  1086  1254 D ASH     : @ 1557.228: tcs3701: start power rail timer, state:3
+         1703830686.458  1086  1254 I ASH     : @ 1557.267: tcs3701: stop power rail pending_off timer
+         1703830686.458  1086  1254 D ASH     : @ 1557.268: tcs3701: start power rail timer, state:3
+         1703830686.498  1086  1254 I ASH     : @ 1557.307: tcs3701: stop power rail pending_off timer
+         1703830686.498  1086  1254 D ASH     : @ 1557.308: tcs3701: start power rail timer, state:3
+         1703830686.538  1086  1254 I ASH     : @ 1557.347: tcs3701: stop power rail pending_off timer
+         1703830686.538  1086  1254 D ASH     : @ 1557.348: tcs3701: start power rail timer, state:3
+         1703830686.578  1086  1254 I ASH     : @ 1557.387: tcs3701: stop power rail pending_off timer
+         1703830686.578  1086  1254 D ASH     : @ 1557.388: tcs3701: start power rail timer, state:3
+         1703830686.618  1086  1254 I ASH     : @ 1557.427: tcs3701: stop power rail pending_off timer
+         1703830686.619  1086  1254 D ASH     : @ 1557.428: tcs3701: start power rail timer, state:3
+         1703830686.658  1086  1254 I ASH     : @ 1557.467: tcs3701: stop power rail pending_off timer
+         1703830686.658  1086  1254 D ASH     : @ 1557.468: tcs3701: start power rail timer, state:3
+         1703830686.698  1086  1254 I ASH     : @ 1557.507: tcs3701: stop power rail pending_off timer
+         1703830686.698  1086  1254 D ASH     : @ 1557.508: tcs3701: start power rail timer, state:3
+         1703830686.738  1086  1254 I ASH     : @ 1557.547: tcs3701: stop power rail pending_off timer
+         1703830686.738  1086  1254 D ASH     : @ 1557.548: tcs3701: start power rail timer, state:3
+         1703830686.778  1086  1254 I ASH     : @ 1557.587: tcs3701: stop power rail pending_off timer
+         1703830686.778  1086  1254 D ASH     : @ 1557.588: tcs3701: start power rail timer, state:3
+         1703830686.818  1086  1254 I ASH     : @ 1557.627: tcs3701: stop power rail pending_off timer
+         1703830686.818  1086  1254 D ASH     : @ 1557.628: tcs3701: start power rail timer, state:3
+         1703830686.858  1086  1254 I ASH     : @ 1557.668: tcs3701: stop power rail pending_off timer
+         1703830686.858  1086  1254 D ASH     : @ 1557.668: tcs3701: start power rail timer, state:3
+         1703830686.882  8874  8874 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9362 0 14 0 187 77 0 0 10 -10 18 0 153553 15683682304 39288 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830686.898  1086  1254 I ASH     : @ 1557.707: tcs3701: stop power rail pending_off timer
+         1703830686.898  1086  1254 D ASH     : @ 1557.708: tcs3701: start power rail timer, state:3
+         1703830686.938  1086  1254 I ASH     : @ 1557.747: tcs3701: stop power rail pending_off timer
+         1703830686.938  1086  1254 D ASH     : @ 1557.748: tcs3701: start power rail timer, state:3
+         1703830686.980  1086  1254 I ASH     : @ 1557.787: tcs3701: stop power rail pending_off timer
+         1703830686.980  1086  1254 D ASH     : @ 1557.788: tcs3701: start power rail timer, state:3
+         1703830687.020  1086  1254 I ASH     : @ 1557.827: tcs3701: stop power rail pending_off timer
+         1703830687.020  1086  1254 D ASH     : @ 1557.828: tcs3701: start power rail timer, state:3
+         1703830687.059  1086  1254 I ASH     : @ 1557.867: tcs3701: stop power rail pending_off timer
+         1703830687.059  1086  1254 D ASH     : @ 1557.868: tcs3701: start power rail timer, state:3
+         1703830687.100  1086  1254 I ASH     : @ 1557.907: tcs3701: stop power rail pending_off timer
+         1703830687.100  1086  1254 D ASH     : @ 1557.908: tcs3701: start power rail timer, state:3
+         1703830687.140  1086  1254 I ASH     : @ 1557.947: tcs3701: stop power rail pending_off timer
+         1703830687.140  1086  1254 D ASH     : @ 1557.948: tcs3701: start power rail timer, state:3
+         1703830687.180  1086  1254 I ASH     : @ 1557.987: tcs3701: stop power rail pending_off timer
+         1703830687.180  1086  1254 D ASH     : @ 1557.988: tcs3701: start power rail timer, state:3
+         1703830687.220  1086  1254 I ASH     : @ 1558.027: tcs3701: stop power rail pending_off timer
+         1703830687.220  1086  1254 D ASH     : @ 1558.028: tcs3701: start power rail timer, state:3
+         1703830687.258  1086  1254 I ASH     : @ 1558.067: tcs3701: stop power rail pending_off timer
+         1703830687.259  1086  1254 D ASH     : @ 1558.068: tcs3701: start power rail timer, state:3
+         1703830687.300  1086  1254 I ASH     : @ 1558.107: tcs3701: stop power rail pending_off timer
+         1703830687.300  1086  1254 D ASH     : @ 1558.108: tcs3701: start power rail timer, state:3
+         1703830687.340  1086  1254 I ASH     : @ 1558.147: tcs3701: stop power rail pending_off timer
+         1703830687.340  1086  1254 D ASH     : @ 1558.148: tcs3701: start power rail timer, state:3
+         1703830687.380  1086  1254 I ASH     : @ 1558.187: tcs3701: stop power rail pending_off timer
+         1703830687.380  1086  1254 D ASH     : @ 1558.188: tcs3701: start power rail timer, state:3
+         1703830687.413  8877  8877 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9362 0 14 0 188 77 0 0 10 -10 18 0 153553 15683682304 39288 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830687.418  1086  1254 I ASH     : @ 1558.227: tcs3701: stop power rail pending_off timer
+         1703830687.418  1086  1254 D ASH     : @ 1558.228: tcs3701: start power rail timer, state:3
+         1703830687.459  1086  1254 I ASH     : @ 1558.267: tcs3701: stop power rail pending_off timer
+         1703830687.459  1086  1254 D ASH     : @ 1558.268: tcs3701: start power rail timer, state:3
+         1703830687.500  1086  1254 I ASH     : @ 1558.308: tcs3701: stop power rail pending_off timer
+         1703830687.500  1086  1254 D ASH     : @ 1558.308: tcs3701: start power rail timer, state:3
+         1703830687.540  1086  1254 I ASH     : @ 1558.347: tcs3701: stop power rail pending_off timer
+         1703830687.540  1086  1254 D ASH     : @ 1558.348: tcs3701: start power rail timer, state:3
+         1703830687.580  1086  1254 I ASH     : @ 1558.387: tcs3701: stop power rail pending_off timer
+         1703830687.580  1086  1254 D ASH     : @ 1558.388: tcs3701: start power rail timer, state:3
+         1703830687.620  1086  1254 I ASH     : @ 1558.427: tcs3701: stop power rail pending_off timer
+         1703830687.620  1086  1254 D ASH     : @ 1558.428: tcs3701: start power rail timer, state:3
+         1703830687.658  1086  1254 I ASH     : @ 1558.467: tcs3701: stop power rail pending_off timer
+         1703830687.659  1086  1254 D ASH     : @ 1558.468: tcs3701: start power rail timer, state:3
+         1703830687.700  1086  1254 I ASH     : @ 1558.507: tcs3701: stop power rail pending_off timer
+         1703830687.700  1086  1254 D ASH     : @ 1558.508: tcs3701: start power rail timer, state:3
+         1703830687.738  1086  1254 I ASH     : @ 1558.547: tcs3701: stop power rail pending_off timer
+         1703830687.738  1086  1254 D ASH     : @ 1558.548: tcs3701: start power rail timer, state:3
+         1703830687.779  1086  1254 I ASH     : @ 1558.587: tcs3701: stop power rail pending_off timer
+         1703830687.780  1086  1254 D ASH     : @ 1558.588: tcs3701: start power rail timer, state:3
+         1703830687.820  1086  1254 I ASH     : @ 1558.627: tcs3701: stop power rail pending_off timer
+         1703830687.820  1086  1254 D ASH     : @ 1558.628: tcs3701: start power rail timer, state:3
+         1703830687.859  1086  1254 I ASH     : @ 1558.667: tcs3701: stop power rail pending_off timer
+         1703830687.859  1086  1254 D ASH     : @ 1558.668: tcs3701: start power rail timer, state:3
+         1703830687.900  1086  1254 I ASH     : @ 1558.707: tcs3701: stop power rail pending_off timer
+         1703830687.900  1086  1254 D ASH     : @ 1558.708: tcs3701: start power rail timer, state:3
+         1703830687.938  1086  1254 I ASH     : @ 1558.747: tcs3701: stop power rail pending_off timer
+         1703830687.938  1086  1254 D ASH     : @ 1558.748: tcs3701: start power rail timer, state:3
+         1703830687.943  8880  8880 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9364 0 14 0 190 79 0 0 10 -10 18 0 153553 15683682304 39288 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830687.958  8714  8737 I dashscene: 1200 frames over 1200 vsyncs
+         1703830687.978  1086  1254 I ASH     : @ 1558.787: tcs3701: stop power rail pending_off timer
+         1703830687.978  1086  1254 D ASH     : @ 1558.788: tcs3701: start power rail timer, state:3
+         1703830688.018  1086  1254 I ASH     : @ 1558.827: tcs3701: stop power rail pending_off timer
+         1703830688.018  1086  1254 D ASH     : @ 1558.828: tcs3701: start power rail timer, state:3
+         1703830688.058  1086  1254 I ASH     : @ 1558.867: tcs3701: stop power rail pending_off timer
+         1703830688.058  1086  1254 D ASH     : @ 1558.868: tcs3701: start power rail timer, state:3
+         1703830688.098  1086  1254 I ASH     : @ 1558.907: tcs3701: stop power rail pending_off timer
+         1703830688.098  1086  1254 D ASH     : @ 1558.908: tcs3701: start power rail timer, state:3
+         1703830688.138  1086  1254 I ASH     : @ 1558.947: tcs3701: stop power rail pending_off timer
+         1703830688.138  1086  1254 D ASH     : @ 1558.948: tcs3701: start power rail timer, state:3
+         1703830688.178  1086  1254 I ASH     : @ 1558.987: tcs3701: stop power rail pending_off timer
+         1703830688.178  1086  1254 D ASH     : @ 1558.988: tcs3701: start power rail timer, state:3
+         1703830688.218  1086  1254 I ASH     : @ 1559.027: tcs3701: stop power rail pending_off timer
+         1703830688.218  1086  1254 D ASH     : @ 1559.028: tcs3701: start power rail timer, state:3
+         1703830688.258  1086  1254 I ASH     : @ 1559.067: tcs3701: stop power rail pending_off timer
+         1703830688.258  1086  1254 D ASH     : @ 1559.068: tcs3701: start power rail timer, state:3
+         1703830688.298  1086  1254 I ASH     : @ 1559.107: tcs3701: stop power rail pending_off timer
+         1703830688.298  1086  1254 D ASH     : @ 1559.108: tcs3701: start power rail timer, state:3
+         1703830688.338  1086  1254 I ASH     : @ 1559.147: tcs3701: stop power rail pending_off timer
+         1703830688.338  1086  1254 D ASH     : @ 1559.148: tcs3701: start power rail timer, state:3
+         1703830688.378  1086  1254 I ASH     : @ 1559.187: tcs3701: stop power rail pending_off timer
+         1703830688.378  1086  1254 D ASH     : @ 1559.188: tcs3701: start power rail timer, state:3
+         1703830688.418  1086  1254 I ASH     : @ 1559.227: tcs3701: stop power rail pending_off timer
+         1703830688.418  1086  1254 D ASH     : @ 1559.228: tcs3701: start power rail timer, state:3
+         1703830688.458  1086  1254 I ASH     : @ 1559.267: tcs3701: stop power rail pending_off timer
+         1703830688.458  1086  1254 D ASH     : @ 1559.268: tcs3701: start power rail timer, state:3
+         1703830688.484  8886  8886 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9430 0 14 0 198 82 0 0 10 -10 18 0 153553 15683690496 39288 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830688.498  1086  1254 I ASH     : @ 1559.307: tcs3701: stop power rail pending_off timer
+         1703830688.498  1086  1254 D ASH     : @ 1559.308: tcs3701: start power rail timer, state:3
+         1703830688.538  1086  1254 I ASH     : @ 1559.347: tcs3701: stop power rail pending_off timer
+         1703830688.538  1086  1254 D ASH     : @ 1559.348: tcs3701: start power rail timer, state:3
+         1703830688.578  1086  1254 I ASH     : @ 1559.387: tcs3701: stop power rail pending_off timer
+         1703830688.578  1086  1254 D ASH     : @ 1559.388: tcs3701: start power rail timer, state:3
+         1703830688.618  1086  1254 I ASH     : @ 1559.427: tcs3701: stop power rail pending_off timer
+         1703830688.618  1086  1254 D ASH     : @ 1559.428: tcs3701: start power rail timer, state:3
+         1703830688.658  1086  1254 I ASH     : @ 1559.467: tcs3701: stop power rail pending_off timer
+         1703830688.658  1086  1254 D ASH     : @ 1559.468: tcs3701: start power rail timer, state:3
+         1703830688.698  1086  1254 I ASH     : @ 1559.507: tcs3701: stop power rail pending_off timer
+         1703830688.698  1086  1254 D ASH     : @ 1559.508: tcs3701: start power rail timer, state:3
+         1703830688.738  1086  1254 I ASH     : @ 1559.547: tcs3701: stop power rail pending_off timer
+         1703830688.738  1086  1254 D ASH     : @ 1559.548: tcs3701: start power rail timer, state:3
+         1703830688.778  1086  1254 I ASH     : @ 1559.587: tcs3701: stop power rail pending_off timer
+         1703830688.778  1086  1254 D ASH     : @ 1559.588: tcs3701: start power rail timer, state:3
+         1703830688.818  1086  1254 I ASH     : @ 1559.627: tcs3701: stop power rail pending_off timer
+         1703830688.818  1086  1254 D ASH     : @ 1559.628: tcs3701: start power rail timer, state:3
+         1703830688.858  1086  1254 I ASH     : @ 1559.667: tcs3701: stop power rail pending_off timer
+         1703830688.858  1086  1254 D ASH     : @ 1559.668: tcs3701: start power rail timer, state:3
+         1703830688.898  1086  1254 I ASH     : @ 1559.707: tcs3701: stop power rail pending_off timer
+         1703830688.898  1086  1254 D ASH     : @ 1559.708: tcs3701: start power rail timer, state:3
+         1703830688.938  1086  1254 I ASH     : @ 1559.747: tcs3701: stop power rail pending_off timer
+         1703830688.938  1086  1254 D ASH     : @ 1559.748: tcs3701: start power rail timer, state:3
+         1703830688.978  1086  1254 I ASH     : @ 1559.787: tcs3701: stop power rail pending_off timer
+         1703830688.978  1086  1254 D ASH     : @ 1559.788: tcs3701: start power rail timer, state:3
+         1703830689.018  8889  8889 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9492 0 14 0 205 87 0 0 10 -10 18 0 153553 15683682304 39288 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830689.018  1086  1254 I ASH     : @ 1559.827: tcs3701: stop power rail pending_off timer
+         1703830689.018  1086  1254 D ASH     : @ 1559.828: tcs3701: start power rail timer, state:3
+         1703830689.058  1086  1254 I ASH     : @ 1559.867: tcs3701: stop power rail pending_off timer
+         1703830689.058  1086  1254 D ASH     : @ 1559.868: tcs3701: start power rail timer, state:3
+         1703830689.098  1086  1254 I ASH     : @ 1559.907: tcs3701: stop power rail pending_off timer
+         1703830689.098  1086  1254 D ASH     : @ 1559.908: tcs3701: start power rail timer, state:3
+         1703830689.138  1086  1254 I ASH     : @ 1559.947: tcs3701: stop power rail pending_off timer
+         1703830689.138  1086  1254 D ASH     : @ 1559.948: tcs3701: start power rail timer, state:3
+         1703830689.178  1086  1254 I ASH     : @ 1559.987: tcs3701: stop power rail pending_off timer
+         1703830689.178  1086  1254 D ASH     : @ 1559.988: tcs3701: start power rail timer, state:3
+         1703830689.218  1086  1254 I ASH     : @ 1560.027: tcs3701: stop power rail pending_off timer
+         1703830689.218  1086  1254 D ASH     : @ 1560.028: tcs3701: start power rail timer, state:3
+         1703830689.260  1086  1254 I ASH     : @ 1560.067: tcs3701: stop power rail pending_off timer
+         1703830689.260  1086  1254 D ASH     : @ 1560.068: tcs3701: start power rail timer, state:3
+         1703830689.298  1086  1254 I ASH     : @ 1560.107: tcs3701: stop power rail pending_off timer
+         1703830689.298  1086  1254 D ASH     : @ 1560.108: tcs3701: start power rail timer, state:3
+         1703830689.338  1086  1254 I ASH     : @ 1560.147: tcs3701: stop power rail pending_off timer
+         1703830689.338  1086  1254 D ASH     : @ 1560.148: tcs3701: start power rail timer, state:3
+         1703830689.378  1086  1254 I ASH     : @ 1560.187: tcs3701: stop power rail pending_off timer
+         1703830689.379  1086  1254 D ASH     : @ 1560.188: tcs3701: start power rail timer, state:3
+         1703830689.418  1086  1254 I ASH     : @ 1560.227: tcs3701: stop power rail pending_off timer
+         1703830689.418  1086  1254 D ASH     : @ 1560.228: tcs3701: start power rail timer, state:3
+         1703830689.458  1086  1254 I ASH     : @ 1560.267: tcs3701: stop power rail pending_off timer
+         1703830689.458  1086  1254 D ASH     : @ 1560.268: tcs3701: start power rail timer, state:3
+         1703830689.500  1086  1254 I ASH     : @ 1560.307: tcs3701: stop power rail pending_off timer
+         1703830689.500  1086  1254 D ASH     : @ 1560.308: tcs3701: start power rail timer, state:3
+         1703830689.538  1086  1254 I ASH     : @ 1560.347: tcs3701: stop power rail pending_off timer
+         1703830689.539  1086  1254 D ASH     : @ 1560.348: tcs3701: start power rail timer, state:3
+         1703830689.550  8892  8892 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9530 0 14 0 211 88 0 0 10 -10 18 0 153553 15683682304 39288 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830689.578  1086  1254 I ASH     : @ 1560.387: tcs3701: stop power rail pending_off timer
+         1703830689.579  1086  1254 D ASH     : @ 1560.388: tcs3701: start power rail timer, state:3
+         1703830689.620  1086  1254 I ASH     : @ 1560.428: tcs3701: stop power rail pending_off timer
+         1703830689.620  1086  1254 D ASH     : @ 1560.428: tcs3701: start power rail timer, state:3
+         1703830689.658  1086  1254 I ASH     : @ 1560.467: tcs3701: stop power rail pending_off timer
+         1703830689.659  1086  1254 D ASH     : @ 1560.468: tcs3701: start power rail timer, state:3
+         1703830689.700  1086  1254 I ASH     : @ 1560.507: tcs3701: stop power rail pending_off timer
+         1703830689.700  1086  1254 D ASH     : @ 1560.508: tcs3701: start power rail timer, state:3
+         1703830689.740  1086  1254 I ASH     : @ 1560.547: tcs3701: stop power rail pending_off timer
+         1703830689.740  1086  1254 D ASH     : @ 1560.548: tcs3701: start power rail timer, state:3
+         1703830689.780  1086  1254 I ASH     : @ 1560.587: tcs3701: stop power rail pending_off timer
+         1703830689.780  1086  1254 D ASH     : @ 1560.588: tcs3701: start power rail timer, state:3
+         1703830689.820  1086  1254 I ASH     : @ 1560.627: tcs3701: stop power rail pending_off timer
+         1703830689.820  1086  1254 D ASH     : @ 1560.628: tcs3701: start power rail timer, state:3
+         1703830689.859  1086  1254 I ASH     : @ 1560.667: tcs3701: stop power rail pending_off timer
+         1703830689.859  1086  1254 D ASH     : @ 1560.668: tcs3701: start power rail timer, state:3
+         1703830689.900  1086  1254 I ASH     : @ 1560.707: tcs3701: stop power rail pending_off timer
+         1703830689.900  1086  1254 D ASH     : @ 1560.708: tcs3701: start power rail timer, state:3
+         1703830689.938  1086  1254 I ASH     : @ 1560.747: tcs3701: stop power rail pending_off timer
+         1703830689.938  1086  1254 D ASH     : @ 1560.748: tcs3701: start power rail timer, state:3
+         1703830689.980  1086  1254 I ASH     : @ 1560.787: tcs3701: stop power rail pending_off timer
+         1703830689.980  1086  1254 D ASH     : @ 1560.788: tcs3701: start power rail timer, state:3
+         1703830690.020  1086  1254 I ASH     : @ 1560.827: tcs3701: stop power rail pending_off timer
+         1703830690.020  1086  1254 D ASH     : @ 1560.828: tcs3701: start power rail timer, state:3
+         1703830690.059  1086  1254 I ASH     : @ 1560.867: tcs3701: stop power rail pending_off timer
+         1703830690.059  1086  1254 D ASH     : @ 1560.868: tcs3701: start power rail timer, state:3
+         1703830690.080  8895  8895 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9530 0 14 0 211 90 0 0 10 -10 18 0 153553 15683682304 39288 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830690.098  1086  1254 I ASH     : @ 1560.907: tcs3701: stop power rail pending_off timer
+         1703830690.098  1086  1254 D ASH     : @ 1560.908: tcs3701: start power rail timer, state:3
+         1703830690.140  1086  1254 I ASH     : @ 1560.947: tcs3701: stop power rail pending_off timer
+         1703830690.140  1086  1254 D ASH     : @ 1560.948: tcs3701: start power rail timer, state:3
+         1703830690.180  1086  1254 I ASH     : @ 1560.987: tcs3701: stop power rail pending_off timer
+         1703830690.180  1086  1254 D ASH     : @ 1560.988: tcs3701: start power rail timer, state:3
+         1703830690.220  1086  1254 I ASH     : @ 1561.027: tcs3701: stop power rail pending_off timer
+         1703830690.220  1086  1254 D ASH     : @ 1561.028: tcs3701: start power rail timer, state:3
+         1703830690.259  1086  1254 I ASH     : @ 1561.067: tcs3701: stop power rail pending_off timer
+         1703830690.259  1086  1254 D ASH     : @ 1561.068: tcs3701: start power rail timer, state:3
+         1703830690.300  1086  1254 I ASH     : @ 1561.107: tcs3701: stop power rail pending_off timer
+         1703830690.300  1086  1254 D ASH     : @ 1561.108: tcs3701: start power rail timer, state:3
+         1703830690.340  1086  1254 I ASH     : @ 1561.147: tcs3701: stop power rail pending_off timer
+         1703830690.340  1086  1254 D ASH     : @ 1561.148: tcs3701: start power rail timer, state:3
+         1703830690.378  1086  1254 I ASH     : @ 1561.187: tcs3701: stop power rail pending_off timer
+         1703830690.379  1086  1254 D ASH     : @ 1561.188: tcs3701: start power rail timer, state:3
+         1703830690.420  1086  1254 I ASH     : @ 1561.227: tcs3701: stop power rail pending_off timer
+         1703830690.420  1086  1254 D ASH     : @ 1561.228: tcs3701: start power rail timer, state:3
+         1703830690.458  1086  1254 I ASH     : @ 1561.267: tcs3701: stop power rail pending_off timer
+         1703830690.458  1086  1254 D ASH     : @ 1561.268: tcs3701: start power rail timer, state:3
+         1703830690.499  1086  1254 I ASH     : @ 1561.307: tcs3701: stop power rail pending_off timer
+         1703830690.499  1086  1254 D ASH     : @ 1561.308: tcs3701: start power rail timer, state:3
+         1703830690.538  1086  1254 I ASH     : @ 1561.347: tcs3701: stop power rail pending_off timer
+         1703830690.538  1086  1254 D ASH     : @ 1561.348: tcs3701: start power rail timer, state:3
+         1703830690.579  1086  1254 I ASH     : @ 1561.387: tcs3701: stop power rail pending_off timer
+         1703830690.579  1086  1254 D ASH     : @ 1561.388: tcs3701: start power rail timer, state:3
+         1703830690.607  8898  8898 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9550 0 14 0 214 92 0 0 10 -10 18 0 153553 15683682304 39288 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830690.618  1086  1254 I ASH     : @ 1561.427: tcs3701: stop power rail pending_off timer
+         1703830690.618  1086  1254 D ASH     : @ 1561.428: tcs3701: start power rail timer, state:3
+         1703830690.658  1086  1254 I ASH     : @ 1561.467: tcs3701: stop power rail pending_off timer
+         1703830690.658  1086  1254 D ASH     : @ 1561.468: tcs3701: start power rail timer, state:3
+         1703830690.698  1086  1254 I ASH     : @ 1561.507: tcs3701: stop power rail pending_off timer
+         1703830690.698  1086  1254 D ASH     : @ 1561.508: tcs3701: start power rail timer, state:3
+         1703830690.738  1086  1254 I ASH     : @ 1561.547: tcs3701: stop power rail pending_off timer
+         1703830690.738  1086  1254 D ASH     : @ 1561.548: tcs3701: start power rail timer, state:3
+         1703830690.778  1086  1254 I ASH     : @ 1561.587: tcs3701: stop power rail pending_off timer
+         1703830690.778  1086  1254 D ASH     : @ 1561.588: tcs3701: start power rail timer, state:3
+         1703830690.818  1086  1254 I ASH     : @ 1561.627: tcs3701: stop power rail pending_off timer
+         1703830690.818  1086  1254 D ASH     : @ 1561.628: tcs3701: start power rail timer, state:3
+         1703830690.858  1086  1254 I ASH     : @ 1561.667: tcs3701: stop power rail pending_off timer
+         1703830690.858  1086  1254 D ASH     : @ 1561.668: tcs3701: start power rail timer, state:3
+         1703830690.898  1086  1254 I ASH     : @ 1561.707: tcs3701: stop power rail pending_off timer
+         1703830690.898  1086  1254 D ASH     : @ 1561.708: tcs3701: start power rail timer, state:3
+         1703830690.938  1086  1254 I ASH     : @ 1561.747: tcs3701: stop power rail pending_off timer
+         1703830690.938  1086  1254 D ASH     : @ 1561.748: tcs3701: start power rail timer, state:3
+         1703830690.978  1086  1254 I ASH     : @ 1561.787: tcs3701: stop power rail pending_off timer
+         1703830690.978  1086  1254 D ASH     : @ 1561.788: tcs3701: start power rail timer, state:3
+         1703830691.018  1086  1254 I ASH     : @ 1561.827: tcs3701: stop power rail pending_off timer
+         1703830691.018  1086  1254 D ASH     : @ 1561.828: tcs3701: start power rail timer, state:3
+         1703830691.058  1086  1254 I ASH     : @ 1561.867: tcs3701: stop power rail pending_off timer
+         1703830691.058  1086  1254 D ASH     : @ 1561.868: tcs3701: start power rail timer, state:3
+         1703830691.098  1086  1254 I ASH     : @ 1561.907: tcs3701: stop power rail pending_off timer
+         1703830691.098  1086  1254 D ASH     : @ 1561.908: tcs3701: start power rail timer, state:3
+         1703830691.137  8901  8901 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9614 0 14 0 222 97 0 0 10 -10 18 0 153553 15683682304 39288 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830691.138  1086  1254 I ASH     : @ 1561.947: tcs3701: stop power rail pending_off timer
+         1703830691.138  1086  1254 D ASH     : @ 1561.948: tcs3701: start power rail timer, state:3
+         1703830691.178  1086  1254 I ASH     : @ 1561.987: tcs3701: stop power rail pending_off timer
+         1703830691.178  1086  1254 D ASH     : @ 1561.988: tcs3701: start power rail timer, state:3
+         1703830691.218  1086  1254 I ASH     : @ 1562.027: tcs3701: stop power rail pending_off timer
+         1703830691.218  1086  1254 D ASH     : @ 1562.028: tcs3701: start power rail timer, state:3
+         1703830691.258  1086  1254 I ASH     : @ 1562.067: tcs3701: stop power rail pending_off timer
+         1703830691.258  1086  1254 D ASH     : @ 1562.068: tcs3701: start power rail timer, state:3
+         1703830691.298  1086  1254 I ASH     : @ 1562.107: tcs3701: stop power rail pending_off timer
+         1703830691.298  1086  1254 D ASH     : @ 1562.108: tcs3701: start power rail timer, state:3
+         1703830691.338  1086  1254 I ASH     : @ 1562.147: tcs3701: stop power rail pending_off timer
+         1703830691.338  1086  1254 D ASH     : @ 1562.148: tcs3701: start power rail timer, state:3
+         1703830691.378  1086  1254 I ASH     : @ 1562.187: tcs3701: stop power rail pending_off timer
+         1703830691.378  1086  1254 D ASH     : @ 1562.188: tcs3701: start power rail timer, state:3
+         1703830691.418  1086  1254 I ASH     : @ 1562.227: tcs3701: stop power rail pending_off timer
+         1703830691.418  1086  1254 D ASH     : @ 1562.228: tcs3701: start power rail timer, state:3
+         1703830691.458  1086  1254 I ASH     : @ 1562.267: tcs3701: stop power rail pending_off timer
+         1703830691.458  1086  1254 D ASH     : @ 1562.268: tcs3701: start power rail timer, state:3
+         1703830691.498  1086  1254 I ASH     : @ 1562.307: tcs3701: stop power rail pending_off timer
+         1703830691.498  1086  1254 D ASH     : @ 1562.308: tcs3701: start power rail timer, state:3
+         1703830691.538  1086  1254 I ASH     : @ 1562.347: tcs3701: stop power rail pending_off timer
+         1703830691.538  1086  1254 D ASH     : @ 1562.348: tcs3701: start power rail timer, state:3
+         1703830691.578  1086  1254 I ASH     : @ 1562.387: tcs3701: stop power rail pending_off timer
+         1703830691.578  1086  1254 D ASH     : @ 1562.388: tcs3701: start power rail timer, state:3
+         1703830691.618  1086  1254 I ASH     : @ 1562.427: tcs3701: stop power rail pending_off timer
+         1703830691.618  1086  1254 D ASH     : @ 1562.428: tcs3701: start power rail timer, state:3
+         1703830691.658  1086  1254 I ASH     : @ 1562.467: tcs3701: stop power rail pending_off timer
+         1703830691.658  1086  1254 D ASH     : @ 1562.468: tcs3701: start power rail timer, state:3
+         1703830691.667  8904  8904 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9678 0 14 0 232 98 0 0 10 -10 18 0 153553 15683682304 39288 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830691.698  1086  1254 I ASH     : @ 1562.507: tcs3701: stop power rail pending_off timer
+         1703830691.698  1086  1254 D ASH     : @ 1562.508: tcs3701: start power rail timer, state:3
+         1703830691.704  8714  8737 I dashscene: typography over 240 frames — tick 0.36 ms, paint mean 0.09 p50 0.09, present mean 7.05 p50 9.28 p95 10.41 max 12.10 ms (133.2 fps if unpaced) — 8 run(s), 446 glyph(s)
+         1703830691.738  1086  1254 I ASH     : @ 1562.547: tcs3701: stop power rail pending_off timer
+         1703830691.738  1086  1254 D ASH     : @ 1562.548: tcs3701: start power rail timer, state:3
+         1703830691.778  1086  1254 I ASH     : @ 1562.587: tcs3701: stop power rail pending_off timer
+         1703830691.778  1086  1254 D ASH     : @ 1562.588: tcs3701: start power rail timer, state:3
+         1703830691.818  1086  1254 I ASH     : @ 1562.627: tcs3701: stop power rail pending_off timer
+         1703830691.818  1086  1254 D ASH     : @ 1562.628: tcs3701: start power rail timer, state:3
+         1703830691.858  1086  1254 I ASH     : @ 1562.667: tcs3701: stop power rail pending_off timer
+         1703830691.858  1086  1254 D ASH     : @ 1562.668: tcs3701: start power rail timer, state:3
+         1703830691.898  1086  1254 I ASH     : @ 1562.707: tcs3701: stop power rail pending_off timer
+         1703830691.898  1086  1254 D ASH     : @ 1562.708: tcs3701: start power rail timer, state:3
+         1703830691.938  1086  1254 I ASH     : @ 1562.747: tcs3701: stop power rail pending_off timer
+         1703830691.938  1086  1254 D ASH     : @ 1562.748: tcs3701: start power rail timer, state:3
+         1703830691.959  8714  8737 I dashscene: 1440 frames over 1440 vsyncs
+         1703830691.979  1086  1254 I ASH     : @ 1562.787: tcs3701: stop power rail pending_off timer
+         1703830691.979  1086  1254 D ASH     : @ 1562.788: tcs3701: start power rail timer, state:3
+         1703830692.020  1086  1254 I ASH     : @ 1562.827: tcs3701: stop power rail pending_off timer
+         1703830692.020  1086  1254 D ASH     : @ 1562.828: tcs3701: start power rail timer, state:3
+         1703830692.060  1086  1254 I ASH     : @ 1562.867: tcs3701: stop power rail pending_off timer
+         1703830692.060  1086  1254 D ASH     : @ 1562.868: tcs3701: start power rail timer, state:3
+         1703830692.100  1086  1254 I ASH     : @ 1562.907: tcs3701: stop power rail pending_off timer
+         1703830692.100  1086  1254 D ASH     : @ 1562.908: tcs3701: start power rail timer, state:3
+         1703830692.140  1086  1254 I ASH     : @ 1562.947: tcs3701: stop power rail pending_off timer
+         1703830692.140  1086  1254 D ASH     : @ 1562.948: tcs3701: start power rail timer, state:3
+         1703830692.178  1086  1254 I ASH     : @ 1562.987: tcs3701: stop power rail pending_off timer
+         1703830692.178  1086  1254 D ASH     : @ 1562.988: tcs3701: start power rail timer, state:3
+         1703830692.200  8907  8907 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9694 0 14 0 235 99 0 0 10 -10 18 0 153553 15683682304 39288 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830692.218  1086  1254 I ASH     : @ 1563.027: tcs3701: stop power rail pending_off timer
+         1703830692.219  1086  1254 D ASH     : @ 1563.028: tcs3701: start power rail timer, state:3
+         1703830692.259  1086  1254 I ASH     : @ 1563.067: tcs3701: stop power rail pending_off timer
+         1703830692.260  1086  1254 D ASH     : @ 1563.068: tcs3701: start power rail timer, state:3
+         1703830692.300  1086  1254 I ASH     : @ 1563.107: tcs3701: stop power rail pending_off timer
+         1703830692.300  1086  1254 D ASH     : @ 1563.108: tcs3701: start power rail timer, state:3
+         1703830692.340  1086  1254 I ASH     : @ 1563.147: tcs3701: stop power rail pending_off timer
+         1703830692.340  1086  1254 D ASH     : @ 1563.148: tcs3701: start power rail timer, state:3
+         1703830692.379  1086  1254 I ASH     : @ 1563.187: tcs3701: stop power rail pending_off timer
+         1703830692.379  1086  1254 D ASH     : @ 1563.188: tcs3701: start power rail timer, state:3
+         1703830692.420  1086  1254 I ASH     : @ 1563.227: tcs3701: stop power rail pending_off timer
+         1703830692.420  1086  1254 D ASH     : @ 1563.228: tcs3701: start power rail timer, state:3
+         1703830692.460  1086  1254 I ASH     : @ 1563.267: tcs3701: stop power rail pending_off timer
+         1703830692.460  1086  1254 D ASH     : @ 1563.268: tcs3701: start power rail timer, state:3
+         1703830692.500  1086  1254 I ASH     : @ 1563.307: tcs3701: stop power rail pending_off timer
+         1703830692.500  1086  1254 D ASH     : @ 1563.308: tcs3701: start power rail timer, state:3
+         1703830692.540  1086  1254 I ASH     : @ 1563.347: tcs3701: stop power rail pending_off timer
+         1703830692.540  1086  1254 D ASH     : @ 1563.348: tcs3701: start power rail timer, state:3
+         1703830692.579  1086  1254 I ASH     : @ 1563.387: tcs3701: stop power rail pending_off timer
+         1703830692.579  1086  1254 D ASH     : @ 1563.388: tcs3701: start power rail timer, state:3
+         1703830692.620  1086  1254 I ASH     : @ 1563.427: tcs3701: stop power rail pending_off timer
+         1703830692.620  1086  1254 D ASH     : @ 1563.428: tcs3701: start power rail timer, state:3
+         1703830692.660  1086  1254 I ASH     : @ 1563.467: tcs3701: stop power rail pending_off timer
+         1703830692.660  1086  1254 D ASH     : @ 1563.468: tcs3701: start power rail timer, state:3
+         1703830692.700  1086  1254 I ASH     : @ 1563.507: tcs3701: stop power rail pending_off timer
+         1703830692.700  1086  1254 D ASH     : @ 1563.507: tcs3701: start power rail timer, state:3
+         1703830692.730  8910  8910 I dashscene-cpu: 8714 (.dashscene.demo) S 1041 1041 0 0 -1 1077936448 9694 0 14 0 237 99 0 0 10 -10 18 0 153553 15683682304 39288 18446744073709551615 1 1 0 0 0 0 4612 1 1073775864 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1703830692.739  1086  1254 I ASH     : @ 1563.547: tcs3701: stop power rail pending_off timer
+         1703830692.739  1086  1254 D ASH     : @ 1563.548: tcs3701: start power rail timer, state:3
+         1703830692.780  1086  1254 I ASH     : @ 1563.587: tcs3701: stop power rail pending_off timer
+         1703830692.781  1086  1254 D ASH     : @ 1563.588: tcs3701: start power rail timer, state:3
+         1703830692.820  1086  1254 I ASH     : @ 1563.628: tcs3701: stop power rail pending_off timer
+         1703830692.820  1086  1254 D ASH     : @ 1563.628: tcs3701: start power rail timer, state:3
+         1703830692.859  1086  1254 I ASH     : @ 1563.667: tcs3701: stop power rail pending_off timer
+         1703830692.859  1086  1254 D ASH     : @ 1563.668: tcs3701: start power rail timer, state:3
+         1703830692.900  1086  1254 I ASH     : @ 1563.707: tcs3701: stop power rail pending_off timer
+         1703830692.900  1086  1254 D ASH     : @ 1563.708: tcs3701: start power rail timer, state:3
+         1703830692.938  1086  1254 I ASH     : @ 1563.747: tcs3701: stop power rail pending_off timer
+         1703830692.939  1086  1254 D ASH     : @ 1563.748: tcs3701: start power rail timer, state:3
+         1703830692.978  1086  1254 I ASH     : @ 1563.787: tcs3701: stop power rail pending_off timer
+         1703830692.978  1086  1254 D ASH     : @ 1563.788: tcs3701: start power rail timer, state:3
+         1703830693.018  1086  1254 I ASH     : @ 1563.827: tcs3701: stop power rail pending_off timer
+         1703830693.018  1086  1254 D ASH     : @ 1563.828: tcs3701: start power rail timer, state:3

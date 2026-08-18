@@ -1,0 +1,14 @@
+    Finished `release` profile [optimized] target(s) in 0.27s
+   Compiling dashscene-ffi v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-ffi)
+    Finished `release` profile [optimized] target(s) in 1.94s
+   Compiling dashscene-ffi v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-ffi)
+   Compiling dashscene-android v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-android)
+    Finished `release` profile [optimized] target(s) in 2.00s
+   Compiling dashscene-ffi v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-ffi)
+   Compiling dashscene-android v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-android)
+   Compiling demo-android v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/demo-android)
+    Finished `release` profile [optimized] target(s) in 2.77s
+demo-android: using the release library
+demo-android: build-tools 35.0.0, android-36
+demo-android: 1 dex file(s) staged
+demo-android: /Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/target/android-demo/showcase.apk
