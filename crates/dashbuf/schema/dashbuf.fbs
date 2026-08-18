@@ -557,6 +557,40 @@ table LayoutConstraints {
   grid_column_span: ushort = 1;
 }
 
+// A declared placeholder: the box a document reserves for content a host
+// contributes at runtime — node replacement
+// (docs/technotes/runtime-content.md §7). Presence of this table on a Node
+// is what declares that node a placeholder, and story #1127's diagnostic
+// reads exactly that predicate — not any one field's value.
+//
+// The surface only. What fills a placeholder at runtime is placeholder
+// *activation*, which docs/specification/05-qualification.md keeps in v1.
+table Placeholder {
+  // Index into Document.strings — the id a runtime producer binds a
+  // contribution against, or NO_CONTRIBUTION (uint32::MAX, the same
+  // sentinel convention as Node.parent/text/paint_entry) for a box that
+  // reserves space without naming a binding.
+  contribution_id: uint32 = 4294967295;
+  // Index into Document.strings — an external dashscene subtree to stream
+  // in (the seed's "external (fragment ref) — reserved"), or NO_FRAGMENT
+  // (uint32::MAX) when the contribution is drawn by the host rather than
+  // streamed.
+  fragment_ref: uint32 = 4294967295;
+  // What the engine's measure callback reports while no contribution is
+  // bound; absent means undeclared. Declared rather than derived from the
+  // content, so a contribution arriving at a different size cannot reflow
+  // the scene — the measured size does not depend on what arrives. This is
+  // not the node's box (Node.layout) and not its sizing mode
+  // (LayoutConstraints.sizing_h/sizing_v): those state the box, this states
+  // what to measure in the absence of content.
+  declared_size: Vec2;
+  // Shown while the contribution loads or resolves. The same Fill union a
+  // Paint entry carries, inline rather than pooled: an interim appearance
+  // is one fill, and inlining keeps the read lossless — a pool entry is a
+  // whole paint, of which only the fill would ever be read here.
+  interim_fill: Fill;
+}
+
 table Node {
   name: string;
   // Index into Document.nodes of this node's parent, or NO_PARENT
@@ -623,6 +657,11 @@ table Node {
   // (w/2, h/2), stated rather than defaulted.
   rotation_anchor_x: float32 = 0.0;
   rotation_anchor_y: float32 = 0.0;
+  // v0.21 node replacement (story #1126). Absent on an ordinary node —
+  // which is every node written before this vocabulary, so those documents
+  // emit byte-identically (R7). Present on a declared placeholder; its
+  // presence is the predicate.
+  placeholder: Placeholder;
 }
 
 // v0.4 variant table (docs/decisions/variant-set-flat-index.md,

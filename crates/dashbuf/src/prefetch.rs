@@ -166,14 +166,20 @@ pub fn resolve(document: &Document<'_>, shown: ShownRoot) -> Option<u32> {
 /// [`crate::open`] returns its [`crate::Wanted`]s in, so a host touches
 /// `wanted[index]` for each index here.
 ///
-/// Two ways a paint entry reaches an asset, and both are followed:
+/// Three ways a node reaches an asset, and all three are followed:
 ///
 /// - an **image fill**, through `Paint.fill` and through every layer of
 ///   `Paint.extra_fills` — a stacked fill is as much a fill as the bottom one;
 /// - a **baked vector shape**, through `Paint.shape_field` to
 ///   `Document.vector_shapes`, that shape's atlas, and that atlas's image. The
 ///   MSDF sheet is an ordinary asset entry and a node drawing a vector shape
-///   needs it exactly as a node drawing a picture needs its picture.
+///   needs it exactly as a node drawing a picture needs its picture;
+/// - a **placeholder's interim fill** (story #1126), through
+///   `Node.placeholder.interim_fill`. This one hangs off the node rather than
+///   off a paint entry, so it is reached before the `paint_entry` test below:
+///   a placeholder that reserves a box and draws only an interim picture has
+///   no paint entry at all, and walking only the entry would leave its asset
+///   unfetched and unverified on the bounded load path (R5).
 ///
 /// Strokes, shadows and blurs reach no asset: a v0.3 stroke is solid-only by
 /// its own schema comment, and an effect carries no image.
@@ -202,6 +208,15 @@ pub fn assets_of_root(document: &Document<'_>, root: u32) -> Vec<u32> {
             || (parent != NO_PARENT && (parent as usize) < index && inside[parent as usize]);
         if !inside[index] {
             continue;
+        }
+
+        // Story #1126, before the `paint_entry` test: a placeholder need not
+        // carry a paint entry, so this is unreachable from the walk below.
+        if let Some(placeholder) = node.placeholder()
+            && placeholder.interim_fill_type() == Fill::ImageFill
+            && let Some(fill) = placeholder.interim_fill_as_image_fill()
+        {
+            wanted.push(fill.image());
         }
 
         let entry = node.paint_entry();

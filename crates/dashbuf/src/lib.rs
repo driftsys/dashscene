@@ -66,6 +66,14 @@ pub const NO_TEXT_STYLE: u32 = u32::MAX;
 /// `Paint.shape_field`'s "parametric shape" sentinel (story B1): the paint
 /// entry carries the implicit rounded box, not a baked field.
 pub const NO_FIELD: u32 = u32::MAX;
+/// `Placeholder.contribution_id`'s "names no binding" sentinel (story
+/// #1126): the placeholder reserves a box, and no runtime producer is named
+/// to fill it.
+pub const NO_CONTRIBUTION: u32 = u32::MAX;
+/// `Placeholder.fragment_ref`'s "not streamed" sentinel (story #1126): the
+/// contribution is drawn by the host rather than read from an external
+/// dashscene subtree.
+pub const NO_FRAGMENT: u32 = u32::MAX;
 
 /// A payload the document names, as the file records it.
 ///

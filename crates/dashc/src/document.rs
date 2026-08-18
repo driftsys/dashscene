@@ -280,6 +280,10 @@ pub struct Node {
     /// both the canonical value and what a Figma `relativeTransform`
     /// resolves to.
     pub rotation_anchor: (f32, f32),
+    /// The node's declared placeholder — the box it reserves for content a
+    /// host contributes at runtime (story #1126). `None` is an ordinary
+    /// node; `Some` declares a placeholder, and presence is the predicate.
+    pub placeholder: Option<Placeholder>,
 }
 
 impl Default for Node {
@@ -301,8 +305,36 @@ impl Default for Node {
             visible: true,
             rotation: 0.0,
             rotation_anchor: (0.0, 0.0),
+            placeholder: None,
         }
     }
+}
+
+/// A declared placeholder — the authored form of the schema's `Placeholder`
+/// table (story #1126). The box a document reserves for content a host
+/// contributes at runtime; node replacement
+/// (`docs/technotes/runtime-content.md` §7).
+///
+/// The emitter interns `contribution_id` and `fragment_ref` into
+/// `Document.strings`, the same pooling `Node.text` gets, and writes
+/// `interim_fill` straight into the schema's `Fill` union from the spec's
+/// owned data — inline rather than into the paint pool, since an interim
+/// appearance is one fill.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Placeholder {
+    /// The id a runtime producer binds a contribution against. `None`
+    /// reserves a box without naming a binding.
+    pub contribution_id: Option<String>,
+    /// An external dashscene subtree to stream in. `None` when the
+    /// contribution is drawn by the host rather than streamed.
+    pub fragment_ref: Option<String>,
+    /// What a measure callback will report while no contribution is bound;
+    /// `None` is undeclared. Neither the node's box nor its sizing mode —
+    /// those state the box, this states what to measure with no content, so
+    /// content arriving at a different size cannot reflow the scene.
+    pub declared_size: Option<(f32, f32)>,
+    /// Shown while the contribution loads or resolves.
+    pub interim_fill: Option<FillSpec>,
 }
 
 /// A node's fill, stroke, and corner intent — the producer-side twin of

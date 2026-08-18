@@ -62,6 +62,22 @@ struct NodeSpec {
     /// the struct, which is what almost every test here wants. Added for issue
     /// #1048's authored-box rules.
     layout: Option<(f32, f32, f32, f32)>,
+    /// A declared placeholder (story #1126): the two string indices, and an
+    /// optional image index for its `interim_fill`. `None` writes no
+    /// `Placeholder` table, which is what every other test here wants.
+    placeholder: Option<PlaceholderSpec>,
+}
+
+/// One declared placeholder, in the terms this suite drives:
+/// `(contribution_id, fragment_ref, interim image index)`.
+#[derive(Clone, Copy, Default)]
+struct PlaceholderSpec {
+    contribution_id: Option<u32>,
+    fragment_ref: Option<u32>,
+    interim_image: Option<u32>,
+    /// `Some` writes a `declared_size`; `None` omits the struct, which is the
+    /// undeclared state.
+    declared_size: Option<(f32, f32)>,
 }
 
 #[derive(Clone)]
@@ -192,6 +208,33 @@ impl Doc {
                 let layout = spec
                     .layout
                     .map(|(x, y, w, h)| dashbuf::FixedSizeLayout::new(x, y, w, h));
+                let placeholder = spec.placeholder.map(|ph| {
+                    let declared = ph.declared_size.map(|(w, h)| Vec2::new(w, h));
+                    let interim = ph.interim_image.map(|image| {
+                        ImageFill::create(
+                            &mut b,
+                            &ImageFillArgs {
+                                image,
+                                scale_mode: ScaleMode::Fill,
+                                ..Default::default()
+                            },
+                        )
+                    });
+                    dashbuf::Placeholder::create(
+                        &mut b,
+                        &dashbuf::PlaceholderArgs {
+                            contribution_id: ph.contribution_id.unwrap_or(dashbuf::NO_CONTRIBUTION),
+                            fragment_ref: ph.fragment_ref.unwrap_or(dashbuf::NO_FRAGMENT),
+                            declared_size: declared.as_ref(),
+                            interim_fill_type: if interim.is_some() {
+                                Fill::ImageFill
+                            } else {
+                                Fill::NONE
+                            },
+                            interim_fill: interim.map(|f| f.as_union_value()),
+                        },
+                    )
+                });
                 Node::create(
                     &mut b,
                     &NodeArgs {
@@ -204,6 +247,7 @@ impl Doc {
                         opacity: spec.opacity.unwrap_or(1.0),
                         mask: spec.mask,
                         layout: layout.as_ref(),
+                        placeholder,
                         ..Default::default()
                     },
                 )
@@ -3140,4 +3184,114 @@ fn a_loop_on_a_channel_a_variant_member_overrides_is_named() {
         "{report}"
     );
     assert!(report.has_errors());
+}
+
+/// Story #1126. The loader resolves both placeholder strings through
+/// `Document.strings` on this gate's word that they are in range — and
+/// `flatbuffers::Vector::get` asserts, so an unchecked index is a panic in
+/// `dashscene-core` rather than a named diagnostic (P4).
+#[test]
+fn placeholder_string_indices_past_the_pool_are_named() {
+    let report = check(
+        Doc::default()
+            .node(NodeSpec {
+                name: "gauge-slot",
+                placeholder: Some(PlaceholderSpec {
+                    contribution_id: Some(3),
+                    fragment_ref: Some(4),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .strings(1),
+    );
+    // Both fields, named individually. `has` alone cannot tell a gate that
+    // checks both from one that checks only `contribution_id`, and the
+    // unchecked one is still resolved through `strings.get` in the loader.
+    let named: Vec<&str> = report
+        .errors()
+        .filter(|d| d.rule == rule::PLACEHOLDER_STRING_OUT_OF_RANGE)
+        .map(|d| d.message.as_str())
+        .collect();
+    assert_eq!(named.len(), 2, "one diagnostic per field: {report}");
+    assert!(
+        named.iter().any(|m| m.contains("contribution_id")),
+        "{report}"
+    );
+    assert!(named.iter().any(|m| m.contains("fragment_ref")), "{report}");
+}
+
+/// A `declared_size` that is not finite, or is negative, is named here — so
+/// the arena's assertion is never the first thing to see one. A document the
+/// gate accepts must not panic the loader (P4).
+#[test]
+fn a_declared_size_that_is_not_finite_or_is_negative_is_named() {
+    for size in [(f32::NAN, 32.0), (64.0, -1.0), (f32::INFINITY, 32.0)] {
+        let report = check(Doc::default().node(NodeSpec {
+            name: "gauge-slot",
+            placeholder: Some(PlaceholderSpec {
+                declared_size: Some(size),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }));
+        assert!(
+            report.has(rule::PLACEHOLDER_DECLARED_SIZE_INVALID),
+            "declared_size {size:?} must be named: {report}"
+        );
+    }
+}
+
+/// A well-formed declared size passes, so the rule above is not firing on
+/// every placeholder that carries one.
+#[test]
+fn a_well_formed_declared_size_is_allowed() {
+    let report = check(Doc::default().node(NodeSpec {
+        name: "gauge-slot",
+        placeholder: Some(PlaceholderSpec {
+            declared_size: Some((48.0, 24.0)),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }));
+    assert!(
+        !report.has(rule::PLACEHOLDER_DECLARED_SIZE_INVALID),
+        "{report}"
+    );
+}
+
+/// A placeholder that names no binding sits at the sentinel on both fields,
+/// which is in range for a pool of any size — including an empty one.
+#[test]
+fn a_placeholder_naming_no_strings_is_clean() {
+    let report = check(Doc::default().node(NodeSpec {
+        name: "gauge-slot",
+        placeholder: Some(PlaceholderSpec::default()),
+        ..Default::default()
+    }));
+    assert!(
+        !report.has(rule::PLACEHOLDER_STRING_OUT_OF_RANGE),
+        "{report}"
+    );
+}
+
+/// `Placeholder.interim_fill` is a third `Fill` union carrier, and a carrier
+/// is not exempt from the fill rules because of where it sits: the asset
+/// index reaches `image_of[..]` in the loader, which panics rather than
+/// diagnosing if this gate let it past.
+#[test]
+fn an_interim_fill_image_past_the_asset_table_is_named() {
+    let report = check(
+        Doc::default()
+            .node(NodeSpec {
+                name: "gauge-slot",
+                placeholder: Some(PlaceholderSpec {
+                    interim_image: Some(7),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .images(1),
+    );
+    assert!(report.has(rule::IMAGE_OUT_OF_RANGE), "{report}");
 }

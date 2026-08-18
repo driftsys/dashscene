@@ -18,16 +18,16 @@ use dashbuf::{
     Keyframe as FbKeyframe, KeyframesSpec, KeyframesSpecArgs,
     LayoutConstraints as FbLayoutConstraints, LayoutConstraintsArgs,
     LayoutContainer as FbLayoutContainer, LayoutContainerArgs, LoopTrack as FbLoopTrack,
-    LoopTrackArgs, Mat23, NO_FIELD, NO_PAINT, NO_PARENT, NO_TEXT, NO_TEXT_STYLE, Node as FbNode,
-    NodeArgs as FbNodeArgs, Paint as BufPaint, PaintArgs, PlaneBounds,
-    PropTransition as FbPropTransition, PropTransitionArgs, Shadow as FbShadow, ShadowArgs,
-    ShadowKind as FbShadowKind, SignalDecl as FbSignalDecl, SignalDeclArgs as FbSignalDeclArgs,
-    SolidFill, SolidFillArgs, SpringSpec, SpringSpecArgs, Stroke, StrokeArgs,
-    TextStyle as FbTextStyle, TextStyleArgs, TransformClamp, TransformClampArgs, TransformMapRange,
-    TransformMapRangeArgs, TransformScale, TransformScaleArgs, TweenSpec, TweenSpecArgs,
-    VariantFill as FbVariantFill, VariantFillArgs, VariantHeight as FbVariantHeight,
-    VariantHeightArgs, VariantMember as FbVariantMember, VariantMemberArgs,
-    VariantOverride as FbVariantOverride, VariantOverrideArgs,
+    LoopTrackArgs, Mat23, NO_CONTRIBUTION, NO_FIELD, NO_FRAGMENT, NO_PAINT, NO_PARENT, NO_TEXT,
+    NO_TEXT_STYLE, Node as FbNode, NodeArgs as FbNodeArgs, Paint as BufPaint, PaintArgs,
+    Placeholder as FbPlaceholder, PlaceholderArgs, PlaneBounds, PropTransition as FbPropTransition,
+    PropTransitionArgs, Shadow as FbShadow, ShadowArgs, ShadowKind as FbShadowKind,
+    SignalDecl as FbSignalDecl, SignalDeclArgs as FbSignalDeclArgs, SolidFill, SolidFillArgs,
+    SpringSpec, SpringSpecArgs, Stroke, StrokeArgs, TextStyle as FbTextStyle, TextStyleArgs,
+    TransformClamp, TransformClampArgs, TransformMapRange, TransformMapRangeArgs, TransformScale,
+    TransformScaleArgs, TweenSpec, TweenSpecArgs, VariantFill as FbVariantFill, VariantFillArgs,
+    VariantHeight as FbVariantHeight, VariantHeightArgs, VariantMember as FbVariantMember,
+    VariantMemberArgs, VariantOverride as FbVariantOverride, VariantOverrideArgs,
     VariantRotation as FbVariantRotation, VariantRotationArgs, VariantSet as FbVariantSet,
     VariantSetArgs, VariantTransition as FbVariantTransition, VariantTransitionArgs,
     VariantVisible as FbVariantVisible, VariantVisibleArgs, VariantWidth as FbVariantWidth,
@@ -67,6 +67,11 @@ pub fn emit(doc: &Document) -> Vec<u8> {
     let mut strings: Vec<&str> = Vec::new();
     let mut string_of_pool: HashMap<&str, u32> = HashMap::new();
     let mut string_of: Vec<Option<u32>> = Vec::with_capacity(doc.nodes.len());
+    // Story #1126: a placeholder's two strings intern into the same
+    // `Document.strings` pool, in the same first-use DFS order and after the
+    // node's own text, so the order is deterministic. A document with no
+    // placeholder adds nothing to the pool and emits unchanged (R7).
+    let mut placeholder_of: Vec<PlaceholderStrings> = Vec::with_capacity(doc.nodes.len());
     let mut styles: Vec<&TextStyle> = Vec::new();
     let mut style_of_pool: HashMap<TextStyleKey, u32> = HashMap::new();
     let mut style_of: Vec<Option<u32>> = Vec::with_capacity(doc.nodes.len());
@@ -80,13 +85,24 @@ pub fn emit(doc: &Document) -> Vec<u8> {
                 index
             })
         }));
-        string_of.push(node.text.as_deref().map(|text| {
-            *string_of_pool.entry(text).or_insert_with(|| {
-                let index = u32::try_from(strings.len()).expect("string pool exceeds u32::MAX");
-                strings.push(text);
-                index
-            })
-        }));
+        string_of.push(
+            node.text
+                .as_deref()
+                .map(|text| intern_string(text, &mut strings, &mut string_of_pool)),
+        );
+        placeholder_of.push(match &node.placeholder {
+            None => PlaceholderStrings::default(),
+            Some(p) => PlaceholderStrings {
+                contribution_id: p
+                    .contribution_id
+                    .as_deref()
+                    .map(|t| intern_string(t, &mut strings, &mut string_of_pool)),
+                fragment_ref: p
+                    .fragment_ref
+                    .as_deref()
+                    .map(|t| intern_string(t, &mut strings, &mut string_of_pool)),
+            },
+        });
         style_of.push(node.text_style.as_ref().map(|style| {
             let key = text_style_key(style);
             *style_of_pool.entry(key).or_insert_with(|| {
@@ -108,7 +124,10 @@ pub fn emit(doc: &Document) -> Vec<u8> {
         .iter()
         .zip(&entry_of)
         .zip(string_of.iter().zip(&style_of))
-        .map(|((node, entry), (text, style))| build_node(&mut b, node, *entry, *text, *style))
+        .zip(&placeholder_of)
+        .map(|(((node, entry), (text, style)), placeholder)| {
+            build_node(&mut b, node, *entry, *text, *style, *placeholder)
+        })
         .collect();
 
     // The variant table (v0.4, story #20). Empty for a document with no
@@ -539,12 +558,41 @@ fn channel_of(channel: BindingChannel) -> dashbuf::BindingChannel {
     }
 }
 
+/// Interns `text` into the `Document.strings` pool, returning its index.
+///
+/// Called at the same point in the same first-use DFS pass for every string a
+/// node contributes — its own `text`, then its placeholder's `contribution_id`
+/// and `fragment_ref` — so the pool's order, and with it R7's byte-identity,
+/// is what it was when this was written inline.
+fn intern_string<'a>(
+    text: &'a str,
+    strings: &mut Vec<&'a str>,
+    pool: &mut HashMap<&'a str, u32>,
+) -> u32 {
+    *pool.entry(text).or_insert_with(|| {
+        let index = u32::try_from(strings.len()).expect("string pool exceeds u32::MAX");
+        strings.push(text);
+        index
+    })
+}
+
+/// The `Document.strings` indices a node's placeholder needs, resolved in
+/// the same first-use DFS pass as the text pools (story #1126). Both absent
+/// for a node that declares no placeholder, and for one whose placeholder
+/// names neither a contribution nor a fragment.
+#[derive(Clone, Copy, Default)]
+struct PlaceholderStrings {
+    contribution_id: Option<u32>,
+    fragment_ref: Option<u32>,
+}
+
 fn build_node<'a>(
     b: &mut FlatBufferBuilder<'a>,
     node: &Node,
     paint_entry: Option<u32>,
     text: Option<u32>,
     text_style: Option<u32>,
+    placeholder_strings: PlaceholderStrings,
 ) -> WIPOffset<FbNode<'a>> {
     let name = node.name.as_deref().map(|n| b.create_string(n));
 
@@ -590,6 +638,32 @@ fn build_node<'a>(
                 cross_gap: c.cross_gap,
                 grid_rows,
                 grid_columns,
+            },
+        )
+    });
+    // Story #1126. Absent stays absent: a node that declares no placeholder
+    // writes no table, so a document from before this vocabulary emits
+    // byte-identically (R7). Built before the enclosing Node, the standard
+    // flatbuffer nesting order.
+    let placeholder = node.placeholder.as_ref().map(|p| {
+        let (interim_fill_type, interim_fill) = match &p.interim_fill {
+            None => (dashbuf::Fill::NONE, None),
+            Some(spec) => {
+                let (fill_type, fill) = build_fill(b, spec);
+                (fill_type, Some(fill))
+            }
+        };
+        let declared_size = p.declared_size.map(|(x, y)| Vec2::new(x, y));
+        FbPlaceholder::create(
+            b,
+            &PlaceholderArgs {
+                contribution_id: placeholder_strings
+                    .contribution_id
+                    .unwrap_or(NO_CONTRIBUTION),
+                fragment_ref: placeholder_strings.fragment_ref.unwrap_or(NO_FRAGMENT),
+                declared_size: declared_size.as_ref(),
+                interim_fill_type,
+                interim_fill,
             },
         )
     });
@@ -654,6 +728,9 @@ fn build_node<'a>(
             rotation: node.rotation,
             rotation_anchor_x: node.rotation_anchor.0,
             rotation_anchor_y: node.rotation_anchor.1,
+            // v0.21 (story #1126). Absent on an ordinary node, which is the
+            // schema default, so a pre-#1126 document emits unchanged (R7).
+            placeholder,
             ..Default::default()
         },
     )

@@ -40,8 +40,8 @@ mod load;
 
 pub use arena::{
     Arena, AxisSizing, CrossAxisAlign, Easing, EdgeInsets, GridTrack, Keyframe, Layout, LayoutMode,
-    LayoutSolver, LoopTrack, MainAxisAlign, NodeId, Prop, PropTransition, SolvedRect, StagedRun,
-    TextAlign, TextAlignV, TextStyle, TransitionSpec, Txn, VariantMember, VariantSetId,
+    LayoutSolver, LoopTrack, MainAxisAlign, NodeId, Placeholder, Prop, PropTransition, SolvedRect,
+    StagedRun, TextAlign, TextAlignV, TextStyle, TransitionSpec, Txn, VariantMember, VariantSetId,
     VariantTransition, VariantValue,
 };
 pub use bindings::{

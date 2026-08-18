@@ -93,6 +93,19 @@ pub mod rule {
     pub const CONFLICTING_PAINT_REPRESENTATION: &str = "paint.conflicting-representation";
     pub const TEXT_STRING_OUT_OF_RANGE: &str = "text.string-out-of-range";
     pub const TEXT_STYLE_OUT_OF_RANGE: &str = "text.style-out-of-range";
+    /// A placeholder naming a string outside the pool (story #1126). The
+    /// loader resolves `contribution_id`/`fragment_ref` through
+    /// `Document.strings` on the contract that this gate checked them, so an
+    /// unchecked index is a panic in `dashscene-core` rather than a
+    /// diagnostic.
+    pub const PLACEHOLDER_STRING_OUT_OF_RANGE: &str = "placeholder.string-out-of-range";
+    /// A placeholder whose `declared_size` is not finite and non-negative
+    /// (story #1126). The same rule `geometry.rect-invalid-extent` applies to
+    /// an authored box, and for the same reason: this is the size a measure
+    /// callback reports, so it reaches the solve. Without this the arena's own
+    /// assertion is the first thing to see it, which is a panic on the load
+    /// path rather than a diagnostic (P4).
+    pub const PLACEHOLDER_DECLARED_SIZE_INVALID: &str = "placeholder.declared-size-invalid";
     /// A text style whose `color` is absent. The schema makes it optional (a
     /// struct field in a table always is), so a producer can omit it — and a
     /// consumer that invents a default has silently discovered vocabulary,
@@ -513,6 +526,8 @@ pub mod rule {
         CONFLICTING_PAINT_REPRESENTATION,
         TEXT_STRING_OUT_OF_RANGE,
         TEXT_STYLE_OUT_OF_RANGE,
+        PLACEHOLDER_STRING_OUT_OF_RANGE,
+        PLACEHOLDER_DECLARED_SIZE_INVALID,
         TEXT_STYLE_NO_COLOR,
         TEXT_STYLE_WEIGHT_OUT_OF_RANGE,
         TEXT_STYLE_SIZE_OUT_OF_RANGE,

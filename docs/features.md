@@ -374,11 +374,24 @@ Checked against `crates/dashbuf/src/container.rs`, `bank.rs`, `prefix.rs`,
       every byte addressable whether or not it was checked; a browser has
       no such thing. Issue #822 is the change that would remove the
       condition, and it is in the runtime rather than in either host.
-- [ ] **Placeholders for content still loading** — **the schema surface is
-      v0.21**, the runtime behaviour is still unscheduled. Story #1126 adds the
-      four `Node` fields node replacement binds to and #1127 the diagnostic for
-      an unfilled one; what a not-yet-loaded image should _show_ is still
-      undecided, and the design source does not supply it.
+- [ ] **Placeholders for content still loading** — **the schema surface landed
+      at v0.21; the runtime behaviour is still unscheduled.** Story #1126 added
+      `table Placeholder` and the one appended `Node.placeholder` field that
+      holds its four values — a nested table rather than four loose `Node`
+      fields, so that its _presence_ is what declares a node a placeholder
+      ([`decisions/a-placeholder-is-a-table-and-declares-its-measure-size.md`](decisions/a-placeholder-is-a-table-and-declares-its-measure-size.md)).
+      `dashc`'s emitter lowers a declared placeholder and `dashscene-core` reads
+      it back through `Arena::placeholder`, but **no producer lowers one**: the
+      `dashc` CLI's only subcommand is `check`, so authoring one means building
+      a `dashc::Document` in code. Figma is not missing the vocabulary —
+      `dashscene/role = placeholder` is a known annotation the importer
+      recognises and whose sample children it trims — but the lowering drops it
+      and sets `placeholder: None` — story #1264. **And nothing resolves it**:
+      no measure callback reads `declared_size`, no host binds a
+      `contribution_id`, no painter draws an `interim_fill`, and #1127 — the
+      diagnostic for an unfilled one — is still open. What a not-yet-loaded
+      image should _show_ is still undecided, and the design source does not
+      supply it.
 
 ## 7. Images, fonts and asset preparation
 

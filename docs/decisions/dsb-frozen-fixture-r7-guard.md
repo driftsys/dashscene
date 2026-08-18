@@ -63,9 +63,26 @@ edit that breaks it.
   sentinel-defaulted `Node` fields (`parent`, `paint_entry`, `text`,
   `text_style`), all three `Fill` union members, `Paint.clip`, the legacy inline
   `Node.paint`, both flex tables (including an absent optional scalar and a
-  negative margin), and both text pools. Fields added by a future slice should
-  be added to the fixture in the same commit that adds them — which regenerates
-  it, legitimately, as an append.
+  negative margin), and both text pools.
+
+  **This fixture can no longer be regenerated, so a later slice does not extend
+  it.** This bullet used to say fields added by a future slice "should be added
+  to the fixture in the same commit that adds them — which regenerates it,
+  legitimately, as an append", and that instruction is not executable: since
+  story #107 `Document.images` is a deprecated slot that `build_fixture` cannot
+  address, so `UPDATE_DSB_FIXTURE=1` panics rather than rewriting. Regenerating
+  would produce a fixture 48 bytes shorter, missing the only
+  pre-current-bindings image bytes in the repo, **while every assertion in the
+  suite still passed** — which is what makes it dangerous rather than merely
+  wrong.
+
+  What a later slice does instead: **run the suite.** The fixture's subject is
+  the field ids that existed when its bytes were written, and an append cannot
+  shift one, so a green suite is the append's proof. Story #1126 added
+  `table Placeholder` and `Node.placeholder` this way, and all 15 assertions
+  passed unchanged. A new table's _own_ ids are guarded by nothing until a
+  fixture predating an edit to it exists; adding one is a deliberate act, beside
+  this fixture rather than over it.
 - The fixture is a single flatbuffer, matching today's `.dsb`. When the
   sectioned container lands (`dsb-sectioned-container.md`), the envelope needs
   its own frozen fixture; this one stays as the structured-section guard.

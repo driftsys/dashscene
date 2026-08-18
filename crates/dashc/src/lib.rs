@@ -52,9 +52,9 @@ pub mod figma;
 pub use document::{
     Asset, AssetKind, AxisSizing, Binding, BindingChannel, BindingTransform, Box2D, CrossAxisAlign,
     Document, Easing, EdgeInsets, GridTrack, Keyframe, LayoutConstraints, LayoutContainer,
-    LayoutMode, LoopTrack, MainAxisAlign, Node, Paint, PaintEntry, PropTransition, SignalDecl,
-    TextAlign, TextAlignV, TextStyle, TransitionSpec, VariantMember, VariantOverride, VariantSet,
-    VariantTransition, VariantValue,
+    LayoutMode, LoopTrack, MainAxisAlign, Node, Paint, PaintEntry, Placeholder, PropTransition,
+    SignalDecl, TextAlign, TextAlignV, TextStyle, TransitionSpec, VariantMember, VariantOverride,
+    VariantSet, VariantTransition, VariantValue,
 };
 pub use emit::emit;
 // `CompileError` only: it is `compile_figma`'s error type, so it belongs at the

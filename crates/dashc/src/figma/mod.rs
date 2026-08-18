@@ -1129,6 +1129,10 @@ impl Walk<'_> {
             // already this repository's sign convention (`rest.rs`).
             rotation,
             rotation_anchor: (0.0, 0.0),
+            // Story #1126. Nothing in the Figma vocabulary declares a
+            // placeholder: the annotation path that would is not built, so
+            // this producer lowers none.
+            placeholder: None,
         });
         // Where this Figma node landed — the join key for the binding
         // rows (story #167). A synthetic node without an id (a test

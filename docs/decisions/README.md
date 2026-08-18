@@ -266,6 +266,11 @@ records below. Per-story decisions land here directly:
   `CommittedScene::renumbered`. R5 loses its document-shape qualification, the
   per-frame band goes from 65.00x to 1.00x, and the browser's widening is
   deleted (story #838, issue #822, the second half of the record above's D3).
+- [a-placeholder-is-a-table-and-declares-its-measure-size.md](a-placeholder-is-a-table-and-declares-its-measure-size.md)
+  — node replacement's schema surface is one nested `Placeholder` table whose
+  _presence_ declares the node a placeholder, and its `declared_size` is the
+  size a measure callback reports while nothing is bound, not a second statement
+  of the node's box (story #1126). The surface only: activation stays in v1.
 - [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a frozen,
   checked-in `.dsb` byte fixture guards R7's append-only schema evolution (debt
   #64); binds every edit to `dashbuf.fbs`.

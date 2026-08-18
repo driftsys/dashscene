@@ -241,20 +241,37 @@ measured (epic #476), and the browser target is WebGPU only.
   [rendering-and-painters.md](../technotes/rendering-and-painters.md) §9-§10. It
   is instanced SDF quads too, so it shares `dashscene-gpu`'s instance struct and
   its layer-1 and layer-2 suites (R-T5).
-- **Placeholders and node replacement** — a schema surface **still to be
-  added**: `Node` will carry the fields
-  (`contribution_id`/`fragment_ref`/`declared_size`/`interim_fill`), append-only
-  so existing loaders keep reading new documents. **None of the four exists, and
-  nothing is reserved for them** — `table Node` in
-  `crates/dashbuf/schema/dashbuf.fbs` holds no placeholder slot. Story #1126 on
-  v0.21 is what builds them, and this line said "already carries" until the
-  v0.19 phase-end revision checked it (issue #876). Re-derive over all four,
-  with a form that prints a count rather than exiting 1 on no match:
+- **Placeholders and node replacement** — **the schema surface exists;
+  activation does not.** Story #1126 added `table Placeholder`
+  (`contribution_id`/`fragment_ref`/`declared_size`/`interim_fill`) and one
+  appended `Node.placeholder` field holding it, so an ordinary node writes no
+  table and a pre-#1126 document encodes byte-identically. `dashc`'s emitter
+  lowers a declared placeholder and `dashscene-core` reads it back through
+  `Arena::placeholder`, but **no producer lowers one**: the `dashc` CLI's only
+  subcommand is `check`, so authoring one today means building a
+  `dashc::Document` in code, which is what the tests do. Figma is not missing
+  the vocabulary — `dashscene/role = placeholder` is a known annotation the
+  importer already recognises and whose sample children it trims
+  ([importer-trim-layers.md](../decisions/importer-trim-layers.md)) — but the
+  lowering drops it, so `crates/dashc/src/figma/mod.rs` sets
+  `placeholder: None`. Connecting the two is story #1264. **Nothing resolves it
+  either** — no measure callback reads `declared_size`, no host binds a
+  contribution, and no diagnostic reports an unfilled one (story #1127).
+  Placeholder _activation_ stays in v1
+  ([05-qualification.md](../specification/05-qualification.md)). Why a nested
+  table rather than four loose fields, and why `declared_size` is a measure size
+  rather than a second box:
+  [a-placeholder-is-a-table-and-declares-its-measure-size.md](../decisions/a-placeholder-is-a-table-and-declares-its-measure-size.md).
+  This line said "already carries" while none of the four existed, until the
+  v0.19 phase-end revision checked it (issue #876), and read "still to be added"
+  until story #1126 built it. Re-derive rather than trusting it, with a form
+  that prints a count rather than exiting 1 on no match:
 
       for f in contribution_id fragment_ref declared_size interim_fill; do
         printf '%s %s\n' "$f" "$(git grep -l "$f" -- crates/ | wc -l)"
-      done Bound by R5
-  (cold-start cost proportional to what is shown) in
+      done
+
+  Bound by R5 (cold-start cost proportional to what is shown) in
   [01-goals-and-requirements.md](../specification/01-goals-and-requirements.md)
   and `docs/archive/2026-07-14-design-1-seed.md` §10.2. The contract that will
   fill a placeholder at runtime is already designed:
