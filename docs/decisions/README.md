@@ -631,6 +631,16 @@ their parent rather than apart from it:
   written, which is its own best argument: they were not hard, they were
   unasked. #462 is deferred to v1 with the resulting gap stated rather than
   implied.
+- [the-c-abi-runtime-handle-is-generational.md](the-c-abi-runtime-handle-is-generational.md)
+  — the C ABI identifies a runtime by a **generational integer in a
+  thread-affine table**, not by a pointer, so a handle that is stale or misused
+  produces a `DsStatus` the host can act on rather than undefined behaviour
+  (owner's ruling on issue #1226, 2026-08-18). Lands in v0.21 before story #859,
+  while the only consumers are this repository's own JNI layer and its C
+  conformance test. The record rules those three things and **hands the
+  mechanics to the implementing pull request as seven questions**; it is neither
+  an `unsafe` reduction nor a CodeQL fix, and it corrects #1226's figures for
+  both.
 - [slices-are-planned-against-their-inflow.md](slices-are-planned-against-their-inflow.md)
   — the v0.20 retrospective (2026-08-18). Epic #951 planned 13 issues and the
   milestone closed 142, of which 126 were filed while the slice ran, so a

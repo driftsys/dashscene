@@ -1978,12 +1978,15 @@ reading.
   v0.23. Which issue sits under which epic is GitHub's, per the table at the top
   of this file; the sweep that finds the unanchored ones is this file's ritual,
   and it now runs at the epic as well as at the milestone.
-- **#1226 became a gate rather than debt beside the slice.** It asks whether the
-  C ABI's runtime handle stays a raw pointer. The answer changes the signature
-  of every entry point and therefore every P/Invoke declaration a C# host
-  writes, so it is owed before **#859** adds entry points and before **#1121**
-  writes the host. It is not an entry condition on the slice — the rest of #1106
-  can start without it — and it is answerable in parallel with everything else.
+- **#1226 became a gate rather than debt beside the slice, and was ruled on
+  2026-08-18.** It asked whether the C ABI's runtime handle stays a raw pointer.
+  The answer changes the signature of every entry point and therefore every
+  P/Invoke declaration a C# host writes, so it was owed before **#859** adds
+  entry points and before **#1121** writes the host. **The ruling is a
+  generational handle in a thread-affine table** —
+  [`decisions/the-c-abi-runtime-handle-is-generational.md`](decisions/the-c-abi-runtime-handle-is-generational.md)
+  carries it, its reasoning and its cost; they are not restated here. It is not
+  an entry condition on the slice, and #1226 now carries the build.
 - **Two stories no plan had named were filed and closed on 2026-08-17**: #1229,
   the Android measurement apparatus, and #1230, the Unity build environment and
   the seam proven end to end. Both were built **while the thing they serve was
@@ -2198,7 +2201,10 @@ is open question 4 on #851, "which of the three layers a Unity host occupies",
 recorded there as never settled during the discussion. The third is a delivery,
 with nothing tracking it but this paragraph.
 
-**The Unity half's first build step is the data plane.** `dashscene-ffi` is
+**The Unity half's first build step is the data plane** — **superseded on
+2026-08-18**: #1226's ruling lands before it, because it changes the signature
+of every entry point the data plane would add to. The paragraph below is
+otherwise unchanged and still describes what #859 is for. `dashscene-ffi` is
 shaped around a surface handle: a host gives dashscene a surface and dashscene
 draws into it. A host that draws the frame itself — which is what a Unity host
 is — needs the opposite direction, and the committed tables cross no boundary
