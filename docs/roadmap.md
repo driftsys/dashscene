@@ -1290,9 +1290,9 @@ below are v0.19, v1 and v0.21, not this slice.** Read it as the state on that
 date, not as a claim about today: Android's "nothing" row was overtaken by
 v0.19, and the Unity row's separate repository was **reversed on 2026-08-17** —
 the C# package is sited in this repository under `unity/`
-([`decisions/unity-separate-repo-deferred.md`](decisions/unity-separate-repo-deferred.md)),
-which also renames `dashscene-unity` to `dashpaint-abi` (issue #1239). The
-survey below is left as written rather than corrected in place.
+([`decisions/unity-package-sited-in-this-repository.md`](decisions/unity-package-sited-in-this-repository.md)),
+which also renamed `dashscene-unity` to `dashpaint-abi` (story #1239, landed).
+The survey below is left as written rather than corrected in place.
 
 Delivers, as first written: **platform reach — web, desktop and Android.** iOS
 and the Unity host follow in v1. Everything below boundary B is a library;
@@ -1316,9 +1316,13 @@ that is not a demonstration. Android and iOS are a **bring-up** problem, and
 almost certainly need a C API first — boundary B is already FFI-representable
 (story #600 made a non-FFI type a compile error) and `dashc` already has an ABI,
 so the foundation exists, but nothing sits on it. Unity is blocked on decisions
-rather than on code: `decisions/unity-separate-repo-deferred.md` puts the
-project in another repository and `decisions/unity-painter-uses-brg.md` is still
-`proposed`.
+rather than on code: the siting record — then
+`decisions/unity-separate-repo-deferred.md`, and
+`decisions/unity-package-sited-in-this-repository.md` since story #1239 renamed
+it with its contents — put the project in another repository, and
+`decisions/unity-painter-uses-brg.md` is still `proposed`. **The first half was
+reversed on 2026-08-17**, which the entry above records; this paragraph is left
+as written.
 
 **This is larger than one slice as written, and the planning session should
 expect to split it.** Recorded here rather than discovered later: a slice naming
@@ -1634,8 +1638,8 @@ on 2026-08-09, kept because the reasoning is the record; read those parts in the
 past tense. **Paragraphs carrying their own later date are amendments, not
 plan** — the issue placements dated 2026-08-16 are this close's, and are the
 part it is accountable for. At planning time Android was at zero: no target
-triple, no toolchain, no CI job, and no FFI beyond `dashscene-unity`'s
-Unity-facing bindings. What that became is in "What it shipped" above.
+triple, no toolchain, no CI job, and no FFI beyond `dashpaint-abi`'s boundary-B
+gate. What that became is in "What it shipped" above.
 
 [`decisions/host-integration-in-three-layers.md`](decisions/host-integration-in-three-layers.md)
 is **accepted** and is the structure this slice builds against: three layers —
@@ -2184,11 +2188,13 @@ the first two are settleable at will, and hardware was expected roughly
 third, and the owner's ruling that day sited the C# package in this repository
 under `unity/` instead, which turned it from an artifact only the owner could
 supply into work this repository can do
-([`decisions/unity-separate-repo-deferred.md`](decisions/unity-separate-repo-deferred.md),
-reversed in place). Issue #1239 carries it, together with the rename of
-`dashscene-unity` to `dashpaint-abi` ruled the same day. Epic #1106's body still
-states three and is corrected by a comment on it, which is how this repository
-amends an issue.
+([`decisions/unity-package-sited-in-this-repository.md`](decisions/unity-package-sited-in-this-repository.md),
+reversed in place). Story #1239 carried it out, together with the rename of
+`dashscene-unity` to `dashpaint-abi` ruled the same day: `unity/` holds the UPM
+package and the .NET check that compiles its declarations against the Rust
+layouts, and the crate and its symbols carry the new name. Epic #1106's body
+still states three and is corrected by a comment on it, which is how this
+repository amends an issue.
 
 **Only the second of the three has an issue of its own: #171**, moved here from
 v1 on 2026-08-16. It holds three records still marked `proposed` and only

@@ -42,7 +42,7 @@ cannot emit.
 
 **D4 — `ImageTable` flattens: one byte pool plus `#[repr(C)]` rows.** The three
 types are `ImageAsset` (producer, owns its bytes), `ImageEntry` (stored, fixed
-width, **on `dashscene-unity`'s FFI gate**), `ImageRef` (reader, borrows).
+width, **on `dashpaint-abi`'s FFI gate**), `ImageRef` (reader, borrows).
 
 **D5 — a payload binding may state its own format.** `BoundPayload` carries the
 bytes and, for a derivation, what they are; `load_document` is
@@ -85,7 +85,7 @@ names. That is the same producer/table/reader split
 `instance-buffer-contract.md` took, and it is why doing this _with_ #640 rather
 than after it was the cheaper order.
 
-`ImageEntry` joins `dashscene-unity`'s gate in this change, which is what makes
+`ImageEntry` joins `dashpaint-abi`'s gate in this change, which is what makes
 "meets story #600's rule" a fact rather than a claim: the crate names each gated
 type in an `extern "C"` signature, so `improper_ctypes_definitions` fires on
 anything unrepresentable, and pins its size and alignment beside it. Story
@@ -150,7 +150,7 @@ Three changes, and the shape of them follows D4's own split:
 
 - **`ImageEntry` and `ImageRef` carry `width` and `height`.** The row grows from
   12 bytes to 20, stays `#[repr(C)]` with fixed-width members, and its pin on
-  `dashscene-unity`'s gate moves with it.
+  `dashpaint-abi`'s gate moves with it.
 - **`ImageTable::push` derives the extent for an encoded payload** by calling
   `identify`, and `push_baked` takes it from the caller. So `ImageAsset` keeps
   its shape and none of the 47 construction sites across 20 files changed — the

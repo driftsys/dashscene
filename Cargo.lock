@@ -595,6 +595,13 @@ name = "dashpaint"
 version = "0.0.0"
 
 [[package]]
+name = "dashpaint-abi"
+version = "0.0.0"
+dependencies = [
+ "dashpaint",
+]
+
+[[package]]
 name = "dashscene"
 version = "0.0.0"
 
@@ -701,13 +708,6 @@ dependencies = [
  "ttf-parser",
  "unicode-bidi",
  "unicode-properties",
-]
-
-[[package]]
-name = "dashscene-unity"
-version = "0.0.0"
-dependencies = [
- "dashpaint",
 ]
 
 [[package]]

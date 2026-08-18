@@ -48,7 +48,7 @@ change is which region, not what a row is.
 
 **Story #596's premise that `Cow<'a, [u8]>` is ruled out by the compiler is
 wrong, and correcting it does not change the answer.** The FFI gate is stated
-over `ImageEntry`, the stored row. `crates/dashscene-unity/src/lib.rs` says so
+over `ImageEntry`, the stored row. `crates/dashpaint-abi/src/lib.rs` says so
 directly: `ImageAsset` "stays as the owning producer type, which no `extern "C"`
 signature names". Neither `ImageAsset` nor `ImageTable` appears in any
 `extern "C"` signature, so a lifetime on either compiles. What rules the borrow

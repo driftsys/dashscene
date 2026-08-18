@@ -20,7 +20,7 @@ order, so it could not call it:
 
     dashbuf -> dashpaint -> dashscene-core -> dashscene-typeset -> dashcue ->
     dashscene-engine -> dashscene-validator -> dashscene-skia -> dashlang ->
-    dashc -> dashpack -> dashscene-unity -> dashscene-web -> dashscene
+    dashc -> dashpack -> dashpaint-abi -> dashscene-web -> dashscene
 
 The rule also had nothing to catch. `dashc` was the only writer, and it derived
 the recorded metadata and the payload from a single `identify` call, so the two

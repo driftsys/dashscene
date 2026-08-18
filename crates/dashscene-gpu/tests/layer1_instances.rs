@@ -1226,7 +1226,7 @@ fn the_vocabulary_fixture_is_distinguishable_in_every_instance() {
 /// alone do not hold `#[repr(C)]`: `repr(Rust)` produces the same 80 bytes at
 /// alignment 4 for these members while reordering them, so a build that lost
 /// the attribute would pass a size check and hand a shader the wrong bytes.
-/// This is the check `dashscene-unity`'s `improper_ctypes_definitions` gate
+/// This is the check `dashpaint-abi`'s `improper_ctypes_definitions` gate
 /// gives the boundary-B types, which `instance-buffer-contract.md` deliberately
 /// does not put this type behind.
 #[test]

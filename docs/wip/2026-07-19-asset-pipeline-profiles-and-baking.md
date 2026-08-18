@@ -370,7 +370,7 @@ Still open:
 - **Unity ingest wrapping**: Unity consumes the packed set (runtime KTX2 loader
   plugin vs build-time wrap into Unity textures) — invariant either way: input
   is the packed bank keyed to canonical, never a separate export. Belongs to the
-  deferred dashscene-unity design.
+  deferred dashpaint-abi design.
 - **Band values per class per profile**: pinned empirically by the packer
   oracle + review, never invented (the E7 band discipline). Done for the
   image-fill class at story #432 (`hifi-image-fill`, `lofi-image-fill`); every

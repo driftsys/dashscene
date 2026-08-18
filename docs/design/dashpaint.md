@@ -311,24 +311,24 @@ its anchor (v0.18, story #770) — pinned by test.
 `CornerRadii` is `#[repr(C)]` too, and was not until story #600. `ClipBox`
 embeds one, so a `repr(C)` struct held a `repr(Rust)` field, whose layout is
 unspecified — the blittability claim above was true only by accident of what
-rustc does with four `f32`s. It was found by `crates/dashscene-unity`'s
+rustc does with four `f32`s. It was found by `crates/dashpaint-abi`'s
 `improper_ctypes_definitions` gate on the first run of that gate, and adding the
 attribute moved nothing: all 77 committed binary artifacts stayed
 byte-identical.
 
 That gate is why these attributes are now enforced rather than merely intended.
-`dashscene-unity` declares an `extern "C"` surface over the boundary-B value
-types under `#![deny(improper_ctypes_definitions)]`, so removing a `repr`
-attribute, adding a `Vec` field, or putting a payload-carrying enum on the
-surface stops the workspace compiling. Boundary B is a language-neutral data
-contract, and the reason is G2 — see `docs/design/architecture.md`. The surface
-is narrow today and widens as story #578 flattens each type in turn.
-`ClipRegion`, `GlyphRun` (with `GlyphRange`), `ShadowRange`, `BlurRange`,
-`PaintKind`, `Gradient` (with `StopRange`), `ImageFill`, and now `PaintEntry`
-itself with the three ranges it gained, are done and on the surface.
-`ImageAsset` remains, and is a different problem: its `Vec<u8>` is a payload
-rather than a reference into a table, so flattening it means deciding where a
-decoded-ready blob lives.
+`dashpaint-abi` declares an `extern "C"` surface over the boundary-B value types
+under `#![deny(improper_ctypes_definitions)]`, so removing a `repr` attribute,
+adding a `Vec` field, or putting a payload-carrying enum on the surface stops
+the workspace compiling. Boundary B is a language-neutral data contract, and the
+reason is G2 — see `docs/design/architecture.md`. **The surface is complete**:
+story #578's flattening finished, and story #640 closed the last of it by giving
+the image table a blob pool so the stored row is `ImageEntry` — a range into
+that pool — while `ImageAsset` stays the owning producer type that no
+`extern "C"` signature names. No enumeration of the surface is kept here,
+because a hand-maintained one goes stale silently; `abi_surface!` in
+`crates/dashpaint-abi/src/lib.rs` is the list, and `dashpaint_abi_type_count`
+reports its length at run time.
 
 `Painter::paint` is infallible and the trait is object-safe (`Box<dyn
 Painter>`

@@ -61,7 +61,7 @@
 //!   ("`dependency.X` was not found in `workspace.dependencies`") for any crate
 //!   something inherits. So this suite is not what protects that entry for most
 //!   crates. It still protects the leaves — **`dashscene` and
-//!   `dashscene-unity`**, the two nothing in the workspace depends on, so
+//!   `dashpaint-abi`**, the two nothing in the workspace depends on, so
 //!   removing their entries would build cleanly and break only at publish. An
 //!   earlier draft said four and added `dashpack` and `dashscene-desktop`;
 //!   `goldens/tooling` takes the first and `demo` the second.

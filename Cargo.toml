@@ -14,7 +14,7 @@ members = [
   "crates/dashc",
   "crates/dashpack",
   "crates/dashpack-astcenc-sys",
-  "crates/dashscene-unity",
+  "crates/dashpaint-abi",
   "crates/dashscene-web",
   "crates/dashscene-desktop",
   "crates/dashscene-ffi",
@@ -74,7 +74,7 @@ rust-version = "1.88"
 # Publish order (see justfile `publish` recipe):
 #   dashbuf -> dashpaint -> dashscene-core -> dashscene-typeset ->
 #   dashcue -> dashscene-engine -> dashscene-validator -> dashscene-skia -> dashlang ->
-#   dashc -> dashpack-astcenc-sys -> dashpack -> dashscene-unity ->
+#   dashc -> dashpack-astcenc-sys -> dashpack -> dashpaint-abi ->
 #   dashscene-gpu -> dashscene-desktop -> dashscene-web -> dashscene-ffi ->
 #   dashscene-android -> dashscene
 # dashscene-android follows dashscene-ffi, which it depends on: it is the
@@ -108,7 +108,7 @@ dashbuf = { path = "crates/dashbuf", version = "0.0.0" }
 dashc = { path = "crates/dashc", version = "0.0.0" }
 dashpack = { path = "crates/dashpack", version = "0.0.0" }
 dashpack-astcenc-sys = { path = "crates/dashpack-astcenc-sys", version = "0.0.0" }
-dashscene-unity = { path = "crates/dashscene-unity", version = "0.0.0" }
+dashpaint-abi = { path = "crates/dashpaint-abi", version = "0.0.0" }
 dashscene-web = { path = "crates/dashscene-web", version = "0.0.0" }
 dashscene-desktop = { path = "crates/dashscene-desktop", version = "0.0.0" }
 dashscene-ffi = { path = "crates/dashscene-ffi", version = "0.0.0" }

@@ -39,14 +39,17 @@ milestones, which is why every `#N` in these records still resolves.
 
 There are **21** reserved crates.io names: the 12 taken on 2026-03-18, before
 this repo's first commit, plus 9 reserved during development as the crates
-needing them arrived. Nineteen are this workspace's crates — every one of them —
-and `dashscore` and `dashscene-compose` stay parked. These counts were off by
-one for a while, having not moved when `dashscene-ffi` was reserved, so
-re-derive them from `docs/decisions/crate-name-map.md` rather than trusting the
-number here. Beware `demo`: a crate of that name has existed on crates.io since
-2018 and is not ours, so querying the 25 workspace member names against
-crates.io returns 20 — the 19 crates plus that one. Neither 20 nor 25 is the
-reservation count.
+needing them arrived. **Eighteen of the 21 are this workspace's crates since
+story #1239**, which renamed `dashscene-unity` to `dashpaint-abi`: the old name
+stays reserved and now describes nothing, and the new one is not reserved at
+all, so three are parked rather than two — `dashscore`, `dashscene-compose` and
+`dashscene-unity` — and one workspace crate holds a name the project does not
+own. These counts have been wrong before, having not moved when `dashscene-ffi`
+was reserved, so re-derive them from `docs/decisions/crate-name-map.md` rather
+than trusting the number here. Beware `demo`: a crate of that name has existed
+on crates.io since 2018 and is not ours, so querying the 25 workspace member
+names against crates.io returns 19 — the 18 reserved crates plus that one.
+Neither 19 nor 25 is the reservation count.
 
 The repository that made those reservations is archived as
 `driftsys/dashscene-name-reservations`, kept because every published stub points
@@ -86,16 +89,17 @@ and `main` now carries one
     dashpack               asset packer — canonical payloads to per-profile
                           derivations (RAW/HiFi/LoFi), cold-bank assembly,
                           derivation manifest; lands across slice v0.12
-    dashscene-unity        the C representation of boundary B — the
+    dashpaint-abi          the C representation of boundary B — the
                           improper_ctypes_definitions gate over dashpaint's
                           value types, not bindings and not Unity-specific.
-                          Renamed to dashpaint-abi, and the Unity C# package
-                          sited in this repository under unity/, by the
-                          rulings of 2026-08-17
+                          Named dashscene-unity until the rulings of
+                          2026-08-17, which also sited the Unity C# package in
+                          this repository under unity/
                           (docs/decisions/crate-name-map.md,
-                          docs/decisions/unity-separate-repo-deferred.md).
-                          Issue #1239 carries both; until it lands the crate
-                          is still dashscene-unity and unity/ does not exist
+                          docs/decisions/unity-package-sited-in-this-repository.md).
+                          Story #1239 landed both, and moved the exported
+                          symbols to the dashpaint_abi_ prefix with the
+                          package
     dashscene-desktop     the desktop integration surface — the window-to-surface
                           handoff, the winit frame loop, rebuilding on resize,
                           the published `Present` seam and the lean painter's
@@ -134,9 +138,11 @@ reimplementing lowering/validation, see
 `docs/decisions/figma-importer-deno-plus-dashc-wasm.md`), `corpus/` (stress
 corpus + Figma fixture captures), `goldens/` (CI golden images + diff tooling),
 `demo/` (the windowed showcase host — the window, the event loop and the frame
-loop, landed at v0.14), and `demo-web/` (the same showcase in a browser — a
-canvas, `requestAnimationFrame`, and a `.dsb` fetched by byte range, landed at
-v0.15).
+loop, landed at v0.14), `demo-web/` (the same showcase in a browser — a canvas,
+`requestAnimationFrame`, and a `.dsb` fetched by byte range, landed at v0.15),
+and `unity/` (the UPM package and the .NET check that holds its C# declarations
+of boundary B to the Rust layouts — declarations only, no painter and no host,
+landed at v0.21 by story #1239).
 
 Six of those directories hold workspace members that are never published:
 `demo/`, `demo-web/` (the browser host — a canvas, the lean painter, and a
@@ -181,6 +187,23 @@ total, nineteen of them the crates above.
     just check        regression tier + lint + audit + secrets + the two wasm
                       gates + c-abi, which compiles the committed header from C
                       and checks the two halves agree (needs a C toolchain)
+    just unity-abi    the UPM package's C# declarations of boundary B against
+                      the Rust build of `dashpaint-abi`. Compiles the package's
+                      own `BoundaryB.cs` and compares every type on the surface,
+                      member by member, matched by name. **Needs no Unity
+                      editor** and no manifest change: the gate crate is built
+                      as a cdylib for the run by `cargo rustc --crate-type
+                      cdylib`, so the published crate stays an rlib. Needs the
+                      .NET SDK, which bootstrap does not install, so it is
+                      outside `check`; CI's `unity-abi` job runs exactly it. It
+                      catches anything wrong with the C# declaration: a
+                      member added, removed, renamed, moved or widened. Two
+                      things it does not catch, both measured: a member whose
+                      C# type has the right size and the wrong meaning (`uint`
+                      declared as `float`), and a member added to the **Rust**
+                      type that fits inside existing padding, since
+                      `abi_surface!`'s member lists are hand-written (issue
+                      #1252). See `unity/abi-check/Program.cs`
     just secrets      gitleaks over HEAD and over history, plus a pattern-grep
                       backstop over every object git would push. Unreachable
                       objects are deliberately out of scope — see the recipe.

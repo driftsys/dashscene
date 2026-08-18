@@ -22,7 +22,7 @@ eventually live. What this story produces is the evidence that makes two of
 those decisions cheaper to make.
 
 **The repository question in particular is open and this story does not answer
-it.** `docs/decisions/unity-separate-repo-deferred.md` is accepted on the
+it.** `docs/decisions/unity-package-sited-in-this-repository.md` is accepted on the
 separate-repository choice, and creating that repository is entry condition 3.
 The owner is still weighing it. **Do not create it.** Produce the evidence and
 leave the decision alone.
@@ -41,7 +41,7 @@ leave the decision alone.
   in particular what it says about `ds_abi_version`.
 - `crates/dashscene-ffi/include/dashscene.h` — the committed header.
   `just c-abi` compiles it from C and checks the two halves agree.
-- [`../decisions/unity-separate-repo-deferred.md`](../decisions/unity-separate-repo-deferred.md)
+- [`../decisions/unity-package-sited-in-this-repository.md`](../decisions/unity-package-sited-in-this-repository.md)
   — accepted, with its schedule corrected in place; the reasoning is about where
   the code lives, not when it is written.
 

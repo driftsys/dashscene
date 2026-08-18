@@ -49,13 +49,13 @@ only if the fields are private, and `glyph_id` cannot be:
 `neither_glyph_type_carries_padding` — the test
 `sub-word-members-widen-rather-than-pad.md` names as what has teeth — reads
 `offset_of!(GlyphQuad, glyph_id)` and `size_of_val(&quad.glyph_id)` from
-`dashscene-unity`, another crate. Private fields make both a compile error, so
-the constructor would be bought by deleting the assertion that holds the
-widening this check exists to complete.
+`dashpaint-abi`, another crate. Private fields make both a compile error, so the
+constructor would be bought by deleting the assertion that holds the widening
+this check exists to complete.
 
 **For `VectorField` it is available, and the reason against it is cost.**
-Nothing pins that type's field offsets — `dashscene-unity` measures only its
-size and alignment, which private fields do not change — so private fields plus
+Nothing pins that type's field offsets — `dashpaint-abi` measures only its size
+and alignment, which private fields do not change — so private fields plus
 accessors would work. They would mean rewriting every literal and every read of
 the type outside `dashpaint`: both painters read the fields directly on the draw
 path, the loader builds one per shape, and the arena folds `distance_range` into
@@ -68,14 +68,14 @@ wrong twice — once counting the packages that merely _name_ the type, once
 including a crate whose only mentions are comments.
 
 **What is not a reason.** An earlier draft of this record argued that both rows
-cross the C ABI by value through `dashscene-unity`'s `abi_surface!`, so a
-foreign host writes the bytes and no constructor is on that path. That is false
-and was removed. `abi_surface!` generates `fn(value: T) -> T { value }` — an
-identity function whose job is to prove a hand-written C header agrees on field
-order — and it reaches no table. `dashscene-ffi` exposes no function taking
-either row: there is no data plane for these types today. The argument is noted
-here because it was written into three documents before the review caught it,
-and because it is exactly the defect this pair of issues exists to correct.
+cross the C ABI by value through `dashpaint-abi`'s `abi_surface!`, so a foreign
+host writes the bytes and no constructor is on that path. That is false and was
+removed. `abi_surface!` generates `fn(value: T) -> T { value }` — an identity
+function whose job is to prove a hand-written C header agrees on field order —
+and it reaches no table. `dashscene-ffi` exposes no function taking either row:
+there is no data plane for these types today. The argument is noted here because
+it was written into three documents before the review caught it, and because it
+is exactly the defect this pair of issues exists to correct.
 
 **Keeping the fields public beside a constructor is the shape already
 rejected.** PR #983's review found that a `pub px_per_em` let `Atlas::new`'s

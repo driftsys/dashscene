@@ -144,13 +144,14 @@ container versions and then exits without packing anything.
 
 Not built:
 
-- **The Unity painter.** `crates/dashscene-unity` holds the `extern "C"` surface
+- **The Unity painter.** `crates/dashpaint-abi` holds the `extern "C"` surface
   that keeps boundary B representable from C#, and the build enforces it; the
-  painter itself and the C# package are not written. Two rulings of 2026-08-17
-  decide where they go and are **not yet carried out** (issue #1239): the C#
-  package is sited in this repository under `unity/`, which does not exist, and
-  this crate is to be renamed `dashpaint-abi`, which has not moved
-  (`docs/decisions/unity-separate-repo-deferred.md`,
+  painter itself and the C# host are not written. The two rulings of 2026-08-17
+  are carried out (issue #1239): the C# package is sited in this repository
+  under `unity/`, where it declares the boundary-B value types and
+  `unity/abi-check` holds those declarations to the Rust layouts on every pull
+  request, and this crate carries the name `dashpaint-abi`
+  (`docs/decisions/unity-package-sited-in-this-repository.md`,
   `docs/decisions/crate-name-map.md`).
 - **The umbrella crate.** `crates/dashscene` is a stub; code in this repository
   depends on the individual crates, not on a facade.
@@ -191,7 +192,7 @@ to be weighed rather than run).
 | `dashpack`             | the asset packer — quality profiles, cold banks, manifests                |
 | `dashpack-astcenc-sys` | bindings to the vendored astcenc encoder and reference decoder            |
 | `dashscene`            | the umbrella crate — a stub                                               |
-| `dashscene-unity`      | the `extern "C"` gate holding boundary B representable from C#            |
+| `dashpaint-abi`        | the `extern "C"` gate holding boundary B representable from C#            |
 | `dashscene-web`        | web integration — the canvas handoff, the frame loop, `.dsb` by range     |
 | `dashscene-desktop`    | desktop integration — the window handoff, the winit loop, a mapped `.dsb` |
 | `dashscene-ffi`        | the C ABI every platform host sits on — lifecycle, load, tick, surface    |

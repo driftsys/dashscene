@@ -3,7 +3,7 @@
     status   proposed — a direction, not yet ratified
     date     2026-07-13
     source   docs/technotes/rendering-and-painters.md §10
-    scope    dashscene-unity, the future Unity/C# painter project
+    scope    dashpaint-abi, the future Unity/C# painter project
 
 ## Context
 

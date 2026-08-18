@@ -1,5 +1,5 @@
 [package]
-name = "dashscene-unity"
+name = "dashpaint-abi"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,7 +10,7 @@ keywords = ["ffi", "abi", "layout", "rendering", "graphics"]
 categories = ["development-tools::ffi", "graphics"]
 
 [lib]
-name = "dashscene_unity"
+name = "dashpaint_abi"
 
 [dependencies]
 dashpaint.workspace = true

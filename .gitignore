@@ -40,3 +40,8 @@ goldens/images/*.actual.png
 # Layer-1 instance-buffer golden failure artifacts
 # (docs/decisions/instance-buffer-contract.md)
 crates/dashscene-gpu/tests/goldens/*.actual.txt
+
+# .NET build output for `unity/abi-check` (story #1239). The check compiles the
+# UPM package's own `BoundaryB.cs`; only sources are tracked.
+unity/abi-check/bin/
+unity/abi-check/obj/
