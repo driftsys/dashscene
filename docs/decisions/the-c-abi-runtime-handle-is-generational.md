@@ -20,6 +20,11 @@ against code that does not exist yet. They are handed to the implementing pull
 request below, as questions it must answer rather than answers it must carry
 out.
 
+The line between the two is a **property** against a **mechanism**. Decision 2's
+handle-uniqueness clause is a property, added after the cut that produced this
+shape left it promised and unbacked; the bit split that delivers it stays a
+question.
+
 ## Decision
 
 **1. A runtime is identified by a generational integer, not by a pointer.**
@@ -34,7 +39,16 @@ arithmetic-derived value is detected for the same reason; a bad pointer cannot
 be checked at all.
 
 **2. The table is thread-affine**, one per thread, rather than process-global
-behind a lock.
+behind a lock, and **a handle value identifies at most one runtime for the life
+of the process**.
+
+Handle uniqueness is part of the ruling, not a mechanic left to the
+implementation, because thread affinity does not give it on its own. If slots
+and generations are both numbered per thread, each thread's first runtime takes
+the same handle value, so a handle from one thread can resolve against another's
+table and drive a runtime the caller did not name — worse than the pointer it
+replaces, because it looks like it worked. What makes handle values unique is
+question 1 below; that they are is not open.
 
 **3. It lands in v0.21, before story #859.**
 
@@ -42,9 +56,10 @@ behind a lock.
 
 - **It enforces the rule the ABI already states.**
   [`../design/c-abi.md`](../design/c-abi.md) says a caller must guarantee that
-  no other call is in flight on the same runtime. Thread affinity turns a
-  violation of that rule into a status rather than undefined behaviour, which is
-  the same upgrade decision 1 makes for a stale handle.
+  no other call is in flight on the same runtime. Thread affinity, with decision
+  2's uniqueness clause, turns a violation of that rule into a status rather
+  than undefined behaviour — the same upgrade decision 1 makes for a stale
+  handle. Neither gives it alone.
 - **`DsRuntime` is neither `Send` nor `Sync`**, and nothing in
   `crates/dashscene-ffi/src/lib.rs` makes it either — `LiveScene` holds
   `Box<dyn LayoutSolver>` and boxed closures. A process-global table hands a
@@ -82,7 +97,11 @@ are surface this change has to revisit.
 Each of these was specified in an earlier draft of this record and got it wrong.
 They need code and a test, not prose:
 
-1. **The bit split**, and what each field's width bounds.
+1. **The bit split**, and what each field's width bounds — subject to decision
+   2. Two candidate layouts fail it, for the reason decision 2 gives: a
+   per-thread slot index with a per-thread generation, and a thread field drawn
+   from a registry that recycles thread numbers. Answered with question 5, which
+   asks what happens when whatever supplies the uniqueness runs out.
 2. **Whether a stale handle and a foreign-thread handle report the same status
    or different ones.** They have different remedies — stop using it, versus
    call from the owning thread — but a handle outliving its own thread is
