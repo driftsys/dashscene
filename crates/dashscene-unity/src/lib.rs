@@ -1,4 +1,11 @@
-//! Rust-side FFI bindings consumed by the Unity painter's C# projection layer; the Unity project itself lives in a separate repo, later (docs/decisions/unity-separate-repo-deferred.md).
+//! The C representation of boundary B: an `extern "C"` surface holding [`dashpaint`]'s value types FFI-representable, with layout pins and round-trip functions a non-Rust painter checks its own declarations against.
+//!
+//! **Renamed to `dashpaint-abi` by issue #1239, and not yet moved.** The crate
+//! is not Unity's and never was — Unreal and Kanzi need this gate identically
+//! (`docs/design/architecture.md`) — and the Unity C# package is sited in this
+//! repository under `unity/` rather than in a separate repository
+//! (`docs/decisions/unity-separate-repo-deferred.md`, reversed 2026-08-17;
+//! `docs/decisions/crate-name-map.md` carries the rename).
 //!
 //! # What this crate is for today: holding boundary B to a C representation
 //!
@@ -84,12 +91,22 @@
 //!
 //! # What this is not
 //!
-//! Not a Unity FFI implementation. No `csbindgen`, no shipped C header, no
-//! platform work — those are v1. One note for whoever builds them: **the C
-//! header is the primary artifact and `csbindgen` is the C# adapter on top of
-//! it**, not the other way round. A surface designed only against `csbindgen`
-//! risks being one only C# can consume, which would give back exactly the
-//! generality this crate exists to protect.
+//! Not a Unity FFI implementation. No `csbindgen`, no platform work — those
+//! belong to the C# package under `unity/`, at slice v0.21 rather than v1,
+//! which this comment said until 2026-08-17. One note for whoever builds them:
+//! **the C header is the primary artifact and `csbindgen` is the C# adapter on
+//! top of it**, not the other way round. A surface designed only against
+//! `csbindgen` risks being one only C# can consume, which would give back
+//! exactly the generality this crate exists to protect.
+//!
+//! **Nothing here reaches a shipped artifact today**, which matters because the
+//! doc on [`AbiLayout`] tells a foreign consumer to call these functions. This
+//! crate declares no `crate-type`, so it is a plain rlib; nothing in the
+//! workspace depends on it; and `crates/dashscene-ffi/include/dashscene.h`
+//! declares none of them — that library exports twelve `ds_*` symbols and
+//! nothing else. Whether these are re-exported through `dashscene-ffi` or
+//! replaced by the `stride` member of issue #859's `DsSlice` is #859's to
+//! settle.
 #![deny(improper_ctypes_definitions)]
 
 use dashpaint::{

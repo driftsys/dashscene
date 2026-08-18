@@ -42,15 +42,16 @@ exit criteria together. `v0.14` — the showcase runtime above — is the curren
 slice.
 
 Two components named in this book are not built: the Unity painter
-(`dashscene-unity` carries Rust FFI bindings only, and the Unity project is a
-separate repository that does not exist yet) and the lean painter
-(`dashscene-gpu`, whose crate exists and draws nothing — epic #569). The
-`dashscene-web` name once described a wasm/tiny-skia painter, which is retired
-and superseded by `dashscene-gpu`; the crate is the web integration surface
-since story #741, and `dashscene-desktop` is its desktop counterpart since story
-#794, and `dashscene-android` the third since story #841. `dashscene-ffi` is the
-C ABI a platform host embeds through, added at story #840; Android reaches it
-through JNI, and the iOS and Unity hosts that follow inherit the same symbols.
+(`dashscene-unity` carries the boundary-B gate only, and the C# package is sited
+in this repository under `unity/`, which does not exist yet — ruled 2026-08-17,
+reversing the separate repository) and the lean painter (`dashscene-gpu`, whose
+crate exists and draws nothing — epic #569). The `dashscene-web` name once
+described a wasm/tiny-skia painter, which is retired and superseded by
+`dashscene-gpu`; the crate is the web integration surface since story #741, and
+`dashscene-desktop` is its desktop counterpart since story #794, and
+`dashscene-android` the third since story #841. `dashscene-ffi` is the C ABI a
+platform host embeds through, added at story #840; Android reaches it through
+JNI, and the iOS and Unity hosts that follow inherit the same symbols.
 `docs/roadmap.md` is the authority on what has landed.
 
 ## Where things live

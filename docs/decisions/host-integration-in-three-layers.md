@@ -65,17 +65,18 @@ Platform reach was one slice when this was written. Web and desktop already work
 and are a packaging problem — **that half is v0.17 (epic #793)**, and this
 record does not bear on it. **Android was at zero when this was written** — no
 target triple, no toolchain, no CI job, and no FFI beyond `dashscene-unity`'s
-Unity-facing bindings — so it is the slice's one new platform.
+boundary-B gate — so it is the slice's one new platform.
 
 **iOS and the Unity host are deliberately not in v0.19.** iOS is a second
 platform bring-up with the same zero foundation, and Unity is blocked on
-decisions rather than code — `unity-separate-repo-deferred.md` puts the project
+decisions rather than code — `unity-separate-repo-deferred.md` put the project
 in another repository and `unity-painter-uses-brg.md` is still `proposed`. Both
 were v1 when this was written; **Unity became slice v0.21 on 2026-08-12**, and
-`unity-painter-uses-brg.md` moving to `accepted` is one of that slice's three
-entry conditions. iOS stays v1. The layering below is written to be
-platform-general precisely so the iOS story inherits it rather than re-deriving
-it.
+`unity-painter-uses-brg.md` moving to `accepted` is one of that slice's entry
+conditions. **The siting was reversed on 2026-08-17** — the C# package is in
+this repository under `unity/` — which lifted a second condition and left two.
+iOS stays v1. The layering below is written to be platform-general precisely so
+the iOS story inherits it rather than re-deriving it.
 
 What an embedder needs is already known, from the browser host story #587 built:
 the surface handoff, the tick loop, the generation-and-`shown` contract,

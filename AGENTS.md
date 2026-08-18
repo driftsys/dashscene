@@ -22,7 +22,8 @@ instance of it rather than as the boundary.
   under `docs/design/`.
 - `docs/decisions/` — everything decided since, each traced to what it affects:
   repo strategy, the full crate-name map, the `.dsb` format decision, the
-  Deno/wasm Figma importer split, Unity's deferred separate repo, and the
+  Deno/wasm Figma importer split, the Unity C# package sited under `unity/` in
+  this repository (2026-08-17, reversing its deferred separate repo), and the
   driftsys house-style conventions this repo follows
   (`docs/decisions/house-style.md`).
 - `docs/roadmap.md` — the v0/v1/v2 plan.
@@ -85,8 +86,16 @@ and `main` now carries one
     dashpack               asset packer — canonical payloads to per-profile
                           derivations (RAW/HiFi/LoFi), cold-bank assembly,
                           derivation manifest; lands across slice v0.12
-    dashscene-unity        Rust-side FFI bindings only — the Unity/C# project
-                          itself is a separate, not-yet-created repo
+    dashscene-unity        the C representation of boundary B — the
+                          improper_ctypes_definitions gate over dashpaint's
+                          value types, not bindings and not Unity-specific.
+                          Renamed to dashpaint-abi, and the Unity C# package
+                          sited in this repository under unity/, by the
+                          rulings of 2026-08-17
+                          (docs/decisions/crate-name-map.md,
+                          docs/decisions/unity-separate-repo-deferred.md).
+                          Issue #1239 carries both; until it lands the crate
+                          is still dashscene-unity and unity/ does not exist
     dashscene-desktop     the desktop integration surface — the window-to-surface
                           handoff, the winit frame loop, rebuilding on resize,
                           the published `Present` seam and the lean painter's
@@ -343,8 +352,8 @@ precedent, and they are different reasons:
   split is drawn by what a branch owns.
 - **By what gates the parts**, so one blocked half does not make the whole slice
   read as blocked. This is v0.13's #474, "the inputs and rulings this slice
-  waits on", and v0.21's #1106 (three owner decisions) against #1107 (target
-  hardware).
+  waits on", and v0.21's #1106 (two owner decisions, three until 2026-08-17)
+  against #1107 (target hardware).
 - **By MVP against the rest**, so a slice cannot be held open by optimization.
   This is v0.21's #1120, and it comes with a rule: an epic split off this way
   **declares that it does not gate the slice**, and what it still holds at the

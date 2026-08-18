@@ -23,12 +23,11 @@
 //!
 //! # Why it lives in this workspace
 //!
-//! The recorded bar for a separate repo is toolchain incompatibility (the
-//! Unity decision, `docs/decisions/unity-separate-repo-deferred.md`), and this
-//! is plain cargo. Its coupling is deep: it compiles against `dashbuf`'s asset
-//! and manifest schemas, its band oracle reuses the golden oracle, and its
-//! weld and profile-preview tests span packer output and the reference
-//! painter. The standalone-tool requirement is met by the binary artifact
+//! This is plain cargo, so it is a workspace member on the ordinary terms. Its
+//! coupling is deep: it compiles against `dashbuf`'s asset and manifest
+//! schemas, its band oracle reuses the golden oracle, and its weld and
+//! profile-preview tests span packer output and the reference painter. The
+//! standalone-tool requirement is met by the binary artifact
 //! (`cargo build -p dashpack`), not by repo ownership.
 //!
 //! # Status

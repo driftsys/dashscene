@@ -44,9 +44,12 @@ Reuse all 12, mapped onto the roles in `docs/design/architecture.md`:
                           is dashscene-core's
     dashlang              Rust DSL skin (v0) and future typed skins over
                           the one producer surface
-    dashscene-unity        Rust-side FFI bindings for the Unity painter;
-                          the Unity/C# work itself lives in a separate
-                          repo
+    dashscene-unity        the C representation of boundary B — a gate, not
+                          bindings, and not Unity's. Renamed to
+                          dashpaint-abi by issue #1239; the C# package is
+                          sited in this repository under unity/. Both are
+                          rulings of 2026-08-17 and neither is built — see
+                          the section below
     dashscene-web          the web integration surface, since story #741 at
                           v0.17 — the wasm/tiny-skia painter it named is
                           retired at v0.15; see the `dashscene-gpu` section
@@ -77,14 +80,22 @@ v0 crate: the asset pipeline that needs it was designed in
 `docs/wip/2026-07-19-asset-pipeline-profiles-and-baking.md` and scheduled to
 v0.12.
 
-**Why it is a workspace crate and not a separate repo.** The recorded bar for a
-separate repo is toolchain incompatibility — the reason the Unity work got its
-own (`docs/decisions/unity-separate-repo-deferred.md`) — and the packer is plain
-cargo. Its coupling runs the other way: it compiles against `dashbuf`'s asset
-and manifest schemas, its band oracle reuses `goldens`' oracle, and its weld and
-profile-preview tests span packer output and the reference painter. The
-workspace already absorbs a heavier build than a vendored astcenc `-sys` crate,
-in `skia-bindings`.
+**Why it is a workspace crate and not a separate repo.** The packer is plain
+cargo, so it is a workspace member on the ordinary terms. Its coupling runs the
+other way: it compiles against `dashbuf`'s asset and manifest schemas, its band
+oracle reuses `goldens`' oracle, and its weld and profile-preview tests span
+packer output and the reference painter. The workspace already absorbs a heavier
+build than a vendored astcenc `-sys` crate, in `skia-bindings`.
+
+**Corrected 2026-08-17.** This paragraph opened by asserting that "the recorded
+bar for a separate repo is toolchain incompatibility — the reason the Unity work
+got its own", citing `docs/decisions/unity-separate-repo-deferred.md`. Neither
+half held. `importers/figma/` was already a non-Rust toolchain inside this
+repository when that sentence was written, so toolchain incompatibility bars
+membership in the **Cargo workspace** and not in the repository; and the Unity
+siting was reversed on the same day this correction was made, so the work it
+cited no longer has its own repository. The claim is removed rather than
+restated, because `dashpack`'s membership never rested on it.
 
 The requirement it has to satisfy is that the packer is a **standalone tool**
 (user requirement, 2026-07-19: no external CLIs anywhere in the pipeline). That
@@ -170,9 +181,20 @@ loop, the generation-and-`shown` contract, rebuilding on resize with
 `document_replaced`, and the byte-range `.dsb` loader. **Two of those five were
 wrong in its first cut** — the loop never drove the scene's pulse, and the host
 never followed the canvas — and neither was caught by a test; both were found by
-running it in a browser. `dashscene-unity` — "Rust-side FFI bindings for the
-Unity painter; the Unity/C# work itself lives in a separate repo", three lines
-above — is the precedent for a published per-platform integration crate.
+running it in a browser. `dashscene-unity`, as the Choice table described it
+when this was written — "Rust-side FFI bindings for the Unity painter; the
+Unity/C# work itself lives in a separate repo" — was the precedent for a
+published per-platform integration crate.
+
+**That precedent was withdrawn on 2026-08-17 and the conclusion below is
+unaffected.** Both halves of the quoted row are superseded: the crate is the
+boundary-B gate rather than bindings, and the C# package is sited in this
+repository under `unity/` (`docs/decisions/unity-separate-repo-deferred.md`,
+reversed in place). The argument this paragraph makes for `dashscene-web` never
+rested on it — issue #741 was settled at v0.17 on the five integration concerns
+listed above, and `dashscene-desktop` followed on the same grounds. The
+quotation is kept as a quotation, marked, rather than silently repointed at a
+row that no longer says it.
 
 Against it: there is exactly one consumer, a published crate is a semver
 commitment, and the seam it needs (how a host hands the library a scene for an
@@ -394,10 +416,12 @@ platform is a third crate — which is what
 [`host-integration-in-three-layers.md`](host-integration-in-three-layers.md)
 assumes when it gives each platform its own small handle type.
 
-**`dashscene-android` rather than `dashandroid`.** The same split every other
-name here follows: `dashscene-*` is the host-facing family — `dashscene-web`,
-`dashscene-desktop`, `dashscene-unity`, `dashscene-ffi` — and the short `dash*`
-names are the vocabularies. A platform name is not a vocabulary.
+**`dashscene-android` rather than `dashandroid`.** The short `dash*` names are
+the vocabularies — `dashpaint`, `dashcue`, `dashbuf`, `dashlang` — and a
+platform name is not a vocabulary. **The reading that `dashscene-*` marks a
+host, which this paragraph carried until 2026-08-17, is withdrawn**: most
+`dashscene-*` crates are not hosts, and the `dashpaint-abi` section below
+records why. The conclusion is unaffected — it rests on the vocabulary half.
 
 **What makes it unlike the other two.** It sits **on** `dashscene-ffi` rather
 than beside it, driving the C ABI through its own entry points as a C caller
@@ -418,6 +442,78 @@ the same day. That window is the exposure this record keeps naming — a name ca
 be squatted out from under the project while nothing is published — and it is
 recorded rather than smoothed over, because the fix is to reserve at the moment
 a crate name is chosen rather than when someone notices.
+
+## `dashscene-unity` becomes `dashpaint-abi` (owner's ruling, 2026-08-17)
+
+    dashpaint-abi        the C representation of boundary B — the
+                         `improper_ctypes_definitions` gate over dashpaint's
+                         value types, their layout pins, and the round-trip
+                         functions a foreign consumer checks its own
+                         declarations against
+
+**Not built. Issue #1239 carries the move**, and until it lands the crate is
+`crates/dashscene-unity` everywhere, including in the records here that name it.
+Those citations are accurate today and are not to be rewritten ahead of the
+code.
+
+**Why the old name is wrong.** It names one engine and holds none of that
+engine's code. The crate depends only on `dashpaint`, and **every symbol it
+exports is `dashscene_abi_*`** — not one carries the engine's name. That is the
+claim worth checking, because it says the code already picked a name the package
+did not; the engine appears only in prose and in packaging metadata. No count of
+those occurrences is given, because editing the crate's own doc changes them.
+
+Issue #859 rules the data plane into `dashscene-ffi` and says this crate "keeps
+its present job", so bindings are not what it becomes. What #859 leaves open is
+whether these layout and round-trip functions survive as they are or are
+replaced by its `DsSlice` stride member; either way the crate is not Unity's,
+which is all this ruling turns on. `docs/design/architecture.md` already records
+that "Unreal and Kanzi are the same problem as Unity minus the C# adapter", and
+both need this gate identically.
+
+**This is the `dashscene-wgpu` argument, applied a second time.** The
+`dashscene-gpu` section above rejected a name taken from the backend because "a
+crate named for the backend would have to be renamed on the day that contingency
+was taken. The role is 'the GPU painter'; the name says that." Substitute the
+engine for the backend and it is the same sentence. Recording it here so the
+next name taken from a consumer rather than from a role is caught at the point
+it is chosen.
+
+**Why `dashpaint-abi` and not `dashscene-abi`.** Because beside `dashscene-ffi`,
+which is the runtime's actual C ABI, a `dashscene-abi` reads as a competing one
+— and the crate is not a second ABI but the gate holding the first one's types
+representable. It gates `dashpaint`'s vocabulary and belongs beside it, on the
+pattern `dashpack-astcenc-sys` already sets for a qualified vocabulary name.
+
+**Not because `dashscene-*` marks a host.** It does not: `dashscene`,
+`dashscene-core`, `dashscene-engine`, `dashscene-typeset`,
+`dashscene-validator`, `dashscene-skia`, `dashscene-gpu` and `dashscene-unity`
+all carry the prefix and none is a host. The prefix marks the project, and the
+host-facing reading works only over the subset someone happens to be looking at.
+The `dashscene-android` section above carried it until 2026-08-17 and is
+corrected there; it is recorded as rejected here so it is not re-derived a third
+time.
+
+**The symbol prefix moves with the package name**, and that is part of this
+ruling rather than a follow-up. Renaming the package while the symbols keep
+saying `dashscene_abi_*` would leave the two disagreeing. It is free exactly
+now, because the surface has had no consumer since story #600 built it — which
+is what issue #859 exists to change — and it stops being free once a C# project
+imports it.
+
+**Availability.** `dashscene-unity` holds a 0.1.0 placeholder pointing at this
+repository, one of the 12 reserved on 2026-03-18. `dashpaint-abi` needs
+reserving before the move, on the terms the `dashscene-gpu` section sets. The
+old name stays held and describing nothing, which that section records as the
+cheap state for a reserved name — `dashscene-web` is the precedent. The
+workspace crate is `0.0.0` and has never been released, so nothing migrates.
+
+**`AGENTS.md`'s reservation count is unchanged today and changes when the
+reservation is made**, not when this section was written — re-deriving now still
+yields 21, because `dashpaint-abi` is not reserved yet. When it is, that file's
+"21 reserved" and its "`dashscore` and `dashscene-compose` stay parked" both
+move: 22 reserved, and three parked once `dashscene-unity` joins them. Re-derive
+both from this record rather than editing either number in place.
 
 ## Why
 

@@ -60,20 +60,27 @@ Layout:
   Byte-reproducibility (R7) holds trivially since it's the same Rust code either
   way, the same argument that already applies to wasm-Skia goldens matching CPU
   goldens by construction.
-- **Same repo, not option 3.** Unlike Unity
-  (`docs/decisions/unity-separate-repo-deferred.md`), where the only coupling to
-  the core is a narrow versioned FFI wire protocol and a repo split costs
-  nothing, the Deno importer directly imports `dashc.wasm` — the compiled output
-  of the `dashc` crate sitting in the same workspace. Splitting repos would mean
-  publishing `dashc.wasm` as a versioned artifact and consuming it with a
-  version pin from a second repo, coordinating two-PR landings every time the
-  wasm interface changes — real overhead for a boundary that isn't
-  architecturally distinct, since it's the same compiler, just called from a
-  different host process. A monorepo doesn't require one toolchain: the Deno
-  code lives in its own subdirectory with its own `deno.json` and its own CI job
-  (path-filtered so Rust-only changes don't trigger it and vice versa); JSR
-  publishing works fine from a subdirectory, same as crates.io publishing works
-  fine for individual crates inside a Cargo workspace.
+- **Same repo, not option 3.** The Deno importer directly imports `dashc.wasm` —
+  the compiled output of the `dashc` crate sitting in the same workspace.
+  Splitting repos would mean publishing `dashc.wasm` as a versioned artifact and
+  consuming it with a version pin from a second repo, coordinating two-PR
+  landings every time the wasm interface changes — real overhead for a boundary
+  that isn't architecturally distinct, since it's the same compiler, just called
+  from a different host process. A monorepo doesn't require one toolchain: the
+  Deno code lives in its own subdirectory with its own `deno.json` and its own
+  CI job (path-filtered so Rust-only changes don't trigger it and vice versa);
+  JSR publishing works fine from a subdirectory, same as crates.io publishing
+  works fine for individual crates inside a Cargo workspace.
+
+**Corrected 2026-08-17.** That bullet opened by contrasting Unity, "where the
+only coupling to the core is a narrow versioned FFI wire protocol and a repo
+split costs nothing", citing `docs/decisions/unity-separate-repo-deferred.md`.
+That record no longer says it: stories #578 and #600 made the coupling 26 struct
+layouts that must agree byte-for-byte, and the Unity C# package is now sited in
+this repository under `unity/` on the strength of the last sentence above — a
+subdirectory with its own toolchain and its own CI job, which is what this
+record established. The contrast is removed rather than restated; this bullet's
+own conclusion never depended on it.
 
 ## Consequences
 
