@@ -423,23 +423,66 @@ Offscreen at 1280x720, release, 60 frames per row after 10 discarded:
        32       8        14.172       17.816      106.760
 
 **Only the minimum reproduces, which is why every reading below uses it.** The
-sweep was run twice, from two separate builds. The six minima came back as
-1.804, 3.144, 7.104, 7.980, 10.641 and 14.156 ms against the table's 1.805,
-3.144, 7.105, 7.983, 10.632 and 14.172 — **within 0.016 ms on every row**. The
-p50 and max columns did not: row one's p50 moved from 4.083 to 2.814 ms and row
-five's from 10.879 to 23.759, a factor of 2.2. Those two columns record what
-else the device was doing, so **no conclusion here is drawn from them**; they
-are printed because a row whose minimum and maximum differ by a factor of 8 is a
-row worth distrusting.
+sweep has been taken three times, from three builds of the probe. They are
+lettered **A**, **B** and **C** here, because this record already uses "run 1"
+and "run 2" further down for the two archived capture bundles — neither of which
+holds any GPU output.
 
-**Provenance.** Both runs predate a later revision of the probe that added the
-`DS_GPU_FRAMES` and `DS_GPU_WARMUP` overrides and made a failed map retire the
-instrument rather than abort the process. Neither touches the path a successful
-frame takes — the same encode, the same wait, the same strict `>` on the pair —
-and the defaults are the same 60 and 10. The figures were not re-derived on
-hardware afterwards, because the device was disconnected by then; re-run
-`just android-gpu-time` on the next device contact and expect the minima to land
-within the spread above.
+- **Sweep A** produced the table above, from the first build that measured.
+- **Sweep B** followed a refactor later in the same session.
+- **Sweep C** was built from the tree at `747e1093`, the commit that introduced
+  this section.
+
+Their minima, in milliseconds, and the worst spread on each row:
+
+    row     sweep A   sweep B   sweep C   worst spread
+    0/0       1.805     1.804     1.805          0.001
+    8/0       3.144     3.144     3.145          0.001
+    32/0      7.105     7.104     7.105          0.001
+    32/1      7.983     7.980     7.983          0.003
+    32/4     10.632    10.641    10.629          0.012
+    32/8     14.172    14.156    14.162          0.016
+
+**Within 0.016 ms on every row.** Sweep C, the one from the tree named above,
+sits closer still: its largest deviation from the table is 0.010 ms, on the last
+row, and three of its six rows are identical.
+
+**Neither the p50 nor the max column reproduces, and nothing here is drawn from
+either.** Row one's p50 reads 4.083, 2.814 and 2.254 ms across A, B and C, and
+row five's 10.879, 23.759 and 16.960 — a factor of 2.2. The max column moves
+further: row one is 19.906, 4.086 and 4.086. Both record what else the device
+was doing. They are printed because a row whose minimum and maximum differ by a
+factor of 11, as row one's do in sweep A, is a row worth distrusting.
+
+**Provenance, stated exactly.** The table is sweep A's, and sweep A predates the
+revision that added the `DS_GPU_FRAMES` and `DS_GPU_WARMUP` overrides and made a
+failed map retire the instrument rather than abort the process. Neither change
+touches the path a successful frame takes — the same encode, the same wait, the
+same strict `>` on the pair — and the defaults are unchanged at 60 and 10.
+**Sweep C reproduces the table from the tree named above; it did not produce
+it**, and this record claims only the former.
+
+Sweeps A and B were built from revisions that exist in no pushed ref, because
+the pull request carrying them landed squashed. Sweep C is the only one
+reproducible from history.
+
+**No raw output is committed for any of the three**, which every other device
+measurement in this record has — issue #1254. The figures above are hand
+transcriptions until that is fixed, and `measure/android/run.sh` already writes
+`gpu-time.txt` into the evidence bundle, so the next device contact can capture
+one with no code change.
+
+**The recipe's forwarding is verified.** A separate invocation with
+`DS_GPU_FRAMES=5 DS_GPU_WARMUP=2` printed "5 frames per row after 2 discarded",
+so both variables reach the device through `adb shell` — a path that had landed
+on `main` verified only by `bash -n`. With neither set the recipe passes empty
+strings, and `read_usize` in `gpu_time.rs` returns the defaults; the shell does
+not do that, and the same guard is what makes an explicit `0` fall back rather
+than measure nothing.
+
+**One path is still unexercised on hardware** — issue #1255. The marker on a
+partial row, printed as `(N of M frames read back)`, has never fired, because no
+sweep has read back fewer frames than it asked for.
 
 **The `0 rects` row is not an empty frame.** The probe's scene always lays a
 full-screen background quad, so row one is one 1280x720 quad and the `rects`
