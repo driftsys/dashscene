@@ -64,6 +64,55 @@ run in the schedule not driven by a path filter — the backstop against a table
 that drifted through a change the filter did not predict
 (`docs/decisions/test-tiers.md`).
 
+**The ritual also sweeps for unanchored work, at three levels.**
+[`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md)
+made the first level part of this ritual on 2026-07-19, after 23 issues were
+found carrying no milestone and so sitting in nobody's count; the same failure
+recurred at 55 and is why v0.20 exists. **The second and third levels were both
+added at the v0.20 close (2026-08-18)** — the second when nine open issues on
+v0.21 were found belonging to none of that milestone's three epics, which is the
+same failure one level down, where a milestone query finds the issue and an
+epic-driven session does not; and the third for story #859, which an epic named
+in prose and which no query returned for want of a label. So:
+
+- **Milestone** — every open issue carries one.
+- **Epic** — every open issue on a slice is named by one of that slice's epics.
+  **A milestone with no epic is skipped, not flagged.** Two shapes have none: a
+  slice opened and not yet planned, which is v0.22 today, and v0.23, which is a
+  holding milestone and will never have one.
+- **Label** — every open issue carries a label some listing returns.
+
+**Each level's scope, its command and its standing exceptions are stated once**,
+in
+[`decisions/slices-are-planned-against-their-inflow.md`](decisions/slices-are-planned-against-their-inflow.md)
+— not here and not in `AGENTS.md`. This file names the three levels because the
+shape of the ritual is its job; how each one is run is not, and the three copies
+of that detail drifted apart six times while this revision was being written.
+
+**Level 3's first run returned five, and none was relabelled**: the repository
+has no label for design, investigation or tracking work, which is what all five
+are. That is **#1247**, carrying `owner-input`, and until it is ruled those five
+are a standing exception list.
+
+**And it gives the rolling-debt milestone a cluster pass**, also added at the
+v0.20 close: group its open population by subject and act on the groups rather
+than on the items. That milestone's own rule — one focused pull request each —
+is what hides the three things only the population shows: duplicates that later
+work already repaired, clusters that are one property described N times, and
+items sized against the gate they came from rather than against the milestone
+they landed on. The v0.23 entry below records what the first pass found of each.
+
+**And it records the slice's inflow against its plan**, the third addition made
+at the v0.20 close and the one a slice is planned by rather than closed by: a
+slice's epic states the issue count it plans where it states its tracks, and
+this ritual writes the closing count beside it. v0.20 planned 13 and closed 142,
+which nothing predicted and nothing recorded until afterwards. Neither number
+gates anything and neither is a target.
+
+[`decisions/slices-are-planned-against-their-inflow.md`](decisions/slices-are-planned-against-their-inflow.md)
+carries all three additions and the measurements behind them, including what a
+cluster pass deliberately does **not** do.
+
 The ritual has fired off-cycle three times, ahead of its own slice's close: v0.4
 was revised by a design session before epic #19 closed, v0.7 was revised at the
 v0.3 close even though epic #36 had not yet closed at that point, and v0.20 to
@@ -1735,17 +1784,36 @@ Depends on: v0.17 for what an embedder consumes, and on the C ABI this slice
 builds. Independent of v0.18 in dependency terms; see the sequencing note above
 for the file-level overlap.
 
-### v0.20 — hardening: the critical findings and the Android recovery path — open
+### v0.20 — hardening: the critical findings and the Android recovery path — closed
 
 **Epic #951**, filed 2026-08-13. Planned 2026-08-12, before the v0.19 phase-end
-revision rather than at it.
+revision rather than at it. **Closed 2026-08-18.**
 
-**That is not a departure from the revision ritual — it is the third time the
-ritual has fired off-cycle**, after v0.4 and v0.7 above, and it fired for the
-reason this file already gives: the ground had shifted enough that carrying the
-old shape forward would be misleading. Fifty-five open issues carried no
-milestone at all, and the v0.20 milestone held no plan, its description
-assigning its own content to the v0.19 phase-end revision.
+**Thirteen issues were planned and one hundred and forty-two closed.** The
+milestone reads 154, which counts 12 pull requests alongside 142 issues; of
+those 142, sixteen were filed before 2026-08-13, the day the epic was filed, and
+**126 were filed while the slice ran**. That gap is the largest thing this slice
+taught the plan, and it has its own record —
+[`decisions/slices-are-planned-against-their-inflow.md`](decisions/slices-are-planned-against-their-inflow.md),
+this slice's retrospective, which also carries what the ratio does and does not
+mean. The issue half re-derives with
+
+    gh issue list --milestone "v0.20 — hardening: the critical findings and the Android recovery path" \
+      --state all --limit 200 --json number,createdAt
+
+**and it answers 142, not 154**: `gh issue list` returns no pull requests, so
+the 12 have to be counted separately with `gh pr list --search 'milestone:…'`.
+It answers 142 today, and reads an issue's **current** milestone rather than the
+one it had at the close — so the figure holds only while nothing further moves
+off, and a later move would silently lower it.
+
+**Planning it before the v0.19 phase-end revision was not a departure from the
+ritual — it is the third time the ritual has fired off-cycle**, after v0.4 and
+v0.7 above, and it fired for the reason this file already gives: the ground had
+shifted enough that carrying the old shape forward would be misleading.
+Fifty-five open issues carried no milestone at all, and the v0.20 milestone held
+no plan, its description assigning its own content to the v0.19 phase-end
+revision.
 [`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md) had
 already met this exact failure: its 2026-07-19 correction records 23 open issues
 that "carried no milestone at all and so were in nobody's count", and it made a
@@ -1753,33 +1821,39 @@ milestone sweep for un-anchored issues part of the phase-end revision rather
 than something assumed. Fifty-five is that failure again at more than twice the
 size, so the sweep ran ahead of the revision instead of waiting for it.
 
-**What it delivers: the six critical findings of that sweep, and the Android
+**The same failure was present again at this close, one level down**: nine open
+issues on v0.21 belonged to no epic on that milestone. The retrospective extends
+the sweep to epic membership; see the ritual section at the top of this file.
+
+**What it delivered: the six critical findings of that sweep, and the Android
 recovery path finished.** The sweep classified all fifty-five issues on two
 axes, size and priority, checking each against the tree rather than against its
 own text. Three were closed rather than scheduled: one had been fixed by an
 earlier story, one duplicated an open story, and one had never been real — its
 evidence was a search that could not match the call site it was looking for.
-**Not every correctness defect the sweep found is scheduled here.** Several went
-to v1 instead, because they unlock with a v1 consumer rather than being
+**Not every correctness defect the sweep found was scheduled here.** Several
+went to v1 instead, because they unlock with a v1 consumer rather than being
 resolvable now, which is the dividing line that same record sets.
 
-**Why this slice runs before Unity and before SVG, reversing the 2026-08-09
+**Why this slice ran before Unity and before SVG, reversing the 2026-08-09
 proposal.** Two reasons, and the second is the stronger. The first is the
 argument of
 [`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md),
 which is why v0.13 was split out of v1: debt scheduled behind a large
 deliverable is never reached. Ordering the critical findings behind two feature
 slices would repeat that. The second is a dependency fact rather than a
-preference: **this is the only near-term slice whose start needs nothing from
+preference: **it was the only near-term slice whose start needed nothing from
 the repository owner.** v0.21 and v0.22 each wait on decisions and artifacts
-only the owner can supply, and those can be settled while this slice is built.
+only the owner can supply, and those could be settled while this slice was
+built. That held: v0.21's own hardware arrived during it.
 
-**Its two hardware-gated issues moved to v0.21 on 2026-08-16**, #960 and #969,
-and the v0.21 entry below gives the reasoning. **This slice now has no
-hardware-gated issue at all**: what is left of the Android half here is closable
-on an emulator, as is #874, which stays on v0.23.
+**Two issues moved to v0.21 on 2026-08-16 as hardware-gated**, #960 and #969 — a
+reading that held for one of them, as this entry's "what left this milestone"
+paragraph below records, and the v0.21 entry below gives the reasoning. **The
+slice then had no hardware-gated issue at all**: what was left of the Android
+half here was closable on an emulator, as is #874, which stays on v0.23.
 
-**The Android half is the larger half, and it is one property rather than four
+**The Android half was the larger half, and it was one property rather than four
 items.** As the slice opened: the recovery path was untested; the bound that
 gives up after repeated failures could not be reached; the C ABI could not
 report which frame failures are recoverable, so the host guessed; and the device
@@ -1788,8 +1862,8 @@ All four described one thing: **nothing on the Android path could report or
 detect its own failure.** The unreachable bound was the third consecutive repair
 to that recovery to have broken it, and all three were invisible for the same
 reason — the frame loop sat entirely behind a platform `cfg`, so a host-target
-test compiled none of it. That property is what this slice has to change; the
-four items are its symptoms.
+test compiled none of it. That property is what this slice had to change; the
+four items were its symptoms.
 
 **All four issues are closed. Three of them removed the defect; the fourth
 recorded it.** The state machine came out from behind the platform `cfg` into
@@ -1804,6 +1878,63 @@ every run beside the two other things a passing result does not cover. The
 property this slice set out to change has changed for the loop and for the ABI;
 the probe's gap is recorded where a reader of its output meets it.
 
+**Three of its six gates did not close cleanly, and each is recorded on epic
+#951 or in `docs/archive/README.md` rather than softened here.** The third is
+the smallest: the driver-prompt archive gate is met **in substance and not in
+full** — eighteen prompts are archived, and `docs/archive/README.md` records
+that lanes A to C ran earlier in the slice with no prompt kept, so the set is
+partial by its own account.
+
+- **The Android frame loop reachable by a CI test — amended, not met by its
+  letter.** `crates/dashscene-android/src/lib.rs` declares
+  `#[cfg(target_os = "android")] pub mod loop_;`, so the host `--lib` binary
+  compiles none of `loop_.rs`, which is the exact state the gate named as
+  failing. The gate was written before `machine.rs` existed; story #888 created
+  that module to lift the loop's decidable half out from behind the platform
+  `cfg`, and `cargo test -p dashscene-android --lib` now runs 55 host tests,
+  **24 of them against `machine.rs`** — epic #951's own comment states the 55
+  and it is the whole crate's count, not that module's. The criterion moved
+  there, the residual risk is named on the epic, and it was **recorded as met in
+  error first** — the amendment is what corrected it.
+- **`docs/features.md` re-checked — partly, with the remainder filed at the
+  close as #1241, and found narrower than the gate at this revision.** The Track
+  C pass corrected four bullets, then found the same defect in four more plus
+  errors in its own corrections; pull request #1238 was closed unmerged after
+  six review rounds did not converge. `features.md` describes several constructs
+  as "the property is refused" where the importer drops the whole layer, against
+  57 `blockers.push` sites in `crates/dashc/src/figma/mod.rs` that have never
+  been mapped onto the file's 93 claims. **#1241 is the scoped part and not the
+  whole gate**: the sections it does not reach are #1246, filed at this
+  revision. The gap is scheduled rather than implied, in two pieces because they
+  are two different parts of the file — **not two sizes of work**, which is how
+  the close read it. Both are on `v1`: #1241 was placed on `v0.23` at the close
+  and its own body argues it is not a quick fix, which is that milestone's whole
+  threshold, so this revision moved it.
+
+**What left this milestone, and what the slice filed elsewhere. They are not the
+same thing** — epic #951's closing comment groups both under "carried forward",
+which is a ruling rather than a milestone fact, and this entry separates them.
+
+**Moved off v0.20**: #979 (the CodeQL dismissal on the C ABI's own test) to
+v0.23, and #960 and #969 to v0.21 **as hardware-gated, which one of the two
+was** — #969 was measured on 2026-08-17. #960 is the other and the reading does
+not hold for it: its own 2026-08-14 correction had already re-scoped it to a
+painter that cannot obtain a device saying so, which no device run settles. It
+is still open, and the v0.21 entry below carries the correction.
+
+**Filed by this slice's work onto other milestones, never on this one**: #1226
+(the C ABI's runtime handle is a raw pointer) to v0.21, where the v0.20
+phase-end revision made it a gate on epic #1106 ahead of #859 and #1121, and
+#1241 to v0.23, from which this revision moved it to `v1` beside #1246 — its own
+body argues it is not a quick fix, and `v0.23` takes nothing over half a day.
+**#885 was never on this milestone either** — it was v0.19's, and moved to v0.21
+in the same ruling that took #960 and #969 there.
+
+Delivered: **the correctness sweep, and an Android path that can report its own
+failure.** What it did not deliver is a documentation file that agrees with the
+importer: #1241 carries the importer-blocker claims and #1246 the sections it
+does not reach.
+
 Depends on: v0.19, for the Android code it hardens. v0.21 depends on it in turn,
 for the failure reporting the C ABI gains here.
 
@@ -1812,6 +1943,62 @@ for the failure reporting the C ABI gains here.
 **Three epics, all filed 2026-08-16: #1106 (Unity) and #1107 (target hardware),
 which are the MVP pair, and #1120, which holds what is not MVP.** The design
 findings are held on tracking issue #851 and must not be re-derived.
+
+**Revised at the v0.20 phase-end revision (2026-08-18).** The scope is again
+unchanged — three epics, the MVP pair plus the non-gating one — and this
+revision changed four things. **Everything below this block is earlier** — the
+v0.19 revision's paragraphs of 2026-08-16 and the Unity-siting amendments of
+2026-08-17 — and is left as written. Where a count differs, this block is the
+later one. Two readings below are superseded outright rather than by a count:
+the "Three entry conditions" paragraph lists the conditions rather than the
+unmet ones, and the third of them is now met; and **every paragraph below
+describing #960 as a device run that "owes only the run" is wrong** — its own
+2026-08-14 correction re-scoped it, and the bullet on it here is the current
+reading.
+
+- **The hardware entry condition was met before the slice opened**, so of the
+  three the paragraph below lists, two remain. A device was expected around
+  2026-08-23. A Pixel 5 (`redfin`, Adreno 620, Android 14 / API 34) was measured
+  on 2026-08-17, and #885, #969, #842 and #1128 all closed on it. **#1107's
+  Track A owed five items and four are closed**; the two this revision adds to
+  it, #1215 and #1236, make it seven with three open. Of those three, none is a
+  device run: #960 is a silent-failure defect on its own 2026-08-14 correction,
+  and #1215 and #1236 are defects in the harness and in the measurement's own
+  table. **So no part of Track A is waiting for hardware any longer** — which is
+  a statement about that track and not about the epic: **Track B is Unity on
+  Android hardware**, it is device work by definition, and it is in #1107's
+  definition of done. It waits on #1106 rather than on a device being absent.
+  The measurements are in
+  [`design/android-toolchain.md`](design/android-toolchain.md) under "What the
+  device measured", and every number there is a number about one device.
+- **Nine open issues on this milestone belonged to no epic**, which is v0.20's
+  own opening failure one level down — that slice was planned because 55 issues
+  carried no milestone. All nine are now placed: #1226 to #1106, #1215 and #1236
+  to #1107, #1029, #1191, #1232, #1235 and #1195 to #1120, and #1149 moved to
+  v0.23. Which issue sits under which epic is GitHub's, per the table at the top
+  of this file; the sweep that finds the unanchored ones is this file's ritual,
+  and it now runs at the epic as well as at the milestone.
+- **#1226 became a gate rather than debt beside the slice.** It asks whether the
+  C ABI's runtime handle stays a raw pointer. The answer changes the signature
+  of every entry point and therefore every P/Invoke declaration a C# host
+  writes, so it is owed before **#859** adds entry points and before **#1121**
+  writes the host. It is not an entry condition on the slice — the rest of #1106
+  can start without it — and it is answerable in parallel with everything else.
+- **Two stories no plan had named were filed and closed on 2026-08-17**: #1229,
+  the Android measurement apparatus, and #1230, the Unity build environment and
+  the seam proven end to end. Both were built **while the thing they serve was
+  still blocked** — #1229 before the device arrived, #1230 while all of #1106's
+  entry conditions were open, its own body saying it exists so the Unity work
+  "starts against a toolchain that is known to work rather than against one
+  being installed". #1229 was spent the same day it landed —
+  `design/android-toolchain.md` records the first bundle as "taken 2026-08-17
+  with `just android-measure` (story #1229's apparatus)". That ordering is the
+  one scheduling lesson this slice has produced so far, and it is why v0.22's
+  profile and census items were filed at this revision rather than left as
+  prose. #1242, the profile, can be built before that slice's entry condition is
+  settled — it is a specification document and needs no dependency — and #1243's
+  corpus capture can be pinned before anything imports it, though the harness
+  itself waits on the import path.
 
 **Revised at the v0.19 phase-end revision (2026-08-16).** The scope above is
 unchanged — three epics, the MVP pair plus the non-gating one. The revision
@@ -2037,10 +2224,29 @@ until #842 moved here on 2026-08-16.
 
 ### v0.22 — SVG as a second producer — open
 
+**Revised at the v0.20 phase-end revision (2026-08-18): its four items are now
+four issues.** The two that were named here and filed nowhere are #1242, the SVG
+vocabulary profile, and #1243, the census harness. Nothing about the slice's
+scope, order or entry condition changed — what changed is that a `story` listing
+now returns all four rather than half of them.
+
+**Three failures make work invisible and they are not the same failure**, which
+this revision had to separate before it could act: an issue on **no milestone**
+is what v0.20 was planned to fix, 55 of them; an issue named by **no epic** is
+what this revision found on v0.21, nine of them; and an issue with **no label**
+is #859, which appeared in no `story` listing until the v0.19 revision gave it
+one, and which was missing from epic #1106's story table so that only a sentence
+named it. **An epic sweep passes it** — the epic did name it — which is why the
+ritual now checks labels as a third level rather than two. These two v0.22 items
+are a fourth: named in this file's prose and filed as no issue at all, so every
+one of the three queries misses them.
+
 **Checked and unchanged at the v0.19 phase-end revision (2026-08-16).** Two
 stories, #848 and #774, and no epic — the right shape for a slice opened but not
 yet planned, and nothing v0.19 taught bears on it. Recorded so a later reader
-can tell "checked" from "not checked".
+can tell "checked" from "not checked". **Its story count is superseded by the
+block above**: four since 2026-08-18. The "no epic" reading is not, and still
+holds.
 
 **No epic filed yet.** A second producer beside Figma. Proposed on 2026-08-09 as
 v0.21 and moved here on 2026-08-12. No other slice depends on it and it depends
@@ -2056,8 +2262,20 @@ vocabulary profile, which is the P4 prerequisite because refusing by name needs
 a list to refuse against; stroke-to-fill before baking, without which 46 % of
 icon content has no fill to bake; the icon import itself; and a census harness
 that runs both corpora, publishes the counts and gates on zero silent drops,
-which is what makes the profile falsifiable. The second and third are filed as
-issues; the first and fourth are not.
+which is what makes the profile falsifiable. **All four are filed**: #1242,
+#848, #774 and #1243, in that order.
+
+**#1242 can be built before the entry condition is settled, and #1243 can be
+started**, which is the one place v0.20 changed how the slice would be begun
+rather than what it contains. The profile is a specification document and needs
+no dependency. The census harness needs its two corpora pinned before it needs
+an importer, so that half can be done early; the harness itself waits on #774.
+v0.21 ran that ordering by accident and it worked — stories #1229 and #1230
+built the Android measurement apparatus and the Unity build environment before
+the device and the rulings arrived. #1229 was spent the day it landed; #1230's
+payoff is still owed, because epic #1106 has two open entry conditions — which
+is the point rather than a qualification of it, since the toolchain is ready for
+the day they lift.
 
 **One entry condition, owner-supplied**: the `usvg` dependency adopted. The
 licence question that was open when this was proposed is resolved — the front
@@ -2080,18 +2298,44 @@ approximation of it.
 [`decisions/review-before-ready-not-before-open.md`](decisions/review-before-ready-not-before-open.md)
 fixes a quick finding in the pull request that found it rather than filing it,
 so the only review-sourced item that still lands here is a **blocked** one — a
-quick, non-correctness finding waiting on a ruling or on hardware. The two
-`owner-input` items below are that shape. **Two kinds sit in it, and the
-`owner-input` label separates them.** An unlabelled item is burn-down work a
-session can finish alone. A labelled item is the third term of
+quick, non-correctness finding waiting on a ruling or on hardware. **Two kinds
+sit in it, and the `owner-input` label separates them.** An unlabelled item is
+burn-down work a session can finish alone. A labelled item is the third term of
 [`decisions/pre-v1-hardening-slice.md`](decisions/pre-v1-hardening-slice.md):
 resolvable now, gated on no v1 consumer, and still not burn-down work, because
 the next step is a ruling or an input only the repository owner can supply. A
-session taking work from here reads the label first. Two items carry it as of
-2026-08-16 — issues #874 and #886, against the four this sentence claimed until
-then — so re-derive with
-`gh issue list --label owner-input --milestone "v0.23 — rolling quick debt"`
-rather than trusting the count here.
+session taking work from here reads the label first, and derives the population
+rather than reading a count:
+
+    gh issue list --label owner-input --milestone "v0.23 — rolling quick debt"
+
+**This sentence has stated that count twice and both statements went stale** —
+four until 2026-08-16, then two, which was correct on the day and had multiplied
+several times over before the sentence was next read. It no longer states a
+count; run the query above.
+
+**Revised at the v0.20 phase-end revision (2026-08-18): read as a population,
+not as a queue.** That slice added twenty-four items here and nobody had ever
+looked at the milestone as a whole. Doing so once found two duplicates that
+later work had already repaired without naming them — #511, repaired by #1193,
+and #647, repaired by #1186, both closed by that revision. It found adjacent
+pairs that read as one item: #1033 and #1060 make the same statement about
+`dashscene-desktop` and `dashscene-ffi` duplicating each other, were filed on
+the same day, and **both already cite the same cause, #925** — so the link
+exists and the split survived it. And it found one item on the wrong milestone
+for its size: **#1241**, filed at the v0.20 close as the remainder of a gate and
+placed here, whose own body is headed "Why this is not a quick fix". It moved to
+`v1` beside #1246. This milestone takes nothing over half a day, and an item
+sized against the gate it came from rather than against the milestone it lands
+on is the third thing a population view shows.
+
+**So the phase-end ritual now gives this milestone a cluster pass**, described
+in the ritual section at the top of this file. It is not a re-verification pass:
+a large part of the population asserts an **absence** — "no test covers X" — and
+an absence is checkable only by mutating the code and running the tier, which is
+a slice's work rather than a step inside a revision.
+[`decisions/slices-are-planned-against-their-inflow.md`](decisions/slices-are-planned-against-their-inflow.md)
+records what was and was not checked.
 
 It exists so that the three slices above stay readable. A slice whose scope is
 "the critical findings" means nothing if forty cosmetic items are scheduled

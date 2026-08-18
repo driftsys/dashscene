@@ -5,10 +5,15 @@
              resolved. Revised at the v0.12 close (2026-07-27): the dividing
              line gains a third term, and the slice gains a second track
              (epic #474) for the items that term names. Context corrected in
-             place 2026-08-13: v1's scope no longer includes Unity.
+             place 2026-08-13: v1's scope no longer includes Unity. **The
+             anchoring sweep this record added on 2026-07-19 was extended
+             below the milestone at the v0.20 close (2026-08-18)** — see
+             the `related` record; this one is unchanged otherwise.
     scope    docs/roadmap.md, the v0.x slice plan, the debt backlog
     related  docs/decisions/debt-streams-own-artifact-classes.md (how the
              slice's burn-down is dispatched)
+             docs/decisions/slices-are-planned-against-their-inflow.md
+             (extends the anchoring sweep below to the epic and the label)
 
 ## Context
 
@@ -186,3 +191,11 @@ Considered at the 2026-07-27 revision, for the third term:
   milestones, and five were stragglers on slices that had already closed. The
   count in #362 is the current one, and a milestone sweep for un-anchored issues
   is now part of the phase-end revision rather than assumed.
+
+  **That sweep gained two more levels at the v0.20 close (2026-08-18)**, after
+  the same failure appeared below the milestone: nine open v0.21 issues belonged
+  to none of that slice's epics, and story #859 was named by an epic in prose
+  while carrying no label, so no listing returned it. The milestone level here
+  is unchanged and is still repo-wide;
+  [`slices-are-planned-against-their-inflow.md`](slices-are-planned-against-their-inflow.md)
+  carries the epic and label levels, their scope, and the epic level's command.

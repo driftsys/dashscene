@@ -122,9 +122,9 @@ before working it. #1032 rewrites `surfaceDestroyed`'s marker logic, and #960's
 entire evidence is those markers — "entering the handshake" logged, "handshake
 complete, returning" never logged, 150 s later. The two point in opposite
 directions (#1032 is a marker printed when no handshake ran; #960 is a handshake
-that entered and never returned), so #1032 does not obviously fix #960 — but it
-changes the code the observation was made against. **Re-derive the symptom on
-post-#1032 `main` before you diagnose it.**
+that entered and never returned), so #1032 is not obviously the answer to #960
+— but it changes the code the observation was made against. **Re-derive the
+symptom on post-#1032 `main` before you diagnose it.**
 
 `DashsceneNative.java` is untouched by #1032. Announce it if you need
 `build.sh`.

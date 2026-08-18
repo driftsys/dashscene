@@ -247,7 +247,8 @@ script wipes.
 
     status  taken 2026-08-17 with `just android-measure` (story #1229's
             apparatus). **This is a device measurement**, and it is the first
-            in this project. It closes #885, #842 and #1128.
+            in this project. It is the evidence #885, #842 and #1128 asked
+            for; a record does not close a ticket.
 
 **The device.** Google Pixel 5 (`redfin`), Android 14 / API 34, `arm64-v8a`,
 over USB. Adreno 620 — a **tiling** GPU, which is the class R-T1's tile-memory
@@ -437,8 +438,10 @@ measurement does settle is the shape of the answer:
 ### The attach, and what it does and does not say
 
 Recorded because the apparatus takes it and it is the first such figure from
-hardware. **It does not close #960**, whose subject is a different thing — see
-the note below.
+hardware. **It is not the answer to #960**, whose subject is a different thing —
+see the note below. (Phrased without the keyword deliberately: #960 is open, and
+a sentence saying an issue was _not_ closed fires exactly as well as one saying
+it was, in any pull-request body that quotes it.)
 
     run   profile   acquire   to first frame   am start -W TotalTime
     1     release   0.27 s    0.31 s           188 ms
