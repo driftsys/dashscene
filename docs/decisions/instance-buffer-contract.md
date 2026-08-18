@@ -20,10 +20,22 @@ Two consumers, not one. G2 names a Unity painter and R-T5 asks for the SDF
 shader math to be single-sourced into both painters' shading languages. The epic
 plans that painter as instanced SDF quads too, which is what makes its claim —
 "layers 1 and 2 are shared with the Unity painter" — concrete. How that painter
-reaches the GPU is still open: `unity-painter-uses-brg.md` is **proposed**,
-pending a lit-BRG shader spike. So the struct is designed for a second consumer
-whose rendering approach is planned rather than settled, and nothing below
-depends on which way that lands.
+reaches the GPU is settled since 2026-08-18: `unity-painter-uses-brg.md` is
+**accepted**, ratified against a fallback ladder rather than against the lit-BRG
+shader spike it originally required. So the struct is designed for a second
+consumer whose rendering approach is decided but unbuilt. **Nothing below is
+changed by which rung that painter ends up on** — the fields, their order and
+their meaning are what `dashscene-gpu` needs — but the rungs are not equally
+good for this record's purpose, which is different from the fields depending on
+them.
+
+**Which rung is taken decides whether there is a second consumer at all.** Rungs
+1 and 3 both keep the instance-buffer data model. Rung 2 keeps it for the unlit
+nodes and routes the lit ones through GameObjects, and the floor gives it up
+entirely — that record's own "Alternatives considered" says GameObject-per-node
+"gives up the job-filled instance buffer that makes the R-T4 mapping work". What
+survives every rung is this struct's use by `dashscene-gpu`; what a lower rung
+costs is the second consumer R-T5 asks for.
 
 ## Decision
 

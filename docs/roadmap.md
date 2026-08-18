@@ -1321,8 +1321,9 @@ rather than on code: the siting record — then
 `decisions/unity-package-sited-in-this-repository.md` since story #1239 renamed
 it with its contents — put the project in another repository, and
 `decisions/unity-painter-uses-brg.md` is still `proposed`. **The first half was
-reversed on 2026-08-17**, which the entry above records; this paragraph is left
-as written.
+reversed on 2026-08-17**, which the entry above records, **and the second was
+ratified on 2026-08-18**, which v0.21's own entry below records rather than
+anything above this line; this paragraph is left as written.
 
 **This is larger than one slice as written, and the planning session should
 expect to split it.** Recorded here rather than discovered later: a slice naming
@@ -1626,7 +1627,10 @@ never run on the target device class.** The emulator ran it, and
 be made to use the host GPU for Vulkan. D3a asked for that confirmation _before_
 anything was built on the assumption; the amendment on
 [`decisions/host-integration-in-three-layers.md`](decisions/host-integration-in-three-layers.md)
-records that it was not, and that the risk is unchanged rather than reduced.
+records that it was not, and that the risk was unchanged rather than reduced.
+**It was retired for one device on 2026-08-17**, when #885 was measured on a
+Pixel 5; that record now says D3a "is now measured", and it stays a property to
+re-check per device class.
 
 **Held issues, each placed rather than left on a closed slice.** #828 (a
 portable conformance suite) to v0.21, where Unity is the second painter that can
@@ -1953,26 +1957,31 @@ unchanged — three epics, the MVP pair plus the non-gating one — and this
 revision changed four things. **Everything below this block is earlier** — the
 v0.19 revision's paragraphs of 2026-08-16 and the Unity-siting amendments of
 2026-08-17 — and is left as written. Where a count differs, this block is the
-later one. Two readings below are superseded outright rather than by a count:
-the "Three entry conditions" paragraph lists the conditions rather than the
-unmet ones, and the third of them is now met; and **every paragraph below
-describing #960 as a device run that "owes only the run" is wrong** — its own
-2026-08-14 correction re-scoped it, and the bullet on it here is the current
-reading.
+later one, **with one exception added below on 2026-08-18 and named here so the
+rule still holds**: the owner ruled the two remaining entry conditions that
+evening, after this block was written, and the paragraph recording it sits under
+the "Three entry conditions" paragraph rather than here. On that count — and
+only that one — the later statement is the one below. Two readings below are
+superseded outright rather than by a count: the "Three entry conditions"
+paragraph lists the conditions rather than the unmet ones, and the third of them
+is now met; and **every paragraph below describing #960 as a device run that
+"owes only the run" is wrong** — its own 2026-08-14 correction re-scoped it, and
+the bullet on it here is the current reading.
 
 - **The hardware entry condition was met before the slice opened**, so of the
-  three the paragraph below lists, two remain. A device was expected around
-  2026-08-23. A Pixel 5 (`redfin`, Adreno 620, Android 14 / API 34) was measured
-  on 2026-08-17, and #885, #969, #842 and #1128 all closed on it. **#1107's
-  Track A owed five items and four are closed**; the two this revision adds to
-  it, #1215 and #1236, make it seven with three open. Of those three, none is a
-  device run: #960 is a silent-failure defect on its own 2026-08-14 correction,
-  and #1215 and #1236 are defects in the harness and in the measurement's own
-  table. **So no part of Track A is waiting for hardware any longer** — which is
-  a statement about that track and not about the epic: **Track B is Unity on
-  Android hardware**, it is device work by definition, and it is in #1107's
-  definition of done. It waits on #1106 rather than on a device being absent.
-  The measurements are in
+  three the paragraph below lists, two remained when this block was written.
+  **Both were ruled later the same day**, so none remains — see the paragraph
+  named in the exception above. A device was expected around 2026-08-23. A Pixel
+  5 (`redfin`, Adreno 620, Android 14 / API 34) was measured on 2026-08-17, and
+  #885, #969, #842 and #1128 all closed on it. **#1107's Track A owed five items
+  and four are closed**; the two this revision adds to it, #1215 and #1236, make
+  it seven with three open. Of those three, none is a device run: #960 is a
+  silent-failure defect on its own 2026-08-14 correction, and #1215 and #1236
+  are defects in the harness and in the measurement's own table. **So no part of
+  Track A is waiting for hardware any longer** — which is a statement about that
+  track and not about the epic: **Track B is Unity on Android hardware**, it is
+  device work by definition, and it is in #1107's definition of done. It waits
+  on #1106 rather than on a device being absent. The measurements are in
   [`design/android-toolchain.md`](design/android-toolchain.md) under "What the
   device measured", and every number there is a number about one device.
 - **Nine open issues on this milestone belonged to no epic**, which is v0.20's
@@ -2027,9 +2036,11 @@ that host.
 **The hardware half is heavier than planned.** v0.19 closed having never run on
 the target device class: D3a's confirmation was required _before_ anything was
 built on the assumption and was never taken, and #842's on-device half moved
-here with #885. So #1107 now carries a risk that was supposed to be retired a
-slice earlier, and `host-integration-in-three-layers.md` says the risk is
-unchanged rather than reduced.
+here with #885. So #1107 carried a risk that was supposed to be retired a slice
+earlier, and `host-integration-in-three-layers.md` said the risk was unchanged
+rather than reduced. **That was settled on 2026-08-17**, before the slice's own
+revision: #885 was measured on a Pixel 5, and the record now says D3a "is now
+measured". One device, and a property to re-check per device class.
 
 **#876 was a live falsehood in a design record**, found by this revision:
 `architecture.md` said `Node` "already carries" the four placeholder fields, and
@@ -2200,12 +2211,28 @@ still states three and is corrected by a comment on it, which is how this
 repository amends an issue.
 
 **Only the second of the three has an issue of its own: #171**, moved here from
-v1 on 2026-08-16. It holds three records still marked `proposed` and only
-`unity-painter-uses-brg.md` is this slice's, so ratifying that one alone lifts
-the condition. **The first is tracked, though not by an issue of its own** — it
-is open question 4 on #851, "which of the three layers a Unity host occupies",
-recorded there as never settled during the discussion. The third is a delivery,
-with nothing tracking it but this paragraph.
+v1 on 2026-08-16. It holds three records, all marked `proposed` when it was
+moved here, and only `unity-painter-uses-brg.md` was this slice's, so ratifying
+that one alone lifted the condition. **The first is tracked, though not by an
+issue of its own** — it is open question 4 on #851, "which of the three layers a
+Unity host occupies". The third is a delivery, with nothing tracking it but this
+paragraph.
+
+**All three are settled as of 2026-08-18, and each half is unblocked.** Take
+them in the order this list gives them, because they do not all belong to the
+same epic.
+
+- **The first and second — the Unity half, and both #1106's** — were ruled by
+  the owner on 2026-08-18. `unity-painter-uses-brg.md` is `accepted` against a
+  fallback ladder, and a Unity host occupies **layer 0 in its host-draws form**,
+  with layers 1 and 2 deferred to `v1` as issues #1261 and #1262. **So #1106 has
+  no entry condition left.**
+- **The third — the target device, and #1107's** — was met on 2026-08-17, six
+  days before the date this paragraph expected, when a Pixel 5 measured #885,
+  #969, #842 and #1128. The later revision entry in this file carries that run.
+
+**#171 stays open**, because only one of the three records it holds was ruled —
+which is what its own comment invited.
 
 **The Unity half's first build step is the data plane** — **superseded on
 2026-08-18**: #1226's ruling lands before it, because it changes the signature
@@ -2218,8 +2245,9 @@ today. Boundary B was made FFI-representable at v0.15 by story #600, and has had
 no consumer since.
 
 Depends on: v0.19 for the C ABI it extends, and on v0.20 for the failure
-reporting that ABI gains there. Its first two entry conditions are independent
-of both and can be settled at any time; the third is hardware.
+reporting that ABI gains there. Its first two entry conditions were independent
+of both and settleable at any time, **and both were settled on 2026-08-18**; the
+third is hardware, and a device arrived on 2026-08-17.
 
 **#1107's Track A is not uniform, and the difference is worth planning around.**
 Three of its four items — #885, #960, #969 — exist as code and owe only the run:
@@ -2285,9 +2313,11 @@ an importer, so that half can be done early; the harness itself waits on #774.
 v0.21 ran that ordering by accident and it worked — stories #1229 and #1230
 built the Android measurement apparatus and the Unity build environment before
 the device and the rulings arrived. #1229 was spent the day it landed; #1230's
-payoff is still owed, because epic #1106 has two open entry conditions — which
-is the point rather than a qualification of it, since the toolchain is ready for
-the day they lift.
+payoff was still owed when this was written, because epic #1106 then had two
+open entry conditions — which was the point rather than a qualification of it,
+since the toolchain was ready for the day they lifted. **They lifted on
+2026-08-18**, and that day's ruling also moved the target to Unity 6.5, whose
+editor carries no Android module.
 
 **One entry condition, owner-supplied**: the `usvg` dependency adopted. The
 licence question that was open when this was proposed is resolved — the front
@@ -2363,6 +2393,15 @@ stays here is the work that unlocks once a Unity host exists rather than the
 host itself. The GitHub milestone was renamed to match on 2026-08-13, and
 [`decisions/host-integration-in-three-layers.md`](decisions/host-integration-in-three-layers.md)
 re-scoped with it: iOS stays v1, Unity is v0.21.
+
+**Layers 1 and 2 are here, for every host, since 2026-08-18** — the ruling that
+settled which layer a Unity host occupies deferred the two above it rather than
+taking them into v0.21. **#1261** is layer 1, app state as signals, and it
+carries that ruling's own broadening: signal binding is to be reachable from C#
+**or** native code, because by D2 it sits on the C ABI and every host inherits
+it. **#1262** is layer 2, scenes authored in the host's language over
+`dashlang`. Neither is built for any platform today, which is what makes them v1
+rather than debt.
 
 LATER-tier features land per priority, including shadow baking switching on and
 `profile:core` being enforced on target documents; **of the loading-performance

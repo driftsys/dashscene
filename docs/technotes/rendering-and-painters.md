@@ -305,9 +305,15 @@ low-level and thin on docs (Entities Graphics is the reference); verify BRG
 platform support on the exact automotive GLES 3.2 target; you own culling
 (coarse or none for UI is fine and cheaper than per-renderer culling). **Spike
 early**: the lit + SDF-clipped-shadow-caster shader on the target SRP
-(especially if HDRP) — that is where the engineering risk sits. Fallback if
-lit-BRG proves costly: a by-material- class hybrid (unlit-overlay via BRG, lit
-via GameObjects).
+(especially if HDRP) — that is where the engineering risk sits.
+
+**The fallback is one rung of a ladder, and this note does not state the
+ladder.** Costly and unsupported are different failures with different answers,
+which the sentence above does not distinguish.
+[`../decisions/unity-painter-uses-brg.md`](../decisions/unity-painter-uses-brg.md)
+D3 is the ladder and D4 is the read that tells the two failures apart, and
+**they are stated in full only there**. Other files name whichever rung bears on
+them; none of them is the place to read the ladder from.
 
 ## 11. lit vs unlit — the underlying concept
 
@@ -345,4 +351,11 @@ nodes match the flat design exactly while lit nodes intentionally do not.
 - Q-1 small-text: MSDF vs per-size bitmap atlas below ~14px (§4/§7).
 - Define the document's canonical colour + blend space (§9).
 - Spike lit + SDF-clipped-shadow-caster BRG shader on the target SRP (§10).
-- Confirm BRG platform support on the automotive GLES 3.2 target (§10).
+  **Still open, and now carried rather than blocking**: the decision record was
+  ratified on 2026-08-18 against a fallback ladder, so a bad outcome here
+  selects the hybrid rather than holding the slice.
+- Confirm BRG platform support on the automotive GLES 3.2 target (§10). **Still
+  open, and now an assumption**: the owner ruled on 2026-08-18 to assume the
+  board supports it and to confirm with Unity directly. The check that
+  discharges it is a read of `BatchRendererGroup.BufferTarget` on the target,
+  and it has been taken on no device.

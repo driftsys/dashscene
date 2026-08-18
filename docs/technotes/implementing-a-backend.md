@@ -39,8 +39,10 @@ only.
 what a direct-GLES backend would do — the contingency
 `docs/decisions/wgpu-is-the-lean-painter.md` names — and what the Unity painter
 is expected to do for its _shaders_ while sitting on seam 1 for its input.
-`docs/decisions/unity-painter-uses-brg.md` is still `proposed`, so that is a
-plan rather than a description.
+`docs/decisions/unity-painter-uses-brg.md` is `accepted` since 2026-08-18, so
+that is a settled plan rather than a description — nothing is built. One rung of
+that record's D3 ladder is instanced draws without BRG, which is this seam by
+another route; D3 is where the rungs and their conditions are stated.
 
 If you are writing a renderer for a platform, you are almost certainly on
 seam 1. Choose seam 2 only when you need the SDF shading itself and not the

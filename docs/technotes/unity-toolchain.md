@@ -3,8 +3,9 @@
 Informative. **Measured 2026-08-17**, story #1230 under epic #1106. Nothing
 depends on this note. It exists because epic #1106's entry conditions are all
 the repository owner's — three on the day this was measured, two after the
-ruling recorded below — and they are cheaper to decide with evidence that a
-Unity project can reach `dashscene-ffi` at all than without it.
+ruling recorded below, and **none from 2026-08-18**, when the last two were
+ruled — and they are cheaper to decide with evidence that a Unity project can
+reach `dashscene-ffi` at all than without it.
 
 **Written for someone deciding, not for someone repeating.** The commands are
 here so a claim can be checked, but the audience is
@@ -83,6 +84,16 @@ Two LTS lines were live on that date — `6000.0.x` (Unity 6) and `6000.3.x`
 6.5, which is a supported release rather than an LTS one — carrying Web Build
 Support and Documentation only. It has no Android module and was not used here.
 Two editors now sit under `/Applications/Unity/Hub/Editor/`.
+
+**That second editor is now the target** (the owner's ruling of 2026-08-18,
+`../decisions/unity-painter-uses-brg.md` D2). Nothing measured below moves — it
+was all taken on `6000.3.22f1` and is labelled as such — but two things follow
+for whoever builds next. **The Android modules are on 6.3 and not on 6.5**, as
+the paragraph above records, so the first Unity Android player on 6.5 installs
+them. And **6.5 is not on Unity's LTS stream**: the release API returned
+`6000.3` and `6000.0` there on 2026-08-18, which is the same query this note
+uses above to identify an LTS line. The departure from this story's LTS
+requirement is deliberate and the record carries it.
 
 **The licence is Unity Personal**, an entitlement issued 2026-08-17 to
 `~/Library/Unity/licenses/UnityEntitlementLicense.xml`. It was already in place
@@ -333,6 +344,9 @@ native code of its own.
 and no part of this story assessed whether the product's use of Unity requires a
 different one.
 
-**Which of the three layers a Unity host occupies** is untouched — open question
-4 on issue #851, and entry condition 1 of epic #1106. This story produced
-evidence and deliberately answered none of the three conditions.
+**Which of the three layers a Unity host occupies** was untouched here — open
+question 4 on issue #851, and entry condition 1 of epic #1106. This story
+produced evidence and deliberately answered none of the three conditions. **It
+was settled on 2026-08-18**: layer 0, in the host-draws form that ruling added
+to `../decisions/host-integration-in-three-layers.md` D1. Everything else in
+this section is still unknown.

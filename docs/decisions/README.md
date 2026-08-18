@@ -195,11 +195,17 @@ records below. Per-story decisions land here directly:
   semantics only, with `TextureView` deferred to v1 alongside the case that
   motivates it. **v0.19 builds layer 0 and the C ABI under it** (narrowed
   2026-08-09, epic #833); layers 1 and 2 move to a follow-on slice, which the
-  layering permits because each layer is usable without the one above it. **D3a
-  is a risk to check rather than a measured fact**: a device without Vulkan may
-  meet the same four-fragment-storage-buffer wall that makes WebGL2 unbuildable,
-  and the first Android story confirms the target device class before anything
-  is built on it.
+  layering permits because each layer is usable without the one above it — and
+  since 2026-08-18 that slice is `v1` for every host, as issues #1261 and #1262.
+  **Amended 2026-08-18** (owner's ruling on open question 4 of issue #851):
+  layer 0 has two forms — the runtime draws into a host view, or the host draws
+  the frame from the committed tables — a Unity host occupies the second, and D6
+  is amended so an engine host ticks from the engine's loop. The host-draws form
+  is not usable until issue #859. **D3a was a risk to check and is now
+  measured** (2026-08-17, issue #885): a Pixel 5's Vulkan adapter exposes 32
+  fragment-stage storage buffers and its GLES 3.2 adapter exactly the four the
+  painter binds, so the wall that makes WebGL2 unbuildable is not hit on that
+  device — one device, and a property to re-check per device class.
 - [container-parse-reads-a-prefix-through-a-host-reader.md](container-parse-reads-a-prefix-through-a-host-reader.md)
   — **accepted**, built by story #587 as `dashbuf::prefix`: `Container::parse`
   stays strict, and a prefix is read by a separate host-side envelope reader
@@ -595,10 +601,13 @@ their parent rather than apart from it:
   its painter with `--painter` and swaps it with a key; the frame path holds its
   buffers across frames and applies a dirty range only when the commit
   generation says this frame follows the one on the device (story #585).
-- [unity-painter-uses-brg.md](unity-painter-uses-brg.md) — **proposed**:
-  BatchRendererGroup over GameObject-per-node for the Unity painter, pending a
-  lit-BRG shader spike and a GLES 3.2 platform check
-  (`docs/technotes/rendering-and-painters.md` §10).
+- [unity-painter-uses-brg.md](unity-painter-uses-brg.md) — **accepted**
+  (2026-08-18, owner's ruling on issue #171): BatchRendererGroup over
+  GameObject-per-node for the Unity painter, targeting Unity 6.5. Ratified
+  against a fallback ladder rather than against the two conditions the record
+  set for itself, both of which are carried; D3 is the ladder and D4 is the read
+  that selects between its rungs. The minimum package version is left to issue
+  #1125.
 - [downloaded-raster-needs-no-vector-engine.md](downloaded-raster-needs-no-vector-engine.md)
   — downloaded PNG/WebP is decode → upload → bind through the existing
   image-fill vocabulary, no vector engine involved

@@ -10,12 +10,22 @@
              What layer 0 became is
              [`../design/c-abi.md`](../design/c-abi.md) and
              [`../design/android-toolchain.md`](../design/android-toolchain.md).
+             **Amended 2026-08-18 by the owner's ruling on which layer a Unity
+             host occupies** (open question 4 on issue #851, epic #1106's first
+             entry condition): it occupies **layer 0**, and D1 below now states
+             layer 0 in two forms rather than one. Layers 1 and 2 are v1 for
+             every host, engine or platform, and carry issues #1261 and #1262.
+             D6 is amended by the same ruling.
     date     2026-08-05; ratified and re-scoped 2026-08-07; slice numbers
              corrected in place 2026-08-08 (story #796, the v0.17 close);
              narrowed to layer 0 for v0.19 on 2026-08-09 (epic #833); Unity
              moved from v1 to slice v0.21 on 2026-08-12, iOS unchanged; D3a
              amended at the v0.19 close on 2026-08-16 (story #843); D4 and
-             D5 left unamended there, and issue #1187 carries why
+             D5 left unamended there, and issue #1187 carries why; **D1 and D6
+             amended 2026-08-18** by the owner's ruling on open question 4 of
+             issue #851 — layer 0 gains a host-draws form and an engine host
+             ticks from the engine's loop. D3, D3a, D4 and D5 are unamended
+             there, being clauses of the runtime-draws form only
     source   the v0.15 phase-end revision (epic #569), which opened v0.17
     scope    embedding into a platform host: how a platform surface reaches
              `dashscene-gpu`, how app state drives a scene, and how a scene is
@@ -24,7 +34,9 @@
 
     Narrowed at v0.19's planning session (2026-08-09, epic #833): **that slice
     builds layer 0 and the C ABI under it.** Layers 1 and 2 are deferred to a
-    follow-on slice named at v0.19's close. The reason is recorded in
+    follow-on slice named at v0.19's close — **and since 2026-08-18 that slice
+    is `v1`, for every host rather than for Android alone, as issues #1261 and
+    #1262.** The reason is recorded in
     `docs/roadmap.md` under "What was ruled when this slice opened" — the
     showcase both other targets run is entirely Rust, so demonstrating Android
     at parity with them exercises layer 0 and nothing above it. D1's claim that
@@ -68,16 +80,24 @@ target triple, no toolchain, no CI job, and no FFI beyond `dashpaint-abi`'s
 boundary-B gate — so it is the slice's one new platform.
 
 **iOS and the Unity host are deliberately not in v0.19.** iOS is a second
-platform bring-up with the same zero foundation, and Unity is blocked on
-decisions rather than code — `unity-package-sited-in-this-repository.md` put the
-project in another repository and `unity-painter-uses-brg.md` is still
-`proposed`. Both were v1 when this was written; **Unity became slice v0.21 on
-2026-08-12**, and `unity-painter-uses-brg.md` moving to `accepted` is one of
-that slice's entry conditions. **The siting was reversed on 2026-08-17** — the
-C# package is in this repository under `unity/` — which lifted a second
-condition and left two. iOS stays v1. The layering below is written to be
-platform-general precisely so the iOS story inherits it rather than re-deriving
-it.
+platform bring-up with the same zero foundation, and Unity was blocked on
+decisions rather than on code. Both were v1 when this was written; **Unity
+became slice v0.21 on 2026-08-12**, and the three decisions that gated it are
+now all settled:
+
+- **Where the C# package lives** — reversed on 2026-08-17, and it is in this
+  repository under `unity/`. The record is
+  [`unity-package-sited-in-this-repository.md`](unity-package-sited-in-this-repository.md),
+  whose name states the outcome; it reverses the deferral that preceded it. This
+  paragraph previously cited that record as having put the project in another
+  repository, which is what the record it replaced had said.
+- **The painter's backend** — `unity-painter-uses-brg.md` moved from `proposed`
+  to `accepted` on 2026-08-18.
+- **Which layer a Unity host occupies** — this record's own question, settled
+  the same day in D1 above.
+
+iOS stays v1. The layering below is written to be platform-general precisely so
+the iOS story inherits it rather than re-deriving it.
 
 What an embedder needs is already known, from the browser host story #587 built:
 the surface handoff, the tick loop, the generation-and-`shown` contract,
@@ -101,15 +121,57 @@ planning session breaks stories against a structure rather than inventing one.
 
 **D1 — three layers, and each is useful without the one above it.**
 
-| layer                        | what it is                                                                       | usable alone?                                              |
-| ---------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| 0. surface interop           | a platform surface reaches `SurfaceRenderer`; the runtime draws into a host view | yes — displays a compiled `.dsb`                           |
-| 1. app state as signals      | Compose `State` / SwiftUI bindings write named dashscene signals                 | yes — an app-driven scene, authored in Figma or `dashlang` |
-| 2. a DSL wrapping `dashlang` | scenes authored from the host's language                                         | needs 0; wants 1                                           |
+| layer                        | what it is                                                                      | usable alone?                                                                        |
+| ---------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| 0. surface interop           | the runtime and the host meet at the frame, in one of **two forms** — see below | runtime-draws, yes — displays a compiled `.dsb`. host-draws, **not yet**: issue #859 |
+| 1. app state as signals      | Compose `State` / SwiftUI bindings write named dashscene signals                | yes — an app-driven scene, authored in Figma or `dashlang`                           |
+| 2. a DSL wrapping `dashlang` | scenes authored from the host's language                                        | needs 0; wants 1                                                                     |
 
 Layer 0 is the whole of "show a designed screen in my app", which is the primary
 content path — Figma to `.dsb`. Layers 1 and 2 are what make it a runtime rather
 than a picture.
+
+**Layer 0 has two forms, and this record stated only one until 2026-08-18.**
+
+- **Runtime-draws** — a platform surface reaches `SurfaceRenderer` and the
+  runtime draws into a host view. **D3, D3a, D4 and D5 below describe this form
+  and only this form** — a window handle, an adapter's storage-buffer limit, a
+  surface-destroy handshake and `SurfaceView` semantics are each about a surface
+  the runtime draws into. It is what is built for web, desktop and Android.
+
+  **D6 is the exception and must not be skipped by a host-draws reader.** Its
+  original clause is runtime-draws — vsync taken natively — but its 2026-08-18
+  amendment rules the host-draws case as well, and it is the clause that says
+  who owns the tick. That is the question an engine host most needs answered.
+- **Host-draws** — the runtime hands over the committed tables and the host
+  draws the frame itself, through its own renderer. Nothing about the document,
+  the solve or the typesetting changes; what differs is which side owns the
+  draw.
+
+The two are the same layer because they answer the same question — how a frame
+reaches the screen — and because each is equally "show a designed screen in my
+app" from the embedder's side. They are not two layers, and host-draws is not
+above runtime-draws: neither needs the other.
+
+**The mechanism of the host-draws form is the C ABI's data plane, issue #859**,
+without which a host that draws its own frames cannot obtain the committed
+tables at all. That issue predates this amendment and is what made the gap
+visible.
+
+**So the host-draws form is not usable today, and the table above says so.**
+`docs/design/c-abi.md` states it from the other side — no data plane, and
+nothing in the header carries a boundary-B row. D1's "usable alone" column is a
+claim about the layering rather than about what is built, and for this form the
+two differ until #859 lands.
+
+**A Unity host occupies layer 0 in its host-draws form** (the owner's ruling,
+2026-08-18, settling open question 4 on issue #851). The Unity painter draws
+through BatchRendererGroup —
+[`unity-painter-uses-brg.md`](unity-painter-uses-brg.md) — so Unity owns the
+draw and dashscene supplies the tables. Three other readings were considered and
+rejected — runtime-draws, a fourth layer of its own, and layers 0 and 1 together
+— and all three are under "Alternatives considered". The third is where the
+scope ruling sits: signal binding is `v1`, as issue #1261.
 
 **D2 — one C ABI underneath, and every layer and platform sits on it.**
 
@@ -292,6 +354,49 @@ each frame. P3 says producers mutate and the runtime owns time; a host that
 drives the tick from its UI thread inverts that, and on Android it would also
 put the frame loop on the thread that has to run D4's destroy handshake.
 
+**Amended 2026-08-18 (the owner's ruling on issue #851's open question 4): this
+clause binds the runtime-draws form of layer 0. An engine host ticks the runtime
+from the engine's own loop.**
+
+The clause above gives two reasons and only the first is general. The second is
+Android's: keeping the frame loop off the thread that runs D4's destroy
+handshake. An engine host has no such thread of ours to protect, and D4 is a
+`SurfaceHolder.Callback` rule that a host-draws embedder never reaches.
+
+The first reason survives, and is satisfied rather than waived. P3 forbids
+producer work inside the frame loop; it does not require that dashscene own the
+timer. An engine already runs a vsync-driven player loop, and taking a second
+native vsync source beside it would give the frame two clocks rather than
+honouring P3 — the tick would race the engine's own frame, and a host-draws
+painter draws on the engine's schedule by construction. So the engine schedules
+`tick()` and the runtime still owns what happens inside it: the commit, the
+solve, the double buffer and the dirty set are unchanged and remain closed to
+the host.
+
+**This is consistent with an accepted record rather than a new position.**
+[`frame-delta-is-clamped-and-the-host-owns-the-clock.md`](frame-delta-is-clamped-and-the-host-owns-the-clock.md)
+already states that the host owns the clock — it decides what "elapsed" means —
+and its scope names "the host of every future product painter", which is exactly
+what an engine host is. This amendment extends that to who _calls_ the tick, for
+a host that draws its own frames; it does not reverse anything there.
+
+**Which thread schedules it is constrained by a second ruling of the same day.**
+[`the-c-abi-runtime-handle-is-generational.md`](the-c-abi-runtime-handle-is-generational.md)
+makes the runtime table **thread-affine**, so a `ds_runtime_*` call from a
+thread other than the one that created the runtime is a diagnosable bad handle
+rather than a working call. An engine host must therefore decide which of its
+threads owns the runtime, and the answer is not automatically the one an
+engine's callbacks run on — a `BatchRendererGroup` culling callback is invoked
+off the main thread, and the data plane of issue #859 is what it would be
+reading. This record does not settle that; it names it, because the first C#
+host meets it as a runtime failure otherwise.
+
+**What this does not license.** A host calling `tick()` is scheduling, not
+mutating. Producer-side work — staging properties, switching variants, building
+scenes — stays outside the frame loop exactly as P3 requires, and an engine host
+that mutates the arena from inside its render callback violates P3 no less than
+a platform host would.
+
 **D7 — layer 1 is one-way by default: app state writes signals.**
 
 A Compose `State<Float>` or a SwiftUI binding writes a named signal; the scene
@@ -368,3 +473,31 @@ tests exist to catch, one layer up.
 **`NativeActivity` or `GameActivity`.** Appropriate when the whole activity is
 native. The premise here is embedding into an existing application, so the host
 owns the Activity and dashscene owns a view inside it.
+
+**Reading a Unity host as layer 0 runtime-draws** — Unity hands dashscene a
+surface or a render target and `dashscene-gpu` draws the UI into it. Rejected
+with the ruling of 2026-08-18. It discards what the Unity painter is for: the
+engine-native material classes, and node replacement putting arbitrary 3D,
+particles or per-frame engine content inside a layout box
+(`../technotes/rendering-and-painters.md` §10.2). A runtime-drawn texture cannot
+have engine content inside it — the host would have to composite around the UI
+rather than through it — and issue #851's first finding records that interleaved
+compositing is an R-T1 violation rather than a tradeoff. It would also put two
+graphics devices in one process.
+
+**Reading a Unity host as a fourth layer, beside the three** — rejected as a
+taxonomy that answers one host and breaks the question for the next. D1's
+layering is written to be platform-general so that the iOS story inherits it; a
+layer that exists for one engine makes "which layer does this host occupy"
+unanswerable for the second engine, and nothing about a Unity host differs at
+the level the layers describe. The two-form reading keeps the question answered
+by the same three names for every host.
+
+**Reading a Unity host as layers 0 and 1 together** — the argument being that an
+embedded HMI is exactly the case where application state drives the scene, so
+signal binding is not optional. Rejected for this slice on scope: layer 1 is
+built for no platform, and taking it here would make v0.21 the first slice to
+build it, on an epic the owner had already declared MVP. It is issue #1261, on
+`v1`, where the ruling also broadened it — signal binding is to be reachable
+from C# **or** native code, since by D2 it sits on the C ABI and every host
+inherits it rather than each binding its own.
