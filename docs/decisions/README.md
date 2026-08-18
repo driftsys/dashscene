@@ -631,6 +631,16 @@ their parent rather than apart from it:
   written, which is its own best argument: they were not hard, they were
   unasked. #462 is deferred to v1 with the resulting gap stated rather than
   implied.
+- [slices-are-planned-against-their-inflow.md](slices-are-planned-against-their-inflow.md)
+  — the v0.20 retrospective (2026-08-18). Epic #951 planned 13 issues and the
+  milestone closed 142, of which 126 were filed while the slice ran, so a
+  slice's epic now states the inflow it expects and the phase-end revision
+  measures it. Extends `pre-v1-hardening-slice.md`'s anchoring sweep below the
+  milestone, to the epic after nine open v0.21 issues were found belonging to
+  none of that slice's three epics, and to the label after story #859 was found
+  named only in an epic's prose; keeps the parallel-lane shape and moves the
+  post-merge lane check into `AGENTS.md`; and gives the rolling-debt milestone a
+  cluster pass at each slice close.
 - [backdrop-blur-is-core-vocabulary.md](backdrop-blur-is-core-vocabulary.md) —
   backdrop blur stops being `profile:full` and every painter honours it; the
   static bake is rejected because it would pass the render oracle while freezing

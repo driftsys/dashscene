@@ -5,18 +5,24 @@
                screen can be built on this today
     method     every claim below was checked against the code, not against
                another document. See "How this file is kept honest".
-    re-checked 2026-08-17, before the v0.20 close — the epic is still
-               open, and docs/roadmap.md remains the authority on that.
-               Narrow by design: the five absence claims in sections 11 and
-               12, not those sections entire, because an absence is the
-               claim nobody re-derives. Two corrections: the dependency
-               audit read "has never been a continuous-integration job"
-               when ci.yml has run an `audit` job since the pre-push hook
-               stopped being the whole gate, and the tier bullet still had
-               a 33-second tier running "before pushing" when the pre-push
-               gate runs no tier at all. The eleven ticked claims in those
-               two sections were not re-derived; sections 1-4 and 6-8 were
-               not re-read at all. Those are the standing gap.
+    re-checked 2026-08-17, before the v0.20 close. Narrow by design: the
+               five absence claims in sections 11 and 12, not those
+               sections entire, because an absence is the claim nobody
+               re-derives. Two corrections: the dependency audit read "has
+               never been a continuous-integration job" when ci.yml has run
+               an `audit` job since the pre-push hook stopped being the
+               whole gate, and the tier bullet still had a 33-second tier
+               running "before pushing" when the pre-push gate runs no tier
+               at all. The eleven ticked claims in those two sections were
+               not re-derived; sections 1-4 and 6-8 were not re-read at all.
+               Those are the standing gap.
+    v0.20-gate **Epic #951 closed on 2026-08-18 and docs/roadmap.md marks
+               the slice closed**; that file remains the authority on slice
+               status. **This file's re-check for that close is not
+               finished.** Issue #1241 carries the part that was scoped —
+               the importer-blocker claims in sections 2 and 3 — and #1246
+               carries **everything #1241 does not reach**: the standing
+               gap named in the line above, plus sections 5, 9 and 10.
     re-checked v0.19 phase-end, 2026-08-16. The pass was scoped, not
                exhaustive: sections 5, 9 and 10, which are what v0.19
                and v0.20 moved, the C ABI bullets among them. Two claims were corrected here: device

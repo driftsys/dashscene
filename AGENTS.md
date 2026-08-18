@@ -639,6 +639,78 @@ Merging a PR — how the branch lands on `main`:
   incidents above it was the **only** signal: `just build` passed, CI passed,
   and three `/code-review` rounds passed over the reverted state, because an
   earlier consistent tree still compiles and still passes its own tests.
+- **After `main` moves, confirm the previous lane's work survived.** It runs
+  after the enqueue steps further down, and it is written here rather than after
+  them because it is the other half of the bullet directly above: both are
+  revert detectors and neither is discoverable without the other. This is the
+  step the merge-queue rules further down name as one of "the post-merge steps",
+  and until 2026-08-18 it was named there and given nowhere: the command lived
+  only in the per-slice lane driver prompts, which are archived with the slice
+  that wrote them. It is the pre-push check's other half — that one asks what
+  this branch changed, this one asks what **your merge** changed underneath it.
+
+      git fetch origin   # without it the merge commit is not local yet
+      M=$(gh pr view <your PR> --json mergeCommit --jq .mergeCommit.oid)
+      git log --oneline --merges --first-parent -5 "$M^1"  # lanes before yours
+
+      P=<a PR number that listing names>
+      git -C "$(git rev-parse --show-toplevel)" diff --stat "$M^1" "$M" -- \
+        $(gh api "repos/{owner}/{repo}/pulls/$P/files" --paginate --jq '.[].filename')
+
+  **Run the second command once per lane the first names**, starting with the
+  most recent. A stale squash base spanning two merges reverts both, and only
+  one lane's files fall inside a single pathspec list.
+
+  **`-5` is a window you choose, not a bound anything derives**, and widening it
+  costs one diff each. Nothing in git can tell you how far back to look, because
+  a squash against a moving ref is precisely what destroys the record of where
+  your base was — which is the defect this check exists for. Two candidate
+  bounds were measured against both incidents above and neither works:
+  `git merge-base "$M^1" "$M^2"` returns `$M^1` **itself** — `ea63006d` for PR
+  #978, `b9d8451f` for #1037 — so a range **starting** there and ending at
+  `$M^1` is empty; and a `--since` bound off the branch tip lists nothing,
+  because the tip is the squash commit, made after those lanes had landed.
+
+  **This is verified against the two incidents above rather than reasoned
+  about.** For PR #978, `$M^1` is `ea63006d`, the #961 merge, and the diff over
+  #961's files reports `3 files changed, 257 deletions(-)` — including the
+  122-line `justfile` deletion that took the `android-splitscreen` recipe with
+  it, and that took three passes to restore.
+
+  **Four details fail the check open if they are dropped, and each has been hit
+  — two of them while writing this bullet.**
+
+  - **`git log --merges --first-parent "$M^1"`, walking back from your merge's
+    first parent, with a count.** Without `--first-parent` the window also
+    returns merges made _into_ a branch rather than onto `main` — this history
+    holds twelve — and each one displaces a real lane out of a fixed count. Not
+    a range starting at `git merge-base "$M^1" "$M^2"`: that merge base _is_
+    `$M^1` whenever the branch tip sits on `main`'s tip, which both the mandated
+    pre-merge rebase and the `reset --soft origin/main` defect produce, so the
+    range is empty in exactly the cases this check exists for.
+  - **`"$M^1" "$M"` as the range**, which asks what your merge did and nothing
+    else: `$M^1` is `main` immediately before you landed, `$M` immediately
+    after. Naming one commit diffs it against your **working tree** instead —
+    and from a clean checkout at the branch head, or at a pulled `main`, that is
+    **empty**, which the paragraph below defines as the pass. It is the easiest
+    of the four to get wrong and the quietest when you do.
+  - **`git -C "$(git rev-parse --show-toplevel)"`**, because
+    `git diff -- <path>` resolves pathspecs against the **current directory**:
+    run from a crate directory, repo-root paths match nothing and it prints the
+    empty output this bullet calls the pass. `:(top)` on each pathspec does the
+    same job.
+  - **`gh api --paginate`, not `gh pr view --json files`**, which caps at 100
+    and does not paginate — verified on `rust-lang/rust` PR #161256, where it
+    answers 100 against the API's 146. A revert past the hundredth file would
+    otherwise read as a pass.
+
+  **An empty `--stat` is the pass, and it is the only answer `--stat` gives.** A
+  non-empty one is a question, not a verdict: drop `--stat` and read the diff.
+  Every line in it was made by your merge, so it is a revert unless every line
+  is a change your branch meant to make — a legitimate non-empty answer is
+  ordinary when both branches edited the same file. Both incidents above would
+  have been caught here and were not; catching it at the merge costs one diff.
+  Run it after `main` carries the merge commit, not after `gh pr merge` returns.
 - Keep separate commits only when they are separately meaningful — for example a
   preparatory refactor and the behavior change that builds on it, each
   independently reviewable and revertable.
@@ -681,10 +753,10 @@ Merging a PR — how the branch lands on `main`:
   setting alone.
 
   **Enqueuing is asynchronous.** The command returns before `main` has moved, so
-  the post-merge steps below — the accidental-closure check, and confirming the
-  previous lane's work survives — have nothing to look at yet and will pass over
-  a merge that has not happened. Wait for `main` to carry the merge commit
-  before running them. A batch that goes red, or that hits
+  the post-merge steps — the accidental-closure check, and confirming the
+  previous lane's work survives, both above — have nothing to look at yet and
+  will pass over a merge that has not happened. Wait for `main` to carry the
+  merge commit before running them. A batch that goes red, or that hits
   `check_response_timeout_minutes`, drops the pull request back out of the queue
   and leaves it open, and nothing announces that.
 
@@ -719,6 +791,38 @@ of them, on a slice carrying more than one — revise the remaining epics and
 stories against what was learned before starting the next slice: update, split,
 merge, or re-order the issues, and record scope-level changes as new or updated
 records in `docs/decisions/`.
+
+**An epic states the issue count it plans, and the revision that closes the
+slice records the count it closed beside it**
+(`docs/decisions/slices-are-planned-against-their-inflow.md`, 2026-08-18).
+Neither number gates anything and neither is a target: v0.20 planned 13 and
+closed 142, and the point of writing both down is that nothing predicted the gap
+and nothing recorded it until afterwards. v0.21's three epics carry theirs in a
+comment each, posted at that revision.
+
+**The same revision sweeps for unanchored work at three levels** — an open issue
+with no milestone, an open issue on a slice that no epic names, and an open
+issue with no label that any listing returns. The second was added after nine
+such issues were found on v0.21, the third for story #859, which an epic named
+in prose and no query returned. An issue that is an exception on purpose is said
+to be one. **Each level's scope and its command are stated once**, in
+`docs/decisions/slices-are-planned-against-their-inflow.md`; do not restate them
+here or in `docs/roadmap.md`, which is how the three copies of this rule drifted
+apart six times while it was being written.
+
+**And it reads the rolling-debt milestone as a population**, grouping its open
+issues by subject and acting on the groups. Filed one at a time under that
+milestone's one-pull-request-each rule, three things are invisible: duplicates
+that later work already repaired, clusters that are one property stated N times,
+and **items sized against the gate they came from rather than against the
+milestone they landed on**. The first pass found one of each: #511 and #647,
+already repaired by #1193 and #1186; #1033 and #1060, which make one statement
+and both cite #925; and #1241, which that milestone's own half-day threshold
+excludes and which moved to `v1`. It is not a re-verification pass — much of
+that population asserts an absence, which only a mutation and a test run can
+check.
+
+`docs/roadmap.md`'s ritual section carries all three.
 
 **Re-check `docs/features.md` in the same pass**, against the code rather than
 against `docs/design/` or `docs/specification/`. It asserts, feature by feature,

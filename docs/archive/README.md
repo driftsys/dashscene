@@ -16,7 +16,17 @@ rather than naming one machine. Nineteen files were affected, three of them
 predating v0.20.
 
 It is a departure from verbatim, recorded here because that is the contract.
-Nothing else was altered, and the substitution is mechanical.
+The substitution is mechanical.
+
+**A second departure, 2026-08-18.** One sentence in
+`2026-08-15-v020-wave2-lane-G-android-ffi.md` read `does not obviously fix #960`,
+where a closing keyword directly governs an issue number that is still **open**.
+A pull-request body quoting that sentence closes #960 — which is not
+hypothetical: #885 was closed exactly that way, from a body quoting a record. The
+sentence now reads `is not obviously the answer to #960`; its meaning is
+unchanged and nothing else in the file was touched. The v0.20 phase-end revision
+made the change and `docs/decisions/slices-are-planned-against-their-inflow.md`
+records the sweep that found it.
 
 **No file tracked in this repository names a developer's home directory.** The
 check is one command:
