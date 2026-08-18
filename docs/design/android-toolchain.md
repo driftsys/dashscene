@@ -13,7 +13,7 @@
             carries the decisions; D3a is the one this record exists to serve.
 
 Android was at zero before this: no target triple, no toolchain, no CI job, and
-no FFI beyond `dashscene-unity`'s Unity-facing bindings.
+no FFI beyond `dashpaint-abi`'s boundary-B gate.
 
 ## The toolchain
 

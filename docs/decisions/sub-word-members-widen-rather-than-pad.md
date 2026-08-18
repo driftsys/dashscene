@@ -14,8 +14,8 @@ Two types failed the last of those. `GlyphQuad` is `{u16, f32, f32}` and
 `AtlasGlyph` is `{u16, [f32; 4], [f32; 4]}`; at alignment 4 both put the glyph
 id at offset 0 and the next member at offset 4, so rustc inserts two bytes after
 the id. That is FFI-_safe_ — a C compiler inserts the same — but it is not
-FFI-_explicit_, and `crates/dashscene-unity` asserted the hole rather than
-fixing it, with a comment saying story #578 would.
+FFI-_explicit_, and `crates/dashpaint-abi` asserted the hole rather than fixing
+it, with a comment saying story #578 would.
 
 ## Decision
 

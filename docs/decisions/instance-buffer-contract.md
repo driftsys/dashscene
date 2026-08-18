@@ -201,9 +201,9 @@ and a golden that moved would no longer say which of them moved it. The cost is
 that the fixtures are Rust rather than data, so a painter written in C# ports
 them rather than loading them; the golden text itself is data and does transfer.
 Siting that package in this repository under `unity/`
-(`docs/decisions/unity-separate-repo-deferred.md`, ruled 2026-08-17 and not yet
-carried out) does not change the cost: what makes a Rust fixture unloadable is
-the language, not the repository.
+(`docs/decisions/unity-package-sited-in-this-repository.md`, ruled 2026-08-17
+and not yet carried out) does not change the cost: what makes a Rust fixture
+unloadable is the language, not the repository.
 
 ## What the packer deliberately does not emit
 
@@ -271,7 +271,7 @@ story #580.
 - Story #583 decides how `clip_offset`/`clip_count` are evaluated, and carries
   issue #133 (the quadratic clip-region storage) as the second consumer that
   gets to weigh the two representations.
-- `dashscene-unity` does **not** gain this type. The instance buffer is what a
+- `dashpaint-abi` does **not** gain this type. The instance buffer is what a
   painter builds _from_ boundary B; a C# painter builds its own, and what the
   two share is this shape and these goldens, not a Rust symbol across an FFI
   seam.

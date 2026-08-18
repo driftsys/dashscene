@@ -99,7 +99,7 @@ condition on a goal already written down, rather than provision for a
 hypothetical backend. Once it holds, Unreal and Kanzi are the same problem as
 Unity minus the C# adapter, since both consume a C header directly.
 
-It is enforced rather than asserted: `crates/dashscene-unity` declares an
+It is enforced rather than asserted: `crates/dashpaint-abi` declares an
 `extern "C"` surface over the boundary-B value types under
 `#![deny(improper_ctypes_definitions)]`, so making one of them non-representable
 stops the workspace compiling (story #600). The surface is narrow today and
@@ -191,7 +191,7 @@ producer mutates) and `dashscene-engine` (the runtime that solves it),
 | `crates/dashc`                | compiler CLI; also builds to wasm32 for the Deno importer                                                                                                                                                                                                               | [dashc.md](dashc.md), [vector-msdf-baking.md](vector-msdf-baking.md)                                                                                                                                                           |
 | `crates/dashpack-astcenc-sys` | raw bindings to the vendored astcenc C++ sources — ASTC encode plus the in-process reference decode                                                                                                                                                                     | in progress (epic #345) — [native-astc-codec-table.md](../decisions/native-astc-codec-table.md)                                                                                                                                |
 | `crates/dashpack`             | asset packer — per-profile derivations, cold-bank assembly, derivation manifest                                                                                                                                                                                         | in progress (epic #345) — [asset-quality-profile-bands.md](../decisions/asset-quality-profile-bands.md)                                                                                                                        |
-| `crates/dashscene-unity`      | the `extern "C"` surface that holds boundary B representable — a gate, not bindings, and not Unity's (renamed `dashpaint-abi`, issue #1239)                                                                                                                             | the gate is built (story #600); the bindings are planned — see below                                                                                                                                                           |
+| `crates/dashpaint-abi`        | the `extern "C"` surface that holds boundary B representable — a gate, not bindings, and not Unity's (named `dashscene-unity` until issue #1239)                                                                                                                        | the gate is built (story #600) and checked against C# declarations by `unity/abi-check` (story #1239); the painter is planned — see below                                                                                      |
 | `crates/dashscene-web`        | web integration — canvas-to-surface handoff, the `requestAnimationFrame` loop, resize rebuild, byte-range `.dsb` load                                                                                                                                                   | [host-integration.md](host-integration.md) — built at v0.17 (story #741); the wasm/tiny-skia painter the name once described is retired, superseded by `dashscene-gpu`                                                         |
 | `crates/dashscene-ffi`        | the C ABI every platform host sits on — runtime lifecycle, `.dsb` load, the tick, resize, and the surface handoff; no panic crosses it and no failure is a string only                                                                                                  | [c-abi.md](c-abi.md) — built at v0.19 (story #840); the Android host of story #841 and the iOS and Unity hosts that follow all sit on it                                                                                       |
 | `crates/dashscene-desktop`    | desktop integration — window-to-surface handoff, the `winit` frame loop, resize rebuild, the published `Present` seam, a mapped `.dsb` load bounded by the shown root                                                                                                   | [host-integration.md](host-integration.md) — built at v0.17 (story #794); `demo` keeps the demonstration and consumes it                                                                                                       |
@@ -225,20 +225,22 @@ measured (epic #476), and the browser target is WebGPU only.
 
 - **Unity painter (v0.21)**, plus its C# declarative producer front end — ships
   as a UPM package **in this repository, under `unity/`**, over the C ABI, with
-  `dashscene-unity` holding the gate that keeps boundary B C-representable.
-  Neither exists yet. Bound by G2 (multiple render backends) and R3 (GPU is the
-  target's bottleneck) in
+  `dashpaint-abi` holding the gate that keeps boundary B C-representable. **The
+  package exists and holds neither**: story #1239 created `unity/` with the C#
+  declarations of the boundary-B value types and the check that holds them to
+  the Rust layouts, and no painter and no producer front end are written. Bound
+  by G2 (multiple render backends) and R3 (GPU is the target's bottleneck) in
   [01-goals-and-requirements.md](../specification/01-goals-and-requirements.md);
   put in a separate repo by `docs/archive/2026-07-14-scope-decisions.md` §5,
   which deferred it to v1; it is v0.21 since 2026-08-12, and the separate-repo
   half was **reversed on 2026-08-17**
-  ([unity-separate-repo-deferred.md](../decisions/unity-separate-repo-deferred.md)).
+  ([unity-package-sited-in-this-repository.md](../decisions/unity-package-sited-in-this-repository.md)).
   A ruling of the same day renames the crate to `dashpaint-abi` —
   [crate-name-map.md](../decisions/crate-name-map.md), which is where crate
-  names are decided. Neither is carried out yet; issue #1239 does both.
-  Internals: [rendering-and-painters.md](../technotes/rendering-and-painters.md)
-  §9-§10. It is instanced SDF quads too, so it shares `dashscene-gpu`'s instance
-  struct and its layer-1 and layer-2 suites (R-T5).
+  names are decided. Story #1239 carried out both. Internals:
+  [rendering-and-painters.md](../technotes/rendering-and-painters.md) §9-§10. It
+  is instanced SDF quads too, so it shares `dashscene-gpu`'s instance struct and
+  its layer-1 and layer-2 suites (R-T5).
 - **Placeholders and node replacement** — a schema surface **still to be
   added**: `Node` will carry the fields
   (`contribution_id`/`fragment_ref`/`declared_size`/`interim_fill`), append-only

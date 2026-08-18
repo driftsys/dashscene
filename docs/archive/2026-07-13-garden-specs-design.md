@@ -167,7 +167,7 @@ current content, and it feeds `architecture.md` rather than being dropped.
 | §2 crate-name map          | `docs/decisions/crate-name-map.md`                                                                                  |
 | §3 `.dsb` format           | `docs/decisions/dsb-format-and-one-schema.md`                                                                       |
 | §4 Deno importer           | `docs/decisions/figma-importer-deno-plus-dashc-wasm.md`                                                             |
-| §5 Unity separate repo     | `docs/decisions/unity-separate-repo-deferred.md`                                                                    |
+| §5 Unity separate repo     | `docs/decisions/unity-package-sited-in-this-repository.md`                                                                    |
 | §6 open items / blocked    | deleted — every item is resolved or is a GitHub issue                                                               |
 | §7 house style             | `docs/decisions/house-style.md`                                                                                     |
 | §8 Figma fixture corpus    | split three ways — see below                                                                                        |

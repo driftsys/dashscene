@@ -78,7 +78,7 @@ scene with effects and a comparison against the default entry.
 
 ## Consequences
 
-- `PaintEntry` is `#[repr(C)]`, `Copy`, 64 bytes, and joins `dashscene-unity`'s
+- `PaintEntry` is `#[repr(C)]`, `Copy`, 64 bytes, and joins `dashpaint-abi`'s
   `improper_ctypes_definitions` surface, which is what turns all of the above
   from intent into a build failure. Its layout is pinned by test there.
 - `PaintTable` grows three flat arrays — `extra_fills`, `strokes`, `shapes` —

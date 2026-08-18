@@ -149,10 +149,11 @@ and their diff tooling), `corpus` (the fixture corpus itself: captured Figma
 JSON, fonts, generated stress scenes — data only, since the capture tool is code
 and lives under `importers/`), `importers` (the Deno/TypeScript Figma importer
 and its capture tool, which have their own toolchain and their own CI job),
-`demo` (both showcase hosts) and `measure` (artifacts built to be weighed rather
-than run) — plus the repo-wide scopes `repo`, `docs`, `ci`, `hooks`, `deps`,
-`release`. `specs/` and `docs/` share the `docs` scope: `specs/` is
-documentation and earns no scope of its own. Also
+`demo` (both showcase hosts), `measure` (artifacts built to be weighed rather
+than run) and `unity` (the Unity C# package and its check, outside the Cargo
+workspace as `importers/` is, added by story #1239) — plus the repo-wide scopes
+`repo`, `docs`, `ci`, `hooks`, `deps`, `release`. `specs/` and `docs/` share the
+`docs` scope: `specs/` is documentation and earns no scope of its own. Also
 `[versioning] tag_prefix = "v"`.
 
 **That count is now load-bearing rather than descriptive.**
@@ -165,10 +166,14 @@ above no longer holds.** There is no longer one entry per crate pointing at that
 crate's own version string: the crates inherit `version.workspace = true` and
 hold no version to point at. The entries are now one per **internal dependency
 requirement** in the root manifest, each anchored on its own crate name —
-nineteen of them — because git-std's `write_version` splices exactly one span
-per entry, so a single unanchored entry would move one requirement and leave the
-rest at the old version behind a registry that looked covered. The workspace
-version itself needs no entry, since git-std's builtin Cargo handling moves
+nineteen of them, plus one that is not a crate at all: story #1239 added an
+entry for `unity/com.driftsys.dashscene/package.json`, the UPM package, which
+sits outside the Cargo workspace and which nothing else would move. Twenty
+entries, and it is the only one whose `path` is not `Cargo.toml`. The anchoring
+matters because git-std's `write_version` splices exactly one span per entry, so
+a single unanchored entry would move one requirement and leave the rest at the
+old version behind a registry that looked covered. The workspace version itself
+needs no entry, since git-std's builtin Cargo handling moves
 `[workspace.package]
 version` section-scoped. The full reasoning, including the
 eighteenth entry that was written and removed on review, is in

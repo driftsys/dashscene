@@ -26,10 +26,11 @@ records below. Per-story decisions land here directly:
 - [figma-importer-deno-plus-dashc-wasm.md](figma-importer-deno-plus-dashc-wasm.md)
   — the Figma importer is Deno/TypeScript calling `dashc.wasm`, in the same repo
   as the Rust core (`docs/archive/2026-07-14-scope-decisions.md` §4).
-- [unity-separate-repo-deferred.md](unity-separate-repo-deferred.md) —
-  **reversed 2026-08-17**: the Unity C# package is sited in this repository
-  under `unity/`, not in a separate repo. The filename is historical; issue
-  #1239 owns renaming it (`docs/archive/2026-07-14-scope-decisions.md` §5).
+- [unity-package-sited-in-this-repository.md](unity-package-sited-in-this-repository.md)
+  — **reversed 2026-08-17**: the Unity C# package is sited in this repository
+  under `unity/`, not in a separate repo. Named
+  `unity-separate-repo-deferred.md` until story #1239 renamed it to match its
+  contents (`docs/archive/2026-07-14-scope-decisions.md` §5).
 - [house-style.md](house-style.md) — repo tooling follows driftsys/git-std,
   driftsys/upskill, driftsys/markspec conventions
   (`docs/archive/2026-07-14-scope-decisions.md` §7).

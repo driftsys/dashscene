@@ -313,7 +313,14 @@ figma-sharing:
 # code — §4(d) in particular carries Arm's attribution for the vendored astcenc
 # sources. `every_publishable_crate_packages_the_licence_and_notice` fails the
 # build if a copy goes missing or drifts.
-# Copy the root LICENSE and NOTICE into every publishable crate.
+#
+# **The UPM package takes the same pair and is not a crate.** It is distributed
+# on its own, by Git URL, so §4 binds it exactly as it binds a `.crate`; it is
+# outside `crates/`, so the loop below cannot reach it and neither can the test
+# named above, which iterates workspace members. It is copied explicitly rather
+# than by widening the glob, because `unity/abi-check` is not distributed and
+# must not receive one.
+# Copy the root LICENSE and NOTICE into every publishable crate and the UPM package.
 licenses:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -324,7 +331,9 @@ licenses:
         cp NOTICE "$c/NOTICE"
         n=$((n+1))
     done
-    echo "licenses: refreshed LICENSE and NOTICE in $n crates"
+    cp LICENSE unity/com.driftsys.dashscene/LICENSE
+    cp NOTICE unity/com.driftsys.dashscene/NOTICE
+    echo "licenses: refreshed LICENSE and NOTICE in $n crates and the UPM package"
 
 # Dependency vulnerability audit.
 audit:
@@ -855,7 +864,7 @@ publish:
     cargo publish -p dashc
     cargo publish -p dashpack-astcenc-sys
     cargo publish -p dashpack
-    cargo publish -p dashscene-unity
+    cargo publish -p dashpaint-abi
     cargo publish -p dashscene-gpu
     cargo publish -p dashscene-desktop
     cargo publish -p dashscene-web
@@ -1052,6 +1061,72 @@ host-lib:
     # a Unity project copies this file into its own `Assets/` from outside this
     # repository, where a path relative to the workspace root is not usable.
     echo "host-lib: ${lib}"
+
+# Compiles `unity/com.driftsys.dashscene/Runtime/BoundaryB.cs` — the package's
+# own file, not a copy — and compares every type on the surface against what
+# `crates/dashpaint-abi` reports for it, member by member and matched by name.
+# **No Unity editor is involved**, and none is needed to compare layouts; the
+# reason that matters is in
+# `docs/decisions/unity-package-sited-in-this-repository.md`.
+#
+# **The gate crate declares no `crate-type`**, so `cargo build` yields a plain
+# rlib and the layout symbols reach no loadable artifact. `cargo rustc
+# --crate-type cdylib` produces one for this run alone, with no manifest
+# change — so the published crate stays an rlib, and issue #859 is left free to
+# decide what a shipping host actually loads.
+#
+# **Not in `check`**, on the grounds `gitleaks` and the NDK already set: the
+# .NET SDK is not a bootstrap dependency and a clone without it still runs
+# `just check`. CI's `unity-abi` job runs exactly this recipe.
+#
+# Hold the UPM package's C# declarations to the Rust build of boundary B.
+unity-abi:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v dotnet >/dev/null 2>&1; then
+      echo "unity-abi: the .NET SDK is not installed" >&2
+      echo "unity-abi:   brew install dotnet" >&2
+      echo "unity-abi:   or https://dotnet.microsoft.com/download" >&2
+      exit 1
+    fi
+    # **Presence is not enough**, and the failure it leaves is unhelpful: an
+    # older SDK passes the check above and then `dotnet run` reports NETSDK1045
+    # about a target framework, naming neither the version needed nor how to
+    # get it. The requirement comes from the project file rather than being
+    # restated here, on the rule `web-build` sets for wasm-bindgen.
+    want=$(sed -n 's/.*<TargetFramework>net\([0-9][0-9]*\)\..*/\1/p' \
+      unity/abi-check/AbiCheck.csproj)
+    have=$(dotnet --version | cut -d. -f1)
+    if [ "${have}" -lt "${want}" ]; then
+      echo "unity-abi: unity/abi-check targets net${want}.0 and the SDK on PATH is ${have}.x" >&2
+      echo "unity-abi:   brew upgrade dotnet" >&2
+      exit 1
+    fi
+    # **One invocation, not the two `host-lib` uses.** That recipe builds twice
+    # because plain `--message-format=json` would swallow rustc's diagnostics
+    # and a failing build would print nothing a reader could act on;
+    # `json-render-diagnostics` removes the reason, putting the artifact JSON on
+    # stdout and rendered diagnostics on stderr. Checked by forcing a type error
+    # and confirming it still renders.
+    #
+    # **The path comes from cargo, not from a `uname` mapping plus a file test.**
+    # `cargo build` does not delete the artifacts of a crate type that has been
+    # removed, so a `[ -f … ]` guard passes over a stale library and the check
+    # would then report on something this run did not produce — the shape of
+    # issue #1057.
+    lib=$(cargo rustc -p dashpaint-abi --crate-type cdylib \
+      --message-format=json-render-diagnostics | jq -r '
+        select(.reason == "compiler-artifact")
+        | select(.target.name == "dashpaint_abi")
+        | .filenames[]
+        | select(endswith(".dylib") or endswith(".so") or endswith(".dll"))
+      ' | tail -n 1)
+    if [ -z "${lib}" ]; then
+      echo "unity-abi: cargo emitted no dynamic library for dashpaint-abi." >&2
+      echo 'unity-abi: did cargo rustc --crate-type cdylib stop being accepted?' >&2
+      exit 1
+    fi
+    DASHPAINT_ABI_LIB="${lib}" dotnet run --project unity/abi-check
 
 # The Android API level this repository links against.
 #

@@ -74,10 +74,11 @@ Layout:
 
 **Corrected 2026-08-17.** That bullet opened by contrasting Unity, "where the
 only coupling to the core is a narrow versioned FFI wire protocol and a repo
-split costs nothing", citing `docs/decisions/unity-separate-repo-deferred.md`.
-That record no longer says it: stories #578 and #600 made the coupling 26 struct
-layouts that must agree byte-for-byte, and the Unity C# package is now sited in
-this repository under `unity/` on the strength of the last sentence above — a
+split costs nothing", citing
+`docs/decisions/unity-package-sited-in-this-repository.md`. That record no
+longer says it: stories #578 and #600 made the coupling 26 struct layouts that
+must agree byte-for-byte, and the Unity C# package is now sited in this
+repository under `unity/` on the strength of the last sentence above — a
 subdirectory with its own toolchain and its own CI job, which is what this
 record established. The contrast is removed rather than restated; this bullet's
 own conclusion never depended on it.

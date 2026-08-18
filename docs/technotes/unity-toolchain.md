@@ -8,8 +8,8 @@ Unity project can reach `dashscene-ffi` at all than without it.
 
 **Written for someone deciding, not for someone repeating.** The commands are
 here so a claim can be checked, but the audience is
-`docs/decisions/unity-separate-repo-deferred.md` and issue #1125, the packaging
-and deployment spike.
+`docs/decisions/unity-package-sited-in-this-repository.md` and issue #1125, the
+packaging and deployment spike.
 
 **The first of those two was decided later the same day, partly on this note.**
 The C# package is sited in this repository under `unity/` rather than in a

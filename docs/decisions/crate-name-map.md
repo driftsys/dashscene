@@ -44,12 +44,12 @@ Reuse all 12, mapped onto the roles in `docs/design/architecture.md`:
                           is dashscene-core's
     dashlang              Rust DSL skin (v0) and future typed skins over
                           the one producer surface
-    dashscene-unity        the C representation of boundary B — a gate, not
-                          bindings, and not Unity's. Renamed to
-                          dashpaint-abi by issue #1239; the C# package is
-                          sited in this repository under unity/. Both are
-                          rulings of 2026-08-17 and neither is built — see
-                          the section below
+    dashpaint-abi          the C representation of boundary B — a gate, not
+                          bindings, and not Unity's. Named dashscene-unity
+                          until issue #1239, which also sited the C# package
+                          in this repository under unity/. Both are rulings
+                          of 2026-08-17 and both are built — see the section
+                          below
     dashscene-web          the web integration surface, since story #741 at
                           v0.17 — the wasm/tiny-skia painter it named is
                           retired at v0.15; see the `dashscene-gpu` section
@@ -89,12 +89,12 @@ build than a vendored astcenc `-sys` crate, in `skia-bindings`.
 
 **Corrected 2026-08-17.** This paragraph opened by asserting that "the recorded
 bar for a separate repo is toolchain incompatibility — the reason the Unity work
-got its own", citing `docs/decisions/unity-separate-repo-deferred.md`. Neither
-half held. `importers/figma/` was already a non-Rust toolchain inside this
-repository when that sentence was written, so toolchain incompatibility bars
-membership in the **Cargo workspace** and not in the repository; and the Unity
-siting was reversed on the same day this correction was made, so the work it
-cited no longer has its own repository. The claim is removed rather than
+got its own", citing `docs/decisions/unity-package-sited-in-this-repository.md`.
+Neither half held. `importers/figma/` was already a non-Rust toolchain inside
+this repository when that sentence was written, so toolchain incompatibility
+bars membership in the **Cargo workspace** and not in the repository; and the
+Unity siting was reversed on the same day this correction was made, so the work
+it cited no longer has its own repository. The claim is removed rather than
 restated, because `dashpack`'s membership never rested on it.
 
 The requirement it has to satisfy is that the packer is a **standalone tool**
@@ -189,12 +189,13 @@ published per-platform integration crate.
 **That precedent was withdrawn on 2026-08-17 and the conclusion below is
 unaffected.** Both halves of the quoted row are superseded: the crate is the
 boundary-B gate rather than bindings, and the C# package is sited in this
-repository under `unity/` (`docs/decisions/unity-separate-repo-deferred.md`,
-reversed in place). The argument this paragraph makes for `dashscene-web` never
-rested on it — issue #741 was settled at v0.17 on the five integration concerns
-listed above, and `dashscene-desktop` followed on the same grounds. The
-quotation is kept as a quotation, marked, rather than silently repointed at a
-row that no longer says it.
+repository under `unity/`
+(`docs/decisions/unity-package-sited-in-this-repository.md`, reversed in place).
+The argument this paragraph makes for `dashscene-web` never rested on it — issue
+#741 was settled at v0.17 on the five integration concerns listed above, and
+`dashscene-desktop` followed on the same grounds. The quotation is kept as a
+quotation, marked, rather than silently repointed at a row that no longer says
+it.
 
 Against it: there is exactly one consumer, a published crate is a semver
 commitment, and the seam it needs (how a host hands the library a scene for an
@@ -351,18 +352,20 @@ described `dashscene-web` as a retired stub — a claim story #741 had falsified
 day earlier. A registry nobody enumerated is a registry nobody updates, which is
 the #445 pattern with a different set of files.
 
-**All 19 names are reserved.** `dashscene-android` was the exception for the
-length of story #841 and was held on 2026-08-09, the same day the directory
-landed. It is worth stating how the gap read while it was open, because the
-sentence here described the set as complete while the count moved underneath it
-— which is the failure this paragraph is otherwise about, one crate along.
-Checking issue #803's premise that `dashscene-desktop` was the unreserved name
-found two more — `dashpack` and `dashpack-astcenc-sys`. Both are real workspace
-crates that build and are depended on today, which is what separates them from a
-name held for work not yet done; neither is released, because nothing here is.
-Those two were also the pair missing from `.git-std.toml`'s `[[version_files]]`,
-so one pass missed both registries at once. Story #795 closed that half and made
-it checkable: `demo/tests/registry_consistency.rs` now fails when any crate is
+**Eighteen of the 19 are reserved, and the exception is `dashpaint-abi`** — see
+the rename section below, which records why the move landed ahead of the
+reservation. `dashscene-android` was the earlier exception for the length of
+story #841 and was held on 2026-08-09, the same day the directory landed. It is
+worth stating how the gap read while it was open, because the sentence here
+described the set as complete while the count moved underneath it — which is the
+failure this paragraph is otherwise about, one crate along. Checking issue
+#803's premise that `dashscene-desktop` was the unreserved name found two more —
+`dashpack` and `dashpack-astcenc-sys`. Both are real workspace crates that build
+and are depended on today, which is what separates them from a name held for
+work not yet done; neither is released, because nothing here is. Those two were
+also the pair missing from `.git-std.toml`'s `[[version_files]]`, so one pass
+missed both registries at once. Story #795 closed that half and made it
+checkable: `demo/tests/registry_consistency.rs` now fails when any crate is
 absent from any of the machine-readable registries.
 
 When checking this against crates.io, send a `User-Agent` header: the API
@@ -377,21 +380,21 @@ puts one C ABI under every platform host, so it cannot live in any of them:
 Android reaches it through JNI, and the iOS and Unity hosts that follow inherit
 the same symbols.
 
-**Why not an existing crate.** `dashscene-unity` is the closest name and is the
-wrong one — it holds story #600's FFI-safety gate, the macro that makes a
-non-FFI-safe boundary-B type a compile error, and it depends only on
-`dashpaint`. The umbrella `dashscene` was considered and rejected: it is
-reserved as the Rust facade, and giving it
+**Why not an existing crate.** `dashpaint-abi` — `dashscene-unity` when this
+section was written — is the closest crate and is the wrong one: it holds story
+#600's FFI-safety gate, the macro that makes a non-FFI-safe boundary-B type a
+compile error, and it depends only on `dashpaint`. The umbrella `dashscene` was
+considered and rejected: it is reserved as the Rust facade, and giving it
 `crate-type = ["cdylib",
 "staticlib"]` would make every consumer of that facade
 build a dynamic library for a C API it does not use.
 
 **`-ffi` rather than `-abi` or `dashffi`.** The `dashscene-*` family is what
 every host-facing surface already uses — `dashscene-web`, `dashscene-desktop`,
-`dashscene-unity` — while the short `dash*` names are the vocabularies
-(`dashpaint`, `dashcue`, `dashbuf`, `dashlang`). `-ffi` is also the Rust
-ecosystem's own word for this, and `categories = ["external-ffi-bindings"]`
-already names it.
+and `dashscene-unity` when this was written — while the short `dash*` names are
+the vocabularies (`dashpaint`, `dashcue`, `dashbuf`, `dashlang`). `-ffi` is also
+the Rust ecosystem's own word for this, and
+`categories = ["external-ffi-bindings"]` already names it.
 
 **Availability.** Unclaimed on crates.io, and reserved **2026-08-09** as a
 standalone placeholder 0.1.0 built to the same shape as the twelve, with
@@ -451,17 +454,19 @@ a crate name is chosen rather than when someone notices.
                          functions a foreign consumer checks its own
                          declarations against
 
-**Not built. Issue #1239 carries the move**, and until it lands the crate is
-`crates/dashscene-unity` everywhere, including in the records here that name it.
-Those citations are accurate today and are not to be rewritten ahead of the
-code.
+**Built by story #1239.** The crate is `crates/dashpaint-abi`, its symbols carry
+the `dashpaint_abi_` prefix, and the citations that named the old name moved in
+the same commit. What still names `dashscene-unity` in this record does so
+because it records history: the crates.io reservation, the marked Choice-table
+quotation, and this section's own heading.
 
 **Why the old name is wrong.** It names one engine and holds none of that
 engine's code. The crate depends only on `dashpaint`, and **every symbol it
-exports is `dashscene_abi_*`** — not one carries the engine's name. That is the
-claim worth checking, because it says the code already picked a name the package
-did not; the engine appears only in prose and in packaging metadata. No count of
-those occurrences is given, because editing the crate's own doc changes them.
+exported was `dashscene_abi_*`** — not one carried the engine's name. That is
+the claim worth checking, because it says the code already picked a name the
+package did not; the engine appeared only in prose and in packaging metadata.
+Story #1239 moved those symbols to `dashpaint_abi_*`, so the package and the
+symbols now agree.
 
 Issue #859 rules the data plane into `dashscene-ffi` and says this crate "keeps
 its present job", so bindings are not what it becomes. What #859 leaves open is
@@ -487,33 +492,42 @@ pattern `dashpack-astcenc-sys` already sets for a qualified vocabulary name.
 
 **Not because `dashscene-*` marks a host.** It does not: `dashscene`,
 `dashscene-core`, `dashscene-engine`, `dashscene-typeset`,
-`dashscene-validator`, `dashscene-skia`, `dashscene-gpu` and `dashscene-unity`
-all carry the prefix and none is a host. The prefix marks the project, and the
-host-facing reading works only over the subset someone happens to be looking at.
-The `dashscene-android` section above carried it until 2026-08-17 and is
-corrected there; it is recorded as rejected here so it is not re-derived a third
-time.
+`dashscene-validator`, `dashscene-skia` and `dashscene-gpu` all carry the prefix
+and none is a host; `dashscene-unity` was an eighth until this ruling renamed
+it. The prefix marks the project, and the host-facing reading works only over
+the subset someone happens to be looking at. The `dashscene-android` section
+above carried it until 2026-08-17 and is corrected there; it is recorded as
+rejected here so it is not re-derived a third time.
 
 **The symbol prefix moves with the package name**, and that is part of this
 ruling rather than a follow-up. Renaming the package while the symbols keep
-saying `dashscene_abi_*` would leave the two disagreeing. It is free exactly
-now, because the surface has had no consumer since story #600 built it — which
-is what issue #859 exists to change — and it stops being free once a C# project
-imports it.
+saying `dashscene_abi_*` would leave the two disagreeing. It was free exactly
+then, because the surface had had no consumer since story #600 built it — which
+is what issue #859 exists to change — and story #1239 took it in the same commit
+as the package rename, immediately before `unity/abi-check` became the first
+caller.
 
 **Availability.** `dashscene-unity` holds a 0.1.0 placeholder pointing at this
-repository, one of the 12 reserved on 2026-03-18. `dashpaint-abi` needs
-reserving before the move, on the terms the `dashscene-gpu` section sets. The
-old name stays held and describing nothing, which that section records as the
-cheap state for a reserved name — `dashscene-web` is the precedent. The
-workspace crate is `0.0.0` and has never been released, so nothing migrates.
+repository, one of the 12 reserved on 2026-03-18. **`dashpaint-abi` was to be
+reserved before the move, and the move landed first.** Story #1239 took the
+rename and left the reservation, deliberately: reserving a name is a publish, it
+cannot be undone, and it was not among this story's stated conditions for being
+done. So the exposure the `dashscene-android` paragraph above describes is open
+on this name — the repository is public, the name is in `Cargo.toml` and in the
+`publish` recipe, and nothing holds it. The terms the `dashscene-gpu` section
+sets are what it should be reserved on. The old name stays held and describing
+nothing, which that section records as the cheap state for a reserved name —
+`dashscene-web` is the precedent. The workspace crate is `0.0.0` and has never
+been released, so nothing migrates.
 
-**`AGENTS.md`'s reservation count is unchanged today and changes when the
-reservation is made**, not when this section was written — re-deriving now still
-yields 21, because `dashpaint-abi` is not reserved yet. When it is, that file's
-"21 reserved" and its "`dashscore` and `dashscene-compose` stay parked" both
-move: 22 reserved, and three parked once `dashscene-unity` joins them. Re-derive
-both from this record rather than editing either number in place.
+**`AGENTS.md` was corrected by story #1239 and is not waiting on the
+reservation.** The rename alone moved it: 21 names stay reserved and only 18 of
+them are workspace crates, with `dashscene-unity` parked beside `dashscore` and
+`dashscene-compose` — three. Reserving `dashpaint-abi` moves the first number
+again, to 22 with 19 of them workspace crates. Re-derive from this record rather
+than editing either number in place, and note that the earlier version of this
+paragraph deferred the whole correction to the reservation, which was wrong in
+the direction that leaves a false count standing.
 
 ## Why
 

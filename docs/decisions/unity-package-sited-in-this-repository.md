@@ -10,19 +10,20 @@
     scope    where the Unity C# code lives — the painter and its producer
              front end. The crate that gates boundary B is
              `docs/decisions/crate-name-map.md`'s, not this record's
-    work     issue #1239. Nothing below is built: the folder does not exist
-             and the crate has not moved
+    work     issue #1239, landed. The folder holds the package and the
+             crate is `crates/dashpaint-abi`
 
-**The filename is unchanged on purpose, and it is now wrong about its own
-contents.** No count of the citing files is given here, and none should be
-added: the obvious re-derivation matches this paragraph's own quoted pattern, so
-it reports one more than it should and every stated number goes stale as the
-sweep proceeds. Enumerate at the moment of the rename, excluding this file.
+**The filename was `unity-separate-repo-deferred.md` until story #1239**, and it
+had stopped describing its own contents: the record's choice was reversed on
+2026-08-17 and the deferral it was named for no longer stands. That story
+renamed the file and repointed every citation in the same commit, the archived
+ones included — a path that resolves is not a change of claim, and leaving three
+of them pointing at nothing would have been the defect issue #914 already tracks
+for a different class of citation.
 
-**Renaming it is a different sweep from the crate rename**, because the two
-citation sets differ — several files cite the record without naming the crate,
-and after this commit `crates/dashpack/src/lib.rs` cites neither. **Issue #1239
-owns both sweeps**, which is recorded on that issue rather than only here.
+**It was a different sweep from the crate rename**, because the two citation
+sets differ — several files cite this record without naming the crate, and
+`crates/dashpack/src/lib.rs` cites neither. Story #1239 carried both.
 
 ## Context
 
@@ -109,10 +110,9 @@ most directly against the new siting, because a directory created now is exactly
 the empty scaffolding it warns about — so it is answered rather than dropped.
 Two things changed under it. Unity is inside v0 as of 2026-08-12, so "until v0
 exits" no longer describes a wait. And the ruling decides **where the package
-goes**, not **when it is created**: `unity/` does not exist and this record does
-not ask for it to be created empty. Issue #1239 creates it in the commit that
-puts a package in it, which is the deferral's substance kept rather than
-overturned.
+goes**, not **when it is created**: this record did not ask for `unity/` to be
+created empty. Story #1239 created it in the commit that put a package in it,
+which is the deferral's substance kept rather than overturned.
 
 ## What makes co-location pay, and what would make it decorative
 
@@ -128,15 +128,19 @@ layout functions against the built library catches layout drift on every pull
 request. Unity itself is needed only for the `BatchRendererGroup` painter and
 the player build, which can stay a manual or scheduled gate.
 
-**That check cannot be written against the surface as it stands today.** The
-layout and round-trip functions the gate crate exports are documented for a
-foreign consumer to call, and no shipped artifact exports them: the crate
-declares no `crate-type`, so it is a plain rlib, nothing in the workspace
+**This record said the check could not be written against the surface as it
+stood, and that was wrong.** What is accurate is the premise: no _shipped_
+artifact exports the layout and round-trip functions. The crate declares no
+`crate-type`, so `cargo build` produces a plain rlib, nothing in the workspace
 depends on it, and `crates/dashscene-ffi/include/dashscene.h` declares none of
 them — the host library exports twelve `ds_*` symbols and nothing else
-(`docs/technotes/unity-toolchain.md`). Whether they are re-exported through
-`dashscene-ffi` or replaced by the `stride` member of issue #859's `DsSlice` is
-that issue's to settle, and this record does not pre-empt it.
+(`docs/technotes/unity-toolchain.md`). **The step that does not follow is that a
+check therefore needs one.** `cargo rustc -p dashpaint-abi --crate-type cdylib`
+emits a dynamic library carrying all 52 symbols with no manifest change, so
+story #1239's `unity/abi-check` calls them directly and the published crate
+stays an rlib. Whether they are _additionally_ re-exported through
+`dashscene-ffi`, or replaced by the `stride` member of issue #859's `DsSlice`,
+is still that issue's to settle and story #1239 did not pre-empt it.
 
 ## Consequences
 
@@ -152,11 +156,10 @@ that issue's to settle, and this record does not pre-empt it.
   corrected by a comment on the issue, which is how this repository amends an
   issue; **the GitHub milestone description states it too** and is corrected
   with it.
-- A `unity` commit scope **is to be added** to `.git-std.toml` by issue #1239,
-  alongside `importers` and on the same grounds. It is not added yet, so
-  `feat(unity): …` is rejected by the commit-message lint until that lands.
-  Issue #1217 already reports drift in that list; the same pass should not
-  compound it.
+- A `unity` commit scope **was added** to `.git-std.toml` by story #1239,
+  alongside `importers` and on the same grounds, so `feat(unity): …` passes the
+  commit-message lint. Issue #1217 already reports drift in that list; that pass
+  renamed one entry and added one, and compounded none of it.
 - **The recorded bar for a separate repository was never toolchain
   incompatibility**, and `docs/decisions/crate-name-map.md`'s `dashpack` section
   cited this record for that claim. Corrected there: toolchain incompatibility
@@ -174,13 +177,14 @@ question or a distribution term could be settled without touching this
 repository.
 
 Against it, and stated as what becomes **possible** rather than as a cost paid
-today: **neither siting checks the 26 layouts right now**, and neither can until
-issue #859 exports them — "What makes co-location pay" above says so. What
-differs is what it then takes. In one repository the check is an ordinary job on
-every pull request. Across two it needs a scheduled cross-repository job, a
-version pin and two-PR landings whenever a layout moves — the overhead
+today: **neither siting checked the 26 layouts when this was written.** The
+premise that neither could until issue #859 exported them was wrong, and "What
+makes co-location pay" above carries the correction. What differs is what it
+then takes. In one repository the check is an ordinary job on every pull
+request. Across two it needs a scheduled cross-repository job, a version pin and
+two-PR landings whenever a layout moves — the overhead
 `figma-importer-deno-plus-dashc-wasm.md` rejected for `dashc.wasm`. So this
-choice is made while the check does not exist yet, which is the cheapest moment
+choice was made while the check did not exist yet, which was the cheapest moment
 to make it.
 
 **A `packages/` bucket holding `packages/unity/`.** Rejected above on the naming

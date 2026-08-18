@@ -31,7 +31,7 @@ the wrong one costs a rewrite.
 **Seam 1 — boundary B: implement `Painter`.** You receive finished rects,
 positioned glyph runs and resolved paint, and you colour them. This is what any
 wholly new painter does, and what the Unity painter is **planned** to do — that
-painter does not exist yet, and `dashscene-unity` today is the boundary-B C gate
+painter does not exist yet, and `dashpaint-abi` today is the boundary-B C gate
 only.
 
 **Seam 2 — behind the lean painter: consume the instance buffer.** You receive

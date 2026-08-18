@@ -880,6 +880,58 @@ jobs:
       - run: just wasm-host
       - run: just wasm-lint
 
+  unity-abi:
+    # The UPM package's C# declarations of boundary B, held to the Rust build
+    # (story #1239). This is what gives siting the C# package in this repository
+    # its value: `docs/decisions/unity-package-sited-in-this-repository.md` says sharing a
+    # repository gains nothing on its own, and that without a check running over
+    # both halves the directory "reads as coupled while guaranteeing nothing".
+    #
+    # **No Unity editor.** One in CI costs a licence, a multi-gigabyte install
+    # and batchmode runs, and none of it is needed to compare layouts. Unity is
+    # needed for the BatchRendererGroup painter and the player build, neither of
+    # which exists yet.
+    #
+    # It runs the recipe rather than restating it, on the rule `wasm-gates` and
+    # `android-build` already state: a second copy of the commands in YAML drifts
+    # against the justfile.
+    #
+    # Compile-heavy: skipped when the diff is documentation only. A change under
+    # `unity/` is NOT documentation-only by that rule — `scripts/is-code-change`
+    # classifies any path inside a directory other than `docs/*.md` as code — so
+    # editing a C# declaration alone still runs this job. Checked against the
+    # script rather than assumed, because the opposite would be fail-open: the
+    # one diff this job exists for would skip it and report green.
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
+    name: unity-abi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # **No `Swatinem/rust-cache`, deliberately.** It was here and was measured
+      # net-negative: the post step uploaded 79.7 MB over 6.5 s to protect a
+      # compile the same log timed at 1.73 s. `dashpaint-abi` depends only on
+      # `dashpaint`, which declares no dependencies at all, so there is not one
+      # third-party artifact for a cache to hold — and an ~80 MB branch-scoped
+      # cache per push competes for the repository's quota with the 377 MB
+      # `workspace-tests` cache, which `docs/decisions/test-tiers.md` records as
+      # worth 3 min 14 s when it is missed.
+      - uses: extractions/setup-just@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      # No flatc either: nothing on this job's path reaches `dashbuf`.
+      #
+      # `dotnet format` before the check, on the rule every other language here
+      # already follows — `cargo fmt --check`, `prim fmt --check`, `deno fmt
+      # --check`. Without it the three C# files would be the only source in the
+      # repository under no style gate, and `BoundaryB.cs` is the file a
+      # reviewer must read member by member, which is where a whitespace diff
+      # hides a semantic change best.
+      - run: dotnet format unity/abi-check --verify-no-changes
+      - run: just unity-abi
+
   android-build:
     # Compile-heavy: skipped when the diff is documentation only
     # (see the changes job's detect step).
@@ -1423,7 +1475,7 @@ jobs:
     # (docs/decisions/house-style.md). "skipped" is accepted: convco only runs on
     # pull requests, deno only when importers/figma/ changed, and calibration
     # only when the packer paths changed (docs/decisions/test-tiers.md).
-    # clippy, test, demo-build, wasm-build, wasm-gates, android-build,
+    # clippy, test, demo-build, wasm-build, wasm-gates, unity-abi, android-build,
     # atlas-repro, render-oracle, exit-gate-tests and exit-gate all skip when
     # the diff is documentation only, which also skips deno through its
     # dependency on wasm-build. The list is every job carrying
@@ -1442,6 +1494,7 @@ jobs:
         demo-build,
         wasm-build,
         wasm-gates,
+        unity-abi,
         android-build,
         convco,
         secrets,

@@ -195,7 +195,7 @@ pub struct GradientStop {
 
 /// The four gradient kinds of docs/specification/04-figma-vocabulary-profile.md (angular serves gauges).
 /// `#[repr(u8)]` is checked: [`Gradient`] carries this enum and is on
-/// `dashscene-unity`'s `extern "C"` surface since story #578, so removing
+/// `dashpaint-abi`'s `extern "C"` surface since story #578, so removing
 /// the attribute stops the workspace compiling — verified by mutation.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -266,7 +266,7 @@ pub struct Gradient {
 /// Figma image-fill scale modes.
 ///
 /// `#[repr(u8)]` is checked: [`ImageFill`] carries this enum and is on
-/// `dashscene-unity`'s `extern "C"` surface since story #578, so removing
+/// `dashpaint-abi`'s `extern "C"` surface since story #578, so removing
 /// the attribute stops the workspace compiling — verified by mutation.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1110,7 +1110,7 @@ pub struct Stroke {
 /// `#[repr(C)]` because [`ClipBox`] embeds one and is itself `#[repr(C)]`.
 /// A `repr(C)` struct with a `repr(Rust)` field does not have a fixed
 /// layout — the field's own layout is unspecified — so `ClipBox` was
-/// making a promise it did not keep. Found by `dashscene-unity`'s
+/// making a promise it did not keep. Found by `dashpaint-abi`'s
 /// `improper_ctypes_definitions` gate on its first run (story #600); the
 /// attribute changes no layout any current target actually produces, which
 /// is why nothing moved when it was added.
@@ -1157,7 +1157,7 @@ pub struct ClipBox {
 ///
 /// - **It has a C representation.** A `Vec` does not, and boundary B is a
 ///   language-neutral data contract because G2 names a C# backend
-///   (`docs/design/architecture.md`). `crates/dashscene-unity`'s
+///   (`docs/design/architecture.md`). `crates/dashpaint-abi`'s
 ///   `improper_ctypes_definitions` gate holds this.
 /// - **It uploads.** A flat array plus a range is one buffer copy; a
 ///   `Vec` per region is a pointer chase per rect, which is what R-T4
@@ -2778,7 +2778,7 @@ impl PaintTable {
 /// `neither_glyph_type_carries_padding` — the test
 /// `docs/decisions/sub-word-members-widen-rather-than-pad.md` names as what
 /// holds the no-padding property — reads `offset_of!(GlyphQuad, glyph_id)` and
-/// `size_of_val(&quad.glyph_id)` from `dashscene-unity`, another crate. Private
+/// `size_of_val(&quad.glyph_id)` from `dashpaint-abi`, another crate. Private
 /// fields make both a compile error, so the constructor would be bought by
 /// deleting the assertion that holds the widening.
 ///

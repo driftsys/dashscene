@@ -58,7 +58,7 @@ reference painter), `dashcue` (descriptive animation vocabulary + scheduling),
 `dashlang` (Rust DSL + corpus generator), `dashc` (compiler),
 `dashpack-astcenc-sys` (raw bindings to the vendored astcenc C++ sources),
 `dashpack` (asset packer — per-profile derivations and cold-bank assembly),
-`dashscene-unity` (the boundary-B C gate), `dashscene-gpu` (the lean painter —
+`dashpaint-abi` (the boundary-B C gate), `dashscene-gpu` (the lean painter —
 instanced quads and analytic SDF over wgpu, native and web), `dashscene-web`
 (the web integration surface since story #741; the wasm/tiny-skia painter the
 name once described was retired at v0.15), `dashscene-desktop` (the desktop

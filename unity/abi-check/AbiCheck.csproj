@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Driftsys.Dashscene.AbiCheck</RootNamespace>
+    <AssemblyName>abi-check</AssemblyName>
+    <!-- Warnings are errors here for the same reason the Rust side runs
+         `clippy -D warnings`: this project exists to detect drift, and a
+         declaration the compiler is unsure about is drift. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The package's own declarations, compiled rather than copied. A second
+         copy here is the drift this project exists to catch. -->
+    <Compile Include="../com.driftsys.dashscene/Runtime/BoundaryB.cs" />
+  </ItemGroup>
+
+</Project>

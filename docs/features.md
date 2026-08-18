@@ -531,7 +531,7 @@ Checked against `importers/figma/src/`, `crates/dashc/src/`,
 ## 9. Rendering backends
 
 Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
-`crates/dashscene-gpu/src/`, `crates/dashscene-unity/src/lib.rs`.
+`crates/dashscene-gpu/src/`, `crates/dashpaint-abi/src/lib.rs`.
 
 - [x] **One renderer contract** — every renderer consumes the same finished data
       and only colours it in: it never measures text, wraps lines or moves
@@ -550,18 +550,24 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       picture had to change. How either behaves on the hardware the product
       ships on has not been measured.
 - [ ] **Unity renderer** — **part built, and less than that phrase suggests.**
-      What exists is the _type_ contract: story #600 pinned 26 boundary-B types
-      as FFI-representable, and `dashscene-unity` exports a layout and a
-      round-trip function for each — enough to prove a C# struct matches the
-      Rust one, and nothing more. **No entry point hands a host the committed
+      What exists is the _type_ contract: story #600 pinned the boundary-B value
+      types as FFI-representable — 26 of them then, 27 since story #1239 added
+      `CornerRadii` — and `dashpaint-abi` exports a layout, a round-trip
+      function and a member table for each, enough to prove a C# struct matches
+      the Rust one and nothing more. **No entry point hands a host the committed
       tables.** `crates/dashscene-ffi/include/dashscene.h` declares no rect, no
       instance and no table, so a host that draws its own frames has nothing to
       read. That is issue #859, now the first story of epic #1106. Boundary B
-      itself has two consumers, both Rust painters; it is the **C#** projection
-      of it that has had none since story #600 built it. The renderer, its
-      shader library and the C# projection are planned (v0.21), as a UPM package
-      in this repository under `unity/`, which does not exist yet (ruled
-      2026-08-17, reversing a separate repository).
+      itself has two consumers, both Rust painters; the **C#** projection of it
+      gained its first at story #1239, and that consumer is a check rather than
+      a painter. `unity/` declares those types in C# and `unity/abi-check`
+      compiles those declarations and compares them against the Rust build on
+      each pull request, without a Unity editor — every member's name, offset
+      and size, not only each type's total. What it does not check is that a
+      member's C# type means what the Rust one means: a `uint` declared as
+      `float` has the right size at the right offset. It draws no pixel. The
+      renderer, its shader library and the C# host are planned (v0.21), in that
+      same UPM package (ruled 2026-08-17, reversing a separate repository).
 - [ ] **Browsers without WebGPU** — WebGPU is the newer browser graphics
       standard the lean renderer needs. A browser lacking it is told so and
       draws nothing. Supporting the older standard is a redesign, and a v1
@@ -571,7 +577,7 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
 
 Checked against `demo/`, `demo-web/`, `demo-android/`, `crates/dashscene-web/`,
 `crates/dashscene-desktop/`, `crates/dashscene-android/`,
-`crates/dashscene-ffi/` and `crates/dashscene-unity/src/lib.rs`. **The mobile
+`crates/dashscene-ffi/` and `crates/dashpaint-abi/src/lib.rs`. **The mobile
 target that was absent when this line was written exists**: v0.19 added the
 `aarch64-linux-android` triple and three workspace members — `dashscene-ffi`,
 `dashscene-android` and `demo-android`. Four crates cross-compile for that

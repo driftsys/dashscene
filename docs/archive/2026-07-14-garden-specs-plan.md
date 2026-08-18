@@ -722,7 +722,7 @@ git commit -m "docs(docs): add the system architecture record"
 - Create: `docs/decisions/crate-name-map.md` (§2, lines 67-130)
 - Create: `docs/decisions/dsb-format-and-one-schema.md` (§3, lines 131-157)
 - Create: `docs/decisions/figma-importer-deno-plus-dashc-wasm.md` (§4, lines 158-228)
-- Create: `docs/decisions/unity-separate-repo-deferred.md` (§5, lines 229-252)
+- Create: `docs/decisions/unity-package-sited-in-this-repository.md` (§5, lines 229-252)
 - Create: `docs/decisions/house-style.md` (§7, lines 317-414)
 - Create: `docs/decisions/figma-corpus-self-authored-only.md` (§8 — the licensing
   ruling only)

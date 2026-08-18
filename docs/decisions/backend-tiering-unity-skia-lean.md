@@ -3,7 +3,7 @@
     status   accepted
     date     2026-07-13
     source   docs/technotes/rendering-and-painters.md §5
-    scope    dashscene-skia, dashscene-unity; the deferred lean native painter
+    scope    dashscene-skia, dashpaint-abi; the deferred lean native painter
 
 ## Context
 

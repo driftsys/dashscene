@@ -1,0 +1,6 @@
+{
+  "name": "Driftsys.Dashscene.Runtime",
+  "rootNamespace": "Driftsys.Dashscene",
+  "allowUnsafeCode": false,
+  "autoReferenced": true
+}
