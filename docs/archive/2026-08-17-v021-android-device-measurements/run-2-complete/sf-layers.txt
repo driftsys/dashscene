@@ -1,0 +1,94 @@
+Display 0 name="Built-in Screen"#3
+WindowedMagnification:0:31#4
+HideDisplayCutout:0:14#5
+OneHanded:0:14#6
+FullscreenMagnification:0:12#7
+Leaf:0:1#8
+WallpaperWindowToken{a967929 token=android.os.Binder@38f29f3}#63
+4b6396 com.breel.wallpapers20.stack.wallpaper.StackWallpaper#65
+com.breel.wallpapers20.stack.wallpaper.StackWallpaper#66
+Wallpaper BBQ wrapper#67
+DefaultTaskDisplayArea#9
+Task=1#46
+Task=49#98
+caefb65 ActivityRecordInputSink com.google.android.apps.nexuslauncher/.NexusLauncherActivity#108
+ActivityRecord{ac5f4eb u0 com.google.android.apps.nexuslauncher/.NexusLauncherActivity#99
+eeced08 com.google.android.apps.nexuslauncher/com.google.android.apps.nexuslauncher.NexusLauncherActivity#101
+Task=2#47
+Task=3#48
+Dim layer#52
+Task=4#49
+Dim layer#53
+Task=62#475
+2f42d16 ActivityRecordInputSink dev.driftsys.dashscene.demo/.DemoActivity#484
+ActivityRecord{cb81697 u0 dev.driftsys.dashscene.demo/.DemoActivity#476
+cdb4d49 dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity#486
+Background for SurfaceView[dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity]#493
+SurfaceView[dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity]#491
+SurfaceView[dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity](BLAST)#492
+dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity#487
+Bounds for - dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity#490
+ImeContainer#12
+WindowToken{1e8cf2a type=2011 android.os.Binder@4d6f015}#95
+Surface(name=f39a838 InputMethod)/@0x523c576 - animation-leash of insets_animation#495
+f39a838 InputMethod#102
+Leaf:3:12#10
+WindowToken{29d5959 type=2038 android.os.BinderProxy@ebeb92b}#50
+23bce34 ShellDropTarget#51
+ImePlaceholder:13:14#11
+OneHanded:15:15#13
+FullscreenMagnification:15:15#14
+Leaf:15:15#15
+WindowToken{9c4a441 type=2000 android.os.BinderProxy@ee6a94b}#83
+Surface(name=e0bede6 StatusBar)/@0x7990272 - animation-leash of insets_animation#488
+e0bede6 StatusBar#84
+StatusBar#93
+HideDisplayCutout:16:16#16
+OneHanded:16:16#17
+FullscreenMagnification:16:16#18
+Leaf:16:16#19
+OneHanded:17:17#20
+FullscreenMagnification:17:17#21
+Leaf:17:17#22
+WindowToken{da48b3c type=2040 android.os.BinderProxy@f058b0e}#81
+de3c0c5 NotificationShade#82
+HideDisplayCutout:18:23#23
+OneHanded:18:23#24
+FullscreenMagnification:18:23#25
+Leaf:18:23#26
+Leaf:24:25#27
+WindowToken{75d4323 type=2019 android.os.BinderProxy@916e0dd}#71
+Surface(name=d3c7020 NavigationBar0)/@0x8ba4e95 - animation-leash of insets_animation#489
+d3c7020 NavigationBar0#72
+NavigationBar0#92
+WindowToken{df6bb75 type=2024 android.os.BinderProxy@a7102ac}#75
+a9a70a EdgeBackGestureHandler0#76
+WindowToken{5136478 type=2024 android.os.BinderProxy@51071db}#90
+eae8751 SecondaryHomeHandle0#91
+HideDisplayCutout:26:31#28
+OneHanded:26:31#29
+FullscreenMagnification:26:27#30
+Leaf:26:27#31
+Leaf:28:28#32
+FullscreenMagnification:29:31#33
+Leaf:29:31#34
+HideDisplayCutout:32:35#35
+OneHanded:32:32#36
+Leaf:32:32#37
+FullscreenMagnification:33:33#38
+Leaf:33:33#39
+OneHanded:34:35#40
+FullscreenMagnification:34:35#41
+Leaf:34:35#42
+Leaf:36:36#43
+WindowToken{2cd69e6 type=2024 android.os.BinderProxy@9cbb54b}#56
+b5ce1d4 ScreenDecorOverlay#57
+ScreenDecorOverlay#60
+WindowToken{4e40070 type=2024 android.os.BinderProxy@7c2a2b3}#58
+3d67fe9 ScreenDecorOverlayBottom#59
+ScreenDecorOverlayBottom#61
+Accessibility Overlays#45
+Display Overlays#44
+[Gesture Monitor] edge-swipe#74
+[Gesture Monitor] swipe-up#89
+Input Consumer recents_animation_input_consumer#100

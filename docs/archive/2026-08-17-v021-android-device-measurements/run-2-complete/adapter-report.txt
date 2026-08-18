@@ -1,0 +1,33 @@
+    Finished `release` profile [optimized] target(s) in 0.31s
+target/aarch64-linux-android/release/examples/adapter_report: 1 file pushed, 0 skipped. 213.9 MB/s (3082472 bytes in 0.014s)
+adapter 0
+  backend     Vulkan
+  name        Adreno (TM) 620
+  device type IntegratedGpu
+  driver      Qualcomm Technologies Inc. Adreno Vulkan Driver Driver Build: 4783c89, I46ff5fc46f, 1606807783
+Date: 11/30/20
+Compiler Version: EV031.31.04.01
+Driver Branch: QPR2
+
+  max_storage_buffers_per_shader_stage 32
+  device request OK
+
+adapter 1
+  backend     Gl
+  name        Adreno (TM) 620
+  device type IntegratedGpu
+  driver       OpenGL ES 3.2 V@0490.0 (GIT@4783c89, I46ff5fc46f, 1606807783) (Date:11/30/20)
+  max_storage_buffers_per_shader_stage 4
+  device request OK
+
+This probe covers the device request, on some adapter. It does NOT cover:
+  1. WHICH adapter the host picks. `SurfaceRenderer::new_async` asks for one
+     with PowerPreference::default() and a compatible surface; a different
+     adapter from the passing one may be chosen. The summary below says
+     at-least-one, and it means exactly that.
+  2. The SURFACE FORMAT. `new_async` refuses with NoLinearFormat when no
+     offered format survives `linear_format`, and that runs BEFORE the device
+     is requested. It needs a surface, and this probe has no window.
+  3. Pipeline creation and check_extent, which come after the device request.
+
+adapter_report: at least one adapter satisfies the painter's device request

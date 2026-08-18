@@ -1,0 +1,41 @@
+   Compiling dashscene-gpu v0.0.0 (/Users/sebastientasson/Workspace/driftsys/wt-v021-android-measure/crates/dashscene-gpu)
+    Finished `release` profile [optimized] target(s) in 25.92s
+target/aarch64-linux-android/release/examples/layer_cost: 1 file pushed, 0 skipped. 95.5 MB/s (4723088 bytes in 0.047s)
+layer_cost: Adreno (TM) 620 | backend Vulkan | device_type IntegratedGpu | driver Qualcomm Technologies Inc. Adreno Vulkan Driver Driver Build: 4783c89, I46ff5fc46f, 1606807783
+Date: 11/30/20
+Compiler Version: EV031.31.04.01
+Driver Branch: QPR2
+
+layer_cost: 1920x1080, 120 frames per point after 5 discarded, sweeping 0..=12 layers
+
+layers   min ms   p50 ms   max ms   marginal min ms
+     0   22.352   25.067   34.723           —
+     1   25.237   28.592   38.895      +2.885
+     2   26.630   31.473   41.818      +1.393
+     3   33.042   40.373   47.840      +6.412
+     4   36.833   43.463  129.127      +3.791
+     5   35.812   46.070  130.616      -1.021
+     6   34.466   48.247  138.128      -1.346
+     7   45.187   49.847  138.924     +10.721
+     8   37.944   52.980  146.144      -7.244
+     9   49.078   55.739  145.827     +11.134
+    10   40.174   58.776  151.346      -8.904
+    11   42.300   68.814  157.779      +2.126
+    12   48.384   64.985  157.270      +6.084
+
+layer_cost: one more render-target layer costs +1.9526 ms ± 0.2919 ms (1 s.e., fit over 13 points; residual 3.6228 ms)
+layer_cost: 12 layers were swept, against dashscene_validator::RENDER_TARGET_BUDGET_PLACEHOLDER = 8
+layer_cost: allocations across the sweep: 340
+
+Read the SLOPE, never the absolute. Every frame here is read back through a
+staging buffer — a full-target copy, the same cost at every layer count — so the
+per-frame figures carry a constant term no device frame pays. The marginal
+column is the measurement; the mean column is not a frame cost.
+
+This is an offscreen target and not a swapchain, and `Renderer::new` asks for an
+adapter with no compatible surface, so it need not be the adapter a windowed host
+picks (issue #890).
+
+An emulator result describes the host machine's GPU behind a translation layer.
+It is NOT the Q-6 measurement (issue #1128) and must not be recorded as one.
+

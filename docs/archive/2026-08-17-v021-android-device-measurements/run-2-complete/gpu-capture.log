@@ -1,0 +1,6 @@
+gpu-capture: collecting compositor frame statistics for 15 s
+gpu-capture: totalFrames = 532, missedFrames = 5 -> target/android-measure/20231229T090010Z/sf-timestats.txt
+gpu-capture: layer: SurfaceView[dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity](BLAST)#492
+gpu-capture: --latency: 127 frame row(s) -> target/android-measure/20231229T090010Z/sf-latency.txt
+gpu-capture: gfxinfo: Total frames rendered: 2 -> target/android-measure/20231229T090010Z/gfxinfo.txt
+gpu-capture: staged perfetto-frames.pbtx and its command -> target/android-measure/20231229T090010Z/perfetto-README.md

@@ -1,0 +1,853 @@
+--------- beginning of main
+         1703830277.123  3302  6401 I PermissionControllerServiceImpl: Updating user sensitive for uid 10264
+         1703830277.124  1845  2452 I InputReader: Reconfiguring input devices, changes=KEYBOARD_LAYOUTS
+         1703830277.131  3302  6401 I PermissionControllerServiceImpl: Updating user sensitive for uid 10264
+         1703830277.136  2917  3151 D ImsResolver: maybeAddedImsService, packageName: dev.driftsys.dashscene.demo
+         1703830277.138  1845  1916 I system_server: Background concurrent copying GC freed 368888(17MB) AllocSpace objects, 31(1084KB) LOS objects, 75% free, 30MB/121MB, paused 3.452ms,143us total 132.223ms
+         1703830277.140  1845  2196 I incfs-dataloaderconnector: Reported status back to IncrementalService. DataLoaderId=12, status=0
+         1703830277.144  3691  3691 D RegisteredNfcFServicesCache: Service unchanged, not updating
+         1703830277.149  3612  3612 I AiAiEcho: AppFetcherImplV2 updateApps package:[dev.driftsys.dashscene.demo], userId:[0], reason:[package is added.].
+--------- beginning of system
+         1703830277.154  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 161252188; UID 10264; state: DISABLED
+         1703830277.154  1845  3829 W ActivityTaskManager: callingPackage for (uid=2000, pid=8854) has no WPC
+         1703830277.155  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 265464455; UID 10264; state: DISABLED
+         1703830277.156  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 265452344; UID 10264; state: DISABLED
+         1703830277.156  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 266124927; UID 10264; state: DISABLED
+         1703830277.156  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 265451093; UID 10264; state: DISABLED
+         1703830277.156  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 265456536; UID 10264; state: DISABLED
+         1703830277.156  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 255940284; UID 10264; state: DISABLED
+         1703830277.156  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 236283604; UID 10264; state: DISABLED
+         1703830277.157  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 263959004; UID 10264; state: DISABLED
+         1703830277.157  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 264304459; UID 10264; state: DISABLED
+         1703830277.157  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 264301586; UID 10264; state: DISABLED
+         1703830277.157  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 254631730; UID 10264; state: DISABLED
+         1703830277.157  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 273509367; UID 10264; state: DISABLED
+         1703830277.157  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 263259275; UID 10264; state: DISABLED
+         1703830277.158  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 174042980; UID 10264; state: DISABLED
+         1703830277.158  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 174042936; UID 10264; state: DISABLED
+         1703830277.158  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 181136395; UID 10264; state: DISABLED
+         1703830277.161  1845  3829 I incfs-mounts: [incfs] Loaded incremental-fs mount info: 2 instances, 4 mount points
+         1703830277.163  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 194480991; UID 10264; state: ENABLED
+         1703830277.163  3691  3691 D RegisteredNfcFServicesCache: Service unchanged, not updating
+         1703830277.164  2867  2961 D SecureElementService: getReaders() for com.android.nfc
+         1703830277.165  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 184838306; UID 10264; state: DISABLED
+         1703830277.165  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 185004937; UID 10264; state: DISABLED
+         1703830277.167  1845  3829 D CompatibilityChangeReporter: Compat change id reported: 197654537; UID 10264; state: ENABLED
+         1703830277.167  1845  3829 D ActivityTaskManager: Temporarily retain top process state for launching app
+         1703830277.170  2867  2961 D SecureElementService: getReaders() for com.android.nfc
+         1703830277.170  1845  3829 I ActivityTaskManager: START u0 {flg=0x10000000 cmp=dev.driftsys.dashscene.demo/.DemoActivity} with LAUNCH_MULTIPLE from uid 2000 (BAL_ALLOW_PERMISSION) result code=0
+         1703830277.170  2572  2596 V WindowManagerShell: Transition requested: android.os.BinderProxy@1d6b825 TransitionRequestInfo { type = OPEN, triggerTask = TaskInfo{userId=0 taskId=40 displayId=0 isRunning=true baseIntent=Intent { flg=0x10000000 cmp=dev.driftsys.dashscene.demo/.DemoActivity } baseActivity=ComponentInfo{dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity} topActivity=ComponentInfo{dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity} origActivity=null realActivity=ComponentInfo{dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity} numActivities=1 lastActiveTime=1145680 supportsMultiWindow=true resizeMode=2 isResizeable=true minWidth=-1 minHeight=-1 defaultMinSize=220 token=WCT{android.window.IWindowContainerToken$Stub$Proxy@625ddfa} topActivityType=1 pictureInPictureParams=null shouldDockBigOverlays=false launchIntoPipHostTaskId=-1 lastParentTaskIdBeforePip=-1 displayCutoutSafeInsets=Rect(0, 136 - 0, 0) topActivityInfo=ActivityInfo{11ddfab dev.driftsys.dashscene.demo.DemoActivity} launchCookies=[] positionInParent=Point(0, 0) parentTaskId=-1 isFocused=false isVisible=false isVisibleRequested=false isSleeping=true topActivityInSizeCompat=false topActivityEligibleForLetterboxEducation= false topActivityLetterboxed= false isFromDoubleTap= false topActivityLetterboxVerticalPosition= -1 topActivityLetterboxHorizontalPosition= -1 topActivityLetterboxWidth=-1 topActivityLetterboxHeight=-1 locusId=null displayAreaFeatureId=1 cameraCompatControlState=hidden}, remoteTransition = null, displayChange = null }
+         1703830277.171  1845  2123 D CompatibilityChangeReporter: Compat change id reported: 135634846; UID 10264; state: DISABLED
+         1703830277.171  1845  2123 D CompatibilityChangeReporter: Compat change id reported: 177438394; UID 10264; state: DISABLED
+         1703830277.171  1845  2123 D CompatibilityChangeReporter: Compat change id reported: 135772972; UID 10264; state: DISABLED
+         1703830277.171  1845  2123 D CompatibilityChangeReporter: Compat change id reported: 135754954; UID 10264; state: ENABLED
+         1703830277.172  1845  2146 D CompatibilityChangeReporter: Compat change id reported: 143937733; UID 10264; state: ENABLED
+         1703830277.173  1845  2142 W WindowMagnificationMgr: requestConnection duplicated request: connect=false, mConnectionState=DISCONNECTED
+         1703830277.176  1038  1038 D Zygote  : Forked child process 8857
+         1703830277.176  1845  2146 I ActivityManager: Start proc 8857:dev.driftsys.dashscene.demo/u0a264 for top-activity {dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity}
+         1703830277.179  1845  2142 W Searchables: No global search activity found
+         1703830277.179  3612  4133 I AiAiEcho: EchoSearch: WidgetFetcherImpl is initialized with [8] widgets [reason=package added for userId: 0]
+         1703830277.182  8857  8857 I .dashscene.demo: Using CollectorTypeCC GC.
+         1703830277.184  1845  2142 W Searchables: No global search activity found
+         1703830277.184  8857  8857 E .dashscene.demo: Not starting debugger since process cannot load the jdwp agent.
+         1703830277.185   658   658 I BpBinder: onLastStrongRef automatically unlinking death recipients: 
+         1703830277.192  3612  3612 I AiAiEcho: AppFetcherImpl onPackageChanged dev.driftsys.dashscene.demo.
+         1703830277.194  8857  8857 D CompatibilityChangeReporter: Compat change id reported: 171979766; UID 10264; state: ENABLED
+         1703830277.194  8857  8857 D CompatibilityChangeReporter: Compat change id reported: 242716250; UID 10264; state: ENABLED
+         1703830277.194  3612  8751 I AiAiEcho: AppIndexer Package:[dev.driftsys.dashscene.demo] UserProfile:[0] Enabled:[true].
+         1703830277.194  3612  8751 I AiAiEcho: AppFetcherImplV2 updateApps package:[dev.driftsys.dashscene.demo], userId:[0], reason:[package is updated.].
+         1703830277.196  1845  2561 D CompatibilityChangeReporter: Compat change id reported: 170503758; UID 10264; state: ENABLED
+         1703830277.196  1845  2349 D CompatibilityChangeReporter: Compat change id reported: 265195908; UID 10264; state: ENABLED
+         1703830277.197  8857  8857 W ziparchive: Unable to open '/data/app/~~pEhrOWDlYFrM8XUGgTKdIQ==/dev.driftsys.dashscene.demo-94hoouaz91XCZ4utf7-AqQ==/base.dm': No such file or directory
+         1703830277.197  8857  8857 W ziparchive: Unable to open '/data/app/~~pEhrOWDlYFrM8XUGgTKdIQ==/dev.driftsys.dashscene.demo-94hoouaz91XCZ4utf7-AqQ==/base.dm': No such file or directory
+         1703830277.198  8857  8857 D nativeloader: Configuring clns-4 for other apk /data/app/~~pEhrOWDlYFrM8XUGgTKdIQ==/dev.driftsys.dashscene.demo-94hoouaz91XCZ4utf7-AqQ==/base.apk. target_sdk_version=34, uses_libraries=, library_path=/data/app/~~pEhrOWDlYFrM8XUGgTKdIQ==/dev.driftsys.dashscene.demo-94hoouaz91XCZ4utf7-AqQ==/lib/arm64:/data/app/~~pEhrOWDlYFrM8XUGgTKdIQ==/dev.driftsys.dashscene.demo-94hoouaz91XCZ4utf7-AqQ==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand:/data/user/0/dev.driftsys.dashscene.demo
+         1703830277.202  8857  8857 V GraphicsEnvironment: Currently set values for:
+         1703830277.202  8857  8857 V GraphicsEnvironment:   angle_gl_driver_selection_pkgs=[]
+         1703830277.203  8857  8857 V GraphicsEnvironment:   angle_gl_driver_selection_values=[]
+         1703830277.203  8857  8857 V GraphicsEnvironment: ANGLE GameManagerService for dev.driftsys.dashscene.demo: false
+         1703830277.203  8857  8857 V GraphicsEnvironment: dev.driftsys.dashscene.demo is not listed in per-application setting
+         1703830277.203  8857  8857 V GraphicsEnvironment: Updatable production driver is not supported on the device.
+         1703830277.205  1845  4336 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10264. pid: 8857
+         1703830277.214  8857  8857 I dashscene: demo: scene extra = null
+         1703830277.222  3302  8843 E RoleControllerServiceImpl: Default/fallback role holder package doesn't qualify for the role, package: com.google.android.apps.photos, role: android.app.role.SYSTEM_GALLERY
+         1703830277.224  8857  8857 D CompatibilityChangeReporter: Compat change id reported: 210923482; UID 10264; state: ENABLED
+         1703830277.227  8857  8857 D CompatibilityChangeReporter: Compat change id reported: 237531167; UID 10264; state: DISABLED
+         1703830277.229  8857  8877 W Parcel  : Expecting binder but got null!
+         1703830277.247  1845  8609 D CoreBackPreview: Window{cb65699 u0 dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@90cc355, mPriority=0, mIsAnimationCallback=false}
+         1703830277.254  1845  2120 V WindowManager: Sent Transition #25 createdAt=12-29 07:11:17.163 via request=TransitionRequestInfo { type = OPEN, triggerTask = TaskInfo{userId=0 taskId=40 displayId=0 isRunning=true baseIntent=Intent { flg=0x10000000 cmp=dev.driftsys.dashscene.demo/.DemoActivity } baseActivity=ComponentInfo{dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity} topActivity=ComponentInfo{dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity} origActivity=null realActivity=ComponentInfo{dev.driftsys.dashscene.demo/dev.driftsys.dashscene.demo.DemoActivity} numActivities=1 lastActiveTime=1145680 supportsMultiWindow=true resizeMode=2 isResizeable=true minWidth=-1 minHeight=-1 defaultMinSize=220 token=WCT{RemoteToken{d63565b Task{7318aa7 #40 type=standard A=10264:dev.driftsys.dashscene.demo}}} topActivityType=1 pictureInPictureParams=null shouldDockBigOverlays=false launchIntoPipHostTaskId=-1 lastParentTaskIdBeforePip=-1 displayCutoutSafeInsets=Rect(0, 136 - 0, 0) topActivityInfo=ActivityInfo{cfdaef8 dev.driftsys.dashscene.demo.DemoActivity} launchCookies=[] positionInParent=Point(0, 0) parentTaskId=-1 isFocused=false isVisible=false isVisibleRequested=false isSleeping=true topActivityInSizeCompat=false topActivityEligibleForLetterboxEducation= false topActivityLetterboxed= false isFromDoubleTap= false topActivityLetterboxVerticalPosition= -1 topActivityLetterboxHorizontalPosition= -1 topActivityLetterboxWidth=-1 topActivityLetterboxHeight=-1 locusId=null displayAreaFeatureId=1 cameraCompatControlState=hidden}, remoteTransition = null, displayChange = null }
+         1703830277.254  1845  2120 V WindowManager:     startWCT=WindowContainerTransaction { changes = {} hops = [] errorCallbackToken=null taskFragmentOrganizer=null }
+         1703830277.254  2572  2596 V WindowManagerShell: onTransitionReady android.os.BinderProxy@1d6b825: {id=25 t=OPEN f=0x40 trk=0 r=[] c=[]}
+         1703830277.254  1845  2120 V WindowManager:     info={id=25 t=OPEN f=0x40 trk=0 r=[] c=[]}
+         1703830277.254  2572  2596 V WindowManagerShell: No transition roots in (#25)android.os.BinderProxy@1d6b825@0 so abort
+         1703830277.254  2572  2596 V WindowManagerShell: Transition animation finished (aborted=true), notifying core (#25)android.os.BinderProxy@1d6b825@0
+         1703830277.255   658   826 W ServiceManagerCppClient: Permission failure: android.permission.ROTATE_SURFACE_FLINGER from uid=10264 pid=0
+         1703830277.255   658   826 D PermissionCache: checking android.permission.ROTATE_SURFACE_FLINGER for uid=10264 => denied (403 us)
+         1703830277.255   658  2979 W ServiceManagerCppClient: Permission failure: android.permission.ROTATE_SURFACE_FLINGER from uid=10264 pid=8857
+         1703830277.256   658  2979 D PermissionCache: checking android.permission.ROTATE_SURFACE_FLINGER for uid=10264 => denied (343 us)
+         1703830277.256   658   826 W ServiceManagerCppClient: Permission failure: android.permission.INTERNAL_SYSTEM_WINDOW from uid=10264 pid=0
+         1703830277.256   658   826 D PermissionCache: checking android.permission.INTERNAL_SYSTEM_WINDOW for uid=10264 => denied (146 us)
+         1703830277.256   658  2979 W ServiceManagerCppClient: Permission failure: android.permission.INTERNAL_SYSTEM_WINDOW from uid=10264 pid=8857
+         1703830277.256   658  2979 D PermissionCache: checking android.permission.INTERNAL_SYSTEM_WINDOW for uid=10264 => denied (176 us)
+         1703830277.256   658   826 W ServiceManagerCppClient: Permission failure: android.permission.ACCESS_SURFACE_FLINGER from uid=10264 pid=0
+         1703830277.256   658   826 D PermissionCache: checking android.permission.ACCESS_SURFACE_FLINGER for uid=10264 => denied (179 us)
+         1703830277.256   658  2979 W ServiceManagerCppClient: Permission failure: android.permission.ACCESS_SURFACE_FLINGER from uid=10264 pid=8857
+         1703830277.256   658  2979 D PermissionCache: checking android.permission.ACCESS_SURFACE_FLINGER for uid=10264 => denied (295 us)
+         1703830277.257  1845  2120 V WindowManager: Finish Transition #25: created at 12-29 07:11:17.163 collect-started=0.092ms request-sent=6.453ms started=8.409ms ready=30.021ms sent=89.801ms finished=92.978ms
+         1703830277.257  8857  8873 I AdrenoGLES-0: QUALCOMM build                   : 4783c89, I46ff5fc46f
+         1703830277.257  8857  8873 I AdrenoGLES-0: Build Date                       : 11/30/20
+         1703830277.257  8857  8873 I AdrenoGLES-0: OpenGL ES Shader Compiler Version: EV031.31.04.01
+         1703830277.257  8857  8873 I AdrenoGLES-0: Local Branch                     : QPR2
+         1703830277.257  8857  8873 I AdrenoGLES-0: Remote Branch                    : 
+         1703830277.257  8857  8873 I AdrenoGLES-0: Remote Branch                    : 
+         1703830277.257  8857  8873 I AdrenoGLES-0: Reconstruct Branch               : 
+         1703830277.257  8857  8873 I AdrenoGLES-0: Build Config                     : S P 10.0.4 AArch64
+         1703830277.257  8857  8873 I AdrenoGLES-0: Driver Path                      : /vendor/lib64/egl/libGLESv2_adreno.so
+         1703830277.258  2572  2596 V WindowManagerShell: Track 0 became idle
+         1703830277.258  2572  2596 V WindowManagerShell: All active transition animations finished
+         1703830277.265  8857  8873 I AdrenoGLES-0: PFP: 0x016dd093, ME: 0x00000000
+         1703830277.268  8857  8873 W AdrenoUtils: <ReadGpuID_from_sysfs:197>: Failed to open /sys/class/kgsl/kgsl-3d0/gpu_model
+         1703830277.268  8857  8873 W AdrenoUtils: <ReadGpuID:221>: Failed to read chip ID from gpu_model. Fallback to use the GSL path
+         1703830277.278  8857  8857 I dashscene: demo: surfaceCreated
+         1703830277.278  8857  8857 I dashscene: demo: surfaceChanged 1080x2050
+         1703830277.279  8857  8857 I dashscene: scene surfaces — fills, strokes, corners, images, a baked vector field, shadows, clips, masks, group opacity and a backdrop blur
+         1703830277.280  8857  8857 I dashscene: demo: handle -5476376646254211568
+         1703830277.283  8857  8873 E OpenGLRenderer: Unable to match the desired swap behavior.
+         1703830277.285  1845  2420 W AppOps  : setUidMode() called with a mode inconsistent with runtime permission state, this is discouraged and you should revoke the runtime permission instead: uid=10129, switchCode=0, mode=4, permission=android.permission.ACCESS_BACKGROUND_LOCATION
+         1703830277.291  8857  8879 I dashscene: attaching a 1080x2050 surface
+         1703830277.300  8857  8879 D vulkan  : searching for layers in '/data/app/~~pEhrOWDlYFrM8XUGgTKdIQ==/dev.driftsys.dashscene.demo-94hoouaz91XCZ4utf7-AqQ==/lib/arm64'
+         1703830277.301  8857  8879 D vulkan  : searching for layers in '/data/app/~~pEhrOWDlYFrM8XUGgTKdIQ==/dev.driftsys.dashscene.demo-94hoouaz91XCZ4utf7-AqQ==/base.apk!/lib/arm64-v8a'
+         1703830277.307  8857  8879 I AdrenoVK-0: ===== BEGIN DUMP OF OVERRIDDEN SETTINGS =====
+         1703830277.307  8857  8879 I AdrenoVK-0: ===== END DUMP OF OVERRIDDEN SETTINGS =====
+         1703830277.308  8857  8879 I AdrenoVK-0: QUALCOMM build          : 4783c89, I46ff5fc46f
+         1703830277.308  8857  8879 I AdrenoVK-0: Build Date              : 11/30/20
+         1703830277.308  8857  8879 I AdrenoVK-0: Shader Compiler Version : EV031.31.04.01
+         1703830277.308  8857  8879 I AdrenoVK-0: Local Branch            : QPR2
+         1703830277.308  8857  8879 I AdrenoVK-0: Remote Branch           : 
+         1703830277.308  8857  8879 I AdrenoVK-0: Remote Branch           : 
+         1703830277.308  8857  8879 I AdrenoVK-0: Reconstruct Branch      : 
+         1703830277.308  8857  8879 I AdrenoVK-0: Build Config            : S P 10.0.4 AArch64
+         1703830277.308  8857  8879 I AdrenoVK-0: Driver Path             : /vendor/lib64/hw/vulkan.adreno.so
+         1703830277.323  8857  8879 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830277.323  8857  8879 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.323  8857  8879 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.323  8857  8879 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.323  8857  8879 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830277.324   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830277.324   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.324   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.324   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.324  8857  8879 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830277.324  8857  8879 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830277.324  8857  8879 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830277.324  8857  8879 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.324  8857  8879 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.324  8857  8879 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.324  8857  8879 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830277.324   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830277.324   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.324   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.324   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.324  8857  8879 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830277.325  8857  8879 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830277.325  8857  8879 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830277.325  8857  8879 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.325  8857  8879 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.325  8857  8879 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.325  8857  8879 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830277.325   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830277.325   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.325   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.325   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.325  8857  8879 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830277.325  8857  8879 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830277.325  8857  8879 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830277.325  8857  8879 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.325  8857  8879 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.325  8857  8879 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.325  8857  8879 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830277.325   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830277.325   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.325   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.325   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.325  8857  8879 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830277.325  8857  8879 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830277.379  1845  2420 W ServiceManagerCppClient: Permission failure: android.permission.ROTATE_SURFACE_FLINGER from uid=10264 pid=0
+         1703830277.379  1845  2420 D PermissionCache: checking android.permission.ROTATE_SURFACE_FLINGER for uid=10264 => denied (171 us)
+         1703830277.380  1845  2420 W ServiceManagerCppClient: Permission failure: android.permission.INTERNAL_SYSTEM_WINDOW from uid=10264 pid=0
+         1703830277.380  1845  2420 D PermissionCache: checking android.permission.INTERNAL_SYSTEM_WINDOW for uid=10264 => denied (295 us)
+         1703830277.380  1845  2420 W ServiceManagerCppClient: Permission failure: android.permission.ACCESS_SURFACE_FLINGER from uid=10264 pid=0
+         1703830277.380  1845  2420 D PermissionCache: checking android.permission.ACCESS_SURFACE_FLINGER for uid=10264 => denied (74 us)
+         1703830277.382  1845  2120 W ziparchive: Unable to open '/data/app/~~pEhrOWDlYFrM8XUGgTKdIQ==/dev.driftsys.dashscene.demo-94hoouaz91XCZ4utf7-AqQ==/base.dm': No such file or directory
+         1703830277.384  1845  2120 I ActivityTaskManager: Displayed dev.driftsys.dashscene.demo/.DemoActivity for user 0: +227ms
+         1703830277.386  8857  8857 I dashscene: demo: surfaceDestroyed — entering the handshake
+         1703830277.389  1845  3829 W AppOps  : setUidMode() called with a mode inconsistent with runtime permission state, this is discouraged and you should revoke the runtime permission instead: uid=10129, switchCode=0, mode=4, permission=android.permission.ACCESS_BACKGROUND_LOCATION
+         1703830277.425  8857  8879 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830277.425  8857  8879 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.425  8857  8879 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.425  8857  8879 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.425  8857  8879 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830277.425   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830277.425   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.425   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.425   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.426  8857  8879 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830277.426  8857  8879 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830277.426  8857  8879 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830277.426  8857  8879 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.426  8857  8879 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.426  8857  8879 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.426  8857  8879 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830277.426   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830277.426   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.426   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.426   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.426  8857  8879 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830277.426  8857  8879 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830277.426  8857  8879 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830277.426  8857  8879 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.426  8857  8879 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.426  8857  8879 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.426  8857  8879 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830277.426   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830277.426   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.426   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.426   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.426  8857  8879 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830277.426  8857  8879 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830277.427  8857  8879 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830277.427  8857  8879 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.427  8857  8879 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.427  8857  8879 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.427  8857  8879 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830277.427   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830277.427   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830277.427   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830277.427   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830277.427  8857  8879 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830277.427  8857  8879 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830277.472  3302  8843 E RoleControllerServiceImpl: Default/fallback role holder package doesn't qualify for the role, package: com.google.android.googlequicksearchbox, role: android.app.role.ASSISTANT
+         1703830277.522  2572  2572 D ControlsListingControllerImpl: ServiceConfig reloaded, count: 0
+         1703830277.526  2572  2572 D ControlsListingControllerImpl: ServiceConfig reloaded, count: 0
+         1703830277.526  3925  3925 I Finsky  : [2] vny.g(0): vny - Received: android.intent.action.PACKAGE_ADDED, [lPWzLivEAOCNuQcv3qCRTUPKno-g_ruFy0I-UMYct9c]
+         1703830277.541  3269  8817 I Fitness : OnPackageChangedOperation got intent: Intent { act=android.intent.action.PACKAGE_CHANGED dat=package: flg=0x5000010 pkg=com.google.android.gms cmp=com.google.android.gms/.chimera.PersistentIntentOperationService (has extras) } [CONTEXT service_id=17 ]
+         1703830277.546  3269  8816 I Fitness : FitCleanupIntentOperation received Intent android.intent.action.PACKAGE_CHANGED [CONTEXT service_id=17 ]
+         1703830277.561  3925  3925 I Finsky  : [2] qqh.ahl(1): DTU: Received onPackageAdded, replacing: false
+         1703830277.563  3925  8673 I Finsky  : [144] jvi.abQ(78): [ContentSync] finished, scheduled=false
+         1703830277.563  3925  8678 I Finsky  : [145] aw.a(5): Asset module storage cleared for package dev.driftsys.dashscene.demo.
+         1703830277.564  3925  3925 I Finsky  : [2] aguv.c(5): Do not start WearSupportService due to Wear service optimization
+         1703830277.565  3925  3925 I Finsky  : [2] aacd.f(8): Clearing split related stale data.
+         1703830277.566  1845  2420 D CompatibilityChangeReporter: Compat change id reported: 161252188; UID 10264; state: DISABLED
+         1703830277.572  3269  4373 W ChimeraUtils: Module com.google.android.gms.nearby_en missing resource null(0)
+         1703830277.585  3925  3925 I Finsky  : [2] vny.g(0): vny - Received: android.intent.action.PACKAGE_CHANGED, [lPWzLivEAOCNuQcv3qCRTUPKno-g_ruFy0I-UMYct9c]
+         1703830277.597  3269  8834 W GCM     : Unexpected forwarded intent: Intent { act=android.intent.action.PACKAGE_ADDED dat=package: flg=0x4000010 pkg=com.google.android.gms cmp=com.google.android.gms/.chimera.PersistentIntentOperationService (has extras) }
+         1703830277.597  3269  8819 I FontLog : Package dev.driftsys.dashscene.demo has no metadata [CONTEXT service_id=132 ]
+         1703830277.599  3925  8671 I Finsky  : [143] oin.run(16): Wrote row to frosting DB: 450
+         1703830277.602  3269  8834 W GCM     : Unexpected forwarded intent: Intent { act=android.intent.action.PACKAGE_ADDED dat=package: flg=0x4000010 pkg=com.google.android.gms cmp=com.google.android.gms/.chimera.PersistentIntentOperationService (has extras) }
+         1703830277.604  3925  8671 I Finsky  : [143] oin.run(16): Wrote row to frosting DB: 451
+         1703830277.609  3780  8823 I BlockstoreStorage: Clearing Blockstore Data for package dev.driftsys.dashscene.demo [CONTEXT service_id=258 ]
+         1703830277.610  3780  8823 I BlockstoreStorage: Keyless data not found or its IsLastInstallationData = false. [CONTEXT service_id=258 ]
+         1703830277.610  3269  8815 I Fitness : OnPackageChangedOperation got intent: Intent { act=android.intent.action.PACKAGE_CHANGED dat=package: flg=0x5000010 pkg=com.google.android.gms cmp=com.google.android.gms/.chimera.PersistentIntentOperationService (has extras) } [CONTEXT service_id=17 ]
+         1703830277.615  3780  8822 I Dck     : doesDeviceHaveSupportedWirelessCapabilities: wccSysProp:0, wccMendel:1, deviceWccOverride:false [CONTEXT service_id=289 ]
+         1703830277.615  3780  8822 I Dck     : isDckModuleEligible: isAtLeastR:true, hasWccSupport:false, downloadAllowed:false [CONTEXT service_id=289 ]
+         1703830277.616  3780  8822 W Dck     : Dck module not eligible for asynchronous downloading [CONTEXT service_id=289 ]
+         1703830277.617  3780  8825 I Auth    : [SupervisedAccountIntentOperation] onHandleIntent(): android.intent.action.PACKAGE_ADDED
+         1703830277.617  3780  8825 I Auth    : [SupervisedAccountIntentOperation] This operation is disabled
+         1703830277.627  3269  4373 W ChimeraUtils: Module com.google.android.gms.nearby_en missing resource null(0)
+         1703830277.628  3925  8671 I Finsky  : [143] oin.run(16): Wrote row to frosting DB: 452
+         1703830277.631  3269  8816 I Fitness : FitCleanupIntentOperation received Intent android.intent.action.PACKAGE_CHANGED [CONTEXT service_id=17 ]
+         1703830277.632  3780  3780 D BoundBrokerSvc: onBind: Intent { act=com.google.android.gms.common.BIND_SHARED_PREFS pkg=com.google.android.gms }
+         1703830277.632  3780  3780 D BoundBrokerSvc: Loading bound service for intent: Intent { act=com.google.android.gms.common.BIND_SHARED_PREFS pkg=com.google.android.gms }
+         1703830277.645  3780  3780 D BoundBrokerSvc: onUnbind: Intent { act=com.google.android.gms.common.BIND_SHARED_PREFS pkg=com.google.android.gms }
+         1703830277.661  3269  4373 W ChimeraUtils: Module com.google.android.gms.nearby_en missing resource null(0)
+         1703830277.670  3925  8671 I Finsky  : [143] oin.run(16): Wrote row to frosting DB: 453
+         1703830277.686  3269  4370 W ChimeraUtils: Module com.google.android.gms.nearby_en missing resource null(0)
+         1703830277.700  3269  4370 W ChimeraUtils: Module com.google.android.gms.nearby_en missing resource null(0)
+         1703830277.702  3269  4370 W ChimeraUtils: Module com.google.android.gms.nearby_en missing resource null(0)
+         1703830277.738  3269  4373 W ChimeraUtils: Module com.google.android.gms.nearby_en missing resource null(0)
+         1703830277.754  3269  4373 W ChimeraUtils: Module com.google.android.gms.nearby_en missing resource null(0)
+         1703830277.758  3269  4373 W ChimeraUtils: Module com.google.android.gms.nearby_en missing resource null(0)
+         1703830277.957  1845  2420 I ActivityManager: Background started FGS: Allowed [callingPackage: com.google.android.apps.wellbeing; callingUid: 10126; uidState: BFGS; uidBFSL: [BFSL]; intent: Intent { cmp=com.google.android.apps.wellbeing/com.google.apps.tiktok.concurrent.InternalForegroundService (has extras) }; code:BACKGROUND_ACTIVITY_PERMISSION; tempAllowListReason:<48bd40e com.google.android.apps.wellbeing.action.SCREEN_TURNING_OFF/u0,reasonCode:UNKNOWN,duration:20000,callingUid:10126>; targetSdkVersion:33; callerTargetSdkVersion:33; startForegroundCount:0; bindFromPackage:null: isBindService:false]
+         1703830278.167  1845  1845 I NotificationService: Cannot find enqueued record for key: 0|com.google.android.apps.wellbeing|174344743|null|10126
+         1703830278.569  8857  8879 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830278.569  8857  8879 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830278.569  8857  8879 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830278.569  8857  8879 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830278.569  8857  8879 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830278.569   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830278.569   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830278.569   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830278.569   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830278.569  8857  8879 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830278.570  8857  8879 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830278.570  8857  8879 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830278.570  8857  8879 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830278.570  8857  8879 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830278.570  8857  8879 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830278.570  8857  8879 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830278.570   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830278.570   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830278.570   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830278.570   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830278.570  8857  8879 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830278.570  8857  8879 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830278.570  8857  8879 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830278.570  8857  8879 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830278.570  8857  8879 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830278.570  8857  8879 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830278.570  8857  8879 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830278.570   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830278.570   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830278.570   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830278.570   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830278.570  8857  8879 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830278.570  8857  8879 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830278.570  8857  8879 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830278.570  8857  8879 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830278.570  8857  8879 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830278.570  8857  8879 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830278.570  8857  8879 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830278.570   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830278.570   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830278.570   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830278.570   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830278.571  8857  8879 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830278.571  8857  8879 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830278.574  8857  8879 I dashscene: dashscene-gpu (Adreno (TM) 620, Vulkan, Rgba8Unorm) — 1080x2050, scene surfaces
+         1703830278.654  3780  4707 I Icing   : Indexing com.google.android.gms-apps from com.google.android.gms
+         1703830278.683  3780  4707 I Icing   : Indexing done com.google.android.gms-apps
+         1703830278.698  3780  4707 I Icing   : Indexing com.google.android.gms-internal.3p:MobileApplication from com.google.android.gms
+         1703830278.716  3780  4707 I Icing   : Indexing done com.google.android.gms-internal.3p:MobileApplication
+         1703830278.717  3780  4707 I Icing   : Indexing com.google.android.gms-apps from com.google.android.gms
+         1703830278.718  3780  4707 I Icing   : Indexing done com.google.android.gms-apps
+         1703830278.726  3780  4707 I Icing   : Indexing com.google.android.gms-apps from com.google.android.gms
+         1703830278.729  3780  4707 I Icing   : Indexing done com.google.android.gms-apps
+         1703830278.745  3780  4707 I Icing   : Indexing com.google.android.gms-internal.3p:MobileApplication from com.google.android.gms
+         1703830278.748  3780  4707 I Icing   : Indexing done com.google.android.gms-internal.3p:MobileApplication
+         1703830278.769  3780  4707 I Icing   : Indexing com.google.android.gms-internal.3p:MobileApplication from com.google.android.gms
+         1703830278.772  3780  4707 I Icing   : Indexing done com.google.android.gms-internal.3p:MobileApplication
+         1703830278.810  8798  8800 I AidlLazyServiceRegistrar: Process has 0 (of 1 available) client(s) in use after notification artd has clients: 0
+         1703830278.810  8798  8800 I AidlLazyServiceRegistrar: Trying to shut down the service. No clients in use for any service in process.
+         1703830278.810  8798  8800 I AidlLazyServiceRegistrar: Unregistered all clients and exiting
+         1703830279.137  8857  8879 I dashscene: attached a 1080x2050 surface
+         1703830279.148  8857  8879 I dashscene: surface detached
+         1703830279.150  8857  8857 I dashscene: stopped — the surface is gone
+         1703830279.150  8857  8857 I dashscene: demo: surfaceDestroyed — handshake complete
+         1703830279.152  8857  8857 I Choreographer: Skipped 104 frames!  The application may be doing too much work on its main thread.
+         1703830279.159  1845  3822 W ProcessStats: Tracking association SourceState{8d119db com.google.android.gms.persistent/10162 BFgs #3678} whose proc state 4 is better than process ProcessState{1987c1e com.google.android.gms/10162 pkg=com.google.android.gms} proc state 8 (316 skipped)
+         1703830284.250  1845  2362 D ActivityManager: freezing 7227 com.google.android.documentsui
+         1703830284.362  1845  2362 D ActivityManager: freezing 7347 android.process.media
+         1703830284.373  1845  2557 W FileUtils: Failed to chmod(AtomicFile[/data/system_de/0/system/game-manager-service.xml]): android.system.ErrnoException: chmod failed: ENOENT (No such file or directory)
+         1703830286.918  3780  4707 I ContentMaintenance: Internal cache bytes used: 0; limit: 100000000; download size: 0
+         1703830286.925  3780  4707 I RealtimeCacheCleanup: Beginning Realtime garbage collection.
+         1703830286.926  3780  4707 I RealtimeCacheCleanup: Finished Realtime garbage collection.
+         1703830287.566   654  8801 I keystore2: system/security/keystore2/src/watchdog.rs:319 - Watchdog thread idle -> terminating. Have a great day.
+         1703830287.681  1079  2511 I android.hardware.usb.aidl-service: port0
+         1703830287.682  1079  2511 I android.hardware.usb.aidl-service: 0:port0 connected:1 canChangeMode:1 canChagedata:1 canChangePower:1 usbDataEnabled:1
+         1703830287.683  1079  2511 I android.hardware.usb.aidl-service: ContaminantDetectionStatus:2 ContaminantProtectionStatus:0
+         1703830287.683  1079  2511 I android.hardware.usb.aidl-service: powerTransferLimited:0
+         1703830287.684  1845  3822 I UsbPortManager: AIDL UsbDataStatus:1
+         1703830287.685  1845  3822 I UsbPortManager: ClientCallback AIDL V1: port0
+         1703830287.707  1079  2511 I android.hardware.usb.aidl-service: port0
+         1703830287.712  1079  2511 I android.hardware.usb.aidl-service: 0:port0 connected:1 canChangeMode:1 canChagedata:1 canChangePower:1 usbDataEnabled:1
+         1703830287.713  1079  2511 I android.hardware.usb.aidl-service: ContaminantDetectionStatus:2 ContaminantProtectionStatus:0
+         1703830287.713  1079  2511 I android.hardware.usb.aidl-service: powerTransferLimited:0
+         1703830287.714  1845  3822 I UsbPortManager: AIDL UsbDataStatus:1
+         1703830287.714  1845  3822 I UsbPortManager: ClientCallback AIDL V1: port0
+         1703830288.839  1078  1264 E ASH     : @ 1160.219: touch gesture: Gesture event: 02 0e 03 00 00 00 00 00
+         1703830288.839  1078  1264 E ASH     : @ 1160.219: touch gesture: s6sy79x_read_gesture_coord(): 0x29 0x57 0x5e
+         1703830288.839  1078  1264 E ASH     : @ 1160.219: touch gesture: s6sy79x_read_gesture_coord(): X 661 Y 1406
+         1703830288.839  1078  1264 I ASH     : @ 1160.220: touch gesture: detected [single press]
+         1703830288.840  1078  1264 D VSC     : @ 1160.220: [Proximity Gated Single Tap Gesture] Stop touch_gesture
+         1703830288.840  1078  1264 I ASH     : @ 1160.220: touch gesture: [touch gesture] unsubscribed
+         1703830288.840  1078  1264 D VSC     : @ 1160.220: [Proximity Gated Single Tap Gesture] Stop proximity
+         1703830288.840  1078  1264 E ASH     : @ 1160.221: touch gesture: updating gesture: double_tap [x], single_tap [x]
+         1703830288.840  1078  1264 I ASH     : @ 1160.221: tcs3701: Client count (type)cur/new: (3)1/0
+         1703830288.840  1078  1264 I VSC     : @ 1160.221: [single-tap-prox-gated] sensor disabled
+         1703830288.840  1078  1264 I ASH     : @ 1160.221: tcs3701: Disabling sensor 3
+         1703830288.840  1078  1264 I ASH     : @ 1160.221: tcs3701: Disabling PROX
+         1703830288.840  1078  1264 D ASH     : @ 1160.221: tcs3701: start power rail timer, state:3
+         1703830288.850  1845  3822 I PowerGroup: Waking up power group from Dozing (groupId=0, uid=10224, reason=WAKE_REASON_TAP, details=com.android.systemui:NODOZE tap)...
+         1703830288.851  1845  3822 I PowerManagerService: Waking up from Dozing (uid=10224, reason=WAKE_REASON_TAP, details=com.android.systemui:NODOZE tap)...
+         1703830288.852  1845  1845 E ActivityManager: Cancel pending or running compactions as system is awake
+         1703830288.855  1845  2202 I DisplayPowerController2[0]: Blocking screen on until initial contents have been drawn.
+         1703830288.856  1845  2202 I DisplayBrightnessStrategySelector: Changing the DisplayBrightnessStrategy from ScreenOffBrightnessStrategy toInvalidBrightnessStrategy for display 0
+         1703830288.857  1845  2202 V DisplayPowerController2[0]: Brightness [1.0] reason changing to: 'manual', previous reason: 'screen_off'.
+         1703830288.859  2572  2572 W WindowOnBackDispatcher: OnBackInvokedCallback is not enabled for the application.
+         1703830288.859  2572  2572 W WindowOnBackDispatcher: Set 'android:enableOnBackInvokedCallback="true"' in the application manifest.
+         1703830288.859  2572  2572 D CentralSurfaces: Received new disable state: enaihbcRso.qingr (unchanged)
+         1703830288.859  2572  2572 D CentralSurfaces: Received new disable state: enaihbcRso.qingr (unchanged)
+         1703830288.860  1845  2202 I DisplayPowerController2[0]: BrightnessEvent: disp=0, physDisp=local:4630946523002478721, brt=1.0, initBrt=0.0, rcmdBrt=NaN, preBrt=NaN, lux=0.0, preLux=0.0, hbmMax=1.0, hbmMode=off, rbcStrength=50, thrmMax=1.0, powerFactor=1.0, wasShortTermModelActive=false, flags=, reason=manual, autoBrightness=false, strategy=InvalidBrightnessStrategy
+         1703830288.860  2572  2572 D CentralSurfaces: updateQsExpansionEnabled - QS Expand enabled: true
+         1703830288.861  3691  3691 D NfcService: MSG_APPLY_SCREEN_STATE 4
+         1703830288.861   658   658 D SurfaceFlinger: Setting power mode 2 on display 4630946523002478721
+         1703830288.862  1845  2123 I DisplayDeviceRepository: Display device changed state: "Built-in Screen", ON
+         1703830288.862   661   661 I SDM     : DisplayBase::SetDisplayState: Set state = 1, display 29-0, teardown = 0
+         1703830288.863  2572  2572 W PageIndicator: Total number of pages invalid: 0. Assuming 1 page.
+         1703830288.863  2572  2572 W BcSmartspaceView: Current card is not present in the Adapter; cannot log.
+         1703830288.864  2572  2572 D CentralSurfaces: updateQsExpansionEnabled - QS Expand enabled: true
+         1703830288.865  1078  1264 I VSC     : @ 1160.247: [single-tap-prox-gated] configuring sensor with interval: 1000000, latency: 0
+         1703830288.865  1078  1264 D VSC     : @ 1160.247: [Proximity Gated Single Tap Gesture] Request proximity, interval 100.0 ms, latency 0.0 ms
+         1703830288.865  1078  1264 I ASH     : @ 1160.247: tcs3701: stop power rail pending_off timer
+         1703830288.865  1078  1264 D VSC     : @ 1160.247: [Proximity Gated Single Tap Gesture] Request touch_gesture, interval 18446744027136.0 ms, latency 0.0 ms
+         1703830288.865  1078  1264 I ASH     : @ 1160.247: tcs3701: Client count (type)cur/new: (3)0/1
+         1703830288.865  1078  1264 I ASH     : @ 1160.247: tcs3701: Enabling sensor 3
+         1703830288.866  1845  2123 I InputManager-JNI: Viewport [0] to add: local:4630946523002478721, isActive: true
+         1703830288.867  1845  2452 I InputReader: Reconfiguring input devices, changes=DISPLAY_INFO
+         1703830288.867  1845  2452 I InputReader: Device reconfigured: id=4, name='sec_touchscreen', size 1080x2340, orientation 0, mode 1, display id 0
+         1703830288.868  1078  1264 I ASH     : @ 1160.250: tcs3701: PCFG1: 00
+         1703830288.868  1078  1264 I ASH     : @ 1160.250: tcs3701: PCFG2: 08
+         1703830288.868  1078  1264 I ASH     : @ 1160.250: tcs3701: PCFG4: 03
+         1703830288.870  1845  2124 I DisplayDevice: [0] Layerstack set to 0 for local:4630946523002478721
+         1703830288.870  1078  1264 I ASH     : @ 1160.252: tcs3701: New TH: 110 0 200 0
+         1703830288.870  2840  2840 D GRIL-S  : [0015]> UPDATE_DEVICE_STATE DeviceState: Usb:1, Wifi: 0, Wifi AP: 0, Earpiece: 0, Bluetooth: 0, Wireless charging: 0, Screen: 1, Camera: 0, 0, -, -, Motion: 0, Bluetooth tethering: 0, Voice: 0, Wifi 2.4G: 0, Radio: 1, Bluetooth connected: 0, Bluetooth media: 0, Wifi Band: 0, Wifi AP Band: 0, Wifi call: 0, mmWave: 0, mCellBackhaul: 0, mHallSensor: 0, mDozeStatus: 0, mAppClassInfo: 0
+         1703830288.873  2840  3663 D GRIL-S  : [0015]< UPDATE_DEVICE_STATE 
+         1703830288.873  1045  2375 D audio_hw_primary: adev_set_parameters: enter: screen_state=on
+         1703830288.873  1045  2375 W sound_trigger_hw: sound_trigger_hw_call_back: Unknown event 17
+         1703830288.873  1045  2375 D a2dp_offload: end of a2dp setparam
+         1703830288.875  2773  3480 I HbmSvManager:  Request state 0 req 2
+         1703830288.875  2773  3480 I HbmSvManager:  Request state 1 req 0
+         1703830288.875  1078  1264 I ASH     : @ 1160.253: tcs3701: PROX trigger disabled!!
+         1703830288.875  1078  1264 I ASH     : @ 1160.256: tcs3701: ALS trigger disabled!!
+         1703830288.877  3612  4247 I AiAiEcho: Settings changed for uri: content://settings/secure/restart_nap_after_start
+         1703830288.878  1078  1078 I sensors-hal: [hal]batch_physical_sensor:314, android.sensor.accelerometer/11, period=200000000, max_latency=2000000000
+         1703830288.878  1078  1078 I sensors-hal: [sensor]set_config:64, sample_period_ns is adjusted to 200000000 based on min/max delay_ns
+         1703830288.878  1078  1078 I sensors-hal: [hal]batch_physical_sensor:323, android.sensor.accelerometer/11, period=200000000, max_latency=2000000000 request completed
+         1703830288.878  1078  1078 I sensors-hal: [hal]activate_physical_sensor:251, android.sensor.accelerometer/11 en=1
+         1703830288.878  3612  3842 I AiAiEcho: Predicting[0]: 
+         1703830288.878  3612  3842 I AiAiEcho: EchoTargets: 
+         1703830288.878  3612  3842 I AiAiEcho: Filtered by AiAi flag check: 
+         1703830288.878  1078  1078 I sensors-hal: [ssc_utils]get_qmi_debug_flag:243, support_qmi_debug : false
+         1703830288.880  1078  1078 W sensors@2.0-ser: type=1400 audit(0.0:363): avc:  denied  { read write } for  name="diag" dev="tmpfs" ino=15022 scontext=u:r:hal_sensors_default:s0 tcontext=u:object_r:diag_device:s0 tclass=chr_file permissive=0
+         1703830288.879  3612  3842 I AiAiEcho: Ranked targets strategy: SORT, count: 0, ranking metadata: 
+         1703830288.880  3612  3842 I AiAiEcho: Predicting[0]: 
+         1703830288.880  3612  3842 I AiAiEcho: EchoTargets: 
+         1703830288.880  3612  3842 I AiAiEcho: Filtered by AiAi flag check: 
+         1703830288.880  3612  3842 I AiAiEcho: Ranked targets strategy: SORT, count: 0, ranking metadata: 
+         1703830288.881  3612  3842 I AiAiEcho: Predicting[0]: 
+         1703830288.881  3612  3842 I AiAiEcho: EchoTargets: 
+         1703830288.881  3612  3842 I AiAiEcho: Filtered by AiAi flag check: 
+         1703830288.881  1078  1078 D Diag_Lib:  Diag_LSM_Init: Failed to open handle to diag driver, error = 13
+         1703830288.881  3612  3842 I AiAiEcho: Ranked targets strategy: SORT, count: 0, ranking metadata: 
+         1703830288.882  1078  1078 I sensors-hal: [ssc_utils]get_qmi_debug_flag:243, support_qmi_debug : false
+         1703830288.883  3612  3842 I AiAiEcho: #postPredictionTargets: Sending updates to UISurface media_data_manager with targets# 0 (types=[])
+         1703830288.884  3612  3842 I AiAiEcho: #postPredictionTargets: Sending updates to UISurface lockscreen with targets# 0 (types=[])
+         1703830288.884  1078  1078 I sensors-hal: [hal]activate_physical_sensor:262, android.sensor.accelerometer/11 en=1 completed
+         1703830288.885  3612  3842 I AiAiEcho: #postPredictionTargets: Sending updates to UISurface home with targets# 0 (types=[])
+         1703830288.885  1078  8930 I sensors-hal: [ssc_sensor]ssc_conn_resp_cb:686, resp_value = 0
+         1703830288.886  1845  1845 D FastPairService: onReceive: ACTION_SCREEN_ON
+         1703830288.886  1845  1845 V FastPairService: invalidateScan: scan is disabled
+         1703830288.886  1845  1845 E NearbyManager: Cannot stop scan with this callback because it is never registered.
+         1703830288.888  1078  2791 I sensors-hal: [ssc_utils]get_qmi_debug_flag:243, support_qmi_debug : false
+         1703830288.890  2886  2886 D DeviceStatisticsService: Send device is interactive
+         1703830288.890  2886  2886 D DeviceInfoHidlClient: getDeviceInfoSupportStatus()=1
+         1703830288.890  2886  2886 D DeviceInfoHidlClient: isRadioOn()=true
+         1703830288.890  2886  2886 I DeviceInfoHidlClient: deviceState=2
+         1703830288.891  1845  2468 E WifiScoringParams: Invalid frequency(-1), using 5G as default rssi array
+         1703830288.899  1078  1264 D ASH     : @ 1160.280: tcs3701: update_rail_vote: 0->2
+         1703830288.899  1078  1264 D ASH     : @ 1160.280: tcs3701: rail already ON
+         1703830288.899  1078  1264 D ASH     : @ 1160.280: tcs3701: power vote set to 1
+         1703830288.899  1078  1264 I ASH     : @ 1160.281: tcs3701: ALS trigger disabled!!
+         1703830288.900  1078  1264 I ASH     : @ 1160.282: tcs3701: PROX trigger disabled!!
+         1703830288.901  1078  1264 I ASH     : @ 1160.283: tcs3701: PERS: 41
+         1703830288.902  1078  1078 I sensors-hal: [hal]batch_physical_sensor:314, android.sensor.light/51, period=20000000, max_latency=0
+         1703830288.902  1078  1078 I sensors-hal: [sensor]set_config:64, sample_period_ns is adjusted to 0 based on min/max delay_ns
+         1703830288.902  1078  1078 I sensors-hal: [hal]batch_physical_sensor:323, android.sensor.light/51, period=20000000, max_latency=0 request completed
+         1703830288.902  1078  1078 I sensors-hal: [hal]activate_physical_sensor:251, android.sensor.light/51 en=1
+         1703830288.902  1078  1078 I sensors-hal: [ssc_utils]get_qmi_debug_flag:243, support_qmi_debug : false
+         1703830288.903  2572  2572 D SsMediaDataProvider: Forwarding Smartspace updates []
+         1703830288.903  2572  2572 W PageIndicator: Total number of pages invalid: 0. Assuming 1 page.
+         1703830288.905  1078  1078 I sensors-hal: [hal]activate_physical_sensor:262, android.sensor.light/51 en=1 completed
+         1703830288.906  1078  1264 I ASH     : @ 1160.288: tcs3701: Client count (type)cur/new: (0)0/1
+         1703830288.906  1078  8935 I sensors-hal: [ssc_sensor]ssc_conn_resp_cb:686, resp_value = 0
+         1703830288.906  1078  1264 I ASH     : @ 1160.288: tcs3701: Enabling sensor 0
+         1703830288.908  1078  1264 I ASH     : @ 1160.290: tcs3701: ALS trigger disabled!!
+         1703830288.909  5681  7504 I DeviceStatusMonitor: DeviceStatusMonitor.handleBroadcast():122 onReceive() : Action = android.intent.action.SCREEN_ON
+         1703830288.910  5681  7504 I DeviceStatusMonitor: DeviceStatusMonitor.updateCountryInfo():138 updateCountryInfo(), notifyAnyway = false
+         1703830288.915  3269  4373 I NearbySharing: Screen is already locked, skipping invalidate [CONTEXT service_id=194 ]
+         1703830288.930  3612  3842 I AiAiEcho: Predicting[0]: 
+         1703830288.931  3612  3842 I AiAiEcho: EchoTargets: 
+         1703830288.931  3612  3842 I AiAiEcho: Filtered by AiAi flag check: 
+         1703830288.931  3612  3842 I AiAiEcho: Ranked targets strategy: SORT, count: 0, ranking metadata: 
+         1703830288.933  3612  3842 I AiAiEcho: #postPredictionTargets: Sending updates to UISurface lockscreen with targets# 0 (types=[])
+         1703830288.937  1078  1264 I ASH     : @ 1160.319: touch gesture: update charger mode: 0x02
+         1703830288.942  2572  2572 W PageIndicator: Total number of pages invalid: 0. Assuming 1 page.
+         1703830288.943  1845  2202 I DisplayPowerController2[0]: Unblocked screen on after 89 ms
+         1703830288.944  3612  3842 I AiAiEcho: Predicting[0]: 
+         1703830288.944  3612  3842 I AiAiEcho: EchoTargets: 
+         1703830288.944  3612  3842 I AiAiEcho: Filtered by AiAi flag check: 
+         1703830288.944  3612  3842 I AiAiEcho: Ranked targets strategy: SORT, count: 0, ranking metadata: 
+         1703830288.945  1078  1264 D VSC     : @ 1160.326: [WO] Set sensor rate and start algorithm version 12_3
+         1703830288.945  1078  1264 D VSC     : @ 1160.326: [WO] Reset mTask, clear history
+         1703830288.945  1078  1264 D VSC     : @ 1160.326: [Device Orientation] Request accel, interval 66.6 ms, latency 40.0 ms
+         1703830288.945  1078  1264 D VSC     : @ 1160.327: [Device Orientation] Request gyro, interval 66.6 ms, latency 40.0 ms
+         1703830288.946  3612  3842 I AiAiEcho: #postPredictionTargets: Sending updates to UISurface lockscreen with targets# 0 (types=[])
+         1703830288.947  2572  2572 W PageIndicator: Total number of pages invalid: 0. Assuming 1 page.
+         1703830288.959  1078  1264 D CHRE    : @ 1160.341: Gyro(0)=Enabled
+         1703830288.986  1078  1264 D ASH     : @ 1160.367: SensorType 195 resampler quality 2
+         1703830288.989  1078  1264 E ASH     : @ 1160.371: touch gesture: updating gesture: double_tap [x], single_tap [v]
+         1703830288.990  1078  1264 I ASH     : @ 1160.372: touch gesture: sttw params: max x/y 540 550, mi/max frame 2 26, tolerance 150, recess size 136
+         1703830288.990  1078  1264 I ASH     : @ 1160.372: touch gesture: [touch gesture] subscribed
+         1703830289.012  1078  2791 I sensors-hal: [DPInfo]file_contents_parse:176, _status = 1
+         1703830289.012  1078  2791 I sensors-hal: [ssc_utils]get_qmi_debug_flag:243, support_qmi_debug : false
+         1703830289.016   658   658 D SurfaceFlinger: Finished setting power mode 2 on display 4630946523002478721
+         1703830289.017  1078  1264 I ASH     : @ 1160.398: tcs3701: display status: 1
+         1703830289.017  1078  1264 I ASH     : @ 1160.398: tcs3701: display brightness: 114
+         1703830289.017  1078  1264 I ASH     : @ 1160.398: tcs3701: display refresh_rate: 60
+         1703830289.017  1845  2536 D SurfaceControl: Excessive delay in setPowerMode()
+         1703830289.019  1845  2202 I DreamManagerService: Gently waking up from dream.
+         1703830289.020  1845  2123 I DisplayDeviceRepository: Display device changed state: "Built-in Screen", ON
+         1703830289.026  1078  1264 D VSC     : @ 1160.408: [WO] Reset mTask, clear history
+         1703830289.026  1078  1264 W ASH     : @ 1160.408: touch gesture: no valid gesture detected
+         1703830289.027  2638  2638 I WallpaperService: engine resumed
+         1703830289.028  1078  1264 W ASH     : @ 1160.409: touch gesture: no valid gesture detected
+         1703830289.028  1078  1264 I ASH     : @ 1160.409: touch gesture: received SNS_TBN_ACQUIRE_BUS_REQ_V01: kernel requesting bus
+         1703830289.029  1078  1078 I sensors-hal: [hal]batch_physical_sensor:314, android.sensor.gyroscope/41, period=20000000, max_latency=0
+         1703830289.030  1078  1078 I sensors-hal: [sensor]set_config:64, sample_period_ns is adjusted to 20000000 based on min/max delay_ns
+         1703830289.030  1078  1078 I sensors-hal: [hal]batch_physical_sensor:323, android.sensor.gyroscope/41, period=20000000, max_latency=0 request completed
+         1703830289.030  1078  1078 I sensors-hal: [hal]activate_physical_sensor:251, android.sensor.gyroscope/41 en=1
+         1703830289.030  1078  1078 I sensors-hal: [ssc_utils]get_qmi_debug_flag:243, support_qmi_debug : false
+         1703830289.038  1078  2791 I sensors-hal: [ssc_utils]get_qmi_debug_flag:243, support_qmi_debug : false
+         1703830289.040  1078  1078 W sensors@2.0-ser: type=1400 audit(0.0:364): avc:  denied  { read write } for  name="diag" dev="tmpfs" ino=15022 scontext=u:r:hal_sensors_default:s0 tcontext=u:object_r:diag_device:s0 tclass=chr_file permissive=0
+         1703830289.043  1078  1078 D Diag_Lib:  Diag_LSM_Init: Failed to open handle to diag driver, error = 13
+         1703830289.044  1078  1078 D Diag_Lib:  Diag_LSM_Init: Failed to open handle to diag driver, error = 13
+         1703830289.044  1078  1078 I sensors-hal: [ssc_sensor]update_handle:560, handle=331, type=33, wakeup=0, hwid=0, base=331
+         1703830289.044  1078  1078 I sensors-hal: [sensor]set_config:64, sample_period_ns is adjusted to 1000000000 based on min/max delay_ns
+         1703830289.044  1078  1078 I sensors-hal: [ssc_utils]get_qmi_debug_flag:243, support_qmi_debug : false
+         1703830289.044  1078  1264 I ASH     : @ 1160.425: tcs3701: Skip 1 prox cycle.
+         1703830289.040  1078  1078 W sensors@2.0-ser: type=1400 audit(0.0:365): avc:  denied  { read write } for  name="diag" dev="tmpfs" ino=15022 scontext=u:r:hal_sensors_default:s0 tcontext=u:object_r:diag_device:s0 tclass=chr_file permissive=0
+         1703830289.054  1078  8945 I sensors-hal: [ssc_sensor]ssc_conn_resp_cb:686, resp_value = 0
+         1703830289.054  1078  1078 I sensors-hal: [ssc_utils]get_qmi_debug_flag:243, support_qmi_debug : false
+         1703830289.063  1078  1264 I ASH     : @ 1160.444: tcs3701: Skip 1 prox cycle.
+         1703830289.064  1078  1264 I ASH     : @ 1160.446: tcs3701: display status: 1
+         1703830289.064  1078  1264 I ASH     : @ 1160.446: tcs3701: display brightness: 1023
+         1703830289.064  1078  1264 I ASH     : @ 1160.446: tcs3701: display refresh_rate: 60
+         1703830289.066  1078  1078 I sensors-hal: [hal]activate_physical_sensor:262, android.sensor.gyroscope/41 en=1 completed
+         1703830289.067  1078  8949 I sensors-hal: [ssc_sensor]ssc_conn_resp_cb:686, resp_value = 0
+         1703830289.076  1845  3822 I DreamManagerService: Leaving dreamland.
+         1703830289.076  1845  2120 I DreamController: Stopping dream: name=ComponentInfo{com.android.systemui/com.android.systemui.doze.DozeService}, isPreviewMode=false, canDoze=true, userId=0, reason='finished self'(from 'power manager request')
+         1703830289.082  1078  1264 I ASH     : @ 1160.464: tcs3701: Skip 1 prox cycle.
+         1703830289.082  2572  2572 D DLObserver: remove listener: com.android.systemui.doze.DozeTriggers$DockEventListener@fd84b9e
+         1703830289.084  2572  2572 D DLObserver: remove listener: com.android.systemui.doze.DozeDockHandler$DockEventListener@2acbb2
+         1703830289.085  1078  1264 D VSC     : @ 1160.466: [Device Pickup Sensor] Stop motion_detect
+         1703830289.087  1078  1264 D VSC     : @ 1160.468: [Proximity Gated Single Tap Gesture] Stop touch_gesture
+         1703830289.087  1078  1264 I ASH     : @ 1160.468: touch gesture: [touch gesture] unsubscribed
+         1703830289.087  1078  1264 D VSC     : @ 1160.468: [Proximity Gated Single Tap Gesture] Stop proximity
+         1703830289.087  1078  1264 I ASH     : @ 1160.469: tcs3701: Client count (type)cur/new: (3)1/0
+         1703830289.087  1078  1264 I VSC     : @ 1160.469: [single-tap-prox-gated] sensor disabled
+         1703830289.087  1078  1264 I ASH     : @ 1160.469: tcs3701: Disabling sensor 3
+         1703830289.087  1078  1264 I ASH     : @ 1160.469: tcs3701: Disabling PROX
+         1703830289.357  1845  3822 W ProcessStats: Tracking association SourceState{8d119db com.google.android.gms.persistent/10162 BFgs #3702} whose proc state 4 is better than process ProcessState{1987c1e com.google.android.gms/10162 pkg=com.google.android.gms} proc state 8 (32 skipped)
+         1703830289.451  3269  3269 D BoundBrokerSvc: onUnbind: Intent { act=com.google.android.gms.icing.LIGHTWEIGHT_INDEX_SERVICE dat=chimera-action:/... cmp=com.google.android.gms/.chimera.PersistentApiService }
+         1703830289.480  3780  3780 D BoundBrokerSvc: onUnbind: Intent { act=com.google.android.gms.feedback.internal.IFeedbackService dat=chimera-action:/... cmp=com.google.android.gms/.chimera.GmsBoundBrokerService }
+         1703830290.969  2572  2572 I FalsingManager: {belief=0.5 confidence=0.0}
+         1703830291.084  2696  2741 I native  : I0000 00:00:1703830291.084540    2741 tf_lite_classifier.cc:400] Event stream classified as kNone
+         1703830291.121  1845  2562 D CompatibilityChangeReporter: Compat change id reported: 197654537; UID 10264; state: ENABLED
+         1703830291.124  2572  2596 V WindowManagerShell: Transition requested: android.os.BinderProxy@3577651 TransitionRequestInfo { type = TO_BACK, triggerTask = null, remoteTransition = null, displayChange = null }
+         1703830291.125  1845  2562 D ActivityTaskManager: Top Process State changed to PROCESS_STATE_TOP
+         1703830291.130  1845  2562 D CompatibilityChangeReporter: Compat change id reported: 205907456; UID 10264; state: ENABLED
+         1703830291.137  2572  2604 I incfs-mounts: [incfs] Loaded incremental-fs mount info: 2 instances, 4 mount points
+         1703830291.140   658   658 I BpBinder: onLastStrongRef automatically unlinking death recipients: 
+         1703830291.140  2572  2614 W Parcel  : Expecting binder but got null!
+         1703830291.142  1845  8609 D CompatibilityChangeReporter: Compat change id reported: 168419799; UID 10264; state: DISABLED
+         1703830291.142  1845  8609 D CompatibilityChangeReporter: Compat change id reported: 273564678; UID 10264; state: DISABLED
+         1703830291.143  8857  8873 E OpenGLRenderer: Unable to match the desired swap behavior.
+         1703830291.145  8857  8857 I dashscene: demo: surfaceCreated
+         1703830291.145  8857  8857 I dashscene: demo: surfaceChanged 1080x1984
+         1703830291.145  8857  8857 I dashscene: scene surfaces — fills, strokes, corners, images, a baked vector field, shadows, clips, masks, group opacity and a backdrop blur
+         1703830291.145  8857  8857 I dashscene: demo: handle -5476376646254210992
+         1703830291.145  8857  8953 I dashscene: attaching a 1080x1984 surface
+         1703830291.149  8857  8953 I AdrenoVK-0: QUALCOMM build          : 4783c89, I46ff5fc46f
+         1703830291.149  8857  8953 I AdrenoVK-0: Build Date              : 11/30/20
+         1703830291.149  8857  8953 I AdrenoVK-0: Shader Compiler Version : EV031.31.04.01
+         1703830291.149  8857  8953 I AdrenoVK-0: Local Branch            : QPR2
+         1703830291.149  8857  8953 I AdrenoVK-0: Remote Branch           : 
+         1703830291.149  8857  8953 I AdrenoVK-0: Remote Branch           : 
+         1703830291.149  8857  8953 I AdrenoVK-0: Reconstruct Branch      : 
+         1703830291.149  8857  8953 I AdrenoVK-0: Build Config            : S P 10.0.4 AArch64
+         1703830291.149  8857  8953 I AdrenoVK-0: Driver Path             : /vendor/lib64/hw/vulkan.adreno.so
+         1703830291.157  1845  2561 D CoreBackPreview: Window{a6e5d72 u0 Splash Screen dev.driftsys.dashscene.demo}: Setting back callback OnBackInvokedCallbackInfo{mCallback=android.window.IOnBackInvokedCallback$Stub$Proxy@57afe40, mPriority=0, mIsAnimationCallback=false}
+         1703830291.159  8857  8953 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830291.159  8857  8953 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.159  8857  8953 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.159  8857  8953 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.159  8857  8953 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830291.159   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830291.159   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.159   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.159   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.160  8857  8953 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830291.160  8857  8953 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830291.160  8857  8953 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830291.160  8857  8953 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.160  8857  8953 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.160  8857  8953 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.160  8857  8953 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830291.160   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830291.160   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.160   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.160   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.160  8857  8953 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830291.160  8857  8953 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830291.160  8857  8953 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830291.160  8857  8953 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.160  8857  8953 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.160  8857  8953 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.160  8857  8953 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830291.161   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830291.161   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.161   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.161   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.161  8857  8953 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830291.161  8857  8953 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830291.161  8857  8953 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830291.161  8857  8953 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.161  8857  8953 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.161  8857  8953 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.161  8857  8953 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830291.161   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830291.161   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.161   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.161   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.161  8857  8953 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830291.161  8857  8953 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830291.165  2572  2609 E OpenGLRenderer: Unable to match the desired swap behavior.
+         1703830291.172  1845  2120 V WindowManager: Sent Transition #26 createdAt=12-29 07:11:31.122 via request=TransitionRequestInfo { type = TO_BACK, triggerTask = null, remoteTransition = null, displayChange = null }
+         1703830291.172  1845  2120 V WindowManager:     startWCT=WindowContainerTransaction { changes = {} hops = [] errorCallbackToken=null taskFragmentOrganizer=null }
+         1703830291.173  2572  2596 V WindowManagerShell: onTransitionReady android.os.BinderProxy@3577651: {id=26 t=TO_BACK f=0x106 trk=0 r=[0@Point(0, 0)] c=[{WCT{android.window.IWindowContainerToken$Stub$Proxy@258e6a8} m=TO_FRONT f=NONE p=WCT{android.window.IWindowContainerToken$Stub$Proxy@41195c1} leash=Surface(name=Task=40)/@0xdbc9a45 sb=Rect(0, 0 - 1080, 2340) eb=Rect(0, 0 - 1080, 2340) d=0},{WCT{android.window.IWindowContainerToken$Stub$Proxy@b63c166} m=TO_FRONT f=NONE leash=Surface(name=DefaultTaskDisplayArea)/@0x6ace59a sb=Rect(0, 0 - 1080, 2340) eb=Rect(0, 0 - 1080, 2340) d=0}]}
+         1703830291.173  2572  2596 V WindowManagerShell: Playing animation for (#26)android.os.BinderProxy@3577651@0
+         1703830291.173  2572  2596 V WindowManagerShell:  try handler com.android.wm.shell.transition.DefaultMixedHandler@763dc57
+         1703830291.173  1845  2120 V WindowManager:     info={id=26 t=TO_BACK f=0x106 trk=0 r=[0@Point(0, 0)] c=[{WCT{RemoteToken{d63565b Task{7318aa7 #40 type=standard A=10264:dev.driftsys.dashscene.demo}}} m=TO_FRONT f=NONE p=WCT{RemoteToken{7bc8b73 DefaultTaskDisplayArea@94631192}} leash=Surface(name=Task=40)/@0x455f179 sb=Rect(0, 0 - 1080, 2340) eb=Rect(0, 0 - 1080, 2340) d=0},{WCT{RemoteToken{7bc8b73 DefaultTaskDisplayArea@94631192}} m=TO_FRONT f=NONE leash=Surface(name=DefaultTaskDisplayArea)/@0x4fe371e sb=Rect(0, 0 - 1080, 2340) eb=Rect(0, 0 - 1080, 2340) d=0}]}
+         1703830291.173  2572  2596 V WindowManagerShell: start keyguard going-away transition, info = {id=26 t=TO_BACK f=0x106 trk=0 r=[0@Point(0, 0)] c=[{WCT{android.window.IWindowContainerToken$Stub$Proxy@258e6a8} m=TO_FRONT f=NONE p=WCT{android.window.IWindowContainerToken$Stub$Proxy@41195c1} leash=Surface(name=Task=40)/@0xdbc9a45 sb=Rect(0, 0 - 1080, 2340) eb=Rect(0, 0 - 1080, 2340) d=0},{WCT{android.window.IWindowContainerToken$Stub$Proxy@b63c166} m=TO_FRONT f=NONE leash=Surface(name=DefaultTaskDisplayArea)/@0x6ace59a sb=Rect(0, 0 - 1080, 2340) eb=Rect(0, 0 - 1080, 2340) d=0}]}
+         1703830291.173  2572  2596 D KeyguardService: Starts IRemoteAnimationRunner: info={id=26 t=TO_BACK f=0x106 trk=0 r=[0@Point(0, 0)] c=[{WCT{android.window.IWindowContainerToken$Stub$Proxy@258e6a8} m=TO_FRONT f=NONE p=WCT{android.window.IWindowContainerToken$Stub$Proxy@41195c1} leash=Surface(name=Task=40)/@0xdbc9a45 sb=Rect(0, 0 - 1080, 2340) eb=Rect(0, 0 - 1080, 2340) d=0},{WCT{android.window.IWindowContainerToken$Stub$Proxy@b63c166} m=TO_FRONT f=NONE leash=Surface(name=DefaultTaskDisplayArea)/@0x6ace59a sb=Rect(0, 0 - 1080, 2340) eb=Rect(0, 0 - 1080, 2340) d=0}]}
+         1703830291.173  2572  2596 V WindowManagerShell:  animated by com.android.wm.shell.transition.DefaultMixedHandler@763dc57
+         1703830291.173  2572  2572 D KeyguardViewMediator: handleStartKeyguardExitAnimation startTime=0 fadeoutDuration=0
+         1703830291.174  2572  2572 D KeyguardUnlock: fadeInSurfaceBehind
+         1703830291.174  2572  2572 D KeyguardViewMediator: onKeyguardExitRemoteAnimationFinished
+         1703830291.175  1078  1078 I sensors-hal: [hal]activate_physical_sensor:251, android.sensor.light/51 en=0
+         1703830291.175  1078  1078 I sensors-hal: [hal]activate_physical_sensor:262, android.sensor.light/51 en=0 completed
+         1703830291.178  1078  1264 I ASH     : @ 1162.559: tcs3701: Client count (type)cur/new: (0)1/0
+         1703830291.178  1078  1264 I ASH     : @ 1162.559: tcs3701: Disabling sensor 0
+         1703830291.178  1078  1264 I ASH     : @ 1162.560: tcs3701: Disabling ALS
+         1703830291.178  1078  1264 D ASH     : @ 1162.560: tcs3701: start power rail timer, state:3
+         1703830291.185  1078  1264 I ASH     : @ 1162.567: tcs3701: stop power rail pending_off timer
+         1703830291.185  1078  1264 D ASH     : @ 1162.567: tcs3701: start power rail timer, state:3
+         1703830291.187  2572  2572 D KeyguardViewMediator: onKeyguardExitRemoteAnimationFinished#hideKeyguardViewAfterRemoteAnimation
+         1703830291.188  2572  2572 D CentralSurfaces: Received new disable state: Old: enaihbcRso.qingr | New: enaihbcrso.qingr (changed: r.)
+         1703830291.190  2572  2572 D SbStateController: setState: requested state SHADE!= upcomingState: KEYGUARD. This usually means the status bar state transition was interrupted before the upcoming state could be applied.
+         1703830291.191  2572  2572 D CentralSurfaces: updateQsExpansionEnabled - QS Expand enabled: true
+         1703830291.191  3691  3691 D NfcService: MSG_APPLY_SCREEN_STATE 8
+         1703830291.193  3691  3691 D NfcService: Discovery configuration equal, not updating.
+         1703830291.194  2572  2572 D CentralSurfaces: Received new disable state: enaihbcrso.qingr (unchanged)
+         1703830291.197  2572  2572 D CentralSurfaces: updateQsExpansionEnabled - QS Expand enabled: true
+         1703830291.197  3760  3760 E SUI_svcsock: svc_sock_send_message(suisvc): invalid remote socket suilst
+         1703830291.198  2572  2572 D KeyguardUnlock: skip finishSurfaceBehindRemoteAnimation surfaceBehindAlpha=1.0
+         1703830291.198  2572  2572 D KeyguardService: Finish IRemoteAnimationRunner.
+         1703830291.198  2572  2596 V WindowManagerShell: Transition animation finished (aborted=false), notifying core (#26)android.os.BinderProxy@3577651@0
+         1703830291.199  1845  8609 D SystemServerTiming: getUserSwitchability-0
+         1703830291.199  1845  8609 D SystemServerTiming: TM.isInCall
+         1703830291.199  1845  8609 D SystemServerTiming: hasUserRestriction-DISALLOW_USER_SWITCH
+         1703830291.199  1845  8609 D SystemServerTiming: getInt-ALLOW_USER_SWITCHING_WHEN_SYSTEM_USER_LOCKED
+         1703830291.199  1845  8609 D SystemServerTiming: isUserUnlocked-USER_SYSTEM
+         1703830291.199  1845  2120 V WindowManager: Finish Transition #26: created at 12-29 07:11:31.122 collect-started=0.174ms request-sent=0.334ms started=10.533ms ready=10.489ms sent=49.761ms finished=77.118ms
+         1703830291.205  2572  7849 D KeyguardService: setOccluded(false)
+         1703830291.205  2572  7849 D KeyguardViewMediator: setOccluded(false)
+         1703830291.205  2572  2596 V WindowManagerShell: Track 0 became idle
+         1703830291.205  2572  2596 V WindowManagerShell: All active transition animations finished
+         1703830291.217  8857  8953 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830291.217  8857  8953 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.217  8857  8953 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.217  8857  8953 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.217  8857  8953 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830291.217   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830291.217   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.217   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.217   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.217  8857  8953 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830291.217  8857  8953 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830291.217  8857  8953 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830291.217  8857  8953 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.217  8857  8953 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.217  8857  8953 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.217  8857  8953 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830291.217   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830291.217   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.217   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.217   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.217  8857  8953 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830291.217  8857  8953 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830291.217  8857  8953 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830291.218  8857  8953 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.218  8857  8953 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.218  8857  8953 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.218  8857  8953 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830291.218   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830291.218   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.218   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.218   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.218  8857  8953 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830291.218  8857  8953 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830291.218  8857  8953 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830291.218  8857  8953 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.218  8857  8953 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.218  8857  8953 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.218  8857  8953 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830291.218   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830291.218   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.218   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.218   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.218  8857  8953 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830291.218  8857  8953 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830291.225  1078  1264 I ASH     : @ 1162.607: tcs3701: stop power rail pending_off timer
+         1703830291.225  1078  1264 D ASH     : @ 1162.607: tcs3701: start power rail timer, state:3
+         1703830291.238  2572  2572 D KeyguardViewMediator: handleSetOccluded(false)
+         1703830291.241  1845  2562 D CompatibilityChangeReporter: Compat change id reported: 214016041; UID 10264; state: ENABLED
+         1703830291.241  1845  2562 I ImeTracker: dev.driftsys.dashscene.demo:6ece222a: onRequestHide at ORIGIN_SERVER_HIDE_INPUT reason HIDE_UNSPECIFIED_WINDOW
+         1703830291.241  1845  2562 I ImeTracker: dev.driftsys.dashscene.demo:6ece222a: onCancelled at PHASE_SERVER_SHOULD_HIDE
+         1703830291.245  5681  5681 I GoogleInputMethodService: GoogleInputMethodService.onStartInput():1877 onStartInput(EditorInfo{inputType=0x0(NULL) imeOptions=0x0 privateImeOptions=null actionName=UNSPECIFIED actionLabel=null actionId=0 initialSelStart=-1 initialSelEnd=-1 initialCapsMode=0x0 hintText=null label=null packageName=dev.driftsys.dashscene.demo fieldId=0 fieldName=null extras=null}, false)
+         1703830291.245  5681  5681 I GoogleInputMethodService: GoogleInputMethodService.shouldHideHeaderOnInitialState():4008 ShouldHideHeaderOnInitialState = false
+         1703830291.246  5681  5681 I GoogleInputMethodService: GoogleInputMethodService.updateDeviceLockedStatus():2087 repeatCheckTimes = 2, unlocked = true
+         1703830291.266  1078  1264 I ASH     : @ 1162.647: tcs3701: stop power rail pending_off timer
+         1703830291.266  1078  1264 D ASH     : @ 1162.647: tcs3701: start power rail timer, state:3
+         1703830291.291  2572  2572 D CentralSurfaces: Received new disable state: enaihbcrso.qingr (unchanged)
+         1703830291.305  1078  1264 I ASH     : @ 1162.687: tcs3701: stop power rail pending_off timer
+         1703830291.305  1078  1264 D ASH     : @ 1162.687: tcs3701: start power rail timer, state:3
+         1703830291.309  2638  2638 I WallpaperService: engine paused
+         1703830291.310  1078  1078 I sensors-hal: [hal]activate_physical_sensor:251, android.sensor.gyroscope/41 en=0
+         1703830291.311  1078  1078 D Diag_Lib: diag: Diag_LSM_DeInit: invoked for pid: 1078
+         1703830291.311  1078  1078 D Diag_Lib: diag: Diag_LSM_DeInit: done for pid: 1078
+         1703830291.312  1078  1078 D Diag_Lib: diag: Diag_LSM_DeInit: invoked for pid: 1078
+         1703830291.312  1078  1078 D Diag_Lib: diag: Diag_LSM_DeInit: done for pid: 1078
+         1703830291.312  1078  1078 I sensors-hal: [hal]activate_physical_sensor:262, android.sensor.gyroscope/41 en=0 completed
+         1703830291.345  1078  1264 I ASH     : @ 1162.727: tcs3701: stop power rail pending_off timer
+         1703830291.345  1078  1264 D ASH     : @ 1162.727: tcs3701: start power rail timer, state:3
+         1703830291.363  2572  2608 D ControlsListingControllerImpl: Unsubscribing callback
+         1703830291.364  2572  2572 D DLObserver: remove listener: com.android.systemui.dock.DockManagerExtensionsKt$retrieveIsDocked$1$callback$1@10f2aa3
+         1703830291.365  2572  2572 D DLObserver: remove listener: com.android.systemui.dock.DockManagerExtensionsKt$retrieveIsDocked$1$callback$1@d6219d2
+         1703830291.365  2572  2608 D ControlsListingControllerImpl: Unsubscribing callback
+         1703830291.366  2572  2572 D DLObserver: remove listener: com.android.systemui.dock.DockManagerExtensionsKt$retrieveIsDocked$1$callback$1@f8501a0
+         1703830291.366  2572  2572 D DLObserver: remove listener: com.android.systemui.dock.DockManagerExtensionsKt$retrieveIsDocked$1$callback$1@3e0a159
+         1703830291.367  2572  2608 D ControlsListingControllerImpl: Unsubscribing callback
+         1703830291.367  2572  2572 D DLObserver: remove listener: com.android.systemui.dock.DockManagerExtensionsKt$retrieveIsDocked$1$callback$1@f4a667e
+         1703830291.368  2572  2572 D DLObserver: remove listener: com.android.systemui.dock.DockManagerExtensionsKt$retrieveIsDocked$1$callback$1@15c37df
+         1703830291.385  1078  1264 I ASH     : @ 1162.767: tcs3701: stop power rail pending_off timer
+         1703830291.385  1078  1264 D ASH     : @ 1162.767: tcs3701: start power rail timer, state:3
+         1703830291.425  1078  1264 I ASH     : @ 1162.807: tcs3701: stop power rail pending_off timer
+         1703830291.425  1078  1264 D ASH     : @ 1162.807: tcs3701: start power rail timer, state:3
+         1703830291.465  1078  1264 I ASH     : @ 1162.847: tcs3701: stop power rail pending_off timer
+         1703830291.466  1078  1264 D ASH     : @ 1162.847: tcs3701: start power rail timer, state:3
+         1703830291.476  2572  2604 W WindowOnBackDispatcher: sendCancelIfRunning: isInProgress=falsecallback=android.view.ViewRootImpl$$ExternalSyntheticLambda17@483f590
+         1703830291.477  1845  2561 W InputManager-JNI: Input channel object 'a6e5d72 Splash Screen dev.driftsys.dashscene.demo (client)' was disposed without first being removed with the input manager!
+         1703830291.479  1845  3750 D CoreBackPreview: Window{a6e5d72 u0 Splash Screen dev.driftsys.dashscene.demo EXITING}: Setting back callback null
+         1703830291.505  1078  1264 I ASH     : @ 1162.887: tcs3701: stop power rail pending_off timer
+         1703830291.505  1078  1264 D ASH     : @ 1162.887: tcs3701: start power rail timer, state:3
+         1703830291.545  1078  1264 I ASH     : @ 1162.927: tcs3701: stop power rail pending_off timer
+         1703830291.545  1078  1264 D ASH     : @ 1162.927: tcs3701: start power rail timer, state:3
+         1703830291.585  1078  1264 I ASH     : @ 1162.967: tcs3701: stop power rail pending_off timer
+         1703830291.585  1078  1264 D ASH     : @ 1162.967: tcs3701: start power rail timer, state:3
+         1703830291.601  8857  8953 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830291.601  8857  8953 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.601  8857  8953 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.601  8857  8953 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.601  8857  8953 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830291.601   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830291.601   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.601   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.601   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.601  8857  8953 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830291.601  8857  8953 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830291.601  8857  8953 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830291.601  8857  8953 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.601  8857  8953 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.601  8857  8953 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.601  8857  8953 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830291.601   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830291.601   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.601   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.601   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.601  8857  8953 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830291.601  8857  8953 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830291.601  8857  8953 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830291.601  8857  8953 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.601  8857  8953 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.601  8857  8953 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.602  8857  8953 E Gralloc4: isSupported(1, 1, 56, 1, ...) failed with 1
+         1703830291.602   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x38
+         1703830291.602   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.602   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.602   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.602  8857  8953 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 56 usage b00: 1
+         1703830291.602  8857  8953 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830291.602  8857  8953 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830291.602  8857  8953 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.602  8857  8953 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.602  8857  8953 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.602  8857  8953 E Gralloc4: isSupported(1, 1, 59, 1, ...) failed with 1
+         1703830291.602   663  8166 E qdgralloc: GetGpuPixelFormat: No map for format: 0x3b
+         1703830291.602   663  8166 E AdrenoUtils: <validate_memory_layout_input_parmas:1923>: Unknown Format 0
+         1703830291.602   663  8166 E AdrenoUtils: <adreno_init_memory_layout:4634>: Memory Layout input parameter validation failed!
+         1703830291.602   663  8166 E qdgralloc: GetGpuResourceSizeAndDimensions Graphics metadata init failed
+         1703830291.602  8857  8953 E GraphicBufferAllocator: Failed to allocate (4 x 4) layerCount 1 format 59 usage b00: 1
+         1703830291.602  8857  8953 E AHardwareBuffer: GraphicBuffer(w=4, h=4, lc=1) failed (Unknown error -1), handle=0x0
+         1703830291.603  8857  8953 I dashscene: dashscene-gpu (Adreno (TM) 620, Vulkan, Rgba8Unorm) — 1080x1984, scene surfaces
+         1703830291.620  2572  3190 D ResourceTrimmer: Sending TRIM_MEMORY_UI_HIDDEN.
+         1703830291.625  1078  1264 I ASH     : @ 1163.007: tcs3701: stop power rail pending_off timer
+         1703830291.625  1078  1264 D ASH     : @ 1163.007: tcs3701: start power rail timer, state:3
+         1703830291.629  8857  8953 I dashscene: attached a 1080x1984 surface
+         1703830291.637  8857  8953 I dashscene: first vsync callback
+         1703830291.665  1078  1264 I ASH     : @ 1163.047: tcs3701: stop power rail pending_off timer
+         1703830291.665  1078  1264 D ASH     : @ 1163.047: tcs3701: start power rail timer, state:3
+         1703830291.700  3269  4370 I NearbySharing: Screen is unlocked [CONTEXT service_id=194 ]
+         1703830291.700  3269  4370 I NearbySharing: Stopping scanning because Bluetooth is disabled. [CONTEXT service_id=194 ]
+         1703830291.700  3269  4370 I NearbySharing: Failed to stop scanning because we're not scanning. [CONTEXT service_id=194 ]
+         1703830291.701  3269  4370 I NearbySharing: Can't stop advertising FastInitiation. Not advertising. [CONTEXT service_id=194 ]
+         1703830291.701  3269  4370 I NearbySharing: Stopping Fast Init advertisement because Bluetooth is off. [CONTEXT service_id=194 ]
+         1703830291.702  3269  4370 I NearbySharing: Stopping advertising because Bluetooth is disabled. [CONTEXT service_id=194 ]
+         1703830291.703  3269  4370 I NearbySharing: Can't stop scanning for FastInitiation. Not scanning. [CONTEXT service_id=194 ]
+         1703830291.703  3269  4370 I NearbySharing: Cancelling in use notification [CONTEXT service_id=194 ]
+         1703830291.704  3269  4370 I NearbySharing: Fast Initiation Scanning has stopped [CONTEXT service_id=194 ]
+         1703830291.704  3269  4370 I NearbySharing: Stopping FastInitiation scanning because Bluetooth is disabled. [CONTEXT service_id=194 ]
+         1703830291.704  3269  4370 I NearbySharing: Dismissing HUN as there's no device nearby. [CONTEXT service_id=194 ]
+         1703830291.705  3269  4370 I NearbySharing: Cancelling in use notification [CONTEXT service_id=194 ]
+         1703830291.705  1078  1264 I ASH     : @ 1163.087: tcs3701: stop power rail pending_off timer
+         1703830291.705  1078  1264 D ASH     : @ 1163.087: tcs3701: start power rail timer, state:3
+         1703830291.725  3269  4370 I NearbyMediums: BluetoothAdapter's name was not set by Nearby Connections, ignoring call to restore default scan mode. [CONTEXT service_id=54 ]
+         1703830291.726  3269  3269 D BoundBrokerSvc: onBind: Intent { act=com.google.android.gms.cast.firstparty.START dat=chimera-action:/... cmp=com.google.android.gms/.chimera.PersistentApiService }
+         1703830291.726  3269  3269 D BoundBrokerSvc: Loading bound service for intent: Intent { act=com.google.android.gms.cast.firstparty.START dat=chimera-action:/... cmp=com.google.android.gms/.chimera.PersistentApiService }
+         1703830291.727  3269  4370 I NearbyMediums: BluetoothAdapter's name was not set by Nearby Connections, ignoring call to restore device name [CONTEXT service_id=54 ]
+         1703830291.733  3780  3780 D BoundBrokerSvc: onBind: Intent { act=com.google.android.gms.auth.cryptauth.cryptauthservice.START dat=chimera-action:/... cmp=com.google.android.gms/.chimera.GmsBoundBrokerService }
+         1703830291.733  3780  3780 D BoundBrokerSvc: Loading bound service for intent: Intent { act=com.google.android.gms.auth.cryptauth.cryptauthservice.START dat=chimera-action:/... cmp=com.google.android.gms/.chimera.GmsBoundBrokerService }
+         1703830291.734  3269  4377 I CastDatabase: Opening the database
+         1703830291.735  1845  2477 D ConnectivityService: NetReassign [no changes] [c 0] [a 0] [i 2]
+         1703830291.737  3269  4377 I SQLiteCastStore: 0 CastNetworkInfo instances loaded, 0 CastDeviceInfo instances loaded, 0 paired guest mode devices loaded.
+         1703830291.745  1078  1264 I ASH     : @ 1163.127: tcs3701: stop power rail pending_off timer
+         1703830291.745  1078  1264 D ASH     : @ 1163.127: tcs3701: start power rail timer, state:3
+         1703830291.785  1078  1264 I ASH     : @ 1163.167: tcs3701: stop power rail pending_off timer
+         1703830291.786  1078  1264 D ASH     : @ 1163.167: tcs3701: start power rail timer, state:3
+         1703830291.788  1845  2562 D WifiNl80211Manager: Scan result ready event
+         1703830291.789  1845  2562 D WifiNative: Scan result ready event
+         1703830291.791  1454  2564 I LOWI-9.0.0.89.f: [LOWI-Scan] lowi_close_record:Scan done in 1146711ms, 32 APs in scan results
+         1703830291.825  1078  1264 I ASH     : @ 1163.207: tcs3701: stop power rail pending_off timer
+         1703830291.825  1078  1264 D ASH     : @ 1163.207: tcs3701: start power rail timer, state:3
+         1703830291.865  8857  8953 I dashscene: first frame
+         1703830291.865  1078  1264 I ASH     : @ 1163.247: tcs3701: stop power rail pending_off timer
+         1703830291.866  1078  1264 D ASH     : @ 1163.247: tcs3701: start power rail timer, state:3
+         1703830291.906  1078  1264 I ASH     : @ 1163.287: tcs3701: stop power rail pending_off timer
+         1703830291.906  1078  1264 D ASH     : @ 1163.287: tcs3701: start power rail timer, state:3
+         1703830291.945  1078  1264 I ASH     : @ 1163.327: tcs3701: stop power rail pending_off timer
+         1703830291.946  1078  1264 D ASH     : @ 1163.327: tcs3701: start power rail timer, state:3
+         1703830291.986  1078  1264 I ASH     : @ 1163.367: tcs3701: stop power rail pending_off timer
+         1703830291.986  1078  1264 D ASH     : @ 1163.367: tcs3701: start power rail timer, state:3
+         1703830292.026  1078  1264 I ASH     : @ 1163.407: tcs3701: stop power rail pending_off timer
+         1703830292.026  1078  1264 D ASH     : @ 1163.407: tcs3701: start power rail timer, state:3
+         1703830292.066  1078  1264 I ASH     : @ 1163.447: tcs3701: stop power rail pending_off timer
+         1703830292.066  1078  1264 D ASH     : @ 1163.447: tcs3701: start power rail timer, state:3
+         1703830292.106  1078  1264 I ASH     : @ 1163.487: tcs3701: stop power rail pending_off timer
+         1703830292.106  1078  1264 D ASH     : @ 1163.487: tcs3701: start power rail timer, state:3
+         1703830292.147  1078  1264 I ASH     : @ 1163.527: tcs3701: stop power rail pending_off timer
+         1703830292.147  1078  1264 D ASH     : @ 1163.527: tcs3701: start power rail timer, state:3
+         1703830292.187  1078  1264 I ASH     : @ 1163.567: tcs3701: stop power rail pending_off timer
+         1703830292.187  1078  1264 D ASH     : @ 1163.567: tcs3701: start power rail timer, state:3
+         1703830292.226  1078  1264 I ASH     : @ 1163.607: tcs3701: stop power rail pending_off timer
+         1703830292.226  1078  1264 D ASH     : @ 1163.607: tcs3701: start power rail timer, state:3
+         1703830292.266  1078  1264 I ASH     : @ 1163.647: tcs3701: stop power rail pending_off timer
+         1703830292.266  1078  1264 D ASH     : @ 1163.647: tcs3701: start power rail timer, state:3

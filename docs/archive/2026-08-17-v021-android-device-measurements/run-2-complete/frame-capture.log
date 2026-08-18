@@ -1,0 +1,13 @@
+frame-capture: Pixel 5 (redfin), Android 14 / API 34, device
+All files should be loaded. Notifying the device.
+frame-capture: installed target/android-demo/showcase.apk
+frame-capture: capturing surfaces — up to 3 sample(s), 240 s at most
+frame-capture: surfaces: pid 10186
+frame-capture: surfaces: 3 sample(s) -> target/android-measure/20231229T090010Z/frames-surfaces.log
+frame-capture: capturing typography — up to 3 sample(s), 240 s at most
+frame-capture: typography: pid 10428
+frame-capture: typography: 3 sample(s) -> target/android-measure/20231229T090010Z/frames-typography.log
+frame-capture: capturing layout — up to 3 sample(s), 240 s at most
+frame-capture: layout: pid 10655
+frame-capture: layout: 3 sample(s) -> target/android-measure/20231229T090010Z/frames-layout.log
+frame-capture: 9 sample(s) across 3 scene(s) -> target/android-measure/20231229T090010Z/frames.md

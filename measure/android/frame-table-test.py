@@ -243,6 +243,16 @@ def main():
         case("a zero-glyph frame is a row, not a rejection", TABLE, status)
         case("and its glyph cell is 0, not an em dash", "0", glyph_cell(out))
 
+        # **The one-day `present mean` shape**, which the archived device captures
+        # carry: the split instrument used that word before it was renamed to
+        # `submit`, and the archive's README promises those captures can still be
+        # re-derived. A rename must not orphan evidence.
+        renamed = sample("1786963759.840", 4014).replace("submit mean", "present mean")
+        assert "present mean" in renamed, "the fixture must actually use the old label"
+        status, out = table([renamed], "oldlabel")
+        case("a capture using the old `present` label still parses", TABLE, status)
+        case("and its paint column is intact", "1.20", paint_cell(out))
+
         # --- the pre-split shape, which every earlier bundle holds -----------
         status, out = table([combined("1786963759.840", 4014)], "legacy")
         case("a pre-split capture still parses", TABLE, status)
