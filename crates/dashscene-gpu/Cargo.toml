@@ -12,6 +12,43 @@ categories = ["graphics", "rendering::graphics-api"]
 [lib]
 name = "dashscene_gpu"
 
+[features]
+# GPU execution time, from the device's own timestamps (v0.21, epic #1107).
+#
+# **Off by default, and that is the whole point.** Turning it on adds two
+# feature bits to the device request — `TIMESTAMP_QUERY` and
+# `TIMESTAMP_QUERY_INSIDE_ENCODERS`, both of which the encoder bracketing needs
+# — and the shipped painter otherwise requests no features beyond the ASTC bit
+# it bakes with. A shipped painter whose device request depends on a build flag
+# would make every D3a statement conditional on how it was compiled.
+#
+# The limits are a separate axis and this feature does not touch them: the
+# painter asks for `Limits::downlevel_defaults().using_resolution(adapter
+# .limits())`, not bare `downlevel_defaults`, and `dashscene-android`'s own
+# module documentation is what describes that request. Do not conflate the two;
+# an earlier revision of this comment cited `dashscene-validator`, which
+# contains no such prose.
+#
+# It exists because GPU time is otherwise unmeasurable on a retail Android
+# device: `perfetto --query` registers no `gpu.counters` there, the `kgsl`
+# ftrace tracepoints will not enable under `traced_probes`, and
+# `/sys/class/kgsl` is refused to `shell` with no root. Timestamps are what is
+# left, and the Adreno 620's Vulkan adapter reports all four query features.
+#
+# `dashscene-gpu --example gpu_time` is the consumer, and the only one — which
+# is why `just lint` compiles this feature explicitly. A feature nothing builds
+# rots.
+gpu-timing = []
+
+# `gpu_time` calls `Renderer::last_gpu_time`, which exists only under the
+# feature above. Without this, `cargo test --no-run --workspace` and
+# `clippy --all-targets` both build the example with default features and fail
+# on the missing method — which is how the omission was found, by `just build`
+# rather than by the two single-crate checks that preceded it.
+[[example]]
+name = "gpu_time"
+required-features = ["gpu-timing"]
+
 [dependencies]
 # Boundary B — the `Painter` trait this crate implements, and the only
 # dependency it has until story #578 brings the instance buffer and `wgpu`

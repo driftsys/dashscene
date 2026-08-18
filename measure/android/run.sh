@@ -123,6 +123,18 @@ just android-layer-cost > "${out}/layer-cost.txt" 2>&1 || \
     ds_warn "the render-target probe failed; see ${out}/layer-cost.txt"
 
 # ---------------------------------------------------------------------------
+# 2b. GPU execution time, from the device's own timestamps (epic #1107).
+# ---------------------------------------------------------------------------
+# Here rather than in a second device window, because the bundle's own
+# `perfetto-README.md` now tells its reader that GPU time comes from this probe
+# — and a bundle that raises the question without answering it costs an operator
+# a whole second contact with the hardware. Windowless and needing no APK, the
+# same property that puts the two probes above ahead of the packaging step.
+ds_note "GPU execution time (epic #1107)"
+just android-gpu-time > "${out}/gpu-time.txt" 2>&1 || \
+    ds_warn "the GPU-timing probe failed; see ${out}/gpu-time.txt"
+
+# ---------------------------------------------------------------------------
 # 3. The frame capture, on release.
 # ---------------------------------------------------------------------------
 ds_note "packaging the release showcase host"
@@ -227,7 +239,7 @@ ds_note "attach procedure — release, then debug"
     # Single-quoted on purpose: the backticks are Markdown and the `%s` is
     # printf's. Nothing here is meant to expand.
     # shellcheck disable=SC2016
-    for file in environment.md adapter-report.txt layer-cost.txt frames.md \
+    for file in environment.md adapter-report.txt layer-cost.txt gpu-time.txt frames.md \
         attach.md sf-timestats.txt sf-latency.txt gfxinfo.txt perfetto-README.md; do
         if [ -f "${out}/${file}" ]; then
             printf -- '- `%s`\n' "${file}"
@@ -248,9 +260,10 @@ ds_note "attach procedure — release, then debug"
     echo "| \`adapter-report.txt\` | #885 — D3a, the Vulkan measurement |"
     echo "| \`frames.md\`, \`frames-*.log\` | #842 — the showcase on device |"
     echo "| \`attach.md\` | #842, and the debug-versus-release cost of reaching a frame |"
-    echo "| \`sf-timestats.txt\` | #842, and the GPU half of #1107 |"
+    echo "| \`sf-timestats.txt\` | #842 — the compositor's view of the frame path, not GPU time |"
     echo "| \`sf-latency.txt\`, \`gfxinfo.txt\` | neither is the painter's frames — read their own headers |"
     echo "| \`layer-cost.txt\` | #1128 — Q-6, the render-target budget |"
+    echo "| \`gpu-time.txt\` | epic #1107 — GPU execution time, from the device's own timestamps |"
     echo
     echo "The text path (#969) is the **harness** host and not this one, and it is"
     echo "checked by \`just android-splitscreen\`, whose witness is"

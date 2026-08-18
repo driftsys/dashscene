@@ -100,6 +100,10 @@ test-all:
 # Lint everything: clippy, rustfmt, doc-links, prim and the Deno sources.
 lint: deno-fmt-check
     cargo clippy --workspace --all-targets -- -D warnings
+    # The `gpu-timing` cfg population, which the line above never compiles.
+    # Its own recipe because CI's `clippy` job has to run exactly it — see
+    # `gpu-timing-lint`.
+    just gpu-timing-lint
     # The wasm32 half, which the line above never sees. Its own recipe rather
     # than four more lines here, because CI has to run exactly it and a second
     # copy in YAML is the drift this repository keeps hitting. Called from the
@@ -1651,6 +1655,81 @@ android-layer-cost:
     # the default" rather than as zero.
     "${adb}" shell "DS_LAYER_MAX='${DS_LAYER_MAX:-}' \
       DS_LAYER_FRAMES='${DS_LAYER_FRAMES:-}' /data/local/tmp/layer_cost"
+
+# The `gpu-timing` feature's own pass: clippy and intra-doc links over the code
+# behind that cfg.
+#
+# **Its own recipe for the reason `doc-links`, `wasm-lint` and `prim` are** —
+# CI's `clippy` job runs exactly it, and a second copy of the command in YAML is
+# the drift this repository keeps hitting. Added inline to `lint` first, which
+# was issue #1108 reproduced: CI runs the literal
+# `cargo clippy --workspace --all-targets`, not `just lint`, and
+# `--all-targets` does not imply `--all-features` — so nothing in CI compiled
+# either the query-set code in `dashscene-gpu` or `examples/gpu_time.rs`, and a
+# rename behind the cfg would have landed green.
+#
+# **The doc pass is the half clippy cannot cover**, and the same half issue
+# #1109 added to `wasm-lint` and `android-lint`: an item behind an unsatisfied
+# cfg is *absent* rather than private, so `just doc-links` — which runs on
+# default features — resolves no link written on `GpuTiming`,
+# `timing_features` or `last_gpu_time`.
+#
+# Clippy and the intra-doc-link pass for the `gpu-timing` feature's own code.
+gpu-timing-lint:
+    cargo clippy -p dashscene-gpu --all-targets --features gpu-timing -- -D warnings
+    RUSTDOCFLAGS='-D warnings' cargo doc -p dashscene-gpu --features gpu-timing --no-deps --document-private-items --quiet
+
+# GPU execution time on the attached device, from its own timestamps (epic
+# #1107).
+#
+# **The only route to a GPU number on a retail Android device**, established by
+# eliminating the others on a Pixel 5: `perfetto --query` registers no
+# `gpu.counters`, the `kgsl` and `dma_fence` ftrace tracepoints exist and will
+# not enable under `traced_probes` — a 20 s trace with the painter drawing
+# recorded zero of them against 75 000 `sched_switch` — and `/sys/class/kgsl` is
+# refused to `shell` with no `su`. Timestamp queries are what is left.
+#
+# **`--features gpu-timing`, which is off everywhere else.** It adds two feature
+# bits to the device request — `TIMESTAMP_QUERY` and
+# `TIMESTAMP_QUERY_INSIDE_ENCODERS`, both of which the encoder bracketing needs
+# — where the shipped painter requests no features beyond the ASTC bit it bakes
+# with. The limits are a separate axis and are untouched. The feature's comment
+# in `crates/dashscene-gpu/Cargo.toml` carries why that must not depend on a
+# build flag. `just android-probe` prints whether an adapter offers the queries at
+# all, so a device that forecloses this says so first.
+#
+# Offscreen and windowless, like `android-layer-cost`: no swapchain, so the
+# figure excludes the acquire and present that dominate a windowed frame's
+# wall-clock. That is the point — those were measured and this is the term they
+# did not contain.
+#
+# Build the GPU-timing probe, push it to a device and run it.
+android-gpu-time:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Assigned, then evalled — never `eval "$(just _android-env)"`, which
+    # swallows a missing NDK and compiles unwired. See `_android-env`.
+    android_env=$(just _android-env {{ ANDROID_API }})
+    eval "${android_env}"
+    cargo build -p dashscene-gpu --example gpu_time --features gpu-timing --release \
+      --target aarch64-linux-android
+    adb=$(just _android-adb)
+    if ! just _android-has-device; then
+      echo "android-gpu-time: no device attached" >&2
+      exit 1
+    fi
+    "${adb}" push target/aarch64-linux-android/release/examples/gpu_time \
+      /data/local/tmp/gpu_time
+    "${adb}" shell chmod 755 /data/local/tmp/gpu_time
+    # **Forwarded explicitly**, because `adb shell` does not carry the host's
+    # environment — so without this the probe's own `DS_GPU_FRAMES` and
+    # `DS_GPU_WARMUP` overrides are unreachable through the only recipe that
+    # runs it, and they are its sole duration bound: a plain executable under
+    # `adb shell` takes no timeout. `android-layer-cost` forwards its two the
+    # same way and for the same reason. Empty is passed as empty, which the
+    # probe reads as "use the default" rather than as zero.
+    "${adb}" shell "DS_GPU_FRAMES='${DS_GPU_FRAMES:-}' \
+      DS_GPU_WARMUP='${DS_GPU_WARMUP:-}' /data/local/tmp/gpu_time"
 
 # The whole Android measurement apparatus, into one evidence bundle (story
 # #1229).

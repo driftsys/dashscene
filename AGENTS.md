@@ -260,6 +260,18 @@ total, nineteen of them the crates above.
                       does not clear three standard errors — the first draft's
                       threshold was 1.12 of them and declared 32% of pure noise
                       resolved
+    just android-gpu-time  the same shape again, for GPU execution time: a
+                      wgpu QuerySet bracketing the frame's encoder, converted
+                      with get_timestamp_period(). **The only route to a GPU
+                      number on a retail device** — a Pixel 5 registers no
+                      Perfetto `gpu.counters`, its kgsl and dma_fence
+                      tracepoints do not enable, and /sys/class/kgsl is refused
+                      to shell. Needs `--features gpu-timing`, which is off
+                      everywhere else because it adds two feature bits to the
+                      device request the shipped painter does not ask for;
+                      `just lint` compiles it so it cannot rot. Offscreen, so the figure
+                      excludes the acquire and present that dominate a windowed
+                      frame
     just android-measure  the whole measurement apparatus into one evidence
                       bundle under target/android-measure/: the adapter probe,
                       the render-target sweep, the showcase frame capture with

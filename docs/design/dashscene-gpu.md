@@ -74,7 +74,24 @@ draws the buffer is one of two renderers:
         pub fn render_dirty(&mut self, ..., changes: Option<Changes<'_>>, ...)
                       -> Result<Vec<u8>, RendererError>;
         pub fn max_extent(&self) -> u32;
+        #[cfg(feature = "gpu-timing")]        // off by default; see below
+        pub fn last_gpu_time(&self) -> Option<std::time::Duration>;
     }
+
+**`gpu-timing`, this crate's only Cargo feature, and it is off.** With it on,
+the device request gains `TIMESTAMP_QUERY` and
+`TIMESTAMP_QUERY_INSIDE_ENCODERS`, a `QuerySet` brackets the frame's command
+encoder, and `last_gpu_time` reports what the frame cost the device. With it off
+— every shipped build, every test tier, every CI job but one — the request is
+byte-for-byte what it was, no query set exists and the method is not compiled.
+That invariant is asserted by `a_default_build_adds_no_device_features` rather
+than only stated here, because nothing else in the suite observes it.
+
+It exists because GPU time is otherwise unmeasurable on a retail Android device;
+`docs/design/android-toolchain.md` carries what it measured and what closed the
+alternatives. `last_gpu_time` returns `None` on a `SurfaceRenderer` — the
+collection point is the offscreen path's existing wait — so the probe that uses
+it is offscreen.
 
     impl SurfaceRenderer {                 // to a window or canvas, surface.rs
         #[cfg(not(target_arch = "wasm32"))]

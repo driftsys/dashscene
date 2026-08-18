@@ -127,11 +127,45 @@ fn main() {
             limits.max_storage_buffers_per_shader_stage
         );
 
+        // **What a GPU-timing probe would need, reported because it decides
+        // whether one is possible at all** (v0.21). Vendor GPU counters are not
+        // reachable on a retail Android build — `perfetto --query` registers no
+        // `gpu.counters`, the `kgsl` ftrace tracepoints will not enable under
+        // `traced_probes`, and `/sys/class/kgsl` is refused to `shell` with no
+        // root. Timestamp queries are the remaining route to GPU execution time,
+        // and they are a device **feature**, so an adapter that lacks them
+        // forecloses it.
+        //
+        // Reported rather than requested: this probe replicates the painter's own
+        // device request below, and asking for a feature the painter does not ask
+        // for would make the verdict a different question's answer.
+        let features = adapter.features();
+        for (name, bit) in [
+            ("TIMESTAMP_QUERY", wgpu::Features::TIMESTAMP_QUERY),
+            (
+                "TIMESTAMP_QUERY_INSIDE_ENCODERS",
+                wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
+            ),
+            (
+                "TIMESTAMP_QUERY_INSIDE_PASSES",
+                wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
+            ),
+            (
+                "PIPELINE_STATISTICS_QUERY",
+                wgpu::Features::PIPELINE_STATISTICS_QUERY,
+            ),
+        ] {
+            println!(
+                "  {name:<32} {}",
+                if features.contains(bit) { "yes" } else { "no" }
+            );
+        }
+
         // The painter's own request, replicated. `baked` is intersected rather
         // than required for the same reason `Renderer::on_adapter` intersects
         // it: a requested feature the adapter lacks fails the request outright,
         // and this painter draws without ASTC.
-        let baked = adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_ASTC;
+        let baked = features & wgpu::Features::TEXTURE_COMPRESSION_ASTC;
         let requested = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("adapter_report"),
             required_features: baked,
