@@ -1740,8 +1740,9 @@ fn an_ordinary_node_declares_no_placeholder() {
 
     assert!(
         arena.placeholder(arena.roots()[0]).is_none(),
-        "presence of the table is the predicate story #1127 reads, so a node \
-         without one must read back as not a placeholder",
+        "presence of the table is the predicate story #1127's diagnostic \
+         classifies by, so a node without one must read back as not a \
+         placeholder",
     );
 }
 
@@ -1778,8 +1779,11 @@ fn a_node_with_no_placeholder_writes_no_placeholder_table() {
 /// Its table has an empty vtable, so it is the one input for which an emitter
 /// that learned to skip an all-default nested table — the optimisation
 /// `flex`/`constraints` already apply through `.map` — would silently flip the
-/// node back to ordinary. Presence is the predicate story #1127 reads, so that
-/// would make an unfilled placeholder report as an ordinary node.
+/// node back to ordinary. Presence is the predicate story #1127's diagnostic
+/// classifies by, so that would silently reclassify a declared placeholder as
+/// an ordinary node — for every reader of the table, whether it asks through
+/// `Arena::placeholder` or through `dashbuf::Node::placeholder` as the
+/// contribution gate does.
 #[test]
 fn an_all_default_placeholder_still_reads_back_as_declared() {
     let arena = load(&slot_document(Some(Placeholder::default())));

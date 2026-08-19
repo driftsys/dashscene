@@ -1,7 +1,8 @@
-# dashscene-validator — the three gates, diagnostics, waivers, and the rule set
+# dashscene-validator — the four gates, diagnostics, waivers, and the rule set
 
-As-built after stories #15 and #139 (v0.3) and #41 (v0.7 — full diagnostics and
-waivers). The rationale is in `docs/decisions/validator-three-gates.md` and
+As-built after stories #15 and #139 (v0.3), #41 (v0.7 — full diagnostics and
+waivers) and #1127 (v0.21 — the contribution gate). The rationale is in
+`docs/decisions/validator-three-gates.md` and
 `docs/decisions/waivers-and-diagnostic-completion.md`; this record is the
 component's shape and its rule table.
 
@@ -9,25 +10,44 @@ component's shape and its rule table.
 
 The validator sits _beside_ the semantic model, not inside it. It reads the
 document (`dashbuf`) and boundary B (`dashpaint`), and **producers call it** —
-the arena does not. It has no `dashscene-core` dependency: core is published
-earlier, and `CommittedScene`'s accessors already hand out `dashpaint` types.
+the arena does not — with the contribution gate as the exception this record's
+own gate table names: its caller is a host, not a producer. It has no
+`dashscene-core` dependency: core is published earlier, and `CommittedScene`'s
+accessors already hand out `dashpaint` types.
 
-    producer source vocabulary ──► triage ────────────┐
-                                                      │
-    dashc ──► .dsb document ─────► validate_document ─┼──► Report
-                                                      │
-    Arena::commit ──► CommittedScene ► validate_scene ┘
+    producer source vocabulary ────────► triage ────────────────┐
+                                                                │
+    dashc ──► .dsb document ───────────► validate_document ─────┤
+                                                                ├──► Report
+    Arena::commit ──► CommittedScene ──► validate_scene ────────┤
+                                                                │
+    .dsb document + a host's bound ids ► validate_contributions ┘
 
-## The three gates
+## The four gates
 
-| gate   | entry point                                                                    | input                         | catches                                                                         |
-| ------ | ------------------------------------------------------------------------------ | ----------------------------- | ------------------------------------------------------------------------------- |
-| import | `triage(Construct, Profile, NodePath) -> Diagnostic`                           | the producer's own vocabulary | out-of-profile constructs (`docs/specification/04-figma-vocabulary-profile.md`) |
-| load   | `validate_document(&Document) -> Report`                                       | a `.dsb`                      | referential integrity, unknown enum values, geometry-free paint rules           |
-| paint  | `validate_scene(&[RectEntry], &PaintTable, &ImageTable, &ClipTable) -> Report` | boundary B                    | geometry budgets, runtime index resolution                                      |
+| gate         | entry point                                                                    | input                                              | catches                                                                          |
+| ------------ | ------------------------------------------------------------------------------ | -------------------------------------------------- | -------------------------------------------------------------------------------- |
+| import       | `triage(Construct, Profile, NodePath) -> Diagnostic`                           | the producer's own vocabulary                      | out-of-profile constructs (`docs/specification/04-figma-vocabulary-profile.md`)  |
+| load         | `validate_document(&Document) -> Report`                                       | a `.dsb`                                           | referential integrity, unknown enum values, geometry-free paint rules            |
+| paint        | `validate_scene(&[RectEntry], &PaintTable, &ImageTable, &ClipTable) -> Report` | boundary B                                         | geometry budgets, runtime index resolution                                       |
+| contribution | `validate_contributions(&Document, &[&str], Profile) -> Report`                | a `.dsb` **and** the host's bound contribution ids | a placeholder no host fills, and a binding no placeholder declares (story #1127) |
 
-They are not interchangeable — each of the three failure classes is invisible to
-the other two gates. See the decision record.
+They are not interchangeable: each gate's failure class is one the others cannot
+report. The contribution gate is a partial exception worth knowing about — it
+reads the same `.dsb` as the load gate, so it can _detect_ an out-of-range
+placeholder index, and deliberately stays silent because that finding is the
+load gate's to make. More generally it asks what each side _declares_, never
+whether what it declares is well-formed: an empty or out-of-range pool entry is
+a document defect for the load gate to name (debt #1273). See the decision
+record.
+
+The contribution gate is the one whose second input is not an artifact at all:
+the document states which nodes are placeholders and which ids they name, and
+only the host knows which ids it binds. (Taking a second input is not itself new
+— `validate_asset_payloads` below does too.) That is why the check cannot live
+in `dashc`, which holds the first half and never the second (issue #851). It
+does not weaken `validator-three-gates.md`: the caller supplies the half the
+validator cannot obtain.
 
 The load gate has a second entry point:
 
@@ -71,12 +91,19 @@ rather than a stored field, and `Display` appends it. The hint is a pure
 function of the rule id, and keeping it out of the struct leaves the
 `Diagnostic` shape — and the wasm-ABI mirror `dashc` owns of it
 (`docs/decisions/dashc-wasm-abi.md`) — unchanged. A hint exists where the
-designer can act on the finding: the import gate's out-of-profile constructs
-(§04's "bake it, slot it, design without it") and the MSDF size floor. The
-referential-integrity and geometry rules stand in front of producer bugs, so
-they answer `None`. See `docs/decisions/waivers-and-diagnostic-completion.md`.
+designer can act on the finding — a design choice, whichever gate found it — and
+`None` where the rule stands in front of a producer bug, as the
+referential-integrity and geometry rules do. The import gate's out-of-profile
+constructs (§04's "bake it, slot it, design without it") are the largest group,
+and they are not the only one: the MSDF size floor carries a hint, and so do the
+contribution gate's two rules (story #1127). `rule::workaround`'s match arms are
+the list; this paragraph is deliberately not a second copy of it. See
+`docs/decisions/waivers-and-diagnostic-completion.md`.
 
-`Report` collects them in document order: `has_errors()` answers "is the
+`Report` collects them in the order the gate walked its input, which is document
+order for the gates that walk a document — the contribution gate appends its
+binding diagnostics after those, in the order the host listed them, because
+their subjects have no position in the document. `has_errors()` answers "is the
 document blocked", `is_empty()` answers "does a normal build carry no findings",
 `has(rule)` / `find(rule)` are what tests and callers pin, and
 `strict(&[Waiver])` is the release-mode gate (see "Waivers" below).
@@ -97,13 +124,17 @@ it — a silent drop by construction. See
 
 ### `Location` — not everything reported is a node
 
-    Location::Node(NodePath)     a node: DFS index (= rect index) + name path
-    Location::PaintEntry(u32)    an entry of the paint pool, by pool index
-    Location::ImageAsset(u32)    an image asset, by asset index
-    Location::VariantSet(u32)    a variant set, by pool index (#20)
-    Location::TextStyle(u32)     a text style, by pool index (#41)
-    Location::Signal(u32)        a signal declaration, by pool index (#167)
-    Location::Binding(u32)       a binding row, by row index (#167)
+`Location`'s variants are the enum's own documentation — this record
+deliberately does not carry a second copy of the list, which had already drifted
+by three variants before story #1127 extended it, and which nothing compiles or
+tests.
+
+`Contribution` is the exception the rest of this section is not about: its
+subject is a binding the document does not contain, which is what the diagnostic
+carrying it reports, so it carries the id rather than any index. It is keyed by
+id precisely because the waiver machinery below matches on `Location` equality —
+a position in the caller's own list would make a waiver follow that list's
+order.
 
 Every pooled surface — paint entry, image asset, variant set, text style — is
 shared by every node that references it, so each is reported **once, at its own
@@ -124,12 +155,16 @@ has none, so a scene node diagnostic renders as `#3`.
 ## Profiles
 
 `Profile::Core` (lean/native painters) and `Profile::Full` (Unity-class). They
-diverge only at the import gate, on the constructs
+diverge at the import gate, on the constructs
 `docs/specification/04-figma-vocabulary-profile.md` annotates `(profile:full)`,
-which a `Core` target can never honor and so cannot degrade to anything.
-Backdrop blur was one until story #393 made it core vocabulary every painter
-honours (`docs/decisions/backdrop-blur-is-core-vocabulary.md`); the advanced
-blend mode is now the only one.
+which a `Core` target can never honor and so cannot degrade to anything — and,
+since story #1127, at the contribution gate, for an unrelated reason: there the
+profile says whether the target has a host-content mechanism at all, not which
+paint vocabulary it honours. That gate is the only place `Profile` selects on
+something other than the vocabulary bands. Backdrop blur was one until story
+#393 made it core vocabulary every painter honours
+(`docs/decisions/backdrop-blur-is-core-vocabulary.md`); the advanced blend mode
+is now the only one.
 
 `validate_document` takes no profile: every construct the schema can express is
 in the NOW band, so there is nothing to select — including the v0.8 shadow
@@ -236,6 +271,16 @@ Paint gate only — needs the solved box:
 A pool entry is validated **once, at its own index** — it is shared by every
 rect referencing it, so reporting per referencing rect would repeat one
 authoring mistake N times and bury the rest of the report.
+
+Contribution gate — the document's placeholders against the host's bindings.
+Which of the four states warn, when `placeholder.unfilled` is suppressed, and
+which two placeholder shapes deliberately do not raise it:
+`docs/decisions/a-host-binds-a-contribution-by-id.md`.
+
+| rule                              | why it exists                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `placeholder.unfilled`            | a placeholder whose contribution id no host binding fills (story #1127). A **warning**: nothing here says the document is malformed, only that a migration is unfinished. Suppressed on a `Profile::Core` target **that binds nothing a host contribution can fill** — a lean painter has no host-content mechanism, so the document is correct as it stands; a `Core` caller that binds such an id has contradicted that and is told what it left unfilled. Neither a binding matching nothing (a misspelled id) nor one matching only a placeholder a fragment fills lifts the suppression                                                                                                                                                                                                              |
+| `placeholder.undeclared-overload` | a contribution the host binds that no placeholder declares — host content covering a node the designer believes ships, so they keep maintaining artwork nobody sees (issue #851). The one state nothing else catches, and the only cost paid continuously rather than at load. A **warning**, on both profiles. Not raised at all when any placeholder's id is out of range: the gate cannot then read the whole of what the document declares, so the rule is off for the whole document. Findings already made are kept, so the report is not necessarily empty — the signal is the load gate's `placeholder.string-out-of-range`, not the shape of this report. On a `Core` target the same unreadable id can suppress `placeholder.unfilled` too, since the arming set cannot contain it (debt #1275) |
 
 ## Import-gate vocabulary
 

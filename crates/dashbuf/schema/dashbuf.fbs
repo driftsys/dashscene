@@ -560,8 +560,11 @@ table LayoutConstraints {
 // A declared placeholder: the box a document reserves for content a host
 // contributes at runtime — node replacement
 // (docs/technotes/runtime-content.md §7). Presence of this table on a Node
-// is what declares that node a placeholder, and story #1127's diagnostic
-// reads exactly that predicate — not any one field's value.
+// is what declares that node a placeholder — no field's value decides it, and
+// story #1127's diagnostic classifies nodes by exactly that predicate. Having
+// classified one, that gate does read `contribution_id` and `fragment_ref`, to
+// decide whether an unfilled placeholder is one a host was ever owed
+// (docs/decisions/a-host-binds-a-contribution-by-id.md, Decision 3).
 //
 // The surface only. What fills a placeholder at runtime is placeholder
 // *activation*, which docs/specification/05-qualification.md keeps in v1.

@@ -25,6 +25,7 @@ enum WireLocation<'a> {
     VectorAtlas { index: u32 },
     VectorShape { index: u32 },
     Loop { index: u32 },
+    Contribution { id: &'a str },
 }
 
 impl<'a> From<&'a Location> for WireLocation<'a> {
@@ -43,6 +44,7 @@ impl<'a> From<&'a Location> for WireLocation<'a> {
             Location::VectorAtlas(index) => Self::VectorAtlas { index: *index },
             Location::VectorShape(index) => Self::VectorShape { index: *index },
             Location::Loop(index) => Self::Loop { index: *index },
+            Location::Contribution(id) => Self::Contribution { id },
         }
     }
 }
@@ -187,6 +189,27 @@ mod tests {
             .into_iter()
             .collect();
         assert!(report_json(&report).contains(r#""at":{"kind":"textStyle","index":4}"#));
+    }
+
+    /// Story #1127. The one location that names nothing in the document, so it
+    /// carries an id where every other arm but `Node` carries only an index.
+    ///
+    /// `dashc` never raises this rule (it has no host bindings to compare
+    /// against), so nothing else here would exercise the arm: before this test,
+    /// renaming the field or retagging the variant compiled and passed.
+    #[test]
+    fn a_contribution_location_carries_its_id_on_the_wire() {
+        let report: Report = vec![diagnostic(Location::Contribution("hud.speed".to_owned()))]
+            .into_iter()
+            .collect();
+        let json = report_json(&report);
+        assert!(
+            json.contains(r#""at":{"kind":"contribution","id":"hud.speed"}"#),
+            "{json}"
+        );
+        // An id and no index. `Node` carries both an index and a path; every
+        // other arm carries only an index, and this one only an id.
+        assert!(!json.contains(r#""index""#), "{json}");
     }
 
     #[test]

@@ -271,6 +271,14 @@ records below. Per-story decisions land here directly:
   _presence_ declares the node a placeholder, and its `declared_size` is the
   size a measure callback reports while nothing is bound, not a second statement
   of the node's box (story #1126). The surface only: activation stays in v1.
+- [a-host-binds-a-contribution-by-id.md](a-host-binds-a-contribution-by-id.md) —
+  a host binds a contribution by `contribution_id`, not by naming the node it
+  covers, because no name-to-`NodeId` lookup exists to resolve one. Two of the
+  four placeholder states warn: `placeholder.unfilled`, suppressed on a
+  `Profile::Core` target that binds nothing a host contribution can fill, and
+  `placeholder.undeclared-overload` on both. A placeholder at `NO_CONTRIBUTION`
+  or carrying a `fragment_ref` deliberately does not warn (story #1127). Adds
+  the validator's fourth gate, amending `validator-three-gates.md`.
 - [dsb-frozen-fixture-r7-guard.md](dsb-frozen-fixture-r7-guard.md) — a frozen,
   checked-in `.dsb` byte fixture guards R7's append-only schema evolution (debt
   #64); binds every edit to `dashbuf.fbs`.
@@ -345,10 +353,11 @@ records below. Per-story decisions land here directly:
   snapshots + commit deltas plus content-addressed asset fetch; snapshots speak
   indices, deltas speak handles (design session, 2026-07-12); binds the
   producer-API shape now.
-- [validator-three-gates.md](validator-three-gates.md) — the validator is three
-  gates (import / load / paint), not one `validate()`; out-of-profile constructs
-  never reach the document, so the triage runs on the producer's source
-  vocabulary (story #15); binds #16 and #41.
+- [validator-three-gates.md](validator-three-gates.md) — the validator is a gate
+  per surface (import / load / paint), not one `validate()`; out-of-profile
+  constructs never reach the document, so the triage runs on the producer's
+  source vocabulary (story #15); binds #16 and #41. Amended 2026-08-19 by story
+  #1127, which adds a fourth — the file name still says three.
 - [waivers-and-diagnostic-completion.md](waivers-and-diagnostic-completion.md) —
   a waiver keys on (rule, target) and only converts a warning; the workaround
   hint is derived from the rule id rather than stored, so the `Diagnostic` shape

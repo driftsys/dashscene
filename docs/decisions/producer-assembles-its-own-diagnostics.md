@@ -29,7 +29,8 @@ gave `dashc` the job and then gave it no container to put the answer in.
     impl FromIterator<Diagnostic> for Report
     impl Extend<Diagnostic> for Report
 
-`Report` stays the single diagnostic container across all three gates. No new
+`Report` stays the single diagnostic container across every gate — the three
+this record was written for, and the contribution gate story #1127 added. No new
 type, no second report shape, and no public `push`: a producer collects its
 findings and then assembles them, rather than accreting into a shared mutable
 container.

@@ -2110,7 +2110,7 @@ fn hug_ancestors(
 /// that is not strictly lower than the child's is treated as a root here,
 /// and reported separately by `node.parent-not-before-child`. Each followed
 /// link strictly decreases the index, so the walk terminates on any input.
-fn node_path(
+pub(crate) fn node_path(
     nodes: &flatbuffers::Vector<'_, flatbuffers::ForwardsUOffset<Node<'_>>>,
     index: u32,
 ) -> NodePath {

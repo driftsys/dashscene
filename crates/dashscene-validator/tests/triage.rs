@@ -208,9 +208,12 @@ fn the_rule_registry_is_unique_and_covers_every_construct() {
 /// the constants and the slice together — would make an omission unrepresentable
 /// rather than merely caught. It is recorded in the pull request as the shape to
 /// take if this list grows a second failure mode; it was not taken here because
-/// it rewrites all 84 declarations and their documentation to close a gap a test
-/// closes. Re-derive that count rather than trusting it — it was written here as
-/// 81, the figure before this branch added three rules of its own.
+/// it rewrites every declaration and its documentation to close a gap a test
+/// closes. **Re-derive the count rather than trusting a figure here** — this
+/// comment has carried a stale one twice, at 81 and then at 84, each left behind
+/// by a branch that added rules without touching it:
+///
+///     awk '/^pub mod rule \{/,/^\}$/' src/lib.rs | grep -c '^    pub const .*: &str'
 mod registry {
     use dashscene_validator::rule;
 

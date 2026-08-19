@@ -255,9 +255,17 @@ measured (epic #476), and the browser target is WebGPU only.
   ([importer-trim-layers.md](../decisions/importer-trim-layers.md)) — but the
   lowering drops it, so `crates/dashc/src/figma/mod.rs` sets
   `placeholder: None`. Connecting the two is story #1264. **Nothing resolves it
-  either** — no measure callback reads `declared_size`, no host binds a
-  contribution, and no diagnostic reports an unfilled one (story #1127).
-  Placeholder _activation_ stays in v1
+  either** — no measure callback reads `declared_size` and no host binds a
+  contribution. What is now reported is the disagreement between the two:
+  `dashscene_validator::validate_contributions` takes a document and the host's
+  bound contribution ids and names a placeholder no host fills
+  (`placeholder.unfilled`, suppressed on a `Core` target that binds nothing a
+  host contribution can fill) and a binding no placeholder declares
+  (`placeholder.undeclared-overload`, on both profiles) — story #1127, and
+  [a-host-binds-a-contribution-by-id.md](../decisions/a-host-binds-a-contribution-by-id.md).
+  **No caller in this repository passes it a binding list**: hosts are its
+  callers and the C ABI data plane that would carry one is #859, so its tests
+  are its only caller today. Placeholder _activation_ stays in v1
   ([05-qualification.md](../specification/05-qualification.md)). Why a nested
   table rather than four loose fields, and why `declared_size` is a measure size
   rather than a second box:
