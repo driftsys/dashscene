@@ -275,6 +275,44 @@ debt ticket is regularly closed from a story branch. The sequence is:
   fifteen was critical, so the narrow rule would not have asked for the pass
   that found the holes.
 
+  **Amended 2026-08-19 by story #1127: the rule needs a stop, and this record's
+  own worked example is why it was missing.** The paragraph above reports five
+  passes returning fifteen findings each and treats that as evidence _for_ the
+  rule. It is also evidence that the rule as written cannot terminate: each
+  pass's fixes are themselves content, so each pass manufactures the next pass's
+  subject. Story #1127 ran it to fourteen passes over **84 lines of executable
+  code** — the gate is 242 lines, 158 of them comments. Passes 10 to 14 found no
+  wrong verdict in that code at all; they found prose, tests and pull-request
+  claims, most of it written by the pass before.
+
+  **So: a pass that finds no defect in executable code is the last one.** Fold
+  its prose findings into one edit, file whatever remains as `debt`, and stop.
+  This does not weaken the rule — a change still gets a pass — it says the pass
+  is what is owed, not an empty pass.
+
+  Two supports, both measured on that story:
+
+  - **`high` for a branch's first pass, `medium` after.** `/code-review`'s own
+    description says high and above "may include uncertain findings", and seven
+    of story #1127's findings were rejected as incorrect. A later pass reads a
+    small diff and does not need the wider net.
+  - **Re-derive every statement of a rule before reviewing a change to it**, and
+    grep the symbol rather than the concept. Twice the behaviour changed and
+    none of the seven or eight files stating it did; and a citation of
+    `Arena::apply` — a function that has never existed in `dashscene-core` —
+    survived six passes, because every sweep searched for what the sentence
+    meant.
+
+  **Where the two review tools sit.** `superpowers:requesting-code-review` is
+  one subagent scoped to a change's SHAs, and its output carries an `Assessment`
+  verdict — a stop signal. `/code-review` fans out over many finder angles and
+  verifies by execution and mutation, which is what found story #1127's real
+  defects, and it returns findings with no verdict. Use the first per behaviour
+  change and the second once per pull request. This record does **not** adopt
+  superpowers' "note Minor issues for later": the disposition rule below is
+  narrower on purpose, and the stop condition above is what makes the narrower
+  rule terminate.
+
 - **Merge** only once CI is green on the commit being merged, the review pass is
   complete, and **every** finding has one of the three dispositions recorded
   against it: fixed, rejected with the reasoning, or filed. It binds every

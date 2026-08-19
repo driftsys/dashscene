@@ -503,12 +503,26 @@ they do:
   ready for review", which is the opposite of why the PR was opened: reviewers
   are not requested, and `/code-review` stops without reviewing when the PR is a
   draft (`docs/decisions/review-before-ready-not-before-open.md`).
+- **Review after each behaviour change, not once at the end**, with
+  `superpowers:requesting-code-review` — one subagent, scoped to that change's
+  SHAs. Its core principle is "review early, review often", and its output
+  carries an explicit `Assessment` verdict, which is the brake the deep pass
+  below does not have. A behaviour change reviewed while it is one edit old is a
+  small diff whose prose has not yet spread.
 - Run `/code-review` on the PR (`--comment` posts the findings as inline PR
   comments) **while CI runs, not after it**. Neither answer depends on the
   other, so waiting for green before starting the review only adds the shorter
   of the two to the wall clock. The merge gate is unchanged: both must be
   complete. Capture every finding as a checklist in the PR description — never
   drop a finding silently.
+
+  **`high` for a branch's first pass, `medium` after.** The skill's own
+  description is the reason: low and medium return "fewer, high-confidence
+  findings", high and above "broader coverage, **may include uncertain
+  findings**". A later pass reads a small diff and does not need the wider net;
+  asking for uncertain findings on one is asking for work that is then rejected.
+  `/code-review 1271 high` was run fourteen times on one branch and seven of its
+  findings were rejected as incorrect.
 - **Fix findings in the pull request that found them.** File one as `debt` only
   in these two cases:
 
@@ -555,6 +569,21 @@ they do:
   changes the implementation": now that most findings are fixed in the PR rather
   than filed, they are most of what lands late. The rebase and squash before
   merging change no content and need no pass.
+
+  **A pass that finds no defect in executable code is the last one.** Fold its
+  prose findings into one edit, file whatever remains as `debt`, and stop. The
+  rule above asks for a pass _over the change_, not for a pass that comes back
+  empty — and without a stop the cycle feeds itself, because each pass's own
+  fixes are prose the next pass then reads. Story #1127 ran fourteen passes over
+  **84 lines of executable code**; the last five found no wrong verdict in it
+  and spent themselves on the records, the tests and the pull request body
+  (`docs/decisions/review-before-ready-not-before-open.md`).
+- **After a behaviour change, re-derive every statement of the rule before
+  reviewing it** — `git grep` the rule across `crates/` and `docs/`, and grep
+  the **symbol**, not the concept. Twice on story #1127 a behaviour change
+  reached the code and none of the seven or eight files stating it, and each
+  time the next pass spent itself on that; a citation of a function that never
+  existed survived six passes because every sweep searched for what it meant.
 - The findings checklist is what says the PR is not ready to merge: an absent or
   unticked checklist means the review is still running. **The review half is not
   enforced mechanically**: the direct mechanism is a required approving review,
