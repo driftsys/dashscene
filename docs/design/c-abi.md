@@ -94,14 +94,24 @@ showing a different artboard loads again.
 
 ## Versioning: a new symbol is free, a changed signature is not
 
-`ds_abi_version` returns `DS_ABI_VERSION`, which is **1** and has never moved.
-It is not the crate's version — it is what this library implements.
+`ds_abi_version` returns `DS_ABI_VERSION`, which is **2**. It is not the crate's
+version — it is what this library implements.
 
-`DsStatus` has grown from nine variants to sixteen without moving it, because
+**It moved once, at story #1226**, when `DsRuntime` stopped being a pointer and
+became a generational handle. Ten of the twelve exported entry points changed
+signature for it; `ds_abi_version` and `ds_last_error_message` take no runtime
+and did not. That is the rule in this heading working as stated rather than an
+exception to it — a changed signature is exactly what is not free, and it is the
+only thing that has ever moved this number.
+
+`DsStatus` has grown from nine variants to nineteen without moving it, because
 every addition went on the **tail**: `FontFace` and `Atlas` at #947, then `Map`,
-`NoSuchRoot`, `Derived` and `Payload` at #925, then `SurfaceLost` at #884. A C
-caller compiled against an earlier header still reads every discriminant it knew
-at the value it knew.
+`NoSuchRoot`, `Derived` and `Payload` at #925, then `SurfaceLost` at #884, then
+`BadHandle`, `WrongThread` and `HandlesExhausted` at #1226. The last three
+arrived in the change that moved the version, and did not contribute to it:
+appending is still free, and ten changed signatures are what was not. A C caller
+compiled against an earlier header still reads every discriminant it knew at the
+value it knew.
 
 That is why the shapes above were chosen: three loaders rather than one with a
 widening signature, and a detach call rather than a flag on free.
@@ -117,31 +127,36 @@ the next one.
 
 ## What a caller must guarantee
 
-This section describes the ABI as built. An accepted decision changes what the
-runtime handle is and **narrows this section** —
-[`../decisions/the-c-abi-runtime-handle-is-generational.md`](../decisions/the-c-abi-runtime-handle-is-generational.md),
-landing in v0.21 under issue #1226. The first rule below forbids concurrency,
-not thread migration, so a host may create a runtime on one thread and call it
-from another as long as the calls are serialised; under a thread-affine table it
-may not. What that ruling settles and what it leaves to the implementing pull
-request are both stated there.
+This section describes the ABI as built.
 
-- **No other call may be in flight on the same runtime.** The header states this
-  on `ds_runtime_detach_surface` and on `ds_runtime_tick`, and nowhere else —
-  **not** on `ds_runtime_attach_surface`, whose block says nothing about
-  concurrency. `ds_runtime_free`'s Rust safety documentation carries it too, so
-  the rule is wider than the header shows. The header states no general
-  thread-safety note at all, while `ds_runtime_tick`'s block appeals to one —
-  "the same rule the rest of this header states" — that is not there. That
-  contradiction is the actionable half of the gap. `ds_runtime_tick` is the
-  surprising member and is why it is said there at all: since issue #945 it
-  reads the renumbering gate and may call `document_replaced` on the attached
-  surface, so it touches more than the scene.
-- **A handle from `ds_runtime_new` is valid until `ds_runtime_free`.** A null
-  **where a value is required** is `DS_NULL_ARGUMENT` rather than a trusted
-  pointer. Three entry points are deliberately outside that: `ds_abi_version`
-  takes no pointer, `ds_runtime_free(NULL)` returns silently as `free` does, and
-  `ds_last_error_message(NULL, 0)` is the **documented size query** below.
+**Story #1226 landed and narrowed it**
+([`../decisions/the-c-abi-runtime-handle-is-generational.md`](../decisions/the-c-abi-runtime-handle-is-generational.md)).
+Thread **migration is no longer permitted**: the table is thread-affine, so a
+runtime created on one thread and called from another answers `DS_WRONG_THREAD`,
+however well the calls are serialised. That is a narrowing of what this section
+used to allow, and a host relying on it must move the calls rather than the
+runtime.
+
+- **No other call may be in flight on the same runtime.** **Stated once per
+  audience, on `DsRuntime`** — in the C header for a C host, in the Rust doc for
+  a `cargo doc` reader — since story #1226 carried out the ruling's open
+  question 7 — it used to sit on `ds_runtime_detach_surface` and
+  `ds_runtime_tick` and nowhere else, while `ds_runtime_tick`'s block appealed
+  to "the same rule the rest of this header states", which was not there. The
+  rule is also now **enforced rather than only asked for**: a re-entrant call on
+  the same handle is `DS_BAD_HANDLE` rather than a second `&mut` to one runtime,
+  and a call on a different runtime from inside a callback resolves.
+  `ds_runtime_tick` is the surprising member and is why it is said there at all:
+  since issue #945 it reads the renumbering gate and may call
+  `document_replaced` on the attached surface, so it touches more than the
+  scene.
+- **A handle from `ds_runtime_new` is valid until `ds_runtime_free`**, and using
+  it after that is `DS_BAD_HANDLE` rather than undefined behaviour. `0` **where
+  a value is required** is `DS_NULL_ARGUMENT`, standing exactly where a null
+  pointer did. Three entry points are deliberately outside that:
+  `ds_abi_version` takes no handle, `ds_runtime_free(0)` answers `DS_OK` as
+  `free(NULL)` did, and `ds_last_error_message(NULL, 0)` is the **documented
+  size query** below.
 - **`ds_last_error_message` returns the size _needed_, including the
   terminator** — never the number of bytes written. Query with `(NULL, 0)`,
   allocate that, call again, then drop the terminator.

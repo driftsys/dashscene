@@ -198,7 +198,8 @@ for weight.
   cascade, which shapes and measures text and draws none of it. Neither a
   `Typesetter` nor an `Atlas` crosses the boundary; their **inputs** do, and
   `dashscene_engine::TextResources::from_faces` assembles them on the far side.
-  A new symbol rather than a parameter, so `DS_ABI_VERSION` stays 1.
+  A new symbol rather than a parameter, so `DS_ABI_VERSION` did not move for it.
+  (It is 2 since story #1226, which changed ten signatures.)
 
   The atlas sits inside the descriptor rather than in a parallel array because
   the atlas list is indexed by the font slot of the face that shaped a glyph: a

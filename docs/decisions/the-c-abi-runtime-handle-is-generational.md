@@ -124,6 +124,79 @@ They need code and a test, not prose:
    entry points, with `ds_runtime_tick` keeping a block that says how it departs
    — `docs/design/c-abi.md` records why it is the surprising member.
 
+## What the implementation answered — story #1226
+
+The questions above asked for code and a test rather than prose. This is what
+the code says; each line names the test that holds it.
+
+**The reconciliation the record did not state.** Its rationale argues for thread
+affinity by avoiding process-wide state, while decision 2 requires a handle to
+be unique for the life of the _process_ — which needs process-wide state. Both
+hold because **uniqueness is a property of how a handle is minted, not of how it
+is resolved**. One `AtomicU32` mints a thread number on each thread's first
+`ds_runtime_new` and is read by no lookup and no frame-path call; everything
+else is a `thread_local!`, which needs no lock because it is reachable from one
+thread only. An implementer optimising the rationale's stated goal builds
+per-thread counters and gives two threads the same first handle —
+`two_threads_first_handles_are_different_values` is that defect's test, and it
+was watched failing against exactly that implementation before this one was
+written.
+
+- **Question 1, the bit split** — `thread(20) | index(12) | generation(32)`. The
+  thread field is the wide one because an Android host creates a render thread
+  per surface lifecycle, so that is the counter that grows without bound;
+  concurrently-live runtimes per thread do not (`handle.rs`,
+  `no_field_bleeds_into_a_neighbour`).
+- **Question 2, the statuses** — `DS_BAD_HANDLE = 16` for a value this thread
+  has retired or never minted, and — since the checkout that keeps the ABI
+  re-entrant — for one whose runtime is checked out by a call already in flight,
+  which no host can reach until an entry point calls back into host code.
+  `DS_WRONG_THREAD = 17` for a handle naming another thread's table. Appended,
+  so nothing renumbers
+  (`appending_a_status_is_free_and_the_handle_change_was_not`).
+- **Question 3** — not `DS_UNSUPPORTED_HANDLE`, which already means an
+  unsupported _surface_ handle kind and would collide.
+- **Question 4, zero** — `ds_runtime_free(0)` is `DS_OK` and does nothing,
+  standing exactly where `free(NULL)` stood; every other entry point answers
+  `DS_NULL_ARGUMENT` for `0`, which is the answer a null pointer got. So no
+  documented behaviour changes shape (`zero_names_no_runtime`, and `abi.c`).
+- **Question 5, exhaustion** — a slot whose generation reaches `u32::MAX` is
+  **retired**, not wrapped, and a full table refuses with `DS_HANDLES_EXHAUSTED`
+  rather than overwriting (`a_full_table_refuses_rather_than_overwriting`).
+- **Question 6, what happens to a runtime still in an exiting thread's table** —
+  it is **leaked, deliberately**. Dropping it would run `wgpu::Surface`'s
+  destructor at thread-exit time, which on Android is after `surfaceDestroyed`
+  returned and `ANativeWindow_release` ran — a use-after-free of the window that
+  the old design could not commit, since an unfreed handle was a `Box` that was
+  simply never dropped. `Table`'s `Drop` forgets its runtimes, so the behaviour
+  is exactly what it was: a host that does not free leaks, and cannot do worse
+  than leak. The question also notes that pthread-based TLS destructors may not
+  run on the main thread at all, which is a second reason no host may rely on
+  this path for teardown.
+- **What a handle reports from a thread that has since exited** — the other half
+  of question 2. `DS_WRONG_THREAD`, the same as one from a live foreign thread.
+  The two are **not** distinguished: telling them apart needs a process-wide
+  registry of live threads, the shared state this design removes. The Android
+  render thread is joined per surface lifecycle, so this case is ordinary there,
+  and issue #1267 carries it for a ruling
+  (`a_handle_from_another_thread_is_wrong_thread_and_drives_nothing_local`).
+- **Question 4's second half, `ds_runtime_free`'s signature** — it returns
+  `DsStatus` now. It can report, and a double free is `DS_BAD_HANDLE` rather
+  than undefined behaviour, which is the property this whole record exists for.
+- **Question 7, the threading rule stated once** — the header carries both the
+  thread-affinity rule and "no other call in flight on the same runtime" on
+  `DsRuntime` itself, rather than on two of ten entry points, and
+  `ds_runtime_tick` keeps a block saying how it departs. The in-flight rule is
+  now enforced rather than only asked for: a re-entrant call on the same handle
+  answers `DS_BAD_HANDLE` instead of aliasing the runtime, and one on a
+  different runtime resolves
+  (`a_re_entrant_call_on_the_same_runtime_is_refused`,
+  `a_re_entrant_call_on_another_runtime_resolves`).
+
+`DS_ABI_VERSION` moved 1 → 2. Ten of the twelve exported entry points changed
+signature; `ds_abi_version` and `ds_last_error_message` take no runtime and did
+not.
+
 ## What this is not
 
 **Not an `unsafe` reduction.** `crates/dashscene-ffi/src/lib.rs` holds 154
