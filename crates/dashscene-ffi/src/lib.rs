@@ -126,15 +126,18 @@
 //!    this crate simple enough to earn that.
 //!
 //!    Those returning a [`DsStatus`] use `guard`, which turns an unwind
-//!    into [`DsStatus::Panic`]. [`ds_runtime_free`] and
-//!    [`ds_last_error_message`] catch one directly instead, because neither
-//!    has a status to report it in — the first returns `void` and the second a
-//!    length — so each swallows it rather than naming it.
+//!    into [`DsStatus::Panic`]. [`ds_last_error_message`] catches one
+//!    directly instead, because it has no status to report it in — it returns
+//!    a length — so it swallows the unwind rather than naming it.
 //!    [`ds_abi_version`] is the only entry point with no `catch_unwind` at
 //!    all, and it returns a constant.
 //!
-//!    The property is **catching an unwind**, not calling `guard`: two entry
-//!    points hold it without the helper, so counting `guard` under-reports.
+//!    **[`ds_runtime_free`] joined the first group at story #1226**, when it
+//!    stopped returning `void`: it reports a panic as [`DsStatus::Panic`] like
+//!    every other status-returning entry point.
+//!
+//!    The property is **catching an unwind**, not calling `guard`: one entry
+//!    point holds it without the helper, so counting `guard` under-reports.
 //!
 //!    This is **not** the workspace's only `extern` boundary. `dashscene-android`
 //!    has an `AChoreographer` callback the NDK invokes and six JNI entry points,
@@ -162,6 +165,11 @@
 //! it does not recognise, because the alternative is discovering the mismatch as
 //! a corrupted argument.
 
+mod handle;
+mod table;
+
+use table::Runtime;
+
 use std::cell::RefCell;
 use std::ffi::{CStr, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -170,14 +178,13 @@ use std::sync::Arc;
 use dashbuf::map::MappedFile;
 use dashbuf::prefetch::ShownRoot;
 use dashbuf::residency::BlobResidency;
-use dashlang::LiveScene;
 use dashpaint::Painter;
 use dashscene_core::{Arena, MappedPayload, Region};
 use dashscene_engine::{TaffySolver, TextResources, TextResourcesError};
-use dashscene_gpu::{Changes, Drawn, GpuPainter, SurfaceRenderer};
+use dashscene_gpu::{Changes, Drawn};
 
 /// The ABI generation. See the module's "Versioning" section for what moves it.
-pub const DS_ABI_VERSION: u32 = 1;
+pub const DS_ABI_VERSION: u32 = 2;
 
 /// Returns [`DS_ABI_VERSION`], so a host can refuse a library it does not know.
 ///
@@ -285,6 +292,37 @@ pub enum DsStatus {
     /// does not yet say is what a re-routed condition costs; that is a gap in
     /// the rule rather than in this variant.
     SurfaceLost = 15,
+    /// The handle named no runtime the calling thread can reach right now.
+    ///
+    /// It was **freed**, or it was **never minted** by this library. Either
+    /// way, stop using it.
+    ///
+    /// A third cause exists and **no host can reach it today**: a call already
+    /// in flight on that same handle, leaving the runtime checked out. No
+    /// entry point takes a function pointer, so nothing host-side runs during
+    /// a call. It becomes reachable when a callback does, and then it names a
+    /// runtime that is alive and still has to be freed.
+    BadHandle = 16,
+    /// The handle names another thread's table — usually because it was
+    /// minted there, and the runtime may still be alive on that thread.
+    ///
+    /// **Any** handle whose thread field is non-zero and not this thread's
+    /// reads as this — including a number no thread has ever drawn. `resolve`
+    /// compares against this thread's number and asks nothing else; knowing
+    /// which numbers were ever issued would mean a process-wide registry on
+    /// the lookup path, which is the shared state this design keeps off it.
+    ///
+    /// A handle whose creating thread has since **exited** reports this too:
+    /// thread numbers are never reissued, so the value resolves on no thread
+    /// ever again. Telling the two apart would need a process-wide registry of
+    /// live threads — the shared state the thread-affine table exists to avoid
+    /// — so it is deliberately not distinguished (issue #1267).
+    WrongThread = 17,
+    /// No handle could be minted: this thread already holds the maximum number
+    /// of live runtimes, or the process has drawn every thread number a handle
+    /// can carry. Never a wrap — a counter that has run out refuses rather
+    /// than reissuing a value.
+    HandlesExhausted = 18,
 }
 
 /// Which platform handle the pointers in [`ds_runtime_attach_surface`] carry.
@@ -358,19 +396,66 @@ fn guard(body: impl FnOnce() -> DsStatus) -> DsStatus {
     }
 }
 
-/// A live runtime: the arena, the scene over it, and the surface it draws to.
+/// A live runtime, named by an opaque handle.
 ///
-/// Opaque to C. A host holds a `DsRuntime *` and nothing else, so the layout
-/// below is free to change without moving [`DS_ABI_VERSION`].
-pub struct DsRuntime {
-    arena: Arena,
-    scene: Option<LiveScene>,
-    surface: Option<SurfaceRenderer>,
-    /// Boundary B's implementation: it turns the committed tables into an
-    /// instance buffer and knows nothing about the window. Held rather than
-    /// built per frame, because it owns the packing buffers whose byte ranges
-    /// the dirty set decides to upload.
-    painter: GpuPainter,
+/// **Not an address.** A host must not dereference it, do arithmetic on it, or
+/// invent one. A handle names at most one runtime for the life of the process:
+/// freeing retires its value and no later runtime is given it again, so a
+/// stale handle, a forged handle and a handle used from the wrong thread each
+/// produce a [`DsStatus`] rather than undefined behaviour
+/// (`docs/decisions/the-c-abi-runtime-handle-is-generational.md`).
+///
+/// **Thread-affine.** A runtime is reachable only from the thread whose
+/// [`ds_runtime_new`] minted it. Every call from any other thread answers
+/// [`DsStatus::WrongThread`], including after the minting thread has exited —
+/// the two are not distinguished (issue #1267).
+///
+/// **No other call may be in flight on the same runtime.** The rule for every
+/// `ds_runtime_*` entry point. Since story #1226 it is also **checked**: a
+/// re-entrant call on the same handle is [`DsStatus::BadHandle`] rather than a
+/// second `&mut` to one runtime. A call on a *different* runtime is fine.
+/// Nothing can break the rule today in any case, because no entry point calls
+/// back into host code.
+///
+/// `0` is never a live runtime, and every failing [`ds_runtime_new`] writes it.
+///
+/// This restates the C header's `DsRuntime` block rather than pointing at it,
+/// because a Rust consumer reads rustdoc and a C one reads the header. The two
+/// are the same contract and are edited together.
+pub type DsRuntime = u64;
+
+/// Maps a failed lookup onto the status a host sees, and records why.
+fn lookup_status(what: &str, error: table::LookupError) -> DsStatus {
+    match error {
+        table::LookupError::Zero => {
+            set_last_error(format!("{what}: the handle is 0, which names no runtime"));
+            DsStatus::NullArgument
+        }
+        table::LookupError::Bad => {
+            set_last_error(format!(
+                "{what}: the handle names no runtime this thread can reach now — it \
+                 was freed, it was never one this library minted, or a call is \
+                 already in flight on it"
+            ));
+            DsStatus::BadHandle
+        }
+        table::LookupError::WrongThread => {
+            set_last_error(format!(
+                "{what}: the handle names another thread's table — that thread may \
+                 hold the runtime, may have exited, or may never have minted this \
+                 value at all"
+            ));
+            DsStatus::WrongThread
+        }
+    }
+}
+
+/// Resolves `handle` on this thread and runs `f` against the runtime it names.
+fn on_runtime(handle: DsRuntime, what: &str, f: impl FnOnce(&mut Runtime) -> DsStatus) -> DsStatus {
+    match table::with_runtime(handle, f) {
+        Ok(status) => status,
+        Err(error) => lookup_status(what, error),
+    }
 }
 
 /// Creates an empty runtime and writes it to `out`.
@@ -384,39 +469,52 @@ pub struct DsRuntime {
 ///
 /// `out` must be a valid, writable `DsRuntime *`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ds_runtime_new(out: *mut *mut DsRuntime) -> DsStatus {
+pub unsafe extern "C" fn ds_runtime_new(out: *mut DsRuntime) -> DsStatus {
     guard(|| {
         if out.is_null() {
             set_last_error("ds_runtime_new: out is null");
             return DsStatus::NullArgument;
         }
-        let runtime = Box::new(DsRuntime {
-            arena: Arena::new(),
-            scene: None,
-            surface: None,
-            painter: GpuPainter::new(),
-        });
-        unsafe { *out = Box::into_raw(runtime) };
-        DsStatus::Ok
+        // `0` on every failure, so a caller that ignores the status still
+        // holds a value that cannot resolve rather than an uninitialised one.
+        unsafe { *out = 0 };
+        match table::mint(Runtime::new()) {
+            Ok(handle) => {
+                unsafe { *out = handle };
+                DsStatus::Ok
+            }
+            Err(table::MintError::Exhausted) => {
+                set_last_error(
+                    "ds_runtime_new: no handle could be minted — this thread holds the \
+                     maximum number of live runtimes, or the process has drawn every \
+                     thread number a handle can carry",
+                );
+                DsStatus::HandlesExhausted
+            }
+        }
     })
 }
 
-/// Frees a runtime. Null is accepted and does nothing, like `free`.
+/// Frees the runtime a handle names, and retires the handle.
 ///
-/// # Safety
+/// `0` is accepted and does nothing, exactly where `NULL` did.
 ///
-/// `runtime` must be a pointer from [`ds_runtime_new`] that has not already been
-/// freed, and no other call may be in flight on it.
+/// **No safety obligation, which is the point of story #1226.** A handle is
+/// not a pointer, so freeing one twice, freeing one this library never minted,
+/// or freeing from the wrong thread are each a [`DsStatus`] — [`DsStatus::BadHandle`]
+/// or [`DsStatus::WrongThread`] — rather than undefined behaviour the caller
+/// had to prevent.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ds_runtime_free(runtime: *mut DsRuntime) {
-    if runtime.is_null() {
-        return;
+pub extern "C" fn ds_runtime_free(runtime: DsRuntime) -> DsStatus {
+    // `0` does nothing and succeeds, exactly where `free(NULL)` did — so a
+    // host's teardown path is unchanged by the handle becoming a value.
+    if runtime == 0 {
+        return DsStatus::Ok;
     }
-    // Not `guard`: this returns no status, and a panic in `Drop` is not
-    // something a status could report anyway.
-    let _ = catch_unwind(AssertUnwindSafe(|| {
-        drop(unsafe { Box::from_raw(runtime) });
-    }));
+    guard(|| match table::remove(runtime) {
+        Ok(()) => DsStatus::Ok,
+        Err(error) => lookup_status("ds_runtime_free", error),
+    })
 }
 
 /// Loads a `.dsb` held in memory.
@@ -434,22 +532,24 @@ pub unsafe extern "C" fn ds_runtime_free(runtime: *mut DsRuntime) {
 ///
 /// # Safety
 ///
-/// `bytes` must point to `len` readable bytes, and `runtime` must be a live
-/// pointer from [`ds_runtime_new`].
+/// `bytes` must point to `len` readable bytes. `runtime` carries no safety
+/// obligation: a handle that is stale, forged or from another thread is a
+/// [`DsStatus`], not undefined behaviour (story #1226).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ds_runtime_load_document(
-    runtime: *mut DsRuntime,
+    runtime: DsRuntime,
     bytes: *const u8,
     len: usize,
 ) -> DsStatus {
     guard(|| {
-        if runtime.is_null() || bytes.is_null() {
-            set_last_error("ds_runtime_load_document: runtime or bytes is null");
+        if bytes.is_null() {
+            set_last_error("ds_runtime_load_document: bytes is null");
             return DsStatus::NullArgument;
         }
-        let runtime = unsafe { &mut *runtime };
-        let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
-        load_into(runtime, bytes, None)
+        on_runtime(runtime, "ds_runtime_load_document", |runtime| {
+            let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
+            load_into(runtime, bytes, None)
+        })
     })
 }
 
@@ -486,7 +586,7 @@ pub unsafe extern "C" fn ds_runtime_load_document(
 /// **Below every step that can return a status**, so a refused load leaves the
 /// previously loaded document drawable. That ordering belongs to each loader
 /// rather than to this function, and each carries a test for it.
-fn drop_document(runtime: &mut DsRuntime) {
+fn drop_document(runtime: &mut Runtime) {
     runtime.scene = None;
     runtime.arena = Arena::new();
 }
@@ -501,7 +601,7 @@ fn drop_document(runtime: &mut DsRuntime) {
 /// [`ds_runtime_load_document_with_text`] can also refuse **above** this
 /// function, in `text_from_c`, which is why no test drives that entry point for
 /// the property: a cascade rejected there has not reached the document at all.
-fn load_into(runtime: &mut DsRuntime, bytes: &[u8], text: Option<TextResources>) -> DsStatus {
+fn load_into(runtime: &mut Runtime, bytes: &[u8], text: Option<TextResources>) -> DsStatus {
     let (document, payloads) = match dashbuf::open_verified(bytes) {
         Ok(opened) => opened,
         Err(error) => {
@@ -547,7 +647,7 @@ fn load_into(runtime: &mut DsRuntime, bytes: &[u8], text: Option<TextResources>)
 /// **Called after the new scene is attached, not beside the drop**, which is why
 /// it is not part of [`drop_document`]: what it announces is a document that has
 /// been replaced, and until the reassignment there is not one.
-fn announce_document_replaced(runtime: &mut DsRuntime) {
+fn announce_document_replaced(runtime: &mut Runtime) {
     if let Some(surface) = runtime.surface.as_mut() {
         surface.document_replaced();
     }
@@ -560,7 +660,7 @@ fn announce_document_replaced(runtime: &mut DsRuntime) {
 /// That is why the arena assignment sits below all of the fallible steps rather
 /// than beside the rest of the setup.
 fn load_mapped_into(
-    runtime: &mut DsRuntime,
+    runtime: &mut Runtime,
     path: &str,
     shown_root: ShownRoot,
     text: Option<TextResources>,
@@ -898,21 +998,22 @@ unsafe fn faces_from_c(
 ///
 /// # Safety
 ///
-/// `bytes` must point to `len` readable bytes, `runtime` must be live, and
+/// The handle carries no safety obligation (story #1226). `bytes` must point
+/// to `len` readable bytes, and
 /// `faces` must point to `face_count` readable [`DsFontFace`] whose own
 /// pointers are valid for the lengths beside them. Nothing is retained:
 /// every byte is copied before this returns.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ds_runtime_load_document_with_text(
-    runtime: *mut DsRuntime,
+    runtime: DsRuntime,
     bytes: *const u8,
     len: usize,
     faces: *const DsFontFace,
     face_count: usize,
 ) -> DsStatus {
     guard(|| {
-        if runtime.is_null() || bytes.is_null() {
-            set_last_error("ds_runtime_load_document_with_text: runtime or bytes is null");
+        if bytes.is_null() {
+            set_last_error("ds_runtime_load_document_with_text: bytes is null");
             return DsStatus::NullArgument;
         }
         if faces.is_null() && face_count != 0 {
@@ -921,17 +1022,18 @@ pub unsafe extern "C" fn ds_runtime_load_document_with_text(
             );
             return DsStatus::NullArgument;
         }
-        let runtime = unsafe { &mut *runtime };
-        let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
+        on_runtime(runtime, "ds_runtime_load_document_with_text", |runtime| {
+            let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
 
-        // The faces are read and assembled BEFORE the document is opened, so
-        // a bad cascade is reported as itself rather than as whatever the
-        // document turned out to be. `tests/abi.c` depends on that ordering.
-        let text = match unsafe { text_from_c(faces, face_count) } {
-            Ok(text) => text,
-            Err(status) => return status,
-        };
-        load_into(runtime, bytes, text)
+            // The faces are read and assembled BEFORE the document is opened, so
+            // a bad cascade is reported as itself rather than as whatever the
+            // document turned out to be. `tests/abi.c` depends on that ordering.
+            let text = match unsafe { text_from_c(faces, face_count) } {
+                Ok(text) => text,
+                Err(status) => return status,
+            };
+            load_into(runtime, bytes, text)
+        })
     })
 }
 
@@ -971,22 +1073,23 @@ pub unsafe extern "C" fn ds_runtime_load_document_with_text(
 ///
 /// # Safety
 ///
-/// `path` must be a NUL-terminated string, `runtime` must be a live pointer
-/// from [`ds_runtime_new`], and `faces` must point to `face_count` readable
-/// [`DsFontFace`] whose own pointers are valid for the lengths beside them.
+/// `path` must be a NUL-terminated string, and `faces` must point to
+/// `face_count` readable [`DsFontFace`] whose own pointers are valid for the
+/// lengths beside them. The handle carries no safety obligation (story
+/// #1226).
 /// Nothing about the faces is retained: every byte is copied before this
 /// returns. The file itself is mapped and **is** retained, by the arena.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ds_runtime_load_document_mapped(
-    runtime: *mut DsRuntime,
+    runtime: DsRuntime,
     path: *const c_char,
     shown_root: u32,
     faces: *const DsFontFace,
     face_count: usize,
 ) -> DsStatus {
     guard(|| {
-        if runtime.is_null() || path.is_null() {
-            set_last_error("ds_runtime_load_document_mapped: runtime or path is null");
+        if path.is_null() {
+            set_last_error("ds_runtime_load_document_mapped: path is null");
             return DsStatus::NullArgument;
         }
         if faces.is_null() && face_count != 0 {
@@ -995,20 +1098,21 @@ pub unsafe extern "C" fn ds_runtime_load_document_mapped(
             );
             return DsStatus::NullArgument;
         }
-        let runtime = unsafe { &mut *runtime };
-        let path = match unsafe { CStr::from_ptr(path) }.to_str() {
-            Ok(path) => path,
-            Err(_) => {
-                set_last_error("ds_runtime_load_document_mapped: path is not UTF-8");
-                return DsStatus::Map;
-            }
-        };
+        on_runtime(runtime, "ds_runtime_load_document_mapped", |runtime| {
+            let path = match unsafe { CStr::from_ptr(path) }.to_str() {
+                Ok(path) => path,
+                Err(_) => {
+                    set_last_error("ds_runtime_load_document_mapped: path is not UTF-8");
+                    return DsStatus::Map;
+                }
+            };
 
-        let text = match unsafe { text_from_c(faces, face_count) } {
-            Ok(text) => text,
-            Err(status) => return status,
-        };
-        load_mapped_into(runtime, path, ShownRoot::nth(shown_root), text)
+            let text = match unsafe { text_from_c(faces, face_count) } {
+                Ok(text) => text,
+                Err(status) => return status,
+            };
+            load_mapped_into(runtime, path, ShownRoot::nth(shown_root), text)
+        })
     })
 }
 
@@ -1020,84 +1124,79 @@ pub unsafe extern "C" fn ds_runtime_load_document_mapped(
 ///
 /// # Safety
 ///
-/// `runtime` must be live, and `out_advanced` must be writable or null.
+/// `out_advanced` must be writable or null. The handle carries no safety
+/// obligation (story #1226).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ds_runtime_tick(
-    runtime: *mut DsRuntime,
+    runtime: DsRuntime,
     dt: f32,
     out_advanced: *mut bool,
 ) -> DsStatus {
     guard(|| {
-        if runtime.is_null() {
-            set_last_error("ds_runtime_tick: runtime is null");
-            return DsStatus::NullArgument;
-        }
-        let runtime = unsafe { &mut *runtime };
-        let Some(scene) = runtime.scene.as_mut() else {
-            set_last_error("ds_runtime_tick: no document loaded");
-            return DsStatus::NoDocument;
-        };
-        scene.tick(dt, &mut runtime.arena);
+        on_runtime(runtime, "ds_runtime_tick", |runtime| {
+            let Some(scene) = runtime.scene.as_mut() else {
+                set_last_error("ds_runtime_tick: no document loaded");
+                return DsStatus::NoDocument;
+            };
+            scene.tick(dt, &mut runtime.arena);
 
-        // A commit that renumbered the rect table is the one case where the
-        // painter's per-document state goes stale **without** the arena being
-        // replaced: the same rect index names a different node afterwards
-        // (story #838). The load path reports the arena case; this reports the
-        // other, through the same call.
-        //
-        // The gate is `LiveScene`'s, so this host reads the rule the other two
-        // read rather than holding a third copy of it (issue #945). It is the
-        // rule, not a fix for a defect reachable today: this ABI names the
-        // shown root once, inside the load, and offers no symbol to change it
-        // afterwards — so nothing here can raise a renumbering that the load's
-        // own `document_replaced` has not already covered. It is here so that
-        // the day a root-switching symbol lands, the host is already right
-        // rather than quietly wrong.
-        if let Some(surface) = runtime.surface.as_mut()
-            && scene.take_renumbering(&runtime.arena)
-        {
-            surface.document_replaced();
-        }
+            // A commit that renumbered the rect table is the one case where the
+            // painter's per-document state goes stale **without** the arena being
+            // replaced: the same rect index names a different node afterwards
+            // (story #838). The load path reports the arena case; this reports the
+            // other, through the same call.
+            //
+            // The gate is `LiveScene`'s, so this host reads the rule the other two
+            // read rather than holding a third copy of it (issue #945). It is the
+            // rule, not a fix for a defect reachable today: this ABI names the
+            // shown root once, inside the load, and offers no symbol to change it
+            // afterwards — so nothing here can raise a renumbering that the load's
+            // own `document_replaced` has not already covered. It is here so that
+            // the day a root-switching symbol lands, the host is already right
+            // rather than quietly wrong.
+            if let Some(surface) = runtime.surface.as_mut()
+                && scene.take_renumbering(&runtime.arena)
+            {
+                surface.document_replaced();
+            }
 
-        if !out_advanced.is_null() {
-            unsafe { *out_advanced = scene.advanced() };
-        }
-        DsStatus::Ok
+            if !out_advanced.is_null() {
+                unsafe { *out_advanced = scene.advanced() };
+            }
+            DsStatus::Ok
+        })
     })
 }
 
 /// Resizes the surface. `width` and `height` are **device** pixels.
 ///
 /// Android's `surfaceChanged` reports physical pixels, which is what this takes
-/// and what `SurfaceRenderer::resize` already guards against the adapter maximum
+/// and what `dashscene_gpu::SurfaceRenderer::resize` already guards against the adapter maximum
 /// (issue #714).
 ///
 /// # Safety
 ///
-/// `runtime` must be live.
+/// The handle carries no safety obligation (story #1226).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ds_runtime_resize(
-    runtime: *mut DsRuntime,
+    runtime: DsRuntime,
     width: u32,
     height: u32,
 ) -> DsStatus {
     guard(|| {
-        if runtime.is_null() {
-            set_last_error("ds_runtime_resize: runtime is null");
-            return DsStatus::NullArgument;
-        }
-        let runtime = unsafe { &mut *runtime };
-        let Some(surface) = runtime.surface.as_mut() else {
-            set_last_error("ds_runtime_resize: no surface attached");
-            return DsStatus::NoSurface;
-        };
-        match surface.resize(width, height) {
-            Ok(()) => DsStatus::Ok,
-            Err(error) => {
-                set_last_error(format!("{error:?}"));
-                DsStatus::Surface
+        on_runtime(runtime, "ds_runtime_resize", |runtime| {
+            let Some(surface) = runtime.surface.as_mut() else {
+                set_last_error("ds_runtime_resize: no surface attached");
+                return DsStatus::NoSurface;
+            };
+            match surface.resize(width, height) {
+                Ok(()) => DsStatus::Ok,
+                Err(error) => {
+                    set_last_error(format!("{error:?}"));
+                    DsStatus::Surface
+                }
             }
-        }
+        })
     })
 }
 
@@ -1123,84 +1222,79 @@ pub unsafe extern "C" fn ds_runtime_resize(
 ///
 /// # Safety
 ///
-/// `runtime` must be live, and `out_drawn` must be writable or null. No other
-/// call may be in flight on `runtime`.
+/// `out_drawn` must be writable or null. The handle carries no safety
+/// obligation (story #1226): the no-other-call-in-flight rule is stated on
+/// [`DsRuntime`] and enforced, so breaking it is [`DsStatus::BadHandle`].
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ds_runtime_draw(
-    runtime: *mut DsRuntime,
-    out_drawn: *mut bool,
-) -> DsStatus {
+pub unsafe extern "C" fn ds_runtime_draw(runtime: DsRuntime, out_drawn: *mut bool) -> DsStatus {
     guard(|| {
-        if runtime.is_null() {
-            set_last_error("ds_runtime_draw: runtime is null");
-            return DsStatus::NullArgument;
-        }
-        let runtime = unsafe { &mut *runtime };
-        if runtime.scene.is_none() {
-            set_last_error("ds_runtime_draw: no document loaded");
-            return DsStatus::NoDocument;
-        }
-        let Some(surface) = runtime.surface.as_mut() else {
-            set_last_error("ds_runtime_draw: no surface attached");
-            return DsStatus::NoSurface;
-        };
-        let scene = runtime.arena.committed();
-        let changes = Changes {
-            rects: scene.dirty(),
-            generation: scene.generation(),
-        };
-        runtime.painter.paint(
-            scene.rects(),
-            scene.paints(),
-            scene.images(),
-            scene.clips(),
-            scene.groups(),
-            scene.glyphs(),
-            Some(changes.rects),
-        );
-        let presented = surface.present(
-            runtime.painter.instances(),
-            scene.paints(),
-            scene.images(),
-            scene.clips(),
-            scene.glyphs(),
-            Some(changes),
-        );
-        match presented {
-            Ok(drawn) => {
-                if !out_drawn.is_null() {
-                    unsafe { *out_drawn = drawn == Drawn::Yes };
-                }
-                // Unconditionally on `Ok`, not only on `Drawn::Yes`, which is
-                // what both reference hosts do and what `LiveScene::advanced`'s
-                // own documentation requires: "a present can return `Ok`
-                // without drawing — a zero extent, an occluded window, or an
-                // acquire that timed out. Nothing here tries to detect that,
-                // and a host should not either." Gating on `Drawn::Yes` would
-                // leave `advanced()` true on every tick while the window is
-                // occluded, so a host that idles on it would never idle.
-                if let Some(scene) = runtime.scene.as_mut() {
-                    scene.mark_shown();
-                }
-                DsStatus::Ok
+        on_runtime(runtime, "ds_runtime_draw", |runtime| {
+            if runtime.scene.is_none() {
+                set_last_error("ds_runtime_draw: no document loaded");
+                return DsStatus::NoDocument;
             }
-            Err(error) => {
-                set_last_error(format!("{error:?}"));
-                // **The one place this ABI can classify a surface failure**, and
-                // the reason issue #884 was about `ds_runtime_draw` rather than
-                // about `DsStatus` generally: `present` fails with a
-                // `FrameError`, which carries the rule, and the other two
-                // surface failures — `resize` and the attach — fail with a
-                // `RendererError`, which does not describe a lost swapchain at
-                // all. Reporting a lost surface there would be inventing a
-                // classification rather than forwarding one.
-                if error.is_recoverable() {
-                    DsStatus::SurfaceLost
-                } else {
-                    DsStatus::Surface
+            let Some(surface) = runtime.surface.as_mut() else {
+                set_last_error("ds_runtime_draw: no surface attached");
+                return DsStatus::NoSurface;
+            };
+            let scene = runtime.arena.committed();
+            let changes = Changes {
+                rects: scene.dirty(),
+                generation: scene.generation(),
+            };
+            runtime.painter.paint(
+                scene.rects(),
+                scene.paints(),
+                scene.images(),
+                scene.clips(),
+                scene.groups(),
+                scene.glyphs(),
+                Some(changes.rects),
+            );
+            let presented = surface.present(
+                runtime.painter.instances(),
+                scene.paints(),
+                scene.images(),
+                scene.clips(),
+                scene.glyphs(),
+                Some(changes),
+            );
+            match presented {
+                Ok(drawn) => {
+                    if !out_drawn.is_null() {
+                        unsafe { *out_drawn = drawn == Drawn::Yes };
+                    }
+                    // Unconditionally on `Ok`, not only on `Drawn::Yes`, which is
+                    // what both reference hosts do and what `LiveScene::advanced`'s
+                    // own documentation requires: "a present can return `Ok`
+                    // without drawing — a zero extent, an occluded window, or an
+                    // acquire that timed out. Nothing here tries to detect that,
+                    // and a host should not either." Gating on `Drawn::Yes` would
+                    // leave `advanced()` true on every tick while the window is
+                    // occluded, so a host that idles on it would never idle.
+                    if let Some(scene) = runtime.scene.as_mut() {
+                        scene.mark_shown();
+                    }
+                    DsStatus::Ok
+                }
+                Err(error) => {
+                    set_last_error(format!("{error:?}"));
+                    // **The one place this ABI can classify a surface failure**, and
+                    // the reason issue #884 was about `ds_runtime_draw` rather than
+                    // about `DsStatus` generally: `present` fails with a
+                    // `FrameError`, which carries the rule, and the other two
+                    // surface failures — `resize` and the attach — fail with a
+                    // `RendererError`, which does not describe a lost swapchain at
+                    // all. Reporting a lost surface there would be inventing a
+                    // classification rather than forwarding one.
+                    if error.is_recoverable() {
+                        DsStatus::SurfaceLost
+                    } else {
+                        DsStatus::Surface
+                    }
                 }
             }
-        }
+        })
     })
 }
 
@@ -1267,13 +1361,14 @@ pub unsafe extern "C" fn ds_last_error_message(buf: *mut c_char, cap: usize) -> 
 ///
 /// # Safety
 ///
-/// `window` must be a valid handle of the kind `kind` names, and must outlive
-/// every later call on `runtime` until the surface is replaced or the runtime is
-/// freed. On Android that is D4's rule: `surfaceDestroyed` must not return until
+/// The runtime handle carries no safety obligation (story #1226). `window`
+/// must be a valid platform handle of the kind `kind` names — a different
+/// thing entirely — and must outlive every later call on `runtime` until the
+/// surface is replaced or the runtime is freed. On Android that is D4's rule: `surfaceDestroyed` must not return until
 /// rendering has stopped.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ds_runtime_attach_surface(
-    runtime: *mut DsRuntime,
+    runtime: DsRuntime,
     kind: i32,
     window: *mut std::ffi::c_void,
     _display: *mut std::ffi::c_void,
@@ -1281,28 +1376,29 @@ pub unsafe extern "C" fn ds_runtime_attach_surface(
     height: u32,
 ) -> DsStatus {
     guard(|| {
-        if runtime.is_null() || window.is_null() {
-            set_last_error("ds_runtime_attach_surface: runtime or window is null");
+        if window.is_null() {
+            set_last_error("ds_runtime_attach_surface: window is null");
             return DsStatus::NullArgument;
         }
-        let runtime = unsafe { &mut *runtime };
-        // `kind` is an `i32` and not a `DsSurfaceKind`, deliberately. Binding a
-        // C integer to a `#[repr(i32)]` enum parameter *constructs* that enum,
-        // and a bit pattern with no declared discriminant is undefined
-        // behaviour the instant the call binds its arguments — before `guard`
-        // runs, so `catch_unwind` could never see it. An uninitialised local on
-        // the C side, or a header newer than the library once a second variant
-        // exists, is enough to produce one. Validating an integer is the only
-        // shape that stays sound.
-        match kind {
-            kind if kind == DsSurfaceKind::AndroidNdk as i32 => {
-                attach_android(runtime, window, width, height)
+        on_runtime(runtime, "ds_runtime_attach_surface", |runtime| {
+            // `kind` is an `i32` and not a `DsSurfaceKind`, deliberately. Binding a
+            // C integer to a `#[repr(i32)]` enum parameter *constructs* that enum,
+            // and a bit pattern with no declared discriminant is undefined
+            // behaviour the instant the call binds its arguments — before `guard`
+            // runs, so `catch_unwind` could never see it. An uninitialised local on
+            // the C side, or a header newer than the library once a second variant
+            // exists, is enough to produce one. Validating an integer is the only
+            // shape that stays sound.
+            match kind {
+                kind if kind == DsSurfaceKind::AndroidNdk as i32 => {
+                    attach_android(runtime, window, width, height)
+                }
+                other => {
+                    set_last_error(format!("ds_runtime_attach_surface: unknown kind {other}"));
+                    DsStatus::UnsupportedHandle
+                }
             }
-            other => {
-                set_last_error(format!("ds_runtime_attach_surface: unknown kind {other}"));
-                DsStatus::UnsupportedHandle
-            }
-        }
+        })
     })
 }
 
@@ -1340,36 +1436,35 @@ pub unsafe extern "C" fn ds_runtime_attach_surface(
 ///
 /// # Safety
 ///
-/// `runtime` must be live, and `out_had_surface` must be writable or null. **No
-/// other call may be in flight on `runtime`** — that is what the caller's own
-/// handshake is for, and this function cannot check it.
+/// `out_had_surface` must be writable or null; the handle carries no safety
+/// obligation (story #1226). The no-other-call-in-flight rule is stated on
+/// [`DsRuntime`] and, since that story, **checked**: a re-entrant call on this
+/// handle is [`DsStatus::BadHandle`] rather than something the caller's own
+/// handshake alone has to prevent.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ds_runtime_detach_surface(
-    runtime: *mut DsRuntime,
+    runtime: DsRuntime,
     out_had_surface: *mut bool,
 ) -> DsStatus {
     guard(|| {
-        if runtime.is_null() {
-            set_last_error("ds_runtime_detach_surface: runtime is null");
-            return DsStatus::NullArgument;
-        }
-        let runtime = unsafe { &mut *runtime };
-        // `take` and drop. The drop is the point of the call: it is what
-        // releases the `wgpu::Surface` holding the `ANativeWindow`, and it
-        // happens here rather than at some later cleanup precisely so the
-        // caller can order it before releasing the window.
-        let had_surface = runtime.surface.take().is_some();
-        if !out_had_surface.is_null() {
-            unsafe { *out_had_surface = had_surface };
-        }
-        DsStatus::Ok
+        on_runtime(runtime, "ds_runtime_detach_surface", |runtime| {
+            // `take` and drop. The drop is the point of the call: it is what
+            // releases the `wgpu::Surface` holding the `ANativeWindow`, and it
+            // happens here rather than at some later cleanup precisely so the
+            // caller can order it before releasing the window.
+            let had_surface = runtime.surface.take().is_some();
+            if !out_had_surface.is_null() {
+                unsafe { *out_had_surface = had_surface };
+            }
+            DsStatus::Ok
+        })
     })
 }
 
 /// The Android arm of [`ds_runtime_attach_surface`].
 #[cfg(target_os = "android")]
 fn attach_android(
-    runtime: &mut DsRuntime,
+    runtime: &mut Runtime,
     window: *mut std::ffi::c_void,
     width: u32,
     height: u32,
@@ -1392,7 +1487,7 @@ fn attach_android(
     // It is also what the `# Safety` note means by "until the surface is
     // replaced": after this call there is no old surface, whatever the status.
     runtime.surface = None;
-    match unsafe { SurfaceRenderer::for_android_ndk(window, width, height) } {
+    match unsafe { dashscene_gpu::SurfaceRenderer::for_android_ndk(window, width, height) } {
         Ok(surface) => {
             runtime.surface = Some(surface);
             DsStatus::Ok
@@ -1411,7 +1506,7 @@ fn attach_android(
 /// them and says so rather than pretending.
 #[cfg(not(target_os = "android"))]
 fn attach_android(
-    _runtime: &mut DsRuntime,
+    _runtime: &mut Runtime,
     _window: *mut std::ffi::c_void,
     _width: u32,
     _height: u32,
@@ -1475,11 +1570,8 @@ mod tests {
     ///
     /// `runtime` is non-null and points at a live `DsRuntime` that outlives
     /// `'a`.
-    unsafe fn live<'a>(runtime: *mut DsRuntime) -> &'a DsRuntime {
-        assert!(!runtime.is_null(), "a live runtime is never null here");
-        // SAFETY: the caller promises a live, non-null handle that outlives
-        // `'a`.
-        unsafe { &*runtime }
+    fn live<T>(runtime: DsRuntime, f: impl FnOnce(&mut Runtime) -> T) -> T {
+        table::with_runtime(runtime, f).expect("a live runtime resolves here")
     }
 
     /// **Every `extern "C"` entry point runs inside `catch_unwind`, and
@@ -1631,10 +1723,13 @@ mod tests {
 
     #[test]
     fn a_runtime_round_trips() {
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
-        assert!(!runtime.is_null());
-        unsafe { ds_runtime_free(runtime) };
+        assert_ne!(
+            runtime, 0,
+            "ds_runtime_new answered Ok, so it minted a handle"
+        );
+        ds_runtime_free(runtime);
     }
 
     #[test]
@@ -1647,31 +1742,31 @@ mod tests {
 
     #[test]
     fn freeing_null_is_allowed() {
-        unsafe { ds_runtime_free(std::ptr::null_mut()) };
+        ds_runtime_free(0);
     }
 
     /// The tick needs a document, and says so rather than ticking nothing.
     #[test]
     fn ticking_without_a_document_reports_no_document() {
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         let mut advanced = true;
         assert_eq!(
             unsafe { ds_runtime_tick(runtime, 0.016, &mut advanced) },
             DsStatus::NoDocument
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     #[test]
     fn resizing_without_a_surface_reports_no_surface() {
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe { ds_runtime_resize(runtime, 100, 100) },
             DsStatus::NoSurface
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// Detaching reports whether there was anything to detach, and detaching
@@ -1683,7 +1778,7 @@ mod tests {
     /// status it would have to treat as benign.
     #[test]
     fn detaching_without_a_surface_is_allowed_and_says_there_was_none() {
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
 
         let mut had = true;
@@ -1701,7 +1796,7 @@ mod tests {
             unsafe { ds_runtime_detach_surface(runtime, std::ptr::null_mut()) },
             DsStatus::Ok
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// A null runtime is a status rather than a dereference, like every other
@@ -1709,7 +1804,7 @@ mod tests {
     #[test]
     fn detaching_a_null_runtime_is_a_status() {
         assert_eq!(
-            unsafe { ds_runtime_detach_surface(std::ptr::null_mut(), std::ptr::null_mut()) },
+            unsafe { ds_runtime_detach_surface(0, std::ptr::null_mut()) },
             DsStatus::NullArgument
         );
     }
@@ -1721,7 +1816,7 @@ mod tests {
     /// detach that dropped it would answer `NoDocument` here.
     #[test]
     fn detaching_keeps_the_document() {
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         // No document loaded, so the tick's answer is `NoDocument` before and
         // after. The point is that detaching does not change it to something
@@ -1733,19 +1828,19 @@ mod tests {
         );
         let after = unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) };
         assert_eq!(before, after);
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// Bytes that are not a document fail as a status, not as a panic — which is
     /// the rule the whole boundary exists to keep.
     #[test]
     fn junk_bytes_are_an_open_failure_and_not_a_panic() {
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         let junk = [0_u8; 32];
         let status = unsafe { ds_runtime_load_document(runtime, junk.as_ptr(), junk.len()) };
         assert_eq!(status, DsStatus::Open);
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// The committed table's row count, which is the loaded document's and no
@@ -1759,18 +1854,13 @@ mod tests {
     /// site, a second dereference further down the test — past a load, past a
     /// tick, or inside a loop — is out of reach of it again, which is what the
     /// rule reported against the first cut of these two tests.
-    fn committed_rows(runtime: *const DsRuntime) -> usize {
-        // `as_ref` rather than `&*` behind an `assert!`: it is the conversion
-        // that carries the null check in its type, and CodeQL's
-        // `rust/access-invalid-pointer` reads the raw dereference as
-        // unguarded whatever assertion precedes it — which is what it reported
-        // against the first two cuts of this helper.
-        //
-        // SAFETY: `ds_runtime_new` answered Ok where this handle was made, and
-        // nothing has freed it yet; null is the one other case and `as_ref`
-        // answers `None` for it.
-        let runtime = unsafe { runtime.as_ref() }.expect("the handle under test is live");
-        runtime.arena.committed().rects().len()
+    fn committed_rows(runtime: DsRuntime) -> usize {
+        // No pointer, so no dereference and nothing for CodeQL's
+        // `rust/access-invalid-pointer` to read as unguarded: the handle is a
+        // value and the table answers `Err` for one it does not know. That is
+        // the alert issue #979 tracked, removed by the type rather than
+        // dismissed.
+        live(runtime, |r| r.arena.committed().rects().len())
     }
 
     /// A document that opens and then fails the gate: one root node naming a
@@ -1843,7 +1933,7 @@ mod tests {
         ))
         .expect("the committed fixture is present");
 
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe { ds_runtime_load_document(runtime, document.as_ptr(), document.len()) },
@@ -1880,7 +1970,7 @@ mod tests {
                  left behind: {expected:?}"
             );
         }
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// The size query works before the buffer exists, so a caller can size one.
@@ -1922,7 +2012,7 @@ mod tests {
     #[cfg(not(target_os = "android"))]
     #[test]
     fn an_android_handle_on_a_host_build_is_declined() {
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         let mut fake = 0_u8;
         let status = unsafe {
@@ -1936,7 +2026,7 @@ mod tests {
             )
         };
         assert_eq!(status, DsStatus::UnsupportedHandle);
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// An unknown tag is rejected rather than merely unmatched.
@@ -1947,7 +2037,7 @@ mod tests {
     /// the test that fails if someone "tidies" the signature back to the enum.
     #[test]
     fn an_unknown_surface_kind_is_rejected() {
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         let mut fake = 0_u8;
         let status = unsafe {
@@ -1961,7 +2051,7 @@ mod tests {
             )
         };
         assert_eq!(status, DsStatus::UnsupportedHandle);
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// **A loaded document draws its text**, which is the story's whole
@@ -2017,7 +2107,7 @@ mod tests {
         /// raw pointer in and dereferencing it here put the deref out of
         /// reach of the null check, which is what CodeQL's
         /// `rust/access-invalid-pointer` reported against this test.
-        fn measured(runtime: &DsRuntime) -> (usize, f32, f32) {
+        fn measured(runtime: &mut Runtime) -> (usize, f32, f32) {
             let scene = runtime.arena.committed();
             let row = (0..scene.rects().len() as u32)
                 .find(|&row| runtime.arena.text(scene.node_of(row)).is_some())
@@ -2027,11 +2117,11 @@ mod tests {
         }
 
         let load = |faces: *const DsFontFace, count: usize| {
-            let mut runtime = std::ptr::null_mut();
+            let mut runtime: DsRuntime = 0;
             assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
-            assert!(
-                !runtime.is_null(),
-                "ds_runtime_new answered Ok, so it wrote a live handle"
+            assert_ne!(
+                runtime, 0,
+                "ds_runtime_new answered Ok, so it minted a live handle"
             );
             assert_eq!(
                 unsafe {
@@ -2048,8 +2138,8 @@ mod tests {
             // SAFETY: `ds_runtime_new` answered Ok and wrote a non-null handle,
             // asserted above, and nothing has freed it yet. Through `live` for
             // the reason that function gives (issue #979).
-            let out = measured(unsafe { live(runtime) });
-            unsafe { ds_runtime_free(runtime) };
+            let out = live(runtime, measured);
+            ds_runtime_free(runtime);
             out
         };
 
@@ -2075,7 +2165,7 @@ mod tests {
     /// A null face array with a non-zero count is a status, not a dereference.
     #[test]
     fn a_null_face_array_with_a_count_is_a_status() {
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         let junk = [0_u8; 32];
         assert_eq!(
@@ -2090,7 +2180,7 @@ mod tests {
             },
             DsStatus::NullArgument
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// Bytes that are not a face are `FontFace` — not a panic, and not `Open`.
@@ -2112,7 +2202,7 @@ mod tests {
             atlas_metrics_len: 0,
         };
         let not_a_document = [0_u8; 32];
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe {
@@ -2126,7 +2216,7 @@ mod tests {
             },
             DsStatus::FontFace
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// A weight outside the CSS range is `FontFace`, refused rather than
@@ -2169,7 +2259,7 @@ mod tests {
                 atlas_metrics: std::ptr::null(),
                 atlas_metrics_len: 0,
             };
-            let mut runtime = std::ptr::null_mut();
+            let mut runtime: DsRuntime = 0;
             assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
             assert_eq!(
                 unsafe {
@@ -2184,7 +2274,7 @@ mod tests {
                 DsStatus::FontFace,
                 "weight {weight} is outside 1..=1000, so the load is refused as FontFace"
             );
-            unsafe { ds_runtime_free(runtime) };
+            ds_runtime_free(runtime);
         }
 
         // The ends of the range are accepted, so the check is a range and not
@@ -2202,7 +2292,7 @@ mod tests {
                 atlas_metrics: std::ptr::null(),
                 atlas_metrics_len: 0,
             };
-            let mut runtime = std::ptr::null_mut();
+            let mut runtime: DsRuntime = 0;
             assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
             assert_eq!(
                 unsafe {
@@ -2218,7 +2308,7 @@ mod tests {
                 "weight {weight} is inside 1..=1000, so the faces assemble and the junk \
                  document is what fails"
             );
-            unsafe { ds_runtime_free(runtime) };
+            ds_runtime_free(runtime);
         }
     }
 
@@ -2245,7 +2335,7 @@ mod tests {
             atlas_metrics_len: 0,
         };
         let not_a_document = [0_u8; 32];
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe {
@@ -2259,7 +2349,7 @@ mod tests {
             },
             DsStatus::FontFace
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
 
         let message = LAST_ERROR.with(|slot| slot.borrow().clone());
         assert!(
@@ -2320,7 +2410,7 @@ mod tests {
             },
         ];
         let not_a_document = [0_u8; 32];
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe {
@@ -2334,7 +2424,7 @@ mod tests {
             },
             DsStatus::Atlas
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// Atlas metrics that do not decode are `Atlas`, not a panic and not `Ok`.
@@ -2365,7 +2455,7 @@ mod tests {
             atlas_metrics_len: not_metrics.len(),
         };
         let not_a_document = [0_u8; 32];
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe {
@@ -2379,7 +2469,7 @@ mod tests {
             },
             DsStatus::Atlas
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// **A descriptor wrong in two ways reports the atlas, not the weight**,
@@ -2424,7 +2514,7 @@ mod tests {
             atlas_metrics_len: 0,
         };
         let not_a_document = [0_u8; 32];
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe {
@@ -2439,7 +2529,7 @@ mod tests {
             DsStatus::Atlas,
             "the atlas pair is judged in `faces_from_c` and the weight in `from_faces` after it"
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// Exactly one atlas pointer set is `Atlas`, not a silent fall back to
@@ -2470,7 +2560,7 @@ mod tests {
             atlas_metrics_len: 0,
         };
         let not_a_document = [0_u8; 32];
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe {
@@ -2484,13 +2574,20 @@ mod tests {
             },
             DsStatus::Atlas
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
-    /// The shipped symbols are unchanged, which is what "additive" has to mean.
+    /// Every appended status keeps its discriminant, and the version moved
+    /// exactly once — for the handle, not for any of them.
+    ///
+    /// **The version is 2 since story #1226.** Appending a status is free and
+    /// still does not move it; changing ten signatures is not free, and that
+    /// is what moved it. The assertions below are the evidence for the first
+    /// half: none of these discriminants shifted when `DsRuntime` stopped
+    /// being a pointer.
     #[test]
-    fn the_abi_version_did_not_move() {
-        assert_eq!(DS_ABI_VERSION, 1);
+    fn appending_a_status_is_free_and_the_handle_change_was_not() {
+        assert_eq!(DS_ABI_VERSION, 2);
         assert_eq!(DsStatus::Panic as i32, 8);
         // The two story #947 appended. A discriminant is the contract, and
         // these are the ones a later variant would renumber by being
@@ -2508,6 +2605,12 @@ mod tests {
         // rule `FrameError::is_recoverable` states and every other host reads
         // directly. Appended, so the version did not move for it either.
         assert_eq!(DsStatus::SurfaceLost as i32, 15);
+        // The three story #1226 appended beside the handle change. Appended at
+        // the tail, so nothing above them renumbered — the version moved for
+        // the ten changed signatures, not for these.
+        assert_eq!(DsStatus::BadHandle as i32, 16);
+        assert_eq!(DsStatus::WrongThread as i32, 17);
+        assert_eq!(DsStatus::HandlesExhausted as i32, 18);
     }
 
     /// A two-root `.dsb`, RAW, with `corrupt`'s payload one byte wrong.
@@ -2642,7 +2745,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("a temp dir");
         let path = written(&dir, "two-root.dsb", two_root_document(1));
 
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe {
@@ -2651,7 +2754,7 @@ mod tests {
             DsStatus::Ok,
             "root 1's payload is one byte wrong, and a load bounded to root 0 must never read it"
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// And the other direction: the residency check is reached at all.
@@ -2664,7 +2767,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("a temp dir");
         let path = written(&dir, "corrupt.dsb", two_root_document(0));
 
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe {
@@ -2673,7 +2776,7 @@ mod tests {
             DsStatus::Payload,
             "root 0's own payload is corrupted, so bounding the load to it must refuse the file"
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// An ordinal past the last root is refused, and the message says what the
@@ -2684,7 +2787,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("a temp dir");
         let path = written(&dir, "two-root.dsb", two_root_document(0));
 
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe {
@@ -2698,7 +2801,7 @@ mod tests {
             message.contains("carries 2"),
             "the message must name the count the document carries, and said: {message}"
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// The last error, read the way `ds_last_error_message` documents.
@@ -2739,7 +2842,7 @@ mod tests {
         // Root 0's payload is the corrupt one this time, and root 1 is shown.
         let path = written(&dir, "two-root.dsb", two_root_document(0));
 
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe {
@@ -2753,18 +2856,21 @@ mod tests {
         // document's first. A prefetch bounded correctly while the traversal is
         // confined to the wrong root would draw the wrong artboard with nothing
         // to report it, which is the conflation issue #943 records.
-        // Through `live` for the reason that function gives (issue #979).
-        let arena = &unsafe { live(runtime) }.arena;
-        let shown = arena
-            .committed()
-            .shown_root()
-            .expect("the load named a shown root");
+        let (shown, second_root) = live(runtime, |r| {
+            let arena = &r.arena;
+            (
+                arena
+                    .committed()
+                    .shown_root()
+                    .expect("the load named a shown root"),
+                arena.roots()[1],
+            )
+        });
         assert_eq!(
-            shown,
-            arena.roots()[1],
+            shown, second_root,
             "ordinal 1 must name the document's second root in the arena"
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// And the second root's own corruption is still refused when it is the one
@@ -2774,7 +2880,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("a temp dir");
         let path = written(&dir, "corrupt.dsb", two_root_document(1));
 
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe {
@@ -2783,7 +2889,7 @@ mod tests {
             DsStatus::Payload,
             "root 1's own payload is corrupted, so bounding the load to it must refuse the file"
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// A **refused** load leaves the document already loaded still drawable.
@@ -2817,7 +2923,7 @@ mod tests {
         let good = written(&dir, "good.dsb", two_root_document(1));
         let bad = written(&dir, "bad.dsb", two_root_document(0));
 
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe {
@@ -2852,13 +2958,13 @@ mod tests {
             "and drawable means the document that was loaded, not an emptied arena a scene is \
              still attached to"
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// A null path is a status, not a dereference.
     #[test]
     fn a_null_path_is_a_status_and_not_a_dereference() {
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe {
@@ -2866,7 +2972,7 @@ mod tests {
             },
             DsStatus::NullArgument
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 
     /// A path nothing is at reports `Map` rather than opening an empty
@@ -2874,7 +2980,7 @@ mod tests {
     #[test]
     fn a_path_that_does_not_exist_reports_map() {
         let path = std::ffi::CString::new("/nonexistent/no-such.dsb").expect("no interior NUL");
-        let mut runtime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
         assert_eq!(
             unsafe {
@@ -2882,6 +2988,6 @@ mod tests {
             },
             DsStatus::Map
         );
-        unsafe { ds_runtime_free(runtime) };
+        ds_runtime_free(runtime);
     }
 }

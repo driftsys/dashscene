@@ -27,7 +27,7 @@
 extern "C" {
 #endif
 
-#define DS_ABI_VERSION 1u
+#define DS_ABI_VERSION 2u
 
 /*
  * Why a call did not succeed.
@@ -100,7 +100,26 @@ typedef enum DsStatus {
    * Bound your consecutive rebuilds even so. A surface lost on every frame is
    * a device that has gone away, and the remedy keeps not working.
    */
-  DS_SURFACE_LOST = 15
+  DS_SURFACE_LOST = 15,
+  /* The handle named no runtime the calling thread can reach right now:
+   * it was freed, or it was never one this library minted. Either way the
+   * remedy is to stop using it.
+   *
+   * One further cause exists and NO HOST CAN REACH IT TODAY: a call already
+   * in flight on that same handle, which leaves the runtime checked out. No
+   * entry point takes a function pointer, so nothing of yours runs during a
+   * call and you cannot re-enter one. It becomes reachable when a callback
+   * does — story #859's data plane is the candidate — and then it names a
+   * runtime that is alive and still has to be freed, so it must not be read
+   * as "give up on the runtime". */
+  DS_BAD_HANDLE = 16,
+  /* The handle was minted on a different thread, which may still hold it or
+   * may have exited. The remedy is to call from the thread that created it. */
+  DS_WRONG_THREAD = 17,
+  /* No handle could be minted: this thread already holds the maximum number of
+   * live runtimes, or the process has drawn every thread number a handle can
+   * carry. Never a wrap. */
+  DS_HANDLES_EXHAUSTED = 18
 } DsStatus;
 
 /* Which platform handle ds_runtime_attach_surface's pointers carry. */
@@ -147,19 +166,52 @@ typedef struct DsFontFace {
   size_t atlas_metrics_len;
 } DsFontFace;
 
-/* A live runtime. Opaque: the layout is free to change without moving the ABI
- * version. */
-typedef struct DsRuntime DsRuntime;
+/*
+ * A live runtime, named by an opaque handle.
+ *
+ * NOT AN ADDRESS. Do not dereference it, do arithmetic on it, or invent one.
+ * A handle names at most one runtime for the life of the process: freeing a
+ * runtime retires its value and no later runtime is ever given it again. So a
+ * stale handle, a forged handle, and a handle used from a thread other than
+ * the one that created it each produce a DsStatus rather than undefined
+ * behaviour.
+ *
+ * THREAD-AFFINE. A runtime is reachable only from the thread whose
+ * ds_runtime_new minted it. From any other thread every call answers
+ * DS_WRONG_THREAD, including after the minting thread has exited — the two
+ * cases are deliberately not distinguished, because telling them apart needs a
+ * process-wide registry of live threads and that is the shared state this
+ * design exists to avoid.
+ *
+ * NO OTHER CALL MAY BE IN FLIGHT ON THE SAME RUNTIME. This is the rule for
+ * every ds_runtime_* entry point, and this is the one place it is stated.
+ * Since story #1226 it is also checked: a re-entrant call on the same handle
+ * is refused with DS_BAD_HANDLE rather than aliasing the runtime. A call on a
+ * DIFFERENT runtime is fine. Nothing can break the rule today in any case,
+ * because no entry point calls back into host code.
+ *
+ * 0 is never a live runtime. ds_runtime_new writes 0 on every failure, so a
+ * caller that ignores the status still holds a value that cannot resolve.
+ */
+typedef uint64_t DsRuntime;
 
 /* Returns DS_ABI_VERSION. Cannot fail and takes no handle, so a host can ask
  * before it commits to anything. */
 uint32_t ds_abi_version(void);
 
 /* Creates an empty runtime — no document, no surface — and writes it to out. */
-DsStatus ds_runtime_new(DsRuntime **out);
+DsStatus ds_runtime_new(DsRuntime *out);
 
-/* Frees a runtime. NULL is accepted and does nothing, like free(). */
-void ds_runtime_free(DsRuntime *runtime);
+/*
+ * Frees the runtime a handle names, and retires the handle.
+ *
+ * 0 is accepted and does nothing, exactly where NULL was. Freeing a handle
+ * twice, freeing one this library never minted, or freeing from a thread other
+ * than the one that created it are each reported — DS_BAD_HANDLE or
+ * DS_WRONG_THREAD — rather than being undefined behaviour the caller has to
+ * prevent. That is what this handle exists for.
+ */
+DsStatus ds_runtime_free(DsRuntime runtime);
 
 /*
  * Loads a .dsb held in memory.
@@ -171,7 +223,7 @@ void ds_runtime_free(DsRuntime *runtime);
  * If you have the file rather than its bytes, ds_runtime_load_document_mapped
  * is the bounded path and costs less.
  */
-DsStatus ds_runtime_load_document(DsRuntime *runtime, const uint8_t *bytes,
+DsStatus ds_runtime_load_document(DsRuntime runtime, const uint8_t *bytes,
                                   size_t len);
 
 /*
@@ -194,7 +246,7 @@ DsStatus ds_runtime_load_document(DsRuntime *runtime, const uint8_t *bytes,
  *
  * Adding this symbol did not move DS_ABI_VERSION.
  */
-DsStatus ds_runtime_load_document_with_text(DsRuntime *runtime,
+DsStatus ds_runtime_load_document_with_text(DsRuntime runtime,
                                             const uint8_t *bytes, size_t len,
                                             const DsFontFace *faces,
                                             size_t face_count);
@@ -238,7 +290,7 @@ DsStatus ds_runtime_load_document_with_text(DsRuntime *runtime,
  * Adding this symbol did not move DS_ABI_VERSION, and neither did the four
  * statuses it reports: they are appended at the tail of DsStatus.
  */
-DsStatus ds_runtime_load_document_mapped(DsRuntime *runtime, const char *path,
+DsStatus ds_runtime_load_document_mapped(DsRuntime runtime, const char *path,
                                          uint32_t shown_root,
                                          const DsFontFace *faces,
                                          size_t face_count);
@@ -258,7 +310,7 @@ DsStatus ds_runtime_load_document_mapped(DsRuntime *runtime, const char *path,
  * kind must be rejectable rather than merely unmatched. An unrecognised value
  * returns DS_UNSUPPORTED_HANDLE.
  */
-DsStatus ds_runtime_attach_surface(DsRuntime *runtime, DsSurfaceKind kind,
+DsStatus ds_runtime_attach_surface(DsRuntime runtime, DsSurfaceKind kind,
                                    void *window, void *display, uint32_t width,
                                    uint32_t height);
 
@@ -278,15 +330,12 @@ DsStatus ds_runtime_attach_surface(DsRuntime *runtime, DsSurfaceKind kind,
  * out_advanced says: the scene did not change while the surface was gone, and
  * the new device has drawn nothing.
  *
- * No other call may be in flight on runtime. That is what the caller's
- * handshake is for, and this function cannot check it.
- *
  * Adding this symbol did not move DS_ABI_VERSION.
  */
-DsStatus ds_runtime_detach_surface(DsRuntime *runtime, bool *out_had_surface);
+DsStatus ds_runtime_detach_surface(DsRuntime runtime, bool *out_had_surface);
 
 /* Resizes the surface. width and height are device pixels. */
-DsStatus ds_runtime_resize(DsRuntime *runtime, uint32_t width, uint32_t height);
+DsStatus ds_runtime_resize(DsRuntime runtime, uint32_t width, uint32_t height);
 
 /*
  * Advances the scene by dt seconds. out_advanced, if non-NULL, receives whether
@@ -302,7 +351,7 @@ DsStatus ds_runtime_resize(DsRuntime *runtime, uint32_t width, uint32_t height);
  * inside the load, and no call changes it afterwards. The report is here so a
  * host is already correct if that changes.
  */
-DsStatus ds_runtime_tick(DsRuntime *runtime, float dt, bool *out_advanced);
+DsStatus ds_runtime_tick(DsRuntime runtime, float dt, bool *out_advanced);
 
 /*
  * Draws the committed frame and puts it on the surface.
@@ -327,7 +376,7 @@ DsStatus ds_runtime_tick(DsRuntime *runtime, float dt, bool *out_advanced);
  * this header, a new symbol is additive and a host built against an older
  * header keeps working.
  */
-DsStatus ds_runtime_draw(DsRuntime *runtime, bool *out_drawn);
+DsStatus ds_runtime_draw(DsRuntime runtime, bool *out_drawn);
 
 /*
  * Copies the last failure's message into buf as NUL-terminated UTF-8.

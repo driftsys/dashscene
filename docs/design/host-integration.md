@@ -186,8 +186,8 @@ for, and its index within a collection — with the committed sheet its glyphs
 sample. Neither a `Typesetter` nor an `Atlas` crosses the boundary; their
 **inputs** do, and `dashscene_engine::TextResources::from_faces` assembles both
 on the far side from one family-major walk. A new symbol rather than a changed
-signature, so `DS_ABI_VERSION` stays 1, and `ds_runtime_load_document` is this
-call with no faces.
+signature, so `DS_ABI_VERSION` did not move for it, and
+`ds_runtime_load_document` is this call with no faces.
 
 The atlas sits inside the descriptor rather than in a parallel array for the
 reason `TextResources` gives: the atlas list is indexed by the font slot of the

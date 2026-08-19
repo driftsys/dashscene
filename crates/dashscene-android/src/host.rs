@@ -193,7 +193,7 @@ enum Document {
 
 /// A compiled `.dsb`, drawn through the C ABI.
 struct DocumentFrames {
-    runtime: *mut DsRuntime,
+    runtime: DsRuntime,
     /// The document, **kept for the life of this object** — see [`Document`].
     document: Document,
     /// Why the last `resize` was refused, for [`Frames::refusal_reason`].
@@ -228,7 +228,7 @@ impl Frames for DocumentFrames {
         width: u32,
         height: u32,
     ) -> Result<(), AttachError> {
-        let mut runtime: *mut DsRuntime = std::ptr::null_mut();
+        let mut runtime: DsRuntime = 0;
         // SAFETY: `runtime` is a valid writable out-pointer.
         if unsafe { dashscene_ffi::ds_runtime_new(&mut runtime) } != DsStatus::Ok {
             return Err(format!("ds_runtime_new: {}", last_error()));
@@ -396,20 +396,43 @@ impl Frames for DocumentFrames {
         // cycle it was kept for rather than the life of the process.
         //
         // Tolerates being called after a failed `attach`, which the loop does.
-        if self.runtime.is_null() {
+        if self.runtime == 0 {
             return;
         }
         // The surface first, then the runtime. Both before the loop releases the
         // handshake, which is what D4 requires of the first and what issue #872
         // records as unnecessary for the second.
         //
+        // **Both statuses are read.** Before story #1226 neither call could be
+        // refused: the detach dereferenced a pointer and always took the
+        // surface. Now a retired handle, or one from another thread, answers
+        // `BadHandle`/`WrongThread` and drops nothing — and this is the path
+        // that releases D4's `surfaceDestroyed` handshake, which must not
+        // return while the surface is still held. A refusal here is a defect
+        // in this host, so it is reported rather than discarded.
+        //
         // SAFETY: `runtime` is live and no other call is in flight — this is the
         // only thread that has ever touched it.
-        unsafe {
-            dashscene_ffi::ds_runtime_detach_surface(self.runtime, std::ptr::null_mut());
-            dashscene_ffi::ds_runtime_free(self.runtime);
+        let detached =
+            unsafe { dashscene_ffi::ds_runtime_detach_surface(self.runtime, std::ptr::null_mut()) };
+        if detached != DsStatus::Ok {
+            log(&format!(
+                "ds_runtime_detach_surface refused with {detached:?} ({}) — \
+                 the surface may still be held and surfaceDestroyed is about \
+                 to return",
+                last_error()
+            ));
         }
-        self.runtime = std::ptr::null_mut();
+        // The handle is retired by this call: a second free, or any later use,
+        // is a status rather than a double free.
+        let freed = dashscene_ffi::ds_runtime_free(self.runtime);
+        if freed != DsStatus::Ok {
+            log(&format!(
+                "ds_runtime_free refused with {freed:?} ({})",
+                last_error()
+            ));
+        }
+        self.runtime = 0;
     }
 }
 
@@ -471,7 +494,7 @@ fn start_document_host(
     // `faces` cross, and both are `Send`.
     let frames = move || -> Box<dyn Frames> {
         Box::new(DocumentFrames {
-            runtime: std::ptr::null_mut(),
+            runtime: 0,
             document,
             refusal: None,
             faces,

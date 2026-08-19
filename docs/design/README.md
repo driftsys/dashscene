@@ -51,7 +51,8 @@ directly:
   (v0.17, stories #741, #810, #794, #792).
 - [c-abi.md](c-abi.md) — `dashscene-ffi` as built: the entry points and the
   lifecycle they form, why there are three loaders, the versioning rule that has
-  kept `DS_ABI_VERSION` at 1 across every status variant added since — and the
+  kept `DS_ABI_VERSION` unmoved across every status variant added since, and
+  moved it to 2 exactly once, for story #1226's ten changed signatures — and the
   gap in it that `SurfaceLost` exposed — what a caller must guarantee, and the
   gaps — including that it is a control plane and not a data plane (v0.19, story
   #840).

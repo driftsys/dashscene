@@ -40,9 +40,9 @@ int main(void) {
   check(ds_abi_version() == DS_ABI_VERSION,
         "the header's DS_ABI_VERSION matches ds_abi_version()");
 
-  DsRuntime *runtime = NULL;
+  DsRuntime runtime = 0;
   check(ds_runtime_new(&runtime) == DS_OK, "ds_runtime_new succeeds");
-  check(runtime != NULL, "ds_runtime_new writes a handle");
+  check(runtime != 0, "ds_runtime_new mints a handle, and 0 is never one");
 
   check(ds_runtime_new(NULL) == DS_NULL_ARGUMENT,
         "a null out pointer is a status, not a crash");
@@ -183,9 +183,9 @@ int main(void) {
   check(ds_runtime_load_document_mapped(runtime, NULL, 0, NULL, 0) ==
             DS_NULL_ARGUMENT,
         "a NULL path is DS_NULL_ARGUMENT from C");
-  check(ds_runtime_load_document_mapped(NULL, "/nonexistent/no-such.dsb", 0,
-                                        NULL, 0) == DS_NULL_ARGUMENT,
-        "a NULL runtime is DS_NULL_ARGUMENT from C");
+  check(ds_runtime_load_document_mapped(0, "/nonexistent/no-such.dsb", 0, NULL,
+                                        0) == DS_NULL_ARGUMENT,
+        "a 0 handle is DS_NULL_ARGUMENT from C, where NULL was");
   check(ds_runtime_load_document_mapped(runtime, "/nonexistent/no-such.dsb", 0,
                                         NULL, 0) == DS_MAP,
         "a path nothing is at is DS_MAP from C");
@@ -227,10 +227,23 @@ int main(void) {
    * being the newest and the only one a host is told to branch on differently
    * from its neighbour. */
   check(DS_SURFACE_LOST == 15, "DS_SURFACE_LOST is 15 in the header");
+  /* The three story #1226 appended. A Rust test over DsStatus cannot read the
+   * header, so these pins are the only thing that can see a header-only typo
+   * in them. DS_BAD_HANDLE is also exercised below; these two are reachable
+   * only from another thread or from an exhausted table, so they are pinned by
+   * value rather than provoked. */
+  check(DS_BAD_HANDLE == 16, "DS_BAD_HANDLE is 16 in the header");
+  check(DS_WRONG_THREAD == 17, "DS_WRONG_THREAD is 17 in the header");
+  check(DS_HANDLES_EXHAUSTED == 18, "DS_HANDLES_EXHAUSTED is 18 in the header");
 
-  ds_runtime_free(runtime);
-  ds_runtime_free(NULL); /* free(NULL) semantics */
-  check(1, "freeing the runtime and NULL both return");
+  check(ds_runtime_free(runtime) == DS_OK, "a live handle frees");
+  check(ds_runtime_free(runtime) == DS_BAD_HANDLE,
+        "and freeing it twice is reported rather than corrupting the table");
+  check(ds_runtime_free(0) == DS_OK, "0 frees nothing and succeeds, like free(NULL)");
+  check(ds_runtime_tick(runtime, 0.016f, NULL) == DS_BAD_HANDLE,
+        "a freed handle drives nothing");
+  check(ds_runtime_tick(0, 0.016f, NULL) == DS_NULL_ARGUMENT,
+        "and 0 is the null argument it replaces");
 
   if (failures == 0) {
     printf("dashscene C ABI: all checks passed\n");

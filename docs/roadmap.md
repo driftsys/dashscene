@@ -1993,10 +1993,11 @@ the bullet on it here is the current reading.
   and it now runs at the epic as well as at the milestone.
 - **#1226 became a gate rather than debt beside the slice, and was ruled on
   2026-08-18.** It asked whether the C ABI's runtime handle stays a raw pointer.
-  The answer changes the signature of every entry point and therefore every
-  P/Invoke declaration a C# host writes, so it was owed before **#859** adds
-  entry points and before **#1121** writes the host. **The ruling is a
-  generational handle in a thread-affine table** —
+  The answer changes the signature of ten of the twelve exported entry points —
+  `ds_abi_version` and `ds_last_error_message` take no runtime and keep theirs —
+  and therefore every P/Invoke declaration a C# host writes, so it was owed
+  before **#859** adds entry points and before **#1121** writes the host. **The
+  ruling is a generational handle in a thread-affine table** —
   [`decisions/the-c-abi-runtime-handle-is-generational.md`](decisions/the-c-abi-runtime-handle-is-generational.md)
   carries it, its reasoning and its cost; they are not restated here. It is not
   an entry condition on the slice, and #1226 now carries the build.
