@@ -6,7 +6,7 @@
 This is a profile specification: it defines what the validator must accept, warn
 on, and reject. It is what makes P4 ("vocabulary is validated, never
 discovered") checkable. The validator that implements this triage is
-`crates/dashscene-validator`; its three-gate architecture is recorded in
+`crates/dashscene-validator`; its gate-per-surface architecture is recorded in
 [validator-three-gates.md](../decisions/validator-three-gates.md).
 
     NOW (v0/v1)    all four gradient types (angular = gauges),

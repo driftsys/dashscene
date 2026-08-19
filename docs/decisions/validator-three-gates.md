@@ -1,6 +1,10 @@
 # The validator is three gates, not one `validate()`
 
-    status   accepted (story #15, 2026-07-13)
+    status   accepted (story #15, 2026-07-13). **Amended 2026-08-19 by story
+             #1127**, which adds a fourth gate. What was decided here is
+             unchanged: a gate per surface, never one `validate()`. The
+             addition is the first gate whose subject can sit outside the
+             document — see the last Consequences bullet.
     scope    crates/dashscene-validator, crates/dashpaint
     binds    #16 (dashc calls the import + load gates), #41 (v0.7 waivers
              and workaround hints), #45/#44 (v0.8 effects widen the profile
@@ -142,6 +146,20 @@ and the validator all read it.
 - **v0.8 effects** (#44, #45) put blur/mask/shadow vocabulary into the schema.
   That is when `validate_document` regains a `Profile` parameter, and when the
   Q-6 group-opacity RT budget gets a number fixed in `profile:core`.
+- **A fourth gate, added by story #1127** (2026-08-19):
+  `validate_contributions(&Document, &[&str], Profile) -> Report`, the
+  document's declared placeholders against the contribution ids a host binds.
+  The choice above is unweakened — it is still a gate per surface rather than
+  one `validate()`. What the three classes did not anticipate is a gate whose
+  second input exists nowhere in this repository: a placeholder no host fills
+  and a binding no placeholder declares are each invisible on either half alone,
+  so the caller supplies the half the validator cannot obtain. Taking a second
+  input is not itself new — `validate_asset_payloads` already does, because an
+  `AssetEntry` describes bytes the document does not carry. What is new is a
+  gate whose **subject** can sit outside the document, which is what
+  `Location::Contribution` names.
+  [`a-host-binds-a-contribution-by-id.md`](a-host-binds-a-contribution-by-id.md)
+  carries the rest.
 - The producer API cannot yet _express_ the v0.3 paint vocabulary at all: core's
   `Prop` enum carries only `Fill(Color)`, so the "DSL commit" producer entry
   cannot construct a gradient, stroke, corner radius, image, or clip. Wiring the

@@ -1,14 +1,17 @@
 //! Shared validation crate: paint-vocabulary profiles, diagnostics, waivers (docs/specification/02-principles.md P4, docs/design/architecture.md).
 //!
-//! P4 — "vocabulary is validated, never discovered" — needs three gates,
-//! because the three producer surfaces carry genuinely different
-//! information:
+//! P4 — "vocabulary is validated, never discovered" — needs a gate per
+//! surface, because each surface carries genuinely different information.
+//! Three of those surfaces are a producer's. The fourth belongs to a host, and
+//! is the one surface no artifact in this repository holds — the gate that
+//! reads it lives here like the others, but its input must be supplied:
 //!
 //! | gate | entry point | answers |
 //! |---|---|---|
 //! | import | [`triage`](fn@crate::triage) | is this source construct in the target's profile? (docs/specification/04-figma-vocabulary-profile.md) |
 //! | load | [`validate_document`] | is this `.dsb` internally consistent? |
 //! | paint | [`validate_scene`] | does this solved scene stay inside painter budgets? |
+//! | contribution | [`validate_contributions`] | do the host's bound contributions and the document's placeholders agree? (story #1127) |
 //!
 //! The load gate has a second half, [`validate_asset_payloads`], because an
 //! `AssetEntry` describes bytes the document does not contain — the payload
@@ -20,12 +23,20 @@
 //! need — the eager reader, because this gate needs every payload's bytes and
 //! `dashbuf::open` deliberately reads none.
 //!
+//! [`validate_contributions`] takes a second input for the same reason
+//! [`validate_asset_payloads`] does — the thing to compare against is not in
+//! the document. Here it is not in the repository either: only the host knows
+//! which contribution ids it binds, which is why the check cannot live in
+//! `dashc` (issue #851), and why it takes them explicitly rather than
+//! defaulting to none and silently reporting every placeholder as unfilled.
+//!
 //! They are not interchangeable. A `.dsb` document cannot carry an
 //! out-of-profile construct — by the time a construct is in the schema it
 //! is in the vocabulary — so the triage runs on the *producer's* source
 //! vocabulary. Conversely a solved scene has no indices left to dangle
 //! (`docs/decisions/boundary-b-unification.md`), while a document has no
-//! resolved boxes to measure a stroke against (P1). See
+//! resolved boxes to measure a stroke against (P1). And no gate reading only
+//! this repository's artifacts can know which contributions a host binds. See
 //! `docs/design/dashscene-validator.md`.
 //!
 //! The validator owns the verdict, never the source format: P5 —
@@ -51,12 +62,14 @@
 //! assert_eq!(d.severity, Severity::Warning);
 //! ```
 
+mod contribution;
 mod document;
 mod paint;
 mod scene;
 mod triage;
 mod waiver;
 
+pub use contribution::validate_contributions;
 pub use document::{validate_asset_payloads, validate_document};
 pub use scene::validate_scene;
 pub use triage::{Construct, triage};
@@ -137,6 +150,29 @@ pub mod rule {
     /// that accepts the degrade declares a waiver. An error is never
     /// waivable, which would leave no way to accept it.
     pub const TEXT_STYLE_BELOW_MSDF_FLOOR: &str = "text.style-below-msdf-floor";
+
+    // Contribution gate — the document's placeholders against the contribution
+    // ids a host binds (story #1127).
+    /// A placeholder whose contribution id no host binding fills. Suppressed on
+    /// a [`crate::Profile::Core`] target that binds nothing a host contribution
+    /// can fill — a lean painter has no host-content mechanism, so the document
+    /// is correct as it stands, and one warning per placeholder in every `Core`
+    /// build is how a diagnostic channel stops being read. Neither a binding
+    /// that matches nothing nor one matching only a fragment-filled placeholder
+    /// lifts it.
+    ///
+    /// A warning, not an error: nothing here says the document is malformed,
+    /// only that a migration is unfinished. Two placeholder shapes deliberately
+    /// do not raise it, and
+    /// `docs/decisions/a-host-binds-a-contribution-by-id.md` says which and why.
+    pub const PLACEHOLDER_UNFILLED: &str = "placeholder.unfilled";
+    /// A contribution the host binds that no placeholder in the document
+    /// declares — host content covering a node the designer believes ships,
+    /// so they keep maintaining artwork nobody sees. Raised on both profiles.
+    ///
+    /// The one state nothing else catches, and the expensive one: its cost is
+    /// paid continuously rather than at load (issue #851).
+    pub const PLACEHOLDER_UNDECLARED_OVERLOAD: &str = "placeholder.undeclared-overload";
 
     // Load gate — the v0.4 variant table (issue #20).
     pub const VARIANT_OVERRIDE_NODE_OUT_OF_RANGE: &str = "variant.override-node-out-of-range";
@@ -493,9 +529,13 @@ pub mod rule {
     /// entries that all silently "apply".
     pub const WAIVER_REDUNDANT: &str = "waiver.redundant";
 
-    /// Every rule id a document or scene diagnostic can carry: the import,
-    /// load, and paint gates. This is the vocabulary a waiver may name; the
-    /// `waiver.*` meta-rules above are not in it.
+    /// Every rule id a gate's diagnostic can carry — import, load, paint and
+    /// contribution. This is the vocabulary a waiver may name; the `waiver.*`
+    /// meta-rules above are not in it.
+    ///
+    /// Not all of them point into a document or a scene: the contribution
+    /// gate's `placeholder.undeclared-overload` names a binding the document
+    /// does not contain (story #1127).
     ///
     /// [`is_known`] answers membership in this slice, so a new rule not added
     /// here is treated as unknown by the waiver check — never silently
@@ -618,6 +658,10 @@ pub mod rule {
         SHADOW_INVALID_GEOMETRY,
         BLUR_INVALID_RADIUS,
         SHADOW_COLOR_OUT_OF_RANGE,
+        // Contribution gate (story #1127) — last in the list, so this comment
+        // captions these two and nothing else.
+        PLACEHOLDER_UNFILLED,
+        PLACEHOLDER_UNDECLARED_OVERLOAD,
     ];
 
     /// Whether `rule` is a real document/scene diagnostic rule id. A waiver
@@ -630,11 +674,14 @@ pub mod rule {
     ///
     /// docs/specification/04-figma-vocabulary-profile.md's REJECT and LATER
     /// bands each carry a documented workaround ("bake it, slot it, design
-    /// without it"). The split is what the designer can act on, not which
-    /// gate found it: those bands and the MSDF size floor are design
-    /// choices, while the referential-integrity and geometry rules stand in
-    /// front of producer bugs, so those carry no workaround and answer
-    /// `None`.
+    /// without it"). **The split is what the designer can act on, not which
+    /// gate found it**, and not any one gate's rules: a rule answers `Some`
+    /// when the finding names a design choice, and `None` when it stands in
+    /// front of a producer bug, as the referential-integrity and geometry
+    /// rules do. Read the arms below for which rules that is rather than any
+    /// list in prose — three copies of such a list had gone stale by story
+    /// #1127, which added two rules outside the import gate that carry
+    /// hints.
     pub fn workaround(rule: &str) -> Option<&'static str> {
         let hint = match rule {
             LAYER_BLUR => {
@@ -657,6 +704,14 @@ pub mod rule {
             }
             VARIABLE_WIDTH_STROKE => {
                 "bake the variable-width stroke into a filled shape and import it"
+            }
+            PLACEHOLDER_UNFILLED => {
+                "bind a contribution to the id the message names, or drop the placeholder if \
+                 the node ships as designed"
+            }
+            PLACEHOLDER_UNDECLARED_OVERLOAD => {
+                "declare a placeholder for the id the message names, or drop the binding if \
+                 the node is meant to ship as the designer drew it"
             }
             TEXT_STYLE_BELOW_MSDF_FLOOR => {
                 "raise the style to the floor the message names or above; v0 bakes no per-size \
@@ -701,6 +756,11 @@ pub const RENDER_TARGET_BUDGET_PLACEHOLDER: usize = 8;
 pub const MSDF_MIN_PX_PER_EM: f32 = 14.0;
 
 /// A named paint-vocabulary subset a target honors (docs/design/architecture.md, R6).
+///
+/// [`crate::validate_contributions`] is the one gate that reads it for
+/// something else: there `Core` means a target with no host-content mechanism,
+/// which is an inference from the painter class rather than a vocabulary band
+/// (story #1127).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Profile {
     /// Lean / native painters: the subset a fixed-vocabulary painter can
@@ -769,6 +829,11 @@ impl fmt::Display for NodePath {
 /// waiver machinery keying on it) must not silently land on an unrelated
 /// node. Every pooled surface therefore has its own variant — a pool index
 /// must never be wrapped in a `Node`, where it would resolve as a DFS index.
+///
+/// **Not every variant names something in the document.** `Contribution` is a
+/// binding the host declares, which is exactly what the diagnostic carrying it
+/// reports as absent — so a consumer must not assume a `Location` always
+/// resolves into the `.dsb` (story #1127).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Location {
     /// A node in the document, by DFS index and name path.
@@ -800,6 +865,16 @@ pub enum Location {
     /// A baked vector shape, by its index in `Document.vector_shapes`
     /// (story B1).
     VectorShape(u32),
+    /// A contribution the host binds, by its id (story #1127).
+    ///
+    /// The one variant that does not name a document surface, because the
+    /// subject does not exist in the document — that is what the diagnostic
+    /// carrying it reports. It carries the id rather than a position in the
+    /// `bound` slice handed to [`crate::validate_contributions`], because a
+    /// [`Waiver`] matches on `Location` equality: a positional variant would
+    /// make a waiver follow the host's argument order and silently cover a
+    /// different binding when that order changed.
+    Contribution(String),
 }
 
 impl fmt::Display for Location {
@@ -815,6 +890,7 @@ impl fmt::Display for Location {
             Self::Loop(index) => write!(f, "<loop #{index}>"),
             Self::VectorAtlas(index) => write!(f, "<vector atlas #{index}>"),
             Self::VectorShape(index) => write!(f, "<vector shape #{index}>"),
+            Self::Contribution(id) => write!(f, "<contribution {id}>"),
         }
     }
 }
@@ -864,7 +940,11 @@ impl fmt::Display for Diagnostic {
     }
 }
 
-/// Every diagnostic one gate produced, in document order.
+/// Every diagnostic one gate produced, in the order that gate walked its
+/// input — document order for the gates that walk a document.
+/// [`validate_contributions`] appends its binding diagnostics after those, in
+/// the order the host listed them, because their subjects have no position in
+/// the document (story #1127).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Report {
     diagnostics: Vec<Diagnostic>,

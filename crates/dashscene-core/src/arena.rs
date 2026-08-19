@@ -1089,8 +1089,12 @@ impl Arena {
     /// The node's declared placeholder, or `None` for an ordinary node.
     ///
     /// **Presence is the predicate**: a node carrying one is a declared
-    /// placeholder, which is what story #1127's diagnostic reads. No field
-    /// of the placeholder decides it.
+    /// placeholder, and no field of the placeholder decides it. Story #1127's
+    /// diagnostic classifies nodes by exactly that, then reads
+    /// `contribution_id` and `fragment_ref` to decide whether an unfilled one
+    /// is a placeholder a host was ever owed. That gate reads the document
+    /// rather than an arena, so it asks `dashbuf::Node::placeholder`; the
+    /// predicate is the same either way.
     ///
     /// # Panics
     ///

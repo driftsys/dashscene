@@ -43,10 +43,16 @@ carrying `profile.noise-or-texture-effect` has the same workaround — so nothin
 is lost by deriving it on demand, and the `Diagnostic` struct keeps its four
 fields.
 
-Only the import gate's out-of-profile constructs carry a workaround (§04's "bake
-it, slot it, design without it"). The referential-integrity and geometry rules
-stand in front of producer bugs, not design choices, so they answer `None`:
-there is nothing for a designer to rework.
+A rule carries a workaround where the finding names a design choice, and `None`
+where it stands in front of a producer bug — the referential-integrity and
+geometry rules answer `None`, because there is nothing for a designer to rework.
+
+**Amended 2026-08-19 by story #1127.** This said "only the import gate's
+out-of-profile constructs carry a workaround" (§04's "bake it, slot it, design
+without it"). That was already false for the MSDF size floor when it was
+written, and story #1127 added two contribution-gate rules that carry hints. The
+criterion above is what was decided; the gate an enumeration happened to
+describe was not. `rule::workaround`'s match arms are the list.
 
 Alternative considered — add `workaround: Option<&'static str>` to `Diagnostic`.
 Rejected: it breaks the `Diagnostic` literals `dashc` constructs and the ABI
@@ -168,11 +174,15 @@ so the variant is exercised at the import gate directly.
   which `dashc`'s mirror learns through one mechanical `WireLocation` arm plus
   its serialization test — the report JSON gains a possible
   `"kind":"textStyle"`, no binary wire break, ABI version unchanged. The Deno
-  `Location` type (`importers/figma/src/wasm.ts`) already lags the Rust mirror
-  (it lists neither `variantSet` nor `textStyle`) and tolerates unknown kinds at
-  runtime, so `just deno-test` stays green; completing that TS type is an
-  importer (#39) concern. The new `Construct` variant is additive (the producer
-  maps onto it, nothing matches it exhaustively outside the validator).
+  `Location` type (`importers/figma/src/wasm.ts`) lagged the Rust mirror when
+  this was written and tolerates unknown kinds at runtime, so `just deno-test`
+  stays green either way; completing that TS type is an importer (#39) concern.
+  The arms this parenthetical named — `variantSet` and `textStyle` — have since
+  been added, and story #1127 added the three that were still missing. Read the
+  file rather than this sentence: it names the one arm deliberately absent,
+  `contribution`, which `dashc` cannot raise. The new `Construct` variant is
+  additive (the producer maps onto it, nothing matches it exhaustively outside
+  the validator).
 - **The strict gate is available but not yet wired.** `Report::strict` is the
   release-mode gate; wiring it into `dashc`/the importer with a waiver-file
   format is a later importer step, on this contract.

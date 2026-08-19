@@ -29,10 +29,22 @@ different schemas.
 
 **A node carrying the table is a declared placeholder; a node without one is
 not.** Story #1127's diagnostic distinguishes four states — filled, unfilled,
-undeclared overload, ordinary — and its two warnings both turn on that
-predicate. Presence of a table answers it exactly. Four loose fields would make
-the predicate a convention ("`contribution_id` is set") that #1127 would then
-depend on, and would spend four `Node` field ids rather than one.
+undeclared overload, ordinary — and presence of a table answers the
+placeholder/not axis exactly.
+
+**Amended 2026-08-19 by story #1127**, which built that diagnostic: this
+paragraph said its two warnings "both turn on that predicate", and neither turns
+on it alone. `placeholder.undeclared-overload` turns on no placeholder at all —
+its subject is a binding the document does not declare — and
+`placeholder.unfilled` reads `contribution_id` and `fragment_ref` after the
+predicate has classified the node, to decide whether a host was ever owed a
+contribution for it
+([`a-host-binds-a-contribution-by-id.md`](a-host-binds-a-contribution-by-id.md),
+Decision 3). The decision below is unchanged, and so is its reasoning: what
+presence buys is that placeholder-ness is not a convention over field values.
+Four loose fields would make the predicate a convention ("`contribution_id` is
+set") that #1127 would then depend on, and would spend four `Node` field ids
+rather than one.
 
 Nesting is also what `Node` already does for a grouped concern: `layout`,
 `flex`, `constraints` and `paint` are all nested tables.
@@ -107,7 +119,13 @@ same reason — what consumes it did not exist yet — and it is why
   the interim fill for the same reason: a placeholder need not carry a paint
   entry, so an asset reachable only through it would never be prefetched or
   verified (R5).
-- Story #1127 can now be built. It needs no new concepts, only this predicate.
+- Story #1127 can now be built — and was, on 2026-08-19. It needed one concept
+  this record did not anticipate: `Location::Contribution`, the first `Location`
+  variant naming something outside the document, because the undeclared-overload
+  warning's subject is a host binding rather than a node.
+  [`a-host-binds-a-contribution-by-id.md`](a-host-binds-a-contribution-by-id.md)
+  carries what it settled, and `validator-three-gates.md` is amended for the
+  gate it added.
 
 ## Trace
 

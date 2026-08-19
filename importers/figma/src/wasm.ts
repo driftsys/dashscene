@@ -46,7 +46,17 @@ export interface ImageAsset {
   readonly bytes: Uint8Array;
 }
 
-/** What a diagnostic points at — a node, or a pooled entry by its own index. */
+/**
+ * What a diagnostic points at — a node, or a pooled entry by its own index.
+ *
+ * Mirrors `WireLocation` in `crates/dashc/src/abi/json.rs`, minus the one arm
+ * `dashc` cannot produce: `contribution` comes from the validator's
+ * contribution gate, which needs a host's bindings and so is never reached
+ * through this ABI (story #1127).
+ *
+ * The mirror is maintained by hand and **nothing checks it** — it had drifted
+ * by three arms before story #1127 repaired it. Debt #1276.
+ */
 export type Location =
   | { readonly kind: "node"; readonly index: number; readonly path: string }
   | { readonly kind: "paintEntry"; readonly index: number }
@@ -54,7 +64,10 @@ export type Location =
   | { readonly kind: "variantSet"; readonly index: number }
   | { readonly kind: "textStyle"; readonly index: number }
   | { readonly kind: "signal"; readonly index: number }
-  | { readonly kind: "binding"; readonly index: number };
+  | { readonly kind: "binding"; readonly index: number }
+  | { readonly kind: "loop"; readonly index: number }
+  | { readonly kind: "vectorAtlas"; readonly index: number }
+  | { readonly kind: "vectorShape"; readonly index: number };
 
 export interface Diagnostic {
   readonly rule: string;

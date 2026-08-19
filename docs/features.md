@@ -388,10 +388,21 @@ Checked against `crates/dashbuf/src/container.rs`, `bank.rs`, `prefix.rs`,
       recognises and whose sample children it trims — but the lowering drops it
       and sets `placeholder: None` — story #1264. **And nothing resolves it**:
       no measure callback reads `declared_size`, no host binds a
-      `contribution_id`, no painter draws an `interim_fill`, and #1127 — the
-      diagnostic for an unfilled one — is still open. What a not-yet-loaded
-      image should _show_ is still undecided, and the design source does not
-      supply it.
+      `contribution_id`, and no painter draws an `interim_fill`. What is
+      reported, since story #1127, is the disagreement between the document and
+      a host: `dashscene_validator::validate_contributions` names a placeholder
+      whose id no host binding fills (`placeholder.unfilled`, suppressed on a
+      `Profile::Core` target that binds nothing a host contribution can fill — a
+      lean painter has no host-content mechanism, so the document is correct as
+      it stands) and a bound id no placeholder declares
+      (`placeholder.undeclared-overload`, on both profiles). **Nothing in this
+      repository passes it a binding list** — its callers are hosts, and the C
+      ABI data plane that would carry one is #859 — so its tests are its only
+      caller, which is the posture the surface itself shipped in. Two
+      placeholder shapes deliberately do not warn, and
+      [`decisions/a-host-binds-a-contribution-by-id.md`](decisions/a-host-binds-a-contribution-by-id.md)
+      says which. What a not-yet-loaded image should _show_ is still undecided,
+      and the design source does not supply it.
 
 ## 7. Images, fonts and asset preparation
 

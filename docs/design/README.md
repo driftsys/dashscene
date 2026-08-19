@@ -65,9 +65,10 @@ directly:
   walking-skeleton golden scene, the v0.1 slice's closing component (story #6);
   the v0.2 flex-vocabulary goldens, closing epic #7 (story #11); the v0.3 paint
   and clip goldens (stories #14, #18, #97).
-- [dashscene-validator.md](dashscene-validator.md) — the three validation gates,
-  the diagnostic shape, and the v0.1–v0.3 rule set (story #15);
-  producer-assembled reports (story #139).
+- [dashscene-validator.md](dashscene-validator.md) — the validation gates, the
+  diagnostic shape, and the v0.1–v0.3 rule set (story #15); producer-assembled
+  reports (story #139); the contribution gate, which reads a document and a
+  host's bindings together (story #1127).
 - [dashc.md](dashc.md) — the dashscene compile pipeline: the in-memory
   `Document` model, the deterministic `.dsb` emitter, the emission gate, and the
   `dashscene-core` load path (story #16); the Figma REST front end — the
