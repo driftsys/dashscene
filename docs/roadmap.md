@@ -2235,15 +2235,21 @@ same epic.
 **#171 stays open**, because only one of the three records it holds was ruled —
 which is what its own comment invited.
 
-**The Unity half's first build step is the data plane** — **superseded on
-2026-08-18**: #1226's ruling lands before it, because it changes the signature
-of every entry point the data plane would add to. The paragraph below is
-otherwise unchanged and still describes what #859 is for. `dashscene-ffi` is
-shaped around a surface handle: a host gives dashscene a surface and dashscene
-draws into it. A host that draws the frame itself — which is what a Unity host
-is — needs the opposite direction, and the committed tables cross no boundary
-today. Boundary B was made FFI-representable at v0.15 by story #600, and has had
-no consumer since.
+**The Unity half's first build step is the data plane** — **superseded twice.**
+On 2026-08-18, because #1226's ruling had to land before it: that ruling changes
+the signature of every entry point the data plane would add to. Then on
+2026-08-20, because story #859 built it. The paragraph below describes the gap
+as it stood and is kept for what it says about why the step came first.
+
+`dashscene-ffi` was shaped around a surface handle: a host gives dashscene a
+surface and dashscene draws into it. A host that draws the frame itself — which
+is what a Unity host is — needs the opposite direction, and the committed tables
+crossed no boundary. Boundary B was made FFI-representable at v0.15 by story
+#600 and had had no consumer since; it has one now. `ds_runtime_acquire_frame`
+and `ds_runtime_release_frame` hand the tables out under a lease
+([`decisions/the-frame-crosses-under-a-lease.md`](decisions/the-frame-crosses-under-a-lease.md)),
+which leaves **#1122** and **#1123** unblocked and leaves the glyph atlases,
+which are not rows, to #1123.
 
 Depends on: v0.19 for the C ABI it extends, and on v0.20 for the failure
 reporting that ABI gains there. Its first two entry conditions were independent

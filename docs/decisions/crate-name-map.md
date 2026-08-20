@@ -482,13 +482,16 @@ package did not; the engine appeared only in prose and in packaging metadata.
 Story #1239 moved those symbols to `dashpaint_abi_*`, so the package and the
 symbols now agree.
 
-Issue #859 rules the data plane into `dashscene-ffi` and says this crate "keeps
-its present job", so bindings are not what it becomes. What #859 leaves open is
-whether these layout and round-trip functions survive as they are or are
-replaced by its `DsSlice` stride member; either way the crate is not Unity's,
-which is all this ruling turns on. `docs/design/architecture.md` already records
-that "Unreal and Kanzi are the same problem as Unity minus the C# adapter", and
-both need this gate identically.
+Story #859 put the data plane in `dashscene-ffi` and left this crate its present
+job, so bindings are not what it becomes. **It also settled the question this
+paragraph left open**: the layout and round-trip functions survive as they are
+and are _not_ re-exported through `dashscene-ffi`, whose `DsSlice::stride`
+carries this build's row size per array instead. A host on the C ABI checks the
+strides it is handed; a consumer wanting the member-by-member comparison —
+`unity/abi-check` — links this crate directly. Either way the crate is not
+Unity's, which is all this ruling turns on. `docs/design/architecture.md`
+already records that "Unreal and Kanzi are the same problem as Unity minus the
+C# adapter", and both need this gate identically.
 
 **This is the `dashscene-wgpu` argument, applied a second time.** The
 `dashscene-gpu` section above rejected a name taken from the backend because "a

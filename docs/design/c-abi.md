@@ -1,22 +1,25 @@
 # The C ABI: `dashscene-ffi`
 
-    status  as-built at the v0.19 close (2026-08-16). Story #840 built it;
-            stories #841 and #947 and issues #925, #945 and #884 changed it
-            afterwards, and this record describes the result rather than
-            any one of them.
+    status  as-built. Story #840 built it at the v0.19 close (2026-08-16);
+            stories #841 and #947 and issues #925, #945, #884, #1226 and
+            #859 changed it afterwards, and this record describes the result
+            rather than any one of them. **Story #859 gave it a data plane
+            on 2026-08-20**, so the "control plane and not a data plane"
+            framing this record carried until then is gone rather than
+            qualified.
     source  story #840, epic #833. Amended by #841 (the detach call), #947
-            (fonts), #925 (the mapped load), #945 (the renumbering gate)
-            and #884 (surface loss).
+            (fonts), #925 (the mapped load), #945 (the renumbering gate),
+            #884 (surface loss), #1226 (the generational handle) and #859
+            (the data plane).
     why     [`../decisions/host-integration-in-three-layers.md`](../decisions/host-integration-in-three-layers.md)
             D2 decides that one C ABI exists and that every platform host
             sits on it; this record carries what was built.
 
 The seam a non-Rust host reaches the runtime through when it **loads a
 document** rather than building a scene in code. Kotlin reaches it by JNI today;
-the iOS and Unity hosts that follow inherit it rather than getting their own —
-**for control**. Unity draws the frame with its own renderer, and nothing here
-carries a boundary-B row for it to draw, which is issue #859 and is open on the
-same slice Unity lands in.
+the iOS and Unity hosts that follow inherit it rather than getting their own.
+Unity draws the frame with its own renderer, and since story #859 this ABI
+carries the boundary-B rows for it to draw.
 
     a Java host --JNI--> dashscene-android --> dashscene-ffi --> dashscene-gpu
                                                         |
@@ -31,14 +34,22 @@ have owned for it. The JNI boundary is between the Java host and
 `dashscene-android`; that crate reaches `dashscene-ffi` as an ordinary Rust
 dependency.
 
-**It is a control plane and not a data plane.** Everything below moves a
-document, a surface, a clock and a status. No entry point takes or returns a
-boundary-B row, so a host that wants to draw the frame itself has nothing to
-call — that is issue #859, named here rather than left to be discovered.
+**It is a control plane and, since story #859, a data plane beside it.** Most of
+what follows moves a document, a surface, a clock and a status. Two entry points
+move rows: `ds_runtime_acquire_frame` hands out borrowed views of the committed
+tables and `ds_runtime_release_frame` ends the borrow. That pair is what a host
+drawing its own frames calls, and until it existed such a host had nothing to
+call at all.
 
 ## The entry points
 
-Four groups, and the grouping is the lifecycle:
+Five groups, and the grouping is the lifecycle. The last is the data plane.
+**What a host chooses between is `ds_runtime_draw` and the acquire pair**, not
+between the groups: a host that paints its own frames still creates a runtime,
+loads a document and calls `ds_runtime_tick` every frame. A load commits too, so
+a frame is available before the first tick — but only the tick can produce a
+_later_ one, and a host-draws host that skipped it would acquire the same frame
+for ever.
 
     ds_abi_version                       what this library implements
     ds_last_error_message                the last failure, as text
@@ -56,15 +67,18 @@ Four groups, and the grouping is the lifecycle:
     ds_runtime_tick                      advance the scene by dt
     ds_runtime_draw                      paint the committed frame
 
+    ds_runtime_acquire_frame             borrow the committed tables
+    ds_runtime_release_frame             give them back
+
 `ds_runtime_detach_surface` exists because of D4 rather than symmetry. The
 Android host must drop its surface and keep its document when `surfaceDestroyed`
 arrives, and freeing the runtime would drop both. Story #841 found that by
 driving the ABI as a C caller, which is also what established the rest of it was
 sufficient for layer 0 **in its runtime-draws form**. The qualifier is load
 bearing since 2026-08-18: `../decisions/host-integration-in-three-layers.md` D1
-now states layer 0 in two forms, and this ABI serves only the one where the
-runtime draws. The host-draws form needs the data plane of issue #859, which is
-what the paragraph above says this ABI does not have.
+now states layer 0 in two forms. This ABI served only the runtime-draws one
+until story #859 added the data plane the other needs; it now serves both, and
+`ds_runtime_detach_surface` belongs to the first of them.
 
 ## Three loaders, and why they are three rather than one
 
@@ -99,19 +113,20 @@ version — it is what this library implements.
 
 **It moved once, at story #1226**, when `DsRuntime` stopped being a pointer and
 became a generational handle. Ten of the twelve exported entry points changed
-signature for it; `ds_abi_version` and `ds_last_error_message` take no runtime
-and did not. That is the rule in this heading working as stated rather than an
-exception to it — a changed signature is exactly what is not free, and it is the
-only thing that has ever moved this number.
+signature for it — twelve was the count then, and it is fourteen since story
+#859; `ds_abi_version` and `ds_last_error_message` take no runtime and did not.
+That is the rule in this heading working as stated rather than an exception to
+it — a changed signature is exactly what is not free, and it is the only thing
+that has ever moved this number.
 
-`DsStatus` has grown from nine variants to nineteen without moving it, because
+`DsStatus` has grown from nine variants to twenty without moving it, because
 every addition went on the **tail**: `FontFace` and `Atlas` at #947, then `Map`,
 `NoSuchRoot`, `Derived` and `Payload` at #925, then `SurfaceLost` at #884, then
-`BadHandle`, `WrongThread` and `HandlesExhausted` at #1226. The last three
-arrived in the change that moved the version, and did not contribute to it:
-appending is still free, and ten changed signatures are what was not. A C caller
-compiled against an earlier header still reads every discriminant it knew at the
-value it knew.
+`BadHandle`, `WrongThread` and `HandlesExhausted` at #1226, then `FrameLeased`
+at #859. `BadHandle`, `WrongThread` and `HandlesExhausted` arrived in the change
+that moved the version, and did not contribute to it: appending is still free,
+and ten changed signatures are what was not. A C caller compiled against an
+earlier header still reads every discriminant it knew at the value it knew.
 
 That is why the shapes above were chosen: three loaders rather than one with a
 widening signature, and a detach call rather than a flag on free.
@@ -157,6 +172,13 @@ runtime.
   `ds_abi_version` takes no handle, `ds_runtime_free(0)` answers `DS_OK` as
   `free(NULL)` did, and `ds_last_error_message(NULL, 0)` is the **documented
   size query** below.
+- **A frame lease is the caller's to end.** Between `ds_runtime_acquire_frame`
+  and `ds_runtime_release_frame` every call that would commit answers
+  `DS_FRAME_LEASED`, and a forgotten release refuses every later tick. The rule
+  and the reasoning behind it are in
+  [`../decisions/the-frame-crosses-under-a-lease.md`](../decisions/the-frame-crosses-under-a-lease.md);
+  what a host must do is stated once per audience on `ds_runtime_acquire_frame`,
+  in the header and in the Rust doc, exactly as the rule above it is.
 - **`ds_last_error_message` returns the size _needed_, including the
   terminator** — never the number of bytes written. Query with `(NULL, 0)`,
   allocate that, call again, then drop the terminator.
@@ -284,8 +306,16 @@ make the counts unnecessary.
   arena~~ — **closed (issue #1183)**, found while writing this record. Both
   loaders now clear it, and the panic boundary section above states what each
   window holds.
-- **No data plane** — issue #859. Nothing here carries a boundary-B row, so a
-  host that wants to draw the frame with its own renderer cannot.
+- ~~No data plane~~ — **closed (story #859, 2026-08-20)**.
+  `ds_runtime_acquire_frame` hands out nineteen arrays under a lease that
+  refuses any call that would commit. Seventeen carry a gated boundary-B row
+  type; the other two are primitives — the dirty set of `u32` rect indices and
+  the image payload bytes an `ImageEntry` indexes. Its own gap is narrower and
+  is named in the section below.
+- **The glyph atlases do not cross** — story #1123. `dashpaint::Atlas` owns an
+  encoded sheet and a glyph list rather than being a row, so the data plane
+  carries `GlyphRun` and `GlyphQuad` and not the sheet they sample. A host can
+  lay text out and cannot shade it until #1123 lands.
 - ~~No host calls the mapped load~~ — **closed 2026-08-16 (issue #1035)**, while
   this record was in review. `dashscene-android` gained
   `nativeSurfaceCreatedMapped`, which takes a path and an ordinal and reaches

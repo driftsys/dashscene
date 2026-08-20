@@ -9,11 +9,23 @@
 //! # What is here, and what is deliberately not
 //!
 //! **Layer 0's needs and no more**: create and destroy a runtime, load a
-//! document, hand it a surface, drive the tick, resize, and report why something
-//! failed. Signals (layer 1) and the builder projection (layer 2) are deferred
-//! with their layers, and D8 already records that a chatty handle-based builder
-//! ABI is affordable because scenes are built outside the frame loop — so
-//! nothing here has to pre-empt that shape.
+//! document, hand it a surface, drive the tick, resize, hand out the committed
+//! frame, and report why something failed. Signals (layer 1) and the builder
+//! projection (layer 2) are deferred with their layers, and D8 already records
+//! that a chatty handle-based builder ABI is affordable because scenes are
+//! built outside the frame loop — so nothing here has to pre-empt that shape.
+//!
+//! **Layer 0 has two forms and this crate serves both** (D1, as amended on
+//! 2026-08-18). In the **runtime-draws** form a host hands over a surface and
+//! [`ds_runtime_draw`] paints it — that is Android, desktop and web. In the
+//! **host-draws** form the host owns the renderer, so
+//! [`ds_runtime_acquire_frame`] hands out the committed tables and the host
+//! paints them; that is what an engine embedder needs, and Unity over
+//! `BatchRendererGroup` is the first. The two share a runtime, a document and a
+//! tick, and differ only in which side of the boundary the painting happens on.
+//!
+//! The host-draws form is the reason boundary B was given a C representation at
+//! story #600, and it had no consumer until story #859.
 //!
 //! **Root selection is on the mapped entry point and on no other, and that
 //! asymmetry is the design rather than an omission** (issue #925).
@@ -171,7 +183,7 @@ mod table;
 use table::Runtime;
 
 use std::cell::RefCell;
-use std::ffi::{CStr, c_char};
+use std::ffi::{CStr, c_char, c_void};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
@@ -179,7 +191,7 @@ use dashbuf::map::MappedFile;
 use dashbuf::prefetch::ShownRoot;
 use dashbuf::residency::BlobResidency;
 use dashpaint::Painter;
-use dashscene_core::{Arena, MappedPayload, Region};
+use dashscene_core::{Arena, CommittedScene, MappedPayload, Region};
 use dashscene_engine::{TaffySolver, TextResources, TextResourcesError};
 use dashscene_gpu::{Changes, Drawn};
 
@@ -300,8 +312,12 @@ pub enum DsStatus {
     /// A third cause exists and **no host can reach it today**: a call already
     /// in flight on that same handle, leaving the runtime checked out. No
     /// entry point takes a function pointer, so nothing host-side runs during
-    /// a call. It becomes reachable when a callback does, and then it names a
-    /// runtime that is alive and still has to be freed.
+    /// a call. It becomes reachable when one does, and then it names a runtime
+    /// that is alive and still has to be freed.
+    ///
+    /// [`ds_runtime_acquire_frame`] was expected to be the first such entry
+    /// point and is not: it hands out memory rather than taking a callback, so
+    /// a host's worker threads read rows without calling in at all.
     BadHandle = 16,
     /// The handle names another thread's table — usually because it was
     /// minted there, and the runtime may still be alive on that thread.
@@ -323,6 +339,20 @@ pub enum DsStatus {
     /// can carry. Never a wrap — a counter that has run out refuses rather
     /// than reissuing a value.
     HandlesExhausted = 18,
+    /// A frame lease is outstanding on this runtime, and the call would have
+    /// invalidated the views it handed out.
+    ///
+    /// Reported by [`ds_runtime_tick`], the three loaders, [`ds_runtime_free`]
+    /// and a second [`ds_runtime_acquire_frame`]. The remedy is always the
+    /// same: call [`ds_runtime_release_frame`] and try again.
+    ///
+    /// **Additive in effect as well as in value.** Unlike
+    /// [`DsStatus::SurfaceLost`], which re-routed a condition that used to
+    /// arrive as something else, nothing could reach this before story #859:
+    /// there were no leases to be outstanding. So a host built against an
+    /// older header meets it only on a call it could not have made, and
+    /// [`DS_ABI_VERSION`] does not move.
+    FrameLeased = 19,
 }
 
 /// Which platform handle the pointers in [`ds_runtime_attach_surface`] carry.
@@ -458,6 +488,42 @@ fn on_runtime(handle: DsRuntime, what: &str, f: impl FnOnce(&mut Runtime) -> DsS
     }
 }
 
+/// Resolves `handle` like [`on_runtime`], and refuses the call when a frame
+/// lease is outstanding.
+///
+/// **Every entry point that can reach a commit goes through this one**, rather
+/// than each repeating the check. A commit replaces the tables
+/// [`ds_runtime_acquire_frame`] handed out borrowed views into, so letting one
+/// run under a lease is exactly the dangling read the lease exists to prevent
+/// (issue #1267).
+fn on_runtime_committing(
+    handle: DsRuntime,
+    what: &str,
+    f: impl FnOnce(&mut Runtime) -> DsStatus,
+) -> DsStatus {
+    on_runtime(handle, what, |runtime| {
+        if runtime.frame_leased {
+            return leased_refusal(what);
+        }
+        f(runtime)
+    })
+}
+
+/// The one refusal a frame lease produces, so every path that refuses says the
+/// same thing.
+///
+/// [`ds_runtime_free`] cannot use [`on_runtime_committing`] — it removes the
+/// runtime rather than running against it — so without this the wording would
+/// live in two places and drift.
+fn leased_refusal(what: &str) -> DsStatus {
+    set_last_error(format!(
+        "{what}: a frame lease is outstanding — the views \
+         ds_runtime_acquire_frame handed out would stop being valid. Call \
+         ds_runtime_release_frame first"
+    ));
+    DsStatus::FrameLeased
+}
+
 /// Creates an empty runtime and writes it to `out`.
 ///
 /// The runtime holds no document and no surface yet; both are separate calls,
@@ -511,9 +577,21 @@ pub extern "C" fn ds_runtime_free(runtime: DsRuntime) -> DsStatus {
     if runtime == 0 {
         return DsStatus::Ok;
     }
-    guard(|| match table::remove(runtime) {
-        Ok(()) => DsStatus::Ok,
-        Err(error) => lookup_status("ds_runtime_free", error),
+    guard(|| {
+        // Asked before the removal rather than inside it, because `remove`
+        // drops the runtime and a host holding an outstanding lease would be
+        // left with views into a dropped arena — the undefined behaviour the
+        // handle ruling removed from every other path. Refusing is
+        // recoverable: release, then free.
+        match table::with_runtime(runtime, |runtime| runtime.frame_leased) {
+            Ok(true) => return leased_refusal("ds_runtime_free"),
+            Ok(false) => {}
+            Err(error) => return lookup_status("ds_runtime_free", error),
+        }
+        match table::remove(runtime) {
+            Ok(()) => DsStatus::Ok,
+            Err(error) => lookup_status("ds_runtime_free", error),
+        }
     })
 }
 
@@ -546,7 +624,7 @@ pub unsafe extern "C" fn ds_runtime_load_document(
             set_last_error("ds_runtime_load_document: bytes is null");
             return DsStatus::NullArgument;
         }
-        on_runtime(runtime, "ds_runtime_load_document", |runtime| {
+        on_runtime_committing(runtime, "ds_runtime_load_document", |runtime| {
             let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
             load_into(runtime, bytes, None)
         })
@@ -651,6 +729,13 @@ fn announce_document_replaced(runtime: &mut Runtime) {
     if let Some(surface) = runtime.surface.as_mut() {
         surface.document_replaced();
     }
+    // The same announcement for the other form of layer 0. A host that draws
+    // its own frames has no surface to be told through, so the fact is held
+    // until its next `ds_runtime_acquire_frame` reports it. Set here rather
+    // than in `drop_document` for the reason this function is separate from
+    // it: what is announced is a document that has been *replaced*, not one
+    // that has been dropped (story #859).
+    runtime.document_replaced = true;
 }
 
 /// The mapped load, bounded by `shown_root`.
@@ -1022,7 +1107,7 @@ pub unsafe extern "C" fn ds_runtime_load_document_with_text(
             );
             return DsStatus::NullArgument;
         }
-        on_runtime(runtime, "ds_runtime_load_document_with_text", |runtime| {
+        on_runtime_committing(runtime, "ds_runtime_load_document_with_text", |runtime| {
             let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
 
             // The faces are read and assembled BEFORE the document is opened, so
@@ -1098,7 +1183,7 @@ pub unsafe extern "C" fn ds_runtime_load_document_mapped(
             );
             return DsStatus::NullArgument;
         }
-        on_runtime(runtime, "ds_runtime_load_document_mapped", |runtime| {
+        on_runtime_committing(runtime, "ds_runtime_load_document_mapped", |runtime| {
             let path = match unsafe { CStr::from_ptr(path) }.to_str() {
                 Ok(path) => path,
                 Err(_) => {
@@ -1133,7 +1218,7 @@ pub unsafe extern "C" fn ds_runtime_tick(
     out_advanced: *mut bool,
 ) -> DsStatus {
     guard(|| {
-        on_runtime(runtime, "ds_runtime_tick", |runtime| {
+        on_runtime_committing(runtime, "ds_runtime_tick", |runtime| {
             let Some(scene) = runtime.scene.as_mut() else {
                 set_last_error("ds_runtime_tick: no document loaded");
                 return DsStatus::NoDocument;
@@ -1154,10 +1239,45 @@ pub unsafe extern "C" fn ds_runtime_tick(
             // own `document_replaced` has not already covered. It is here so that
             // the day a root-switching symbol lands, the host is already right
             // rather than quietly wrong.
-            if let Some(surface) = runtime.surface.as_mut()
-                && scene.take_renumbering(&runtime.arena)
-            {
-                surface.document_replaced();
+            // **Taken, not read as a level, and taken whether or not a
+            // surface exists.** `LiveScene::take_renumbering`'s own rule is
+            // that it is read once per commit: `CommittedScene::renumbered`
+            // describes one commit, and an idle tick returns without
+            // committing, so reading it as a level answers the renumbering
+            // commit on every later frame. A host doing that would discard its
+            // whole instance buffer every frame of a settled scene.
+            //
+            // Until story #859 this was guarded by `runtime.surface`, which
+            // was correct while a surface was the only consumer. The
+            // host-draws form is the second, and it has no surface — so the
+            // take happens first and its answer goes to whichever consumers
+            // exist.
+            //
+            // **`take_renumbering` documents a carry-over this drops, and it
+            // is safe here for a reason outside that function.** Its own doc
+            // says a renumbering landing with no renderer attached "is still
+            // pending for the renderer that follows"; taking it here records it
+            // for the host-draws consumer below and drops it for a *surface*
+            // attached afterwards. That cannot lose anything
+            // in this crate, because `attach_android` sets `runtime.surface =
+            // None` and builds a **fresh** `SurfaceRenderer` — a renderer that
+            // has uploaded nothing needs no notice that the document changed.
+            // A crate that reattached an existing renderer would need the
+            // guard back.
+            //
+            // **Unreachable today, and no test covers it**, for the reason the
+            // module documentation gives about this gate: the root is named
+            // once at load, and the load's own `announce_document_replaced`
+            // already covers that case, so nothing can raise a renumbering
+            // here. A mutation of the line below therefore fails no test —
+            // said plainly rather than left for someone to discover, because
+            // the day a root-switching symbol lands this is the line that
+            // makes a host-draws host correct.
+            if scene.take_renumbering(&runtime.arena) {
+                runtime.document_replaced = true;
+                if let Some(surface) = runtime.surface.as_mut() {
+                    surface.document_replaced();
+                }
             }
 
             if !out_advanced.is_null() {
@@ -1294,6 +1414,444 @@ pub unsafe extern "C" fn ds_runtime_draw(runtime: DsRuntime, out_drawn: *mut boo
                     }
                 }
             }
+        })
+    })
+}
+
+/// A borrowed, contiguous array of rows the runtime owns.
+///
+/// **The host reads it and never frees it.** The bytes belong to the runtime's
+/// committed tables and stay valid until [`ds_runtime_release_frame`] returns.
+///
+/// `ptr` is `NULL` exactly when `count` is `0`, so an empty table needs no
+/// special case on either side and a host never dereferences a pointer that
+/// names nothing.
+///
+/// # Why `stride` is here, next to a row type the host already declares
+///
+/// It is not redundant with the consumer's own `sizeof`. It is how a foreign
+/// consumer checks its declaration against **this build** in one comparison,
+/// which is the job `AbiLayout` in `crates/dashpaint-abi` does per row applied
+/// to the arrays. Without it, a row type that changed width — `RectEntry` went
+/// from 28 bytes to 40 at story #770 — reaches a host as garbled geometry
+/// rather than as an error it can report.
+///
+/// A host that compares `stride` against its own `sizeof` before reading a
+/// single row turns every future layout change into a refusal.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct DsSlice {
+    /// First row, or `NULL` when `count` is `0`.
+    pub ptr: *const c_void,
+    /// How many rows. Not bytes.
+    pub count: usize,
+    /// One row's size in bytes **in this build**.
+    pub stride: usize,
+}
+
+impl DsSlice {
+    /// No rows, and **still this build's row size**.
+    ///
+    /// `stride` is reported for an empty table as well as a populated one, so
+    /// a host can validate all of a frame's strides against its own `sizeof`
+    /// at the top of the frame — which is exactly what the header tells it to
+    /// do. Reporting `0` here would make that advice reject every ordinary
+    /// document, because a scene with no gradients, no images and no blurs
+    /// leaves most of these arrays empty.
+    const fn none<T>() -> Self {
+        Self {
+            ptr: std::ptr::null(),
+            count: 0,
+            stride: size_of::<T>(),
+        }
+    }
+}
+
+/// Borrows `rows` as a [`DsSlice`], normalising the empty case to `NULL`.
+fn slice_of<T>(rows: &[T]) -> DsSlice {
+    if rows.is_empty() {
+        // `[].as_ptr()` is well-aligned and non-null, and handing that to C
+        // gives a host a pointer it may not dereference and cannot tell from
+        // one it may. `NULL` with `count == 0` is the contract the header
+        // states.
+        return DsSlice::none::<T>();
+    }
+    DsSlice {
+        ptr: rows.as_ptr().cast(),
+        count: rows.len(),
+        stride: size_of::<T>(),
+    }
+}
+
+/// One committed frame, as arrays a host draws from.
+///
+/// This is boundary B with a C representation: the same tables
+/// `dashpaint::Painter::paint` receives, handed to a host that paints them
+/// itself rather than to a painter inside this library
+/// (`docs/decisions/host-integration-in-three-layers.md` D1, the host-draws
+/// form).
+///
+/// # How the arrays relate
+///
+/// [`rects`](Self::rects) is the frame. Every other array is either indexed by
+/// a field on a row, or is the flat backing an index type names:
+///
+/// - `RectEntry::paint` indexes [`paint_entries`](Self::paint_entries), and a
+///   `PaintEntry`'s ranges index [`extra_fills`](Self::extra_fills),
+///   [`strokes`](Self::strokes), [`shapes`](Self::shapes),
+///   [`shadows`](Self::shadows) and [`blurs`](Self::blurs). A `PaintKind`'s
+///   `index` reaches [`solids`](Self::solids),
+///   [`gradients`](Self::gradients) or [`image_fills`](Self::image_fills) by
+///   its tag, and a `Gradient`'s `stops` reach
+///   [`gradient_stops`](Self::gradient_stops).
+/// - `RectEntry::clip` indexes [`clip_regions`](Self::clip_regions), whose
+///   rows are ranges into [`clip_boxes`](Self::clip_boxes).
+/// - An `ImageFill::image` indexes [`image_entries`](Self::image_entries),
+///   whose `offset` and `len` index [`image_payload`](Self::image_payload).
+/// - [`groups`](Self::groups) names rect ranges that composite offscreen.
+/// - [`glyph_runs`](Self::glyph_runs) carry ranges into
+///   [`glyph_quads`](Self::glyph_quads).
+///
+/// # What is not here
+///
+/// **The glyph atlases.** `dashpaint::Atlas` owns an encoded sheet and a glyph
+/// list; it is not a row and has no C representation, so the runs cross here
+/// and the sheet they sample does not. Story #1123 — the Unity text seam,
+/// atlas upload and the MSDF sampler — is where it lands, and until then a
+/// host can lay out text and cannot shade it.
+///
+/// # Lifetime
+///
+/// Every pointer is the runtime's and is valid until
+/// [`ds_runtime_release_frame`] returns for this lease. Reading one after that
+/// is undefined behaviour, and so is caching one across frames.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct DsFrame {
+    /// The commit this frame is: the value
+    /// `dashscene_core::CommittedScene::generation` carries. It moves when a
+    /// tick commits.
+    ///
+    /// **It is not an identity across a load.** Each load installs a fresh
+    /// arena whose generation restarts at 0, so two unrelated documents both
+    /// produce `generation == 1` on their first tick. Compare it only with
+    /// generations from the same document, and use
+    /// [`document_replaced`](Self::document_replaced) to learn when that
+    /// changed.
+    pub generation: u64,
+    /// **Discard every cached per-rect thing you hold**: this frame's rect
+    /// indices do not name what the last one's did.
+    ///
+    /// True when a load has installed a fresh arena since the previous
+    /// acquire, or when the commit renumbered the rect table. Cleared by the
+    /// acquire that reports it, so a host that reads it every frame sees it
+    /// exactly once per event.
+    ///
+    /// **The runtime-draws path has always had this**, as
+    /// `dashscene_gpu::Present::document_replaced`, and the host-draws path
+    /// cannot reach it — that call is made only through an attached surface.
+    /// Without this member a host keeping an instance buffer keyed on rect
+    /// index would patch stale rows after a load
+    /// (`dashscene_core::CommittedScene::renumbered`).
+    pub document_replaced: bool,
+    /// `RectEntry` — the frame, in DFS order.
+    pub rects: DsSlice,
+    /// `GroupComposite` — the rect ranges that composite offscreen, and the
+    /// alpha each composites at.
+    pub groups: DsSlice,
+    /// `uint32_t` — the rect indices this commit changed.
+    ///
+    /// **Relative to the previous commit**, so it is only usable by a host
+    /// that has seen every commit in order. A host that skipped one repacks
+    /// everything.
+    pub dirty: DsSlice,
+    /// `PaintEntry` — what `RectEntry::paint` indexes.
+    pub paint_entries: DsSlice,
+    /// `PaintKind` — what a `PaintEntry`'s `extra_fills` range indexes.
+    pub extra_fills: DsSlice,
+    /// `Stroke` — what a `PaintEntry`'s `stroke` range indexes.
+    pub strokes: DsSlice,
+    /// `VectorField` — what a `PaintEntry`'s `shape` range indexes.
+    pub shapes: DsSlice,
+    /// `Color` — the interned solid fills a `PaintKind` reaches by index.
+    pub solids: DsSlice,
+    /// `Gradient` — the interned gradient fills.
+    pub gradients: DsSlice,
+    /// `GradientStop` — what a `Gradient`'s `stops` range indexes.
+    pub gradient_stops: DsSlice,
+    /// `ImageFill` — the interned image fills.
+    pub image_fills: DsSlice,
+    /// `Shadow` — what a `PaintEntry`'s `shadows` range indexes.
+    pub shadows: DsSlice,
+    /// `Blur` — what a `PaintEntry`'s `blurs` range indexes.
+    pub blurs: DsSlice,
+    /// `ClipRegion` — what `RectEntry::clip` indexes. Index `0` is the
+    /// reserved unclipped region.
+    pub clip_regions: DsSlice,
+    /// `ClipBox` — what a `ClipRegion`'s `offset` and `count` index.
+    pub clip_boxes: DsSlice,
+    /// `ImageEntry` — what an `ImageFill::image` indexes.
+    pub image_entries: DsSlice,
+    /// `uint8_t` — every asset's bytes, which an `ImageEntry`'s `offset` and
+    /// `len` index.
+    ///
+    /// **This may be a mapped file rather than bytes this library allocated.**
+    /// A document loaded by [`ds_runtime_load_document_mapped`] points into
+    /// the mapping, which is what makes that load bounded by the shown root.
+    /// It changes nothing for a host that reads it under the lease.
+    pub image_payload: DsSlice,
+    /// `GlyphRun` — the positioned runs, each naming its anchor rect.
+    pub glyph_runs: DsSlice,
+    /// `GlyphQuad` — what a `GlyphRun`'s `glyphs` range indexes.
+    pub glyph_quads: DsSlice,
+}
+
+impl DsFrame {
+    /// A frame naming nothing.
+    ///
+    /// Written to `out` before anything can fail, for the reason
+    /// [`ds_runtime_new`] writes `0`: a caller that ignores the status then
+    /// holds a frame with no rows rather than uninitialised memory.
+    const fn empty() -> Self {
+        Self {
+            generation: 0,
+            document_replaced: false,
+            rects: DsSlice::none::<dashpaint::RectEntry>(),
+            groups: DsSlice::none::<dashpaint::GroupComposite>(),
+            dirty: DsSlice::none::<u32>(),
+            paint_entries: DsSlice::none::<dashpaint::PaintEntry>(),
+            extra_fills: DsSlice::none::<dashpaint::PaintKind>(),
+            strokes: DsSlice::none::<dashpaint::Stroke>(),
+            shapes: DsSlice::none::<dashpaint::VectorField>(),
+            solids: DsSlice::none::<dashpaint::Color>(),
+            gradients: DsSlice::none::<dashpaint::Gradient>(),
+            gradient_stops: DsSlice::none::<dashpaint::GradientStop>(),
+            image_fills: DsSlice::none::<dashpaint::ImageFill>(),
+            shadows: DsSlice::none::<dashpaint::Shadow>(),
+            blurs: DsSlice::none::<dashpaint::Blur>(),
+            clip_regions: DsSlice::none::<dashpaint::ClipRegion>(),
+            clip_boxes: DsSlice::none::<dashpaint::ClipBox>(),
+            image_entries: DsSlice::none::<dashpaint::ImageEntry>(),
+            image_payload: DsSlice::none::<u8>(),
+            glyph_runs: DsSlice::none::<dashpaint::GlyphRun>(),
+            glyph_quads: DsSlice::none::<dashpaint::GlyphQuad>(),
+        }
+    }
+}
+
+/// Borrows every table of one commit.
+///
+/// Separate from [`ds_runtime_acquire_frame`] so a test can build one without
+/// going through the handle and the lease.
+///
+/// `document_replaced` is passed in rather than read off the scene:
+/// `CommittedScene::renumbered` is a property of one commit and this function
+/// runs once per acquire, so reading it here would answer the renumbering
+/// commit on every frame after it. It is recorded on the runtime by
+/// [`announce_document_replaced`], which every load goes through and which is
+/// the only reachable source today, and by [`ds_runtime_tick`] for the
+/// renumbering that no symbol can currently raise.
+fn frame_of(scene: &CommittedScene, document_replaced: bool) -> DsFrame {
+    let paints = scene.paints();
+    let clips = scene.clips();
+    let images = scene.images();
+    let glyphs = scene.glyphs();
+    DsFrame {
+        generation: scene.generation(),
+        document_replaced,
+        rects: slice_of(scene.rects()),
+        groups: slice_of(scene.groups()),
+        dirty: slice_of(scene.dirty()),
+        paint_entries: slice_of(paints.all_entries()),
+        extra_fills: slice_of(paints.all_extra_fills()),
+        strokes: slice_of(paints.all_strokes()),
+        shapes: slice_of(paints.all_shapes()),
+        solids: slice_of(paints.all_solids()),
+        gradients: slice_of(paints.all_gradients()),
+        gradient_stops: slice_of(paints.all_stops()),
+        image_fills: slice_of(paints.all_images()),
+        shadows: slice_of(paints.all_shadows()),
+        blurs: slice_of(paints.all_blurs()),
+        clip_regions: slice_of(clips.all_regions()),
+        clip_boxes: slice_of(clips.all_boxes()),
+        image_entries: slice_of(images.all_entries()),
+        image_payload: slice_of(images.pool_bytes()),
+        glyph_runs: slice_of(glyphs.runs()),
+        glyph_quads: slice_of(glyphs.all_quads()),
+    }
+}
+
+/// Takes a lease on the committed frame and writes its arrays to `out`.
+///
+/// **This is the inverse of [`ds_runtime_draw`].** That call hands the runtime
+/// a surface and lets it paint; this hands the host the tables and lets the
+/// host paint. A Unity host on `BatchRendererGroup` needs the second, and
+/// `docs/decisions/host-integration-in-three-layers.md` D1 calls it layer 0's
+/// host-draws form.
+///
+/// # The lease
+///
+/// While a lease is outstanding, every call that would commit is refused with
+/// [`DsStatus::FrameLeased`]: [`ds_runtime_tick`], the three loaders,
+/// [`ds_runtime_free`], and a second acquire. That is what makes the borrowed
+/// views safe rather than merely documented — a commit is the only thing that
+/// replaces the tables they point into.
+///
+/// **Release after the reader is finished, not when the call that dispatched
+/// it returns.** A host that hands these pointers to worker threads releases
+/// once those workers have completed, which for a Unity host means after
+/// Unity completes the `JobHandle` and not on return from `OnPerformCulling`
+/// (issue #1267).
+///
+/// The workers themselves make no call into this library. They read memory,
+/// which is why nothing here is thread-affine for them: only the acquire and
+/// the release are calls, and both are on the runtime's own thread like every
+/// other entry point.
+///
+/// **A forgotten release refuses every later tick.** That is a new failure
+/// mode and it is deliberate: it is diagnosable, where the undefined behaviour
+/// it replaces was not.
+///
+/// # Safety
+///
+/// `out` must be a valid, writable `DsFrame *`. The handle carries no safety
+/// obligation (story #1226).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ds_runtime_acquire_frame(
+    runtime: DsRuntime,
+    out: *mut DsFrame,
+) -> DsStatus {
+    guard(|| {
+        if out.is_null() {
+            set_last_error("ds_runtime_acquire_frame: out is null");
+            return DsStatus::NullArgument;
+        }
+
+        // **The lease is asked about before `out` is touched at all**, because
+        // `DS_FRAME_LEASED` is the one failure that must leave the caller's
+        // frame exactly as it was passed in: a host looping with a single
+        // `DsFrame` and a missed release would otherwise have its live
+        // pointers zeroed by the call telling it the lease was outstanding,
+        // losing the only copy of what its workers are reading.
+        //
+        // A second lookup rather than a flag on the closure below, and it is
+        // sound because the table is thread-affine: nothing can take a lease
+        // between these two calls, since taking one is itself a call on this
+        // thread.
+        match table::with_runtime(runtime, |runtime| runtime.frame_leased) {
+            Ok(true) => {
+                // Not `leased_refusal`: that message says the call would
+                // invalidate the views, and a second acquire would not. It is
+                // refused because a lease does not nest.
+                set_last_error(
+                    "ds_runtime_acquire_frame: a frame lease is already outstanding on \
+                     this runtime — a lease does not nest, so release it before \
+                     acquiring again",
+                );
+                return DsStatus::FrameLeased;
+            }
+            Ok(false) => {}
+            Err(error) => {
+                unsafe { *out = DsFrame::empty() };
+                return lookup_status("ds_runtime_acquire_frame", error);
+            }
+        }
+
+        // Now, and **before anything else that can fail** — including an
+        // unwind, which `guard` turns into `DsStatus::Panic` without running
+        // another line of this function. A caller that ignores the status then
+        // reads no rows rather than whatever was in its stack slot.
+        unsafe { *out = DsFrame::empty() };
+
+        on_runtime(runtime, "ds_runtime_acquire_frame", |runtime| {
+            if runtime.scene.is_none() {
+                set_last_error("ds_runtime_acquire_frame: no document loaded");
+                return DsStatus::NoDocument;
+            }
+
+            // The borrow ends here: `DsFrame` holds raw pointers and no
+            // lifetime, so the writes below can take `&mut`.
+            let frame = frame_of(runtime.arena.committed(), runtime.document_replaced);
+            unsafe { *out = frame };
+            runtime.document_replaced = false;
+            runtime.frame_leased = true;
+            DsStatus::Ok
+        })
+    })
+}
+
+/// Ends the lease [`ds_runtime_acquire_frame`] took, and reports whether there
+/// was one.
+///
+/// Every pointer in that frame is invalid once this returns.
+///
+/// # `drawn`
+///
+/// **Non-zero if you painted this frame**, which marks the commit shown so a
+/// settled scene stops reporting `out_advanced` and the host can idle. `0` if
+/// you took the frame and did not paint it — read its
+/// [`DsFrame::generation`], decided nothing was visible, ran out of budget —
+/// and the commit stays worth drawing.
+///
+/// **An `i32` rather than a `bool`, and for the reason `kind` is one on
+/// [`ds_runtime_attach_surface`].** A Rust `bool` has exactly two valid bit
+/// patterns, so a host passing anything else is undefined behaviour the
+/// instant the call binds its arguments — before `guard` runs, so
+/// `catch_unwind` could never see it. Every other `bool` on this surface is
+/// written *by* this library through an out-pointer; this is the first one
+/// read *from* a host, and JNI's `jboolean` is an `unsigned char` whose
+/// specification says only that any non-zero value is true.
+///
+/// **It is a parameter rather than something this call assumes**, and the
+/// difference from [`ds_runtime_draw`] is why. That call also marks a commit
+/// shown without knowing whether anything reached the screen — but calling it
+/// is *optional*, so a host that does not want a frame shown simply does not
+/// call it. Releasing is **mandatory**: nothing can tick again until the lease
+/// ends. So a release cannot carry the meaning "I consumed this frame" on its
+/// own without silently marking every acquire shown, including one taken to
+/// read a generation and discard.
+///
+/// **Releasing without a lease succeeds and says so**, rather than being an
+/// error. `out_was_leased` receives whether one was outstanding, which is the
+/// shape [`ds_runtime_detach_surface`] already uses for the same question: a
+/// host tearing down does not have to track whether it is mid-frame. `drawn` is
+/// ignored when no lease was outstanding.
+///
+/// # Safety
+///
+/// `out_was_leased` must be writable or null. The handle carries no safety
+/// obligation (story #1226).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ds_runtime_release_frame(
+    runtime: DsRuntime,
+    drawn: i32,
+    out_was_leased: *mut bool,
+) -> DsStatus {
+    guard(|| {
+        // Written before anything that can fail, the rule
+        // [`ds_runtime_acquire_frame`] states: a caller that ignores a
+        // `DsStatus::BadHandle` reads `false` rather than its own stack.
+        if !out_was_leased.is_null() {
+            unsafe { *out_was_leased = false };
+        }
+        on_runtime(runtime, "ds_runtime_release_frame", |runtime| {
+            let was_leased = runtime.frame_leased;
+            runtime.frame_leased = false;
+            if !out_was_leased.is_null() {
+                unsafe { *out_was_leased = was_leased };
+            }
+            // **The host-draws counterpart of `ds_runtime_draw`'s
+            // `mark_shown`**, and the only route to it for a runtime with no
+            // surface: `mark_shown` is reachable only below
+            // `ds_runtime_draw`'s `NoSurface` guard, so without this a
+            // host-draws scene reports `advanced` for ever and never idles.
+            if was_leased
+                && drawn != 0
+                && let Some(scene) = runtime.scene.as_mut()
+            {
+                scene.mark_shown();
+            }
+            DsStatus::Ok
         })
     })
 }
@@ -2989,5 +3547,1390 @@ mod tests {
             DsStatus::Map
         );
         ds_runtime_free(runtime);
+    }
+
+    // ---- story #859: the data plane -----------------------------------
+
+    /// A paint-heavy fixture: 14 rects over strokes, gradients, an image fill
+    /// and clips. It is the one committed document that populates more than a
+    /// handful of the frame's arrays, which is what makes the census below
+    /// assert something.
+    const FIXTURE_PAINT: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../goldens/dsb/v03-paint.dsb"
+    );
+
+    /// The text fixture. Loaded **with** faces it is the only one that stages
+    /// glyph runs; loaded without them it still commits rects and a dirty set.
+    const FIXTURE_TEXT: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../goldens/dsb/v07-text-hug-in-fill.dsb"
+    );
+
+    fn fixture(path: &str) -> Vec<u8> {
+        std::fs::read(path).expect("the committed fixture is present")
+    }
+
+    /// A runtime with `document` loaded and one tick committed.
+    fn loaded(document: &[u8]) -> DsRuntime {
+        let mut runtime: DsRuntime = 0;
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe { ds_runtime_load_document(runtime, document.as_ptr(), document.len()) },
+            DsStatus::Ok
+        );
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+            DsStatus::Ok
+        );
+        runtime
+    }
+
+    /// A runtime with the text fixture loaded **with its fonts** and one tick
+    /// committed, so the glyph arrays are populated.
+    ///
+    /// Nothing is returned but the handle, and nothing needs to be:
+    /// `faces_from_c` copies every byte a `DsFontFace` points at before the
+    /// load returns, which is what both loaders' `# Safety` sections promise.
+    fn loaded_with_text() -> DsRuntime {
+        let document = fixture(FIXTURE_TEXT);
+        let font = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/fonts/inter/Inter-Regular.otf"
+        ))
+        .expect("the corpus font is present");
+        let png = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/atlas/inter-ascii/atlas.png"
+        ))
+        .expect("the committed sheet is present");
+        let metrics = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/atlas/inter-ascii/atlas.metrics"
+        ))
+        .expect("the committed metrics are present");
+        let family = std::ffi::CString::new("Inter").expect("no interior nul");
+        let face = DsFontFace {
+            family: family.as_ptr(),
+            weight: 400,
+            face_index: 0,
+            font_bytes: font.as_ptr(),
+            font_len: font.len(),
+            atlas_png: png.as_ptr(),
+            atlas_png_len: png.len(),
+            atlas_metrics: metrics.as_ptr(),
+            atlas_metrics_len: metrics.len(),
+        };
+
+        let mut runtime: DsRuntime = 0;
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_with_text(
+                    runtime,
+                    document.as_ptr(),
+                    document.len(),
+                    &face,
+                    1,
+                )
+            },
+            DsStatus::Ok
+        );
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+            DsStatus::Ok
+        );
+        runtime
+    }
+
+    fn acquire(runtime: DsRuntime) -> DsFrame {
+        let mut frame = DsFrame::empty();
+        assert_eq!(
+            unsafe { ds_runtime_acquire_frame(runtime, &mut frame) },
+            DsStatus::Ok,
+            "a loaded, ticked runtime hands out a frame"
+        );
+        frame
+    }
+
+    /// Release, saying the frame was painted — what a drawing host does.
+    fn release(runtime: DsRuntime) {
+        let mut was_leased = false;
+        assert_eq!(
+            unsafe { ds_runtime_release_frame(runtime, 1, &mut was_leased) },
+            DsStatus::Ok
+        );
+        assert!(was_leased, "there was a lease to release");
+    }
+
+    /// What a slice must look like for `rows`: a null pointer when empty, the
+    /// rows' own address when not, and this build's row size either way.
+    fn expected_of<T>(rows: &[T]) -> (*const c_void, usize, usize) {
+        let ptr: *const c_void = if rows.is_empty() {
+            std::ptr::null()
+        } else {
+            rows.as_ptr().cast()
+        };
+        (ptr, rows.len(), size_of::<T>())
+    }
+
+    fn actual_of(slice: DsSlice) -> (*const c_void, usize, usize) {
+        (slice.ptr, slice.count, slice.stride)
+    }
+
+    /// Every array of a frame, named, in declaration order.
+    ///
+    /// Exhaustive on purpose: a twentieth member added to `DsFrame` stops this
+    /// destructuring compiling until it is bound. Binding it is what the
+    /// compiler enforces; listing it below is not — an unused binding is a
+    /// warning, which `just lint`'s `-D warnings` fails on and `cargo test`
+    /// does not.
+    fn slices_of(frame: &DsFrame) -> [(&'static str, DsSlice); 19] {
+        let DsFrame {
+            generation: _,
+            document_replaced: _,
+            rects,
+            groups,
+            dirty,
+            paint_entries,
+            extra_fills,
+            strokes,
+            shapes,
+            solids,
+            gradients,
+            gradient_stops,
+            image_fills,
+            shadows,
+            blurs,
+            clip_regions,
+            clip_boxes,
+            image_entries,
+            image_payload,
+            glyph_runs,
+            glyph_quads,
+        } = *frame;
+        [
+            ("rects", rects),
+            ("groups", groups),
+            ("dirty", dirty),
+            ("paint_entries", paint_entries),
+            ("extra_fills", extra_fills),
+            ("strokes", strokes),
+            ("shapes", shapes),
+            ("solids", solids),
+            ("gradients", gradients),
+            ("gradient_stops", gradient_stops),
+            ("image_fills", image_fills),
+            ("shadows", shadows),
+            ("blurs", blurs),
+            ("clip_regions", clip_regions),
+            ("clip_boxes", clip_boxes),
+            ("image_entries", image_entries),
+            ("image_payload", image_payload),
+            ("glyph_runs", glyph_runs),
+            ("glyph_quads", glyph_quads),
+        ]
+    }
+
+    /// Every array of a frame with its identity, plus the two scalars — what a
+    /// test compares when the property is "this frame is unchanged".
+    fn fingerprint(frame: &DsFrame) -> Vec<(&'static str, (*const c_void, usize, usize))> {
+        let mut out: Vec<(&'static str, (*const c_void, usize, usize))> = slices_of(frame)
+            .into_iter()
+            .map(|(name, slice)| (name, actual_of(slice)))
+            .collect();
+        out.push((
+            "generation",
+            (std::ptr::null(), frame.generation as usize, 0),
+        ));
+        out.push((
+            "document_replaced",
+            (std::ptr::null(), usize::from(frame.document_replaced), 0),
+        ));
+        out
+    }
+
+    /// Every array of the frame, paired with the accessor that owns it.
+    ///
+    /// **The pairing is the property under test**, so the right-hand side is
+    /// read from `CommittedScene` and its tables directly and never from
+    /// `frame_of` — the function `ds_runtime_acquire_frame` itself calls.
+    /// Comparing the entry point against `frame_of` compares that function
+    /// with itself and passes however the fields are wired.
+    fn census(
+        frame: &DsFrame,
+        runtime: DsRuntime,
+    ) -> Vec<(&'static str, (*const c_void, usize, usize))> {
+        let expected = live(runtime, |r| {
+            let scene = r.arena.committed();
+            let paints = scene.paints();
+            let clips = scene.clips();
+            let images = scene.images();
+            let glyphs = scene.glyphs();
+            [
+                expected_of(scene.rects()),
+                expected_of(scene.groups()),
+                expected_of(scene.dirty()),
+                expected_of(paints.all_entries()),
+                expected_of(paints.all_extra_fills()),
+                expected_of(paints.all_strokes()),
+                expected_of(paints.all_shapes()),
+                expected_of(paints.all_solids()),
+                expected_of(paints.all_gradients()),
+                expected_of(paints.all_stops()),
+                expected_of(paints.all_images()),
+                expected_of(paints.all_shadows()),
+                expected_of(paints.all_blurs()),
+                expected_of(clips.all_regions()),
+                expected_of(clips.all_boxes()),
+                expected_of(images.all_entries()),
+                expected_of(images.pool_bytes()),
+                expected_of(glyphs.runs()),
+                expected_of(glyphs.all_quads()),
+            ]
+        });
+
+        slices_of(frame)
+            .iter()
+            .zip(expected)
+            .map(|((name, slice), want)| {
+                assert_eq!(
+                    actual_of(*slice),
+                    want,
+                    "{name}: the frame must name this table's own rows, at this build's \
+                     row size",
+                );
+                // The pointer, the count and the stride — not merely whether
+                // the array has rows. A before/after comparison over "is it
+                // populated" cannot see a reload that produced the same shape,
+                // which is exactly what a refused-but-committed loader does.
+                (*name, actual_of(*slice))
+            })
+            .collect()
+    }
+
+    /// The frame names each committed table's own rows — checked field by
+    /// field against the accessor that owns each, not against `frame_of`.
+    #[test]
+    fn a_frame_names_the_committed_tables_row_for_row() {
+        let runtime = loaded(&fixture(FIXTURE_PAINT));
+        let frame = acquire(runtime);
+
+        let populated: Vec<&str> = census(&frame, runtime)
+            .into_iter()
+            .filter_map(|(name, (_, count, _))| (count > 0).then_some(name))
+            .collect();
+
+        // **Named rather than counted.** A floor ("at least three") cannot tell
+        // "the fixture covers gradients and images" from "it covers three
+        // arrays and sixteen are untested", and every mis-wiring whose result
+        // is an empty slice hides behind the difference.
+        assert_eq!(
+            populated,
+            [
+                "rects",
+                "paint_entries",
+                "strokes",
+                "solids",
+                "gradients",
+                "gradient_stops",
+                "image_fills",
+                "clip_regions",
+                "clip_boxes",
+                "image_entries",
+                "image_payload",
+            ],
+            "this fixture's populated arrays are what give the pairing above its \
+             evidence; if it stops populating one, the pairing for that array stops \
+             being tested rather than starting to fail",
+        );
+
+        release(runtime);
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// The five arrays **no committed fixture populates**, named so the gap is
+    /// visible rather than implied by the list above.
+    ///
+    /// `groups` needs a translucent group whose painted subtree overlaps,
+    /// `extra_fills` a stacked fill, `shapes` a baked vector, and `shadows` and
+    /// `blurs` their effects. For each, the frame is asserted to be a
+    /// well-formed empty array — which is what a host reads — and the pairing
+    /// of the pointer is asserted by `census` above on every fixture.
+    #[test]
+    fn the_arrays_no_fixture_populates_are_still_well_formed() {
+        for path in [FIXTURE_PAINT, FIXTURE_TEXT] {
+            let runtime = loaded(&fixture(path));
+            let frame = acquire(runtime);
+            for (name, slice, row) in [
+                (
+                    "groups",
+                    frame.groups,
+                    size_of::<dashpaint::GroupComposite>(),
+                ),
+                (
+                    "extra_fills",
+                    frame.extra_fills,
+                    size_of::<dashpaint::PaintKind>(),
+                ),
+                ("shapes", frame.shapes, size_of::<dashpaint::VectorField>()),
+                ("shadows", frame.shadows, size_of::<dashpaint::Shadow>()),
+                ("blurs", frame.blurs, size_of::<dashpaint::Blur>()),
+            ] {
+                assert_eq!(slice.count, 0, "{name}: no fixture populates this yet");
+                assert!(slice.ptr.is_null(), "{name}: an empty array is NULL");
+                assert_eq!(
+                    slice.stride, row,
+                    "{name}: an empty array still reports this build's row size — a host \
+                     validating all nineteen strides at the top of the frame must not be \
+                     told a valid document is stale",
+                );
+            }
+            release(runtime);
+            assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+        }
+    }
+
+    /// Every call that commits is refused while a lease is outstanding, **and
+    /// nothing it would have done happened**, **and** it succeeds again once
+    /// the lease is released.
+    ///
+    /// Three assertions per call rather than one, because each catches a
+    /// different failure. The status alone passes on an implementation that
+    /// commits and *then* reports the refusal. The unchanged tables alone pass
+    /// on a call that fails for its own unrelated reason. The restoration
+    /// alone is what stops a flag that is set and never cleared.
+    #[test]
+    fn a_lease_refuses_every_committing_call_and_nothing_it_would_do_happens() {
+        let text = fixture(FIXTURE_TEXT);
+        let runtime = loaded(&text);
+        let path = std::ffi::CString::new(FIXTURE_TEXT).expect("no interior NUL");
+
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+            DsStatus::Ok,
+            "ticking works before the lease, so the refusal below is the lease's doing"
+        );
+
+        let frame = acquire(runtime);
+        let before = census(&frame, runtime);
+
+        // All three loaders, not one: each replaces the arena outright, and
+        // `..._mapped` matters most because `image_payload` then points into a
+        // mapping the reload would unmap.
+        let refusals: [(&str, &dyn Fn() -> DsStatus); 5] = [
+            ("tick", &|| unsafe {
+                ds_runtime_tick(runtime, 0.016, std::ptr::null_mut())
+            }),
+            ("load_document", &|| unsafe {
+                ds_runtime_load_document(runtime, text.as_ptr(), text.len())
+            }),
+            ("load_document_with_text", &|| unsafe {
+                ds_runtime_load_document_with_text(
+                    runtime,
+                    text.as_ptr(),
+                    text.len(),
+                    std::ptr::null(),
+                    0,
+                )
+            }),
+            ("load_document_mapped", &|| unsafe {
+                ds_runtime_load_document_mapped(runtime, path.as_ptr(), 0, std::ptr::null(), 0)
+            }),
+            ("free", &|| ds_runtime_free(runtime)),
+        ];
+
+        for (name, call) in refusals {
+            assert_eq!(call(), DsStatus::FrameLeased, "{name} must be refused");
+            let after = acquire_free_census(runtime);
+            assert_eq!(
+                after, before,
+                "{name} was refused, so it must also have left every row where it was — a \
+                 refusal reported after the commit is not a refusal",
+            );
+        }
+
+        release(runtime);
+
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+            DsStatus::Ok,
+            "the release restored the tick"
+        );
+        assert_eq!(
+            unsafe { ds_runtime_load_document(runtime, text.as_ptr(), text.len()) },
+            DsStatus::Ok,
+            "and the load"
+        );
+        assert_eq!(
+            ds_runtime_free(runtime),
+            DsStatus::Ok,
+            "and the free, which is the one that would otherwise leak the runtime"
+        );
+    }
+
+    /// The census of the live runtime's tables, without taking a lease.
+    ///
+    /// Used to ask "did that refused call move anything?", which needs a
+    /// reading of the tables while a lease is already outstanding — so it
+    /// cannot go through `ds_runtime_acquire_frame`.
+    fn acquire_free_census(
+        runtime: DsRuntime,
+    ) -> Vec<(&'static str, (*const c_void, usize, usize))> {
+        let frame = live(runtime, |r| frame_of(r.arena.committed(), false));
+        census(&frame, runtime)
+    }
+
+    /// A second acquire is refused **into the caller's own live frame** and
+    /// must not touch it.
+    ///
+    /// The aliased case is the one a real frame loop produces: one `DsFrame`
+    /// on the stack, reused every frame. A test using a second, separate
+    /// `DsFrame` cannot see the pointers being zeroed.
+    #[test]
+    fn a_second_acquire_is_refused_without_touching_the_live_frame() {
+        // Text staged, so the glyph arrays are non-empty. On a text-free
+        // fixture, blanking `glyph_quads` on this path is a no-op the
+        // comparison below cannot distinguish from correct behaviour — which
+        // is exactly the mutation that survived this test before.
+        let runtime = loaded_with_text();
+
+        let mut frame = DsFrame::empty();
+        assert_eq!(
+            unsafe { ds_runtime_acquire_frame(runtime, &mut frame) },
+            DsStatus::Ok
+        );
+        assert!(
+            frame.glyph_quads.count > 0,
+            "this test's evidence is that every array is compared, so the glyph arrays \
+             must be populated — blanking an already-empty one is a no-op no comparison \
+             can see",
+        );
+        let held = frame;
+
+        assert_eq!(
+            unsafe { ds_runtime_acquire_frame(runtime, &mut frame) },
+            DsStatus::FrameLeased,
+        );
+        // Every member, not a sample: a regression zeroing only `glyph_quads`
+        // on this path would pass a three-scalar check.
+        assert_eq!(
+            fingerprint(&frame),
+            fingerprint(&held),
+            "the refused acquire must leave the live frame exactly as it arrived: a host \
+             looping with one DsFrame would otherwise lose the only copy of what its \
+             workers are reading",
+        );
+
+        release(runtime);
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// A call that cannot commit is allowed under a lease, and moves nothing.
+    ///
+    /// `ds_runtime_detach_surface` is the one that carries this: it runs its
+    /// whole body with no surface attached and answers `Ok`. `resize` and
+    /// `draw` are asserted for their status only, and the comment says why —
+    /// both return at a `NoSurface` guard before reaching any body, so
+    /// asserting they moved nothing would be asserting over a call that did
+    /// nothing.
+    #[test]
+    fn a_non_committing_call_is_allowed_under_a_lease_and_moves_nothing() {
+        let runtime = loaded(&fixture(FIXTURE_PAINT));
+        let frame = acquire(runtime);
+        let before = census(&frame, runtime);
+
+        let mut had_surface = true;
+        assert_eq!(
+            unsafe { ds_runtime_detach_surface(runtime, &mut had_surface) },
+            DsStatus::Ok,
+            "detach runs its whole body and is not refused by the lease",
+        );
+        assert!(!had_surface, "there was no surface to detach");
+        assert_eq!(acquire_free_census(runtime), before, "and it moved nothing",);
+
+        // These two return at their own `NoSurface` guard, so what is asserted
+        // is that the lease did not turn them into `FrameLeased` — not that
+        // their bodies are harmless, which this cannot see.
+        assert_eq!(
+            unsafe { ds_runtime_resize(runtime, 640, 480) },
+            DsStatus::NoSurface,
+        );
+        assert_eq!(
+            unsafe { ds_runtime_draw(runtime, std::ptr::null_mut()) },
+            DsStatus::NoSurface,
+        );
+        assert!(
+            unsafe { ds_last_error_message(std::ptr::null_mut(), 0) } > 1,
+            "and the error channel answers under a lease",
+        );
+
+        release(runtime);
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// Attaching a surface is allowed under a lease and moves nothing.
+    ///
+    /// Separate from the detach case because it fails for its own reason on a
+    /// host build — there is no Android window to hand it — and what is being
+    /// asserted is that the reason is not the lease.
+    #[test]
+    fn attaching_under_a_lease_is_not_refused_by_the_lease() {
+        let runtime = loaded(&fixture(FIXTURE_PAINT));
+        let frame = acquire(runtime);
+        let before = census(&frame, runtime);
+
+        // A non-null window, because a null one is refused above the lease
+        // check and the call would never reach it. It is never dereferenced:
+        // a host build declines `AndroidNdk` by kind first, which is what
+        // `an_android_handle_on_a_host_build_is_declined` pins.
+        let mut window = 0_u8;
+        let status = unsafe {
+            ds_runtime_attach_surface(
+                runtime,
+                DsSurfaceKind::AndroidNdk as i32,
+                (&raw mut window).cast(),
+                std::ptr::null_mut(),
+                640,
+                480,
+            )
+        };
+        assert_ne!(
+            status,
+            DsStatus::FrameLeased,
+            "the attach never commits, so a lease must not refuse it; it failed as \
+             {status:?}, which is its own business",
+        );
+        // **Not evidence that it moved nothing.** On a host build
+        // `attach_android` is a stub that sets an error and returns without
+        // touching the runtime, so this would hold however the real arm
+        // behaved — the same reason `resize` and `draw` in the sibling test
+        // get no such assertion. The status above is what is real here.
+        assert_eq!(
+            acquire_free_census(runtime),
+            before,
+            "and, vacuously on a build with no Android arm, it moved nothing",
+        );
+
+        release(runtime);
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// Releasing a frame the host did **not** draw leaves the commit worth
+    /// drawing.
+    ///
+    /// The reason `drawn` is a parameter rather than something the release
+    /// assumes: releasing is mandatory, so a host that acquired only to read
+    /// the generation and then discarded the frame has no way to avoid the
+    /// call — and must not have that read counted as a paint.
+    #[test]
+    fn releasing_a_frame_the_host_did_not_draw_leaves_it_worth_drawing() {
+        let runtime = loaded(&fixture(FIXTURE_TEXT));
+
+        let mut advanced = false;
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, &mut advanced) },
+            DsStatus::Ok
+        );
+        assert!(advanced, "nothing has been shown yet");
+
+        let _ = acquire(runtime);
+        let mut was_leased = false;
+        assert_eq!(
+            unsafe { ds_runtime_release_frame(runtime, 0, &mut was_leased) },
+            DsStatus::Ok
+        );
+        assert!(was_leased);
+
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, &mut advanced) },
+            DsStatus::Ok
+        );
+        assert!(
+            advanced,
+            "the host said it did not draw the frame, so the commit is still worth \
+             drawing — a release is not a paint",
+        );
+
+        // And saying it did draw settles it, which is the other half.
+        let _ = acquire(runtime);
+        release(runtime);
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, &mut advanced) },
+            DsStatus::Ok
+        );
+        assert!(!advanced, "now it is shown");
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// **Any non-zero `drawn` means drawn**, which is what the header promises
+    /// and what a JNI host needs.
+    ///
+    /// `jboolean` is an `unsigned char` whose specification says only that a
+    /// non-zero value is true, so a Kotlin host can reach this with `2`. A body
+    /// testing `drawn == 1` would silently treat that as not-drawn: the scene
+    /// would report `advanced` for ever and never idle. Nothing else in the
+    /// suite passes anything but `0` or `1`, so without this the promise has no
+    /// test — and the C gate cannot supply one, because it checks no types.
+    #[test]
+    fn any_non_zero_drawn_marks_the_commit_shown() {
+        for drawn in [2_i32, -1, i32::MIN, i32::MAX] {
+            let runtime = loaded(&fixture(FIXTURE_TEXT));
+            let mut advanced = false;
+            assert_eq!(
+                unsafe { ds_runtime_tick(runtime, 0.016, &mut advanced) },
+                DsStatus::Ok
+            );
+            assert!(advanced, "nothing shown yet");
+
+            let _ = acquire(runtime);
+            let mut was_leased = false;
+            assert_eq!(
+                unsafe { ds_runtime_release_frame(runtime, drawn, &mut was_leased) },
+                DsStatus::Ok
+            );
+            assert!(was_leased);
+
+            assert_eq!(
+                unsafe { ds_runtime_tick(runtime, 0.016, &mut advanced) },
+                DsStatus::Ok
+            );
+            assert!(
+                !advanced,
+                "drawn = {drawn} is non-zero, so the commit is shown and the scene idles",
+            );
+            assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+        }
+    }
+
+    /// Releasing without a lease succeeds and reports that there was none —
+    /// **including when `out_was_leased` is NULL**, which is the shape that
+    /// hides a release that reports success without ending the lease.
+    #[test]
+    fn releasing_without_a_lease_is_allowed_and_says_there_was_none() {
+        let runtime = loaded(&fixture(FIXTURE_TEXT));
+
+        let mut was_leased = true;
+        assert_eq!(
+            unsafe { ds_runtime_release_frame(runtime, 1, &mut was_leased) },
+            DsStatus::Ok
+        );
+        assert!(!was_leased, "there was no lease outstanding");
+
+        // Acquire, release with a NULL out-parameter, then tick: the tick is
+        // the observable that says the lease actually ended. Without it, a
+        // release that only clears the flag on the non-NULL path reports `Ok`
+        // and wedges the runtime for ever.
+        let _ = acquire(runtime);
+        assert_eq!(
+            unsafe { ds_runtime_release_frame(runtime, 1, std::ptr::null_mut()) },
+            DsStatus::Ok
+        );
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+            DsStatus::Ok,
+            "a release with a NULL out-parameter still ends the lease",
+        );
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// `generation` moves across a tick, and a reload says so rather than
+    /// letting a host read the new document's first frame as the old one's.
+    #[test]
+    fn generation_moves_on_a_tick_and_a_reload_reports_document_replaced() {
+        let text = fixture(FIXTURE_TEXT);
+        let runtime = loaded(&text);
+
+        let first = acquire(runtime);
+        assert!(
+            first.generation > 0,
+            "a runtime that has loaded and ticked is past the pre-commit generation",
+        );
+        assert!(
+            first.document_replaced,
+            "the load that produced this frame replaced the document, and no acquire has \
+             reported it yet",
+        );
+        release(runtime);
+
+        let again = acquire(runtime);
+        assert!(
+            !again.document_replaced,
+            "the flag is cleared by the acquire that reports it, so a host is told once \
+             per replacement rather than for ever",
+        );
+        release(runtime);
+
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+            DsStatus::Ok
+        );
+        let second = acquire(runtime);
+        assert_eq!(
+            second.generation, first.generation,
+            "a tick that commits nothing does not move it — this fixture is static, so \
+             the generation names the commit rather than counting ticks",
+        );
+        release(runtime);
+
+        // The reload. Its generation restarts, so the generation alone cannot
+        // tell a host this is a different document — which is what
+        // `document_replaced` is for.
+        assert_eq!(
+            unsafe { ds_runtime_load_document(runtime, text.as_ptr(), text.len()) },
+            DsStatus::Ok
+        );
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+            DsStatus::Ok
+        );
+        let reloaded = acquire(runtime);
+        assert!(
+            reloaded.document_replaced,
+            "a reload must be announced to a host that draws its own frames — it has no \
+             surface for Present::document_replaced to reach",
+        );
+        assert_eq!(
+            reloaded.generation, second.generation,
+            "and this is why it must be: the reload restarted the arena, so the new \
+             document's first frame carries the generation the previous document was \
+             already showing. A host comparing generations alone reads it as one it has \
+             drawn and shows the old pixels",
+        );
+        release(runtime);
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// Releasing a frame is what marks the commit shown, so a host that draws
+    /// its own frames can idle.
+    ///
+    /// Without it `LiveScene::advanced` stays true for ever on a runtime with
+    /// no surface: `mark_shown` is reachable only below `ds_runtime_draw`'s
+    /// `NoSurface` guard.
+    #[test]
+    fn releasing_a_frame_marks_the_commit_shown_so_a_host_draws_host_can_idle() {
+        let runtime = loaded(&fixture(FIXTURE_TEXT));
+
+        let mut advanced = false;
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, &mut advanced) },
+            DsStatus::Ok
+        );
+        assert!(
+            advanced,
+            "nothing has been shown yet, so this commit is worth drawing",
+        );
+
+        let _ = acquire(runtime);
+        release(runtime);
+
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, &mut advanced) },
+            DsStatus::Ok
+        );
+        assert!(
+            !advanced,
+            "the release said the host consumed that frame, so a settled scene idles",
+        );
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// `dirty` names rect indices of this commit, and no more of them than
+    /// there are rects.
+    ///
+    /// **What this cannot test, and why the test is not named after the
+    /// member.** `dirty` is documented as the change relative to the
+    /// *previous* commit, and nothing reachable through this ABI produces two
+    /// commits that differ: there is no producer surface here, every committed
+    /// fixture is static, and a tick over a settled scene commits nothing at
+    /// all. The delta property is stated in the header and pinned in
+    /// `dashscene-core`, not here. What is checkable from this side is that
+    /// the array a host is handed is the commit's own dirty set — `census`'s
+    /// job — and that its contents are usable as rect indices, which is this.
+    #[test]
+    fn dirty_names_rect_indices_of_this_commit() {
+        let runtime = loaded(&fixture(FIXTURE_TEXT));
+        let frame = acquire(runtime);
+
+        assert!(
+            frame.dirty.count > 0,
+            "this fixture dirties rects, which is what makes the check below run at all",
+        );
+        assert!(
+            frame.dirty.count <= frame.rects.count,
+            "the dirty set names rect indices, so it cannot be longer than the table: \
+             {} of {}",
+            frame.dirty.count,
+            frame.rects.count,
+        );
+
+        // Every index is one a host can use against `rects`. Reading the values
+        // is what separates this from a count comparison: an array wired to
+        // some other table lands out of range as soon as the two differ.
+        let indices: &[u32] =
+            unsafe { std::slice::from_raw_parts(frame.dirty.ptr.cast(), frame.dirty.count) };
+        for index in indices {
+            assert!(
+                (*index as usize) < frame.rects.count,
+                "dirty index {index} is past the {} rects this commit holds",
+                frame.rects.count,
+            );
+        }
+
+        release(runtime);
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// A mapped load hands out the mapping, and the entries index into it.
+    ///
+    /// The mapped arm of `ImageTable`'s pool is the one where the bytes are a
+    /// file's rather than this library's, and it was the arm no test carried
+    /// across the boundary.
+    #[test]
+    fn a_mapped_load_hands_out_the_mapping_as_the_payload() {
+        let path = std::ffi::CString::new(FIXTURE_PAINT).expect("no interior NUL");
+        let mut runtime: DsRuntime = 0;
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped(runtime, path.as_ptr(), 0, std::ptr::null(), 0)
+            },
+            DsStatus::Ok
+        );
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+            DsStatus::Ok
+        );
+
+        let frame = acquire(runtime);
+        census(&frame, runtime);
+
+        assert!(
+            frame.image_entries.count > 0,
+            "this fixture carries an image fill, so the mapped arm is exercised",
+        );
+        let file = std::fs::metadata(FIXTURE_PAINT)
+            .expect("the fixture is present")
+            .len() as usize;
+        assert_eq!(
+            frame.image_payload.count, file,
+            "a mapped table's pool IS the whole file, which is what makes the mapped load \
+             bounded — a host must read only the ranges the entries name and never the \
+             slice as a whole",
+        );
+
+        release(runtime);
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// Acquiring without a document reports it, rather than handing out a
+    /// frame with no rows that a host would read as an empty scene.
+    #[test]
+    fn acquiring_without_a_document_reports_no_document() {
+        let mut runtime: DsRuntime = 0;
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+
+        // **Deliberately not a frame that is already empty.** Starting from
+        // `DsFrame::empty()` makes the assertion below true whether or not the
+        // call wrote anything — which is how deleting the pre-write left the
+        // whole Rust suite green, with only `just c-abi` (which memsets to
+        // 0xAB) catching it.
+        let mut frame = DsFrame::empty();
+        frame.generation = 99;
+        frame.document_replaced = true;
+        frame.rects.count = 7;
+        frame.rects.ptr = (&raw const frame.generation).cast();
+        frame.glyph_quads.count = 3;
+        frame.glyph_quads.ptr = (&raw const frame.generation).cast();
+
+        assert_eq!(
+            unsafe { ds_runtime_acquire_frame(runtime, &mut frame) },
+            DsStatus::NoDocument
+        );
+        assert_eq!(
+            fingerprint(&frame),
+            fingerprint(&DsFrame::empty()),
+            "a failed acquire empties the frame it was given — every array, both scalars",
+        );
+
+        let mut was_leased = true;
+        assert_eq!(
+            unsafe { ds_runtime_release_frame(runtime, 1, &mut was_leased) },
+            DsStatus::Ok
+        );
+        assert!(!was_leased, "a refused acquire must not have taken a lease");
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// A null `out` is a status, not a dereference.
+    #[test]
+    fn a_null_frame_out_pointer_is_a_status() {
+        let runtime = loaded(&fixture(FIXTURE_TEXT));
+        assert_eq!(
+            unsafe { ds_runtime_acquire_frame(runtime, std::ptr::null_mut()) },
+            DsStatus::NullArgument
+        );
+        let mut was_leased = true;
+        assert_eq!(
+            unsafe { ds_runtime_release_frame(runtime, 1, &mut was_leased) },
+            DsStatus::Ok
+        );
+        assert!(!was_leased);
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// A failed acquire on a handle this library never minted still leaves an
+    /// empty frame, and every array of it — not only the first.
+    #[test]
+    fn a_failed_acquire_empties_every_array_and_not_only_the_first() {
+        let mut frame = DsFrame::empty();
+        frame.rects.count = 7;
+        frame.glyph_quads.count = 9;
+        frame.generation = 42;
+        frame.document_replaced = true;
+
+        assert_eq!(
+            unsafe { ds_runtime_acquire_frame(0, &mut frame) },
+            DsStatus::NullArgument,
+            "0 names no runtime",
+        );
+
+        // Compared against the row sizes themselves, not against
+        // `DsFrame::empty()` — which is the constructor the code under test
+        // used, so comparing with it would compare that function with itself
+        // and pass however its nineteen type parameters were written.
+        assert_eq!(frame.generation, 0);
+        assert!(!frame.document_replaced);
+        for (name, got, row) in [
+            ("rects", frame.rects, size_of::<dashpaint::RectEntry>()),
+            (
+                "groups",
+                frame.groups,
+                size_of::<dashpaint::GroupComposite>(),
+            ),
+            ("dirty", frame.dirty, size_of::<u32>()),
+            (
+                "image_entries",
+                frame.image_entries,
+                size_of::<dashpaint::ImageEntry>(),
+            ),
+            ("image_payload", frame.image_payload, size_of::<u8>()),
+            (
+                "glyph_quads",
+                frame.glyph_quads,
+                size_of::<dashpaint::GlyphQuad>(),
+            ),
+        ] {
+            assert_eq!(
+                actual_of(got),
+                (std::ptr::null(), 0, row),
+                "{name}: a failed acquire empties the whole frame, and an emptied array \
+                 still describes its row",
+            );
+        }
+    }
+
+    /// The text half crosses: a document loaded with its fonts hands out glyph
+    /// runs and the quads they index.
+    #[test]
+    fn a_text_document_crosses_its_glyph_runs_and_quads() {
+        let document = fixture(FIXTURE_TEXT);
+        let font = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/fonts/inter/Inter-Regular.otf"
+        ))
+        .expect("the corpus font is present");
+        let png = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/atlas/inter-ascii/atlas.png"
+        ))
+        .expect("the committed sheet is present");
+        let metrics = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../corpus/atlas/inter-ascii/atlas.metrics"
+        ))
+        .expect("the committed metrics are present");
+
+        let family = std::ffi::CString::new("Inter").expect("no interior nul");
+        let face = DsFontFace {
+            family: family.as_ptr(),
+            weight: 400,
+            face_index: 0,
+            font_bytes: font.as_ptr(),
+            font_len: font.len(),
+            atlas_png: png.as_ptr(),
+            atlas_png_len: png.len(),
+            atlas_metrics: metrics.as_ptr(),
+            atlas_metrics_len: metrics.len(),
+        };
+
+        let mut runtime: DsRuntime = 0;
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_with_text(
+                    runtime,
+                    document.as_ptr(),
+                    document.len(),
+                    &face,
+                    1,
+                )
+            },
+            DsStatus::Ok
+        );
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+            DsStatus::Ok
+        );
+
+        let frame = acquire(runtime);
+        census(&frame, runtime);
+
+        assert!(
+            frame.glyph_runs.count > 0,
+            "the fixture's text staged runs, so the data plane must carry them — a host \
+             that receives none lays out no text at all",
+        );
+        assert_eq!(
+            frame.glyph_runs.stride,
+            size_of::<dashpaint::GlyphRun>(),
+            "the runs arrive as this build's rows"
+        );
+        assert_eq!(
+            frame.glyph_quads.stride,
+            size_of::<dashpaint::GlyphQuad>(),
+            "and so do the quads — asserted rather than inferred from the runs, because \
+             pointing this array at the runs would satisfy any count comparison",
+        );
+
+        // The quad count is what the runs' own ranges name, not merely "at
+        // least as many as there are runs".
+        let quads = live(runtime, |r| {
+            let glyphs = r.arena.committed().glyphs();
+            glyphs
+                .runs()
+                .iter()
+                .map(|run| run.glyphs.count as usize)
+                .sum::<usize>()
+        });
+        assert_eq!(
+            frame.glyph_quads.count, quads,
+            "every quad the runs name crosses, and no others",
+        );
+
+        release(runtime);
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// The committed C header declares `DsFrame` and `DsSlice` exactly as this
+    /// build lays them out.
+    ///
+    /// **Nothing else checks this.** `just c-abi` compiles and links the
+    /// header, which catches a missing or renamed *symbol* and cannot see a
+    /// member inserted, dropped or reordered inside a struct — every member of
+    /// `DsFrame` but one is the same type, so a permutation is not a type
+    /// error on either side. It is not a crash either: the host reads
+    /// `strokes` where `shapes` should be and draws a plausible wrong frame.
+    ///
+    /// The check asks whether a **known** declaration is present rather than
+    /// parsing what the header declares. A parser over a foreign grammar loses
+    /// to the shapes it did not anticipate; a search for the exact text this
+    /// build expects cannot.
+    #[test]
+    fn the_header_declares_the_frame_exactly_as_this_build_lays_it_out() {
+        let header =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/include/dashscene.h"))
+                .expect("the committed header is present");
+
+        let block = |name: &str| -> String {
+            let start = header
+                .find(&format!("typedef struct {name} {{"))
+                .unwrap_or_else(|| panic!("the header declares {name}"));
+            let end = header[start..]
+                .find(&format!("}} {name};"))
+                .unwrap_or_else(|| panic!("{name}'s declaration is terminated"));
+            header[start..start + end].to_string()
+        };
+
+        // `DsSlice`'s member types, which decide every offset in `DsFrame`.
+        // A `uint32_t count` against this build's `usize` would misalign every
+        // slice in the frame, and `sizeof` on the C side alone cannot see it.
+        let slice = block("DsSlice");
+        for declaration in ["const void *ptr;", "size_t count;", "size_t stride;"] {
+            assert!(
+                slice.contains(declaration),
+                "the header's DsSlice must declare `{declaration}` — this build's DsSlice \
+                 is {{ *const c_void, usize, usize }}",
+            );
+        }
+
+        // `DsFrame`, in order — **on both sides, from one list.** Each entry
+        // pairs the header's declaration with this build's `offset_of!`, so
+        // the header is checked against the list and the Rust struct is
+        // checked against the same list. Without the offsets this would be a
+        // header-versus-literal check: swapping two members in the Rust
+        // struct would leave `frame_of` and the destructuring in `census`
+        // self-consistent (both go by name), the header untouched, and every
+        // stride equal where the two types are the same size.
+        let frame = block("DsFrame");
+        use std::mem::offset_of;
+        let members: [(&str, usize); 21] = [
+            ("uint64_t generation;", offset_of!(DsFrame, generation)),
+            (
+                "bool document_replaced;",
+                offset_of!(DsFrame, document_replaced),
+            ),
+            ("DsSlice rects;", offset_of!(DsFrame, rects)),
+            ("DsSlice groups;", offset_of!(DsFrame, groups)),
+            ("DsSlice dirty;", offset_of!(DsFrame, dirty)),
+            ("DsSlice paint_entries;", offset_of!(DsFrame, paint_entries)),
+            ("DsSlice extra_fills;", offset_of!(DsFrame, extra_fills)),
+            ("DsSlice strokes;", offset_of!(DsFrame, strokes)),
+            ("DsSlice shapes;", offset_of!(DsFrame, shapes)),
+            ("DsSlice solids;", offset_of!(DsFrame, solids)),
+            ("DsSlice gradients;", offset_of!(DsFrame, gradients)),
+            (
+                "DsSlice gradient_stops;",
+                offset_of!(DsFrame, gradient_stops),
+            ),
+            ("DsSlice image_fills;", offset_of!(DsFrame, image_fills)),
+            ("DsSlice shadows;", offset_of!(DsFrame, shadows)),
+            ("DsSlice blurs;", offset_of!(DsFrame, blurs)),
+            ("DsSlice clip_regions;", offset_of!(DsFrame, clip_regions)),
+            ("DsSlice clip_boxes;", offset_of!(DsFrame, clip_boxes)),
+            ("DsSlice image_entries;", offset_of!(DsFrame, image_entries)),
+            ("DsSlice image_payload;", offset_of!(DsFrame, image_payload)),
+            ("DsSlice glyph_runs;", offset_of!(DsFrame, glyph_runs)),
+            ("DsSlice glyph_quads;", offset_of!(DsFrame, glyph_quads)),
+        ];
+
+        // This build lays the members out in the order this list gives them.
+        let mut previous = None;
+        for (declaration, offset) in members {
+            if let Some((before, at)) = previous {
+                assert!(
+                    at < offset,
+                    "`{declaration}` is at offset {offset} and `{before}` at {at}: this \
+                     build declares them in the opposite order to this list, so the \
+                     header check below is comparing against the wrong order",
+                );
+            }
+            previous = Some((declaration, offset));
+        }
+
+        // And the header declares them in that order too.
+        let mut at = 0;
+        for (declaration, _) in members {
+            let found = frame[at..].find(declaration).unwrap_or_else(|| {
+                panic!(
+                    "the header's DsFrame must declare `{declaration}`, after the member \
+                     before it — a reordered or missing member is silent everywhere else",
+                )
+            });
+            at += found + declaration.len();
+        }
+
+        // And nothing else: a member the header declares and this build does
+        // not is just as wrong, and the ordered search above would step over
+        // it.
+        let declared = frame
+            .lines()
+            .filter(|line| line.trim_start().starts_with("DsSlice "))
+            .count();
+        assert_eq!(
+            declared,
+            members.len() - 2,
+            "the header declares a DsSlice member this build does not, or the count moved",
+        );
+    }
+
+    /// Every row type on the boundary-B gate either crosses in a [`DsFrame`]
+    /// or is named here as one that deliberately does not.
+    ///
+    /// **The gap this closes**: `DsFrame`'s arrays and `abi_surface!`'s type
+    /// list are two hand-written enumerations of one idea — what a host may be
+    /// handed — and nothing related them. A row type added to the gate and not
+    /// to the frame was caught by no test, and a host would simply never
+    /// receive it.
+    ///
+    /// It cannot be "every gated type appears": `AtlasGlyph` is gated and does
+    /// not cross, because it is not a committed table but a list hanging off an
+    /// `Atlas`, and an `Atlas` is not a row
+    /// (`docs/decisions/the-frame-crosses-under-a-lease.md` D4). So each type
+    /// carries a disposition, and adding one to the gate fails here until
+    /// somebody writes down which it is.
+    #[test]
+    fn every_gated_row_type_either_crosses_or_says_why_not() {
+        /// Which `DsFrame` array carries this row type, or why none does.
+        enum Crosses {
+            /// The named array is rows of this type.
+            As(&'static str),
+            /// Part of a row that crosses, rather than an array of its own.
+            Within(&'static str),
+            /// Deliberately absent, with the reason.
+            No(&'static str),
+        }
+        use Crosses::*;
+
+        let disposition: &[(&str, Crosses)] = &[
+            ("RectEntry", As("rects")),
+            ("GroupComposite", As("groups")),
+            ("PaintEntry", As("paint_entries")),
+            ("PaintKind", As("extra_fills")),
+            ("Stroke", As("strokes")),
+            ("VectorField", As("shapes")),
+            ("Color", As("solids")),
+            ("Gradient", As("gradients")),
+            ("GradientStop", As("gradient_stops")),
+            ("ImageFill", As("image_fills")),
+            ("Shadow", As("shadows")),
+            ("Blur", As("blurs")),
+            ("ClipRegion", As("clip_regions")),
+            ("ClipBox", As("clip_boxes")),
+            ("ImageEntry", As("image_entries")),
+            ("GlyphRun", As("glyph_runs")),
+            ("GlyphQuad", As("glyph_quads")),
+            // Range and vector types: they are fields of a row that crosses,
+            // not arrays of their own.
+            ("FillRange", Within("PaintEntry")),
+            ("StrokeRange", Within("PaintEntry")),
+            ("ShapeRange", Within("PaintEntry")),
+            ("ShadowRange", Within("PaintEntry")),
+            ("BlurRange", Within("PaintEntry")),
+            ("StopRange", Within("Gradient")),
+            ("GlyphRange", Within("GlyphRun")),
+            ("CornerRadii", Within("ClipBox and PaintEntry")),
+            ("Vec2", Within("RectEntry, Gradient and Shadow")),
+            ("Mat23", Within("ImageFill")),
+            (
+                "AtlasGlyph",
+                No(
+                    "the glyph list of an Atlas, and an Atlas is not a committed \
+                    table — story #1123 carries the atlas seam",
+                ),
+            ),
+        ];
+
+        let gated = dashpaint_abi::dashpaint_abi_type_count() as usize;
+        assert_eq!(
+            disposition.len(),
+            gated,
+            "the gate holds {gated} row types and this list names {}: a type joined \
+             `abi_surface!` without anyone saying whether a host receives it",
+            disposition.len(),
+        );
+
+        // Every gated type is named here, by the gate's own name for it.
+        for index in 0..gated {
+            let name = unsafe {
+                std::ffi::CStr::from_ptr(dashpaint_abi::dashpaint_abi_type_name(index as u32))
+            }
+            .to_str()
+            .expect("a gated type's name is UTF-8");
+            assert!(
+                disposition.iter().any(|(listed, _)| *listed == name),
+                "`{name}` is on the boundary-B gate and this list does not say whether it \
+                 crosses the C ABI",
+            );
+        }
+
+        // A type that does not cross as an array of its own has to say why.
+        // Without this the two non-`As` dispositions would be a shrug that
+        // compiles, and the next person adding a gated type could write one.
+        for (name, crosses) in disposition {
+            let reason = match crosses {
+                As(_) => continue,
+                Within(reason) | No(reason) => reason,
+            };
+            assert!(
+                !reason.trim().is_empty(),
+                "`{name}` does not cross as an array of its own, and this list does not \
+                 say what it is instead",
+            );
+        }
+
+        // And every array a disposition names is one `DsFrame` actually has,
+        // so a renamed member cannot leave a stale entry behind.
+        let frame = DsFrame::empty();
+        let arrays: Vec<&str> = census_names();
+        for (name, crosses) in disposition {
+            if let As(array) = crosses {
+                assert!(
+                    arrays.contains(array),
+                    "`{name}` is said to cross as `{array}`, which DsFrame has no such \
+                     member for",
+                );
+            }
+        }
+        // Two `DsFrame` arrays carry no gated row type — `dirty`, which is
+        // plain `u32` rect indices, and `image_payload`, which is bytes.
+        // Asserted so the pairing above is known to cover everything else.
+        let carried: Vec<&str> = disposition
+            .iter()
+            .filter_map(|(_, c)| match c {
+                As(array) => Some(*array),
+                _ => None,
+            })
+            .collect();
+        let uncarried: Vec<&&str> = arrays
+            .iter()
+            .filter(|array| !carried.contains(array))
+            .collect();
+        assert_eq!(
+            uncarried,
+            [&"dirty", &"image_payload"],
+            "these DsFrame arrays hold no gated row type, and both are primitives — \
+             anything else here is an array whose rows reach a host ungated",
+        );
+        let _ = frame;
+    }
+
+    /// The nineteen array names of a [`DsFrame`], from one exhaustive
+    /// destructuring so the list cannot go stale.
+    fn census_names() -> Vec<&'static str> {
+        let DsFrame {
+            generation: _,
+            document_replaced: _,
+            rects: _,
+            groups: _,
+            dirty: _,
+            paint_entries: _,
+            extra_fills: _,
+            strokes: _,
+            shapes: _,
+            solids: _,
+            gradients: _,
+            gradient_stops: _,
+            image_fills: _,
+            shadows: _,
+            blurs: _,
+            clip_regions: _,
+            clip_boxes: _,
+            image_entries: _,
+            image_payload: _,
+            glyph_runs: _,
+            glyph_quads: _,
+        } = DsFrame::empty();
+        vec![
+            "rects",
+            "groups",
+            "dirty",
+            "paint_entries",
+            "extra_fills",
+            "strokes",
+            "shapes",
+            "solids",
+            "gradients",
+            "gradient_stops",
+            "image_fills",
+            "shadows",
+            "blurs",
+            "clip_regions",
+            "clip_boxes",
+            "image_entries",
+            "image_payload",
+            "glyph_runs",
+            "glyph_quads",
+        ]
     }
 }

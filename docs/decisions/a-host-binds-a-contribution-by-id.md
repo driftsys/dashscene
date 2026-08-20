@@ -215,13 +215,16 @@ carries a `String`, so an id-carrying variant needs nothing new.
   multi-root document is told about placeholders in roots it never loads, and
   cannot clear them. That is the noise Decision 2 is otherwise careful to avoid,
   and it is left open rather than guessed at: a shown root reaches this gate
-  through the same seam that will carry the binding list (issue #859), and
-  nothing passes either today. Debt: #1272.
+  through whatever seam carries the binding list, and nothing passes either
+  today. **Story #859 is not that seam** — it was named here as the candidate
+  before it was built, and what it added runs the other way, handing the
+  committed tables _out_ to a host that draws them. No entry point takes a
+  binding list. Debt: #1272.
 - Nothing calls it in this repository yet. The callers are hosts, and the host
-  that motivates it is the Unity one (epic #1106); the C ABI's data plane (#859)
-  is what will carry a binding list across boundary B. Until then the gate's
-  tests are its only caller, which is the same posture story #1126's surface
-  shipped in.
+  that motivates it is the Unity one (epic #1106). **No entry point on the C ABI
+  takes a binding list**, and story #859's data plane — named here as what would
+  carry one — is outbound only. Until a seam exists the gate's tests are its
+  only caller, which is the same posture story #1126's surface shipped in.
 - `Placeholder.contribution_id` now has a consumer, so the story #1264 lowering
   of Figma's `dashscene/role = placeholder` gains a reason to carry the
   annotator's reserved `contribution-id` key

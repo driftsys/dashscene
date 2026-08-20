@@ -135,14 +135,18 @@ stood, and that was wrong.** What is accurate is the premise: no _shipped_
 artifact exports the layout and round-trip functions. The crate declares no
 `crate-type`, so `cargo build` produces a plain rlib, nothing in the workspace
 depends on it, and `crates/dashscene-ffi/include/dashscene.h` declares none of
-them — the host library exports twelve `ds_*` symbols and nothing else
-(`docs/technotes/unity-toolchain.md`). **The step that does not follow is that a
-check therefore needs one.** `cargo rustc -p dashpaint-abi --crate-type cdylib`
-emits a dynamic library carrying all 52 symbols with no manifest change, so
-story #1239's `unity/abi-check` calls them directly and the published crate
-stays an rlib. Whether they are _additionally_ re-exported through
-`dashscene-ffi`, or replaced by the `stride` member of issue #859's `DsSlice`,
-is still that issue's to settle and story #1239 did not pre-empt it.
+them — the host library exports fourteen `ds_*` symbols and nothing else. (The
+technote measured twelve at story #1230; story #859 added the data plane's two,
+and that measurement is left as it was taken.) **The step that does not follow
+is that a check therefore needs one.**
+`cargo rustc -p dashpaint-abi --crate-type cdylib` emits a dynamic library
+carrying all **56** of them — two per gated type — with no manifest change,
+alongside the four table functions that make **60** `dashpaint_abi_*` exports in
+total; it was 58 before story #859 added `GroupComposite`. So story #1239's
+`unity/abi-check` calls them directly and the published crate stays an rlib.
+**Story #859 settled the rest**: they are not re-exported through
+`dashscene-ffi`, whose `DsSlice::stride` reports this build's row size per array
+instead.
 
 ## Consequences
 

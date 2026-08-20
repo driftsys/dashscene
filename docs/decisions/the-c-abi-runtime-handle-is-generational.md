@@ -193,9 +193,9 @@ written.
   (`a_re_entrant_call_on_the_same_runtime_is_refused`,
   `a_re_entrant_call_on_another_runtime_resolves`).
 
-`DS_ABI_VERSION` moved 1 → 2. Ten of the twelve exported entry points changed
-signature; `ds_abi_version` and `ds_last_error_message` take no runtime and did
-not.
+`DS_ABI_VERSION` moved 1 → 2. Ten of the twelve exported entry points then —
+fourteen since story #859 — changed signature; `ds_abi_version` and
+`ds_last_error_message` take no runtime and did not.
 
 ## What this is not
 

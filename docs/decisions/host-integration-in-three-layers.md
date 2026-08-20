@@ -121,11 +121,11 @@ planning session breaks stories against a structure rather than inventing one.
 
 **D1 — three layers, and each is useful without the one above it.**
 
-| layer                        | what it is                                                                      | usable alone?                                                                        |
-| ---------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| 0. surface interop           | the runtime and the host meet at the frame, in one of **two forms** — see below | runtime-draws, yes — displays a compiled `.dsb`. host-draws, **not yet**: issue #859 |
-| 1. app state as signals      | Compose `State` / SwiftUI bindings write named dashscene signals                | yes — an app-driven scene, authored in Figma or `dashlang`                           |
-| 2. a DSL wrapping `dashlang` | scenes authored from the host's language                                        | needs 0; wants 1                                                                     |
+| layer                        | what it is                                                                      | usable alone?                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 0. surface interop           | the runtime and the host meet at the frame, in one of **two forms** — see below | both, yes. Runtime-draws displays a compiled `.dsb`; host-draws gained its data plane at story #859 |
+| 1. app state as signals      | Compose `State` / SwiftUI bindings write named dashscene signals                | yes — an app-driven scene, authored in Figma or `dashlang`                                          |
+| 2. a DSL wrapping `dashlang` | scenes authored from the host's language                                        | needs 0; wants 1                                                                                    |
 
 Layer 0 is the whole of "show a designed screen in my app", which is the primary
 content path — Figma to `.dsb`. Layers 1 and 2 are what make it a runtime rather
@@ -158,11 +158,12 @@ without which a host that draws its own frames cannot obtain the committed
 tables at all. That issue predates this amendment and is what made the gap
 visible.
 
-**So the host-draws form is not usable today, and the table above says so.**
-`docs/design/c-abi.md` states it from the other side — no data plane, and
-nothing in the header carries a boundary-B row. D1's "usable alone" column is a
-claim about the layering rather than about what is built, and for this form the
-two differ until #859 lands.
+**Story #859 built it on 2026-08-20, and the table above says so.**
+`ds_runtime_acquire_frame` hands out the committed tables under a lease —
+[`the-frame-crosses-under-a-lease.md`](the-frame-crosses-under-a-lease.md) — and
+[`../design/c-abi.md`](../design/c-abi.md) carries the as-built surface. Until
+then D1's "usable alone" column was a claim about the layering rather than about
+what was built, and for this form the two differed.
 
 **A Unity host occupies layer 0 in its host-draws form** (the owner's ruling,
 2026-08-18, settling open question 4 on issue #851). The Unity painter draws
@@ -387,9 +388,17 @@ thread other than the one that created the runtime is a diagnosable bad handle
 rather than a working call. An engine host must therefore decide which of its
 threads owns the runtime, and the answer is not automatically the one an
 engine's callbacks run on — a `BatchRendererGroup` culling callback is invoked
-off the main thread, and the data plane of issue #859 is what it would be
-reading. This record does not settle that; it names it, because the first C#
-host meets it as a runtime failure otherwise.
+off the main thread, and story #859's data plane is what it reads there.
+
+**Settled by the owner on 2026-08-19 and built by that story**: the callback's
+workers make no call into the library at all. `ds_runtime_acquire_frame` and
+`ds_runtime_release_frame` bracket the dispatch on the runtime's own thread, and
+the workers read the borrowed rows. So thread affinity does not meet the
+callback, and this paragraph's warning is discharged rather than standing.
+[`the-frame-crosses-under-a-lease.md`](the-frame-crosses-under-a-lease.md)
+carries it. What is still unknown is which thread Unity invokes
+`OnPerformCulling` on, which decides whether a host can bracket the dispatch at
+all; issue #1125 is where that is read.
 
 **What this does not license.** A host calling `tick()` is scheduling, not
 mutating. Producer-side work — staging properties, switching variants, building

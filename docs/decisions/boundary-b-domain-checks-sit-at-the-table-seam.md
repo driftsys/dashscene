@@ -72,10 +72,11 @@ cross the C ABI by value through `dashpaint-abi`'s `abi_surface!`, so a foreign
 host writes the bytes and no constructor is on that path. That is false and was
 removed. `abi_surface!` generates `fn(value: T) -> T { value }` — an identity
 function whose job is to prove a hand-written C header agrees on field order —
-and it reaches no table. `dashscene-ffi` exposes no function taking either row:
-there is no data plane for these types today. The argument is noted here because
-it was written into three documents before the review caught it, and because it
-is exactly the defect this pair of issues exists to correct.
+and it reaches no table. `dashscene-ffi` exposes no function **taking** either
+row — story #859's data plane hands both out and takes neither, so nothing on
+that path constructs one either. The argument is noted here because it was
+written into three documents before the review caught it, and because it is
+exactly the defect this pair of issues exists to correct.
 
 **Keeping the fields public beside a constructor is the shape already
 rejected.** PR #983's review found that a `pub px_per_em` let `Atlas::new`'s

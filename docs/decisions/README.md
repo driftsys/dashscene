@@ -201,11 +201,13 @@ records below. Per-story decisions land here directly:
   layer 0 has two forms — the runtime draws into a host view, or the host draws
   the frame from the committed tables — a Unity host occupies the second, and D6
   is amended so an engine host ticks from the engine's loop. The host-draws form
-  is not usable until issue #859. **D3a was a risk to check and is now
-  measured** (2026-08-17, issue #885): a Pixel 5's Vulkan adapter exposes 32
-  fragment-stage storage buffers and its GLES 3.2 adapter exactly the four the
-  painter binds, so the wall that makes WebGL2 unbuildable is not hit on that
-  device — one device, and a property to re-check per device class.
+  became usable at story #859 (2026-08-20), which gave it the data plane — see
+  [the-frame-crosses-under-a-lease.md](the-frame-crosses-under-a-lease.md).
+  **D3a was a risk to check and is now measured** (2026-08-17, issue #885): a
+  Pixel 5's Vulkan adapter exposes 32 fragment-stage storage buffers and its
+  GLES 3.2 adapter exactly the four the painter binds, so the wall that makes
+  WebGL2 unbuildable is not hit on that device — one device, and a property to
+  re-check per device class.
 - [container-parse-reads-a-prefix-through-a-host-reader.md](container-parse-reads-a-prefix-through-a-host-reader.md)
   — **accepted**, built by story #587 as `dashbuf::prefix`: `Container::parse`
   stays strict, and a prefix is read by a separate host-side envelope reader
@@ -665,6 +667,19 @@ their parent rather than apart from it:
   mechanics to the implementing pull request as seven questions**; it is neither
   an `unsafe` reduction nor a CodeQL fix, and it corrects #1226's figures for
   both.
+- [the-frame-crosses-under-a-lease.md](the-frame-crosses-under-a-lease.md) — the
+  committed tables reach a host that draws its own frames as **borrowed views
+  under an acquire/release lease**, never as an owned snapshot, and every call
+  that would commit is refused while one is outstanding (owner's ruling on issue
+  #1267, 2026-08-19; built by story #859). This is the mechanism layer 0's
+  host-draws form runs on, so it is what a Unity host over `BatchRendererGroup`
+  draws from. Its workers make no ABI call, which is why the thread-affine table
+  above costs them nothing. `GroupComposite` joins the gated boundary-B surface
+  in the same change — it was the last row type on that boundary with no C
+  representation. The frame also carries `document_replaced`, because
+  `generation` restarts on a load and a host-draws embedder has no surface for
+  `Present::document_replaced` to reach. The glyph atlases still do not cross,
+  and story #1123 owns them.
 - [slices-are-planned-against-their-inflow.md](slices-are-planned-against-their-inflow.md)
   — the v0.20 retrospective (2026-08-18). Epic #951 planned 13 issues and the
   milestone closed 142, of which 126 were filed while the slice ran, so a

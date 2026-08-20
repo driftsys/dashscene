@@ -152,4 +152,15 @@ namespace Driftsys.Dashscene.BoundaryB
     }
 
     public struct ImageEntry { public uint Format, Offset, Len, Width, Height; }
+
+    /// <summary>
+    /// One render-target group opacity: the rect range <c>[Start, End)</c> in
+    /// DFS order, and the alpha its offscreen layer composites at.
+    /// </summary>
+    /// <remarks>
+    /// The last row type on boundary B to gain a C representation (story
+    /// #859). A host that draws its own frames and ignores this composites a
+    /// translucent group's overlapping children twice.
+    /// </remarks>
+    public struct GroupComposite { public uint Start, End; public float Alpha; }
 }

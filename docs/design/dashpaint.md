@@ -120,9 +120,9 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
 - `RectEntry` — `#[repr(C)]`, fields `x`, `y`, `w`, `h: f32`,
   `paint: PaintIndex`, `clip: ClipIndex`, `opacity: f32`, `rotation: f32`,
   `rotation_anchor: Vec2` (40 bytes total, pinned by test).
-- `GroupComposite` — a render-target group opacity: a rect subtree range
-  `start`/`end: u32` and the `alpha: f32` its offscreen layer composites at
-  (story #44).
+- `GroupComposite` — `#[repr(C)]`, a render-target group opacity: a rect subtree
+  range `start`/`end: u32` and the `alpha: f32` its offscreen layer composites
+  at (story #44; `repr(C)` at story #859, 12 bytes, align 4).
 - `PaintIndex` — `#[repr(transparent)]` newtype over `u32` (story #4, debt #54):
   a node index or other bare `u32` cannot cross into a paint index without an
   explicit wrap; layout unchanged.
@@ -301,12 +301,29 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
   `ClipTable` for a scene that clips nothing; an empty `groups` slice for a
   scene with no render-target opacity).
 
+Each table also exposes its rows as one flat array — `PaintTable::all_entries`
+and its `all_*` siblings, `ClipTable::all_regions` and `all_boxes`,
+`ImageTable::all_entries` and `pool_bytes`, `GlyphRunTable::runs` and
+`all_quads`. A painter inside this process resolves one index at a time; a
+consumer across a boundary cannot, and hands its own renderer the arrays
+instead. `PaintTable::all_entries`, `ClipTable::all_regions` and
+`ImageTable::pool_bytes` were added at story #859 for the C ABI's data plane —
+before it, every _range_ a `PaintEntry` names had its flat array here and the
+entries the ranges belong to did not.
+
 `Color`, `RectEntry` and `ClipBox` are `#[repr(C)]` because
 `docs/design/architecture.md` calls rect entries blittable and R-T4 plans
 dirty-range instance-buffer uploads of per-frame painter input; fixing the
 layout now costs nothing. A `RectEntry` is 40 bytes — four coordinates, the
 paint and clip indices, the free-path group alpha, and the rotation angle with
 its anchor (v0.18, story #770) — pinned by test.
+
+`GroupComposite` is `#[repr(C)]` as well, and was not until story #859 — the
+last row type on this boundary without it, found when the C ABI's data plane
+needed to hand every committed table to a host and this was the one argument of
+`Painter::paint` its gate did not cover. Its layout is unchanged by the
+attribute: 12 bytes at align 4, which `crates/dashpaint-abi`'s pinned-layout
+test and `just unity-abi` both assert.
 
 `CornerRadii` is `#[repr(C)]` too, and was not until story #600. `ClipBox`
 embeds one, so a `repr(C)` struct held a `repr(Rust)` field, whose layout is

@@ -1072,8 +1072,9 @@ host-lib:
 # **The gate crate declares no `crate-type`**, so `cargo build` yields a plain
 # rlib and the layout symbols reach no loadable artifact. `cargo rustc
 # --crate-type cdylib` produces one for this run alone, with no manifest
-# change — so the published crate stays an rlib, and issue #859 is left free to
-# decide what a shipping host actually loads.
+# change — so the published crate stays an rlib. Story #859 settled what a
+# shipping host loads: not these symbols. It reports each array's row size as
+# `DsSlice::stride` instead, and this gate stays the member-by-member check.
 #
 # **Not in `check`**, on the grounds `gitleaks` and the NDK already set: the
 # .NET SDK is not a bootstrap dependency and a clone without it still runs

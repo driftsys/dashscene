@@ -47,6 +47,27 @@ pub(crate) struct Runtime {
     /// built per frame, because it owns the packing buffers whose byte ranges
     /// the dirty set decides to upload.
     pub(crate) painter: GpuPainter,
+    /// Whether a frame lease is outstanding: `ds_runtime_acquire_frame` has
+    /// handed a host borrowed views into [`Self::arena`]'s committed tables
+    /// and `ds_runtime_release_frame` has not been called yet.
+    ///
+    /// **It lives on the runtime rather than in the table**, because a lease
+    /// spans calls: the acquire returns, the host dispatches its jobs, and the
+    /// release arrives later. A checkout, which `with_runtime` already does,
+    /// is the other shape — it lasts one call and cannot express this.
+    ///
+    /// While it is set, every path that would commit is refused. That is the
+    /// whole enforcement: a commit is the only thing that replaces the tables
+    /// those views point into (issue #1267, story #859).
+    pub(crate) frame_leased: bool,
+    /// Whether a document has been installed since the host last took a
+    /// frame — the host-draws half of `Present::document_replaced`, which
+    /// reaches only an attached surface (story #859).
+    ///
+    /// Set by `announce_document_replaced`, cleared by the acquire that
+    /// reports it, so a host reading it every frame sees each replacement
+    /// exactly once.
+    pub(crate) document_replaced: bool,
     /// Test-only. Held **for its `Drop`, never read** — hence the underscore:
     /// dropping this field is the observation, and a test asks the counter it
     /// carries rather than asking the runtime.
@@ -80,6 +101,8 @@ impl Runtime {
             scene: None,
             surface: None,
             painter: GpuPainter::new(),
+            frame_leased: false,
+            document_replaced: false,
             #[cfg(test)]
             _dropped: None,
         }
@@ -261,10 +284,12 @@ pub(crate) fn with_runtime<T>(
 ) -> Result<T, LookupError> {
     // **The runtime is checked out for the call, not borrowed across it.**
     // Holding the `RefCell` borrow while `f` runs would make any re-entrant
-    // call — a host callback that calls back in during a draw, which story
-    // #859's data plane and issue #1267's culling callback both invite — a
+    // call — a host callback that calls back in during a draw — a
     // `BorrowMutError` panic surfaced as `DsStatus::Panic` rather than a
-    // defined status. Moving the `Box` out costs one pointer.
+    // defined status. Story #859's data plane was named here as the entry
+    // point that would invite one, and it is not: it hands out memory and
+    // takes no function pointer, so a host's workers read rows without
+    // calling in at all. Moving the `Box` out costs one pointer.
     //
     // While it is out the slot is occupied-but-empty, so the generation still
     // matches and a re-entrant call on the *same* handle answers `Bad` rather
@@ -544,8 +569,10 @@ mod forged {
     /// A re-entrant call on a *different* runtime resolves rather than
     /// panicking. Holding the table's borrow across the caller's closure would
     /// make this a `BorrowMutError`, which `guard` reports as
-    /// `DsStatus::Panic` — a host callback during a draw is the case that
-    /// meets it (issue #1267, story #859).
+    /// `DsStatus::Panic`. No entry point takes a callback today — story #859's
+    /// data plane was expected to be the first and is not — so this is the
+    /// shape being kept correct ahead of one, rather than a case a host can
+    /// reach.
     #[test]
     fn a_re_entrant_call_on_another_runtime_resolves() {
         let outer = mint(Runtime::new()).expect("mints");
