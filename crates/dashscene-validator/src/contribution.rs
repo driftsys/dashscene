@@ -76,8 +76,11 @@ use crate::{Location, Profile, Report, rule};
 /// shows one root of a multi-root document is still told about placeholders in
 /// the roots it never loads, and cannot clear them — it has no such
 /// contributions to bind. No caller passes a shown root today because none
-/// passes a binding list at all; closing it needs the seam that will carry one
-/// (issue #859). A placeholder in a root the host never loads can also
+/// passes a binding list at all; closing it needs a seam that carries one into
+/// the runtime. **Story #859 is not that seam** — it was named here as the
+/// candidate before it was built, and what it added runs the other way: it
+/// hands the committed tables *out* to a host that draws them. No entry point
+/// takes a binding list. A placeholder in a root the host never loads can also
 /// *satisfy* a binding meant for the root it does load, so
 /// [`rule::PLACEHOLDER_UNDECLARED_OVERLOAD`] fails open there with nothing to
 /// notice. Debt: #1272.

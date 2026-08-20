@@ -108,10 +108,14 @@ typedef enum DsStatus {
    * One further cause exists and NO HOST CAN REACH IT TODAY: a call already
    * in flight on that same handle, which leaves the runtime checked out. No
    * entry point takes a function pointer, so nothing of yours runs during a
-   * call and you cannot re-enter one. It becomes reachable when a callback
-   * does — story #859's data plane is the candidate — and then it names a
-   * runtime that is alive and still has to be freed, so it must not be read
-   * as "give up on the runtime". */
+   * call and you cannot re-enter one. It becomes reachable when some entry
+   * point takes a callback, and then it names a runtime that is alive and
+   * still has to be freed, so it must not be read as "give up on the runtime".
+   *
+   * Story #859's data plane was named here as the candidate and is NOT one:
+   * ds_runtime_acquire_frame hands out memory and takes no function pointer,
+   * so a host's workers read rows without calling in. Nothing in this ABI
+   * re-enters it yet. */
   DS_BAD_HANDLE = 16,
   /* The handle was minted on a different thread, which may still hold it or
    * may have exited. The remedy is to call from the thread that created it. */
@@ -119,7 +123,17 @@ typedef enum DsStatus {
   /* No handle could be minted: this thread already holds the maximum number of
    * live runtimes, or the process has drawn every thread number a handle can
    * carry. Never a wrap. */
-  DS_HANDLES_EXHAUSTED = 18
+  DS_HANDLES_EXHAUSTED = 18,
+
+  /* A frame lease is outstanding and the call would have invalidated the views
+   * ds_runtime_acquire_frame handed out. Reported by ds_runtime_tick, the three
+   * loaders, ds_runtime_free, and a second acquire. The remedy is always
+   * ds_runtime_release_frame.
+   *
+   * Additive in effect as well as in value: nothing could reach this before the
+   * lease existed, so a host built against an older header meets it only on a
+   * call it could not have made. DS_ABI_VERSION does not move. */
+  DS_FRAME_LEASED = 19
 } DsStatus;
 
 /* Which platform handle ds_runtime_attach_surface's pointers carry. */
@@ -377,6 +391,194 @@ DsStatus ds_runtime_tick(DsRuntime runtime, float dt, bool *out_advanced);
  * header keeps working.
  */
 DsStatus ds_runtime_draw(DsRuntime runtime, bool *out_drawn);
+
+/*
+ * A borrowed, contiguous array of rows the runtime owns.
+ *
+ * You read it. You never free it. The bytes belong to the runtime's committed
+ * tables and are valid until ds_runtime_release_frame returns.
+ *
+ * ptr is NULL exactly when count is 0, so an empty table needs no special case
+ * and you never hold a pointer that names nothing.
+ *
+ * stride is NOT redundant with your own sizeof. It is this build's row size,
+ * and comparing it against your sizeof before you read a row is how a layout
+ * change becomes an error you report rather than geometry you draw wrong.
+ * RectEntry went from 28 bytes to 40 at story #770, so this is not theoretical.
+ *
+ * stride is reported for an EMPTY array too, so you can validate all of them at
+ * the top of the frame. Most documents leave several empty — a scene with no
+ * gradients, no images and no blurs leaves most of them empty — and a stride of
+ * 0 there would make that check reject every ordinary document.
+ */
+typedef struct DsSlice {
+  const void *ptr;
+  size_t count;  /* rows, not bytes */
+  size_t stride; /* one row's size in bytes, in this build */
+} DsSlice;
+
+/*
+ * One committed frame, as arrays you draw from.
+ *
+ * This is the inverse of ds_runtime_draw: that call hands dashscene a surface
+ * and lets it paint, this hands you the tables and lets you paint. An engine
+ * host with its own renderer — Unity over BatchRendererGroup — needs the
+ * second.
+ *
+ * HOW THE ARRAYS RELATE. rects is the frame; every other array is either
+ * indexed by a field on a row or is the flat backing an index names.
+ *
+ *   RectEntry.paint    -> paint_entries
+ *   PaintEntry ranges  -> extra_fills, strokes, shapes, shadows, blurs
+ *   PaintKind.index    -> solids | gradients | image_fills, by its tag
+ *   Gradient.stops     -> gradient_stops
+ *   RectEntry.clip     -> clip_regions, whose rows are ranges into clip_boxes
+ *   ImageFill.image    -> image_entries, whose offset/len index image_payload
+ *   GlyphRun.glyphs    -> glyph_quads
+ *   groups             -> rect ranges that composite offscreen, and their alpha
+ *
+ * The row types are boundary B's, declared in crates/dashpaint and held to a C
+ * representation by crates/dashpaint-abi. This header does not redeclare them:
+ * a second declaration is a second place for them to go stale, and the layout
+ * functions in that crate are how a consumer checks its own.
+ *
+ * WHAT IS NOT HERE. The glyph atlases. dashpaint::Atlas owns an encoded sheet
+ * and a glyph list, it is not a row, and it has no C representation — so the
+ * runs cross and the sheet they sample does not. Until that lands you can lay
+ * text out and cannot shade it.
+ */
+typedef struct DsFrame {
+  /* The commit this frame is. It moves when a tick commits.
+   *
+   * NOT AN IDENTITY ACROSS A LOAD. Each load installs a fresh arena whose
+   * generation restarts, so a reloaded document's first frame can carry a
+   * generation you have already drawn. Compare generations only within one
+   * document, and read document_replaced to learn when that changed. */
+  uint64_t generation;
+
+  /* Discard every cached per-rect thing you hold: this frame's rect indices do
+   * not name what the last one's did.
+   *
+   * True when a load has installed a fresh arena since your previous acquire,
+   * or when the commit renumbered the rect table. Cleared by the acquire that
+   * reports it, so you see each replacement exactly once.
+   *
+   * A host that hands dashscene a surface gets this as an internal call the
+   * painter receives. You have no surface, so this member is how it reaches
+   * you. */
+  bool document_replaced;
+
+  DsSlice rects;
+  DsSlice groups;
+  DsSlice dirty; /* uint32_t rect indices, relative to the PREVIOUS commit */
+
+  DsSlice paint_entries;
+  DsSlice extra_fills;
+  DsSlice strokes;
+  DsSlice shapes;
+  DsSlice solids;
+  DsSlice gradients;
+  DsSlice gradient_stops;
+  DsSlice image_fills;
+  DsSlice shadows;
+  DsSlice blurs;
+
+  DsSlice clip_regions;
+  DsSlice clip_boxes;
+
+  DsSlice image_entries;
+  /* uint8_t. Read only the ranges image_entries name — never the whole slice.
+   *
+   * For a mapped load this IS THE WHOLE .dsb FILE, not the assets: the entries'
+   * offsets are file offsets. Uploading or hashing the slice wholesale touches
+   * every page of the document and defeats the bound the mapped load exists
+   * for. */
+  DsSlice image_payload;
+
+  DsSlice glyph_runs;
+  DsSlice glyph_quads;
+} DsFrame;
+
+/*
+ * Takes a lease on the committed frame and writes its arrays to out.
+ *
+ * THE LEASE. While one is outstanding, every call that would commit is refused
+ * with DS_FRAME_LEASED: ds_runtime_tick, the three loaders, ds_runtime_free,
+ * and a second acquire. That is what makes the borrowed views safe rather than
+ * merely documented — a commit is the only thing that replaces the tables they
+ * point into.
+ *
+ * RELEASE AFTER YOUR READERS FINISH, not when the call that dispatched them
+ * returns. If you hand these pointers to worker threads, release once those
+ * workers have completed — for a Unity host that means after Unity completes
+ * the JobHandle, not on return from OnPerformCulling.
+ *
+ * The workers make no call into this library. They read memory. So nothing here
+ * is thread-affine for them: the acquire and the release are the only calls,
+ * and both are on the runtime's own thread like every other entry point.
+ *
+ * A FORGOTTEN RELEASE REFUSES EVERY LATER TICK. That is a real failure mode and
+ * it is the intended one: it is diagnosable, where reading a freed table is not.
+ *
+ * Requires a document. A tick is not required: loading commits, so a frame is
+ * available before the first ds_runtime_tick — and on a static document the
+ * first tick commits nothing, so it is the same frame.
+ *
+ * ON FAILURE the frame is emptied — every count 0, every ptr NULL, every stride
+ * still this build's row size — so a caller that ignores the status holds a
+ * frame with no rows rather than uninitialised memory. That holds for every
+ * status this call returns, DS_PANIC and DS_NULL_ARGUMENT included — the one
+ * case with no write is a NULL out itself, where there is nowhere to write.
+ * (DS_NULL_ARGUMENT is also what a handle of 0 gets, and that path does empty
+ * the frame.)
+ *
+ * EXCEPT ON DS_FRAME_LEASED, which leaves *out EXACTLY AS YOU PASSED IT IN.
+ * That is the one failure where your frame may be the live one: if you loop
+ * with a single DsFrame and miss a release, emptying it would take away the
+ * only copy of the pointers your workers are still reading. The corollary is
+ * that a DS_FRAME_LEASED return tells you nothing about *out — if you passed an
+ * uninitialised one, it is still uninitialised.
+ *
+ * Adding this symbol did not move DS_ABI_VERSION.
+ */
+DsStatus ds_runtime_acquire_frame(DsRuntime runtime, DsFrame *out);
+
+/*
+ * Ends the lease. Every pointer in that frame is invalid once this returns.
+ *
+ * PASS drawn NON-ZERO IF YOU PAINTED THIS FRAME. That marks the commit shown,
+ * so a settled scene stops reporting out_advanced and you can idle. Pass 0 if
+ * you took the frame and did not paint it — read its generation, decided
+ * nothing was visible, ran out of budget — and it stays worth drawing.
+ *
+ * IT IS AN int32_t AND NOT A bool, AND THAT IS NOT A STYLE CHOICE. A bool
+ * crossing INTO this library has exactly two valid bit patterns, and any other
+ * is undefined behaviour where the arguments bind — before anything here can
+ * turn it into a status. Every other bool on this surface is one WE write
+ * through an out-pointer. Declaring this one as bool in a binding would
+ * reintroduce that, and would also be an ABI mismatch, since the library takes
+ * four bytes here.
+ *
+ * (The same hazard is why ds_runtime_attach_surface's kind takes an integer on
+ * the Rust side. It is declared DsSurfaceKind here, which is sound because the
+ * two are both four bytes; bool and int32_t are not, so this one is declared
+ * as what it is.)
+ *
+ * It is a parameter rather than something this call assumes, and the difference
+ * from ds_runtime_draw is why. That call also marks a commit shown without
+ * knowing what reached the screen, but calling it is OPTIONAL. Releasing is
+ * MANDATORY: nothing can tick again until the lease ends. So a release cannot
+ * mean "I consumed this frame" on its own without counting an acquire you took
+ * only to read a generation.
+ *
+ * Releasing without a lease succeeds and says so: out_was_leased, if non-NULL,
+ * receives whether one was outstanding. A teardown path does not have to track
+ * whether it is mid-frame. drawn is ignored when there was no lease.
+ *
+ * Adding this symbol did not move DS_ABI_VERSION.
+ */
+DsStatus ds_runtime_release_frame(DsRuntime runtime, int32_t drawn,
+                                  bool *out_was_leased);
 
 /*
  * Copies the last failure's message into buf as NUL-terminated UTF-8.

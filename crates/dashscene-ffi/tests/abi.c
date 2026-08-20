@@ -19,9 +19,42 @@
 #include "dashscene.h"
 
 #include <stdio.h>
+#include <stddef.h>
 #include <string.h>
 
 static int failures = 0;
+
+/* Every array of a frame, named on the C side.
+ *
+ * Written out rather than walked, because the point is that a C caller sees the
+ * same nineteen members this build declares: if the header gained or lost one,
+ * this stops compiling. Whether the two declarations AGREE IN ORDER is checked
+ * on the Rust side, by `the_header_declares_the_frame_exactly_as_this_build_
+ * lays_it_out` — a C compiler cannot see a permutation of same-typed members,
+ * and neither can sizeof. */
+static int frame_is_empty(const DsFrame *f) {
+  const DsSlice all[] = {
+      f->rects,         f->groups,        f->dirty,
+      f->paint_entries, f->extra_fills,   f->strokes,
+      f->shapes,        f->solids,        f->gradients,
+      f->gradient_stops, f->image_fills,  f->shadows,
+      f->blurs,         f->clip_regions,  f->clip_boxes,
+      f->image_entries, f->image_payload, f->glyph_runs,
+      f->glyph_quads,
+  };
+  if (f->generation != 0 || f->document_replaced) {
+    return 0;
+  }
+  for (size_t i = 0; i < sizeof all / sizeof all[0]; i++) {
+    /* Empty means no rows and no pointer — but the stride still describes a
+     * row, which is what lets a host validate every array at the top of the
+     * frame instead of only the populated ones. */
+    if (all[i].ptr != NULL || all[i].count != 0 || all[i].stride == 0) {
+      return 0;
+    }
+  }
+  return 1;
+}
 
 static void check(int condition, const char *what) {
   if (condition) {
@@ -60,6 +93,39 @@ int main(void) {
   bool drawn = true;
   check(ds_runtime_draw(runtime, &drawn) == DS_NO_DOCUMENT,
         "drawing without a document reports DS_NO_DOCUMENT");
+
+  /* The data plane, from C. Without a document there is nothing to lease, and
+   * it must say so rather than hand out a frame of zero rows that a host would
+   * read as an empty scene. */
+  DsFrame frame;
+  memset(&frame, 0xAB, sizeof frame);
+  check(ds_runtime_acquire_frame(runtime, &frame) == DS_NO_DOCUMENT,
+        "acquiring without a document reports DS_NO_DOCUMENT");
+  check(frame_is_empty(&frame),
+        "a refused acquire overwrote EVERY array of the caller's frame, not just "
+        "the first");
+
+  check(ds_runtime_acquire_frame(runtime, NULL) == DS_NULL_ARGUMENT,
+        "a null frame pointer is a status, not a crash");
+
+  /* And no lease was taken by either refusal, which is the half a status code
+   * alone does not tell you. */
+  bool was_leased = true;
+  check(ds_runtime_release_frame(runtime, 0, &was_leased) == DS_OK,
+        "releasing without a lease succeeds");
+  check(!was_leased, "and reports that there was none");
+
+  /* Nothing follows glyph_quads. An exact bound rather than `>=`, which would
+   * pass over a twentieth member added to the header alone.
+   *
+   * This is header-against-header and cannot be otherwise: a C caller has no
+   * view of the Rust layout. What ties the two is the Rust-side test
+   * `the_header_declares_the_frame_exactly_as_this_build_lays_it_out`, which
+   * checks this file's declarations and `offset_of!` against one list. Said
+   * here because the check it replaced — `sizeof frame.rects.stride ==
+   * sizeof(size_t)` — looked like a cross-check and was not. */
+  check(sizeof frame == offsetof(DsFrame, glyph_quads) + sizeof(DsSlice),
+        "glyph_quads is the last member of DsFrame, with nothing after it");
 
   /* Junk must fail as a status. An unwind across this boundary would be
    * undefined behaviour, so "it returned at all" is part of the assertion. */
@@ -235,6 +301,7 @@ int main(void) {
   check(DS_BAD_HANDLE == 16, "DS_BAD_HANDLE is 16 in the header");
   check(DS_WRONG_THREAD == 17, "DS_WRONG_THREAD is 17 in the header");
   check(DS_HANDLES_EXHAUSTED == 18, "DS_HANDLES_EXHAUSTED is 18 in the header");
+  check(DS_FRAME_LEASED == 19, "DS_FRAME_LEASED is 19 in the header");
 
   check(ds_runtime_free(runtime) == DS_OK, "a live handle frees");
   check(ds_runtime_free(runtime) == DS_BAD_HANDLE,

@@ -1073,6 +1073,24 @@ impl ImageTable {
         &self.entries
     }
 
+    /// The whole payload pool, which every [`ImageEntry`]'s `offset` and
+    /// `len` index — in **both** arms, owned and mapped.
+    ///
+    /// [`resolve`](Self::resolve) hands one asset's bytes to a painter that
+    /// draws in this process. This is for a consumer that cannot borrow row by
+    /// row across a boundary: `dashscene-ffi`'s data plane passes one base and
+    /// lets a host do its own indexing, the same way it passes the flat arrays
+    /// a range type indexes (story #859).
+    ///
+    /// **A mapped table returns the mapped region**, so the bytes are a file's
+    /// rather than this table's. That is the point of the mapped arm and it
+    /// costs a reader nothing here — but a consumer holding this beyond the
+    /// table's life is reading a mapping that may be gone, which is what the
+    /// FFI frame lease exists to prevent.
+    pub fn pool_bytes(&self) -> &[u8] {
+        self.pool.bytes()
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -1339,6 +1357,15 @@ impl ClipTable {
     /// [`resolve`](Self::resolve).
     pub fn region(&self, index: ClipIndex) -> ClipRegion {
         self.resolve(index).region()
+    }
+
+    /// Every stored region, in one flat array — what a [`ClipIndex`] indexes.
+    ///
+    /// The companion of [`all_boxes`](Self::all_boxes): a consumer walking the
+    /// table rather than resolving one index needs both, because a region is a
+    /// range **into** the boxes and carries no boxes of its own (story #859).
+    pub fn all_regions(&self) -> &[ClipRegion] {
+        &self.entries
     }
 
     /// Every box in the table, in one flat array. A [`ClipRegion`]'s
@@ -2731,6 +2758,18 @@ impl PaintTable {
         })
     }
 
+    /// Every stored entry, in one flat array — what a
+    /// [`RectEntry::paint`](crate::RectEntry::paint) indexes.
+    ///
+    /// The one `all_*` this table was missing. Every range type on a
+    /// [`PaintEntry`] already had its flat array here; the entries those
+    /// ranges belong to did not, so a consumer walking the table across a
+    /// boundary could reach every part of a paint and not the paint itself
+    /// (story #859).
+    pub fn all_entries(&self) -> &[PaintEntry] {
+        &self.entries
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -3495,6 +3534,14 @@ impl GlyphRunTable {
 /// that encloses it, so the ranges form a proper nesting (never a partial
 /// overlap). The non-overlapping *free* path carries its alpha in
 /// [`RectEntry::opacity`] instead and produces no `GroupComposite` at all.
+///
+/// `#[repr(C)]` because it crosses boundary B like every other row a painter
+/// is handed, and since story #859 it crosses the C ABI too. It was the **last
+/// row type** on this boundary without a C representation — the four tables
+/// [`Painter::paint`] also takes have none either, and never will, since a
+/// table is not a row. A host drawing its own frames received every table but
+/// this one and composited group opacity wrongly.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GroupComposite {
     /// First rect index in the group's subtree (the group node itself).
@@ -3921,5 +3968,126 @@ mod field_draws {
     #[test]
     fn a_sound_field_draws() {
         assert!(field([1.0, 2.0, 9.0, 14.0]).draws());
+    }
+}
+
+#[cfg(test)]
+mod flat_accessors {
+    use super::*;
+
+    /// The three accessors story #859 added exist so a consumer can walk a
+    /// table across a boundary instead of resolving one index at a time. Each
+    /// must return the rows the resolving accessor beside it returns — a flat
+    /// view of a *different* array would be invisible to any caller that only
+    /// resolves.
+    #[test]
+    fn a_flat_view_holds_what_resolving_one_index_returns() {
+        let mut paints = PaintTable::new();
+        let a = paints.push_solid(Color {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        });
+        let b = paints.push_solid(Color {
+            r: 0.0,
+            g: 1.0,
+            b: 0.0,
+            a: 1.0,
+        });
+
+        assert_eq!(
+            paints.all_entries().len(),
+            paints.len(),
+            "the flat view holds every entry the table counts",
+        );
+        for index in [a, b] {
+            assert_eq!(
+                &paints.all_entries()[index.0 as usize],
+                paints.resolve(index),
+                "entry {} must be the same row through both routes",
+                index.0,
+            );
+        }
+
+        let mut clips = ClipTable::new();
+        let region = clips.push(&[ClipBox {
+            x: 1.0,
+            y: 2.0,
+            w: 3.0,
+            h: 4.0,
+            corners: CornerRadii {
+                top_left: 0.0,
+                top_right: 0.0,
+                bottom_right: 0.0,
+                bottom_left: 0.0,
+            },
+        }]);
+        assert_eq!(
+            clips.all_regions().len(),
+            clips.len(),
+            "every region, including the reserved unclipped one at index 0",
+        );
+        assert_eq!(
+            clips.all_regions()[region.0 as usize],
+            clips.region(region),
+            "and the row is the one `region` resolves",
+        );
+        // The regions are ranges INTO the boxes, which is why both flat views
+        // are needed to walk the table at all.
+        let stored = clips.all_regions()[region.0 as usize];
+        assert_eq!(
+            &clips.all_boxes()[stored.offset as usize..][..stored.count as usize],
+            clips.resolve(region).boxes(),
+            "a region's range names its own boxes in the flat array",
+        );
+    }
+
+    /// `pool_bytes` is the base every `ImageEntry`'s `offset` and `len` index,
+    /// which is the only way a consumer that cannot borrow row by row reaches
+    /// a payload.
+    #[test]
+    fn the_pool_is_what_an_entry_offset_indexes() {
+        // Baked payloads, because an encoded one has its extent read out of a
+        // real header and this test is about the pool rather than about
+        // decoding.
+        let mut images = ImageTable::new();
+        // One ASTC 4x4 block is 16 bytes, so these are a 4x4 and an 8x4 image.
+        // Their payloads differ in length as well as content, so an
+        // implementation that ignored either `offset` or `len` fails below.
+        let first = images.push_baked(
+            ImageAsset {
+                format: ImageFormat::Astc4x4Unorm,
+                bytes: vec![1; 16],
+            },
+            4,
+            4,
+        );
+        let second = images.push_baked(
+            ImageAsset {
+                format: ImageFormat::Astc4x4Unorm,
+                bytes: vec![9; 32],
+            },
+            8,
+            4,
+        );
+
+        for index in [first, second] {
+            let entry = images.all_entries()[index as usize];
+            let from_pool = &images.pool_bytes()[entry.offset as usize..][..entry.len as usize];
+            assert_eq!(
+                from_pool,
+                images.resolve(index).bytes,
+                "asset {index}: indexing the pool must give what resolving the row gives",
+            );
+        }
+
+        // The second asset's payload does not start at 0 — otherwise the test
+        // would hold for an implementation that ignored `offset` entirely.
+        assert_ne!(
+            images.all_entries()[second as usize].offset,
+            0,
+            "the fixture must place a payload away from the base",
+        );
     }
 }

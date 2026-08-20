@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "The C ABI every platform host sits on: runtime lifecycle, document load, the tick, and the surface handoff (docs/decisions/host-integration-in-three-layers.md, D2)."
+description = "The C ABI every platform host sits on: runtime lifecycle, document load, the tick, the surface handoff, and the committed frame for a host that draws it itself (docs/decisions/host-integration-in-three-layers.md, D2)."
 keywords = ["ffi", "abi", "bindings", "embedding", "graphics"]
 categories = ["external-ffi-bindings", "graphics"]
 
@@ -48,3 +48,9 @@ flatbuffers.workspace = true
 # by hand means computing one. `dashbuf` uses it for the same reason and does
 # not re-export it.
 blake3.workspace = true
+# The boundary-B gate, for one test only: it asks whether every gated row type
+# either crosses in a `DsFrame` or is named as deliberately not crossing, so a
+# type added to that surface cannot be forgotten here. A dev-dependency rather
+# than a dependency — the shipped library links none of its symbols, and
+# `docs/decisions/crate-name-map.md` records that they are not re-exported.
+dashpaint-abi = { path = "../dashpaint-abi" }

@@ -54,8 +54,10 @@ directly:
   kept `DS_ABI_VERSION` unmoved across every status variant added since, and
   moved it to 2 exactly once, for story #1226's ten changed signatures — and the
   gap in it that `SurfaceLost` exposed — what a caller must guarantee, and the
-  gaps — including that it is a control plane and not a data plane (v0.19, story
-  #840).
+  gaps. It was a control plane and not a data plane until story #859 added one
+  (v0.19 story #840, amended 2026-08-20); the lease that data plane crosses
+  under is
+  [../decisions/the-frame-crosses-under-a-lease.md](../decisions/the-frame-crosses-under-a-lease.md).
 - [android-toolchain.md](android-toolchain.md) — the `aarch64-linux-android`
   target, the discovered NDK and the API floor, the `android-build` job, and the
   D3a probe: what the painter's own device request reports on an adapter,

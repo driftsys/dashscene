@@ -662,6 +662,7 @@ dependencies = [
  "dashbuf",
  "dashlang",
  "dashpaint",
+ "dashpaint-abi",
  "dashscene-core",
  "dashscene-engine",
  "dashscene-gpu",

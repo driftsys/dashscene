@@ -396,10 +396,12 @@ Checked against `crates/dashbuf/src/container.rs`, `bank.rs`, `prefix.rs`,
       lean painter has no host-content mechanism, so the document is correct as
       it stands) and a bound id no placeholder declares
       (`placeholder.undeclared-overload`, on both profiles). **Nothing in this
-      repository passes it a binding list** — its callers are hosts, and the C
-      ABI data plane that would carry one is #859 — so its tests are its only
-      caller, which is the posture the surface itself shipped in. Two
-      placeholder shapes deliberately do not warn, and
+      repository passes it a binding list** — its callers are hosts, and no
+      entry point takes one — so its tests are its only caller, which is the
+      posture the surface itself shipped in. Story #859's data plane was named
+      here as the seam that would carry one and is not: it hands the committed
+      tables outward and takes nothing inward. Two placeholder shapes
+      deliberately do not warn, and
       [`decisions/a-host-binds-a-contribution-by-id.md`](decisions/a-host-binds-a-contribution-by-id.md)
       says which. What a not-yet-loaded image should _show_ is still undecided,
       and the design source does not supply it.
@@ -576,22 +578,29 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
 - [ ] **Unity renderer** — **part built, and less than that phrase suggests.**
       What exists is the _type_ contract: story #600 pinned the boundary-B value
       types as FFI-representable — 26 of them then, 27 since story #1239 added
-      `CornerRadii` — and `dashpaint-abi` exports a layout, a round-trip
-      function and a member table for each, enough to prove a C# struct matches
-      the Rust one and nothing more. **No entry point hands a host the committed
-      tables.** `crates/dashscene-ffi/include/dashscene.h` declares no rect, no
-      instance and no table, so a host that draws its own frames has nothing to
-      read. That is issue #859, now the first story of epic #1106. Boundary B
-      itself has two consumers, both Rust painters; the **C#** projection of it
-      gained its first at story #1239, and that consumer is a check rather than
-      a painter. `unity/` declares those types in C# and `unity/abi-check`
-      compiles those declarations and compares them against the Rust build on
-      each pull request, without a Unity editor — every member's name, offset
-      and size, not only each type's total. What it does not check is that a
-      member's C# type means what the Rust one means: a `uint` declared as
-      `float` has the right size at the right offset. It draws no pixel. The
-      renderer, its shader library and the C# host are planned (v0.21), in that
-      same UPM package (ruled 2026-08-17, reversing a separate repository).
+      `CornerRadii`, 28 since story #859 added `GroupComposite` — and
+      `dashpaint-abi` exports a layout, a round-trip function and a member table
+      for each, enough to prove a C# struct matches the Rust one and nothing
+      more. **The committed tables cross since story #859**:
+      `ds_runtime_acquire_frame` hands out nineteen arrays under a lease that
+      refuses any call that would commit, and `ds_runtime_release_frame` ends
+      it. Seventeen carry a gated boundary-B row type; the other two are
+      primitives — the dirty set of `u32` rect indices, and the image payload
+      bytes an `ImageEntry` indexes. The glyph **atlases** do not cross: an
+      `Atlas` is not a table of rows but a sheet with a glyph list hanging off
+      it, so neither it nor its `AtlasGlyph`s travel even though `AtlasGlyph` is
+      on the gated surface. A host can lay text out and cannot shade it until
+      story #1123. Boundary B itself has two consumers, both Rust painters; the
+      **C#** projection of it gained its first at story #1239, and that consumer
+      is a check rather than a painter. `unity/` declares those types in C# and
+      `unity/abi-check` compiles those declarations and compares them against
+      the Rust build on each pull request, without a Unity editor — every
+      member's name, offset and size, not only each type's total. What it does
+      not check is that a member's C# type means what the Rust one means: a
+      `uint` declared as `float` has the right size at the right offset. It
+      draws no pixel. The renderer, its shader library and the C# host are
+      planned (v0.21), in that same UPM package (ruled 2026-08-17, reversing a
+      separate repository).
 - [ ] **Browsers without WebGPU** — WebGPU is the newer browser graphics
       standard the lean renderer needs. A browser lacking it is told so and
       draws nothing. Supporting the older standard is a redesign, and a v1
@@ -640,9 +649,9 @@ sentence.
       carries which entry points hold that how, rather than a count repeated
       here to drift. `dashscene-android` (story #841) drives it through those
       entry points as a C caller would, which is what established that it was
-      sufficient for layer 0 **in its runtime-draws form** — the only form this
-      ABI serves, the host-draws form added on 2026-08-18 needing issue #859's
-      data plane — and what established that it was not quite:
+      sufficient for layer 0 **in its runtime-draws form** — one of the two
+      forms this ABI serves, the host-draws form added on 2026-08-18 and given
+      its data plane by story #859 — and what established that it was not quite:
       `ds_runtime_detach_surface` was added there, because the destroy handshake
       needs a call that drops the surface and keeps the document. No iOS or
       Unity host exists. **Root selection is on the mapped load and on no

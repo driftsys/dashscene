@@ -226,6 +226,13 @@ namespace Driftsys.Dashscene.AbiCheck
         internal static extern PaintEntry dashpaint_abi_paint_entry_round_trip(PaintEntry value);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern AbiLayout dashpaint_abi_group_composite_layout();
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern GroupComposite dashpaint_abi_group_composite_round_trip(
+            GroupComposite value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern AbiLayout dashpaint_abi_image_entry_layout();
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]

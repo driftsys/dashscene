@@ -107,10 +107,14 @@
 //! crate declares no `crate-type`, so `cargo build` produces a plain rlib;
 //! nothing in the workspace depends on it; and
 //! `crates/dashscene-ffi/include/dashscene.h` declares none of them — that
-//! library exports twelve `ds_*` symbols and nothing else. Whether these are
-//! re-exported through `dashscene-ffi` or replaced by the `stride` member of
-//! issue #859's `DsSlice` is #859's to settle, and story #1239 did not
-//! pre-empt it.
+//! library exports fourteen `ds_*` symbols and nothing else.
+//!
+//! **Story #859 settled which of the two routes a host takes, and it took the
+//! second**: these functions are not re-exported through `dashscene-ffi`, and
+//! `DsSlice::stride` carries this build's row size per array instead. So a
+//! host on the C ABI checks its declarations against the strides it is handed
+//! every frame, and a consumer that wants the member-by-member comparison —
+//! `unity/abi-check` is the one — links this crate directly, as below.
 //!
 //! **One caller does reach them, and it is a check rather than a host.**
 //! `unity/abi-check` builds this crate as a dynamic library with
@@ -124,9 +128,9 @@
 use dashpaint::{
     AtlasGlyph, AtlasIndex, Blur, BlurKind, BlurRange, ClipBox, ClipIndex, ClipRegion, Color,
     CornerRadii, FillRange, GlyphQuad, GlyphRange, GlyphRun, Gradient, GradientKind, GradientStop,
-    ImageEntry, ImageFill, Mat23, PaintEntry, PaintIndex, PaintKind, PaintTag, RectEntry,
-    ScaleMode, Shadow, ShadowKind, ShadowRange, ShapeRange, StopRange, Stroke, StrokeAlign,
-    StrokeRange, Vec2, VectorField,
+    GroupComposite, ImageEntry, ImageFill, Mat23, PaintEntry, PaintIndex, PaintKind, PaintTag,
+    RectEntry, ScaleMode, Shadow, ShadowKind, ShadowRange, ShapeRange, StopRange, Stroke,
+    StrokeAlign, StrokeRange, Vec2, VectorField,
 };
 
 /// How this build lays out one boundary-B type.
@@ -336,6 +340,8 @@ abi_surface! {
         => dashpaint_abi_shape_range_layout, dashpaint_abi_shape_range_round_trip;
     PaintEntry { fill: PaintKind, extra_fills: FillRange, stroke: StrokeRange, corners: CornerRadii, shadows: ShadowRange, blurs: BlurRange, shape: ShapeRange }
         => dashpaint_abi_paint_entry_layout, dashpaint_abi_paint_entry_round_trip;
+    GroupComposite { start: u32, end: u32, alpha: f32 }
+        => dashpaint_abi_group_composite_layout, dashpaint_abi_group_composite_round_trip;
     ImageEntry { format: u32, offset: u32, len: u32, width: u32, height: u32 }
         => dashpaint_abi_image_entry_layout, dashpaint_abi_image_entry_round_trip;
 }
@@ -404,6 +410,12 @@ mod tests {
             ("ShapeRange", dashpaint_abi_shape_range_layout(), 8, 4),
             ("PaintEntry", dashpaint_abi_paint_entry_layout(), 64, 4),
             ("ImageEntry", dashpaint_abi_image_entry_layout(), 20, 4),
+            (
+                "GroupComposite",
+                dashpaint_abi_group_composite_layout(),
+                12,
+                4,
+            ),
         ];
         // **Derived from the macro, not restated.** A literal here would
         // agree with a literal in the list above whenever a type was dropped
@@ -538,5 +550,15 @@ mod tests {
             },
         };
         assert_eq!(dashpaint_abi_clip_box_round_trip(clip), clip);
+
+        // The type story #859 added to this surface. Its two `u32`s carry
+        // different values and its `f32` is not a whole number, so a field
+        // swapped for its neighbour or read as the wrong type shows up.
+        let group = GroupComposite {
+            start: 7,
+            end: 11,
+            alpha: 0.25,
+        };
+        assert_eq!(dashpaint_abi_group_composite_round_trip(group), group);
     }
 }

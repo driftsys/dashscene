@@ -125,10 +125,11 @@ and `main` now carries one
                           this at slice v0.17 (story #741); demo-web keeps the
                           demonstration and consumes it
     dashscene-ffi          the C ABI every platform host sits on — runtime
-                          lifecycle, document load, the tick and the surface
-                          handoff. Kotlin reaches it through JNI, and the
-                          iOS and Unity hosts that follow inherit it. Added at
-                          slice v0.19
+                          lifecycle, document load, the tick, the surface
+                          handoff, and the committed frame handed out under a
+                          lease for a host that draws it itself (story #859).
+                          Kotlin reaches it through JNI, and the iOS and Unity
+                          hosts that follow inherit it. Added at slice v0.19
                           (story #840)
     dashscene-android     the Android integration surface — the
                           android.view.Surface to ANativeWindow handoff, the
