@@ -22,11 +22,13 @@ explained rather than merely tolerated.
 state this file has been in at several earlier points — 2026-08-02, 2026-08-07
 and the v0.17 close among them — and it has held continuously since the v0.19
 close (story #843, 2026-08-16), because a prompt belongs to a slice and leaves
-with the work it carried. **Both of v0.21's stories wrote one and archived it
-inside the pull request that landed the work**, so neither is in this
-directory's history on `main`: story #1230's is
-`2026-08-17-v021-UNITY-TOOLCHAIN-DRIVER-PROMPT.md` and story #1229's is
-`2026-08-17-v021-ANDROID-MEASUREMENT-DRIVER-PROMPT.md`. See below.
+with the work it carried. **v0.21's stories have each archived their working
+memory inside the pull request that landed the work**, so none of it is in this
+directory's history on `main`: story #1230's driver prompt is
+`2026-08-17-v021-UNITY-TOOLCHAIN-DRIVER-PROMPT.md`, story #1229's is
+`2026-08-17-v021-ANDROID-MEASUREMENT-DRIVER-PROMPT.md`, and story #1125 archived
+a capture rather than a prompt,
+`2026-08-21-v021-unity-packaging-and-deployment.md`. See below.
 
 **One claim in #1229's was false, and the archive keeps it** as every archived
 prompt keeps what it actually said: it asserts that "no scene in the workspace

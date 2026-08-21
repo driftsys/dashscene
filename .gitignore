@@ -45,3 +45,7 @@ crates/dashscene-gpu/tests/goldens/*.actual.txt
 # UPM package's own `BoundaryB.cs`; only sources are tracked.
 unity/abi-check/bin/
 unity/abi-check/obj/
+# And for `unity/package-compat` (story #1125), the netstandard2.1 compile
+# gate, for the same reason.
+unity/package-compat/bin/
+unity/package-compat/obj/

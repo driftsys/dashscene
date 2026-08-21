@@ -172,6 +172,12 @@
 //!   change it. A host built against an older header keeps working.
 //! - Changing or removing a symbol's signature, or renumbering a `DsStatus`
 //!   variant, bumps it.
+//! - **Re-routing an existing condition onto a different discriminant bumps
+//!   it**, even when that discriminant is itself newly appended. Appending is
+//!   free; moving a condition onto the appended value is not, because a host
+//!   that handled the condition at its old value stops recognising it and
+//!   loses behaviour it had. [`DsStatus::SurfaceLost`] is the case that showed
+//!   this, and it shipped before the rule said so.
 //!
 //! A host should call [`ds_abi_version`] once and refuse to run against a value
 //! it does not recognise, because the alternative is discovering the mismatch as
@@ -294,15 +300,20 @@ pub enum DsStatus {
     /// recognise and stops. That **loses a recovery it did have** — the host in
     /// this repository is the proof, since it rebuilt on every
     /// `DsStatus::Surface` — so it is not the free change the module's
-    /// versioning rule describes, which covers adding a variant rather than
-    /// re-routing a condition onto one.
+    /// versioning rule describes. When this shipped, that rule covered adding a
+    /// variant and said nothing about re-routing a condition onto one; the
+    /// paragraph below records what closed it.
     ///
     /// It is taken anyway, and deliberately: the failure direction is a loop
     /// that stops rather than one that acts on a value it cannot interpret,
     /// there is exactly one host on this ABI and it is updated in the same
-    /// change, and issue #884 specifies the version not moving. What the rule
-    /// does not yet say is what a re-routed condition costs; that is a gap in
-    /// the rule rather than in this variant.
+    /// change, and issue #884 specifies the version not moving.
+    ///
+    /// **The rule now prices a re-routed condition and this variant predates
+    /// it**: since 2026-08-21 the module's versioning rule above says that
+    /// moving an existing condition onto a different discriminant bumps
+    /// `DS_ABI_VERSION`. This variant is not rebased — the version it shipped
+    /// under stands — and it is the case the clause was written from.
     SurfaceLost = 15,
     /// The handle named no runtime the calling thread can reach right now.
     ///

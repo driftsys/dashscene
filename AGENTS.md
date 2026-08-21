@@ -197,7 +197,8 @@ total, nineteen of them the crates above.
     just check        regression tier + lint + audit + secrets + the two wasm
                       gates + c-abi, which compiles the committed header from C
                       and checks the two halves agree (needs a C toolchain)
-    just unity-abi    the UPM package's C# declarations of boundary B against
+    just unity-abi    two gates over the UPM package. Its C# declarations of
+                      boundary B against
                       the Rust build of `dashpaint-abi`. Compiles the package's
                       own `BoundaryB.cs` and compares every type on the surface,
                       member by member, matched by name. **Needs no Unity

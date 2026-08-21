@@ -387,8 +387,11 @@ makes the runtime table **thread-affine**, so a `ds_runtime_*` call from a
 thread other than the one that created the runtime is a diagnosable bad handle
 rather than a working call. An engine host must therefore decide which of its
 threads owns the runtime, and the answer is not automatically the one an
-engine's callbacks run on — a `BatchRendererGroup` culling callback is invoked
-off the main thread, and story #859's data plane is what it reads there.
+engine's callbacks run on. **This clause assumed a `BatchRendererGroup` culling
+callback is invoked off the main thread, and that assumption was wrong** — story
+#1125 read it on 2026-08-21 and it is the main thread; see below. The warning it
+raised was still the right one to raise, because nothing had read it, and story
+#859's data plane is what such a callback reads either way.
 
 **Settled by the owner on 2026-08-19 and built by that story**: the callback's
 workers make no call into the library at all. `ds_runtime_acquire_frame` and
@@ -396,9 +399,15 @@ workers make no call into the library at all. `ds_runtime_acquire_frame` and
 the workers read the borrowed rows. So thread affinity does not meet the
 callback, and this paragraph's warning is discharged rather than standing.
 [`the-frame-crosses-under-a-lease.md`](the-frame-crosses-under-a-lease.md)
-carries it. What is still unknown is which thread Unity invokes
-`OnPerformCulling` on, which decides whether a host can bracket the dispatch at
-all; issue #1125 is where that is read.
+carries it.
+
+**Which thread Unity invokes `OnPerformCulling` on was read on 2026-08-21**, by
+story #1125's spike, and it is **the main thread** — so a host can bracket the
+dispatch. The figures, the configuration and the limits are in
+[`../technotes/unity-toolchain.md`](../technotes/unity-toolchain.md), which owns
+them; the limit that bears on this record is that the reading is one platform's
+and the target is Android, where none has been taken. Unity documents no thread
+for this callback, so a host asserts it rather than assuming it.
 
 **What this does not license.** A host calling `tick()` is scheduling, not
 mutating. Producer-side work — staging properties, switching variants, building

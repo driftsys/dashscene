@@ -49,7 +49,14 @@ not a Cargo workspace member and it is not a separate repository. UPM installs
 from a Git URL with a `?path=` subfolder, so the directory is directly
 consumable by a Unity project:
 
-    https://github.com/driftsys/dashscene.git?path=/unity#<tag>
+    https://github.com/driftsys/dashscene.git?path=/unity/com.driftsys.dashscene#<tag>
+
+**That path was `/unity` until 2026-08-21, and it resolved to nothing.** Unity's
+manual on Git dependencies requires that "the subfolder you specify must contain
+the package manifest (`package.json` file)", and `unity/` holds `README.md`,
+`abi-check/` and `com.driftsys.dashscene/` — the manifest is one level down.
+Corrected by story #1125's spike, which owns the distribution question; see
+[`unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md`](unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md).
 
 **`unity/` rather than `packages/`.** Not on a claim that every top-level
 directory is named for a role — `crates/` groups by kind exactly as a

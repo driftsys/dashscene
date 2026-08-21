@@ -11,9 +11,14 @@
  *
  * VERSIONING. ds_abi_version() returns DS_ABI_VERSION, which is not the crate's
  * semantic version. Adding a symbol, or a DsStatus variant at the tail, does not
- * move it; changing a signature or renumbering a variant does. Call it once and
- * refuse a value you do not recognise — the alternative is discovering the
- * mismatch as a corrupted argument.
+ * move it; changing a signature or renumbering a variant does. So does moving an
+ * existing condition onto a different discriminant, even when the variant it
+ * moves to is itself new and appended: a host that knew the old value stops
+ * recognising the condition, which is a break the first two clauses do not
+ * catch. SurfaceLost is the case that showed it, and it shipped before this
+ * clause existed. Call ds_abi_version() once and refuse a value you do not
+ * recognise — the alternative is discovering the mismatch as a corrupted
+ * argument.
  */
 
 #ifndef DASHSCENE_H

@@ -47,6 +47,29 @@ why thread affinity costs a host nothing here: the workers read memory, and a
 Unity host brackets its job dispatch with the pair rather than calling from
 inside `OnPerformCulling`.
 
+**That bracketing was shown to be reachable on 2026-08-21**, by story #1125's
+spike: Unity invokes `OnPerformCulling` on the main thread. **What that settles
+is where the _acquire_ may sit, and it does not move the _release_.** A host
+whose runtime the main thread owns may acquire inside the callback, because the
+callback is on that thread. The release is governed by a separate rule that the
+reading does not touch: `ds_runtime_acquire_frame`'s own documentation requires
+it **after Unity completes the `JobHandle`, and not on return from
+`OnPerformCulling`**, because the workers are still reading the borrowed rows
+when the callback returns. Releasing at the callback's return lets the next
+`ds_runtime_tick` replace the tables underneath them, which is the failure the
+lease exists to prevent.
+
+So the shape is acquire in the callback, hand Unity the `JobHandle`, and release
+from the owning thread once that handle has completed — not one act, and the two
+halves are separated by work this record does not schedule. What the clause
+above forbids is unchanged and is the part that matters: the **workers** make no
+call. The measurement and its limits — one platform, and not the Android target
+— are in [`../technotes/unity-toolchain.md`](../technotes/unity-toolchain.md).
+It closes the one thing issue #1267's comment of 2026-08-19 left open under its
+question 1; that issue's **question 2**, whether `DS_WRONG_THREAD` should
+distinguish a dead thread from a foreign one, is untouched and is still an
+owner's ruling.
+
 While a lease is outstanding, every call that would commit is refused with
 `DS_FRAME_LEASED`. A commit is the only thing that replaces the tables the views
 point into, so refusing it is the whole enforcement — the views are safe rather
@@ -221,11 +244,13 @@ that never loads a second document is not one to hand a first consumer.
 
 ## What is not settled
 
-**Which thread Unity invokes `OnPerformCulling` on** — the main thread or a
-worker. It decides whether a host can bracket the dispatch at all, and it is
-answered by one `Thread.CurrentThread.ManagedThreadId` reading in the editor.
-Issue #1125 is where someone will have one open. Nothing in this record changes
-with the answer; a host's own structure does.
+**Which thread Unity invokes `OnPerformCulling` on was settled on 2026-08-21**
+and is no longer in this section — it is the main thread, read by story #1125
+and recorded in
+[`../technotes/unity-toolchain.md`](../technotes/unity-toolchain.md). What that
+reading does not cover is the Android target, where none has been taken. As this
+section predicted, nothing in this record changed with the answer; D2 above says
+what did.
 
 **Whether `DS_WRONG_THREAD` should distinguish a minting thread that has exited
 from a live foreign one** — question 2 of issue #1267, still open and unrelated

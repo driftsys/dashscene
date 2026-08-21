@@ -135,10 +135,19 @@ widening signature, and a detach call rather than a flag on free.
 gap.** That variant did not only appear at the tail — it **re-routed an existing
 condition**, a lost swapchain that used to arrive as `DsStatus::Surface`. A host
 built against an earlier header meets a value it does not recognise and stops,
-losing a recovery it previously had. Its own doc comment says so and says the
-rule does not yet price a re-routed condition. **Adding a variant is free;
-moving a condition onto it is not**, and nothing in the rule as written stops
-the next one.
+losing a recovery it previously had. Its own doc comment says so, and — since
+the rule was closed below — records that the variant predates the clause rather
+than that the rule is silent. **Adding a variant is free; moving a condition
+onto it is not**, and nothing in the rule as written stopped the next one.
+
+**The rule now says it, since 2026-08-21.** A change that re-routes an existing
+condition onto a different discriminant moves `DS_ABI_VERSION`, exactly as a
+changed signature does. Ruled by story #1125's spike, which met the gap while
+settling what a Unity package negotiates against;
+[`../decisions/the-package-and-its-library-are-one-versioned-artifact.md`](../decisions/the-package-and-its-library-are-one-versioned-artifact.md)
+D5 carries the reasoning. `SurfaceLost` is not retroactively rebased — the
+version it shipped under stands — and `FrameLeased` is the contrast that stays
+free, because nothing could reach it before leases existed.
 
 ## What a caller must guarantee
 
