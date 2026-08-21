@@ -72,9 +72,14 @@ floating crate.
 v0.11 spent a whole slice making a golden diff attributable to one named cause
 (`docs/decisions/r7-survives-the-envelope-rebaseline.md`) — splitting the
 envelope change from the schema change so that each golden's movement had
-exactly one explanation. A floating dependency graph is the one input that can
+exactly one explanation. A floating dependency graph is such an input: it can
 move a golden with no explanation available at all. Keeping it defeats the
 property the slice was spent to build.
+
+**It was not the only one.** The compiler was floating too — CI took whatever
+`dtolnay/rust-toolchain@stable` resolved to — until `rust-toolchain.toml` pinned
+it on 2026-08-21 (`house-style.md`). So a golden that moves has two committed
+inputs to check rather than one, and both are attributable to a commit.
 
 The second cost is dated. v0.12's packer requires that a re-pack producing
 different bytes is a manifest diff and not an artifact of whichever machine ran

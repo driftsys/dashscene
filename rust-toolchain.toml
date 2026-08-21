@@ -1,0 +1,42 @@
+# The compiler this repository builds with, pinned.
+#
+# CI installs a toolchain with `dtolnay/rust-toolchain@stable`, which ends in
+# `rustup default`. A `rust-toolchain.toml` in the repository root takes
+# precedence over that, so this file — and not the action's `@stable` — decides
+# the compiler in every place the action is used, and locally as well. Derive
+# that count rather than reading one here:
+#
+#     grep -c 'uses: dtolnay/rust-toolchain' .github/workflows/ci.yml
+#
+# **Why it is pinned, and the rule it follows, are
+# `docs/decisions/house-style.md`'s** — "pin what reads only this repository,
+# track what reads a live upstream feed". That record carries the measurement
+# behind this file and the issue that bumps it. Deliberately not repeated here:
+# the same figure in three files is the drift this repository keeps hitting.
+#
+# Bumping is deliberate: raise the channel here, fix what the new release
+# lints, and land both together.
+#
+# `components` and `targets` are here for the same single-copy reason, and no
+# workflow passes either any more. The action's inputs install onto the
+# toolchain *it* resolved, which is no longer the one cargo runs, so a target
+# named there would be added to a compiler nothing uses and the wasm and
+# Android jobs would find theirs missing. **If this pin is ever removed, seven
+# inputs go back into five steps** — `fmt` (rustfmt), `clippy` (clippy),
+# `wasm-build` (the wasm target), `wasm-gates` (both) and `android-build`
+# (clippy and the Android target). Re-derive that from
+# `git show <this commit> -- .github/workflows/ci.yml` rather than trusting the
+# list.
+#
+# **Two limits worth knowing.** rustup applies the `components` and `targets`
+# below when it *installs* the named toolchain; it does not add a missing one
+# to a `1.97.1` that is already present by another route, so a developer who
+# ran `rustup toolchain install 1.97.1` beforehand may still need
+# `rustup target add`. And the auto-install this relies on was removed in
+# rustup 1.28.0 and restored in 1.28.1 — nothing here asserts the runner's
+# rustup version, so on such an image every job fails to find this toolchain
+# rather than quietly using another.
+[toolchain]
+channel = "1.97.1"
+components = ["clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown", "aarch64-linux-android"]

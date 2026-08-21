@@ -84,9 +84,11 @@ does not exist in the host build that `just doc-links` documents. It was added
 at issue #1086 because `just android` is `cargo build`: the platform half of
 `dashscene-android` and `demo-android`'s JNI half compiled in this job without
 ever being linted, the gap `just wasm-lint` closed for wasm32 at PR #907. It
-runs **last** because it is `-D warnings` under an unpinned stable toolchain,
-and a lint that goes red on a clippy release must not take the
-header-conformance check down with it.
+runs **last** because it is `-D warnings`, and a lint that goes red must not
+take the header-conformance check down with it. That used to mean a lint
+arriving unannounced from a stable release; since `rust-toolchain.toml` pinned
+the compiler it means one arriving at a deliberate bump, which is when the
+ordering earns its keep.
 
 `just android-apk` packages both hosts' APKs and is the only **gate** that
 compiles any Java in this repository. Before that recipe, nothing scheduled a
