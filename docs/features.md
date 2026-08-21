@@ -598,9 +598,22 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       member's name, offset and size, not only each type's total. What it does
       not check is that a member's C# type means what the Rust one means: a
       `uint` declared as `float` has the right size at the right offset. It
-      draws no pixel. The renderer, its shader library and the C# host are
-      planned (v0.21), in that same UPM package (ruled 2026-08-17, reversing a
-      separate repository).
+      draws no pixel.
+
+      **The C# host is built since story #1121** and it draws no pixel either.
+      The package binds all fourteen C ABI entry points, negotiates
+      `ds_abi_version` before any other call, owns a thread-affine runtime with
+      no finalizer, loads a document by bytes or by mapped path, ticks it, and
+      takes the committed frame under a lease that compares every array's
+      `DsSlice::stride` against its own row size before reading a row.
+      `unity/ffi-check` executes those declarations against a `dashscene-ffi`
+      cdylib on each pull request; before it, nothing compiled a C# P/Invoke
+      against `include/dashscene.h` at all. **No native library ships in the
+      package** — `just host-lib` builds one and nothing places it — so a
+      customer installing by Git URL gets declarations that resolve nothing
+      until they supply it. The renderer and its shader library are still
+      planned (v0.21, story #1122), in that same UPM package (ruled 2026-08-17,
+      reversing a separate repository).
 - [ ] **Browsers without WebGPU** — WebGPU is the newer browser graphics
       standard the lean renderer needs. A browser lacking it is told so and
       draws nothing. Supporting the older standard is a redesign, and a v1
@@ -750,9 +763,12 @@ sentence.
       shape nothing emits. Read the device table rather than reproducing that
       one.
 
-      iOS and the Unity host
-      have no target, no toolchain and no automation. The Unity host is v0.21
-      and iOS is v1.
+      iOS has no target, no toolchain and no automation, and is v1. **The Unity
+      host has a toolchain and automation since story #1121** — three .NET gates
+      run per pull request and none needs an editor — but **no target**: nothing
+      here has run a Unity player on any device, and the `.meta` values that
+      decide whether a native library reaches an Android build are declared and
+      unexercised (R-E21, unmet).
 
 ## 11. Quality tooling and workflow
 

@@ -1,19 +1,53 @@
 # com.driftsys.dashscene
 
-The C# side of dashscene's painter boundary.
+The C# side of dashscene.
 
-**This package declares types. It does not draw.** There is no painter here, no
-host, and no native library — the `BatchRendererGroup` painter is story #1122
-and the host that loads a native library is #1121. What is here is
-`Runtime/BoundaryB.cs`: the value types that cross boundary B, declared so that
-a painter written against them agrees with the Rust side byte for byte.
+**This package does not draw.** There is no painter here and no native library —
+the `BatchRendererGroup` painter is story #1122, and the library the host loads
+is built by `just host-lib` and placed by whoever ships a release
+([R-E3](../../docs/specification/07-embedding-and-distribution.md), still
+unmet). What is here:
+
+- `Runtime/BoundaryB.cs` — the value types that cross boundary B, declared so a
+  painter written against them agrees with the Rust side byte for byte.
+- `Runtime/Native.cs` — the C ABI's fourteen entry points, as
+  `crates/dashscene-ffi/include/dashscene.h` declares them.
+- `Runtime/DashsceneRuntime.cs`, `DashsceneException.cs`, `FrameLease.cs` — the
+  host: version negotiation, runtime lifetime, document load, the tick, and the
+  committed frame under a lease.
+- `Samples~/FrameLoop/` — a `MonoBehaviour` driving all of it from
+  `Time.deltaTime`. It is a sample rather than `Runtime/` code because R-E10
+  requires every type under `Runtime/` to compile against netstandard2.1 and
+  names `unity/package-compat` as the check; that project has no Unity reference
+  assemblies, so a `MonoBehaviour` there fails R-E10's own check.
+
+**The runtime is thread-affine and has no finalizer.** It is reachable only from
+the thread that created it, and `Dispose` must run there too — a finalizer runs
+on the GC's thread, where `ds_runtime_free` answers `DS_WRONG_THREAD` and the
+runtime leaks with nothing reported.
 
 ## What checks the declarations
 
+Three projects, asking three questions. `just unity-abi` runs the first two and
+`just unity-ffi` runs the third; all three run per pull request and **none needs
+a Unity editor**.
+
+`unity/package-compat` compiles the whole of `Runtime/` against
+**netstandard2.1**, which is what Unity's default API compatibility level
+accepts — R-E10. `unity/abi-check` cannot stand in for it: that project targets
+`net10.0`, a strict superset, so it accepts declarations Unity would refuse.
+
+`unity/ffi-check` **loads a `dashscene-ffi` cdylib and calls it** — the only one
+of the three that executes anything. It looks up every declared entry point
+(.NET binds a `DllImport` lazily, so one nothing calls would otherwise be
+checked by nothing), performs R-E16's version handshake, produces each status
+from a real call rather than reading the header, and compares all nineteen of a
+frame's `DsSlice::stride` values against this package's row sizes, which is
+R-E17.
+
 `unity/abi-check` compiles **this package's own `BoundaryB.cs`**, builds
 `crates/dashpaint-abi` as a dynamic library, and compares every type against
-what the Rust build reports — member by member, matched by name. It runs on
-every pull request and needs no Unity editor. `just unity-abi` runs it locally.
+what the Rust build reports — member by member, matched by name.
 
 It catches anything wrong with **this file**: a member added, removed, renamed,
 moved or widened, including two same-width members exchanged and an enum that
@@ -40,21 +74,15 @@ with the reasoning in the three records
 [`../../docs/decisions/README.md`](../../docs/decisions/README.md) lists under
 story #1125.
 
-**Several are unmet by this package as it stands**, and story #1121 is where
-they close. Read the requirements file for the current set rather than this
-list, which is a pointer and not a census:
+Story #1121 closed the ones about this package's own contents — the `.meta`
+files, the `unity` field, `allowUnsafeCode`, and the two the host owes the ABI.
+**What remains unmet is about a release rather than about this directory**: the
+native library and the git tag that names it.
 
-- **R-E2 — this package ships no `.meta` files, and so delivers nothing.** A
-  Git-URL package is immutable, and Unity does not generate a missing `.meta`
-  there; it ignores the asset. The `.asmdef` is never imported and
-  `BoundaryB.cs` never compiles. See
-  [`../../docs/decisions/unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md`](../../docs/decisions/unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md).
-- **R-E1 — `package.json` carries no `unity` field.** It should declare
-  `"6000.3"`. Omitting it claims compatibility with every editor ever released.
-- **R-E16 and R-E17 — nothing here calls the native library at all**, so the
-  mandatory `ds_abi_version` handshake and the per-array `stride` check are both
-  absent. `BoundaryB.cs` carries no `DllImport`. Shipping the `.meta` files and
-  the `unity` field does not close story #1121 without these.
+Read
+[the requirements file](../../docs/specification/07-embedding-and-distribution.md)
+for the current set. This is a pointer and not a census — an enumeration here is
+a second place for the status to go stale, and it already had been.
 
 ## Licence
 

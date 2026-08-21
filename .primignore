@@ -15,6 +15,20 @@
 # `.claude/worktrees/**`, and `.claude/` below covers more than that.
 corpus/
 goldens/
+
+# Unity writes the UPM package's `.meta` files and a formatter must not rewrite
+# them: the guid inside one is what an asset reference resolves through, and in
+# an immutable Git-URL package nothing can mint a replacement.
+#
+# **Eleven of the twelve are already safe and one is not**, which is why this is
+# a rule rather than a tidy-up. prim skips a `.meta` as "not a file type prim
+# formats" — except `LICENSE.meta`, whose name before the final dot is
+# `LICENSE`, a name prim does format. Measured: `prim fmt` strips the trailing
+# space Unity writes after `userData:`, `assetBundleName:` and
+# `assetBundleVariant:` in that one file, and leaves the eleven identically
+# shaped ones alone. Same root as the `LICENSE`-not-`LICENSE.md` note in
+# unity/com.driftsys.dashscene/README.md.
+unity/com.driftsys.dashscene/**/*.meta
 **/node_modules
 **/.git-std
 
