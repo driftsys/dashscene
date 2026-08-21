@@ -20,7 +20,8 @@ The C# package is sited in this repository under `unity/` rather than in a
 separate repository, so the question described above as "still open on whether
 that repository is created" is closed, and one of epic #1106's entry conditions
 went with it. What this note contributed is below and is unchanged. Issue #1125
-is still open and this note is still its input.
+took this note as input and closed on 2026-08-21; its three records are named in
+`../decisions/README.md`.
 
 **What was proven is narrow, and the narrowness is the point.** A Unity project
 called `ds_abi_version` and got back the value the committed header declares, in
@@ -153,9 +154,20 @@ its own.
 
 **There is also no C++ runtime to reconcile.** The cross-compiled
 `libdashscene_ffi.so` declares exactly four `NEEDED` entries — `libandroid.so`,
-`libdl.so`, `libm.so`, `libc.so` — and not `libc++_shared.so`, which Unity ships
-its own copy of in the same APK. So the usual collision between a plugin's C++
-runtime and the engine's does not arise for this library as it stands.
+`libdl.so`, `libm.so`, `libc.so` — and not `libc++_shared.so`. So the usual
+collision between a plugin's C++ runtime and the engine's does not arise for
+this library as it stands.
+
+**The clause explaining what it would collide with was wrong and is corrected
+here (2026-08-21, story #1125).** It said `libc++_shared.so` is "which Unity
+ships its own copy of in the same APK". Unity ships no copy: the only
+`libc++_shared.so` under this editor is inside the NDK sysroot, which is
+toolchain input rather than player payload, and `libunity.so` for `arm64-v8a`
+declares eight `NEEDED` entries — `libandroid.so`, `liblog.so`, `libz.so`,
+`libEGL.so`, `libmediandk.so`, `libm.so`, `libdl.so`, `libc.so` — with the C++
+runtime not among them. Unity 6.3 links libc++ statically. The conclusion is
+unchanged and the reason is simpler than the one given: this library needs no
+C++ runtime at all, so there is nothing to collide.
 
 ## The gap that was closed: `just host-lib`
 
@@ -215,14 +227,18 @@ full-LTO link into every local `check` is a scheduling decision with a recurring
 cost rather than one this story should take, so it is recorded as issue #1233
 instead of decided here.
 
-**The same gap is still open for the Android triple, and this story did not
-close it.** `just android` carries no `--release`, and `android-probe` — the one
-release build for that triple — builds `dashscene-gpu`'s `adapter_report`
-example rather than this crate. So no recipe produces a release
-`libdashscene_ffi.so`, and the player below loaded the **debug** one. The
-consuming half already exists: `android-apk` reads `DASHSCENE_ANDROID_PROFILE`,
-defaulted to `debug` "because that is what `android` builds" (issue #1057).
-Nothing builds the release artifact that variable would select.
+**The same gap was open for the Android triple when this was written, and it is
+not any more.** As measured, `just android` carried no `--release`, so no recipe
+produced a release `libdashscene_ffi.so` and the player below loaded the
+**debug** one — which is still true of that run and is why its numbers are debug
+numbers.
+
+**The recipe gained a profile parameter fifteen minutes after this note landed**
+(story #1229), and this paragraph asserted the opposite for four days and five
+edits before story #1125 caught it. `just android release` maps to `--release`
+and applies it to `dashscene-ffi`, so the artifact `DASHSCENE_ANDROID_PROFILE`
+selects is built. It is **6,513,488 bytes**, against the 194,407,656 of the
+debug library below.
 
 ## The editor half
 
@@ -252,6 +268,12 @@ asset database:
 The second takes **3.9 s** and answers:
 
     DS_ABI_PROBE result=match ds_abi_version=1 expected=1     (exit 0)
+
+**That `1` is this run's value and is no longer the current one.** Story #1226
+moved `DS_ABI_VERSION` to **2** when ten entry points changed signature for the
+generational handle. The mechanism this proved is unaffected — the probe read
+the header's value and compared — but the number is a measurement of the day,
+not a fact to quote forward.
 
 **It was proven falsifiable rather than assumed to be.** Two mutations, and the
 restoration after them:
@@ -341,6 +363,78 @@ Android one — rather than relying on what Unity infers from the path. Whether
 the inference alone would have been enough was not measured, so this is a thing
 that was done and not a thing that was required.
 
+## The culling callback's thread — measured 2026-08-21, story #1125
+
+**This section is a different measurement from the rest of this note**, taken
+four days later by the packaging spike, and it is here because this note is
+where the Unity measurements live. It is the one thing issue #1267's comment of
+2026-08-19 left open: whether Unity invokes
+`BatchRendererGroup.OnPerformCulling` on the main thread or on a worker, which
+decides whether a host can bracket its job dispatch with
+`ds_runtime_acquire_frame` / `ds_runtime_release_frame`.
+
+**Unity documents no thread for this callback.** The
+`UnityEngine.CoreModule.xml` shipped beside the assembly describes
+`OnPerformCulling` and says nothing about which thread runs it, so the answer
+had to be read rather than looked up.
+
+### The result
+
+|                                    |                                                   |
+| ---------------------------------- | ------------------------------------------------- |
+| editor                             | `6000.3.22f1` (Unity 6.3 LTS), the target         |
+| render pipeline                    | URP 17.0.1, from the `3d-cross-platform` template |
+| graphics device                    | **Metal, Apple M3** — a real device, windowed     |
+| `BatchRendererGroup.BufferTarget`  | `RawBuffer`                                       |
+| `GetConstantBufferMaxWindowSize`   | 16384                                             |
+| `GetConstantBufferOffsetAlignment` | 256                                               |
+| invocations                        | 58 `Camera` + 58 `Light` = **116**                |
+| distinct managed thread ids        | **1**, equal to the id `Start` recorded           |
+
+`OnPerformCulling` ran on the **main thread**, on every invocation, for both
+view types. `IsThreadPoolThread` and `IsBackground` were both false. So a host
+can **acquire** from inside the callback, and
+`../decisions/the-frame-crosses-under-a-lease.md` D2's design is reachable
+rather than merely coherent. **The release is a separate question this reading
+does not answer**: `ds_runtime_acquire_frame` requires it after Unity completes
+the `JobHandle` rather than on return from the callback, because the workers are
+still reading when the callback returns.
+
+### Two readings that were discarded, and why they matter
+
+**A run under the Built-in Render Pipeline reported the same answer and is not
+evidence.** Its log carries
+`BatchRendererGroup requires the use of a
+ScriptableRenderPipeline` at the
+constructor, so the callback was firing on a group Unity had refused — 58
+invocations on a thing that does not draw. It was caught by grepping the run log
+for what Unity had complained about, not by reading the result line, which
+looked correct. This is the same hazard `../decisions/unity-painter-uses-brg.md`
+D4 names for a `-nographics` `BufferTarget` read, in a form that produces a
+plausible number rather than an obvious absence.
+
+**Zero `Light` invocations, in an earlier run, was a default and not a fact.**
+Without a `SetEnabledViewTypes` call a group receives `Camera` views only, so a
+shadow-casting light produced nothing. The 58 above appear only once both view
+types are asked for.
+
+### What it does not settle
+
+- **One platform.** macOS, Metal, URP, Mono, one adapter. **The target is
+  Android on a tiling GPU** and no reading has been taken there. The two
+  constant-buffer figures are this adapter's, by `unity-painter-uses-brg.md`
+  D4's own rule that the value is a property of the active graphics API.
+- **It is a measurement, not a contract.** Unity promises no thread, so a host
+  asserts the identity rather than assuming it — one `ManagedThreadId`
+  comparison.
+- **It says nothing about materials or shader variants.** The probe emits no
+  draw commands, and `Shader.Find("Universal Render Pipeline/Unlit")` returned
+  null in the player, so it fell back to `Sprites/Default`. Nothing was ever
+  shaded.
+- **Issue #1267's question 2 is untouched** — whether `DS_WRONG_THREAD` should
+  distinguish a thread that has exited from a foreign one is an owner's ruling
+  and is not this measurement's.
+
 ## What is still unknown
 
 **Nothing here settles packaging, and a working P/Invoke is not evidence about
@@ -350,9 +444,9 @@ conclusion: Unity packaged the native library as a **Deflate-compressed** zip
 entry, and the manifest it generated carries `extractNativeLibs="true"`. Those
 are Unity's defaults for a _plugin_, and the question that matters is about the
 `.dsb` and its bank, which is issue #1124 for how the bytes reach memory and
-issue #1125 for how the product reaches a customer's project. #851's second
-packaging path needs _stored_ entries; nothing here tested whether Unity can be
-made to produce one.
+issue #1125 for how the product reaches a customer's project — which it settled
+on 2026-08-21 without answering this one. #851's second packaging path needs
+_stored_ entries; nothing here tested whether Unity can be made to produce one.
 
 **No data crossed the boundary.** `ds_abi_version` takes no arguments and
 returns a `const`. Nothing here says a `#[repr(C)]` struct marshals correctly.

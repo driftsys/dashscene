@@ -82,13 +82,16 @@ against itself:
 from Unity's versioned scripting reference. Choosing among them is an LTS and
 platform-support question, not an API-availability one.
 
-**It does not settle the package's minimum version, which is issue #1125's.**
-Epic #1106 recorded on 2026-08-18 that distribution form, minimum Unity version,
-render pipeline, scripting backend, API compatibility level and native-plugin
-layout are all that spike's, which is why `unity/`'s `package.json` carries no
-`unity` field. A target and a floor are different numbers — a package can
-support versions the painter is not developed against — and this clause fixes
-only the first.
+**It does not settle the package's minimum version. Story #1125 did**, and it is
+[`../specification/07-embedding-and-distribution.md`](../specification/07-embedding-and-distribution.md)
+R-E1 — `"unity": "6000.3"`. The paragraph below records why that field was
+absent while this record was written, and R-E1 is what reverses it. Epic #1106
+recorded on 2026-08-18 that distribution form, minimum Unity version, render
+pipeline, scripting backend, API compatibility level and native-plugin layout
+are all that spike's, which is why `unity/`'s `package.json` carries no `unity`
+field. A target and a floor are different numbers — a package can support
+versions the painter is not developed against — and this clause fixes only the
+first.
 
 **D3 — the fallback ladder, and the failure mode each rung answers.**
 
@@ -167,13 +170,18 @@ returns has not been measured**, and it must not be recorded as a verdict: a
 rung 3 and abandon BRG on a read taken with no device. Whoever discharges this
 takes it on a player with a real device, on the target, and says which.
 
-**This has not been read on any device**, and no value is claimed here. When it
-is read, `ConstantBuffer` is not a synonym for supported-and-fine: it routes
-per-instance data through a uniform-buffer window bounded by
-`GetConstantBufferMaxWindowSize()` and aligned by
-`GetConstantBufferOffsetAlignment()` rather than through a storage buffer, which
-is a constraint on the instance layout D1 assumes. That is the same class of
-limit as the four fragment-stage storage buffers the lean painter binds
+**It has now been read on a device, and not on the target.** Story #1125 read
+`RawBuffer`, a 16384-byte window and a 256-byte alignment on Apple M3 / Metal,
+in a windowed player — recorded in
+[`../technotes/unity-toolchain.md`](../technotes/unity-toolchain.md). That
+selects rung 1 **on that adapter only** and discharges nothing here: this
+clause's condition is a read on the target, and Android remains unread. The
+paragraph below is what still stands. When it is read, `ConstantBuffer` is not a
+synonym for supported-and-fine: it routes per-instance data through a
+uniform-buffer window bounded by `GetConstantBufferMaxWindowSize()` and aligned
+by `GetConstantBufferOffsetAlignment()` rather than through a storage buffer,
+which is a constraint on the instance layout D1 assumes. That is the same class
+of limit as the four fragment-stage storage buffers the lean painter binds
 (`host-integration-in-three-layers.md` D3a), and it is to be recorded whichever
 way it lands.
 

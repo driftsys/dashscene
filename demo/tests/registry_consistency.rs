@@ -33,19 +33,28 @@
 //! of seventeen names would be the seventh registry, and it would drift exactly
 //! as the other six can.
 //!
-//! # Two justfile checks that are not about crates (issues #1167 and #1175)
+//! # Four checks that are not about crates (issues #1167, #1175, story #1125)
 //!
-//! The two tests at the end of this file are not registry checks and the
-//! paragraphs above do not describe them. They are here because this file
-//! already reads and parses the justfile in three places, and issue #1167 asked
-//! whether a justfile assertion should overload a test named for the demo
-//! registry or take a binary of its own: the answer taken was to overload it,
-//! and this section is what keeps that legible. One asserts the NDK linker
-//! variable is named by one recipe; the other asserts every recipe `just --list`
-//! shows describes itself in a sentence.
+//! Four tests in this file are not registry checks and the paragraphs above do
+//! not describe them. **They are named rather than located**, because an
+//! earlier version of this paragraph pointed at "the two tests at the end" and
+//! story #1125 then added two more after them:
 //!
-//! **If a third arrives, that is the point to move all three out** into a file
-//! named for the justfile rather than for the registry.
+//! - `the_android_linker_variable_is_named_only_by_the_android_env_recipe`
+//! - `every_listed_recipe_describes_itself_in_a_sentence`
+//! - `the_unity_package_version_is_bumped_and_matches_the_workspace`
+//! - `the_unity_package_meta_files_are_all_or_nothing`
+//!
+//! The first two are here because this file already reads and parses the
+//! justfile in three places, and issue #1167 asked whether a justfile assertion
+//! should overload a test named for the demo registry or take a binary of its
+//! own: the answer taken was to overload it. The last two are story #1125's and
+//! carry their own note where they sit.
+//!
+//! **That threshold has now been passed**, and moving them out into a file
+//! named for what they check rather than for the registry is the obvious next
+//! step. It is not taken here because this pull request's subject is the Unity
+//! package's deployment model, not this file's organisation.
 //!
 //! # What each registry is worth, measured by mutating it
 //!
@@ -733,4 +742,138 @@ fn listed_recipe_name(line: &str) -> Option<&str> {
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
     listed.then_some(name)
+}
+
+// Two checks over the Unity package, added by story #1125. Neither is a
+// registry check and the module header does not describe them; they are here
+// because this file already reads `.git-std.toml` and the workspace root, and
+// because the failure they catch is the same shape as the registry one — a
+// declaration that exists and a list that does not know it.
+
+/// The Unity package's version is moved by `git std bump`, and matches the
+/// workspace.
+///
+/// `the-package-and-its-library-are-one-versioned-artifact.md` D1 rules that
+/// the package version tracks the Cargo workspace, and the whole mechanism is
+/// one `[[version_files]]` entry. That entry is **outside** every assertion in
+/// this file's registry tests, which iterate `[workspace] members` and anchor
+/// on `\nregex = '{name} = ` — the package is not a crate and its entry is
+/// spelled differently. Deleting it leaves every tier green while `git std
+/// bump` silently stops moving `package.json`, which is exactly the failure
+/// story #795 exists to have caught once already.
+#[test]
+fn the_unity_package_version_is_bumped_and_matches_the_workspace() {
+    let workspace = workspace_root();
+    let git_std = fs::read_to_string(workspace.join(".git-std.toml")).expect(".git-std.toml");
+    assert!(
+        git_std.contains("path = \"unity/com.driftsys.dashscene/package.json\""),
+        ".git-std.toml has no [[version_files]] entry for the Unity package, so `git std bump` \
+         will not move it and its version will drift from the workspace's."
+    );
+
+    let manifest = fs::read_to_string(workspace.join("Cargo.toml")).expect("Cargo.toml");
+    let workspace_version = manifest
+        .split_once("\n[workspace.package]")
+        .and_then(|(_, rest)| rest.split_once("version = \""))
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .map(|(v, _)| v.to_owned())
+        .expect("[workspace.package] version");
+
+    let package = fs::read_to_string(workspace.join("unity/com.driftsys.dashscene/package.json"))
+        .expect("the Unity package manifest");
+    let package_version = package
+        .split_once("\"version\": \"")
+        .and_then(|(_, rest)| rest.split_once('"'))
+        .map(|(v, _)| v.to_owned())
+        .expect("a version in package.json");
+
+    assert_eq!(
+        package_version, workspace_version,
+        "the Unity package version and the Cargo workspace version disagree, which D1 of \
+         the-package-and-its-library-are-one-versioned-artifact.md says they never do."
+    );
+}
+
+/// If the Unity package ships any `.meta` file, it ships one for everything
+/// Unity imports.
+///
+/// `07-embedding-and-distribution.md` R-E2. A Git-URL package lands in
+/// `Library/PackageCache` and is **immutable**, where Unity does not generate a
+/// missing `.meta` — it ignores the asset, so a file without one is not
+/// imported at all.
+///
+/// **Deliberately conditional.** The package ships zero `.meta` files today, so
+/// an unconditional form could not land green; this catches the state that
+/// actually arrives — story #1121 adding them by hand and missing one, which
+/// leaves the package installing and delivering nothing with every tier green.
+/// It becomes non-vacuous the moment the first one is committed.
+#[test]
+fn the_unity_package_meta_files_are_all_or_nothing() {
+    let workspace = workspace_root();
+    const PACKAGE: &str = "unity/com.driftsys.dashscene";
+
+    // **Tracked files, not the working tree.** R-E2 says a *committed* `.meta`,
+    // and a stray untracked one left by a local editor would otherwise flip
+    // this test into demanding full coverage of a state nobody pushed.
+    let listing = std::process::Command::new("git")
+        .args(["ls-files", "-z", PACKAGE])
+        .current_dir(&workspace)
+        .output()
+        .expect("git ls-files runs");
+    assert!(listing.status.success(), "git ls-files failed");
+    let prefix = format!("{PACKAGE}/");
+    let tracked: Vec<String> = String::from_utf8_lossy(&listing.stdout)
+        .split('\0')
+        .filter(|p| !p.is_empty())
+        .map(|p| p.trim_start_matches(&prefix).to_owned())
+        .collect();
+
+    // The four shapes Unity's importer hides. Each applies to one kind of entry
+    // — `cvs` names a folder, `.tmp` an extension — so applying either to the
+    // wrong kind would exempt a path R-E2 requires a `.meta` for.
+    fn hidden(relative: &str) -> bool {
+        let mut components: Vec<&str> = relative.split('/').collect();
+        let file = components.pop().unwrap_or_default();
+        let dir_hidden = components
+            .iter()
+            .any(|c| c.starts_with('.') || c.ends_with('~') || c.eq_ignore_ascii_case("cvs"));
+        dir_hidden || file.starts_with('.') || file.ends_with('~') || file.ends_with(".tmp")
+    }
+
+    let mut imported = BTreeSet::new();
+    let mut metas = BTreeSet::new();
+    for relative in &tracked {
+        if hidden(relative) {
+            continue;
+        }
+        if let Some(subject) = relative.strip_suffix(".meta") {
+            metas.insert(subject.to_owned());
+        } else {
+            imported.insert(relative.clone());
+            // Unity imports folders too, and each needs its own `.meta`.
+            let mut parts: Vec<&str> = relative.split('/').collect();
+            parts.pop();
+            while !parts.is_empty() {
+                imported.insert(parts.join("/"));
+                parts.pop();
+            }
+        }
+    }
+
+    assert!(
+        !imported.is_empty(),
+        "a scan that reads nothing proves nothing"
+    );
+    if metas.is_empty() {
+        return; // R-E2 is unmet and known to be; nothing to compare.
+    }
+
+    let missing: Vec<_> = imported.difference(&metas).cloned().collect();
+    let orphaned: Vec<_> = metas.difference(&imported).cloned().collect();
+    assert!(
+        missing.is_empty() && orphaned.is_empty(),
+        "the Unity package ships .meta files but not for everything Unity imports, so the \
+         entries without one are ignored in an immutable package (R-E2).\n  no .meta: \
+         {missing:?}\n  .meta with no subject: {orphaned:?}"
+    );
 }

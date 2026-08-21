@@ -1062,9 +1062,16 @@ host-lib:
     # repository, where a path relative to the workspace root is not usable.
     echo "host-lib: ${lib}"
 
-# Compiles `unity/com.driftsys.dashscene/Runtime/BoundaryB.cs` — the package's
-# own file, not a copy — and compares every type on the surface against what
-# `crates/dashpaint-abi` reports for it, member by member and matched by name.
+# Two gates over the UPM package, not one (the second added by story #1125).
+#
+# 1. Compiles `unity/com.driftsys.dashscene/Runtime/BoundaryB.cs` — the
+#    package's own file, not a copy — and compares every type on the surface
+#    against what `crates/dashpaint-abi` reports for it, member by member and
+#    matched by name.
+# 2. Compiles the package's whole `Runtime/` against **netstandard2.1**, which
+#    is what Unity's default API compatibility level accepts and which the
+#    first gate cannot check: `abi-check` targets net10.0, a strict superset.
+#    `docs/specification/07-embedding-and-distribution.md` R-E10.
 # **No Unity editor is involved**, and none is needed to compare layouts; the
 # reason that matters is in
 # `docs/decisions/unity-package-sited-in-this-repository.md`.
@@ -1128,6 +1135,14 @@ unity-abi:
       exit 1
     fi
     DASHPAINT_ABI_LIB="${lib}" dotnet run --project unity/abi-check
+    # **A second question, and `abi-check` cannot answer it.** That project
+    # targets net10.0, a strict superset of the .NET Standard 2.1 Unity
+    # defaults to, so it accepts declarations Unity would refuse. This compiles
+    # the package's whole `Runtime/` against netstandard2.1 and is what
+    # `docs/specification/07-embedding-and-distribution.md` R-E10 names.
+    # Measured: a `System.Half` in `BoundaryB.cs` builds clean under net10.0
+    # and fails here with CS0234.
+    dotnet build unity/package-compat -v q --nologo
 
 # The Android API level this repository links against.
 #

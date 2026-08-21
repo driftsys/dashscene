@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- The point of this project. Unity's default API compatibility level is
+         .NET Standard 2.1, and `unity/abi-check` targets net10.0, which is a
+         strict superset — so it accepts declarations Unity would refuse and
+         cannot stand in for this check.
+
+         Measured rather than reasoned: adding
+         `public static System.Half H() => (System.Half)1.0f;` to
+         `Runtime/BoundaryB.cs` builds clean under net10.0 and fails here with
+         CS0234. That is the drift this project exists to catch, and it is why
+         `07-embedding-and-distribution.md` R-E10 names this project and not
+         the other one. -->
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <!-- Compile only what is listed below, so this project reports on the
+         package's sources and not on stray files beside it. This does NOT stop
+         an empty set from passing — `RefuseAnEmptyCompileSet` below does, and
+         it was added because the first version of this file claimed this
+         property closed that hazard and it does not. -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- Same reason `AbiCheck.csproj` sets it: this project exists to detect
+         drift, and a declaration the compiler is unsure about is drift. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>package-compat</AssemblyName>
+    <RootNamespace>Driftsys.Dashscene.PackageCompat</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Every runtime source in the package, by glob rather than by name, so a
+         file story #1121 or #1122 adds is covered without editing this list.
+         `abi-check` names `BoundaryB.cs` alone because it compares that one
+         file's types; this project asks a question about the whole package.
+
+         Collected under its own item name first, because `@(Compile)` is never
+         empty — the SDK injects a generated AssemblyInfo into it — so testing
+         that would not detect a glob that reached nothing. -->
+    <PackageRuntimeSource Include="../com.driftsys.dashscene/Runtime/**/*.cs" />
+    <Compile Include="@(PackageRuntimeSource)" />
+  </ItemGroup>
+
+  <!-- A gate that compiles nothing passes, and reports nothing. Measured: with
+       the glob pointed at a directory that does not exist, the build succeeds
+       with zero errors, so `07-embedding-and-distribution.md` R-E10 would read
+       as met over an empty set. This is the same non-empty rule R-E11 states
+       for the painter's shaders, applied to this project. -->
+  <Target Name="RefuseAnEmptyCompileSet" BeforeTargets="BeforeBuild">
+    <Error Condition="'@(PackageRuntimeSource)' == ''"
+           Text="package-compat matched no source file. The glob reached nothing — has unity/com.driftsys.dashscene/Runtime/ moved? A gate over an empty set reports on nothing." />
+  </Target>
+
+</Project>

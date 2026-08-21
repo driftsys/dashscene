@@ -20,7 +20,9 @@
 //
 // The library is the gate crate built as a cdylib on demand. It is NOT the
 // library a Unity host loads: that is `dashscene-ffi`, and which artifact a
-// shipping host takes is issue #1125's to settle. Nothing here is a host.
+// shipping host takes was settled on 2026-08-21 — the cdylib, by
+// docs/decisions/the-native-library-ships-inside-the-unity-package.md D1.
+// Nothing here is a host.
 
 using System.Reflection;
 using System.Runtime.InteropServices;

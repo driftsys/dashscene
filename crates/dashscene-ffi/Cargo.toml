@@ -13,7 +13,23 @@ categories = ["external-ffi-bindings", "graphics"]
 name = "dashscene_ffi"
 # `rlib` so the workspace's own tests can link it as a Rust crate; `cdylib` and
 # `staticlib` because a platform host loads it as a library and not as a crate.
-# JNI wants the first, and an iOS or Unity host in v1 wants the second.
+#
+# `cdylib` is what every host on a platform that loads a library takes — which
+# is every host built today, and every planned one except iOS. JNI loads
+# `libdashscene_ffi.so`, and a Unity host loads the same artifact per platform —
+# story #1230 measured one `DllImport("dashscene_ffi")` resolving the `.dylib`
+# in the editor and the `.so` in the Android player.
+#
+# `staticlib` is the iOS host's, in v1, where a plug-in is linked into the
+# executable rather than loaded — which is also why an iOS declaration is
+# `DllImport("__Internal")` and not the library name. Nothing in this workspace
+# links it today.
+#
+# This comment said "JNI wants the first, and an iOS or Unity host in v1 wants
+# the second" until story #1125, which was wrong twice: Unity has been v0.21
+# since 2026-08-12, and the sentence assigned Unity the `staticlib` by treating
+# it and iOS as one case when they take different crate types
+# (docs/decisions/the-native-library-ships-inside-the-unity-package.md, D1).
 crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]

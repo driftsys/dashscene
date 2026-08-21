@@ -29,13 +29,32 @@ Two things it does not catch, both measured rather than reasoned about:
 
 `unity/abi-check/Program.cs` states both.
 
-## What this package does not settle
+## What a consumer must satisfy
 
-Issue #1125 owns the questions a consumer will ask, and none of them is answered
-here: the distribution form, the minimum Unity version, the render pipeline, the
-scripting backend, the API compatibility level, and where the native library
-sits per platform. `package.json` deliberately carries no `unity` field for that
-reason.
+Story #1125's spike settled the questions a consumer will ask — the distribution
+form, the minimum Unity version, the render pipeline, the scripting backend, the
+API compatibility level, and where the native library sits per platform. They
+are requirements now, in
+[`../../docs/specification/07-embedding-and-distribution.md`](../../docs/specification/07-embedding-and-distribution.md),
+with the reasoning in the three records
+[`../../docs/decisions/README.md`](../../docs/decisions/README.md) lists under
+story #1125.
+
+**Several are unmet by this package as it stands**, and story #1121 is where
+they close. Read the requirements file for the current set rather than this
+list, which is a pointer and not a census:
+
+- **R-E2 — this package ships no `.meta` files, and so delivers nothing.** A
+  Git-URL package is immutable, and Unity does not generate a missing `.meta`
+  there; it ignores the asset. The `.asmdef` is never imported and
+  `BoundaryB.cs` never compiles. See
+  [`../../docs/decisions/unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md`](../../docs/decisions/unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md).
+- **R-E1 — `package.json` carries no `unity` field.** It should declare
+  `"6000.3"`. Omitting it claims compatibility with every editor ever released.
+- **R-E16 and R-E17 — nothing here calls the native library at all**, so the
+  mandatory `ds_abi_version` handshake and the per-array `stride` check are both
+  absent. `BoundaryB.cs` carries no `DllImport`. Shipping the `.meta` files and
+  the `unity` field does not close story #1121 without these.
 
 ## Licence
 

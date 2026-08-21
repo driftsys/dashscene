@@ -628,7 +628,21 @@ their parent rather than apart from it:
   2026-08-20, when D2's 6.5 target was reversed. Ratified against a fallback
   ladder rather than against the two conditions the record set for itself, both
   of which are carried; D3 is the ladder and D4 is the read that selects between
-  its rungs. The minimum package version is left to issue #1125.
+  its rungs. The minimum Unity version is `07-embedding-and-distribution.md`
+  R-E1, settled by story #1125's spike.
+- [unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md](unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md)
+  — **accepted** (2026-08-21, story #1125): UPM over a Git URL, and every file
+  Unity imports carries a committed `.meta`, because a Git-URL package is
+  immutable and Unity ignores an asset that has none rather than generating one.
+  Corrects the install path in `unity-package-sited-in-this-repository.md`.
+- [the-native-library-ships-inside-the-unity-package.md](the-native-library-ships-inside-the-unity-package.md)
+  — **accepted** (2026-08-21, story #1125): a Unity host takes the `cdylib` on
+  every platform in scope, the library is committed under `Runtime/Plugins/`,
+  and its `.meta` rather than its path is what assigns the platform and CPU.
+- [the-package-and-its-library-are-one-versioned-artifact.md](the-package-and-its-library-are-one-versioned-artifact.md)
+  — **accepted** (2026-08-21, story #1125): the package version tracks the Cargo
+  workspace, one git tag selects both halves, `ds_abi_version` is a mandatory
+  refusal, and a re-routed `DsStatus` condition now moves `DS_ABI_VERSION`.
 - [downloaded-raster-needs-no-vector-engine.md](downloaded-raster-needs-no-vector-engine.md)
   — downloaded PNG/WebP is decode → upload → bind through the existing
   image-fill vocabulary, no vector engine involved
