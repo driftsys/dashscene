@@ -135,6 +135,23 @@ whole tree out of format under a developer who ran no command. `bootstrap`
 therefore checks the installed version rather than mere presence, and says so
 when another prim earlier on PATH still wins.
 
+**The compiler is the larger instance of the same rule**, pinned on 2026-08-21
+in `rust-toolchain.toml`. Rust 1.98.0 added two clippy lints that fire on 52
+pre-existing sites, `clippy` runs with `-D warnings`, and `main` went red on
+code nobody had touched — the same shape as a prim version rewrapping the tree,
+and on every open branch at once. It is one copy rather than two: the file
+outranks the `rustup default` that `dtolnay/rust-toolchain@stable` sets, so no
+workflow names a version and none passes `components:` or `targets:` any more.
+The deferred bump is issue #1282.
+
+**One job is exempted, deliberately.** `audit` is the only one that runs `cargo`
+with no toolchain step, and it is ungated — it runs on documentation-only pull
+requests, where every compile job skips. It sets `RUSTUP_TOOLCHAIN: stable`,
+which outranks the toolchain file, so an audit that only reads `Cargo.lock` does
+not provision a compiler and two cross targets to do it. That is the one place a
+floating toolchain is correct: `cargo audit` compiles nothing, and this record
+already says the same commit audits differently tomorrow.
+
 **Two verbs, not one.** `just prim` runs `prim fmt --check .` and then
 `prim lint .`. They are not redundant: `prim lint` reports format drift for
 JSON, YAML and TOML but not for Markdown, so it exits 0 on a Markdown file that

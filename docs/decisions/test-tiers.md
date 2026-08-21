@@ -222,8 +222,11 @@ five since.
   (those tests' own fixture and repository-root helpers),
   `goldens/tooling/tests/perceptual_calibration.rs` itself, `Cargo.toml` and
   `Cargo.lock` (a dependency bump can move an encoder's output without touching
-  any path above), and `.config/**` (`nextest.toml` names those tests by filter
-  and `calibration-tier.txt` pins the listing they must produce).
+  any path above), `rust-toolchain.toml` (a compiler bump is the stronger case
+  of that — raising the channel alone re-derives these tables with a different
+  rustc and touches nothing else), and `.config/**` (`nextest.toml` names those
+  tests by filter and `calibration-tier.txt` pins the listing they must
+  produce).
 
 `.config/**` is about the check rather than the tables, and it was added after
 the membership check shipped broken. None of the paths that define the check
@@ -641,8 +644,10 @@ fixture above), and `deno` (`deno task check` failing). None of the three is a
 test-tiering concern, but a red job anywhere lowers confidence that a green
 `calibration` job means what it claims to mean.
 
-**Local and CI toolchains can disagree.** There is no `rust-toolchain.toml`.
-Local was rustc 1.95.0; CI takes whatever `dtolnay/rust-toolchain@stable`
-resolves to. Local clippy was green while CI clippy was red, which is this
-divergence in practice. Pinning the toolchain is out of scope here but should be
-filed.
+**Local and CI toolchains could disagree, and no longer do.** When this was
+written there was no `rust-toolchain.toml`: local was rustc 1.95.0 and CI took
+whatever `dtolnay/rust-toolchain@stable` resolved to, so local clippy was green
+while CI clippy was red. That divergence closed on 2026-08-21:
+`rust-toolchain.toml` names the compiler and takes precedence over the
+`rustup default` the action sets, so both sides run it. `house-style.md` carries
+what prompted it and the issue that bumps it.
