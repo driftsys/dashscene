@@ -54,8 +54,10 @@ It wins by doing less at runtime and by being specialised to the tiling GPU
 - **No intermediate render targets.** General VG does clips/masks/group-opacity/
   effects via off-screen layers; on a _tiling_ GPU each mid-frame RT switch is a
   tile-memory flush (R-T1), and bandwidth is the shared-SoC bottleneck (R3). The
-  quad painter has no runtime layers — effects baked, clips in-shader or by
-  scissor — so it pays that ~zero times.
+  quad painter has no runtime layers — effects baked, clips in-shader — so it
+  pays that ~zero times. **Not by scissor**: a scissor rect gives an aliased
+  edge and cannot express a clip box's corner radii at all, which
+  `../decisions/clip-edge-semantics.md` rules out.
 - **Exploits the tiler.** A simple quad splits into an opaque core (z-tested,
   front-to-back → hidden-surface rejection kills covered pixels) plus a thin
   blended AA fringe (R-T2). General renderers blend back-to-front and cannot use

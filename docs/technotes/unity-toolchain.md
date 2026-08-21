@@ -1,9 +1,12 @@
 # Technote — the Unity build environment, and the C ABI seam proven
 
-Informative. **Measured 2026-08-17**, story #1230 under epic #1106. Nothing
-depends on this note. It exists because epic #1106's entry conditions are all
-the repository owner's — three on the day this was measured, two after the
-ruling recorded below, and **none from 2026-08-18**, when the last two were
+Informative. **Measured 2026-08-17**, story #1230 under epic #1106, and amended
+twice since: **2026-08-18**, when the target moved to Unity 6.5, and
+**2026-08-20**, when it moved to Unity 6.3 LTS and the Unity CLI paragraph was
+added. Neither amendment is story #1230's evidence; both say their own date.
+Nothing depends on this note. It exists because epic #1106's entry conditions
+are all the repository owner's — three on the day this was measured, two after
+the ruling recorded below, and **none from 2026-08-18**, when the last two were
 ruled — and they are cheaper to decide with evidence that a Unity project can
 reach `dashscene-ffi` at all than without it.
 
@@ -82,23 +85,49 @@ Two LTS lines were live on that date — `6000.0.x` (Unity 6) and `6000.3.x`
 
 **A second editor was already present and was left alone**: 6000.5.6f1 — Unity
 6.5, which is a supported release rather than an LTS one — carrying Web Build
-Support and Documentation only. It has no Android module and was not used here.
-Two editors now sit under `/Applications/Unity/Hub/Editor/`.
+Support and Documentation only. It had no Android module and was not used here.
+Two editors sat under `/Applications/Unity/Hub/Editor/` on the day this was
+measured; one does now, as the paragraph below records.
 
-**That second editor is now the target** (the owner's ruling of 2026-08-18,
-`../decisions/unity-painter-uses-brg.md` D2). Nothing measured below moves — it
-was all taken on `6000.3.22f1` and is labelled as such — but two things follow
-for whoever builds next. **The Android modules are on 6.3 and not on 6.5**, as
-the paragraph above records, so the first Unity Android player on 6.5 installs
-them. And **6.5 is not on Unity's LTS stream**: the release API returned
-`6000.3` and `6000.0` there on 2026-08-18, which is the same query this note
-uses above to identify an LTS line. The departure from this story's LTS
-requirement is deliberate and the record carries it.
+**That second editor was made the target on 2026-08-18, and both halves of that
+were overtaken on 2026-08-20.** The target was reversed to Unity 6.3 LTS — the
+editor this story installed — by the owner's ruling recorded in
+`../decisions/unity-painter-uses-brg.md` D2, which carries the reasons. And the
+6.5 editor is no longer installed here: `/Applications/Unity/Hub/Editor/` holds
+`6000.3.22f1` alone, by both the Hub's headless listing and the Unity CLI's.
+
+Nothing measured below moves — it was all taken on `6000.3.22f1` and is labelled
+as such. What the reversal changes for whoever builds next is that the Android
+modules recorded above are the ones a Unity Android player uses, rather than a
+set that a second editor would have had to install first.
 
 **The licence is Unity Personal**, an entitlement issued 2026-08-17 to
 `~/Library/Unity/licenses/UnityEntitlementLicense.xml`. It was already in place
 when this story started, and no activation step was needed for any of the
 batchmode runs below.
+
+**Unity CLI 1.0.0-beta.5** was installed on 2026-08-20, after this story, with
+`brew install --cask unity-cli`; the cask links a `unity` binary into
+`/opt/homebrew/bin`. It is experimental, and it is in no `just` recipe and no CI
+job — a convenience on this machine rather than a prerequisite of any gate. Two
+of its properties bear on this note.
+
+It does **not** report the LTS stream. `unity editors --releases --json` returns
+an entry per release carrying some of `version`, `alias`, `architecture`,
+`default` and `location`, and **no** stream field on any of them — so the
+release-API query above stays the way an LTS line is identified here.
+
+**Its listing is not a list of what is installed**, which matters when reading
+the paragraph above off it. The same command returns five releases, one of them
+`6000.5.9f1`; what marks an editor as present is the `location` field, which
+only `6000.3.22f1` carries. `6000.5.9f1` is also a different patch from the
+`6000.5.6f1` that was removed, so the CLI's output cannot answer "is 6.5 still
+installed" at all. The Hub's `editors --installed` answers it directly. And its
+`unity mcp` server and its `unity command` family reach a running Editor only
+through `com.unity.pipeline`, a package installed into a project — with no
+project and no Editor the server handshakes and answers `tools/list` with an
+empty array. Issue #1121 carries that as a note for whoever creates the host
+project.
 
 ## The two Android toolchains, which do not agree
 

@@ -65,6 +65,14 @@ consequence worth stating: **you need no mask concept**, because a mask reuses
 the clip table. That second half is not asserted anywhere; take it from
 `docs/design/dashpaint.md`.
 
+**And the edge is anti-aliased.** A clip contributes coverage that multiplies
+into the shape's own, rather than quantising the edge to whole pixels. A
+hardware scissor rect satisfies neither half: it gives an aliased edge, and for
+a clip box with corner radii it cannot express the shape at all.
+`docs/decisions/clip-edge-semantics.md` is the rule, and it leaves one thing
+open that a new backend will meet — the two shipped painters combine overlapping
+boxes by different functions, and no fixture compares them.
+
 **`RectEntry::opacity` is not optional.** It is the resolved free-path group
 alpha, and a painter must multiply it into the paint alpha. Miss it and every
 partially-transparent free-path group draws at full strength — which no golden
