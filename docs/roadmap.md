@@ -2324,7 +2324,10 @@ payoff was still owed when this was written, because epic #1106 then had two
 open entry conditions — which was the point rather than a qualification of it,
 since the toolchain was ready for the day they lifted. **They lifted on
 2026-08-18**, and that day's ruling also moved the target to Unity 6.5, whose
-editor carries no Android module.
+installed editor carried no Android module — reversed to Unity 6.3 LTS on
+2026-08-20
+([`decisions/unity-painter-uses-brg.md`](decisions/unity-painter-uses-brg.md)
+D2, which carries the reasons).
 
 **One entry condition, owner-supplied**: the `usvg` dependency adopted. The
 licence question that was open when this was proposed is resolved — the front

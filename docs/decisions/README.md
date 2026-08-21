@@ -303,6 +303,11 @@ records below. Per-story decisions land here directly:
   commit resolves subtree clips into a per-rect clip-region table;
   `RectEntry.clip` indexes it and `PaintEntry.clip` is gone (story #97); binds
   every painter and the dirty set.
+- [clip-edge-semantics.md](clip-edge-semantics.md) — **accepted** (2026-08-20,
+  owner's ruling on debt #134): clip coverage is anti-aliased and multiplies
+  into the shape's own, which is what both shipped painters already do; it binds
+  the Unity BRG painter to fold the clip into its instance SDF rather than reach
+  for a scissor rect. Same rule, not proven same numbers — that is issue #828.
 - [masks-and-group-opacity.md](masks-and-group-opacity.md) — masks resolve at
   commit into the clip-region table (a mask stencils its following siblings,
   drawing nothing itself); group opacity splits free (per-rect
@@ -619,11 +624,11 @@ their parent rather than apart from it:
   generation says this frame follows the one on the device (story #585).
 - [unity-painter-uses-brg.md](unity-painter-uses-brg.md) — **accepted**
   (2026-08-18, owner's ruling on issue #171): BatchRendererGroup over
-  GameObject-per-node for the Unity painter, targeting Unity 6.5. Ratified
-  against a fallback ladder rather than against the two conditions the record
-  set for itself, both of which are carried; D3 is the ladder and D4 is the read
-  that selects between its rungs. The minimum package version is left to issue
-  #1125.
+  GameObject-per-node for the Unity painter, targeting Unity 6.3 LTS since
+  2026-08-20, when D2's 6.5 target was reversed. Ratified against a fallback
+  ladder rather than against the two conditions the record set for itself, both
+  of which are carried; D3 is the ladder and D4 is the read that selects between
+  its rungs. The minimum package version is left to issue #1125.
 - [downloaded-raster-needs-no-vector-engine.md](downloaded-raster-needs-no-vector-engine.md)
   — downloaded PNG/WebP is decode → upload → bind through the existing
   image-fill vocabulary, no vector engine involved

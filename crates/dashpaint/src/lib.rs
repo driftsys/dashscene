@@ -1167,6 +1167,17 @@ pub struct ClipBox {
 /// re-deriving them. The box list is kept rather than pre-intersected
 /// because the intersection of two rounded rects is not a rounded rect.
 ///
+/// # The edge a painter must produce
+///
+/// A clip contributes **anti-aliased coverage**, and that coverage
+/// multiplies into the shape's own. A clip does not quantise an edge to
+/// whole pixels and does not replace the shape's anti-aliasing with its
+/// own, so a painter clipping with a hardware scissor rect does not
+/// satisfy this. `docs/decisions/clip-edge-semantics.md` is the rule and
+/// carries what it leaves open — how two overlapping boxes combine is not
+/// settled there, and the two shipped painters use different functions for
+/// it. No fixture has yet shown them producing different pixels.
+///
 /// # A range, not a list (story #578)
 ///
 /// This is `(offset, count)` into the [`ClipTable`]'s one flat box array,

@@ -3018,3 +3018,117 @@ fn a_frosted_node_with_an_out_of_domain_origin_draws_nothing() {
         );
     }
 }
+
+/// Renders through a clip table, which [`render`] cannot — it passes an empty
+/// one. Only the two clip-edge fixtures below need this.
+fn render_clipped(
+    rects: &[RectEntry],
+    paints: &PaintTable,
+    clips: &ClipTable,
+    size: i32,
+) -> Vec<u8> {
+    let mut painter = SkiaPainter::new(size, size);
+    painter.paint(
+        rects,
+        paints,
+        &ImageTable::new(),
+        clips,
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+    painter.rgba_bytes()
+}
+
+/// An opaque green rect at `x = 8`, `y = 12`, 24 tall, of the given width.
+fn clip_fixture_rect(paints: &mut PaintTable, w: f32, clip: ClipIndex) -> RectEntry {
+    let entry = solid_entry(
+        paints,
+        Color {
+            r: 0.0,
+            g: 1.0,
+            b: 0.0,
+            a: 1.0,
+        },
+    );
+    RectEntry {
+        x: 8.0,
+        y: 12.0,
+        w,
+        h: 24.0,
+        paint: paints.push(entry),
+        clip,
+        opacity: 1.0,
+        rotation: 0.0,
+        rotation_anchor: Vec2 { x: 0.0, y: 0.0 },
+    }
+}
+
+/// A clip edge between pixel centres is anti-aliased, not snapped to whole
+/// pixels.
+///
+/// `docs/decisions/clip-edge-semantics.md` is the rule, and until this fixture
+/// nothing enforced it on this painter. The `v03-clips` golden cannot: turning
+/// the `true` in the clip-region `clip_rrect` to `false` moves 0.684 % of that
+/// canvas against a 2 % tolerance, so the golden passes and the harness reports
+/// the difference as accepted anti-aliasing jitter.
+///
+/// The clip's right edge is at x = 40.5, so texel 40 — whose centre is x = 40.5
+/// — is half covered by the clip and fully covered by the shape.
+#[test]
+fn a_clip_edge_between_pixel_centres_is_antialiased() {
+    let mut paints = PaintTable::new();
+    let mut clips = ClipTable::new();
+    let half_covering = clips.push(&[ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 40.5,
+        h: 64.0,
+        corners: CornerRadii::default(),
+    }]);
+    // The shape reaches x = 56, well past the clip, so every bit of partial
+    // coverage at texel 40 comes from the clip.
+    let rects = vec![clip_fixture_rect(&mut paints, 48.0, half_covering)];
+    let rgba = render_clipped(&rects, &paints, &clips, 64);
+
+    let alpha = px(&rgba, 64, 40, 24)[3];
+    assert!(
+        (96..=160).contains(&alpha),
+        "a clip edge at x = 40.5 half-covers texel 40, so alpha should be near \
+         128; got {alpha}. 0 or 255 means the clip was applied without \
+         anti-aliasing, which is the scissor-rect behaviour the record forbids"
+    );
+}
+
+/// Clip coverage multiplies into the shape's own rather than replacing it.
+///
+/// The second half of the rule, and it is independent: a painter that took the
+/// clip's coverage as the result would still show a soft edge and would pass
+/// the fixture above.
+///
+/// Both edges land at x = 40.5, so texel 40 is half covered by each. Multiplied
+/// that is a quarter — alpha near 64. Replacing would leave a half, near 128.
+#[test]
+fn clip_coverage_multiplies_into_the_shape_rather_than_replacing_it() {
+    let mut paints = PaintTable::new();
+    let mut clips = ClipTable::new();
+    let half_covering = clips.push(&[ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 40.5,
+        h: 64.0,
+        corners: CornerRadii::default(),
+    }]);
+    // Width 32.5 from x = 8 puts the shape's own right edge at 40.5 too.
+    let rects = vec![clip_fixture_rect(&mut paints, 32.5, half_covering)];
+    let rgba = render_clipped(&rects, &paints, &clips, 64);
+
+    let alpha = px(&rgba, 64, 40, 24)[3];
+    assert!(
+        (40..=90).contains(&alpha),
+        "two coincident half-covering edges multiply to a quarter, so alpha \
+         should be near 64; got {alpha}. Near 128 is the shape's own coverage \
+         surviving alone — either the clip replaced it instead of multiplying \
+         into it, or the clip snapped to whole pixels and contributed 1.0"
+    );
+}

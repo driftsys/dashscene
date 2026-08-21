@@ -2482,3 +2482,87 @@ fn a_clip_does_not_turn_with_the_node_it_clips() {
          pixels), so the clip assertion above proves nothing",
     );
 }
+
+/// A clip edge between pixel centres is anti-aliased.
+///
+/// `docs/decisions/clip-edge-semantics.md` is the rule. Every other clip
+/// fixture in this file is integer-aligned — `0,0,32,48` and `0,0,64,48` — and
+/// probes deep inside or deep outside, so replacing `clip_coverage`'s
+/// `coverage(d, globals.aa)` with a hard `select(0.0, 1.0, d <= 0.0)` produces
+/// identical bytes at every one of their assertions and the whole regression
+/// tier stays green.
+///
+/// The clip's right edge is at x = 40.5, so texel 40 — centre x = 40.5 — is half
+/// covered by the clip and fully covered by the shape.
+#[test]
+fn a_clip_edge_between_pixel_centres_is_antialiased() {
+    let mut paints = PaintTable::new();
+    let fill = paints.push_solid(Color {
+        r: 0.0,
+        g: 1.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    let mut clips = ClipTable::new();
+    let half_covering = clips.push(&[ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 40.5,
+        h: 48.0,
+        corners: CornerRadii::default(),
+    }]);
+    // The shape reaches x = 56, so all partial coverage at texel 40 is the
+    // clip's.
+    let pixels = draw(
+        &[rect(8.0, 12.0, 48.0, 24.0, fill, half_covering)],
+        &paints,
+        &clips,
+    );
+
+    let alpha = texel(&pixels, 40, 24)[3];
+    assert!(
+        (96..=160).contains(&alpha),
+        "a clip edge at x = 40.5 half-covers texel 40, so alpha should be near \
+         128; got {alpha}. 0 or 255 means the clip was applied without \
+         anti-aliasing, which is the scissor-rect behaviour the record forbids"
+    );
+}
+
+/// Clip coverage multiplies into the shape's own rather than replacing it.
+///
+/// Independent of the fixture above: a painter taking `cover = clip_coverage`
+/// would still show a soft edge there and pass it. Both edges land at x = 40.5,
+/// so texel 40 is half covered by each — multiplied that is a quarter.
+#[test]
+fn clip_coverage_multiplies_into_the_shape_rather_than_replacing_it() {
+    let mut paints = PaintTable::new();
+    let fill = paints.push_solid(Color {
+        r: 0.0,
+        g: 1.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    let mut clips = ClipTable::new();
+    let half_covering = clips.push(&[ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 40.5,
+        h: 48.0,
+        corners: CornerRadii::default(),
+    }]);
+    // Width 32.5 from x = 8 puts the shape's own right edge at 40.5 too.
+    let pixels = draw(
+        &[rect(8.0, 12.0, 32.5, 24.0, fill, half_covering)],
+        &paints,
+        &clips,
+    );
+
+    let alpha = texel(&pixels, 40, 24)[3];
+    assert!(
+        (40..=90).contains(&alpha),
+        "two coincident half-covering edges multiply to a quarter, so alpha \
+         should be near 64; got {alpha}. Near 128 is the shape's own coverage \
+         surviving alone — either the clip replaced it instead of multiplying \
+         into it, or the clip snapped to whole pixels and contributed 1.0"
+    );
+}

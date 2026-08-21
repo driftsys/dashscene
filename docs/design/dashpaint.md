@@ -387,6 +387,14 @@ from. A clipping node does not clip itself — only its descendants; its own
 corner radii still shape its own fill and stroke. The full contract and the
 rejected alternatives are `docs/decisions/resolved-clip-regions-at-commit.md`.
 
+**The edge that intersection produces is specified too.** A clip contributes
+anti-aliased coverage, and that coverage multiplies into the shape's own rather
+than quantising the edge to whole pixels — so a hardware scissor rect satisfies
+neither half, and for a box with corner radii cannot express the shape at all.
+`docs/decisions/clip-edge-semantics.md` is the rule; it leaves open how two
+overlapping boxes combine, where the two shipped painters use different
+functions.
+
 ## Masks and group opacity
 
 Story #44 adds two more constructs a painter cannot be handed directly. A
@@ -453,4 +461,5 @@ silent drop.
   `docs/decisions/paint-entry-composition.md`,
   `docs/decisions/document-paint-pool-and-legacy-paint-field.md`,
   `docs/decisions/resolved-clip-regions-at-commit.md`,
+  `docs/decisions/clip-edge-semantics.md`,
   `docs/decisions/backdrop-blur-is-core-vocabulary.md`.

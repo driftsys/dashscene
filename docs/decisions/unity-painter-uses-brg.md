@@ -1,12 +1,14 @@
 # Unity painter uses BatchRendererGroup over GameObject-per-node
 
-    status   **accepted (2026-08-18, owner's ruling)**. Ratified against a
-             fallback ladder rather than against the two conditions this record
-             originally set: one of them is carried as an assumption the owner
-             is confirming with Unity directly, and the other escapes to a
-             fallback this record already named. Both are stated under "What
-             was carried" below.
-    date     2026-07-13; ratified 2026-08-18
+    status   **accepted (2026-08-18, owner's ruling)**, with **D2's target
+             reversed in place on 2026-08-20** from Unity 6.5 to Unity 6.3 LTS
+             (owner's ruling). Ratified against a fallback ladder rather than
+             against the two conditions this record originally set: one of them
+             is carried as an assumption the owner is confirming with Unity
+             directly, and the other escapes to a fallback this record already
+             named. Both are stated under "What was carried" below.
+    date     2026-07-13; ratified 2026-08-18; D2's target moved from
+             Unity 6.5 to Unity 6.3 LTS on 2026-08-20 (owner's ruling)
     source   docs/technotes/rendering-and-painters.md §10
     scope    the Unity C# package under unity/, and dashpaint-abi, which is the
              C representation of boundary B the package's declarations are held
@@ -41,13 +43,44 @@ directly. It is also the natural endpoint of the Burst and `Unity.Collections`
 choice already made for the C# projection — the `NativeArray` the Burst jobs
 fill **is** the BRG instance buffer.
 
-**D2 — the target is Unity 6.5 (`6000.5.x`).** This is the version the painter
-is to be built against. **No painter has run on it and no performance figure
-comes from it** — no Unity painter exists anywhere, and story #1230's evidence
-was all taken on `6000.3.22f1`. What _has_ been read from the 6.5 editor is its
-shipped metadata: the API facts below and in D3, and the absence of an Android
-module. Reading an assembly is not measuring a painter. It is a deliberate
-departure from the editor that story installed.
+**D2 — the target is Unity 6.3 LTS (`6000.3.x`).** This is the version the
+painter is to be built against. **No painter has run on it and no painter
+performance figure comes from it** — no Unity painter exists anywhere. Story
+#1230's batchmode timings in `docs/technotes/unity-toolchain.md` were taken on
+`6000.3.22f1` and measure the editor's own build and probe path, not a painter.
+What has otherwise been read from an editor is shipped metadata: the API facts
+in D3 and D4. Reading an assembly is not measuring a painter.
+
+**This reverses the `6000.5.x` target ruled on 2026-08-18** (owner's ruling,
+2026-08-20). Three reasons, the first two of which that clause already recorded
+against itself:
+
+- **6.3 is on Unity's LTS stream and 6.5 is not** — the release API returned
+  `6000.3` and `6000.0` there on 2026-08-18. Story #1230 asked for an LTS
+  release and took `6000.3.22f1`; the 6.5 target was a deliberate departure from
+  that requirement, and this withdraws it.
+- **The Android modules are on 6.3**, at
+  `6000.3.22f1/PlaybackEngines/AndroidPlayer`. The 6.5 editor carried none, so
+  the first Unity Android player built on it would have installed them — a cost
+  the Android half of this slice no longer pays.
+
+  Throughout D2 "the target" means the **editor version**. Everywhere else in
+  this record — D4 above all — it means the automotive board, and nothing here
+  discharges a reading D4 requires to be taken on a device.
+- **The 6.5 editor is no longer installed**, so nothing can be re-read from it.
+  `docs/technotes/unity-toolchain.md` owns the machine state and records what is
+  installed on 2026-08-20. Neither reading below is left stranded by that: D3's
+  rung-3 list was **re-taken on `6000.3.22f1` on 2026-08-21** and every API in
+  it is present, by both of the evidence routes D4 already uses — the string
+  heap of the editor's own `UnityEngine.CoreModule.dll`, and the `M:` entries of
+  the `UnityEngine.CoreModule.xml` shipped beside it. D4's own reflection was
+  taken against both editors and so also survives on the target.
+
+**BRG is not what separates these versions**, so D1 does not move.
+`BatchRendererGroup` is present with the same public method set in 6.1, 6.3 and
+6.5 — 6.3 and 6.5 read out of those editors' `UnityEngine.CoreModule.dll`, 6.1
+from Unity's versioned scripting reference. Choosing among them is an LTS and
+platform-support question, not an API-availability one.
 
 **It does not settle the package's minimum version, which is issue #1125's.**
 Epic #1106 recorded on 2026-08-18 that distribution form, minimum Unity version,
@@ -55,22 +88,7 @@ render pipeline, scripting backend, API compatibility level and native-plugin
 layout are all that spike's, which is why `unity/`'s `package.json` carries no
 `unity` field. A target and a floor are different numbers — a package can
 support versions the painter is not developed against — and this clause fixes
-only the first. That story asked for an LTS release and took `6000.3.22f1`,
-Unity 6.3 LTS; Unity's release API on 2026-08-18 returns `6000.3` and `6000.0`
-on the LTS stream and **not** `6000.5`, so 6.5 is a supported release rather
-than an LTS one. Two consequences are recorded rather than left to be
-discovered:
-
-- **The Android modules are installed on 6.3 and not on 6.5.**
-  `6000.3.22f1/PlaybackEngines/AndroidPlayer` exists; the 6.5 editor has no
-  `PlaybackEngines/AndroidPlayer` at all. Whatever work first builds a Unity
-  Android player on 6.5 installs them, and `docs/technotes/unity-toolchain.md`
-  records what 6.3 has.
-- **BRG is not what separates these versions.** `BatchRendererGroup` is present
-  with the same public method set in 6.1, 6.3 and 6.5 — 6.3 and 6.5 read out of
-  the installed editors' `UnityEngine.CoreModule.dll`, 6.1 from Unity's
-  versioned scripting reference. Choosing among them is an LTS and platform-
-  support question, not an API-availability one.
+only the first.
 
 **D3 — the fallback ladder, and the failure mode each rung answers.**
 
@@ -105,14 +123,17 @@ therefore the R-T4 mapping — without BRG's batch and culling machinery.
 `Graphics.RenderMeshInstanced`, `Graphics.RenderMeshIndirect`,
 `Graphics.RenderPrimitives` and its indexed and indirect forms, and
 `CommandBuffer.DrawMeshInstanced`, `DrawMeshInstancedProcedural` and
-`DrawProcedural` are all present in the installed `6000.5.6f1` editor. **Nothing
-is built for rung 3.** It is recorded so that the answer is not improvised under
-pressure if the support question comes back badly.
+`DrawProcedural` are all present in the `6000.5.6f1` editor, read on 2026-08-18
+while it was installed, **and in `6000.3.22f1`, re-read on 2026-08-21** after D2
+moved the target there — the editor's own `UnityEngine.CoreModule.dll` string
+heap and the `M:` entries of the `UnityEngine.CoreModule.xml` beside it agree.
+**Nothing is built for rung 3.** It is recorded so that the answer is not
+improvised under pressure if the support question comes back badly.
 
 **D4 — support is read from Unity, not inferred.**
 `UnityEngine.Rendering.BatchRendererGroup.BufferTarget` is a static property
 returning `UnityEngine.Rendering.BatchBufferTarget`, whose members are, verified
-by reflection against both installed editors:
+by reflection against both editors then installed:
 
     Unknown                            =  0
     UnsupportedByUnderlyingGraphicsApi = -1
@@ -131,9 +152,9 @@ fourth as one it never produces:
 | `Unknown`                            | never returned — see below                |
 
 `Unknown` is documented in `UnityEngine.CoreModule.xml`, which ships beside the
-assembly in both installed editors, as "the default uninitialized value for this
-enum … Unity will never return this, and you will never use it". So it is not an
-escape hatch and nothing should be written against it.
+assembly in both editors then installed, as "the default uninitialized value for
+this enum … Unity will never return this, and you will never use it". So it is
+not an escape hatch and nothing should be written against it.
 
 **The read is only valid with a graphics device, and this is the part that can
 go wrong quietly.** `UnsupportedByUnderlyingGraphicsApi` is documented as "the
