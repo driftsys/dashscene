@@ -34,7 +34,8 @@ namespace Driftsys.Dashscene
         private readonly int _ownerThreadId;
         private FrameLease _lease;
 
-        private static int _abiChecked;
+        private static readonly object AbiGate = new object();
+        private static bool _abiChecked;
 
         /// Creates an empty runtime — no document, no surface.
         ///
@@ -65,20 +66,43 @@ namespace Driftsys.Dashscene
         /// about which half to change.
         public static void EnsureAbiCompatible()
         {
-            if (Interlocked.CompareExchange(ref _abiChecked, 1, 0) != 0)
+            // **A lock, not an interlocked latch, and the latch is set only
+            // after the call returns.** Two defects live in the obvious
+            // version. Setting a flag before calling `ds_abi_version` means any
+            // throw from it — `DllNotFoundException` when no native library is
+            // present, which is this package's SHIPPED state, or
+            // `EntryPointNotFoundException` against a library old enough to
+            // predate the symbol, which is the very mismatch this exists to
+            // catch — leaves the flag set, and every later construction then
+            // skips the handshake entirely. And a compare-and-swap lets a
+            // second thread observe the flag while the first is still inside
+            // the call, so it proceeds against a library whose version has not
+            // been compared yet.
+            lock (AbiGate)
             {
-                return;
-            }
+                if (_abiChecked)
+                {
+                    return;
+                }
 
+                CompareAbiVersion(Native.AbiVersion);
+                _abiChecked = true;
+            }
+        }
+
+        /// The comparison R-E16 requires, without the once-per-process latch.
+        ///
+        /// Separated so `unity/ffi-check` can perform the mismatch that
+        /// requirement's own _Check_ asks for — "build a host against a
+        /// mismatched value and assert it refuses" — which it otherwise could
+        /// not do, because `Native.AbiVersion` is a `const` and a C# compiler
+        /// inlines it at every use site, so no reflection can move it.
+        internal static void CompareAbiVersion(uint packageVersion)
+        {
             var actual = Native.ds_abi_version();
-            if (actual != Native.AbiVersion)
+            if (actual != packageVersion)
             {
-                // Allow a later call to retry rather than reporting success by
-                // silence: the first caller saw the refusal, and a second one
-                // that skipped the check would proceed against a mismatched
-                // library.
-                Interlocked.Exchange(ref _abiChecked, 0);
-                throw new DashsceneAbiMismatchException(Native.AbiVersion, actual);
+                throw new DashsceneAbiMismatchException(packageVersion, actual);
             }
         }
 
@@ -196,10 +220,18 @@ namespace Driftsys.Dashscene
 
         internal void ReleaseLease(int drawn)
         {
-            _lease = null;
-            Check(
-                Native.ds_runtime_release_frame(Handle(), drawn, out _),
-                "ds_runtime_release_frame");
+            // **Clear only after the library has actually released.** Clearing
+            // first and then throwing would leave the managed side believing no
+            // lease is outstanding while the library still holds one — so
+            // `Dispose` would skip its release branch, `ds_runtime_free` would
+            // answer `DsStatus.FrameLeased`, and the runtime would leak.
+            var status = Native.ds_runtime_release_frame(Handle(), drawn, out _);
+            if (status == DsStatus.Ok)
+            {
+                _lease = null;
+            }
+
+            Check(status, "ds_runtime_release_frame");
         }
 
         /// Frees the runtime. Must run on the thread that created it.
@@ -214,25 +246,56 @@ namespace Driftsys.Dashscene
                 return;
             }
 
-            if (_lease != null)
+            DsStatus status;
+            try
             {
-                _lease.Dispose();
+                // **`finally`, because releasing can throw and the free must
+                // still run.** `ds_runtime_release_frame` answering
+                // `DsStatus.Panic` is reachable, and the header's own remedy for
+                // a panic is to free the runtime and make no further calls on
+                // it — which is exactly what an unguarded throw here would skip.
+                if (_lease != null)
+                {
+                    _lease.Dispose();
+                }
+            }
+            finally
+            {
+                status = Native.ds_runtime_free(_handle);
+
+                // **Cleared only when the runtime was actually freed.** Every
+                // status below means it was not, and zeroing the handle anyway
+                // would make the retry this method's own exception message
+                // prescribes hit the `_handle == 0` guard above and do nothing —
+                // turning a reported failure into an unrecoverable leak.
+                if (status == DsStatus.Ok)
+                {
+                    _handle = 0;
+                }
             }
 
-            var status = Native.ds_runtime_free(_handle);
-            _handle = 0;
-
-            // Freeing is the one call where throwing is worse than reporting:
-            // a `using` block that threw here would mask the exception that
-            // caused the unwind. `WrongThread` is the reachable case and it
-            // means a real leak, so it is not swallowed silently either.
-            if (status == DsStatus.WrongThread)
+            if (status == DsStatus.Ok)
             {
-                throw new InvalidOperationException(
-                    $"the runtime was created on managed thread {_ownerThreadId} and disposed on "
-                    + $"{Thread.CurrentThread.ManagedThreadId}. A dashscene runtime is "
-                    + "thread-affine, so it has NOT been freed. Dispose it on its own thread.");
+                return;
             }
+
+            // Freeing is the one call where throwing is worse than reporting,
+            // so this reports rather than propagating a `DashsceneException`: a
+            // `using` block that threw here would mask the exception that caused
+            // the unwind. But it does not go silent. Every status that reaches
+            // this point means the runtime was NOT freed — `WrongThread` from a
+            // foreign thread, `FrameLeased` from a release this class failed to
+            // complete, `BadHandle` from a double dispose — and a silent leak is
+            // what this type exists to avoid.
+            var detail = status == DsStatus.WrongThread
+                ? $"it was created on managed thread {_ownerThreadId} and disposed on "
+                  + $"{Thread.CurrentThread.ManagedThreadId}; a dashscene runtime is "
+                  + "thread-affine, so dispose it on its own thread"
+                : DashsceneException.LastMessage();
+
+            throw new InvalidOperationException(
+                $"ds_runtime_free answered {status}, so the runtime has NOT been freed"
+                + (detail.Length == 0 ? "." : $": {detail}."));
         }
 
         private ulong Handle()

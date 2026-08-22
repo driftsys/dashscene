@@ -51,6 +51,10 @@ Console.WriteLine($"ffi-check: fixture {fixture}");
 var failures = new List<string>();
 var checks = 0;
 
+// Captured by the NoDocument check and compared by the Open check: two
+// different failures must not carry the same text.
+var NoDocumentDetail = string.Empty;
+
 void Check(string what, Action body)
 {
     checks++;
@@ -95,23 +99,57 @@ Check("every declared entry point resolves in the library", () =>
         .Where(m => m.GetCustomAttribute<DllImportAttribute>() != null)
         .ToArray();
 
-    // The header declares fourteen. A gate over an empty or shrunken set would
-    // pass having read almost nothing, so the count is asserted rather than
-    // assumed — re-derive it from `include/dashscene.h` if it moves.
+    // **The SET, not the count.** A count assertion pins cardinality and not
+    // identity, so deleting one declaration and adding a duplicate binding for
+    // another entry point keeps it at fourteen, resolves, and passes — leaving
+    // the deleted one bound by nothing. That mutation was run against the count
+    // form of this check and reported all thirteen green.
+    var expected = new SortedSet<string>(StringComparer.Ordinal)
+    {
+        "ds_abi_version",
+        "ds_last_error_message",
+        "ds_runtime_acquire_frame",
+        "ds_runtime_attach_surface",
+        "ds_runtime_detach_surface",
+        "ds_runtime_draw",
+        "ds_runtime_free",
+        "ds_runtime_load_document",
+        "ds_runtime_load_document_mapped",
+        "ds_runtime_load_document_with_text",
+        "ds_runtime_new",
+        "ds_runtime_release_frame",
+        "ds_runtime_resize",
+        "ds_runtime_tick",
+    };
+
+    var declared = new SortedSet<string>(
+        declarations.Select(m => m.GetCustomAttribute<DllImportAttribute>().EntryPoint ?? m.Name),
+        StringComparer.Ordinal);
+
+    var missing = expected.Except(declared).ToArray();
+    var unexpected = declared.Except(expected).ToArray();
     Expect(
-        declarations.Length == 14,
-        $"{declarations.Length} declarations carry [DllImport]; the C ABI has 14");
+        missing.Length == 0 && unexpected.Length == 0,
+        $"declarations do not match the C ABI. undeclared: [{string.Join(", ", missing)}]; "
+        + $"not in the ABI: [{string.Join(", ", unexpected)}]");
 
     var handle = NativeLibrary.Load(libPath);
-    foreach (var declaration in declarations)
+    foreach (var symbol in declared)
     {
-        var symbol = declaration.GetCustomAttribute<DllImportAttribute>().EntryPoint
-                     ?? declaration.Name;
         if (!NativeLibrary.TryGetExport(handle, symbol, out _))
         {
             throw new Exception($"the library exports no symbol named {symbol}");
         }
     }
+
+    // **What this still does not catch, stated rather than implied:** the
+    // library gaining a FIFTEENTH entry point that nothing declares. The set
+    // above is this gate's own copy of the contract, so it moves only when a
+    // person edits it. Catching that direction needs the library's export table
+    // enumerated, which .NET cannot do portably — `NativeLibrary` resolves a
+    // name you supply and cannot list what is there. `just c-abi` compiling
+    // `tests/abi.c` against the committed header is what holds the header to
+    // the library; this holds the C# to the header.
 });
 
 // ---------------------------------------------------------------- versioning
@@ -125,6 +163,34 @@ Check("ds_abi_version resolves and matches the package's DS_ABI_VERSION", () =>
 });
 
 Check("the handshake accepts a matching library (R-E16)", DashsceneRuntime.EnsureAbiCompatible);
+
+Check("a MISMATCHED version is refused, reporting both numbers (R-E16)", () =>
+{
+    // R-E16's own check is "build a host against a mismatched value and assert
+    // it refuses". `Native.AbiVersion` is a `const` and the compiler inlines it
+    // at every use site, so no reflection can move it — `CompareAbiVersion`
+    // exists as the seam that makes this performable, and production reaches it
+    // through `EnsureAbiCompatible`.
+    var wrong = DashsceneRuntime.PackageAbiVersion + 1;
+    try
+    {
+        var compare = typeof(DashsceneRuntime).GetMethod(
+            "CompareAbiVersion", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new Exception("DashsceneRuntime.CompareAbiVersion is gone");
+        compare.Invoke(null, new object[] { wrong });
+        throw new Exception($"a package claiming version {wrong} was accepted");
+    }
+    catch (TargetInvocationException e) when (e.InnerException is DashsceneAbiMismatchException m)
+    {
+        // Both numbers, as fields rather than only inside the message —
+        // "mismatch" without them tells a customer nothing about which half to
+        // change.
+        Expect(m.Expected == wrong, $"Expected was {m.Expected}, not {wrong}");
+        Expect(
+            m.Actual == DashsceneRuntime.LibraryAbiVersion,
+            $"Actual was {m.Actual}, not the library's {DashsceneRuntime.LibraryAbiVersion}");
+    }
+});
 
 // ------------------------------------------------------- lifetime and errors
 
@@ -145,10 +211,14 @@ Check("a tick with no document is NoDocument, and carries a message", () =>
     catch (DashsceneException e)
     {
         Expect(e.Status == DsStatus.NoDocument, $"status was {e.Status}");
-        // R-E16's sibling concern: a wrapper that returns the status without
-        // reading `ds_last_error_message` discards the only description of the
-        // failure. This asserts the channel is actually wired.
+        // A wrapper that returns the status without reading
+        // `ds_last_error_message` discards the only description of the failure.
+        // **Non-empty is not enough**: returning a constant string from
+        // `LastMessage` satisfies that and never calls the library at all, and
+        // that mutation was run and passed. Two different failures must
+        // therefore produce two different messages, which a constant cannot.
         Expect(e.Detail.Length > 0, "ds_last_error_message returned nothing for a failed call");
+        NoDocumentDetail = e.Detail;
     }
 });
 
@@ -163,6 +233,10 @@ Check("bytes that are not a .dsb are Open", () =>
     catch (DashsceneException e)
     {
         Expect(e.Status == DsStatus.Open, $"status was {e.Status}");
+        Expect(
+            e.Detail.Length > 0 && e.Detail != NoDocumentDetail,
+            "two different failures produced the same message, so the detail is not "
+            + $"the library speaking: '{e.Detail}'");
     }
 });
 
@@ -223,10 +297,60 @@ Check("a real document loads, and its frame's strides all match (R-E17)", () =>
         }
     }
 
-    Expect(populated >= 2, $"only {populated} arrays carried rows; the fixture proves too little");
+    // **Named, not a floor.** `v03-paint.dsb` populates eleven of the
+    // nineteen; a floor of two would let nine go empty and still read green, so
+    // a fixture regression that emptied them would be invisible.
+    Expect(
+        populated == 11,
+        $"{populated} arrays carried rows; v03-paint.dsb populates 11. If the fixture changed "
+        + "deliberately, move this number with it rather than loosening it.");
 });
 
-Check("a second acquire is FrameLeased, and the first lease survives it", () =>
+Check("a MUTATED row size makes the host refuse the frame (R-E17)", () =>
+{
+    // R-E17's own check is "mutate a row type's size and assert the host
+    // refuses rather than drawing". `RowSizes` is a private static readonly
+    // array — the FIELD is readonly, the array's contents are not — so the
+    // mutation happens in the shipped code path with no test-only hook in it.
+    var field = typeof(FrameLease).GetField("RowSizes", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new Exception("FrameLease.RowSizes is gone; this check mutates it directly");
+    var rows = ((string Name, int Size)[])field.GetValue(null)!;
+    var original = rows[0];
+
+    rows[0] = (original.Name, original.Size + 4);
+    try
+    {
+        using var runtime = new DashsceneRuntime();
+        runtime.LoadDocument(File.ReadAllBytes(fixture));
+
+        try
+        {
+            runtime.AcquireFrame();
+            throw new Exception("a frame with a mismatched row size was accepted");
+        }
+        catch (DashsceneStrideMismatchException e)
+        {
+            Expect(e.Array == original.Name, $"blamed {e.Array}, not {original.Name}");
+            Expect(e.Expected == original.Size + 4, $"Expected was {e.Expected}");
+            Expect(e.Actual == original.Size, $"Actual was {e.Actual}, not {original.Size}");
+        }
+
+        // **The lease must have been released before the throw.** Otherwise a
+        // version mismatch would leave the lease outstanding and refuse every
+        // later tick for the life of the runtime — turning a diagnosable
+        // mismatch into a runtime that never advances again. A successful tick
+        // is what proves it.
+        Expect(!runtime.HasOutstandingLease, "a refused frame left the lease outstanding");
+        rows[0] = original;
+        runtime.Tick(0.016f);
+    }
+    finally
+    {
+        rows[0] = original;
+    }
+});
+
+Check("a second acquire is refused with FrameLeased", () =>
 {
     using var runtime = new DashsceneRuntime();
     runtime.LoadDocument(File.ReadAllBytes(fixture));
@@ -234,7 +358,14 @@ Check("a second acquire is FrameLeased, and the first lease survives it", () =>
 
     var status = InvokeRaw("ds_runtime_acquire_frame", HandleOf(runtime));
     Expect(status == DsStatus.FrameLeased, $"status was {status}");
-    Expect(lease.Frame.Rects.Ptr != IntPtr.Zero, "the live frame's pointers were cleared");
+    Expect(runtime.HasOutstandingLease, "the runtime forgot its outstanding lease");
+
+    // **The header's "DS_FRAME_LEASED leaves *out exactly as you passed it in"
+    // guarantee is NOT covered here**, and an assertion on `lease.Frame` would
+    // not cover it either: `DsFrame` is a struct, `FrameLease.Frame` returns a
+    // copy, and `InvokeRaw` hands the library a freshly boxed frame — so no
+    // library behaviour can reach the lease's own. The Rust suite pins it, in
+    // `a_second_acquire_is_refused_without_touching_the_live_frame`.
 });
 
 Check("a tick under an outstanding lease is FrameLeased", () =>
@@ -267,10 +398,16 @@ Check("disposing a runtime with a lease outstanding still frees it", () =>
     var runtime = new DashsceneRuntime();
     runtime.LoadDocument(File.ReadAllBytes(fixture));
     runtime.AcquireFrame();
+
+    // **The runtime's OWN handle, captured before the dispose.** Ticking a
+    // literal 0 asserts the library's null-handle path instead, which answers
+    // NullArgument whatever Dispose did — so removing the lease release from
+    // Dispose left the runtime unfreed and that form still reported green.
+    var handle = HandleOf(runtime);
     runtime.Dispose();
 
-    var status = InvokeRaw("ds_runtime_tick", 0UL, 0.016f);
-    Expect(status == DsStatus.NullArgument, $"a zero handle gave {status}");
+    var status = InvokeRaw("ds_runtime_tick", handle, 0.016f);
+    Expect(status == DsStatus.BadHandle, $"the retired handle gave {status}");
 });
 
 // ------------------------------------------------------------------- reflection helpers

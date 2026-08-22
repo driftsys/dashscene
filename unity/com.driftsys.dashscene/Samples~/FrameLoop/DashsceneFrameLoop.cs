@@ -176,7 +176,14 @@ namespace Driftsys.Dashscene.Samples
             }
 
             dt = _sinceCommit;
-            _sinceCommit = 0f;
+
+            // **Subtract the period; do not reset to zero.** Resetting discards
+            // the overshoot every cycle, so any rate that does not divide the
+            // frame rate runs slower than configured — at 60 Hz a requested
+            // 16 Hz commits on a constant 4-frame interval, which is 15 Hz, and
+            // 25 Hz becomes 20. Subtracting produces the alternating cadence
+            // the warning below describes, which averages the requested rate.
+            _sinceCommit -= period;
             return true;
         }
 

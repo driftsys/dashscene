@@ -65,14 +65,54 @@ namespace Driftsys.Dashscene
         }
 
         /// The arrays. Valid until this lease is disposed.
-        public DsFrame Frame => _frame;
+        ///
+        /// **Refused once disposed.** Every pointer in the frame is invalid the
+        /// moment the lease ends, and the next commit replaces the tables they
+        /// point into — so handing them out afterwards is the unreadable
+        /// failure the lease exists to convert into a reportable one. This is
+        /// the guard `DashsceneRuntime.Handle` already applies to a freed
+        /// runtime; a stray read from a worker that outlived the dispose is the
+        /// case this type's own remarks warn about.
+        public DsFrame Frame
+        {
+            get
+            {
+                ThrowIfReleased();
+                return _frame;
+            }
+        }
 
         /// The commit this frame is. Compare only within one document.
-        public ulong Generation => _frame.Generation;
+        public ulong Generation
+        {
+            get
+            {
+                ThrowIfReleased();
+                return _frame.Generation;
+            }
+        }
 
         /// Discard every cached per-rect thing you hold: this frame's rect
         /// indices do not name what the last one's did.
-        public bool DocumentReplaced => _frame.DocumentReplacedFlag;
+        public bool DocumentReplaced
+        {
+            get
+            {
+                ThrowIfReleased();
+                return _frame.DocumentReplacedFlag;
+            }
+        }
+
+        private void ThrowIfReleased()
+        {
+            if (_released)
+            {
+                throw new ObjectDisposedException(
+                    nameof(FrameLease),
+                    "the lease has ended, so every pointer in this frame is invalid. Acquire "
+                    + "another frame rather than holding one past its release.");
+            }
+        }
 
         /// Say that this frame was painted, so the commit is marked shown and a
         /// settled scene stops reporting `advanced`.
@@ -83,6 +123,11 @@ namespace Driftsys.Dashscene
         /// on its own, because releasing is mandatory where painting is not.
         public void MarkDrawn()
         {
+            // Refused after release rather than ignored: the release has already
+            // told the library whether the frame was drawn, so a late call
+            // cannot take effect and silently dropping it would leave a settled
+            // scene reporting that it still has something worth drawing.
+            ThrowIfReleased();
             _drawn = 1;
         }
 
