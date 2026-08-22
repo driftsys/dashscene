@@ -940,6 +940,56 @@ jobs:
       - run: dotnet format unity/abi-check --verify-no-changes
       - run: just unity-abi
 
+  unity-ffi:
+    # The UPM package's C# P/Invoke declarations, executed against the
+    # `dashscene-ffi` build they declare (story #1121).
+    #
+    # **A different surface from `unity-abi`.** That job compares boundary B's
+    # value types against `dashpaint-abi`; this one loads the C ABI and calls it.
+    # Until this job, nothing compiled a C# P/Invoke against
+    # `crates/dashscene-ffi/include/dashscene.h` at all, which is item 2 of
+    # issue #1266.
+    #
+    # **No Unity editor, and no plugin layout.** The library is the cdylib this
+    # run builds, resolved by an explicit path, so nothing here depends on where
+    # a shipped library sits.
+    #
+    # It runs the recipe rather than restating it, on the rule `wasm-gates`,
+    # `android-build` and `unity-abi` already state: a second copy of the
+    # commands in YAML drifts against the justfile.
+    #
+    # Compile-heavy: skipped when the diff is documentation only, on the same
+    # reading of `scripts/is-code-change` that `unity-abi` records — a change
+    # under `unity/` is code, so editing a declaration alone still runs this.
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true'
+    name: unity-ffi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # **`rust-cache` here and not on `unity-abi`**, and the difference is the
+      # dependency graph rather than a preference. `dashpaint-abi` depends only
+      # on `dashpaint`, which declares no dependencies, so that job had no
+      # third-party artifact for a cache to hold. `dashscene-ffi` pulls
+      # `dashscene-core`, `dashbuf` and the painter's `wgpu` stack, which is the
+      # compile a cache is for.
+      - uses: Swatinem/rust-cache@v2
+      # Needed because `dashscene-ffi` depends on `dashbuf` directly — the same
+      # reason `android-build` carries this step.
+      - uses: ./.github/actions/install-flatc
+      - uses: extractions/setup-just@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      # `dotnet format` before the check, on the rule every other language here
+      # follows. The package's own sources are covered by `unity-abi`'s pass
+      # over `unity/abi-check`, which compiles `BoundaryB.cs`; this pass covers
+      # the rest of `Runtime/` and `ffi-check` itself, both of which that
+      # project does not compile.
+      - run: dotnet format unity/ffi-check --verify-no-changes
+      - run: just unity-ffi
+
   android-build:
     # Compile-heavy: skipped when the diff is documentation only
     # (see the changes job's detect step).
@@ -1484,7 +1534,8 @@ jobs:
     # (docs/decisions/house-style.md). "skipped" is accepted: convco only runs on
     # pull requests, deno only when importers/figma/ changed, and calibration
     # only when the packer paths changed (docs/decisions/test-tiers.md).
-    # clippy, test, demo-build, wasm-build, wasm-gates, unity-abi, android-build,
+    # clippy, test, demo-build, wasm-build, wasm-gates, unity-abi, unity-ffi,
+    # android-build,
     # atlas-repro, render-oracle, exit-gate-tests and exit-gate all skip when
     # the diff is documentation only, which also skips deno through its
     # dependency on wasm-build. The list is every job carrying
@@ -1504,6 +1555,7 @@ jobs:
         wasm-build,
         wasm-gates,
         unity-abi,
+        unity-ffi,
         android-build,
         convco,
         secrets,

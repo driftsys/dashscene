@@ -44,6 +44,10 @@ directly:
   instance buffer as the painter's output, the four-storage-buffer wall that
   shaped the paint heap, atlas residency, layers and the backdrop blur, and the
   four-layer verification net (v0.15, epic #569).
+- [unity-csharp-host.md](unity-csharp-host.md) — the C# host on the C ABI:
+  P/Invoke over all fourteen entry points, the thread-affine managed lifetime,
+  the frame lease and its stride check, and why the frame loop is a sample
+  rather than `Runtime/` code (v0.21, story #1121).
 - [host-integration.md](host-integration.md) — the two integration crates,
   `dashscene-web` and `dashscene-desktop`: the five pieces an embedder must
   have, the byte-range and mapped load paths, the two frame loops, the published

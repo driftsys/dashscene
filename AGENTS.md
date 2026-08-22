@@ -150,9 +150,11 @@ corpus + Figma fixture captures), `goldens/` (CI golden images + diff tooling),
 `demo/` (the windowed showcase host — the window, the event loop and the frame
 loop, landed at v0.14), `demo-web/` (the same showcase in a browser — a canvas,
 `requestAnimationFrame`, and a `.dsb` fetched by byte range, landed at v0.15),
-and `unity/` (the UPM package and the .NET check that holds its C# declarations
-of boundary B to the Rust layouts — declarations only, no painter and no host,
-landed at v0.21 by story #1239).
+and `unity/` (the UPM package and three .NET checks over it — boundary B's
+declarations against the Rust layouts, the package against netstandard2.1, and
+its P/Invoke declarations executed against `dashscene-ffi`. The package landed
+at v0.21 by story #1239 and gained the C# host at story #1121; it still carries
+no painter and no native library).
 
 Six of those directories hold workspace members that are never published:
 `demo/`, `demo-web/` (the browser host — a canvas, the lean painter, and a
@@ -215,6 +217,32 @@ total, nineteen of them the crates above.
                       type that fits inside existing padding, since
                       `abi_surface!`'s member lists are hand-written (issue
                       #1252). See `unity/abi-check/Program.cs`
+    just unity-ffi    the package's C# P/Invoke declarations, executed against
+                      the `dashscene-ffi` cdylib this run builds. A DIFFERENT
+                      surface from `unity-abi`, not a second opinion on it:
+                      that recipe compares boundary B's value types against
+                      `dashpaint-abi`, and until story #1121 nothing compiled a
+                      C# P/Invoke against `include/dashscene.h` at all (issue
+                      #1266 item 2). It checks: the declared entry
+                      points against the ABI's named SET — .NET binds a
+                      `DllImport` lazily, so declaring one nothing calls would
+                      gate nothing, and a count would miss a delete-and-
+                      duplicate — the `ds_abi_version` handshake in both
+                      directions, statuses produced by real calls rather
+                      than read out of the header, every array's
+                      `DsSlice::stride`
+                      against the package's own row size, and the commit
+                      pacer's cadence and time conservation. **Two perform the mutation
+                      their requirement's own check asks for**, R-E16's and
+                      R-E17's, rather than a developer doing it once by
+                      hand. **Needs no Unity editor and no plugin layout**: the
+                      library is resolved by explicit path, so nothing here
+                      depends on where a shipped one sits. Needs the .NET SDK,
+                      so it is outside `check`; CI's `unity-ffi` job runs
+                      exactly it. What it cannot see: both halves come from one
+                      tree, so it observes only a disagreement this repository
+                      already contains — a stale shipped binary is
+                      `DsSlice::stride`'s job at run time
     just secrets      gitleaks over HEAD and over history, plus a pattern-grep
                       backstop over every object git would push. Unreachable
                       objects are deliberately out of scope — see the recipe.
@@ -465,8 +493,8 @@ as three tiers, so "tests pass" is no longer a claim about all of it:
   When the diff is documentation only — every changed file is Markdown under
   `docs/` or Markdown at the repository root — `test`, `clippy`, `demo-build`,
   `wasm-build`, `wasm-gates`, `android-build`, `atlas-repro`, `render-oracle`,
-  `exit-gate-tests` and `exit-gate` all skip, and `deno` skips with them. Read
-  the individual jobs to see which tiers executed
+  `exit-gate-tests`, `exit-gate`, `unity-abi` and `unity-ffi` all skip, and
+  `deno` skips with them. Read the individual jobs to see which tiers executed
   (`docs/decisions/test-tiers.md`).
 
 Branch workflow — the definition of done for every pull request against this

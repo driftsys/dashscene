@@ -87,9 +87,10 @@ It is stated there once rather than summarised here as well.
 
 ## Consequences
 
-- **R-E2 is unmet on `main`** and closing it is story #1121's, which is the
-  first story that installs the package into a project and the first that adds a
-  native library whose settings exist only in a `.meta`.
+- **R-E2 was unmet on `main`** and story #1121 closed it — the first story that
+  makes the package installable at all. It adds **no** native library: R-E3,
+  R-E18 and R-E21 stay unmet, so the `.meta` settings a plugin needs are still
+  unexercised, and story #1122 or a release is where they arrive.
 - **GUID stability becomes an obligation at story #1122**, when materials and
   shaders arrive — those genuinely are GUID-referenced. A regenerated GUID
   breaks every reference, so the committed values are permanent once published.

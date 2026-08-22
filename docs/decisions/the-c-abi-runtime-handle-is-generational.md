@@ -78,15 +78,17 @@ between threads — is additive; narrowing after a host relies on it is not.
 
 ## Why now, and not at v1
 
-**Two consumers hold the handle today**: the JNI layer in
-`crates/dashscene-android`, which is Rust, and
-`crates/dashscene-ffi/tests/abi.c`, which is this repository's own conformance
-test. Every other match for `ds_runtime_` in the tree is a comment.
+**Three consumers hold the handle**: the JNI layer in
+`crates/dashscene-android`, which is Rust; `crates/dashscene-ffi/tests/abi.c`,
+this repository's own conformance test; and since story #1121 the Unity C# host
+under `unity/com.driftsys.dashscene/Runtime/`, which stores it as
+`DashsceneRuntime._handle`. Re-derive with `grep -rl ds_runtime_` rather than
+trusting this list, which has been stale once.
 
-Story #1121 writes the Unity C# host on this slice, and it is **the first
-consumer outside this repository's control**. iOS follows. `DS_ABI_VERSION`
-moves either way; the question is only how many hosts pay, and the answer is
-smallest now.
+The C# host is **not** outside this repository's control — the package is sited
+here (`unity-package-sited-in-this-repository.md`), so all three move together.
+iOS in v1 is the first that will not. `DS_ABI_VERSION` moves either way; the
+question is only how many hosts pay, and the answer is smallest now.
 
 **It therefore lands before story #859**, which adds data-plane entry points:
 written after this they take a handle by construction, written before it they

@@ -146,11 +146,12 @@ Not built:
 
 - **The Unity painter.** `crates/dashpaint-abi` holds the `extern "C"` surface
   that keeps boundary B representable from C#, and the build enforces it; the
-  painter itself and the C# host are not written. The two rulings of 2026-08-17
-  are carried out (issue #1239): the C# package is sited in this repository
-  under `unity/`, where it declares the boundary-B value types and
-  `unity/abi-check` holds those declarations to the Rust layouts on every pull
-  request, and this crate carries the name `dashpaint-abi`
+  painter itself is not written; the C# host landed at story #1121 and draws
+  nothing. The two rulings of 2026-08-17 are carried out (issue #1239): the C#
+  package is sited in this repository under `unity/`, where it declares the
+  boundary-B value types and `unity/abi-check` holds those declarations to the
+  Rust layouts on any pull request whose diff is not documentation-only, and
+  this crate carries the name `dashpaint-abi`
   (`docs/decisions/unity-package-sited-in-this-repository.md`,
   `docs/decisions/crate-name-map.md`).
 - **The umbrella crate.** `crates/dashscene` is a stub; code in this repository
