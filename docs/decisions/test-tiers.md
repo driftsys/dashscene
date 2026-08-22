@@ -541,15 +541,16 @@ ever write, so sharing would leave that leg permanently cold rather than warm.
 
 Since 2026-08-01 the `test` job also skips entirely when the diff is
 documentation only, together with `clippy`, `demo-build`, `wasm-build`,
-`wasm-gates`, `android-build`, `atlas-repro`, `render-oracle`, `exit-gate-tests`
-and `exit-gate` — every job carrying `needs.changes.outputs.code == 'true'`. The
-`changes` job decides this by asking whether every changed file is Markdown
-under `docs/` or Markdown at the repository root. `fmt`, `prim`, `secrets` and
-`audit` stay unconditional, and `convco` runs on every pull request: a
-documentation-only diff still has to be formatted and linted, its commit
-messages still have to lint, and it still must not publish a credential. `audit`
-is unconditional for a different reason — it fails on a newly published advisory
-against a dependency that did not change, so no path filter can predict it.
+`wasm-gates`, `android-build`, `atlas-repro`, `render-oracle`, `unity-abi`,
+`unity-ffi`, `exit-gate-tests` and `exit-gate` — every job carrying
+`needs.changes.outputs.code == 'true'`. The `changes` job decides this by asking
+whether every changed file is Markdown under `docs/` or Markdown at the
+repository root. `fmt`, `prim`, `secrets` and `audit` stay unconditional, and
+`convco` runs on every pull request: a documentation-only diff still has to be
+formatted and linted, its commit messages still have to lint, and it still must
+not publish a credential. `audit` is unconditional for a different reason — it
+fails on a newly published advisory against a dependency that did not change, so
+no path filter can predict it.
 
 Two properties of that detector are deliberate. It reports "code changed" on
 every path except a successfully read documentation-only diff, so an empty diff,

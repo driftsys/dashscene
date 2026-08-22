@@ -76,10 +76,14 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
 6. Open a PR — an ordinary one, not a draft. CI runs the same gates (`fmt`,
    `prim`, `clippy`, `test`, `convco`, `audit`, `secrets`) plus `demo-build`,
    `wasm-build`, `wasm-gates` (everything compiled for
-   `wasm32-unknown-unknown`), `android-build`, `render-oracle`, the two
-   `exit-gate` jobs, the `deno` and `calibration` jobs, and the `atlas-repro`
-   job (byte-reproducibility of the glyph-atlas pipeline, with a cached
+   `wasm32-unknown-unknown`), `android-build`, `render-oracle`, `unity-abi` and
+   `unity-ffi` (the C# package's declarations against the Rust build, and its
+   P/Invoke declarations executed against `dashscene-ffi`), the two `exit-gate`
+   jobs, the `deno` and `calibration` jobs, and the `atlas-repro` job
+   (byte-reproducibility of the glyph-atlas pipeline, with a cached
    `msdf-atlas-gen` build), aggregated into a single required `ci` check.
+   Re-derive the list from `.github/workflows/ci.yml`'s `ci` job rather than
+   trusting this sentence.
 
    The compile and test jobs are gated on whether the diff touches code, and
    `deno` and `calibration` on path filters, so a documentation-only change

@@ -19,6 +19,15 @@
          it was added because the first version of this file claimed this
          property closed that hazard and it does not. -->
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- The asmdef sets `allowUnsafeCode: true` (R-E13, forced by
+         `BatchCullingOutputDrawCommands`'s raw pointer fields), so Unity will
+         compile `Runtime/` with unsafe blocks enabled and this project must
+         too. Without it the first `unsafe` member story #1122 adds compiles in
+         Unity and fails here with CS0227 — this project holding the package to
+         a stricter contract than the one it ships into, which is exactly what
+         it must not do. Measured: a trivial `unsafe` member reproduces CS0227
+         with this line removed. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Same reason `AbiCheck.csproj` sets it: this project exists to detect
          drift, and a declaration the compiler is unsure about is drift. -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>

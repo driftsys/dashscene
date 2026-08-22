@@ -228,8 +228,10 @@ measured (epic #476), and the browser target is WebGPU only.
   `dashpaint-abi` holding the gate that keeps boundary B C-representable. **The
   package exists and holds neither**: story #1239 created `unity/` with the C#
   declarations of the boundary-B value types and the check that holds them to
-  the Rust layouts, and no painter and no producer front end are written. Bound
-  by G2 (multiple render backends) and R3 (GPU is the target's bottleneck) in
+  the Rust layouts, story #1121 added the C# host on the C ABI and a second
+  check that executes it, and no painter and no producer front end are written.
+  Bound by G2 (multiple render backends) and R3 (GPU is the target's bottleneck)
+  in
   [01-goals-and-requirements.md](../specification/01-goals-and-requirements.md);
   put in a separate repo by `docs/archive/2026-07-14-scope-decisions.md` §5,
   which deferred it to v1; it is v0.21 since 2026-08-12, and the separate-repo

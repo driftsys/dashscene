@@ -2,11 +2,19 @@
   "name": "com.driftsys.dashscene",
   "version": "0.0.0",
   "displayName": "dashscene",
-  "description": "The C# side of dashscene's painter boundary. Declarations only: this package holds the boundary-B value types and no painter, no host and no native library. See docs/roadmap.md for the slice that adds them.",
+  "description": "The C# side of dashscene. The boundary-B value types, and the host that sits on the C ABI: version negotiation, runtime lifetime, document load, the tick and the committed frame. No painter and no native library yet. See docs/roadmap.md for the slices that add them.",
   "author": {
     "name": "driftsys",
     "url": "https://github.com/driftsys/dashscene"
   },
   "license": "Apache-2.0",
-  "hideInEditor": false
+  "unity": "6000.3",
+  "hideInEditor": false,
+  "samples": [
+    {
+      "displayName": "Frame Loop",
+      "description": "A MonoBehaviour that loads a .dsb, ticks it, and takes each committed frame. The painter that draws those tables is story #1122.",
+      "path": "Samples~/FrameLoop"
+    }
+  ]
 }

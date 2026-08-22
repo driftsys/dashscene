@@ -49,3 +49,7 @@ unity/abi-check/obj/
 # gate, for the same reason.
 unity/package-compat/bin/
 unity/package-compat/obj/
+# And for `unity/ffi-check` (story #1121), which executes the package's P/Invoke
+# declarations against dashscene-ffi, for the same reason.
+unity/ffi-check/bin/
+unity/ffi-check/obj/
