@@ -410,6 +410,57 @@ Check("disposing a runtime with a lease outstanding still frees it", () =>
     Expect(status == DsStatus.BadHandle, $"the retired handle gave {status}");
 });
 
+// ------------------------------------------------------------------ commit pacing
+
+Check("a reduced commit rate averages the rate that was asked for", () =>
+{
+    // The cadence claim in CommitPacer's own remarks and in issue #851: at
+    // 60 Hz a 16 Hz commit lands on 4, 4, 4, 3 frames alternating. Resetting
+    // the accumulator instead of subtracting the period gives a constant
+    // 4-frame interval — 15 Hz, and never the 4,4,4,3 pattern — which is what
+    // this pins. Nothing else in the tree compiles this arithmetic.
+    var intervals = Cadence(60, 16, 60);
+    Expect(
+        intervals.Take(4).SequenceEqual(new[] { 4, 4, 4, 3 }),
+        $"the first four intervals were [{string.Join(", ", intervals.Take(4))}], not [4, 4, 4, 3]");
+
+    // 25 Hz on a 60 Hz display: 2/3 alternation averaging the requested rate.
+    var quarter = Cadence(60, 25, 60);
+    var mean = 60.0 / quarter.Average();
+    Expect(Math.Abs(mean - 25.0) < 0.5, $"25 Hz on a 60 Hz display averaged {mean:F2} Hz");
+
+    // A divisor is unaffected either way, which is why the defect hid.
+    Expect(Cadence(60, 20, 60).All(i => i == 3), "20 Hz on 60 Hz was not a flat 3-frame interval");
+});
+
+static List<int> Cadence(int refreshHz, int commitHz, int frames)
+{
+    var pacer = new CommitPacer(commitHz);
+    var delta = 1f / refreshHz;
+    var intervals = new List<int>();
+    var since = 0;
+    for (var i = 0; i < frames; i++)
+    {
+        since++;
+        if (pacer.ShouldCommit(delta, out _))
+        {
+            intervals.Add(since);
+            since = 0;
+        }
+    }
+
+    return intervals;
+}
+
+Check("NearestDivisor advises a rate that divides, or leaves it alone", () =>
+{
+    Expect(CommitPacer.NearestDivisor(60, 16) == 15, "60/16 should advise 15");
+    Expect(CommitPacer.NearestDivisor(60, 25) == 20, "60/25 should advise 20");
+    Expect(CommitPacer.NearestDivisor(60, 20) == 20, "a divisor must be left alone");
+    Expect(CommitPacer.NearestDivisor(60, 90) == 90, "a rate above the display is not advised on");
+    Expect(CommitPacer.NearestDivisor(0, 30) == 30, "an unknown refresh rate is not advised on");
+});
+
 // ------------------------------------------------------------------- reflection helpers
 
 static ulong HandleOf(DashsceneRuntime runtime)

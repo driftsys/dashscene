@@ -42,7 +42,7 @@ namespace Driftsys.Dashscene.Samples
         private int commitHz;
 
         private DashsceneRuntime _runtime;
-        private float _sinceCommit;
+        private CommitPacer _pacer;
 
         private void Awake()
         {
@@ -50,6 +50,8 @@ namespace Driftsys.Dashscene.Samples
             // every MonoBehaviour callback runs on Unity's main thread — so
             // creating it here is what makes Update, LateUpdate and OnDestroy
             // all legal call sites. Creating it on a worker would strand it.
+            _pacer = new CommitPacer(commitHz);
+
             try
             {
                 _runtime = new DashsceneRuntime();
@@ -58,6 +60,29 @@ namespace Driftsys.Dashscene.Samples
             {
                 // R-E16: refuse rather than proceed, and report both numbers.
                 Debug.LogError($"[dashscene] {e.Message}", this);
+                enabled = false;
+                return;
+            }
+            catch (DllNotFoundException)
+            {
+                // **The failure a customer actually meets first.** This package
+                // ships no native library, so the first call into it — the
+                // version handshake inside the constructor — is where a fresh
+                // Git-URL install lands. Left uncaught it is a bare loader
+                // stack trace naming `ds_abi_version`, while the rarer version
+                // mismatch above gets a sentence explaining itself.
+                Debug.LogError(
+                    $"[dashscene] the native library '{DashsceneRuntime.LibraryName}' was not "
+                    + "found. This package ships no binary: build one with `just host-lib` and "
+                    + "place it under Runtime/Plugins/<platform>/ with a .meta declaring the "
+                    + "platform and CPU. See the package README.",
+                    this);
+                enabled = false;
+                return;
+            }
+            catch (DashsceneException e)
+            {
+                Debug.LogError($"[dashscene] the runtime could not be created: {e.Message}", this);
                 enabled = false;
                 return;
             }
@@ -89,7 +114,7 @@ namespace Driftsys.Dashscene.Samples
                 return;
             }
 
-            if (!ShouldCommitThisFrame(Time.deltaTime, out var dt))
+            if (!_pacer.ShouldCommit(Time.deltaTime, out var dt))
             {
                 return;
             }
@@ -154,39 +179,6 @@ namespace Driftsys.Dashscene.Samples
         {
         }
 
-        /// Accumulates until a commit is due, and returns the time it covers.
-        ///
-        /// `dt` is the elapsed time since the previous commit, not since the
-        /// previous Unity frame — passing the frame delta while committing at a
-        /// reduced rate would advance the scene at a fraction of real time.
-        private bool ShouldCommitThisFrame(float frameDelta, out float dt)
-        {
-            if (commitHz <= 0)
-            {
-                dt = frameDelta;
-                return true;
-            }
-
-            _sinceCommit += frameDelta;
-            var period = 1f / commitHz;
-            if (_sinceCommit < period)
-            {
-                dt = 0f;
-                return false;
-            }
-
-            dt = _sinceCommit;
-
-            // **Subtract the period; do not reset to zero.** Resetting discards
-            // the overshoot every cycle, so any rate that does not divide the
-            // frame rate runs slower than configured — at 60 Hz a requested
-            // 16 Hz commits on a constant 4-frame interval, which is 15 Hz, and
-            // 25 Hz becomes 20. Subtracting produces the alternating cadence
-            // the warning below describes, which averages the requested rate.
-            _sinceCommit -= period;
-            return true;
-        }
-
         /// **Pick a divisor of the display rate** (issue #851, issue #1121).
         ///
         /// At 60 Hz a 16 Hz commit lands on 4, 4, 4, 3 frames alternating — an
@@ -205,33 +197,15 @@ namespace Driftsys.Dashscene.Samples
             }
 
             var refresh = (int)Math.Round(Screen.currentResolution.refreshRateRatio.value);
-            if (refresh <= 0 || commitHz > refresh)
+            var lower = CommitPacer.NearestDivisor(refresh, commitHz);
+            if (lower != commitHz)
             {
-                return;
-            }
-
-            if (refresh % commitHz != 0)
-            {
-                var lower = NearestDivisorAtOrBelow(refresh, commitHz);
                 Debug.LogWarning(
                     $"[dashscene] a commit rate of {commitHz} Hz does not divide the display's "
                     + $"{refresh} Hz, so commits land on an uneven number of frames. "
                     + $"{lower} Hz divides it exactly.",
                     this);
             }
-        }
-
-        private static int NearestDivisorAtOrBelow(int refresh, int rate)
-        {
-            for (var candidate = rate; candidate >= 1; candidate--)
-            {
-                if (refresh % candidate == 0)
-                {
-                    return candidate;
-                }
-            }
-
-            return 1;
         }
     }
 }

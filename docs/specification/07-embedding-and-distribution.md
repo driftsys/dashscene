@@ -207,9 +207,12 @@ than of the adapter.
 build a host against a mismatched value and assert it refuses. **Met** by story
 #1121: `DashsceneRuntime.EnsureAbiCompatible` runs before `ds_runtime_new` and
 throws `DashsceneAbiMismatchException`, which carries both numbers as fields
-rather than only in its message. `unity/ffi-check` performs that mutation —
-declaring version 3 against a library reporting 2 fails every check that touches
-a runtime.
+rather than only in its message. `unity/ffi-check` performs that mutation on
+every run: it calls the comparison with the package version plus one and asserts
+the refusal carries both numbers as fields. The comparison is reachable
+separately from the once-per-process latch for exactly this reason —
+`Native.AbiVersion` is a `const` a C# compiler inlines at every use site, so
+nothing could move it from outside.
 
 **R-E17** — the host shall compare each `DsSlice::stride` against the `sizeof`
 of its own row declaration before reading any row of that array, and shall
@@ -218,9 +221,11 @@ refuse to read the array when they differ. **Met** by story #1121:
 out, and a mismatch releases the lease and throws
 `DashsceneStrideMismatchException` rather than reading a row. _Check:_ mutate a
 row type's size and assert the host refuses rather than drawing.
-`unity/ffi-check` performs that mutation — widening `Vec2` makes the library
-report a 40-byte `RectEntry` against a 44-byte declaration, and the frame is
-refused.
+`unity/ffi-check` performs that mutation on every run: it widens one entry of
+`FrameLease`'s row-size table in place, loads the fixture, and asserts the
+acquire is refused, that the exception names the array and both sizes, and that
+the lease was released before the throw — the last being what stops a mismatch
+from refusing every later tick for the life of the runtime.
 
 **`unity/abi-check` does not cover this**: it compares C# source against Rust
 source at one commit, and `stride` is what observes two shipped artifacts having

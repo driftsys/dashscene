@@ -16,10 +16,12 @@ nothing.** The `BatchRendererGroup` painter that consumes these tables is story
 #1122, and the glyph atlases its runs sample do not cross the ABI at all until
 story #1123.
 
-    Samples~/FrameLoop  --drives-->  DashsceneRuntime --+--> Native (14 DllImports)
-                                     FrameLease --------+
-                                                        |
-                                                  dashscene_ffi (cdylib)
+    Samples~/FrameLoop --+--> CommitPacer      (when to commit)
+                         |
+                         +--> DashsceneRuntime --+--> Native (14 DllImports)
+                              FrameLease --------+
+                                                 |
+                                           dashscene_ffi (cdylib)
 
 ## Compile territory, and why the frame loop is a sample
 
@@ -41,7 +43,7 @@ the compile gate.
 `UnityEngine`, and it belongs under `Runtime/` rather than in a sample. R-E10's
 check cannot compile it as constituted. Issue #1286 carries that.
 
-## Five decisions in the binding, each of which is a defect if reversed
+## Decisions in the binding, each of which is a defect if reversed
 
 **Every `bool` on the surface binds as `byte`.** C's `bool` is one byte and
 .NET's default marshalling for `bool` is the four-byte Win32 `BOOL`, so an
@@ -61,17 +63,28 @@ not the same hazard.
 thread-affine — that `ds_runtime_free` answers `DS_WRONG_THREAD` and the runtime
 leaks with nothing reported. A type that cannot be collected correctly should
 not carry the machinery that claims it can, so `Dispose` is explicit and
-documented as owning-thread-only. When it is called from the wrong thread the
-handle is _not_ cleared and an exception names both thread ids, because the
-alternative is a silent leak.
+documented as owning-thread-only.
 
-**The stride table is derived from `frame_of`, not from the member names.** Five
+**The handle is cleared only when the free succeeded.** Every other status means
+the runtime was not freed — `WrongThread` from a foreign thread, `FrameLeased`
+from a release that did not complete, `BadHandle` from a double dispose — and
+zeroing it anyway would make the retry the thrown message prescribes hit the
+`_handle == 0` guard and do nothing, turning a reported failure into an
+unrecoverable leak. All of them are reported; an earlier form of this method
+reported only `WrongThread` and discarded the rest. The lease release runs in a
+`try`/`finally` so the free happens even when releasing throws, which is
+reachable on `DsStatus.Panic` — whose own documented remedy is to free the
+runtime.
+
+**The stride table is derived from `frame_of`, not from the member names.** Two
 of the nineteen arrays do not hold the type their name suggests: `extra_fills`
-holds `PaintKind`, `strokes` holds `Stroke`, `shapes` holds `VectorField`,
-`shadows` holds `Shadow` and `blurs` holds `Blur`. The `*Range` types are index
-ranges inside `PaintEntry` and are rows of no array here. A table written from
-the names would have compared five arrays against the wrong size and reported a
-mismatch on a correct build.
+holds `PaintKind` and `shapes` holds `VectorField`. The other seventeen are what
+they look like — `strokes` holds `Stroke`, `shadows` holds `Shadow`, `blurs`
+holds `Blur`. The seven `*Range` types are rows of no array here at all: five
+are index ranges inside `PaintEntry`, and `StopRange` and `GlyphRange` sit
+inside `Gradient` and `GlyphRun`. A table written from the names would have
+compared two arrays against the wrong size and reported a mismatch on a correct
+build.
 
 **A stride mismatch releases the lease before it throws.** The acquire has
 already succeeded at that point, so throwing straight out would leave the lease
@@ -86,11 +99,28 @@ diagnosable version mismatch into a runtime that never advances again.
 | `unity/package-compat` | would Unity compile this package at all?        | `just unity-abi` |
 | `unity/ffi-check`      | do the P/Invoke declarations match the library? | `just unity-ffi` |
 
-`unity/ffi-check` is the one story #1121 added, and it is the only one that
-**executes** anything. Thirteen checks: every declared entry point resolves, the
-`ds_abi_version` handshake, six statuses produced by real calls, and all
-nineteen strides. Before it, nothing compiled a C# P/Invoke against
-`crates/dashscene-ffi/include/dashscene.h` — issue #1266 item 2.
+`unity/ffi-check` is the one story #1121 added. Before it, nothing compiled a C#
+P/Invoke against `crates/dashscene-ffi/include/dashscene.h` — issue #1266 item
+2. It is not, however, the only gate that executes: `abi-check` declares sixty
+`[DllImport]`s and round-trips structs by value through `dashpaint-abi`.
+`package-compat` is the one that only compiles.
+
+**Seventeen checks**, and the grouping below accounts for all of them: the
+declared entry points against the ABI's named set (1), the version handshake in
+both directions (3), five statuses from real calls — `NoDocument`, `Open`,
+`Map`, `BadHandle`, `NullArgument` (4) — the frame under a lease, including a
+mutated row size and `FrameLeased` from three different callers (5), the
+lifetime pair create/free and dispose-under-lease (2), and the commit pacer's
+cadence and divisor advice (2).
+
+**Two of them perform the mutation their requirement's own _Check_ asks for.**
+R-E16 says "build a host against a mismatched value and assert it refuses" and
+R-E17 says "mutate a row type's size and assert the host refuses rather than
+drawing" — so the gate does exactly that, rather than a developer doing it once
+by hand and the record claiming the gate does it. `CompareAbiVersion` exists as
+the seam for the first, because `Native.AbiVersion` is a `const` the compiler
+inlines and no reflection can move it; the second mutates `FrameLease.RowSizes`
+in place, since the field is readonly and the array's contents are not.
 
 **Every entry point is declared, including the four a Unity host never calls.**
 `ds_runtime_attach_surface`, `ds_runtime_detach_surface`, `ds_runtime_resize`
@@ -137,6 +167,18 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
 - **`ds_runtime_load_document_with_text` is declared and not wrapped.** The
   managed surface exposes the two loaders that need no font cascade; the third
   takes `DsFontFace` arrays whose atlases story #1123 owns.
+- **Three fixed behaviours are pinned by nothing.** `ReleaseLease` clears its
+  managed handle only after the library has released, `Dispose` reports a failed
+  free, and `FrameLease` refuses use after release — but provoking the first two
+  needs `ds_runtime_release_frame` or `ds_runtime_free` to fail on the owning
+  thread with a live handle, which only `DsStatus.Panic` reaches and the gate
+  cannot induce. Mutating the release ordering back leaves all seventeen checks
+  green, measured rather than assumed.
+- **No gate compiles `Samples~/FrameLoop/`.** The `~` that hides it from Unity's
+  importer hides it from `package-compat` and `ffi-check` too, and no CI job
+  runs an editor. That is why `CommitPacer` sits in `Runtime/` rather than in
+  the sample: the pacing arithmetic carries a numeric claim, so it lives where a
+  gate can reach it. What is left in the sample is Unity glue.
 - **The thread-affinity question is narrowed, not closed.** Story #1125 measured
   `OnPerformCulling` on the main thread under `6000.3.22f1` with URP on macOS
   and Metal, so a host can bracket its job dispatch — but the target is Android,

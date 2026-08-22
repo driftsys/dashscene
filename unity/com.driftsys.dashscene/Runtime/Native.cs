@@ -224,7 +224,7 @@ namespace Driftsys.Dashscene
 
     /// The `extern "C"` surface, one declaration per entry point.
     ///
-    /// **All fourteen are declared, including the five a Unity host does not
+    /// **All fourteen are declared, including the four a Unity host does not
     /// call.** `ds_runtime_attach_surface`, `ds_runtime_detach_surface`,
     /// `ds_runtime_resize` and `ds_runtime_draw` belong to a host that hands
     /// dashscene a surface, which a Unity host does not do. They are here

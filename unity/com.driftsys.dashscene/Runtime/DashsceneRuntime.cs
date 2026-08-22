@@ -112,6 +112,10 @@ namespace Driftsys.Dashscene
         /// The version this package was built against.
         public static uint PackageAbiVersion => Native.AbiVersion;
 
+        /// The native library's base name, as `[DllImport]` asks the loader for
+        /// it. Exposed so a host's "not found" message can name what is missing.
+        public static string LibraryName => Native.Lib;
+
         /// Whether a frame lease is outstanding. Every call that would commit is
         /// refused while one is.
         public bool HasOutstandingLease => _lease != null;

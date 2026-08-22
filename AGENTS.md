@@ -223,13 +223,17 @@ total, nineteen of them the crates above.
                       that recipe compares boundary B's value types against
                       `dashpaint-abi`, and until story #1121 nothing compiled a
                       C# P/Invoke against `include/dashscene.h` at all (issue
-                      #1266 item 2). Thirteen checks: every declared entry point
-                      resolves — .NET binds a `DllImport` lazily, so declaring
-                      one nothing calls would gate nothing — the
-                      `ds_abi_version` handshake, statuses produced by real
-                      calls rather than read out of the header, and every
-                      array's `DsSlice::stride` against the package's own row
-                      size. **Needs no Unity editor and no plugin layout**: the
+                      #1266 item 2). Seventeen checks: the declared entry
+                      points against the ABI's named SET — .NET binds a
+                      `DllImport` lazily, so declaring one nothing calls would
+                      gate nothing, and a count would miss a delete-and-
+                      duplicate — the `ds_abi_version` handshake in both
+                      directions, five statuses produced by real calls rather
+                      than read out of the header, every array's
+                      `DsSlice::stride` against the package's own row size, and
+                      the commit pacer's cadence. **Two perform the mutation
+                      their requirement's own check asks for**, R-E16's and
+                      R-E17's, rather than a developer doing it once by hand. **Needs no Unity editor and no plugin layout**: the
                       library is resolved by explicit path, so nothing here
                       depends on where a shipped one sits. Needs the .NET SDK,
                       so it is outside `check`; CI's `unity-ffi` job runs
@@ -487,8 +491,8 @@ as three tiers, so "tests pass" is no longer a claim about all of it:
   When the diff is documentation only — every changed file is Markdown under
   `docs/` or Markdown at the repository root — `test`, `clippy`, `demo-build`,
   `wasm-build`, `wasm-gates`, `android-build`, `atlas-repro`, `render-oracle`,
-  `exit-gate-tests` and `exit-gate` all skip, and `deno` skips with them. Read
-  the individual jobs to see which tiers executed
+  `exit-gate-tests`, `exit-gate`, `unity-abi` and `unity-ffi` all skip, and
+  `deno` skips with them. Read the individual jobs to see which tiers executed
   (`docs/decisions/test-tiers.md`).
 
 Branch workflow — the definition of done for every pull request against this

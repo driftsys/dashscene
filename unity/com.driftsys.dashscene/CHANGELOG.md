@@ -12,8 +12,9 @@ the Cargo workspace rather than moving on its own.
   holds to a C representation (story #1239).
 - The C# host on the C ABI: P/Invoke declarations for all fourteen entry points,
   a thread-affine managed lifetime, the `ds_last_error_message` channel on every
-  failure, and the committed frame under a lease that checks each array's stride
-  before a row is read (story #1121).
+  failure a `DsStatus` describes, and the committed frame under a lease that
+  checks each array's stride before a row is read (story #1121).
+- `CommitPacer`, for committing below the display rate without drifting off it.
 - A `Frame Loop` sample — a `MonoBehaviour` that loads a `.dsb`, ticks it, and
   takes each committed frame. It draws nothing; the painter is story #1122.
 - `.meta` files for every path Unity imports, without which a Git-URL package

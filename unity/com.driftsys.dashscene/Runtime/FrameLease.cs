@@ -147,11 +147,19 @@ namespace Driftsys.Dashscene
         // The nineteen arrays and the row each one holds.
         //
         // **Derived from `frame_of` in `crates/dashscene-ffi/src/lib.rs`, not
-        // from the member names.** Five of them do not hold the type their name
-        // suggests: `extra_fills` holds `PaintKind`, `strokes` holds `Stroke`,
-        // `shapes` holds `VectorField`, `shadows` holds `Shadow` and `blurs`
-        // holds `Blur`. The `*Range` types are index ranges inside `PaintEntry`
-        // and are not rows of any array here.
+        // from the member names.** Two of them do not hold the type their name
+        // suggests: `extra_fills` holds `PaintKind` and `shapes` holds
+        // `VectorField`. The seven `*Range` types are rows of no array here —
+        // five are index ranges inside `PaintEntry`, and `StopRange` and
+        // `GlyphRange` sit inside `Gradient` and `GlyphRun`.
+        //
+        // **Row sizes collide**, so this table's ORDER is load-bearing and the
+        // length check below cannot see a permutation: rects/shapes/glyph_runs
+        // are all 40 bytes, gradients/image_fills/shadows 36,
+        // extra_fills/blurs/clip_regions 8, groups/glyph_quads 12,
+        // gradient_stops/image_entries 20, gradients/clip_boxes 32. Two
+        // same-sized arrays exchanged here match every stride and read the
+        // wrong rows.
         //
         // `Dirty` and `ImagePayload` hold primitives rather than boundary-B
         // rows — `uint` rect indices and the raw payload pool.

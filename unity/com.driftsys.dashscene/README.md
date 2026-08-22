@@ -15,6 +15,9 @@ unmet). What is here:
 - `Runtime/DashsceneRuntime.cs`, `DashsceneException.cs`, `FrameLease.cs` — the
   host: version negotiation, runtime lifetime, document load, the tick, and the
   committed frame under a lease.
+- `Runtime/CommitPacer.cs` — committing below the display rate without drifting
+  off it. In `Runtime/` rather than in the sample because nothing compiles a
+  sample, and this carries a numeric claim worth gating.
 - `Samples~/FrameLoop/` — a `MonoBehaviour` driving all of it from
   `Time.deltaTime`. It is a sample rather than `Runtime/` code because R-E10
   requires every type under `Runtime/` to compile against netstandard2.1 and
@@ -29,21 +32,21 @@ runtime leaks with nothing reported.
 ## What checks the declarations
 
 Three projects, asking three questions. `just unity-abi` runs the first two and
-`just unity-ffi` runs the third; all three run per pull request and **none needs
-a Unity editor**.
+`just unity-ffi` runs the third; all three run on any pull request whose diff is
+not documentation-only, and **none needs a Unity editor**.
 
 `unity/package-compat` compiles the whole of `Runtime/` against
 **netstandard2.1**, which is what Unity's default API compatibility level
 accepts — R-E10. `unity/abi-check` cannot stand in for it: that project targets
 `net10.0`, a strict superset, so it accepts declarations Unity would refuse.
 
-`unity/ffi-check` **loads a `dashscene-ffi` cdylib and calls it** — the only one
-of the three that executes anything. It looks up every declared entry point
-(.NET binds a `DllImport` lazily, so one nothing calls would otherwise be
-checked by nothing), performs R-E16's version handshake, produces each status
-from a real call rather than reading the header, and compares all nineteen of a
-frame's `DsSlice::stride` values against this package's row sizes, which is
-R-E17.
+`unity/ffi-check` **loads a `dashscene-ffi` cdylib and calls it.** (`abi-check`
+executes too, against `dashpaint-abi`; `package-compat` is the one that only
+compiles.) It looks up every declared entry point (.NET binds a `DllImport`
+lazily, so one nothing calls would otherwise be checked by nothing), performs
+R-E16's version handshake, produces each status from a real call rather than
+reading the header, and compares all nineteen of a frame's `DsSlice::stride`
+values against this package's row sizes, which is R-E17.
 
 `unity/abi-check` compiles **this package's own `BoundaryB.cs`**, builds
 `crates/dashpaint-abi` as a dynamic library, and compares every type against

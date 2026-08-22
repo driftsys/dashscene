@@ -591,10 +591,12 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       it, so neither it nor its `AtlasGlyph`s travel even though `AtlasGlyph` is
       on the gated surface. A host can lay text out and cannot shade it until
       story #1123. Boundary B itself has two consumers, both Rust painters; the
-      **C#** projection of it gained its first at story #1239, and that consumer
-      is a check rather than a painter. `unity/` declares those types in C# and
-      `unity/abi-check` compiles those declarations and compares them against
-      the Rust build on each pull request, without a Unity editor — every
+      **C#** projection of it gained its first at story #1239, a check rather
+      than a painter, and its second at story #1121 — `FrameLease`, which takes
+      the `sizeof` of sixteen boundary-B row types in shipped `Runtime/` code.
+      `unity/` declares those types in C# and `unity/abi-check` compiles those
+      declarations and compares them against the Rust build on any pull request
+      whose diff is not documentation-only, without a Unity editor — every
       member's name, offset and size, not only each type's total. What it does
       not check is that a member's C# type means what the Rust one means: a
       `uint` declared as `float` has the right size at the right offset. It
@@ -765,7 +767,7 @@ sentence.
 
       iOS has no target, no toolchain and no automation, and is v1. **The Unity
       host has a toolchain and automation since story #1121** — three .NET gates
-      run per pull request and none needs an editor — but **no target**: nothing
+      run on any pull request that touches code, and none needs an editor — but **no target**: nothing
       here has run a Unity player on any device, and the `.meta` values that
       decide whether a native library reaches an Android build are declared and
       unexercised (R-E21, unmet).

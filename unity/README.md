@@ -22,11 +22,13 @@ checks here are what give it value. `just unity-abi` runs the first two;
 `just unity-ffi` runs the third.
 
 The three ask different questions and none subsumes another. `abi-check`
-compares boundary B's value types against `dashpaint-abi` **as source**;
-`package-compat` asks whether Unity could compile the package at all;
-`ffi-check` **loads a library and calls it**, which is the only one of the three
-that executes anything. Until story #1121 nothing compiled a C# P/Invoke against
-`crates/dashscene-ffi/include/dashscene.h`, which is item 2 of issue #1266.
+compares boundary B's value types against a `dashpaint-abi` build, member by
+member; `package-compat` asks whether Unity could compile the package at all,
+and is the only one of the three that executes nothing; `ffi-check` loads
+`dashscene-ffi` and calls it. Until story #1121 nothing compiled a C# P/Invoke
+against `crates/dashscene-ffi/include/dashscene.h`, which is item 2 of issue
+#1266 — but `abi-check` has always executed: it declares sixty `[DllImport]`s
+and round-trips structs by value through the library.
 
 None of them reads a shipped binary. All three build both halves from one tree,
 so they observe only a disagreement this repository already contains — a stale
