@@ -1144,6 +1144,79 @@ unity-abi:
     # and fails here with CS0234.
     dotnet build unity/package-compat -v q --nologo
 
+# The package's C# P/Invoke declarations, executed against the library they
+# declare.
+#
+# **A different surface from `unity-abi`, not a second opinion on it.** That
+# recipe compares boundary B's value types against `dashpaint-abi`, and
+# `package-compat` asks whether the package compiles under netstandard2.1.
+# Neither reaches `crates/dashscene-ffi`: until this recipe, nothing compiled a
+# C# P/Invoke against `include/dashscene.h` at all, which is item 2 of issue
+# #1266.
+#
+# **Needs no Unity editor and no plugin layout.** The library is the cdylib this
+# run built, resolved by an explicit path through
+# `NativeLibrary.SetDllImportResolver`, so nothing here depends on where a
+# shipped library sits — that is
+# `docs/decisions/the-native-library-ships-inside-the-unity-package.md` D2, and
+# it is deliberately not exercised here.
+#
+# Needs the .NET SDK, which bootstrap does not install, so it is outside
+# `check`; CI's `unity-ffi` job runs exactly it.
+#
+# Execute the UPM package's C# P/Invoke declarations against dashscene-ffi.
+unity-ffi:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v dotnet >/dev/null 2>&1; then
+      echo "unity-ffi: the .NET SDK is not installed" >&2
+      echo "unity-ffi:   brew install dotnet" >&2
+      echo "unity-ffi:   or https://dotnet.microsoft.com/download" >&2
+      exit 1
+    fi
+    # Presence is not enough, and the failure it leaves is unhelpful: an older
+    # SDK reports NETSDK1045 about a target framework, naming neither the
+    # version needed nor how to get it. The requirement comes from the project
+    # file rather than being restated here, as `unity-abi` does.
+    want=$(sed -n 's/.*<TargetFramework>net\([0-9][0-9]*\)\..*/\1/p' \
+      unity/ffi-check/FfiCheck.csproj)
+    have=$(dotnet --version | cut -d. -f1)
+    if [ "${have}" -lt "${want}" ]; then
+      echo "unity-ffi: unity/ffi-check targets net${want}.0 and the SDK on PATH is ${have}.x" >&2
+      echo "unity-ffi:   brew upgrade dotnet" >&2
+      exit 1
+    fi
+    # **The path comes from cargo, not from a `uname` mapping plus a file
+    # test**, on the rule `host-lib` and `unity-abi` both state: `cargo build`
+    # does not delete the artifacts of a crate type that has been removed, so a
+    # `[ -f … ]` guard passes over a stale library and the check would report on
+    # something this run did not produce. That is the shape of issue #1057.
+    #
+    # Built first, then asked — two invocations, the second a cache hit — so a
+    # failing build still renders its diagnostics.
+    cargo build -p dashscene-ffi
+    lib=$(cargo build -p dashscene-ffi --message-format=json | jq -r '
+        select(.reason == "compiler-artifact")
+        | select(.target.name == "dashscene_ffi")
+        | .filenames[]
+        | select(endswith(".dylib") or endswith(".so") or endswith(".dll"))
+      ' | tail -n 1)
+    if [ -z "${lib}" ]; then
+      echo "unity-ffi: cargo emitted no dynamic library for dashscene-ffi." >&2
+      echo 'unity-ffi: is cdylib still in [lib] crate-type?' >&2
+      exit 1
+    fi
+    # A committed document rather than one built here: the gate asserts against
+    # a frame with rows in it, and a fixture this repository already goldens is
+    # the one least likely to drift under it.
+    fixture="goldens/dsb/v03-paint.dsb"
+    if [ ! -f "${fixture}" ]; then
+      echo "unity-ffi: ${fixture} is missing; the frame checks need a document" >&2
+      exit 1
+    fi
+    DASHSCENE_FFI_LIB="${lib}" DASHSCENE_FFI_FIXTURE="${fixture}" \
+      dotnet run --project unity/ffi-check
+
 # The Android API level this repository links against.
 #
 # A floor rather than a target: the NDK ships wrappers from 21 up, and this is

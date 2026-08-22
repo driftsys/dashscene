@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- net10.0 rather than the package's netstandard2.1, because this project
+         needs `NativeLibrary.SetDllImportResolver` to point the declarations at
+         a library this run built. That resolver does not exist in
+         netstandard2.1 and is not something a Unity player ever needs: Unity
+         resolves a plugin by its `.meta`, which is what
+         `the-native-library-ships-inside-the-unity-package.md` D2 rules.
+
+         **So this project cannot stand in for `unity/package-compat`**, which
+         asks the netstandard2.1 question over the same sources. The two check
+         different things: that project asks whether Unity could compile the
+         package, this one asks whether the declarations match the library. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- Disabled, matching `package-compat` and matching Unity, which does not
+         enable it in a generated project. The package's sources must compile
+         the way Unity will compile them, so this gate must not hold them to a
+         stricter context than the one they ship into. -->
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Driftsys.Dashscene.FfiCheck</RootNamespace>
+    <AssemblyName>ffi-check</AssemblyName>
+    <!-- Same reason `AbiCheck.csproj` sets it: this project exists to detect
+         drift, and a declaration the compiler is unsure about is drift. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <!-- The asmdef sets `allowUnsafeCode: true` (R-E13, forced by
+         `BatchCullingOutputDrawCommands`'s raw pointer fields), so Unity will
+         compile `Runtime/` with unsafe blocks enabled and this project must
+         too. Without it the first `unsafe` member story #1122 adds compiles in
+         Unity and fails here with CS0227 — this project holding the package to
+         a stricter contract than the one it ships into, which is exactly what
+         it must not do. Measured: a trivial `unsafe` member reproduces CS0227
+         with this line removed. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The package's own sources, compiled rather than restated. Compiling
+         them into this assembly is also what makes `Native`'s `internal`
+         declarations reachable here without widening them for every consumer.
+
+         By glob, on the same grounds `package-compat` states: a file a later
+         story adds is covered without editing this list. Collected under its
+         own item name first, because `@(Compile)` is never empty — the SDK
+         injects a generated AssemblyInfo — so testing that would not detect a
+         glob that reached nothing. -->
+    <PackageRuntimeSource Include="../com.driftsys.dashscene/Runtime/**/*.cs" />
+    <Compile Include="@(PackageRuntimeSource)" />
+    <Compile Include="Program.cs" />
+  </ItemGroup>
+
+  <!-- A gate that compiles nothing passes, and reports nothing. -->
+  <Target Name="RefuseAnEmptyCompileSet" BeforeTargets="BeforeBuild">
+    <Error Condition="'@(PackageRuntimeSource)' == ''"
+           Text="ffi-check matched no package source. The glob reached nothing — has unity/com.driftsys.dashscene/Runtime/ moved? A gate over an empty set reports on nothing." />
+  </Target>
+
+</Project>

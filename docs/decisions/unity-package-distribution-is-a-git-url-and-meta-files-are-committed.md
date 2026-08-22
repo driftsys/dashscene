@@ -87,8 +87,8 @@ It is stated there once rather than summarised here as well.
 
 ## Consequences
 
-- **R-E2 is unmet on `main`** and closing it is story #1121's, which is the
-  first story that installs the package into a project and the first that adds a
+- **R-E2 was unmet on `main`** and story #1121 closed it, which is the first
+  story that installs the package into a project and the first that adds a
   native library whose settings exist only in a `.meta`.
 - **GUID stability becomes an obligation at story #1122**, when materials and
   shaders arrive — those genuinely are GUID-referenced. A regenerated GUID

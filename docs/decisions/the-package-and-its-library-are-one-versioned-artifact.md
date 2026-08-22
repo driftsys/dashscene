@@ -61,10 +61,13 @@ takes deliberate effort instead of being the default.
 
 The host calls `ds_abi_version` once before any other `ds_runtime_*` call,
 compares it against the constant its C# was built with, and refuses with both
-numbers named. Nothing does this today: `BoundaryB.cs` contains no `DllImport`
-at all, and the one Java host that reads the value **logs it and does not
-compare**. Advice has been in the header since story #840 and has produced no
-check in any host; a package that ships a host is where it stops being advice.
+numbers named. Story #1121 does this: `DashsceneRuntime.EnsureAbiCompatible`
+runs before `ds_runtime_new` and throws `DashsceneAbiMismatchException`, which
+carries both numbers as fields. Until then `BoundaryB.cs` contained no
+`DllImport` at all, and the one Java host that reads the value **logs it and
+does not compare**. Advice has been in the header since story #840 and has
+produced no check in any host; a package that ships a host is where it stops
+being advice.
 
 A _missing_ library already fails adequately — .NET raises
 `DllNotFoundException`, which story #1230 measured. A _version-mismatched_ one
@@ -102,7 +105,7 @@ could reach it before leases existed.
 - **The technote's `ds_abi_version=1` reading is stale.** Story #1230 measured
   the mechanism before story #1226 moved the number to 2. The mechanism stands;
   the value does not, and the technote says so now.
-- R-E16 and R-E17 are unmet on `main` and are story #1121's to satisfy.
+- R-E16 and R-E17 were unmet on `main` and were satisfied by story #1121.
 
 ## Alternatives considered
 
