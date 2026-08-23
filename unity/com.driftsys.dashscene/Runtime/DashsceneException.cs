@@ -46,7 +46,46 @@ namespace Driftsys.Dashscene
         /// the message — including its terminator — and the second fills a
         /// buffer of that size. Asking with a fixed buffer instead would
         /// truncate exactly the long messages worth reading.
+        ///
+        /// **A library that does not export this symbol does not make this
+        /// throw, and that is a requirement rather than politeness.**
+        /// `ds_last_error_message` is an entry point like any other, so a
+        /// library missing it makes the call raise — and every caller here is
+        /// already reporting a failure that DID answer a `DsStatus`. Letting
+        /// that escape would hand a host a symbol-missing exception where the
+        /// status it is told to branch on should be, and would throw out of
+        /// `Dispose`, which must not. The refusal becomes the message instead,
+        /// which is exactly what this channel is for.
+        ///
+        /// The claim is scoped to that: a `DllNotFoundException` from a package
+        /// with no library at all, or an allocation failure sizing the buffer,
+        /// are not caught here and belong to whoever called.
         internal static string LastMessage()
+        {
+            try
+            {
+                return ReadLastMessage();
+            }
+            catch (DashsceneAbiMismatchException e)
+            {
+                return e.Message;
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                // **Belt and braces, over a state no fixture can reach.** This
+                // is what a forwarder hands back when the library exports
+                // neither the symbol nor `ds_abi_version` — and every caller
+                // here runs on a constructed runtime, whose handshake could not
+                // have succeeded unless `ds_abi_version` bound. So the arm
+                // above is the reachable one. Kept because this method's
+                // contract is that a missing export does not become a throw,
+                // and that should not rest on reasoning about another method's
+                // ordering.
+                return e.Message;
+            }
+        }
+
+        private static string ReadLastMessage()
         {
             var needed = Native.ds_last_error_message(null, UIntPtr.Zero).ToUInt64();
 
@@ -135,17 +174,27 @@ namespace Driftsys.Dashscene
     /// escapes the `catch` a host was told to write. This is that failure,
     /// wearing R-E16's own type.
     ///
-    /// **A host must catch it at every load site as well as around the
+    /// **A host must catch it wherever it calls, not only around the
     /// constructor**, and that is the cost of this shape rather than a detail:
     /// `DashsceneAbiMismatchException` derives from `Exception`, so a
-    /// `catch (DashsceneException)` around a load does **not** see it. The
-    /// frame-loop sample carries both catches. Deriving from
-    /// `DashsceneException` instead would have needed a `DsStatus`, and there
-    /// is none to give honestly — no call reached the library.
+    /// `catch (DashsceneException)` does **not** see it. Since issue #1308 the
+    /// translation is on every entry point, so a tick and a frame acquire raise
+    /// it where only a load could before — `Samples~/FrameLoop/` carries the
+    /// catch around the constructor and around the load and not around the
+    /// frame loop, which is issue #1315. Deriving from `DashsceneException`
+    /// instead would have needed a `DsStatus`, and there is none to give
+    /// honestly — no call reached the library.
     ///
-    /// `Expected` and `Actual` are equal here, and that is the substance rather
-    /// than a defect: they agreeing is exactly why the handshake let this
-    /// through.
+    /// **`Dispose` is the exception, deliberately**: it records the refusal on
+    /// `DashsceneRuntime.LastDisposeDetail` rather than throwing, because it
+    /// runs during unwinding.
+    ///
+    /// `Expected` and `Actual` are equal on every path a host can reach, and
+    /// that is the substance rather than a defect: they agreeing is exactly why
+    /// the handshake let this through. `Actual` is still READ from the library
+    /// rather than copied from this package's constant — `unity/ffi-check`
+    /// drives a forwarder past the handshake, against a library reporting a
+    /// different number, to hold it to that.
     public sealed class DashsceneSymbolMissingException : DashsceneAbiMismatchException
     {
         /// The entry point the loaded library does not export.

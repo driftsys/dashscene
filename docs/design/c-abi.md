@@ -237,9 +237,17 @@ afterwards:
   into `DsStatus::Panic`. **The panic payload is deliberately not formatted into
   the message** — that would run arbitrary `Display` code on the way out of a
   panic — so the text is fixed and the payload is lost.
-- **`ds_runtime_free`** and **`ds_last_error_message`** catch one directly.
-  Neither has a status to report it in, so each swallows it: the free returns,
-  the message call answers 0.
+- **`ds_last_error_message`** catches one directly. It has no status to report
+  it in — it returns a length — so it swallows the unwind and answers 0, which a
+  caller reads as "no message".
+
+**`ds_runtime_free` moved from the second group to the first at story #1226.**
+It was `void` and caught directly, with a comment saying a status could not
+report it; the handle ruling gave it a `DsStatus` to answer with, so it is
+`guard`ed like the rest and a panic inside it is `DS_PANIC`. That is the
+ruling's own property arriving in a place the ruling does not name — see
+[../decisions/the-c-abi-runtime-handle-is-generational.md](../decisions/the-c-abi-runtime-handle-is-generational.md),
+which carries what changed and why.
 
 **The counts are gone from this section on purpose** (issue #1190). It said
 "eleven of the twelve" and "the nine returning a `DsStatus`", in a record that
@@ -251,7 +259,7 @@ gate read any of them. The test above is what reads them now.
 **Do not re-derive the property by counting calls to `guard`** either. Story
 #843 did, read "nine of twelve" as "three unguarded", and put that in this
 record, in `architecture.md`, in `docs/features.md` and in the crate's own rule
-1 before the review caught it. Two entry points hold the property without the
+1 before the review caught it. One entry point holds the property without the
 helper, and `ds_last_error_message`'s own comment records that it was made to
 hold it precisely because rule 1 had claimed it already did.
 

@@ -18,6 +18,7 @@
 
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Runtime.Loader;
 using Driftsys.Dashscene;
 using Driftsys.Dashscene.BoundaryB;
 
@@ -36,6 +37,47 @@ if (string.IsNullOrWhiteSpace(fixture) || !File.Exists(fixture))
 {
     Console.Error.WriteLine("ffi-check: set DASHSCENE_FFI_FIXTURE to a .dsb to load.");
     Console.Error.WriteLine("ffi-check: `just unity-ffi` points it at goldens/dsb/v03-paint.dsb.");
+    return 2;
+}
+
+// The older libraries — `older-library.c`, built several ways by the recipe.
+// Refused rather than skipped when one is absent: the checks they carry are the
+// only ones that provoke issue #1308's failure rather than describing it, and a
+// gate that quietly drops them reports a surface it did not check.
+string StubPath(string variable, string what)
+{
+    var path = Environment.GetEnvironmentVariable(variable);
+    if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+    {
+        Console.Error.WriteLine($"ffi-check: set {variable} to the {what} build of older-library.c.");
+        Console.Error.WriteLine("ffi-check: `just unity-ffi` compiles each of them and sets it.");
+        return null;
+    }
+
+    return path;
+}
+
+// The UPM package itself — the sources this project compiles are a subset of
+// it, and the check below is about the rest. Named as an input rather than
+// derived from a working directory, so it reads what the recipe means.
+var packageDir = Environment.GetEnvironmentVariable("DASHSCENE_PACKAGE");
+if (string.IsNullOrWhiteSpace(packageDir) || !Directory.Exists(packageDir))
+{
+    Console.Error.WriteLine("ffi-check: set DASHSCENE_PACKAGE to the UPM package directory.");
+    Console.Error.WriteLine("ffi-check: `just unity-ffi` sets it.");
+    return 2;
+}
+
+packageDir = Path.GetFullPath(packageDir);
+
+var stubPath = StubPath("DASHSCENE_FFI_STUB", "default");
+var stubSkewPath = StubPath("DASHSCENE_FFI_STUB_SKEW", "skewed-version");
+var stubSilentPath = StubPath("DASHSCENE_FFI_STUB_SILENT", "silent");
+var stubRefusesPath = StubPath("DASHSCENE_FFI_STUB_REFUSES_FREE", "refusing-free");
+var stubLeasePath = StubPath("DASHSCENE_FFI_STUB_LEASE_REFUSES", "refusing-lease-release");
+if (stubPath == null || stubSkewPath == null || stubSilentPath == null
+    || stubRefusesPath == null || stubLeasePath == null)
+{
     return 2;
 }
 
@@ -94,14 +136,6 @@ Check("every declared entry point resolves in the library", () =>
     // A lookup proves the NAME exists, not that the signature matches — C
     // exports carry no signature to compare. The behavioural checks below are
     // what prove the signatures of the ones they exercise.
-    var native = typeof(DashsceneRuntime).Assembly.GetType("Driftsys.Dashscene.Native")
-        ?? throw new Exception("Driftsys.Dashscene.Native is gone");
-
-    var declarations = native
-        .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
-        .Where(m => m.GetCustomAttribute<DllImportAttribute>() != null)
-        .ToArray();
-
     // **The SET, not the count.** A count assertion pins cardinality and not
     // identity, so deleting one declaration and adding a duplicate binding for
     // another entry point keeps the count where it was, resolves, and passes —
@@ -127,7 +161,7 @@ Check("every declared entry point resolves in the library", () =>
     };
 
     var declared = new SortedSet<string>(
-        declarations.Select(m => m.GetCustomAttribute<DllImportAttribute>().EntryPoint ?? m.Name),
+        PackageImports().Select(EntryPointOf),
         StringComparer.Ordinal);
 
     var missing = expected.Except(declared).ToArray();
@@ -154,6 +188,168 @@ Check("every declared entry point resolves in the library", () =>
     // name you supply and cannot list what is there. `just c-abi` compiling
     // `tests/abi.c` against the committed header is what holds the header to
     // the library; this holds the C# to the header.
+});
+
+// Every `[DllImport]` this project COMPILES, wherever it is declared.
+//
+// **Found by the attribute rather than under one type name**, so an entry point
+// a sibling file adds — story #1123's atlas call is the next one — is held to
+// the forwarder rule without editing this gate. The checks that read the ABI's
+// named set still need an edit for a new entry point, and say so: that set is
+// this gate's own copy of the contract and moves only when a person moves it.
+//
+// **`Runtime/Engine/` is outside this**, because `FfiCheck.csproj` excludes it
+// — every file there references `UnityEngine`, which this project cannot
+// resolve. An import declared there would be invisible to this gate, to
+// `package-compat` (the same exclusion) and to `just unity-editor` (which
+// compiles that directory and checks nothing about imports), so the check below
+// refuses one by reading the sources rather than the assembly.
+static MethodInfo[] PackageImports()
+{
+    var imports = PackageMethods()
+        .Where(m => m.GetCustomAttribute<DllImportAttribute>() != null)
+        .ToArray();
+
+    // A gate over an empty set passes and reports nothing, which is the hazard
+    // `FfiCheck.csproj`'s RefuseAnEmptyCompileSet closes for its compile set.
+    if (imports.Length == 0)
+    {
+        throw new Exception(
+            "the package declares no [DllImport] at all — has Native left the "
+            + "Driftsys.Dashscene namespace? A gate over an empty set reports on nothing");
+    }
+
+    return imports;
+}
+
+static IEnumerable<MethodInfo> PackageMethods() =>
+    typeof(DashsceneRuntime).Assembly.GetTypes()
+        .Where(t => t.Namespace != null
+                    && t.Namespace.StartsWith("Driftsys.Dashscene", StringComparison.Ordinal))
+        .SelectMany(t => t.GetMethods(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static
+            | BindingFlags.DeclaredOnly));
+
+static string EntryPointOf(MethodInfo import) =>
+    import.GetCustomAttribute<DllImportAttribute>().EntryPoint ?? import.Name;
+
+// One import by its entry point, for the checks that name a single symbol.
+static MethodInfo ImportNamed(string entryPoint) =>
+    PackageImports().FirstOrDefault(m => EntryPointOf(m) == entryPoint)
+        ?? throw new Exception($"the package declares no import for {entryPoint}");
+
+// Return type and parameter types, by-ref included — `out ulong` is `UInt64&`
+// and does not match `ulong`. Enough to tell a forwarder from an overload.
+static string SignatureOf(MethodInfo m) =>
+    $"{m.ReturnType.Name}({string.Join(",", m.GetParameters().Select(pm => pm.ParameterType.Name))})";
+
+Check("every import is private, and reached through a forwarder that catches a missing symbol", () =>
+{
+    // **The half of issue #1308 that is structural rather than behavioural.**
+    // The context below drives the managed entry points against a library that
+    // exports two symbols and watches the translation happen; it can only reach
+    // the entry points a host can call with no document and no surface. This
+    // asks the question for all of them at once, and it is what covers an
+    // import added later: declare one with no forwarder, or a forwarder with no
+    // catch, and this fails.
+    //
+    // **What it proves is narrow, and saying so is the point.** It reads the
+    // compiled exception-handling clauses, so it sees that a clause catching
+    // `EntryPointNotFoundException` exists in the forwarder — not what that
+    // clause builds, and not that the import call is inside the guarded region
+    // at all. A forwarder that catches and swallows, or that calls the import
+    // before the `try`, passes here and fails the drive below; a forwarder with
+    // no clause at all fails here first, with a message that names the rule.
+    // Both were measured by mutation.
+    var methods = PackageMethods().ToArray();
+    foreach (var import in PackageImports())
+    {
+        var entryPoint = EntryPointOf(import);
+        var signature = SignatureOf(import);
+
+        // **Unreachable outside its own type, or the forwarder is advice.** A
+        // caller that can name the import binds it directly, and an
+        // `EntryPointNotFoundException` from that call reaches a host
+        // untranslated — which is the whole of issue #1308.
+        Expect(
+            import.DeclaringType.IsNestedPrivate,
+            $"{entryPoint} is declared in {import.DeclaringType.Name}, which is not a private "
+            + "nested type, so a caller can bind it directly and step around the forwarder");
+
+        // The forwarder names the symbol through `[CallerMemberName]`, so the
+        // two names agreeing is what makes the reported symbol the real one.
+        Expect(
+            import.Name == entryPoint,
+            $"the import for {entryPoint} is declared as {import.Name}; a forwarder takes its "
+            + "symbol name from its own name, so an EntryPoint alias would report the wrong one");
+
+        var forwarders = methods
+            .Where(m => m.Name == import.Name
+                        && m.GetCustomAttribute<DllImportAttribute>() == null
+                        && SignatureOf(m) == signature)
+            .ToArray();
+
+        Expect(
+            forwarders.Length == 1,
+            $"{entryPoint} has {forwarders.Length} forwarders with its signature, not one. "
+            + "Every import needs exactly one same-named method a caller can reach");
+
+        var body = forwarders[0].GetMethodBody()
+            ?? throw new Exception($"{entryPoint}'s forwarder has no body to read");
+
+        Expect(
+            body.ExceptionHandlingClauses.Any(
+                c => c.Flags == ExceptionHandlingClauseOptions.Clause
+                     && c.CatchType == typeof(EntryPointNotFoundException)),
+            $"{entryPoint}'s forwarder catches no EntryPointNotFoundException, so a library "
+            + "older than this symbol escapes every catch a host was told to write (#1308)");
+    }
+});
+
+Check("no [DllImport] hides in package sources this project does not compile", () =>
+{
+    // **A textual refusal, and deliberately the narrow kind.** It asks whether
+    // a known declaration is present rather than parsing what a file declares —
+    // the shape that does not lose to the grammar. Everything above reads the
+    // compiled assembly and cannot see these files at all: `FfiCheck.csproj`
+    // excludes `Runtime/Engine/`, because every file there references
+    // `UnityEngine`, and compiles nothing outside `Runtime/`.
+    //
+    // Two places an import could hide, and both ship. One under
+    // `Runtime/Engine/` is read by no gate: `package-compat` carries the same
+    // exclusion and `just unity-editor` compiles the directory while checking
+    // nothing about imports. One under `Samples~/` is worse — Unity imports a
+    // sample into the CUSTOMER's assembly and compiles it there. Either would
+    // need no forwarder and would reintroduce issue #1308 with every gate
+    // green.
+    //
+    // It matches the word anywhere in the file, so a doc comment mentioning
+    // `DllImport` fails it. That is the fail-closed direction. What it cannot
+    // see is a P/Invoke declared some other way — `[LibraryImport]`, or a
+    // pointer through `Marshal.GetDelegateForFunctionPointer` — neither of
+    // which netstandard2.1 offers a Unity host today.
+    var sources = Directory.GetFiles(packageDir, "*.cs", SearchOption.AllDirectories);
+    Expect(sources.Length > 0, $"{packageDir} holds no C# at all; has the package moved?");
+
+    // What this project compiles, and therefore what the checks above see:
+    // `Runtime/` minus `Runtime/Engine/`. Everything else in the package ships
+    // to a customer and is read by no gate here — `Samples~/` is imported into
+    // a user's own assembly and compiled there.
+    var compiled = Path.Combine(packageDir, "Runtime") + Path.DirectorySeparatorChar;
+    var engine = Path.Combine(packageDir, "Runtime", "Engine") + Path.DirectorySeparatorChar;
+    bool Seen(string path) =>
+        path.StartsWith(compiled, StringComparison.Ordinal)
+        && !path.StartsWith(engine, StringComparison.Ordinal);
+
+    var offenders = sources
+        .Where(f => !Seen(f) && File.ReadAllText(f).Contains("DllImport"))
+        .Select(f => f.Substring(packageDir.Length).TrimStart(Path.DirectorySeparatorChar))
+        .ToArray();
+    Expect(
+        offenders.Length == 0,
+        "a P/Invoke outside the sources this project compiles is read by no gate that checks "
+        + $"imports: [{string.Join(", ", offenders)}]. Move the declaration under Runtime/, "
+        + "excluding Runtime/Engine/, which is where the forwarder rule is enforced");
 });
 
 // ---------------------------------------------------------------- versioning
@@ -217,10 +413,33 @@ Check("the CONSTRUCTOR performs the handshake, not just the seam (R-E16)", () =>
     }
 });
 
-Check("a runtime is created and freed", () =>
+Check("a runtime is created and freed, and says so on both properties", () =>
 {
-    using var runtime = new DashsceneRuntime();
-    Expect(!runtime.HasOutstandingLease, "a fresh runtime holds a lease");
+    // **Freed in a `finally`.** Reading the two properties needs the dispose
+    // to have happened, so this cannot be a `using` — and a failing `Expect`
+    // above an unguarded `Dispose` would leak a live slot into the library's
+    // thread-affine table for every check that follows.
+    var runtime = new DashsceneRuntime();
+    try
+    {
+        Expect(!runtime.HasOutstandingLease, "a fresh runtime holds a lease");
+    }
+    finally
+    {
+        runtime.Dispose();
+    }
+
+    // **The success half of the pair `LastDisposeStatus` documents**, and the
+    // one the older-library checks cannot assert: `Ok` alone does not say the
+    // runtime was freed, an empty `LastDisposeDetail` beside it does. Without
+    // this, a `Dispose` that reported a failure it did not have would satisfy
+    // every substring assertion those checks make.
+    Expect(
+        runtime.LastDisposeStatus == DsStatus.Ok,
+        $"a good free reported {runtime.LastDisposeStatus}");
+    Expect(
+        runtime.LastDisposeDetail.Length == 0,
+        $"a good free left a detail behind: '{runtime.LastDisposeDetail}'");
 });
 
 Check("a tick with no document is NoDocument, and carries a message", () =>
@@ -468,14 +687,13 @@ Check("a missing entry point is reported as an ABI mismatch with equal numbers",
     // `DashsceneRuntime` rethrows it as the type R-E16 already makes every host
     // handle, and this is that type's contract.
     //
-    // **What this does NOT do is provoke the binding failure**, and it cannot.
-    // .NET consults an assembly's `DllImportResolver` once per library name and
-    // caches the module, and `SetDllImportResolver` throws if called a second
-    // time for one assembly — so this gate, which has already resolved
-    // `dashscene_ffi` to a library that DOES export the symbol, has no way to
-    // present one that does not. Reaching the `catch` needs a second process or
-    // a second load context. What is checked here is everything downstream of
-    // it; `docs/design/unity-csharp-host.md` names the gap.
+    // **This is the type's contract, not the binding failure**, which is
+    // provoked further down: .NET consults an assembly's `DllImportResolver`
+    // once per library name and caches the module, and `SetDllImportResolver`
+    // throws if called a second time for one assembly — so this run, having
+    // already resolved `dashscene_ffi` to a library that DOES export the
+    // symbol, cannot present one that does not. The second load context below
+    // is what can, and it drives the managed entry points through it.
     // **Constructed directly, not through reflection.** This project compiles
     // the package's own sources, so the type and its internal constructor are
     // in scope — and a rename then fails to compile here rather than becoming a
@@ -498,6 +716,572 @@ Check("a missing entry point is reported as an ABI mismatch with equal numbers",
     Expect(
         thrown.Message.Contains("Rebuild the native library"),
         $"the refusal must say what to do: {thrown.Message}");
+});
+
+// -------------------------------------------- libraries older than this package
+
+// **The failure issue #1308 is about, provoked rather than described.**
+//
+// `DS_ABI_VERSION` deliberately does not move when a symbol is added, so a
+// package built after one arrived and loaded against a library from before
+// passes the handshake and then fails at the first call to it — lazily, where
+// .NET binds the import. `older-library.c` is those libraries: one file built
+// several ways, each reaching a case the others cannot, and that file is where
+// they are enumerated.
+//
+// **Each needs its own `AssemblyLoadContext`.** A resolver is consulted once per
+// library name per assembly and the module is cached, and
+// `SetDllImportResolver` throws on a second call for one assembly — so the copy
+// of this assembly that has already resolved `dashscene_ffi` to the real
+// library can never see a different one. A second context holds a second copy
+// of the package, with its own statics, its own resolver and its own imports. A
+// second process would do as well and costs more.
+//
+// Everything crosses that boundary by reflection, because the probe's types are
+// not this one's: `Driftsys.Dashscene.DsStatus` over there is a different `Type`
+// from the one this file compiled against, and only the framework's own types —
+// `string`, `IDisposable` — are shared.
+var probeLocation = typeof(DashsceneRuntime).Assembly.Location;
+
+// **Refused rather than skipped**, on the rule the paths above follow: a
+// single-file publish reports no `Location` and nothing could be loaded a second
+// time, and the checks that need it are the only ones that provoke the failure.
+// `dotnet run`, which is how the recipe runs this, always reports one.
+if (string.IsNullOrEmpty(probeLocation))
+{
+    Console.Error.WriteLine(
+        "ffi-check: this assembly reports no Location, so the older-library checks cannot "
+        + "load a second copy of it. Was this published as a single file?");
+    return 2;
+}
+
+(Assembly Assembly, Type Runtime, Type Native) ProbeContext(string name, string library)
+{
+    var context = new AssemblyLoadContext(name);
+    var assembly = context.LoadFromAssemblyPath(probeLocation);
+    NativeLibrary.SetDllImportResolver(
+        assembly,
+        (n, asm, path) => n == Native.Lib ? NativeLibrary.Load(library) : IntPtr.Zero);
+    return (
+        assembly,
+        assembly.GetType("Driftsys.Dashscene.DashsceneRuntime")
+            ?? throw new Exception($"the {name} context has no DashsceneRuntime"),
+        assembly.GetType("Driftsys.Dashscene.Native")
+            ?? throw new Exception($"the {name} context has no Native"));
+}
+
+var older = ProbeContext("older-library", stubPath);
+var skewed = ProbeContext("skewed-library", stubSkewPath);
+var silent = ProbeContext("silent-library", stubSilentPath);
+var refusesFree = ProbeContext("refusing-free-library", stubRefusesPath);
+var refusesLease = ProbeContext("refusing-lease-library", stubLeasePath);
+
+// The probe's runtime, constructed through its own handshake.
+object ConstructProbeRuntime()
+{
+    try
+    {
+        return Activator.CreateInstance(older.Runtime);
+    }
+    catch (TargetInvocationException e)
+    {
+        throw new Exception(
+            $"the older library refused the construction this class depends on: {e.InnerException}");
+    }
+}
+
+// What a probe call threw, unwrapped from reflection's own exception.
+Exception ProbeThrow(Func<object> call)
+{
+    try
+    {
+        call();
+    }
+    catch (TargetInvocationException e)
+    {
+        return e.InnerException;
+    }
+
+    return null;
+}
+
+// Calls one forwarder on a probe's `Native` and returns what it threw.
+//
+// **Directly, with default arguments, and that is safe here.** The import is
+// bound at the first call, so a forwarder for a symbol the library does not
+// export fails before the library sees an argument — nothing dereferences the
+// nulls and zeros below. It is also the only way to reach the five entry points
+// no managed wrapper calls at all — the four a surface-handing host makes, and
+// the loader whose font cascade story #1123 owns.
+Exception DriveForwarder(Assembly probe, MethodInfo import)
+{
+    // **Found anywhere in the probe's package, not on one type.** `Native.cs`
+    // blesses a sibling file declaring its import in a private nested type of
+    // its own with a forwarder beside it, and the structural check enforces
+    // exactly that — so looking only on `Native` would refuse the shape this
+    // package documents, with a message naming the wrong type. Matched the same
+    // way the structural check matches: name and signature, not extern.
+    var entryPoint = EntryPointOf(import);
+    var signature = SignatureOf(import);
+    var candidates = probe.GetTypes()
+        .Where(t => t.Namespace != null
+                    && t.Namespace.StartsWith("Driftsys.Dashscene", StringComparison.Ordinal))
+        .SelectMany(t => t.GetMethods(
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static
+            | BindingFlags.DeclaredOnly))
+        .Where(m => m.Name == import.Name
+                    && m.GetCustomAttribute<DllImportAttribute>() == null
+                    && SignatureOf(m) == signature)
+        .ToArray();
+
+    var forwarder = candidates.Length == 1
+        ? candidates[0]
+        : throw new Exception(
+            $"{entryPoint} has {candidates.Length} forwarders with its signature in the probe, "
+            + "not one");
+
+    var parameters = forwarder.GetParameters();
+    var arguments = new object[parameters.Length];
+    for (var i = 0; i < arguments.Length; i++)
+    {
+        // `out T` arrives as `T&`, and only that is unwrapped: `byte[]` is an
+        // array whose ELEMENT type is `byte`, so unwrapping it too would pass a
+        // boxed zero where an array is declared.
+        var type = parameters[i].ParameterType;
+        var declared = type.IsByRef ? type.GetElementType() : type;
+        arguments[i] = declared.IsValueType ? Activator.CreateInstance(declared) : null;
+    }
+
+    try
+    {
+        forwarder.Invoke(null, arguments);
+    }
+    catch (TargetInvocationException e)
+    {
+        return e.InnerException;
+    }
+
+    return null;
+}
+
+// Every forwarder this library does not export must report its own symbol.
+//
+// **What the library exports is read from the library**, not taken on trust:
+// a name skipped here is a forwarder nobody drives, so a skip-list that drifted
+// — or that was widened by hand — would remove coverage silently. Measured:
+// widening it by three names left the gate green before this assertion existed.
+void EveryForwarderTranslates(Assembly probe, string library, uint reported)
+{
+    var handle = NativeLibrary.Load(library);
+    var failures = new List<string>();
+    var driven = 0;
+
+    foreach (var import in PackageImports())
+    {
+        var entryPoint = EntryPointOf(import);
+        if (NativeLibrary.TryGetExport(handle, entryPoint, out _))
+        {
+            // Exported here, so its own absence cannot be staged against this
+            // library. Another build stages it, or it is named as unstageable.
+            continue;
+        }
+
+        driven++;
+        void Require(bool condition, string message)
+        {
+            if (!condition)
+            {
+                failures.Add($"{entryPoint}: {message}");
+            }
+        }
+
+        var thrown = DriveForwarder(probe, import);
+        if (thrown == null)
+        {
+            failures.Add($"{entryPoint}: the forwarder returned, against a library lacking it");
+            continue;
+        }
+
+        var type = thrown.GetType();
+        if (type.FullName != "Driftsys.Dashscene.DashsceneSymbolMissingException")
+        {
+            failures.Add(
+                $"{entryPoint}: threw {type.FullName}, which is what a host's catch does not see");
+            continue;
+        }
+
+        Require(
+            (string)type.GetProperty("Symbol").GetValue(thrown) == entryPoint,
+            $"the refusal named {type.GetProperty("Symbol").GetValue(thrown)} instead");
+        Require(
+            (uint)type.GetProperty("Expected").GetValue(thrown) == DashsceneRuntime.PackageAbiVersion,
+            "Expected must be this package's own constant");
+        Require(
+            (uint)type.GetProperty("Actual").GetValue(thrown) == reported,
+            $"Actual was {type.GetProperty("Actual").GetValue(thrown)} and the library reports "
+            + $"{reported} — it must be READ rather than assumed");
+
+        // R-E16's catch is `DashsceneAbiMismatchException`, and a host that
+        // wrote only that one must still see this.
+        Require(
+            type.BaseType.FullName == "Driftsys.Dashscene.DashsceneAbiMismatchException",
+            $"its base is {type.BaseType.FullName}, so an R-E16 catch misses it");
+    }
+
+    // **Every offender, not the first.** Fourteen forwarders share one shape,
+    // so a change that breaks the shape breaks all of them, and reporting one
+    // per run costs a run per symbol.
+    Expect(
+        failures.Count == 0,
+        $"{failures.Count} of {driven} driven forwarders: {string.Join("; ", failures)}");
+
+    // **And the number driven is the number this library lacks**, counted from
+    // its own export table rather than from the loop. A `continue` added inside
+    // the loop — or a skip-list, which this deliberately does not have — would
+    // otherwise remove a forwarder's only coverage with nothing complaining.
+    var lacking = PackageImports()
+        .Count(m => !NativeLibrary.TryGetExport(handle, EntryPointOf(m), out _));
+    Expect(
+        driven == lacking && driven > 0,
+        $"{driven} forwarders were driven and this library lacks {lacking} of the package's "
+        + "imports; every one it lacks must be driven");
+}
+
+Check("EVERY forwarder turns a missing symbol into the R-E16 type, named for itself", () =>
+{
+    // **The check that covers the whole surface**, including the five entry
+    // points no managed code calls at all. Without it a forwarder that rethrows
+    // untranslated, or catches and swallows, is invisible for every symbol the
+    // managed checks below do not drive — measured, on nine of the fifteen.
+    //
+    // What this library exports cannot have its own absence staged here, so
+    // the other builds take those: the skewed one drives `ds_runtime_new`, and
+    // the silent one drives `ds_abi_version` — whose absence is handed back
+    // rather than translated, because translating needs a version read from
+    // the library and it IS the read.
+    EveryForwarderTranslates(older.Assembly, stubPath, DashsceneRuntime.PackageAbiVersion);
+});
+
+Check("the reported version is READ from the library, not assumed equal (#1308)", () =>
+{
+    // **The skewed build reports a version this package was not built against**,
+    // which no other fixture can: the handshake refuses a disagreement, so a
+    // constructed runtime can never see one. Driving the forwarders directly
+    // steps around the handshake, and `Actual` then differs from `Expected` —
+    // which is what says `SymbolMissing` reads the number rather than copying
+    // its own constant. Their AGREEING in production is a fact about the
+    // sequence, not about the type, and this is the check that separates them.
+    //
+    // It also drives `ds_runtime_new`, which the build above exports.
+    // **Read from the library rather than written twice.** The recipe passes
+    // the skew to the compiler; repeating the number here would be a second
+    // copy of it in a second language, with nothing deriving one from the
+    // other.
+    var reported = (uint)skewed.Runtime.GetProperty("LibraryAbiVersion").GetValue(null);
+    Expect(
+        reported != DashsceneRuntime.PackageAbiVersion,
+        $"the skewed library reports {reported}, the same as this package — then Actual and "
+        + "Expected agree whatever SymbolMissing does, and this check discriminates nothing");
+
+    EveryForwarderTranslates(skewed.Assembly, stubSkewPath, reported);
+});
+
+Check("a library exporting NEITHER the symbol nor the handshake is handed back unchanged", () =>
+{
+    // The degenerate case `Native.SymbolMissing` names: with no
+    // `ds_abi_version` there is no version to report and no disagreement to
+    // describe, so the binding failure keeps its own type and travels beside
+    // the `DllNotFoundException` a host already handles.
+    //
+    // **It must still name the symbol that failed.** Losing that — by letting
+    // the exception from the version read escape instead — would report
+    // `ds_abi_version` for every missing symbol in the package.
+    var thrown = DriveForwarder(silent.Assembly, ImportNamed("ds_runtime_tick"));
+    Expect(thrown != null, "the forwarder returned against a library exporting nothing");
+    Expect(
+        thrown is EntryPointNotFoundException,
+        $"threw {thrown.GetType().FullName}; with no version to report there is nothing to "
+        + "translate it into");
+    Expect(
+        thrown.Message.Contains("ds_runtime_tick"),
+        $"the refusal must name the symbol that failed, not the version read: {thrown.Message}");
+
+    // **The frame that names the import survives**, which is the whole reason
+    // `SymbolMissing` rethrows through `ExceptionDispatchInfo` rather than
+    // handing the exception back to be thrown again: `throw caught` at the call
+    // site overwrites `StackTrace` with the forwarder, and which import failed
+    // to bind is the only diagnostic this case has.
+    Expect(
+        (thrown.StackTrace ?? string.Empty).Contains("Imports.ds_runtime_tick"),
+        $"the binding frame was discarded by a rethrow: {thrown.StackTrace}");
+
+    // **`ds_abi_version`'s own forwarder, which no other library can stage.**
+    // Translating needs a version read from the library and it IS the read, so
+    // its absence has nothing to become — the same hand-back, and this is the
+    // only place the fifteenth forwarder is driven at all.
+    var version = DriveForwarder(silent.Assembly, ImportNamed("ds_abi_version"));
+    Expect(version != null, "the ds_abi_version forwarder returned against a silent library");
+    Expect(
+        version is EntryPointNotFoundException,
+        $"ds_abi_version's forwarder threw {version.GetType().FullName}");
+    Expect(
+        version.Message.Contains("ds_abi_version"),
+        $"it must name itself: {version.Message}");
+});
+
+Check("a package newer than its library passes the handshake and constructs (#1308)", () =>
+{
+    // **The premise of the whole class.** If the handshake caught this, there
+    // would be nothing to fix: the library agrees on `DS_ABI_VERSION` because
+    // adding a symbol does not move it, so construction succeeds against a
+    // library missing thirteen of the fifteen entry points this package binds.
+    var version = older.Runtime.GetProperty("LibraryAbiVersion").GetValue(null);
+    Expect(
+        (uint)version == DashsceneRuntime.PackageAbiVersion,
+        $"the older library reports {version}, so the handshake would have caught it and this "
+        + "check would be testing a different failure");
+
+    using ((IDisposable)ConstructProbeRuntime())
+    {
+    }
+});
+
+Check("every managed entry point a host can call reports the missing symbol", () =>
+{
+    // **The host's own path, not the forwarders.** The check above proves each
+    // forwarder translates; this proves the translation survives the managed
+    // API a host actually writes — `LoadDocument`, the two mapped loaders, the
+    // tick and the frame acquire, each on a constructed runtime.
+    var rangeType = older.Assembly.GetType("Driftsys.Dashscene.DocumentRange");
+    var window = rangeType.GetMethod("Window", BindingFlags.Public | BindingFlags.Static)
+        .Invoke(null, new object[] { fixture, 0UL, 16UL });
+
+    object runtime = ConstructProbeRuntime();
+
+    object Call(string method, Type[] signature, object[] args) =>
+        older.Runtime.GetMethod(method, signature).Invoke(runtime, args);
+
+    var driven = new (string Symbol, Func<object> Call)[]
+    {
+        ("ds_runtime_load_document",
+            () => Call("LoadDocument", new[] { typeof(byte[]) }, new object[] { new byte[] { 1, 2, 3, 4 } })),
+        ("ds_runtime_load_document_mapped",
+            () => Call("LoadDocumentMapped", new[] { typeof(string), typeof(uint) }, new object[] { fixture, 0u })),
+        ("ds_runtime_load_document_mapped_range",
+            () => Call("LoadDocumentMapped", new[] { rangeType, typeof(uint) }, new[] { window, (object)0u })),
+        ("ds_runtime_tick",
+            () => Call("Tick", new[] { typeof(float) }, new object[] { 0.016f })),
+        ("ds_runtime_acquire_frame",
+            () => Call("AcquireFrame", Type.EmptyTypes, null)),
+    };
+
+    // **Every import is accounted for, or this list is not total.** The
+    // forwarder drive above covers the surface; this one covers the managed
+    // API a host writes, and a tuple quietly dropped from it would be invisible
+    // without this — measured: deleting the `AcquireFrame` row left the gate
+    // green. The other ten are named with where they are reached instead.
+    var elsewhere = new SortedSet<string>(StringComparer.Ordinal)
+    {
+        // The constructor makes both of these before anything else can run.
+        "ds_abi_version",
+        "ds_runtime_new",
+        // The `Dispose` checks below, which cannot report through this shape
+        // because `Dispose` must not throw.
+        "ds_runtime_free",
+        // The planted-lease checks below: no library here can hand out a lease,
+        // so the release is reached through one that was put there.
+        "ds_runtime_release_frame",
+        // Reached only after a call returned a failing status, which is what
+        // the refusing-free and refusing-release libraries produce.
+        "ds_last_error_message",
+    };
+
+    var noWrapper = new SortedSet<string>(StringComparer.Ordinal)
+    {
+        // Four belong to a host that hands dashscene a surface, which a Unity
+        // host does not do, and the fifth takes the font cascade whose atlases
+        // story #1123 owns. They are declared because an unbound symbol is an
+        // ungated one, and the forwarder drive is what covers them.
+        "ds_runtime_attach_surface",
+        "ds_runtime_detach_surface",
+        "ds_runtime_draw",
+        "ds_runtime_resize",
+        "ds_runtime_load_document_with_text",
+    };
+
+    var covered = new SortedSet<string>(driven.Select(d => d.Symbol), StringComparer.Ordinal);
+    covered.UnionWith(elsewhere);
+    covered.UnionWith(noWrapper);
+    var declared = new SortedSet<string>(PackageImports().Select(EntryPointOf), StringComparer.Ordinal);
+    Expect(
+        covered.SetEquals(declared),
+        "every import must be driven here or named with where it is reached instead. In neither: "
+        + $"[{string.Join(", ", declared.Except(covered))}]; named and not declared: "
+        + $"[{string.Join(", ", covered.Except(declared))}]");
+
+    foreach (var (symbol, call) in driven)
+    {
+        var thrown = ProbeThrow(call);
+        Expect(thrown != null, $"{symbol}: the call succeeded against a library that lacks it");
+        Expect(
+            thrown.GetType().FullName == "Driftsys.Dashscene.DashsceneSymbolMissingException",
+            $"{symbol}: threw {thrown.GetType().FullName}, which is what a host's catch does not see");
+        Expect(
+            (string)thrown.GetType().GetProperty("Symbol").GetValue(thrown) == symbol,
+            $"{symbol}: the refusal named another symbol");
+    }
+
+    // The runtime is not disposed: the older library exports no
+    // `ds_runtime_free`, which the next checks are about.
+});
+
+Check("Dispose reports a free that never reached the library, and does not throw", () =>
+{
+    // **`Dispose` reports and does not throw** is one of the binding's
+    // decisions that is a defect if reversed, and until this library existed
+    // nothing could make a free fail with a live handle — the gap
+    // `docs/design/unity-csharp-host.md` named. A missing `ds_runtime_free` is
+    // that failure, and it is the one the translation must not turn into a
+    // throw out of a teardown that runs during unwinding.
+    var runtime = ConstructProbeRuntime();
+    ((IDisposable)runtime).Dispose();
+
+    var status = older.Runtime.GetProperty("LastDisposeStatus").GetValue(runtime);
+    var detail = (string)older.Runtime.GetProperty("LastDisposeDetail").GetValue(runtime);
+    Expect(
+        status.ToString() == "Ok",
+        $"LastDisposeStatus was {status}; no call answered a status, so there is none to report");
+    Expect(
+        detail.Contains("ds_runtime_free"),
+        $"LastDisposeDetail must name the symbol that could not be reached: '{detail}'");
+
+    // **The handle stays live**, exactly as it does for a free the library
+    // refused: zeroing it would make the retry the property invites hit the
+    // disposed guard and do nothing.
+    var handleField = older.Runtime.GetField("_handle", BindingFlags.NonPublic | BindingFlags.Instance);
+    Expect((ulong)handleField.GetValue(runtime) != 0, "the handle was cleared by a free that never happened");
+
+    // And a second `Dispose` is quiet, retries, and leaves the same report —
+    // rather than clearing it or reporting a different failure.
+    ((IDisposable)runtime).Dispose();
+    Expect(
+        (string)older.Runtime.GetProperty("LastDisposeDetail").GetValue(runtime) == detail,
+        "the second Dispose changed what the first reported");
+    Expect((ulong)handleField.GetValue(runtime) != 0, "the second Dispose cleared the handle");
+});
+
+Check("Dispose records a LEASE release that never reached the library, and does not throw", () =>
+{
+    // **The branch `DashsceneRuntime.Dispose` grew for this class**, and the
+    // one no library can stage on its own: reaching it needs an outstanding
+    // lease, and `ds_runtime_acquire_frame` cannot bind against this library
+    // either. So the lease is planted rather than acquired — nothing reads the
+    // frame it carries, because the release fails to bind before it is used.
+    //
+    // What it pins: the lease release's refusal is RECORDED, the free that
+    // follows still runs and records its own, and neither throws out of a
+    // method that executes during unwinding.
+    var runtime = ConstructProbeRuntime();
+    var leaseType = older.Assembly.GetType("Driftsys.Dashscene.FrameLease");
+    var frameType = older.Assembly.GetType("Driftsys.Dashscene.DsFrame");
+    var lease = Activator.CreateInstance(
+        leaseType,
+        BindingFlags.NonPublic | BindingFlags.Instance,
+        null,
+        new[] { runtime, Activator.CreateInstance(frameType) },
+        null);
+    older.Runtime.GetField("_lease", BindingFlags.NonPublic | BindingFlags.Instance)
+        .SetValue(runtime, lease);
+
+    ((IDisposable)runtime).Dispose();
+
+    var detail = (string)older.Runtime.GetProperty("LastDisposeDetail").GetValue(runtime);
+    Expect(
+        detail.Contains("ds_runtime_release_frame"),
+        $"the lease release's refusal was dropped: '{detail}'");
+    Expect(
+        detail.Contains("ds_runtime_free"),
+        $"the free ran but its own refusal was dropped: '{detail}'");
+
+    // **No status, because no call answered one.** Both the release and the
+    // free failed to bind here, so `LastDisposeStatus` must stay `Ok` and the
+    // detail is what says the runtime was not freed — which is why the property
+    // documents the pair.
+    var status = older.Runtime.GetProperty("LastDisposeStatus").GetValue(runtime);
+    Expect(status.ToString() == "Ok", $"nothing answered a status, yet one was reported: {status}");
+});
+
+Check("a free that ANSWERS, with no channel to describe it, still does not throw", () =>
+{
+    // **The one route by which a translated exception could still escape
+    // `Dispose`**, and it needs a library the other builds cannot be: one whose
+    // `ds_runtime_free` binds and refuses, so the teardown asks
+    // `ds_last_error_message` what happened — and that symbol is the one this
+    // build does not export.
+    //
+    // `DashsceneException.LastMessage` is what must absorb it. A diagnostic
+    // channel that throws replaces the diagnosis: the host would meet a
+    // symbol-missing exception where its `DsStatus.BadHandle` should be, out of
+    // a method that runs during unwinding.
+    var runtime = Activator.CreateInstance(refusesFree.Runtime);
+    ((IDisposable)runtime).Dispose();
+
+    var status = refusesFree.Runtime.GetProperty("LastDisposeStatus").GetValue(runtime);
+    var detail = (string)refusesFree.Runtime.GetProperty("LastDisposeDetail").GetValue(runtime);
+    Expect(
+        status.ToString() == "BadHandle",
+        $"the status the library ANSWERED must survive: it reported {status}");
+    Expect(
+        detail.Contains("ds_last_error_message"),
+        $"the detail must say why there is no description: '{detail}'");
+
+    var handleField = refusesFree.Runtime
+        .GetField("_handle", BindingFlags.NonPublic | BindingFlags.Instance);
+    Expect((ulong)handleField.GetValue(runtime) != 0, "a refused free must leave the handle live");
+});
+
+Check("a runtime CAN be freed while LastDisposeStatus reports a failure", () =>
+{
+    // **The state `LastDisposeStatus` documents and nothing could produce.**
+    // This library's release answers `DS_PANIC` and its free then succeeds, so
+    // the status carries the release's failure while the runtime is gone — the
+    // reason that property is not a "was it freed" flag, and a claim that stood
+    // on reading alone until this fixture existed.
+    //
+    // It also drives `LastMessage`'s absorb on the path that is NOT `Dispose`'s
+    // free: the release's failing status reaches `ThrowIfFailed`, which asks a
+    // channel this library does not export.
+    var runtime = Activator.CreateInstance(refusesLease.Runtime);
+    var leaseType = refusesLease.Assembly.GetType("Driftsys.Dashscene.FrameLease");
+    var frameType = refusesLease.Assembly.GetType("Driftsys.Dashscene.DsFrame");
+    refusesLease.Runtime.GetField("_lease", BindingFlags.NonPublic | BindingFlags.Instance)
+        .SetValue(
+            runtime,
+            Activator.CreateInstance(
+                leaseType,
+                BindingFlags.NonPublic | BindingFlags.Instance,
+                null,
+                new[] { runtime, Activator.CreateInstance(frameType) },
+                null));
+
+    ((IDisposable)runtime).Dispose();
+
+    var status = refusesLease.Runtime.GetProperty("LastDisposeStatus").GetValue(runtime);
+    var detail = (string)refusesLease.Runtime.GetProperty("LastDisposeDetail").GetValue(runtime);
+    Expect(
+        status.ToString() == "Panic",
+        $"the release's own status must survive the free that followed it: {status}");
+    Expect(
+        detail.Contains("ds_last_error_message"),
+        $"the absorbed refusal must reach the detail from the non-free path: '{detail}'");
+
+    var handle = refusesLease.Runtime
+        .GetField("_handle", BindingFlags.NonPublic | BindingFlags.Instance)
+        .GetValue(runtime);
+    Expect(
+        (ulong)handle == 0,
+        "the free succeeded, so the handle must be cleared — which is what makes this state "
+        + "'freed, and the status says otherwise' rather than 'not freed'");
 });
 
 Check("the ranged loader over a whole file equals the path loader, and so does WholeFile", () =>
@@ -883,10 +1667,14 @@ static ulong HandleOf(DashsceneRuntime runtime)
     return (ulong)(field.GetValue(runtime) ?? 0UL);
 }
 
-// Calls a raw declaration that the wrapper deliberately makes unreachable —
-// a retired handle, a second acquire, a tick under a lease. Reflection rather
+// Calls an entry point directly, past the managed wrapper that refuses it — a
+// retired handle, a second acquire, a tick under a lease. Reflection rather
 // than widening `Native` to public: these are failure modes a host must not be
 // able to reach by ordinary means.
+//
+// **It binds the forwarder, not the import.** The imports are private to
+// `Native.Imports` since issue #1308 and this cannot reach them; what it steps
+// around is `DashsceneRuntime`, not the translation.
 static DsStatus InvokeRaw(string entryPoint, params object[] args)
 {
     var native = typeof(DashsceneRuntime).Assembly

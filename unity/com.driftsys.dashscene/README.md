@@ -88,6 +88,17 @@ R-E16's version handshake, produces each status from a real call rather than
 reading the header, and compares all nineteen of a frame's `DsSlice::stride`
 values against this package's row sizes, which is R-E17.
 
+It also builds more libraries beside it, each exporting less than this package
+calls, and drives the package against each in its own `AssemblyLoadContext`.
+That is the one failure a version number cannot report: adding an entry point
+does not move `DS_ABI_VERSION`, so a package newer than the library it loads
+agrees on the version and then fails where .NET binds the import. Every entry
+point but `ds_abi_version` turns that into `DashsceneSymbolMissingException` —
+an issue #1308 defect if it does not, and `Runtime/Native.cs` is where the
+translation lives. That one is the version read itself, so its absence has no
+version to report and is handed back as it arrived. `Dispose` is the one place
+the refusal is recorded rather than thrown, because it runs during unwinding.
+
 `unity/abi-check` compiles **this package's own `BoundaryB.cs`**, builds
 `crates/dashpaint-abi` as a dynamic library, and compares every type against
 what the Rust build reports — member by member, matched by name.

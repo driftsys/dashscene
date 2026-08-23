@@ -14,6 +14,20 @@ the Cargo workspace rather than moving on its own.
   thread-affine managed lifetime, the `ds_last_error_message` channel on every
   failure a `DsStatus` describes, and the committed frame under a lease that
   checks each array's stride before a row is read (story #1121).
+- **A library that does not export an entry point this package calls is reported
+  as `DashsceneSymbolMissingException`** — the R-E16 type — rather than as the
+  `EntryPointNotFoundException` .NET raises where it binds an import, which is
+  neither a `DashsceneException` nor a `DashsceneAbiMismatchException` and so
+  escapes every catch a host is told to write. A package built after a symbol
+  arrived and loaded against a library from before passes the version handshake,
+  because adding a symbol does not move `DS_ABI_VERSION`, and then fails at the
+  first call to it (issue #1308). **Catch `DashsceneAbiMismatchException`
+  wherever you call**, not only around the constructor: the tick and the frame
+  acquire raise it too. `Dispose` is the exception and does not throw — it
+  records the refusal on `LastDisposeDetail` and leaves `LastDisposeStatus` at
+  `Ok`, because no call answered a status. **Read the pair rather than either
+  property**: a status is what a call answered, a detail is why, and neither on
+  its own says whether the runtime was freed.
 - `DocumentRange`, and `LoadDocumentMapped(DocumentRange, uint)` over it: a
   `.dsb` held as a byte range inside a larger file is mapped where it lies. That
   is what makes a document in `StreamingAssets` loadable on Android, where the

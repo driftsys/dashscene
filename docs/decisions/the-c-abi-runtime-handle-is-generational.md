@@ -1,8 +1,10 @@
 # The C ABI's runtime handle is a generational integer, in a thread-affine table
 
     status   accepted (2026-08-18, owner's ruling on issue #1226) — binds the
-             C ABI's identity type and its threading model; lands in v0.21
-             before story #859 and before any host is written against it
+             C ABI's identity type and its threading model. Built by pull
+             request #1268 and on `main`; decision 3 below carries the
+             schedule, and "What the implementation answered" carries what
+             the code says
     scope    crates/dashscene-ffi (the header, the entry points, DS_ABI_VERSION),
              crates/dashscene-android (the JNI consumer),
              docs/design/c-abi.md (the threading rule)
@@ -76,18 +78,28 @@ host is in `impl Frames for DocumentFrames`, and `render_thread` invokes the
 **And it is the narrower promise.** Widening later — a runtime that may move
 between threads — is additive; narrowing after a host relies on it is not.
 
+**This section argues from avoiding process-wide state, and decision 2's
+uniqueness clause requires some** — "for the life of the process" cannot come
+from per-thread counters. The two are reconciled rather than in tension, and
+"What the implementation answered" below is where the mechanism that makes both
+true is named. Read it before optimising this section's stated goal on its own:
+that is exactly the implementation decision 2 forbids, and it has a test.
+
 ## Why now, and not at v1
 
-**Three consumers hold the handle**: the JNI layer in
-`crates/dashscene-android`, which is Rust; `crates/dashscene-ffi/tests/abi.c`,
-this repository's own conformance test; and since story #1121 the Unity C# host
-under `unity/com.driftsys.dashscene/Runtime/`, which stores it as
-`DashsceneRuntime._handle`. Re-derive with `grep -rl ds_runtime_` rather than
-trusting this list, which has been stale once.
+**The handle is already held here**: by the JNI layer in
+`crates/dashscene-android`, which is Rust; by
+`crates/dashscene-ffi/tests/abi.c`, this repository's own conformance test; and
+since story #1121 by the Unity C# host under
+`unity/com.driftsys.dashscene/Runtime/`, which stores it as
+`DashsceneRuntime._handle` and whose declarations `unity/ffi-check` executes.
+Re-derive with `grep -rl ds_runtime_` rather than trusting this list, which has
+been stale once — and note that it carries no count, because a count is the part
+that goes stale.
 
 The C# host is **not** outside this repository's control — the package is sited
-here (`unity-package-sited-in-this-repository.md`), so all three move together.
-iOS in v1 is the first that will not. `DS_ABI_VERSION` moves either way; the
+here (`unity-package-sited-in-this-repository.md`), so they move together. iOS
+in v1 is the first that will not. `DS_ABI_VERSION` moves either way; the
 question is only how many hosts pay, and the answer is smallest now.
 
 **It therefore lands before story #859**, which adds data-plane entry points:
@@ -97,7 +109,14 @@ are surface this change has to revisit.
 ## What the implementing pull request must settle, and say why
 
 Each of these was specified in an earlier draft of this record and got it wrong.
-They need code and a test, not prose:
+They need code and a test, not prose — with one exception, named here rather
+than left as a contradiction a reader has to notice: **where decision 2 already
+rules a candidate out, the question says which**. A question that leaves a
+forbidden answer open is not a smaller record, it is an incomplete one.
+
+**They were answered**, by pull request #1268, and the section after this one is
+what the code says. The questions are kept as they were asked on 2026-08-18, so
+this record shows what was open rather than a surface with no seam in it:
 
 1. **The bit split**, and what each field's width bounds — subject to decision
    2. Two candidate layouts fail it, for the reason decision 2 gives: a
@@ -114,8 +133,9 @@ They need code and a test, not prose:
    exists and means an unsupported surface handle kind.
 4. **What a reserved zero handle means at every entry point**, against what
    `docs/design/c-abi.md` and `abi.c` promise for a null pointer today
-   (`DS_NULL_ARGUMENT`), and whether `ds_runtime_free` stays `void` — it is
-   `void` today, so a double free cannot report itself.
+   (`DS_NULL_ARGUMENT`), and whether `ds_runtime_free` stays `void` — it was
+   `void` when this was asked, so a double free could not report itself. It
+   returns a `DsStatus` now; the answer below is where that is recorded.
 5. **What happens when a counter wraps or exhausts**, for every counter in the
    handle. A wrapped value that hits a live slot is the failure this whole
    ruling exists to remove.
@@ -216,6 +236,90 @@ is no live cost to buy off. #1226 also misreads issue #979 as recording that its
 proposed fix "made the alert worse"; #979 says the fix did not _clear_ the alert
 but improved the position — one dismissal at one site instead of one per test —
 which is why PR #1223 kept the helper.
+
+## Amendment, 2026-08-23 — the framing repaired, and the restatements checked
+
+Issue #1266 filed seven statements about this ruling as stale or wrong across
+six files, and three framing tensions inside this record. It asked for one pass
+that re-derives every claim against the tree before rewriting it, and treats
+deletion as the first option. This is that pass, and re-deriving mattered: some
+of what the issue lists was already correct on `main`, and two statements it
+does not list were wrong.
+
+**Inside this record.** These repair the record's own reasoning rather than its
+typing, so they are named rather than smoothed over:
+
+- **The status line's "before any host is written against it" is deleted.** It
+  named an event that had already not happened — the JNI layer and
+  `crates/dashscene-ffi/tests/abi.c` held the handle when it was written.
+  Deleted rather than corrected: decision 3 states the schedule, so the clause
+  carried nothing this record needs.
+- **"Why thread-affine rather than global behind a lock" now says that decision
+  2's uniqueness clause needs process-wide state**, and points at the
+  reconciliation below it. The tension the issue names is real; the answer was
+  already in this record, and the reading order was the defect. An implementer
+  who optimises that section's stated goal alone builds the thing decision 2
+  forbids.
+- **The questions' preamble says where prose is allowed.** It read "they need
+  code and a test, not prose" while question 1 carries prose ruling out two
+  candidate bit splits — correctly, because decision 2 forbids them. The
+  exception is stated rather than left as a contradiction, and the preamble now
+  says the questions were answered and by what.
+- **Question 4 no longer says `ds_runtime_free` is `void` "today".** It was when
+  the question was asked, and the answers section records that it returns a
+  `DsStatus` now.
+- **The list of who holds the handle carries no count**, and names
+  `unity/ffi-check`. It said "three consumers" beside an instruction to
+  re-derive with a grep that now finds a fourth holder. The count is the part
+  that goes stale, which is the lesson
+  [`../design/c-abi.md`](../design/c-abi.md) already applied to its own panic
+  section.
+
+**Outside this record, corrected:**
+
+- [`README.md`](README.md)'s index entry claimed this record "corrects #1226's
+  figures for both". True of the `unsafe` count and not of CodeQL, where what it
+  corrects is #1226's account of issue #979 — so the clause is deleted rather
+  than qualified. That entry also read in the future tense and omitted the
+  handle-uniqueness property.
+- [`../roadmap.md`](../roadmap.md)'s "changes the signature of every entry point
+  the data plane would add to" is reworded. **Read whole it was right** — its
+  subject is the entry points the data plane would add — and the issue quotes it
+  truncated, which is a reading the wording allowed. It now says "decides the
+  signature of every entry point the data plane would add".
+- [`host-integration-in-three-layers.md`](host-integration-in-three-layers.md)
+  said thread affinity makes a call from another thread "a diagnosable bad
+  handle". Two defects in one clause: the diagnosis comes from decision 2's
+  uniqueness rather than from affinity, and the status is `DS_WRONG_THREAD`
+  rather than `DS_BAD_HANDLE`, which this ABI defines as a different thing.
+
+**Outside this record, found already correct:**
+
+- The "Why now, and not at v1" section's account of the Unity C# host, which the
+  issue reports as calling it "the first consumer outside this repository's
+  control". It says the opposite, and has since story #1121's pull request.
+- [`slices-are-planned-against-their-inflow.md`](slices-are-planned-against-their-inflow.md),
+  which the issue reports as saying "every entry point" and which already said
+  "ten of its twelve". Only the singular "entry point" and the bare "twelve"
+  changed, so that number does not read as today's count.
+- [`../design/c-abi.md`](../design/c-abi.md)'s Versioning section, which the
+  issue reports as reading "**1** and has never moved". It reads 2, and says
+  when it moved, since pull request #1268.
+
+**Two statements the ticket does not list**, both in
+[`../design/c-abi.md`](../design/c-abi.md)'s panic boundary and both falsified
+by this ruling rather than by anything else: `ds_runtime_free` was described as
+catching an unwind directly with no status to report it in, and the number of
+entry points holding that property without `guard` was given as two. Giving that
+call a `DsStatus` moved it under `guard`. One entry point holds the property
+without the helper, and it is `ds_last_error_message`.
+
+**And the issue's own figures were stale**, which is the failure it exists to
+correct rather than to repeat: it says `dashscene-ffi` exports twelve
+`extern "C"` functions and that ten of them change. Twelve was the count when
+this ruling landed, which is what the answers section says; fifteen are exported
+today and thirteen take a runtime, because the three added since — by story #859
+and story #1124 — were written taking one rather than changed to.
 
 ## Alternatives considered
 

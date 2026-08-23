@@ -1,9 +1,25 @@
 // The C# declaration of the dashscene C ABI — `crates/dashscene-ffi`, as
 // `crates/dashscene-ffi/include/dashscene.h` declares it.
 //
-// This file is declarations. The managed lifetime, the error channel and the
-// frame lease are `DashsceneRuntime.cs`, `DashsceneException.cs` and
-// `FrameLease.cs`; nothing here is a policy.
+// This file is the declarations and the one thing that belongs to binding
+// rather than to any call: a missing entry point is translated where the import
+// is bound, not where it is used. The managed lifetime, the error channel and
+// the frame lease are `DashsceneRuntime.cs`, `DashsceneException.cs` and
+// `FrameLease.cs`; no other policy is here.
+//
+// **Every `[DllImport]` is private to `Imports`, and every caller reaches it
+// through the same-named forwarder on `Native`.** .NET binds an import lazily,
+// at the first call, so a library older than a symbol this package declares
+// fails there rather than at load — as an `EntryPointNotFoundException`, which
+// is neither a `DashsceneException` nor a `DashsceneAbiMismatchException` and
+// escapes every catch a host was told to write (issue #1308). The forwarder
+// turns it into `DashsceneSymbolMissingException`, which R-E16 already makes
+// every host handle.
+//
+// `unity/ffi-check` holds this shape rather than a comment doing it: it
+// enumerates the imports, requires a guarded forwarder for each, and drives the
+// managed entry points against a library that exports two of these symbols to
+// watch the translation happen.
 //
 // **The header is the contract.** Read this file against
 // `crates/dashscene-ffi/include/dashscene.h`, not against the Rust source and
@@ -35,6 +51,8 @@
 // `docs/design/c-abi.md` carries the surface's own design record.
 
 using System;
+using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 
 namespace Driftsys.Dashscene
@@ -222,7 +240,13 @@ namespace Driftsys.Dashscene
         public DsSlice GlyphQuads;
     }
 
-    /// The `extern "C"` surface, one declaration per entry point.
+    /// The `extern "C"` surface: one import per entry point, and one forwarder
+    /// per import.
+    ///
+    /// **A caller reaches an entry point only through its forwarder**, which
+    /// turns the `EntryPointNotFoundException` a lazily-bound import raises
+    /// against an older library into `DashsceneSymbolMissingException`. The
+    /// imports themselves are private to `Imports` at the bottom of this class.
     ///
     /// **Every entry point is declared, including the four a Unity host does
     /// not call.** `ds_runtime_attach_surface`, `ds_runtime_detach_surface`,
@@ -258,66 +282,352 @@ namespace Driftsys.Dashscene
         /// any other call, which is R-E16.
         internal const uint AbiVersion = 2;
 
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern uint ds_abi_version();
+        // ------------------------------------------------------------ forwarders
+        //
+        // One per import, same name and same signature, and each one is the
+        // same three steps: call, catch, translate. **The uniformity is the
+        // point.** A hand-written catch in a managed entry point is what story
+        // #1124 shipped for one symbol and issue #1308 filed for the other
+        // fourteen; here the catch cannot be forgotten for a symbol, because a
+        // forwarder is what a caller can reach and `unity/ffi-check` refuses an
+        // import that has none.
+        //
+        // **A delegate taking the symbol name would have been one wrapper
+        // rather than fifteen, and it allocates.** Passing a call as a closure
+        // costs a display class and a delegate per call, and `Tick`,
+        // `AcquireFrame` and the lease release are per-frame — R-T4 bounds a
+        // frame's CPU cost, and `docs/design/unity-csharp-host.md` tracks the
+        // allocation half of it. **The trade is an allocation against a call
+        // frame, not against nothing**: a `try` block entered and not thrown
+        // through allocates nothing and adds no work at run time, but a method
+        // carrying one is not inlined, so each of these is a real call. That is
+        // the cost this shape pays, and neither side of it is measured here.
+        //
+        // Every caller of these entry points goes through them. A sibling file
+        // adding an import of its own cannot reach `Imports` — it is private —
+        // and does not add to it: it declares its import in a private nested
+        // type of its own and writes the same three steps, calling
+        // `SymbolMissing` below, which is `internal` for exactly that. That
+        // shape is not a convention: `unity/ffi-check` requires it of every
+        // import it compiles, which is `Runtime/` minus `Runtime/Engine/`, and
+        // refuses an import anywhere else in the package — a sample's would be
+        // compiled into a customer's own assembly and read by no gate here.
 
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern DsStatus ds_runtime_new(out ulong outRuntime);
+        internal static uint ds_abi_version()
+        {
+            try
+            {
+                return Imports.ds_abi_version();
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
 
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern DsStatus ds_runtime_free(ulong runtime);
+        internal static DsStatus ds_runtime_new(out ulong outRuntime)
+        {
+            try
+            {
+                return Imports.ds_runtime_new(out outRuntime);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
 
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern DsStatus ds_runtime_load_document(
-            ulong runtime, byte[] bytes, UIntPtr len);
+        internal static DsStatus ds_runtime_free(ulong runtime)
+        {
+            try
+            {
+                return Imports.ds_runtime_free(runtime);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
 
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern DsStatus ds_runtime_load_document_with_text(
-            ulong runtime, byte[] bytes, UIntPtr len, DsFontFace[] faces, UIntPtr faceCount);
+        internal static DsStatus ds_runtime_load_document(
+            ulong runtime, byte[] bytes, UIntPtr len)
+        {
+            try
+            {
+                return Imports.ds_runtime_load_document(runtime, bytes, len);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
 
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern DsStatus ds_runtime_load_document_mapped(
-            ulong runtime, byte[] path, uint shownRoot, DsFontFace[] faces, UIntPtr faceCount);
+        internal static DsStatus ds_runtime_load_document_with_text(
+            ulong runtime, byte[] bytes, UIntPtr len, DsFontFace[] faces, UIntPtr faceCount)
+        {
+            try
+            {
+                return Imports.ds_runtime_load_document_with_text(
+                    runtime, bytes, len, faces, faceCount);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
 
-        /// `offset` and `length` are `uint64_t`, so they bind as `ulong` — not
-        /// as `long`, and not as `UIntPtr`. A container entry's offset is a
-        /// file offset and is unsigned on the header's side; `UIntPtr` would be
-        /// 32 bits wide on a 32-bit player and truncate one past 4 GiB, which
-        /// is inside the range an APK can reach.
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern DsStatus ds_runtime_load_document_mapped_range(
+        internal static DsStatus ds_runtime_load_document_mapped(
+            ulong runtime, byte[] path, uint shownRoot, DsFontFace[] faces, UIntPtr faceCount)
+        {
+            try
+            {
+                return Imports.ds_runtime_load_document_mapped(
+                    runtime, path, shownRoot, faces, faceCount);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
+
+        internal static DsStatus ds_runtime_load_document_mapped_range(
             ulong runtime, byte[] path, ulong offset, ulong length, uint shownRoot,
-            DsFontFace[] faces, UIntPtr faceCount);
+            DsFontFace[] faces, UIntPtr faceCount)
+        {
+            try
+            {
+                return Imports.ds_runtime_load_document_mapped_range(
+                    runtime, path, offset, length, shownRoot, faces, faceCount);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
 
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern DsStatus ds_runtime_attach_surface(
-            ulong runtime, int kind, IntPtr window, IntPtr display, uint width, uint height);
+        internal static DsStatus ds_runtime_attach_surface(
+            ulong runtime, int kind, IntPtr window, IntPtr display, uint width, uint height)
+        {
+            try
+            {
+                return Imports.ds_runtime_attach_surface(
+                    runtime, kind, window, display, width, height);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
 
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern DsStatus ds_runtime_detach_surface(
-            ulong runtime, out byte outHadSurface);
+        internal static DsStatus ds_runtime_detach_surface(
+            ulong runtime, out byte outHadSurface)
+        {
+            try
+            {
+                return Imports.ds_runtime_detach_surface(runtime, out outHadSurface);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
 
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern DsStatus ds_runtime_resize(ulong runtime, uint width, uint height);
+        internal static DsStatus ds_runtime_resize(ulong runtime, uint width, uint height)
+        {
+            try
+            {
+                return Imports.ds_runtime_resize(runtime, width, height);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
 
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern DsStatus ds_runtime_tick(
-            ulong runtime, float dt, out byte outAdvanced);
+        internal static DsStatus ds_runtime_tick(ulong runtime, float dt, out byte outAdvanced)
+        {
+            try
+            {
+                return Imports.ds_runtime_tick(runtime, dt, out outAdvanced);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
 
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern DsStatus ds_runtime_draw(ulong runtime, out byte outDrawn);
+        internal static DsStatus ds_runtime_draw(ulong runtime, out byte outDrawn)
+        {
+            try
+            {
+                return Imports.ds_runtime_draw(runtime, out outDrawn);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
 
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern DsStatus ds_runtime_acquire_frame(ulong runtime, out DsFrame outFrame);
+        internal static DsStatus ds_runtime_acquire_frame(ulong runtime, out DsFrame outFrame)
+        {
+            try
+            {
+                return Imports.ds_runtime_acquire_frame(runtime, out outFrame);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
 
-        /// `drawn` is `int` and not `bool`. See the note at the top of this file.
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern DsStatus ds_runtime_release_frame(
-            ulong runtime, int drawn, out byte outWasLeased);
+        internal static DsStatus ds_runtime_release_frame(
+            ulong runtime, int drawn, out byte outWasLeased)
+        {
+            try
+            {
+                return Imports.ds_runtime_release_frame(runtime, drawn, out outWasLeased);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
 
-        /// Returns the bytes the message needs including the terminator, so a
-        /// null `buf` or a short one tells you what to allocate.
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern UIntPtr ds_last_error_message(byte[] buf, UIntPtr cap);
+        internal static UIntPtr ds_last_error_message(byte[] buf, UIntPtr cap)
+        {
+            try
+            {
+                return Imports.ds_last_error_message(buf, cap);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
+
+        /// The exception a caller should see when the loaded library exports no
+        /// `symbol`, having agreed on `DS_ABI_VERSION`.
+        ///
+        /// **The symbol name is `[CallerMemberName]`, not a literal** — so it
+        /// is the forwarder's own name, which is the entry point's name because
+        /// `unity/ffi-check` matches the two. A literal per forwarder is one
+        /// copy-paste away from naming a symbol that resolved perfectly well.
+        ///
+        /// **`Actual` is read from the library rather than assumed equal to
+        /// `AbiVersion`.** It is documented as the value the library reports,
+        /// and a caller logging a number nothing observed is worse than no
+        /// number. The read goes to the raw import, so it cannot recurse
+        /// through this method.
+        ///
+        /// **A library exporting neither the symbol nor the handshake is not a
+        /// build of this library at all**, so there is no version to report and
+        /// no disagreement to describe. The original exception is rethrown
+        /// there, beside the `DllNotFoundException` a host already handles
+        /// separately — this package's SHIPPED state carries no native library,
+        /// so that catch exists in every host anyway.
+        ///
+        /// **No caller with a runtime in hand can reach that branch**, and the
+        /// managed surface leans on it: `DashsceneRuntime`'s constructor cannot
+        /// succeed unless `ds_abi_version` bound, and a library's exports do
+        /// not change afterwards. So `Dispose` and `AcquireFrame` catch
+        /// `DashsceneAbiMismatchException` alone rather than that type as well.
+        /// `DashsceneException.LastMessage` catches both, because its contract
+        /// is that a missing export never becomes a throw and it should not
+        /// rest on this ordering argument.
+        internal static Exception SymbolMissing(
+            EntryPointNotFoundException caught, [CallerMemberName] string symbol = null)
+        {
+            uint actual;
+            try
+            {
+                actual = Imports.ds_abi_version();
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // **Rethrown with its own stack rather than returned to be
+                // thrown again.** `throw caught` at the call site overwrites
+                // `StackTrace` with the forwarder, which discards the frame
+                // naming the import that failed to bind — the only diagnostic
+                // this case has, since there is no version to report.
+                ExceptionDispatchInfo.Capture(caught).Throw();
+                throw caught;
+            }
+
+            return new DashsceneSymbolMissingException(symbol, AbiVersion, actual);
+        }
+
+        /// The `[DllImport]`s themselves, reachable from nowhere else.
+        ///
+        /// **Private so that "call it through the forwarder" is a compile-time
+        /// property rather than a convention.** Widening this type, or calling
+        /// one of these from outside `Native`, puts a call back on the path
+        /// where an `EntryPointNotFoundException` escapes untranslated.
+        private static class Imports
+        {
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern uint ds_abi_version();
+
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_new(out ulong outRuntime);
+
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_free(ulong runtime);
+
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_load_document(
+                ulong runtime, byte[] bytes, UIntPtr len);
+
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_load_document_with_text(
+                ulong runtime, byte[] bytes, UIntPtr len, DsFontFace[] faces, UIntPtr faceCount);
+
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_load_document_mapped(
+                ulong runtime, byte[] path, uint shownRoot, DsFontFace[] faces,
+                UIntPtr faceCount);
+
+            /// `offset` and `length` are `uint64_t`, so they bind as `ulong` — not
+            /// as `long`, and not as `UIntPtr`. A container entry's offset is a
+            /// file offset and is unsigned on the header's side; `UIntPtr` would be
+            /// 32 bits wide on a 32-bit player and truncate one past 4 GiB, which
+            /// is inside the range an APK can reach.
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_load_document_mapped_range(
+                ulong runtime, byte[] path, ulong offset, ulong length, uint shownRoot,
+                DsFontFace[] faces, UIntPtr faceCount);
+
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_attach_surface(
+                ulong runtime, int kind, IntPtr window, IntPtr display, uint width, uint height);
+
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_detach_surface(
+                ulong runtime, out byte outHadSurface);
+
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_resize(
+                ulong runtime, uint width, uint height);
+
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_tick(
+                ulong runtime, float dt, out byte outAdvanced);
+
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_draw(ulong runtime, out byte outDrawn);
+
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_acquire_frame(
+                ulong runtime, out DsFrame outFrame);
+
+            /// `drawn` is `int` and not `bool`. See the note at the top of this file.
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_release_frame(
+                ulong runtime, int drawn, out byte outWasLeased);
+
+            /// Returns the bytes the message needs including the terminator, so a
+            /// null `buf` or a short one tells you what to allocate.
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern UIntPtr ds_last_error_message(byte[] buf, UIntPtr cap);
+        }
     }
 }

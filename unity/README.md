@@ -17,7 +17,13 @@ repository builds and records.
     ffi-check/                the package's P/Invoke declarations, executed
                               against a dashscene-ffi cdylib. Same exclusion,
                               for its own reason: it compiles Runtime/ only
-                              because that is where the declarations live
+                              because that is where the declarations live.
+                              `older-library.c` beside it is built into
+                              several libraries that export LESS than the
+                              package calls, so the gate can provoke a package
+                              newer than its library rather than describe it —
+                              which is why this one also needs a C compiler.
+                              That file enumerates the builds
     package-gate/             a Rust workspace member, in the sanity test tier:
                               the HLSL derived from the WGSL shader library,
                               the shader pragmas R-E11 and R-E12 require, and
@@ -54,7 +60,9 @@ They ask different questions and none subsumes another. `abi-check` compares
 boundary B's value types against a `dashpaint-abi` build, member by member;
 `package-compat` asks whether Unity could compile the engine-free half at
 netstandard2.1, and executes nothing; `ffi-check` loads `dashscene-ffi` and
-calls it; `package-gate` reads sources and re-derives the generated HLSL;
+calls it, and loads deliberately incomplete libraries beside it, each in its own
+`AssemblyLoadContext`, to watch a missing entry point become the R-E16 type
+(issue #1308); `package-gate` reads sources and re-derives the generated HLSL;
 `editor-compat` is the only one that compiles a Unity `.shader`;
 `hlsl-conformance` is the only one that dispatches shader code and compares the
 values it computed against a committed table. Until story #1121 nothing compiled
