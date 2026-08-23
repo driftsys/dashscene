@@ -100,16 +100,57 @@ refused. Measured — the probe produced that message under the Built-in Render
 Pipeline and not under URP.
 
 **R-E5** — the host project's active render pipeline asset shall set
-`m_UseSRPBatcher` to `1`. _Check:_ read the field in the asset. Unity's refusal
-message is `Please turn SRP Batcher ON to use the BatchRendererGroup API`, read
-out of the editor binary's string table and **not observed in any run** — story
-#1125's probe satisfied this requirement, so it never produced it.
+`m_UseSRPBatcher` to `1`. _Check:_ read the field **in the asset** — and, in a
+process that has rendered a frame, read `useScriptableRenderPipelineBatching` on
+`GraphicsSettings`. `just unity-render` does both: the asset on the editor side,
+the global in the player after its first render. They are not interchangeable,
+for the reason two paragraphs below.
+
+Unity's refusal message is
+`Please turn SRP Batcher ON to use the BatchRendererGroup API`, read out of the
+editor binary's string table and **still not observed in any run**: every run
+that has drawn satisfied this requirement first, so nothing has yet produced it.
+
+**Read on the asset, or on the global only after a frame has rendered.** These
+are two different reads and only one of them is this requirement.
+`GraphicsSettings.useScriptableRenderPipelineBatching` is assigned inside
+`UniversalRenderPipeline`'s constructor, from the asset's `useSRPBatcher` — one
+line of `UniversalRenderPipeline.cs` — and that constructor runs when Unity
+first creates a pipeline **instance**, which is at the first render. So the
+global is false in `Awake` of the first frame however the project is configured,
+and false for the whole life of a batch-mode editor that renders nothing.
+
+**Measured** on `6000.3.22f1`, macOS/Metal, 2026-08-23, in a player whose URP
+asset had `useSRPBatcher` true: the global read `False` in `Awake` and `True`
+once a frame had been rendered. So `just unity-render` checks the asset's
+`useSRPBatcher` on the editor side and the global on the player side, after its
+first render — and `BrgPainter`, which reads the global in its own constructor,
+warns that this requirement is unmet on hosts that meet it. Issue #1317 carries
+that.
 
 **R-E6** — `ProjectSettings/GraphicsSettings.asset` shall set `m_BrgStripping`
-to `2` (`BatchRendererGroupStrippingMode.KeepAll`). _Check:_ read the field. The
-default is `0` (`KeepIfEntitiesGraphics`), which strips BRG shader variants in a
-project that has no DOTS packages — which is this design's shape, since
+to `2` (`BatchRendererGroupStrippingMode.KeepAll`). _Check:_ read the field.
+`just unity-render` sets it, reads it back through a fresh `SerializedObject`
+and then draws through it on every run. The default is `0`
+(`KeepIfEntitiesGraphics`), which strips BRG shader variants in a project that
+has no DOTS packages — which is this design's shape, since
 `unity-painter-uses-brg.md` D1 uses BRG without Entities.
+
+**Observed on 2026-08-23**, where it had been written from documentation until
+then: Unity `6000.3.22f1`, macOS/Metal, a windowed player. At the default of `0`
+the painter constructed its group, packed all 16 instances, submitted them and
+drew **nothing**, while Unity logged
+`Trying to render a BatchRendererGroup batch with wrong cbuffer setup. Missing
+DOTS_INSTANCING_ON variant?`
+on every frame; setting it to `2` made the document appear. **The failure is
+silent from the painter's side** — every count it reports is the count a drawing
+frame would report — so a host meeting it reads it as a painter defect rather
+than as a project setting. Issues #1298 and #1313 carry the run.
+
+**It is not free.** `KeepAll` keeps the BatchRendererGroup variant of every
+shader in the project rather than only of the ones a BatchRendererGroup draws,
+so a player build compiles a larger variant set. What that costs has not been
+measured here.
 
 **R-E7** — the host project shall set the Android scripting backend to
 `ScriptingImplementation.IL2CPP`. _Check:_ read `PlayerSettings`. Unity ships no
@@ -153,7 +194,9 @@ in a Unity editor, and reads `PlayerSettings.GetApiCompatibilityLevel` back
 rather than assuming it. It needs an editor install, which
 [`../decisions/the-native-library-ships-inside-the-unity-package.md`](../decisions/the-native-library-ships-inside-the-unity-package.md)
 D4 records no CI runner here can host, so it runs on a developer's machine
-before a pull request that touches `Runtime/Engine/` or `Runtime/Shaders/`.
+before a pull request that touches `Runtime/Engine/`, `Runtime/Shaders/`,
+`Runtime/Resources/` or `Samples~/FrameLoop/` — the last because it is the only
+thing anywhere that compiles the sample.
 
 **The exclusion is itself checked**, in `unity/package-gate`, which runs in the
 sanity test tier with no editor and no .NET SDK: **every** project that globs

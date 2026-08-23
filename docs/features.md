@@ -617,8 +617,9 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       customer installing by Git URL gets declarations that resolve nothing
       until they supply it.
 
-      **The renderer itself is built since story #1122, and it has drawn
-      nothing.** `BrgPainter` turns the committed tables into instances and
+      **The renderer is built since story #1122, and since issue #1298 it has
+      drawn a document that something checked.** `BrgPainter` turns the
+      committed tables into instances and
       draws them through `BatchRendererGroup` in the three material classes
       `unity-painter-uses-brg.md` D1 names. It covers fills — solid and
       gradient — corner radii, strokes, clips, per-node opacity and rotation,
@@ -645,15 +646,27 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       on Vulkan or GLES3x even for URP's own unlit shader — the gate compiles
       that shader as a control and scopes its emptiness check to the pairs
       where the call discriminates — so on the two target-fleet APIs the
-      fragment evidence is the API's `Success` flag alone. **Nothing has run the painter**: no frame has been
-      drawn and nothing constructs it in this tree (issue #1298). The epic's
-      own definition of done has two halves — the painter draws a `.dsb`
-      through the C# host, and issue #828's portable conformance suite says it
-      drew the right thing. The gate above is the suite half's machinery, run
-      over synthetic probes rather than over a painted frame, so it does not
-      close that half either.
-      Read "the renderer is built" as "the code exists, compiles, and its
-      shader library evaluates correctly", not as "it draws".
+      fragment evidence is the API's `Success` flag alone.
+
+      **And it has been run.** `just unity-render` builds a **player**, draws
+      `goldens/dsb/v03-paint.dsb` and reads the pixels back. The package's
+      `Samples~/FrameLoop` also constructs the painter and draws, but nothing
+      here runs it: `just unity-editor` compiles it and that is all. Measured on
+      Unity 6000.3.22f1, macOS/Metal, Apple M3: 16 instances on rung
+      `RawBuffer`, ink at all 13 sampled node centres, and the one rect
+      carrying an image fill refused and reported. The gate's verdict predicate
+      is evaluated first on a frame the painter deliberately did not draw, and
+      the run fails if that frame passes.
+
+      **Read that as narrowly as it is meant.** One graphics API — Metal, which
+      is a translation of the shaders rather than the GLES 3.2 or Vulkan the
+      target fleet runs — one document, and ink where the committed tables
+      place a node rather than ink of the right colour. The epic's own
+      definition of done has a second half that this does not close: issue
+      #828's portable conformance suite says the painter drew the RIGHT thing,
+      and `just unity-conformance` is that suite's machinery, run over
+      synthetic probes rather than over a painted frame. No device has run
+      either of them.
 - [ ] **Browsers without WebGPU** — WebGPU is the newer browser graphics
       standard the lean renderer needs. A browser lacking it is told so and
       draws nothing. Supporting the older standard is a redesign, and a v1
@@ -824,10 +837,13 @@ sentence.
       host has a toolchain and automation since story #1121** — three .NET
       gates and, since story #1122, a fourth in Rust run on any pull request
       that touches code, and none of the four needs an editor — but **no
-      target**: nothing here has run a Unity player on any device. A fifth
-      check does need an editor and therefore runs on no CI runner
-      (`just unity-editor`, story #1122); it is the only thing here that
-      compiles a Unity `.shader`. The `.meta` values that decide whether a native
+      target**: nothing here has run a Unity player on a device. Three further
+      checks need an editor and therefore run on no CI runner:
+      `just unity-editor` (story #1122) compiles every shader pass with
+      `DOTS_INSTANCING_ON`, `just unity-conformance` (issue #1312) evaluates the
+      committed layer-2 probe table through the generated `Sdf.hlsl` on a real
+      graphics device, and `just unity-render` (issue #1298) builds a
+      player on the developer's own machine and draws through it. The `.meta` values that decide whether a native
       library reaches an Android build are neither written nor exercised,
       because the package ships no library (R-E21, unmet).
 

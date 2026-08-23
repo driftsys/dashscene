@@ -54,7 +54,7 @@ Shader "Dashscene/UnlitOverlay"
             #pragma fragment DsFragmentStage
 
             #define DASHSCENE_CLASS_UNLIT_OVERLAY
-            #include "DashsceneInstance.hlsl"
+            #include "Packages/com.driftsys.dashscene/Runtime/Shaders/DashsceneInstance.hlsl"
 
             DsVaryings DsVertexStage(DsAttributes input)
             {

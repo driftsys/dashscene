@@ -45,6 +45,10 @@ pub const HLSL_PATH: &str = "unity/com.driftsys.dashscene/Runtime/Shaders/Sdf.hl
 /// The package directory the shaders and the C# live under.
 pub const PACKAGE_PATH: &str = "unity/com.driftsys.dashscene";
 
+/// The package's UPM name, which is also the first segment of every absolute
+/// `#include "Packages/…"` path its shaders make.
+pub const PACKAGE_NAME: &str = "com.driftsys.dashscene";
+
 /// The `include_str!` in `dashscene-gpu` that must name [`WGSL_PATH`].
 ///
 /// Named as a constant so the test that checks it reads as an assertion about
@@ -155,47 +159,78 @@ pub fn generate_hlsl(wgsl: &str) -> Result<String, String> {
 /// Sorted by path, so a diff between two runs is stable and a test that reports
 /// the set reports it in one order.
 ///
+/// **Collected from the whole package rather than from one directory**, which
+/// is a correctness difference and not tidiness. The scope includes
+/// `Samples~/` and any other hidden directory, deliberately: a shader there is
+/// one `every_shader_sits_where_resources_load_will_find_it` reports as
+/// shipped and unnamed, which is the answer wanted — do not narrow this back to
+/// `Runtime/`.
+///
+/// **[`package_cs_files`] does NOT share that scope**, and the difference is
+/// load-bearing rather than an oversight to tidy: it walks `Runtime/` only, so
+/// every question this crate asks about C# is a question about the compiled
+/// half of the package. The shaders moved once
+/// already — issue #1313 put them under `Runtime/Resources/` so a player build
+/// keeps them — and a collector pointed at a directory answers "R-E11 and R-E12
+/// hold over what I found there", which is not the requirement. Where they are
+/// allowed to sit is a separate assertion,
+/// `every_shader_sits_where_resources_load_will_find_it`, so moving one is a
+/// named failure rather than an invisible one.
+///
 /// # Panics
 ///
-/// If the shader directory cannot be read. An absent directory is not the same
+/// If the package directory cannot be read. An absent directory is not the same
 /// as an empty set and must not be reported as one — R-E11 and R-E12 both
-/// require the non-empty assertion, and a gate whose input directory has moved
-/// would otherwise pass having read nothing.
+/// require the non-empty assertion, and a gate whose input has moved would
+/// otherwise pass having read nothing.
 pub fn shader_sources() -> Vec<(String, String)> {
-    let dir = root().join(PACKAGE_PATH).join("Runtime/Shaders");
-    assert!(
-        dir.is_dir(),
-        "{} is not a directory. The package's shaders are what R-E11 and \
-         R-E12 are stated over; a missing directory is a moved gate, not an \
-         empty set.",
-        dir.display()
-    );
-    let mut out = Vec::new();
-    collect_ext(&dir, "shader", &mut out);
-    out.sort();
-    out
+    collect_package_ext("shader")
 }
 
 /// Every `.hlsl` the package ships, as (path relative to the root, source).
 ///
 /// The shading the `.shader` files include. R-E11 and R-E12 are about the
 /// `.shader` programs; **R-T5 is about these**, because this is where a hand
-/// port would live.
+/// port would live. Collected from the whole package for
+/// [`shader_sources`]'s reason.
 pub fn hlsl_sources() -> Vec<(String, String)> {
-    let dir = root().join(PACKAGE_PATH).join("Runtime/Shaders");
-    assert!(dir.is_dir(), "{} is not a directory", dir.display());
+    collect_package_ext("hlsl")
+}
+
+/// Every file with `ext` anywhere under the package.
+fn collect_package_ext(ext: &str) -> Vec<(String, String)> {
+    let dir = root().join(PACKAGE_PATH);
+    assert!(
+        dir.is_dir(),
+        "{} is not a directory. The package's shading is what R-E11, R-E12 and \
+         R-T5 are stated over; a missing directory is a moved gate, not an \
+         empty set.",
+        dir.display()
+    );
     let mut out = Vec::new();
-    collect_ext(&dir, "hlsl", &mut out);
+    collect_ext(&dir, ext, &mut out);
     out.sort();
     out
+}
+
+/// Where `Resources.Load` finds the shader a material class names, relative to
+/// the repository root.
+///
+/// **The shader's own declared name doubles as its Resources path**, so
+/// `PaintShaders.For` is the only string the painter needs and there is no
+/// second constant to drift. `Dashscene/UnlitOverlay` is the name in
+/// `Shader "…"`, the argument to `Resources.Load<Shader>`, and the path under
+/// `Runtime/Resources/`.
+pub fn resources_shader_path(shader_name: &str) -> String {
+    format!("{PACKAGE_PATH}/Runtime/Resources/{shader_name}.shader")
 }
 
 /// Collect every file with `ext` under `dir`, **recursively**.
 ///
 /// Recursive on purpose: a first version used `read_dir` and would have missed
-/// a shader in `Runtime/Shaders/Lit/` entirely — registered by `Shader.Find` at
-/// run time, and invisible to R-E11, R-E12 and every other check here, with the
-/// non-empty assertions still satisfied by its siblings.
+/// a shader in a subdirectory entirely — resolved at run time, and invisible to
+/// R-E11, R-E12 and every other check here, with the non-empty assertions still
+/// satisfied by its siblings.
 fn collect_ext(dir: &Path, ext: &str, out: &mut Vec<(String, String)>) {
     let entries =
         std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot read {}: {e}", dir.display()));
@@ -227,7 +262,7 @@ fn collect_ext(dir: &Path, ext: &str, out: &mut Vec<(String, String)>) {
 /// comment, so a shader dropped from `PaintShaders` but still named in prose
 /// nearby kept the two sets equal.
 ///
-/// The painter is what holds the other end. `Shader.Find` returning null is a
+/// The painter is what holds the other end. A null from `Resources.Load` is a
 /// named diagnostic there rather than a null dereference, so a name this
 /// function collects that resolves to nothing is caught at run time as well as
 /// here.
@@ -425,7 +460,8 @@ pub const ENGINE_TOKENS: [&str; 3] = ["UnityEngine", "UnityEditor", "Unity."];
 
 /// The `Shader "…"` name a `.shader` source declares.
 ///
-/// The first line of a Unity shader, and what `Shader.Find` matches against.
+/// The first line of a Unity shader: the name it declares, which is also the
+/// path `Resources.Load` resolves it by.
 pub fn declared_shader_name(source: &str) -> Option<String> {
     let at = source.find("Shader \"")?;
     let rest = &source[at + "Shader \"".len()..];

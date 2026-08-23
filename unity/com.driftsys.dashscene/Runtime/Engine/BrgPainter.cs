@@ -296,14 +296,36 @@ namespace Driftsys.Dashscene
                     + "m_UseSRPBatcher on the active render pipeline asset.");
             }
 
+            // **`Resources.Load`, not `Shader.Find`, and that is issue
+            // #1313.** Unity strips a shader that no scene and no material
+            // references out of a PLAYER build, and strips nothing in an
+            // editor — so `Shader.Find` resolved in every gate this repository
+            // had and returned null in the one configuration a customer ships.
+            // Measured: a windowed macOS player, 6000.3.22f1, 2026-08-23,
+            // threw the diagnostic below on a package that passed every other
+            // check.
+            //
+            // A `Resources` folder is included in a build whether or not
+            // anything references it, which is what makes the shader reachable
+            // without asking each host to add it to Always Included Shaders.
+            // The name doubles as the path: `PaintShaders.For` returns
+            // `Dashscene/UnlitOverlay`, the shader's own declared name, and the
+            // file sits at `Runtime/Resources/Dashscene/UnlitOverlay.shader`.
+            // `unity/package-gate` holds the two together in both directions,
+            // so a shader renamed and not moved fails a test rather than a
+            // player.
             var shaderName = PaintShaders.For(materialClass);
-            var shader = Shader.Find(shaderName);
+            var shader = Resources.Load<Shader>(shaderName);
             if (shader == null)
             {
                 throw new DashscenePainterException(
-                    $"the shader '{shaderName}' was not found. It ships in this package "
-                    + "under Runtime/Shaders/; a Git-URL install that is missing it has "
-                    + "lost a .meta file, which is R-E2.");
+                    $"the shader '{shaderName}' was not found. It ships in this package at "
+                    + $"Runtime/Resources/{shaderName}.shader and is loaded with "
+                    + "Resources.Load, so it is included in a player build without the host "
+                    + "configuring anything. Two things make it absent: a Git-URL install "
+                    + "that lost the shader's .meta file, or one that lost the .meta of a "
+                    + "folder on that path — both are R-E2, and Unity ignores an asset with "
+                    + "no .meta inside an immutable package rather than generating one.");
             }
 
             // **Everything from here is disposable, and a throw would strand

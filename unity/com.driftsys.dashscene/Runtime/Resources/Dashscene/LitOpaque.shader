@@ -1,11 +1,14 @@
-// The lit cutout class — `docs/decisions/unity-painter-uses-brg.md` D1's third.
+// The lit opaque class — `docs/decisions/unity-painter-uses-brg.md` D1's
+// second.
 //
-// Writes depth and does not blend, like the opaque class, but discards a
-// fragment whose coverage falls below `_DsCutoff`. That is how a shape survives
-// into the depth buffer: the silhouette is exact to within one fragment, and
-// the edge is hard rather than anti-aliased. A node whose edge must be smooth
-// belongs on the overlay class.
-Shader "Dashscene/LitCutout"
+// Writes depth and does not blend, so a document takes part in the engine's
+// depth buffer and its main directional light. **It cannot express partial
+// coverage**: with no blending, every fragment of the quad is opaque, so a
+// rounded corner would be a square one and a clipped edge would not be cut.
+// The painter refuses to route a node with a corner radius, a clip or a stroke
+// to this class with a named diagnostic — drawing a square where a pill was
+// authored is exactly the silent drop P4 forbids.
+Shader "Dashscene/LitOpaque"
 {
     Properties
     {
@@ -14,17 +17,14 @@ Shader "Dashscene/LitCutout"
         _DsShade("Opacity, outset, rotation", Vector) = (1, 0, 0, 0)
         _DsPivot("Rotation pivot", Vector) = (0, 0, 0, 0)
         _DsPaint("Kind, row, clip offset, clip count", Vector) = (0, 0, 0, 0)
-        // Per material, not per instance: it is the class's own threshold
-        // rather than anything boundary B carries.
-        _DsCutoff("Coverage below which a fragment is discarded", Range(0, 1)) = 0.5
     }
 
     SubShader
     {
         Tags
         {
-            "RenderType" = "TransparentCutout"
-            "Queue" = "AlphaTest"
+            "RenderType" = "Opaque"
+            "Queue" = "Geometry"
             "RenderPipeline" = "UniversalPipeline"
             // Declared as well as pragma'd. Unity reads this tag to decide
             // whether a SubShader is usable at all on the running device, and
@@ -35,7 +35,7 @@ Shader "Dashscene/LitCutout"
 
         Pass
         {
-            Name "DashsceneLitCutout"
+            Name "DashsceneLitOpaque"
             Tags { "LightMode" = "UniversalForward" }
 
             ZWrite On
@@ -52,9 +52,9 @@ Shader "Dashscene/LitCutout"
             #pragma vertex DsVertexStage
             #pragma fragment DsFragmentStage
 
-            #define DASHSCENE_CLASS_LIT_CUTOUT
-            #include "DashsceneInstance.hlsl"
-            #include "DashsceneLighting.hlsl"
+            #define DASHSCENE_CLASS_LIT_OPAQUE
+            #include "Packages/com.driftsys.dashscene/Runtime/Shaders/DashsceneInstance.hlsl"
+            #include "Packages/com.driftsys.dashscene/Runtime/Shaders/DashsceneLighting.hlsl"
 
             DsVaryings DsVertexStage(DsAttributes input)
             {
@@ -64,7 +64,6 @@ Shader "Dashscene/LitCutout"
             float4 DsFragmentStage(DsVaryings input) : SV_Target
             {
                 float4 shaded = DsShade(input);
-                clip(shaded.a - _DsCutoff);
                 return float4(DsLit(shaded.rgb), 1.0);
             }
             ENDHLSL

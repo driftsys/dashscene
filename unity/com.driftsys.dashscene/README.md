@@ -29,7 +29,7 @@ What is here:
   host: version negotiation, runtime lifetime, document load, the tick, and the
   committed frame under a lease.
 - `Runtime/CommitPacer.cs` — committing below the display rate without drifting
-  off it. In `Runtime/` rather than in the sample because nothing compiles a
+  off it. In `Runtime/` rather than in the sample because no CI job compiles a
   sample, and this carries a numeric claim worth gating.
 - `Runtime/PaintHeap.cs`, `PaintProperties.cs`, `PaintBindings.cs`,
   `FramePacker.cs`, `PackDiagnostics.cs` — the half of the painter that decides
@@ -44,10 +44,17 @@ What is here:
   reference assemblies, so R-E10's netstandard check cannot compile it and a
   Unity editor checks it instead
   ([r-e10-is-checked-in-two-halves](../../docs/decisions/r-e10-is-checked-in-two-halves.md)).
-- `Runtime/Shaders/` — the three material classes, the shading they share, and
-  `Sdf.hlsl`. **`Sdf.hlsl` is generated** from the lean painter's WGSL shader
-  library by `naga` and must not be edited: the point is that both painters
-  evaluate one compiled module rather than two ports of one file.
+- `Runtime/Resources/Dashscene/` — the three material classes' `.shader` files,
+  one per class. **They sit in a `Resources` folder because a player build
+  strips a shader that no scene and no material references** — the painter loads
+  each with `Resources.Load<Shader>` by the shader's own declared name, so the
+  name doubles as the path and there is no second constant to drift. Issue #1313
+  is the run that measured the alternative failing.
+- `Runtime/Shaders/` — the shading those three include, and `Sdf.hlsl`. An
+  `.hlsl` is not loaded at run time, so it needs no `Resources` folder.
+  **`Sdf.hlsl` is generated** from the lean painter's WGSL shader library by
+  `naga` and must not be edited: the point is that both painters evaluate one
+  compiled module rather than two ports of one file.
 - `Samples~/FrameLoop/` — a `MonoBehaviour` driving all of it from
   `Time.deltaTime`. It is a sample rather than `Runtime/` code because R-E10
   requires every type under `Runtime/` to compile against netstandard2.1 and
@@ -64,16 +71,18 @@ runtime leaks with nothing reported.
 
 ## What checks the declarations
 
-`just unity-abi` runs the first two below, `just unity-ffi` the third and
-`just test` the fourth — all four run on any pull request whose diff is not
-documentation-only, and **none of those four needs a Unity editor**. Two do need
-one and therefore run on no CI runner: `just unity-editor`, the only thing that
-compiles a Unity `.shader` and the one whose purpose is to compile
-`Runtime/Engine/`, and `just unity-conformance`, which evaluates the committed
+Each check asks a different question and none subsumes another. `just unity-abi`
+runs the first two below, `just unity-ffi` the third and `just test` the fourth
+— all four run on any pull request whose diff is not documentation-only, and
+**none of those four needs a Unity editor**. Three do need one and therefore run
+on no CI runner: `just unity-editor`, the only thing that compiles a Unity
+`.shader` without building a player and the one whose purpose is to compile
+`Runtime/Engine/`; `just unity-conformance`, which evaluates the committed
 layer-2 probe table through the generated `Runtime/Shaders/Sdf.hlsl` on a real
-graphics device (issue #1312). That last one checks arithmetic rather than a
-declaration, and it is the only one here that runs shader code and reads the
-numbers back.
+graphics device (issue #1312) and is the only one here that reads a shader's own
+computed values back and compares them against a committed table; and
+`just unity-render`, which builds a player and draws a document through the
+painter, so it runs shader code too and reads pixels.
 
 `unity/package-compat` compiles `Runtime/` **minus `Runtime/Engine/`** against
 **netstandard2.1**, which is what Unity's default API compatibility level

@@ -160,7 +160,7 @@ that asks the APK where the entry is — needs `UnityEngine`, and lives in
 
 **It was in `Samples~/FrameLoop` when this story wrote it, and that was wrong by
 the time the story merged.** `Runtime/Engine/` did not exist then: R-E10's check
-could not compile a `UnityEngine` reference at all, so a sample nothing compiles
+could not compile a `UnityEngine` reference at all, so a sample nothing compiled
 was the only place a JNI query could go. Story #1122 landed the two-halves
 ruling in the same slice, which both created the right home and made the old
 reasoning false — so the resolver moved before this branch merged, rather than

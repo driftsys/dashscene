@@ -6,7 +6,7 @@
 // than by `unity/package-compat`. It was in `Samples~/FrameLoop` when story
 // #1124 wrote it, because that directory did not exist yet and no gate could
 // compile a `UnityEngine` reference at all; story #1122 landing #1286's ruling
-// is what made this its right home, and a sample nothing compiles the wrong
+// is what made this its right home, and a sample no CI job compiles the wrong
 // one.
 
 using System;

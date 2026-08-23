@@ -66,7 +66,7 @@ Three stages, two boundaries:
         --> rect table + positioned glyph runs (double-buffered)
 
     STAGE 3 — painters (one per target, one trait)
-      Skia (built)    lean GPU (built, v0.15)    Unity (painter landed v0.21; nothing has drawn a frame)
+      Skia (built)    lean GPU (built, v0.15)    Unity (painter landed v0.21; draws, issue #1298)
 
     boundary A = .dsb load gate (version + per-section hashes)
     boundary B = painter contract: rect table + glyph runs + paint indices.
@@ -191,7 +191,7 @@ producer mutates) and `dashscene-engine` (the runtime that solves it),
 | `crates/dashc`                | compiler CLI; also builds to wasm32 for the Deno importer                                                                                                                                                                                                               | [dashc.md](dashc.md), [vector-msdf-baking.md](vector-msdf-baking.md)                                                                                                                                                           |
 | `crates/dashpack-astcenc-sys` | raw bindings to the vendored astcenc C++ sources — ASTC encode plus the in-process reference decode                                                                                                                                                                     | in progress (epic #345) — [native-astc-codec-table.md](../decisions/native-astc-codec-table.md)                                                                                                                                |
 | `crates/dashpack`             | asset packer — per-profile derivations, cold-bank assembly, derivation manifest                                                                                                                                                                                         | in progress (epic #345) — [asset-quality-profile-bands.md](../decisions/asset-quality-profile-bands.md)                                                                                                                        |
-| `crates/dashpaint-abi`        | the `extern "C"` surface that holds boundary B representable — a gate, not bindings, and not Unity's (named `dashscene-unity` until issue #1239)                                                                                                                        | the gate is built (story #600) and checked against C# declarations by `unity/abi-check` (story #1239); the painter landed at v0.21; it has drawn no checked frame                                                              |
+| `crates/dashpaint-abi`        | the `extern "C"` surface that holds boundary B representable — a gate, not bindings, and not Unity's (named `dashscene-unity` until issue #1239)                                                                                                                        | the gate is built (story #600) and checked against C# declarations by `unity/abi-check` (story #1239); the painter landed at v0.21 and draws, checked by `just unity-render` (issue #1298)                                     |
 | `crates/dashscene-web`        | web integration — canvas-to-surface handoff, the `requestAnimationFrame` loop, resize rebuild, byte-range `.dsb` load                                                                                                                                                   | [host-integration.md](host-integration.md) — built at v0.17 (story #741); the wasm/tiny-skia painter the name once described is retired, superseded by `dashscene-gpu`                                                         |
 | `crates/dashscene-ffi`        | the C ABI every platform host sits on — runtime lifecycle, `.dsb` load, the tick, resize, the surface handoff, and the committed frame handed out under a lease for a host that paints it itself; no panic crosses it and no failure is a string only                   | [c-abi.md](c-abi.md) — built at v0.19 (story #840); the Android host of story #841 and the iOS and Unity hosts that follow all sit on it                                                                                       |
 | `crates/dashscene-desktop`    | desktop integration — window-to-surface handoff, the `winit` frame loop, resize rebuild, the published `Present` seam, a mapped `.dsb` load bounded by the shown root                                                                                                   | [host-integration.md](host-integration.md) — built at v0.17 (story #794); `demo` keeps the demonstration and consumes it                                                                                                       |
@@ -209,10 +209,12 @@ decision that binds it.
 
 **The Unity painter left this section at the v0.21 close** — story #1122 built
 it, and its as-built record is [unity-csharp-host.md](unity-csharp-host.md).
-Read that record's gaps before treating it as finished: nothing has drawn a
-frame that anything checked, nothing in this tree constructs it, and the epic's
-definition of done is issue #828's portable conformance suite. Its C#
-declarative producer front end is still unbuilt and is v1.
+Read that record's gaps before treating it as finished. It draws — the package's
+own sample constructs it, and `just unity-render` builds a player and checks the
+pixels (issue #1298) — over one graphics API and one document, which is ink
+where a node is rather than ink of the right colour; the epic's definition of
+done is issue #828's portable conformance suite. Its C# declarative producer
+front end is still unbuilt and is v1.
 
 **The lean native painter and the web painter left this section at the v0.15
 close** — they are one component, `dashscene-gpu`, and it is built for native
@@ -287,12 +289,11 @@ taken on purpose, not an oversight. That rule says shipped docs describe the
 system as-built and forward-looking concepts stay in `docs/wip/`. But boundary B
 exists specifically so a painter is interchangeable — "painter swap = re-golden,
 not redesign" — and **both** painters that prove that claim now exist: the lean
-one measured, the Unity one landed at v0.21 and never having drawn a frame that
-anything checked. The claim stopped being a promise at the v0.15 close: a second
-painter draws the whole vocabulary behind the same seam and one band set serves
-both. Deleting the unbuilt entries from this record would delete the reason
-boundary A and boundary B, the profile system, and the file/wire schema split
-are shaped the way they are. Each unbuilt item above is marked planned and
-traced to what binds it, which satisfies the rule's actual concern (that an
-unbuilt thing not be described as built) without erasing the "why" from the
-record.
+one measured, the Unity one landed at v0.21 and has drawn a frame that something
+checked. The claim stopped being a promise at the v0.15 close: a second painter
+draws the whole vocabulary behind the same seam and one band set serves both.
+Deleting the unbuilt entries from this record would delete the reason boundary A
+and boundary B, the profile system, and the file/wire schema split are shaped
+the way they are. Each unbuilt item above is marked planned and traced to what
+binds it, which satisfies the rule's actual concern (that an unbuilt thing not
+be described as built) without erasing the "why" from the record.

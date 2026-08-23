@@ -64,10 +64,20 @@ namespace Driftsys.Dashscene
 
     /// The shader each material class draws with, by its `Shader` name.
     ///
+    /// **The name is also the path `Resources.Load` resolves.** The painter
+    /// loads `Dashscene/UnlitOverlay` from
+    /// `Runtime/Resources/Dashscene/UnlitOverlay.shader`, so one constant
+    /// serves both and neither can drift from the other. `Shader.Find` was
+    /// what resolved these until issue #1313: a player build strips a shader
+    /// no scene and no material references, and a `Resources` folder is
+    /// included whether or not anything references it.
+    ///
     /// `unity/package-gate` asserts that every name here is declared by a
-    /// `.shader` under `Runtime/Shaders/` and that every such shader is named
-    /// here — in both directions, because a shader nothing registers passes a
-    /// pragma check while the painter registers something else.
+    /// `.shader` the package ships, that every such shader is named here, and
+    /// that each sits at the path its name implies — in all three directions,
+    /// because a shader nothing registers passes a pragma check while the
+    /// painter registers something else, and a shader in the wrong place
+    /// passes every text check and returns null in a player.
     public static class PaintShaders
     {
         /// [`MaterialClass.UnlitOverlay`]'s shader.

@@ -203,7 +203,7 @@ fn the_shading_includes_the_generated_file_and_redefines_nothing_in_it() {
 
     assert!(
         !including.is_empty(),
-        "no .hlsl under Runtime/Shaders/ includes `{generated}`. The generated \
+        "no .hlsl the package ships includes `{generated}`. The generated \
          file is then committed and unread, and whatever the shaders do shade \
          with is not the WGSL — which is exactly what R-T5 forbids."
     );

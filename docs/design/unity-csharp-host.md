@@ -63,7 +63,7 @@ rather than a filing convention
 | --------------------- | --------------------- | -------------------------------------- | ---------- |
 | `Runtime/`            | no                    | `unity/package-compat`, netstandard2.1 | yes        |
 | `Runtime/Engine/`     | yes                   | `just unity-editor`, a Unity editor    | no         |
-| `Samples~/FrameLoop/` | yes                   | nothing                                | no         |
+| `Samples~/FrameLoop/` | yes                   | `just unity-editor`, copied in         | no         |
 
 R-E10 requires every C# type under `Runtime/` to compile against
 `netstandard.dll` 2.1.0. `unity/package-compat` carries no Unity reference
@@ -91,8 +91,13 @@ left, with nothing saying so — the repair #1286 predicted.
 `Samples~/FrameLoop/` stays a sample for the reason it always was:
 `Time.deltaTime` and a component lifecycle need an editor to mean anything, and
 the `~` suffix hides the directory from Unity's importer — one of the four
-shapes R-E2 enumerates — so it needs no `.meta`. It is compiled by nothing,
-which is the third row's cost.
+shapes R-E2 enumerates — so it needs no `.meta`.
+
+**No CI job compiles it, and that is the third row's cost.** It was compiled by
+nothing at all until issue #1298 put the painter's wiring there.
+`just
+unity-editor` now copies it into its throwaway project's `Assets/` and
+asserts it compiled, which is a developer's gate and not CI's.
 
 ## The painter, and where each rule it obeys comes from
 
@@ -142,10 +147,12 @@ because a `-nographics` process reports `UnsupportedByUnderlyingGraphicsApi` and
 that is not a verdict — it is the hazard D4 names and story #1125 measured.
 `RawBuffer` and `ConstantBuffer` are rung 1;
 `UnsupportedByUnderlyingGraphicsApi` selects **rung 3**, and since nothing is
-built for rung 3 the painter reports the rung and draws nothing rather than
-pretending to be on rung 1. `Unknown` is documented as a value Unity never
-returns, so D4's table assigns it none: the painter names it and constructs no
-group.
+built for rung 3 the painter records the rung on its `Rung` property and draws
+nothing rather than pretending to be on rung 1. **It logs nothing there**, so a
+host that neither reads `Rung` nor is told gets a blank screen in silence — the
+`Samples~/FrameLoop` component reads it and reports, and issue #1326 is the
+painter's own half. `Unknown` is documented as a value Unity never returns, so
+D4's table assigns it none: the painter names it and constructs no group.
 
 **Under `ConstantBuffer` both bounds come from the device** (R-E15). The window
 size and the offset alignment are read with `GetConstantBufferMaxWindowSize()`
@@ -194,6 +201,65 @@ rather than drawing them away — a corner radius, a clip, a stroke, a per-node
 opacity below one, and a fill whose colour or any gradient stop is not fully
 opaque; the cutout class discards below a threshold, so the silhouette survives
 and the edge is hard.
+
+## Where the package's shaders live, and why (issue #1313)
+
+**Every `.shader` the package ships sits under `Runtime/Resources/Dashscene/`,
+named by the shader's own `Shader "…"` name, and `BrgPainter` loads each with
+`Resources.Load<Shader>`.** That is the whole of the layout rule, and a shader
+added later goes there too.
+
+**It is a fix, not a preference.** Unity strips a shader that no scene and no
+material references out of a **player** build. The painter resolved its three
+with `Shader.Find` until 2026-08-23, which finds a shader in an editor — where
+nothing is stripped — and returns null in a player. Measured twice on
+`6000.3.22f1`, macOS/Metal: a throwaway probe hit it first and worked around it
+host-side by adding the three shaders to the host project's Always Included
+Shaders list; `just unity-render` then reproduced it against the package as
+installed, with the painter throwing
+
+    the shader 'Dashscene/UnlitOverlay' was not found
+
+A `Resources` folder is included in a build whether or not anything references
+it, so the load succeeds with the host configuring nothing. URP's own core
+package ships a runtime `Resources` folder inside the package and loads from it
+the same way, so this is the ordinary arrangement rather than a novelty.
+
+**The shader's name doubles as the load path**, so `PaintShaders.For` is the
+only string involved: `Dashscene/UnlitOverlay` is what `Shader "…"` declares,
+what `Resources.Load<Shader>` is handed, and where the file sits under
+`Runtime/Resources/`. `unity/package-gate`'s
+`every_shader_sits_where_resources_load_will_find_it` holds all three together,
+in both directions — a shader a class names and that is not at its path, and a
+shader at a path no class names.
+
+**The `.hlsl` files stay in `Runtime/Shaders/`.** They are `#include`d at
+compile time and never loaded at run time, so they need no `Resources` folder;
+`just sdf-hlsl` still writes `Runtime/Shaders/Sdf.hlsl`. The three `.shader`
+files reach them through the absolute
+`Packages/com.driftsys.dashscene/Runtime/Shaders/…` include form, which is what
+URP's own shaders use for their library.
+
+**Issue #1313's four candidates were not four alternatives**, and this is the
+correction the run produced. Candidate 3 — a material asset per class, shipped
+in the package — is a _shape_, and it cannot stand alone: nothing loads a loose
+asset out of a package at run time, so it needs candidate 1's `Resources` folder
+or candidate 2's preloaded-asset reference to be reachable at all. With
+candidate 1 in place, candidate 3 adds an asset per class and buys a material
+whose render state a human can inspect; it is not needed to make the shader
+reachable, and this design takes the shader route because it is the same
+mechanism with one fewer asset kind. Candidate 4 — documenting the defect — was
+never a fix. The diagnostic's own half of it is done: it named `.meta` files and
+nothing else, which sent the first investigation the wrong way, and it now names
+the path the shader ships at and the mechanism that loads it before it gets to
+the two `.meta` causes. Those two causes are still what makes the file absent,
+so they stay.
+
+**No tree-derived check can catch this class**, which is why `unity/render-gate`
+exists: `unity/package-gate`'s own comment said "a gate over the files alone
+would pass while nothing drew", and it passed while nothing drew. Both sides of
+every assertion there are read out of this repository, and stripping happens at
+build time in someone else's project.
 
 ## The SDF math is generated, not ported (R-T5)
 
@@ -334,9 +400,10 @@ constructor**, and that is the cost of this shape rather than a detail.
 `DashsceneAbiMismatchException` derives from `Exception`, so a
 `catch (DashsceneException)` does not see it — and the translation now reaches
 every entry point, so a tick and a frame acquire can raise it where only a load
-could before. `Samples~/FrameLoop/` carries the catch around the constructor and
-around the load and not around the frame loop; issue #1315 is that half, filed
-rather than fixed because that file belongs to another lane this wave.
+could before. `Samples~/FrameLoop/` carries the catch in all three places —
+around the constructor, around the load and around the frame loop. The third was
+issue #1315, filed when that file belonged to another lane and fixed by that
+lane's own pull request.
 
 **Every `bool` on the surface binds as `byte`.** C's `bool` is one byte and
 .NET's default marshalling for `bool` is the four-byte Win32 `BOOL`, so an
@@ -478,19 +545,24 @@ resolver lets `openFd`'s exception through rather than falling back to a copy.
 | `unity/package-gate`     | is the HLSL the WGSL's? do the shaders carry the pragmas? is the R-E10 split intact? | `just test`              | yes    |
 | `unity/editor-compat`    | does the WHOLE package compile, shaders included?                                    | `just unity-editor`      | **no** |
 | `unity/hlsl-conformance` | does the generated HLSL evaluate to the committed probe table?                       | `just unity-conformance` | **no** |
+| `unity/render-gate`      | does the package DRAW, in a player, as a consumer installs it?                       | `just unity-render`      | **no** |
 
-`unity/editor-compat` and `unity/package-gate` are story #1122's;
-`unity/hlsl-conformance` is issue #1312's. `unity/package-gate` is Rust and
-rides in the sanity test tier deliberately: the .NET gates are outside
-`just check` because bootstrap installs no SDK, and an editor is outside CI
-entirely, so it is the only check over the package that runs on every pull
-request without a prerequisite. `unity/editor-compat` is the only thing in this
-repository that compiles a Unity `.shader`, and the only thing whose **purpose**
-is to compile `Runtime/Engine/` — `unity/hlsl-conformance` imports the same
-package into an editor and so compiles that assembly incidentally, which is why
-a compile error there stops it too; it needs an editor install, which
+`unity/editor-compat` and `unity/package-gate` are story #1122's,
+`unity/hlsl-conformance` is issue #1312's and `unity/render-gate` is issue
+#1298's. `unity/package-gate` is Rust and rides in the sanity test tier
+deliberately: the .NET gates are outside `just check` because bootstrap installs
+no SDK, and an editor is outside CI entirely, so it is the only check over the
+package that runs on every pull request without a prerequisite.
+`unity/editor-compat` is the only thing in this repository that compiles a Unity
+`.shader` **without building a player**, and the only thing whose **purpose** is
+to compile `Runtime/Engine/` — `unity/hlsl-conformance` imports the same package
+into an editor and so compiles that assembly incidentally, which is why a
+compile error there stops it too, and `unity/render-gate` compiles both as a
+side effect of `BuildPipeline.BuildPlayer` and costs tens of minutes, so neither
+is a substitute; it needs an editor install, which
 [../decisions/the-native-library-ships-inside-the-unity-package.md](../decisions/the-native-library-ships-inside-the-unity-package.md)
-D4 records no CI runner here can host.
+D4 records no CI runner here can host. `unity/render-gate` needs one too, and
+also builds and runs a player.
 
 **`unity/editor-compat` compiles the variant rather than trusting the import.**
 Unity builds a shader's variants lazily, so `ShaderUtil.GetShaderMessages` after
@@ -544,19 +616,47 @@ one whose free refuses while the channel describing the refusal cannot bind, one
 whose lease release fails while the free succeeds. **That file is where they are
 enumerated**, and this record deliberately does not count them.
 
-**None of them reads a shipped binary.** The three that build a Rust half build
-both halves from one tree, and the other three read this repository's own
-sources — so all six observe only a disagreement it already contains, the older
+**None of them reads a shipped binary.** The ones that build a Rust half build
+both halves from one tree, and the others read this repository's own sources —
+so all of them observe only a disagreement it already contains, the older
 libraries above included: those are built here too, from a C file in this tree.
 A stale committed library is what `DsSlice::stride` catches at run time, which
 is why R-E17 makes that check mandatory in the host rather than advisory.
 
-**And none of them draws.** Five compile, link or execute on the CPU;
-`unity/hlsl-conformance` executes on a graphics device, but as a compute
-dispatch over the shader library's arithmetic — there is no rasteriser, no blend
-and no picture in it, which is what makes layer 2 meaningful on whatever adapter
-a machine offers. Whether the painter puts the right pixels on a screen is a
-question no gate here asks; see the gaps below.
+**One of them draws, and it is the last row.** The rest compile, link or execute
+on the CPU; `unity/hlsl-conformance` executes on a graphics device, but as a
+compute dispatch over the shader library's arithmetic — there is no rasteriser,
+no blend and no picture in it, which is what makes layer 2 meaningful on
+whatever adapter a machine offers. `unity/render-gate` builds a player, runs it,
+renders through `RenderPipeline.SubmitRenderRequest` into a `RenderTexture` and
+reads that back.
+
+**What it asserts is weaker than "the picture is right", and differs by frame
+and by instance.** Every sampled centre is asked whether it differs from the
+frame's own clear colour — "something drew here". Some centres are also asked
+the stronger "THIS node drew": the centre must be nearer that node's own colour
+than the clear colour, so a parent frame's fill behind it will not do.
+
+**Three things exclude a centre from the stronger question, and the run prints
+how many reached it.** The count matters because a change that quietly emptied
+that set would print an otherwise identical report.
+
+- **The material class.** Only `UnlitOverlay` puts the node's albedo on the
+  pixel. `DsLit` multiplies the albedo by the light, which moves the pixel
+  toward the clear colour while leaving both references where they are — so the
+  two cutout frames are judged by the weak question alone. So the low-cutoff
+  frame's "13 of 13" reads "something drew at each centre" and not "each node
+  drew" — and the high-cutoff frame is required to be 0 of 13, which is the
+  discriminator rather than a weaker pass.
+- **The paint.** A gradient's colour at a point is the shading arithmetic issue
+  #828's suite judges, and a translucent fill's centre is a composite. Neither
+  is predictable here.
+- **A later instance's quad reaching the centre**, taken over the quad rather
+  than over its inked shape — so a solid whose centre merely falls inside a
+  later node's box is excluded too. That is over-broad on purpose: narrowing it
+  means evaluating each later instance's silhouette, which is the shading
+  arithmetic this gate exists not to re-implement. The cost is a smaller
+  stronger-form set, which the run prints.
 
 ## The `.meta` files, and how they were made
 
@@ -581,14 +681,34 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
 
 ## Known gaps, named
 
-- **Draw order is submission order, and nothing has confirmed that.** A document
-  is drawn back to front, so order is the property that decides the picture. The
-  painter emits its draw commands in rect order inside one `BatchDrawRange` with
+- **Draw order is submission order, and nothing has confirmed that** — and since
+  issue #1313's branch, `unity/render-gate` rests on it. A document is drawn
+  back to front, so order is the property that decides the picture. The painter
+  emits its draw commands in rect order inside one `BatchDrawRange` with
   `allDepthSorted` false, which is what should preserve it — but every quad in
   an overlay sits at the same depth, and whether URP's transparent pass re-sorts
   a BRG range at equal depth is a question only a drawn frame answers. If it
   does, overlapping nodes will be in an arbitrary order and the failure will
   look like a z-fighting artefact rather than like a painter bug.
+
+  **A drawn frame has not answered it, and the gate does not test it.** What the
+  gate does is exclude a node's centre from its stronger per-instance assertion
+  when a HIGHER-indexed instance's quad reaches that centre, which is sound only
+  under this assumption. Widening the exclusion to any other instance would
+  remove the dependence and is not available: a filled parent frame reaches
+  every child, so that predicate leaves the stronger form nothing to judge. The
+  failure it would permit is bounded — a centre hidden under a LOWER-indexed
+  node could pass the stronger assertion on ink that is not its own — and it can
+  never produce a false failure. Settling it needs a frame drawn from a document
+  built for the question, with two known overlapping fills and no parent under
+  them.
+- **The corner silhouette is checked by nothing.** `unity/render-gate` probes a
+  point inside a node's box and outside its rounded corner, and skips any probe
+  another instance's quad can reach — because a document is drawn back to front
+  and a parent frame's fill sits under every child, so "outside this node's
+  corner" is not "background". On `v03-paint.dsb` no probe survives that test,
+  so the run says so and asserts nothing. A fixture with one isolated rounded
+  node would change it; issue #828's suite is where that belongs.
 - **No frustum culling.** `OnPerformCulling` ignores its `BatchCullingContext`
   and emits every instance for every camera. For a full-screen overlay that is
   the right answer and costs nothing; for a document placed in a 3D scene it is
@@ -600,34 +720,52 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   The arrays are reused, so a steady frame allocates nothing; that is the half
   of R-T4 about allocation, not the half about transfer. Issue #1306, and issue
   #708 is the same gap in the lean painter.
-- **Three code paths have never been exercised by any gate or any device**, and
+- **Two code paths have never been exercised by any gate or any device**, and
   they are worth naming as a class rather than one at a time: the
   `ConstantBuffer` rung (this adapter reports `RawBuffer`, so
-  `InstancesPerBatch` and `BatchStrideBytes` have never run), the cutout
-  material's `clip()` threshold, and the opaque material's alpha handling. A
-  defect in any of them looks like a plausible picture rather than a failure —
-  the window-size clamp in `BatchStrideBytes` was one, found by reading rather
-  than by running.
-- **Nothing constructs the painter.** `Samples~/FrameLoop/` still takes each
-  committed frame and does not hand it to `BrgPainter`, so the package ships a
-  painter with no caller in this repository. Both stories that could have wired
-  it were open at once and each would have had to edit the other's file to do
-  it; issue #1298 carries the wiring and the reasoning.
-- **The painter has never drawn a frame that anything checked.** It compiles,
-  its shaders compile with the BRG variant on three graphics APIs — vertex
-  stages yielding bytes on all three and fragment stages on Metal alone, the
-  other two resting on `CompileVariant`'s `Success` flag because a control shows
-  it returns no bytes there for any shader, and its packing is
-  engine-independent and gated — but nothing in this repository has run it
-  against a device and compared the result to anything. The epic's own
-  definition of done is issue #828's portable conformance suite, which had not
-  landed when this was written. A screenshot is explicitly **not** the
-  substitute: story #1122's own text says so. Issue #1158 is the nearest
-  cautionary case this repository has — an Android harness whose "did it draw"
-  screenshot came back black because the emulator had given the painter no
-  graphics device — and it is a case where the gate went red, not one where a
-  screenshot passed over a wrong picture. Nothing here has been drawn and looked
-  at at all.
+  `InstancesPerBatch` and `BatchStrideBytes` have never run) and the opaque
+  material's alpha handling. A defect in either looks like a plausible picture
+  rather than a failure — the window-size clamp in `BatchStrideBytes` was one,
+  found by reading rather than by running. **The cutout material's `clip()`
+  threshold was the third and is now measured**: `just unity-render` draws that
+  class at 0.5 and at 2 — the second above any coverage a fragment can have —
+  and got 13 of 13 sampled node centres inked at the first and none at the
+  second, with 601144 of 786432 pixels differing. A `_DsCutoff` that did not
+  reach the fragment stage would have drawn the same picture twice, whatever the
+  stage read instead, so **it resolves**, on Metal, and issue #1307 is answered.
+  GLES 3.2 and Vulkan are untested.
+- **The painter draws, and what checks it is `unity/render-gate`.** Measured on
+  `6000.3.22f1`, macOS/Metal, Apple M3, 2026-08-23, in a player built from this
+  package: `goldens/dsb/v03-paint.dsb` packs to 16 instances on rung
+  `RawBuffer`, and all 13 of them whose box centre the gate may assert on carry
+  ink. **Two numbers, because two thresholds govern them.** The smallest
+  distance any of the 13 kept from the frame's own clear colour was 0.514, on a
+  scale where that threshold is 0.016; **5 of the 13** also cleared the stronger
+  per-instance question, and the smallest amount by which one of those was
+  nearer its own instance's colour than the clear colour was 0.599, where the
+  threshold is zero. The other 8 are excluded by the paint rule or the
+  later-quad rule — the class rule excludes nothing on an `UnlitOverlay` frame,
+  which is the whole reason this is the frame the stronger form is asked on —
+  and the run prints the split so that a change which quietly emptied that set
+  would not read as an identical report. The three instances not asserted on at
+  all are strokes, which ink a band around a box and not its middle. The one
+  rect carrying an image fill is refused and reported, which is P4.
+
+  **The corner probes were vacuous on this run**, and the gate says so rather
+  than passing quietly: `0 of 0` reached the assertion, so the run states that
+  it says nothing about whether corner radii are drawn round. Two guards can
+  produce that zero — a radius outside the band a probe is meaningful in, and a
+  point another instance's quad reaches — and the printed report does not
+  distinguish them, so this run does not say which emptied it. That is the gap
+  named below, measured rather than assumed.
+
+  **What that is not** is an oracle. It says ink landed where the committed
+  tables place a node, on one graphics API, over one document; whether the ink
+  is the right colour is issue #828's portable conformance suite. And a
+  screenshot is still not the substitute story #1122's text warns about — what
+  makes this a check rather than a screenshot is that its predicate is evaluated
+  on a frame the painter deliberately did not draw first, and the run fails if
+  that frame passes.
 - **Six paint constructs are not drawn, each by name.** Shadows, layer blurs,
   backdrop blurs, image fills, baked vector nodes and render-target groups.
   `PackDiagnostic` names each, the painter reports the set when it changes, and
@@ -698,16 +836,24 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   has not been. An earlier draft of this bullet said it could not, which was
   wrong. Mutating the release ordering back leaves the gate green, measured
   rather than assumed. Issue #1289 carries the threaded harness it needs.
-- **No gate compiles `Samples~/FrameLoop/`.** Not because of the `~`, which only
-  hides it from Unity's importer: `package-compat` and `ffi-check` glob
-  `Runtime/**/*.cs`, so anything outside `Runtime/` is out of scope wherever it
-  sits, and no CI job runs an editor. That is why `CommitPacer` sits in
-  `Runtime/` rather than in the sample: the pacing arithmetic carries a numeric
-  claim, so it lives where a gate can reach it. **Nothing in the sample carries
-  a claim today.** Story #1124's Android resolver briefly did, and moved to
+- **No CI job compiles `Samples~/FrameLoop/`, and one developer gate does.** Not
+  because of the `~`, which only hides it from Unity's importer:
+  `package-compat` and `ffi-check` glob `Runtime/**/*.cs`, so anything outside
+  `Runtime/` is out of scope wherever it sits, and no CI job runs an editor.
+  That is why `CommitPacer` sits in `Runtime/` rather than in the sample: the
+  pacing arithmetic carries a numeric claim, so it lives where a gate can reach
+  it. Story #1124's Android resolver briefly carried one too, and moved to
   `Runtime/Engine/` once the two-halves ruling gave engine-referencing code a
-  gate; what is left here is `Time.deltaTime`, a component lifecycle and where
-  the painter hangs.
+  gate.
+
+  **The sample stopped being claim-free at issue #1298**, which put the
+  painter's construction, the `Draw`-then-`MarkDrawn` ordering inside the
+  lease's `using`, and the dispose order into it. Until then a syntax error in
+  the file would have survived every gate this repository has — measured. So
+  `just unity-editor` now copies it into its throwaway project's `Assets/` and
+  asserts it compiled. That is a compile and nothing more: the ordering it
+  carries is still pinned by nothing, because the render gate drives its own
+  component rather than this one.
 - **The thread-affinity question is narrowed, not closed.** Story #1125 measured
   `OnPerformCulling` on the main thread under `6000.3.22f1` with URP on macOS
   and Metal, so a host can bracket its job dispatch — but the target is Android,
