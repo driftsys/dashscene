@@ -1,0 +1,21 @@
+[package]
+name = "package-gate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "The Unity package's gates that need no Unity editor and no .NET SDK: the HLSL derivation of the WGSL shader library, the pragma rules over the shaders that consume it, and R-E10's engine/engine-free split of Runtime/."
+publish = false
+
+[dependencies]
+# The one dependency, and the reason this crate is Rust. `naga` is wgpu's own
+# shader translator — the compiler the lean painter's WGSL already goes through
+# on its way to Metal, Vulkan and GLES. Using it to reach HLSL is what makes
+# R-T5's "single-sourced" a mechanism rather than a review promise: the HLSL a
+# Unity shader includes is not a port of `sdf.wgsl`, it is `sdf.wgsl` compiled
+# by the compiler that compiles it for the other painter.
+#
+# `hlsl-out` pulls no dependency of its own and `wgsl-in` pulls only
+# `unicode-ident`, both already in the lockfile through wgpu.
+naga = { version = "30", features = ["wgsl-in", "hlsl-out"] }

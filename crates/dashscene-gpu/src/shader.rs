@@ -1,11 +1,17 @@
 //! The shader library, as source.
 //!
-//! One file holds the painter's signed-distance math, and everything that
-//! evaluates it includes this string: the render pipelines (story #580) and the
-//! layer-2 conformance harness (story #579). That is what R-T5 asks for —
-//! "SDF shader math single-sourced (common include) into both painters'
-//! shading languages" — reduced to the one mechanism WGSL needs, which is
-//! textual inclusion.
+//! One file holds the painter's signed-distance math, and R-T5 asks for it to be
+//! "single-sourced (common include) into both painters' shading languages".
+//!
+//! **Two mechanisms serve that, not one.** Everything in THIS crate that
+//! evaluates the math includes this string — the render pipelines (story #580)
+//! and the layer-2 conformance harness (story #579) — which is textual
+//! inclusion, the one mechanism WGSL needs. A third evaluator lives outside the
+//! crate and uses neither the string nor textual inclusion: `unity/package-gate`
+//! compiles the same module to HLSL with `naga` for the Unity painter (story
+//! #1122), and the Unity shaders `#include` that generated file. An earlier
+//! revision of this comment named the second consumer and then said R-T5
+//! reduces to textual inclusion, which contradicted it.
 //!
 //! Exposed as a `&str` rather than compiled here because this crate owns no
 //! device until story #580. A consumer concatenates it with its own entry

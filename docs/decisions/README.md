@@ -31,6 +31,12 @@ records below. Per-story decisions land here directly:
   under `unity/`, not in a separate repo. Named
   `unity-separate-repo-deferred.md` until story #1239 renamed it to match its
   contents (`docs/archive/2026-07-14-scope-decisions.md` §5).
+- [r-e10-is-checked-in-two-halves.md](r-e10-is-checked-in-two-halves.md) — R-E10
+  keeps its scope and gains a second check: `unity/package-compat` compiles
+  `Runtime/` minus `Runtime/Engine/` against netstandard2.1 on every pull
+  request, and `just unity-editor` compiles the whole package — engine half
+  included — in a Unity editor a CI runner cannot host (story #1122, resolves
+  debt #1286).
 - [house-style.md](house-style.md) — repo tooling follows driftsys/git-std,
   driftsys/upskill, driftsys/markspec conventions
   (`docs/archive/2026-07-14-scope-decisions.md` §7).

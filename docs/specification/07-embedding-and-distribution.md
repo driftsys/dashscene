@@ -133,26 +133,56 @@ lowers the floor without amending this file.
 
 **R-E10** — every C# type under `unity/com.driftsys.dashscene/Runtime/` shall
 compile against `netstandard.dll` version 2.1.0, so the package builds under
-`ApiCompatibilityLevel.NET_Standard`. _Check:_ `unity/package-compat`, which
-`just unity-abi` runs. **Not `unity/abi-check`**, which targets `net10.0` — a
-strict superset, so it accepts declarations Unity would refuse. Measured: a
-`System.Half` in `BoundaryB.cs` builds clean under `net10.0` and fails under
-`netstandard2.1` with CS0234. This requirement is met today.
+`ApiCompatibilityLevel.NET_Standard`. _Check:_ **two, because no one project can
+ask the whole question**, and
+[`../decisions/r-e10-is-checked-in-two-halves.md`](../decisions/r-e10-is-checked-in-two-halves.md)
+is the ruling that split them (story #1122, resolving debt #1286).
+
+`unity/package-compat`, which `just unity-abi` runs, compiles `Runtime/` **minus
+`Runtime/Engine/`** against `netstandard.dll` 2.1.0 on every pull request. That
+project has no Unity reference assemblies, so a type referencing `UnityEngine`
+fails there with CS0246 whatever its API compatibility level actually is — which
+is why the engine-referencing half is excluded rather than checked badly. It is
+**not `unity/abi-check`**, which targets `net10.0` — a strict superset, so it
+accepts declarations Unity would refuse. Measured: a `System.Half` in
+`BoundaryB.cs` builds clean under `net10.0` and fails under `netstandard2.1`
+with CS0234.
+
+`just unity-editor` compiles the **whole** package, `Runtime/Engine/` included,
+in a Unity editor, and reads `PlayerSettings.GetApiCompatibilityLevel` back
+rather than assuming it. It needs an editor install, which
+[`../decisions/the-native-library-ships-inside-the-unity-package.md`](../decisions/the-native-library-ships-inside-the-unity-package.md)
+D4 records no CI runner here can host, so it runs on a developer's machine
+before a pull request that touches `Runtime/Engine/` or `Runtime/Shaders/`.
+
+**The exclusion is itself checked**, in `unity/package-gate`, which runs in the
+sanity test tier with no editor and no .NET SDK: **every** project that globs
+`Runtime/**/*.cs` — `package-compat` and `ffi-check` today — is asserted to
+carry an `Exclude` of exactly `Runtime/Engine/**/*.cs` and to carry only one,
+the set of such projects is asserted to be non-empty, and every file under that
+directory is asserted to reference the engine. Without those, meeting a CS0246
+by widening an exclusion would narrow this requirement to whatever was left,
+with nothing saying so. This requirement is met today.
 
 ## The painter's use of BatchRendererGroup
 
 **R-E11** — every shader the painter passes to
 `BatchRendererGroup.RegisterMaterial` shall declare `#pragma target 4.5` or a
 higher target level. _Check:_ read each such shader's source, **and assert the
-set of them is not empty** — no shader exists under `unity/` today, so a check
-that only greps passes having read nothing. Target 4.5 is satisfied by GLES 3.1
-and above, so this does not conflict with the GLES 3.2 fleet
+set of them is not empty** — no shader existed under `unity/` until story #1122,
+so a check that only greps would have passed having read nothing. Three exist
+now, `unity/package-gate` gates them **per program rather than per file** (a
+`#pragma` in one pass does not reach another), and it discovers them
+recursively. **Met** by story #1122. Target 4.5 is satisfied by GLES 3.1 and
+above, so this does not conflict with the GLES 3.2 fleet
 `03-target-hardware-rules.md` names.
 
 **R-E12** — every shader the painter passes to
 `BatchRendererGroup.RegisterMaterial` shall declare
 `#pragma multi_compile _ DOTS_INSTANCING_ON`. _Check:_ as R-E11, including its
-non-empty assertion. Unity refuses a pass without the variant, naming it.
+non-empty assertion and its per-program reading. Unity refuses a pass without
+the variant, naming it. **Met** by story #1122, by the same three shaders and
+the same gate.
 
 **R-E13** —
 `unity/com.driftsys.dashscene/Runtime/Driftsys.Dashscene.Runtime.asmdef` shall

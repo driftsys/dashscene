@@ -46,8 +46,8 @@ nothing. These counts have been wrong before, having not moved when
 `dashscene-ffi` was reserved, so re-derive them from
 `docs/decisions/crate-name-map.md` rather than trusting the number here. Beware
 `demo`: a crate of that name has existed on crates.io since 2018 and is not
-ours, so querying the 25 workspace member names against crates.io returns 20 —
-the 19 crates plus that one. Neither 20 nor 25 is the reservation count.
+ours, so querying the 26 workspace member names against crates.io returns 20 —
+the 19 crates plus that one. Neither 20 nor 26 is the reservation count.
 
 **Every reserved name is Apache-2.0 as of 2026-08-18.** All 21 that existed
 before that day were published MIT, two of them reserved on the very day the
@@ -150,22 +150,28 @@ corpus + Figma fixture captures), `goldens/` (CI golden images + diff tooling),
 `demo/` (the windowed showcase host — the window, the event loop and the frame
 loop, landed at v0.14), `demo-web/` (the same showcase in a browser — a canvas,
 `requestAnimationFrame`, and a `.dsb` fetched by byte range, landed at v0.15),
-and `unity/` (the UPM package and three .NET checks over it — boundary B's
-declarations against the Rust layouts, the package against netstandard2.1, and
-its P/Invoke declarations executed against `dashscene-ffi`. The package landed
-at v0.21 by story #1239 and gained the C# host at story #1121; it still carries
-no painter and no native library).
+and `unity/` (the UPM package and five checks over it — three .NET ones,
+boundary B's declarations against the Rust layouts, the engine-free half of the
+package against netstandard2.1, and its P/Invoke declarations executed against
+`dashscene-ffi`; a Rust one, `unity/package-gate`, holding the generated HLSL to
+its WGSL source and the shaders to R-E11, R-E12 and R-E10's split; and
+`unity/editor-compat`, which compiles the whole package in a Unity editor and is
+the only thing here that compiles a Unity `.shader`. The package landed at v0.21
+by story #1239, gained the C# host at story #1121 and the BatchRendererGroup
+painter at story #1122; it still carries no native library).
 
-Six of those directories hold workspace members that are never published:
+Seven of those directories hold workspace members that are never published:
 `demo/`, `demo-web/` (the browser host — a canvas, the lean painter, and a
 `.dsb` fetched by byte range, landed at v0.15), `demo-android/` (the third host
 — a SurfaceView, the native vsync loop and the showcase scenes, landed at
 v0.19), `corpus/showcase/` (the scenes all three hosts draw), `goldens/tooling/`
-(the golden-image harness) and `measure/web-minimal/` (the smallest browser
+(the golden-image harness), `measure/web-minimal/` (the smallest browser
 embedder that draws a `.dsb` — an artifact built to be weighed, not run, and
 what the runtime payload budget is measured over; see
-`docs/decisions/publishable-and-the-first-version.md`). Twenty-five members in
-total, nineteen of them the crates above.
+`docs/decisions/publishable-and-the-first-version.md`) and `unity/package-gate/`
+(the Unity package's gates that need neither a Unity editor nor the .NET SDK, so
+they run on every pull request; added at v0.21 by story #1122). Twenty-six
+members in total, nineteen of them the crates above.
 
 ## Commands
 
@@ -199,7 +205,12 @@ total, nineteen of them the crates above.
     just check        regression tier + lint + audit + secrets + the two wasm
                       gates + c-abi, which compiles the committed header from C
                       and checks the two halves agree (needs a C toolchain)
-    just unity-abi    two gates over the UPM package. Its C# declarations of
+    just unity-abi    two gates over the UPM package, plus the `dotnet format`
+                      pass CI runs before them. That pass was CI-only until
+                      story #1122, when a local `just unity-ffi` passed and CI
+                      failed on whitespace — a clean local build reported
+                      nothing, because the check is a separate command rather
+                      than a build analyzer. Its C# declarations of
                       boundary B against
                       the Rust build of `dashpaint-abi`. Compiles the package's
                       own `BoundaryB.cs` and compares every type on the surface,
@@ -243,6 +254,37 @@ total, nineteen of them the crates above.
                       tree, so it observes only a disagreement this repository
                       already contains — a stale shipped binary is
                       `DsSlice::stride`'s job at run time
+    just unity-editor  R-E10's SECOND check, and the only thing in this
+                      repository that compiles a Unity `.shader` or compiles
+                      `Runtime/Engine/`. Creates a throwaway Unity project
+                      under `target/`, imports the package as a `file:`
+                      dependency, compiles it, reads
+                      `PlayerSettings.GetApiCompatibilityLevel` back rather
+                      than assuming it, and compiles every pass with
+                      `DOTS_INSTANCING_ON` for Vulkan and GLES3x on Android and
+                      Metal on macOS. **The evidence differs by stage**: a
+                      vertex stage yields shader bytes on all three, a fragment
+                      stage on Metal only — `CompileVariant` returns none for a
+                      fragment on the other two even for URP's own unlit
+                      shader, which the gate compiles as a control and then
+                      scopes its emptiness check to the pairs that discriminate. **The variant compile is not optional**:
+                      an import builds variants lazily, so a first version that
+                      stopped at `ShaderUtil.GetShaderMessages` reported three
+                      shaders clean while every one of them failed on a
+                      non-existent include path. Needs a Unity editor, which no
+                      CI runner here can host
+                      (`docs/decisions/the-native-library-ships-inside-the-unity-package.md`
+                      D4), so it is outside `check` and outside CI — a
+                      developer runs it before a PR touching `Runtime/Engine/`
+                      or `Runtime/Shaders/`. It also WRITES the `.meta` files
+                      R-E2 requires, because a `file:` dependency is a mutable
+                      package: check `git status` after a run that added a file
+    just sdf-hlsl     regenerate the Unity package's `Sdf.hlsl` from
+                      `crates/dashscene-gpu/src/shaders/sdf.wgsl` with `naga` —
+                      R-T5's mechanism, so the HLSL is the WGSL compiled rather
+                      than a port of it. Forgetting is not silent: a test in
+                      `unity/package-gate` re-derives the file on every run of
+                      the sanity tier and names the first line that differs
     just secrets      gitleaks over HEAD and over history, plus a pattern-grep
                       backstop over every object git would push. Unreachable
                       objects are deliberately out of scope — see the recipe.
