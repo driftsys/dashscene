@@ -98,7 +98,7 @@ fi
 
 adb=$(ds_adb)
 if ! ds_has_device "${adb}"; then
-    ds_warn "no device attached — start an emulator with -gpu host, or plug one in."
+    ds_warn_no_device
     exit 1
 fi
 
@@ -335,8 +335,11 @@ for profile in "${profiles[@]}"; do
         ;;
     device-gone)
         readable="no"
-        ds_warn "${profile}: the device is no longer attached. The capture stopped"
-        ds_warn "when it went, so nothing here is an outcome about the acquisition."
+        ds_warn "${profile}: adb no longer lists the device. It may be gone or it"
+        ds_warn "may be sitting at \`offline\` with its process alive — \`pgrep -f"
+        ds_warn "qemu-system\` says which. Either way the capture stopped when it"
+        ds_warn "stopped answering, so nothing here is an outcome about the"
+        ds_warn "acquisition."
         ;;
     capture-died)
         readable="no"

@@ -905,13 +905,17 @@ is spawned, which is the only path the trap exists for. Both are inside
 `just harness-tests`, and so inside `check` and `build`.
 
 **A device that goes away mid-wait is checked for, and it is a different failure
-from a slow one.** Under memory pressure this emulator first drops to `offline`
-to adb and is later killed outright — the host condition that produces both is
-recorded with the measurement below. Either way the follower stops appending and
-the poll runs out its timeout, which would report `NO COMPLETION OBSERVED` — a
-statement about the acquisition — for a capture that had stopped watching. The
-procedure asks whether the device is still attached **after** the wait, and
-reports the capture as unreadable when it is not.
+from a slow one.** On a host under memory pressure this emulator has stopped
+answering in three different ways, only one of which can be identified while it
+is happening; they are set out below rather than here. In all of them the
+follower stops appending and the poll runs out its timeout, which would report
+`NO COMPLETION OBSERVED` — a statement about the acquisition — for a capture
+that had stopped watching. **Two questions catch that, and which one fires
+depends on the state.** Asking whether the device is still attached catches the
+two where it is not; an emulator that recovers before the wait ends is attached
+again by then, and what catches that one is the follower having exited —
+`capture-died` rather than `device-gone`. Either way the capture is reported
+unreadable rather than as an outcome.
 
 `just android release` exists for this, and is new at this story: the profile is
 a parameter on `android`, `android-apk` and both `_apk-*` recipes, defaulted to
@@ -1186,15 +1190,87 @@ not because it was the cleanest, since 0.72 s was quiet too.
   carrying six worktrees of this repository at once, a load average reaching
   172, and `sysctl vm.swapusage` reporting 35 884 MB of 36 864 used — 97.3%.
   Another session's `just build` was killed by SIGTERM in that state, which is
-  macOS reclaiming memory rather than anything about the code. **The emulator
-  fails in two stages under it**, and both differ from a slow run: it drops to
-  `offline` to adb while its qemu process is still running, and if the pressure
-  continues the process is killed as well — this one was, later the same day,
-  leaving `adb devices` empty and no qemu process at all. Either way a run can
-  lose the device part-way and still produce samples that read as data
-  afterwards. A guest-side CPU-bound interval cannot be measured on a host in
-  that state, and a figure taken anyway would not be separable from the
-  contention. It needs a machine running one session.
+  macOS reclaiming memory rather than anything about the code.
+
+  **The emulator stopped answering three ways during it, and only one of the
+  three can be identified while it is happening.** Whether the host condition
+  caused any of them is untested.
+
+  | state        | `adb devices` | qemu  | identifiable at the time? |
+  | ------------ | ------------- | ----- | ------------------------- |
+  | killed       | empty         | gone  | yes                       |
+  | transient    | `offline`     | alive | no                        |
+  | unresponsive | `offline`     | alive | no                        |
+
+  An empty listing means the process is gone, and `pgrep -f qemu-system` says
+  the same without depending on adb. **The other two present identically and
+  nothing observed here separates them prospectively** — which one it was is
+  learned from what ended it.
+
+  **Waiting does not separate them**, which an earlier draft of this passage
+  claimed. The transient case recovered at about **14.5 minutes**; the
+  unresponsive one was still `offline` about 18 minutes in when it was killed —
+  approximate, because its start time is. A reader who waited fifteen minutes
+  and concluded "transient" would have been right once and wrong once.
+  **`SIGTERM` is not a signal either**: it returned success and the process
+  survived, the same pid three minutes later. `SIGKILL` removed it, and a
+  replacement was up about two minutes later.
+
+  **And the emulator's own hang detector is worse than no signal.** It logs
+  `detected a hanging thread`, which is the obvious thing to reach for. On the
+  two instances that session compared it fired **on the one that went on to work
+  normally** — `No response for 26233 ms` — and **not on the one that had to be
+  killed**. One instance on each side is enough to show the signal is
+  unreliable, which is all that is claimed here; it is not enough to show it is
+  inverted, and that is not claimed. An operator who found it and trusted it
+  would kill the healthy emulator and wait on the wedged one.
+
+  **So the action is a threshold chosen for cost, and this record does not
+  choose one.** `SIGKILL` plus a replacement costs about two minutes; waiting
+  costs whatever is left of a recovery that may not come. Any number is a
+  judgement about which loss is cheaper, not a measurement.
+
+  **`offline` is not necessarily stable.** The record this passage replaced said
+  continued pressure turns it into the killed state, which is one more reason a
+  wait has no guaranteed end.
+
+  **Never start a replacement while a process is still alive.** `nohup … &`
+  returns a pid and the AVD lock refuses the new emulator on the old one's
+  **stderr** — so into `nohup.out`, or wherever the launcher sent it, which is
+  not a file anyone is watching during a run:
+
+      FATAL | Running multiple emulators with the same AVD is an experimental feature.Please use -read-only flag to enable this feature.
+
+  The visible half is harmless: with an unresponsive emulator nothing usable
+  appears and the operator notices. **The dangerous half is a transient one that
+  recovers afterwards** — `adb devices` then lists a working device that is the
+  _old_ one, and the run proceeds against it believing it is the fresh emulator
+  that never started.
+
+  Called _unresponsive_ rather than _wedged_ because **the wedge** is this
+  document's term for an attach that entered and did not return.
+
+  **Provenance, which is thin.** The figures are from the session working issue
+  #1124, and they are in **neither that issue nor this repository** — its result
+  file was overwritten and its transcript is the only copy. `adb kill-server` is
+  recorded there as making no difference. **Scheduling is not ruled out**,
+  though an earlier draft of this paragraph said that session had ruled it out:
+  its figure is a one-minute load average of 7-16, and on the eight cores named
+  above that is still more runnable work than cores. Swap at 97% is a
+  correlation it did not test. Times are that host's local clock, the retry
+  counts come from its own loop rather than a committed instrument, and issue
+  #1305 is the standing gap that makes this class of figure unre-derivable. That
+  session established **no upper bound on the transient state** and **never
+  established that the unresponsive one would not have recovered** — both
+  absences are why the paragraphs above refuse a threshold.
+
+  Any of the three lets a run lose the device part-way. Whether that then
+  produces samples that read as data depends on the script: `attach-timing.sh`
+  asks after the wait and refuses to report intervals, and `frame-capture.sh`
+  and `run.sh` — the two issue #1304 covers — do not ask at all. A guest-side
+  CPU-bound interval cannot be measured on a host in that state, and a figure
+  taken anyway would not be separable from the contention. It needs a machine
+  running one session.
 - It does **not** say what a device does. The Pixel 5 pair above completed both
   profiles, and the two results are not in tension: one is a CPU rasteriser on
   an emulated arm64 guest and the other is an Adreno 620.

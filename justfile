@@ -1669,12 +1669,42 @@ harness-tests:
 #
 # Silent by design. It answers with its exit status, so a caller writes
 # `if ! just _android-has-device; then` and prints its own diagnosis.
+# What to tell an operator when adb lists no device, which is NOT the same as no
+# emulator running.
+#
+# `_android-has-device` is false for an emulator sitting at `offline` while its
+# process is alive, and every caller used to answer that by telling the operator
+# to start one. That is the worst available advice: the AVD lock refuses the
+# second emulator on the first one's stderr, so nothing starts — and if the
+# first recovers, the run then measures the old emulator believing it is the new
+# one. `docs/design/android-toolchain.md` carries the three ways it stops
+# answering and what each wants.
+#
+# One recipe rather than a message per caller, for the reason issue #1101
+# records: the copy that diverges is the one in the recipe that needs a device
+# and therefore runs least often.
+[private]
+_android-warn-no-device name:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    n="{{ name }}"
+    echo "${n}: adb lists no device, which is not the same as none running." >&2
+    echo "${n}: check first — pgrep -f qemu-system" >&2
+    echo "${n}:   a process alive -> it is listed 'offline'; do NOT start" >&2
+    echo "${n}:      another, the AVD lock refuses it silently. See" >&2
+    echo "${n}:      docs/design/android-toolchain.md." >&2
+    echo "${n}:   nothing alive   -> start one, or plug a device in." >&2
+
 [private]
 _android-has-device:
     #!/usr/bin/env bash
     set -euo pipefail
     adb=$(just _android-adb)
-    [ -n "$("${adb}" devices | sed '1d' | grep -w device || true)" ]
+    # The state field matched exactly — `grep -w device` also matches
+    # `device.html` in adb's no-permissions line, so a device adb refuses to
+    # talk to counted as attached. `measure/android/lib.sh` carries the same
+    # fix and the verification.
+    [ -n "$("${adb}" devices | sed '1d' | awk -F'\t' '$2 == "device"' || true)" ]
 
 # Build the lean painter for Android — a gate, like `wasm-painter`.
 #
@@ -1974,7 +2004,7 @@ android-probe:
       --target aarch64-linux-android
     adb=$(just _android-adb)
     if ! just _android-has-device; then
-      echo "android-probe: no device attached — start an emulator or plug one in" >&2
+      just _android-warn-no-device android-probe
       exit 1
     fi
     "${adb}" push target/aarch64-linux-android/release/examples/adapter_report \
@@ -2019,10 +2049,10 @@ android-layer-cost:
       --target aarch64-linux-android
     adb=$(just _android-adb)
     if ! just _android-has-device; then
-      echo "android-layer-cost: no device attached — start an emulator with" >&2
-      echo "android-layer-cost: -gpu host, or plug one in. Under the default GPU" >&2
-      echo "android-layer-cost: mode the painter obtains no device at all and this" >&2
-      echo "android-layer-cost: probe reports that rather than a cost (issue #1158)." >&2
+      just _android-warn-no-device android-layer-cost
+      echo "android-layer-cost: on a handheld image, start it with -gpu host —" >&2
+      echo "android-layer-cost: in the default mode the painter obtains no device" >&2
+      echo "android-layer-cost: and this probe reports that, not a cost (#1158)." >&2
       exit 1
     fi
     "${adb}" push target/aarch64-linux-android/release/examples/layer_cost \
@@ -2098,7 +2128,7 @@ android-gpu-time:
       --target aarch64-linux-android
     adb=$(just _android-adb)
     if ! just _android-has-device; then
-      echo "android-gpu-time: no device attached" >&2
+      just _android-warn-no-device android-gpu-time
       exit 1
     fi
     "${adb}" push target/aarch64-linux-android/release/examples/gpu_time \
