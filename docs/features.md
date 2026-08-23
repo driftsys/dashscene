@@ -603,9 +603,11 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       `float` has the right size at the right offset. It draws no pixel.
 
       **The C# host is built since story #1121** and it draws no pixel either.
-      The package binds all fourteen C ABI entry points, negotiates
+      The package binds every C ABI entry point, negotiates
       `ds_abi_version` before any other call, owns a thread-affine runtime with
-      no finalizer, loads a document by bytes or by mapped path, ticks it, and
+      no finalizer, loads a document by bytes, by mapped path, or by a byte
+      range inside a container so an Android APK's own copy is mapped where it
+      lies (story #1124), ticks it, and
       takes the committed frame under a lease that compares every array's
       `DsSlice::stride` against its own row size before reading a row.
       `unity/ffi-check` executes those declarations against a `dashscene-ffi`
@@ -694,16 +696,20 @@ sentence.
       forms this ABI serves, the host-draws form added on 2026-08-18 and given
       its data plane by story #859 — and what established that it was not quite:
       `ds_runtime_detach_surface` was added there, because the destroy handshake
-      needs a call that drops the surface and keeps the document. No iOS or
-      Unity host exists. **Root selection is on the mapped load and on no
-      other** (issue #925): `ds_runtime_load_document_mapped` takes a path, a
-      required ordinal and the same face array as the load above, maps the file,
-      and reads only the assets the named root's subtree draws, which is R5 on
-      this path. The two byte-taking loads keep no selection deliberately — they
-      use the owning loader, which copies every payload whatever is shown, so an
-      ordinal on them would bound nothing while reading as though it did. The
-      root is named once, at load; no entry point changes it afterwards.
-      **`dashscene-android` calls it**, since issue #1035 closed on 2026-08-16:
+      needs a call that drops the surface and keeps the document. **No iOS host
+      exists**; the Unity one does, since story #1121, and this same file
+      describes it above. **Root selection is on the two mapped loads and on
+      neither byte-taking one** (issue #925): `ds_runtime_load_document_mapped`
+      takes a path, a required ordinal and the same face array as the load
+      above, maps the file, and reads only the assets the named root's subtree
+      draws, which is R5 on this path. `ds_runtime_load_document_mapped_range`
+      is that call over a byte range inside a larger file, added by story #1124
+      because a `.dsb` inside an Android APK has no path of its own. The two
+      byte-taking loads keep no selection deliberately — they use the owning
+      loader, which copies every payload whatever is shown, so an ordinal on
+      them would bound nothing while reading as though it did. The root is named
+      once, at load; no entry point changes it afterwards. **`dashscene-android`
+      calls it**, since issue #1035 closed on 2026-08-16:
       `nativeSurfaceCreatedMapped` takes a path and an ordinal where the older
       entry point took a `byte[]`. **A scene built in code cannot be expressed
       through it at all** — there is no builder entry point, that being layer 2

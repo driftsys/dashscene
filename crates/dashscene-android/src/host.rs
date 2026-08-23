@@ -631,13 +631,30 @@ pub extern "system" fn Java_dev_driftsys_dashscene_DashsceneNative_nativeSurface
 ///
 /// **An APK asset is not a path**, which is the whole reason this takes one
 /// rather than an asset name. An asset compressed inside the APK cannot be
-/// mapped at all, and an uncompressed one is reachable only as a file
-/// descriptor plus an offset and a length, through `AAsset_openFileDescriptor`.
-/// So the host extracts the document to app storage once and passes that path
-/// — the option issue #1035 names first, and the one that needs no new ABI
-/// symbol. The alternative, a descriptor-taking ABI variant with a matching
-/// `dashbuf::map` constructor, stays deferred: it is free under the ABI's
-/// versioning rule, but it is a change to two crates this branch does not own.
+/// mapped at all, and an uncompressed one is a byte range inside `base.apk`
+/// that `AAsset_openFileDescriptor` reports rather than a file of its own. So
+/// the host extracts the document to app storage once and passes that path —
+/// the option issue #1035 names first, and the one that needs no new ABI
+/// symbol.
+///
+/// **Since story #1124 that is a cost this crate pays, not the only shape
+/// available**, and the paragraph above said the opposite until then. The ABI
+/// has `ds_runtime_load_document_mapped_range`, which takes a path with an
+/// offset and a length and maps the entry where it lies;
+/// `dashbuf::map::MappedFile::open_range` is underneath it. The cost of
+/// extracting is a full copy of the file on first run and a second copy on disk
+/// for the life of the install, since the APK's own copy is uncompressed and
+/// cannot be reclaimed — and the extraction run is the one where R5's bound
+/// does not hold, because the copy is proportional to the file rather than to
+/// the shown root.
+///
+/// **It also does not need a file descriptor**, which is what the deferral
+/// assumed. The process can open its own APK by path — measured on a device:
+/// `Application.dataPath`, `ApplicationInfo.sourceDir` and the canonical path
+/// of `/proc/self/fd/<n>` all name the same `base.apk`. Whether this host
+/// should switch is not settled here;
+/// `docs/decisions/the-document-is-mapped-where-it-is-packed.md` carries the
+/// ruling and what it costs.
 ///
 /// `shown_root` is a document ordinal and is required, exactly as the ABI has
 /// it: there is no sentinel for "every root", because a bound that can be

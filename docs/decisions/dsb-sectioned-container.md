@@ -163,13 +163,22 @@ is writer policy, not format law:
 
 ### Loading model
 
-One `mmap` of the whole file, once. The envelope is read through the mapping
-(page 0 faults — it is the hottest data in the file): validate
-magic/version/bounds, hash the section table against the root hash, then hash +
-verify structured sections, and hand `Document` to the arena. Blob sections are
-untouched until the loader thread prefetches them (touch + hash + mark ready).
-There is no read-then-map two-step and no per-section mapping; sections are
-offset ranges inside the one mapping.
+One `mmap`, once, and until story #1124 that was always of the whole file. It
+can now also be of a byte range **inside** a larger file — a `.dsb` packed
+uncompressed in an Android APK has no path of its own, and copying it out is the
+cost mapping exists to avoid
+(`docs/decisions/the-document-is-mapped-where-it-is-packed.md`). Nothing below
+changes for that case: the mapped region is still one mapping and sections are
+still offset ranges inside it, measured from the document's first byte rather
+than the file's. What it costs is the exactness of the page alignment named
+above, which D4 of that record states.
+
+The envelope is read through the mapping (page 0 faults — it is the hottest data
+in the file): validate magic/version/bounds, hash the section table against the
+root hash, then hash + verify structured sections, and hand `Document` to the
+arena. Blob sections are untouched until the loader thread prefetches them
+(touch + hash + mark ready). There is no read-then-map two-step and no
+per-section mapping; sections are offset ranges inside the one mapping.
 
 ### Endianness
 

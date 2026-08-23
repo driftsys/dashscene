@@ -27,8 +27,9 @@
 //! The host-draws form is the reason boundary B was given a C representation at
 //! story #600, and it had no consumer until story #859.
 //!
-//! **Root selection is on the mapped entry point and on no other, and that
-//! asymmetry is the design rather than an omission** (issue #925).
+//! **Root selection is on the mapped entry points and on neither byte-taking
+//! one, and that asymmetry is the design rather than an omission** (issue
+//! #925).
 //! `dashbuf::prefetch::ShownRoot` is the vocabulary, `dashscene-desktop` and
 //! `dashscene-web` both take one, and
 //! `docs/decisions/the-shown-root-is-named-by-ordinal.md` records why it is an
@@ -40,12 +41,18 @@
 //! that holds bytes rather than a file.
 //!
 //! **An APK asset is not a path**, which is what made that host the last to
-//! arrive: an asset compressed inside the APK cannot be mapped, and an
-//! uncompressed one is reachable only as a descriptor plus an offset and a
-//! length. The host extracts the document to app storage once and passes that
-//! path, so no descriptor-taking variant was needed. That variant — and the
-//! `dashbuf::map` constructor over a range of an open descriptor that it needs
-//! — stays deferred, as it was when #925 landed.
+//! arrive: `Application.streamingAssetsPath` and its Kotlin equivalents name a
+//! `jar:file://…!/assets` URI, and an asset compressed inside the APK cannot be
+//! mapped at all.
+//!
+//! **Story #1124 closed that, and by a byte range rather than by a descriptor.**
+//! An uncompressed entry is a range inside `base.apk`, the process can open its
+//! own APK by path, and [`ds_runtime_load_document_mapped_range`] takes that
+//! path with an offset and a length —
+//! `docs/decisions/the-document-is-mapped-where-it-is-packed.md` records why a
+//! range beat a file descriptor, and why extracting the document to app storage
+//! was rejected rather than kept. `dashscene-android` still extracts, which is
+//! now a cost it pays rather than the only shape available.
 //!
 //! [`ds_runtime_load_document_mapped`] takes a path, maps it, and reads out of
 //! the file's cold half only the assets the named root's subtree draws. That is
@@ -61,10 +68,12 @@
 //! have been a changed signature on a shipped symbol, which bumps
 //! [`DS_ABI_VERSION`], where a new symbol is free.
 //!
-//! So the two loads differ in what they can promise, and a caller chooses by
-//! what it holds. Bytes it already read: [`ds_runtime_load_document`], whole
-//! file, no bound, and the cost is the file's. A file on disk:
-//! [`ds_runtime_load_document_mapped`], and the cost is the artboard's.
+//! So the loads differ in what they can promise, and a caller chooses by what
+//! it holds. Bytes it already read: [`ds_runtime_load_document`], whole file,
+//! no bound, and the cost is the file's. A file on disk:
+//! [`ds_runtime_load_document_mapped`], and the cost is the artboard's. A
+//! document packed inside a container it cannot extract:
+//! [`ds_runtime_load_document_mapped_range`], same cost, no copy.
 //!
 //! Story #838 is what made the second worth building — the traversal, the solve
 //! and the paint follow the root a host names, so the bound reaches the frame
@@ -254,8 +263,10 @@ pub enum DsStatus {
     /// past its end.
     Atlas = 10,
     /// The path could not be used: nothing is there, it cannot be read, it is
-    /// empty, or it is not UTF-8. Only [`ds_runtime_load_document_mapped`]
-    /// reports it, because it is the only entry point that takes a path.
+    /// empty, or it is not UTF-8 — or, for
+    /// [`ds_runtime_load_document_mapped_range`], the byte range it names is
+    /// not inside the file. Only the two entry points that take a path report
+    /// it.
     Map = 11,
     /// The ordinal names no root in this document.
     ///
@@ -353,7 +364,7 @@ pub enum DsStatus {
     /// A frame lease is outstanding on this runtime, and the call would have
     /// invalidated the views it handed out.
     ///
-    /// Reported by [`ds_runtime_tick`], the three loaders, [`ds_runtime_free`]
+    /// Reported by [`ds_runtime_tick`], every loader, [`ds_runtime_free`]
     /// and a second [`ds_runtime_acquire_frame`]. The remedy is always the
     /// same: call [`ds_runtime_release_frame`] and try again.
     ///
@@ -749,6 +760,21 @@ fn announce_document_replaced(runtime: &mut Runtime) {
     runtime.document_replaced = true;
 }
 
+/// Which bytes of a file a mapped load covers.
+///
+/// The two arms are the two entry points: [`ds_runtime_load_document_mapped`]
+/// takes a file that **is** a document, and
+/// [`ds_runtime_load_document_mapped_range`] takes one that *contains* one at a
+/// byte range — an uncompressed entry inside an Android APK being the case
+/// story #1124 met.
+#[derive(Clone, Copy)]
+enum MappedExtent {
+    /// The file is the document.
+    WholeFile,
+    /// The document is `length` bytes at `offset` inside the file.
+    Window { offset: u64, length: u64 },
+}
+
 /// The mapped load, bounded by `shown_root`.
 ///
 /// Every failure this returns is raised **before** the runtime's arena is
@@ -758,13 +784,23 @@ fn announce_document_replaced(runtime: &mut Runtime) {
 fn load_mapped_into(
     runtime: &mut Runtime,
     path: &str,
+    extent: MappedExtent,
     shown_root: ShownRoot,
     text: Option<TextResources>,
 ) -> DsStatus {
-    let file = match MappedFile::open(path) {
+    let opened = match extent {
+        MappedExtent::WholeFile => MappedFile::open(path),
+        MappedExtent::Window { offset, length } => MappedFile::open_range(path, offset, length),
+    };
+    let file = match opened {
         Ok(file) => Arc::new(file),
         Err(error) => {
-            set_last_error(format!("{path}: {error}"));
+            // **Passed through unwrapped.** Both `MappedFile` constructors name
+            // the file in every error they can return, including the ones the
+            // operating system produces, so prefixing the path here again gave
+            // `ds_last_error_message` the container twice. The tests assert the
+            // path appears exactly once, on both loaders.
+            set_last_error(format!("{error}"));
             return DsStatus::Map;
         }
     };
@@ -897,7 +933,8 @@ fn load_mapped_into(
 /// The faces a caller supplied, assembled — or the status that says why they
 /// could not be. `Ok(None)` is the measure-only cascade: no faces were offered.
 ///
-/// Both loading entry points read faces the same way, and the assembly happens
+/// Every loading entry point that takes faces reads them the same way, and the
+/// assembly happens
 /// **before** the document is opened so that a bad cascade is reported as
 /// itself rather than as whatever the document turned out to be.
 /// `tests/abi.c` depends on that ordering.
@@ -1133,6 +1170,57 @@ pub unsafe extern "C" fn ds_runtime_load_document_with_text(
     })
 }
 
+/// The body both mapped loaders share, differing only in their extent and in
+/// the name they report themselves by.
+///
+/// **The name is a parameter rather than the two bodies being written twice.**
+/// Every diagnostic below names the entry point the caller actually called,
+/// which is what a host reads out of [`ds_last_error_message`] — so the
+/// duplication the two symbols would otherwise carry is removed without
+/// flattening the two into one message. The **order** of these checks is part
+/// of the contract and `tests/abi.c` exercises it on both symbols: a null path
+/// before a null-with-count faces array, and the faces assembled before the
+/// document is opened.
+///
+/// # Safety
+///
+/// `path` must be a NUL-terminated string, and `faces` must point to
+/// `face_count` readable [`DsFontFace`] whose own pointers are valid for the
+/// lengths beside them.
+unsafe fn load_mapped_entry(
+    runtime: DsRuntime,
+    path: *const c_char,
+    extent: MappedExtent,
+    shown_root: u32,
+    faces: *const DsFontFace,
+    face_count: usize,
+    name: &'static str,
+) -> DsStatus {
+    if path.is_null() {
+        set_last_error(format!("{name}: path is null"));
+        return DsStatus::NullArgument;
+    }
+    if faces.is_null() && face_count != 0 {
+        set_last_error(format!("{name}: faces is null but face_count is not 0"));
+        return DsStatus::NullArgument;
+    }
+    on_runtime_committing(runtime, name, |runtime| {
+        let path = match unsafe { CStr::from_ptr(path) }.to_str() {
+            Ok(path) => path,
+            Err(_) => {
+                set_last_error(format!("{name}: path is not UTF-8"));
+                return DsStatus::Map;
+            }
+        };
+
+        let text = match unsafe { text_from_c(faces, face_count) } {
+            Ok(text) => text,
+            Err(status) => return status,
+        };
+        load_mapped_into(runtime, path, extent, ShownRoot::nth(shown_root), text)
+    })
+}
+
 /// Loads a `.dsb` by **mapping** it from `path`, bounded by the root that
 /// `shown_root` names.
 ///
@@ -1183,32 +1271,78 @@ pub unsafe extern "C" fn ds_runtime_load_document_mapped(
     faces: *const DsFontFace,
     face_count: usize,
 ) -> DsStatus {
-    guard(|| {
-        if path.is_null() {
-            set_last_error("ds_runtime_load_document_mapped: path is null");
-            return DsStatus::NullArgument;
-        }
-        if faces.is_null() && face_count != 0 {
-            set_last_error(
-                "ds_runtime_load_document_mapped: faces is null but face_count is not 0",
-            );
-            return DsStatus::NullArgument;
-        }
-        on_runtime_committing(runtime, "ds_runtime_load_document_mapped", |runtime| {
-            let path = match unsafe { CStr::from_ptr(path) }.to_str() {
-                Ok(path) => path,
-                Err(_) => {
-                    set_last_error("ds_runtime_load_document_mapped: path is not UTF-8");
-                    return DsStatus::Map;
-                }
-            };
+    guard(|| unsafe {
+        load_mapped_entry(
+            runtime,
+            path,
+            MappedExtent::WholeFile,
+            shown_root,
+            faces,
+            face_count,
+            "ds_runtime_load_document_mapped",
+        )
+    })
+}
 
-            let text = match unsafe { text_from_c(faces, face_count) } {
-                Ok(text) => text,
-                Err(status) => return status,
-            };
-            load_mapped_into(runtime, path, ShownRoot::nth(shown_root), text)
-        })
+/// Loads a `.dsb` by **mapping** the `length` bytes at `offset` inside `path`,
+/// bounded by the root that `shown_root` names.
+///
+/// [`ds_runtime_load_document_mapped`] is this call over a whole file, and
+/// everything that entry point documents holds here — the bound on what is
+/// read, the arena owning the mapping, the root being named once, and a failed
+/// load releasing nothing.
+///
+/// **Why a byte range and not a second path.** A `.dsb` does not always begin a
+/// file. An Android APK stores an uncompressed asset as a range inside
+/// `base.apk`, and the platform reports that range rather than a path of its
+/// own; extracting the document to a path so the call above could take it is a
+/// full copy of the file, which is the cost mapping exists to avoid. Story
+/// #1124 is that case, and `docs/decisions/the-document-is-mapped-where-it-is-packed.md`
+/// carries the four shapes it was chosen from.
+///
+/// `offset` needs no alignment. What a misaligned one costs — the document's
+/// own page-aligned blob boundaries shifted against the process's pages — is on
+/// [`dashbuf::map::MappedFile::open_range`], and it is a cost rather than a
+/// refusal because a reader does not require a section to be aligned.
+///
+/// **A range naming bytes the file does not have is `DS_MAP`, refused here.**
+/// `mmap` past the end of a file succeeds and answers `SIGBUS` when the page is
+/// touched, which arrives with nothing naming the range that caused it. So is a
+/// `length` of 0: there is no sentinel meaning "to the end of the file", for
+/// the reason `shown_root` has none meaning "every root" — a caller that wants
+/// the whole file has [`ds_runtime_load_document_mapped`].
+///
+/// Adding this symbol did not move [`DS_ABI_VERSION`], and it adds no
+/// [`DsStatus`] variant: every failure it reports is one the whole-file loader
+/// already reports.
+///
+/// # Safety
+///
+/// `path` must be a NUL-terminated string, and `faces` must point to
+/// `face_count` readable [`DsFontFace`] whose own pointers are valid for the
+/// lengths beside them. The handle carries no safety obligation (story #1226).
+/// Nothing about the faces is retained: every byte is copied before this
+/// returns. The mapped range itself **is** retained, by the arena.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ds_runtime_load_document_mapped_range(
+    runtime: DsRuntime,
+    path: *const c_char,
+    offset: u64,
+    length: u64,
+    shown_root: u32,
+    faces: *const DsFontFace,
+    face_count: usize,
+) -> DsStatus {
+    guard(|| unsafe {
+        load_mapped_entry(
+            runtime,
+            path,
+            MappedExtent::Window { offset, length },
+            shown_root,
+            faces,
+            face_count,
+            "ds_runtime_load_document_mapped_range",
+        )
     })
 }
 
@@ -1703,7 +1837,7 @@ fn frame_of(scene: &CommittedScene, document_replaced: bool) -> DsFrame {
 /// # The lease
 ///
 /// While a lease is outstanding, every call that would commit is refused with
-/// [`DsStatus::FrameLeased`]: [`ds_runtime_tick`], the three loaders,
+/// [`DsStatus::FrameLeased`]: [`ds_runtime_tick`], every loader,
 /// [`ds_runtime_free`], and a second acquire. That is what makes the borrowed
 /// views safe rather than merely documented — a commit is the only thing that
 /// replaces the tables they point into.
@@ -3300,6 +3434,310 @@ mod tests {
             .expect("a temp path holds no interior NUL")
     }
 
+    /// Writes `bytes` at `offset` inside a larger file, the way an APK holds an
+    /// uncompressed entry, and returns the C string for the container's path.
+    ///
+    /// The surrounding bytes are **not** zeros: a loader that ignored the
+    /// offset would then meet a plausible run of nulls rather than bytes that
+    /// cannot be a header, and `dashbuf::open` would refuse it for the wrong
+    /// reason.
+    fn written_inside_a_container(
+        dir: &tempfile::TempDir,
+        name: &str,
+        offset: u64,
+        bytes: &[u8],
+    ) -> std::ffi::CString {
+        let path = dir.path().join(name);
+        let mut container: Vec<u8> = (0..offset).map(|i| (i % 251) as u8 + 1).collect();
+        container.extend_from_slice(bytes);
+        container.extend((0..613u32).map(|i| (i % 241) as u8 + 1));
+        std::fs::write(&path, container).expect("the container writes");
+        std::ffi::CString::new(path.to_str().expect("the temp path is UTF-8"))
+            .expect("a temp path holds no interior NUL")
+    }
+
+    /// A document at an offset inside a container loads, and the bound holds
+    /// there too.
+    ///
+    /// Two claims in one fixture, and the second is the one with teeth. The
+    /// document's unshown root carries a payload one byte wrong, so a load that
+    /// read the whole asset table could not answer `Ok` — which is R5 on this
+    /// path, asserted through the range rather than assumed to survive it.
+    ///
+    /// **No offset here is a multiple of any page size in scope** — not the
+    /// format's `dashbuf::container::PAGE_ALIGN` of 4096, and not the 16384
+    /// this workspace's host and a 16 KB-page Android device use. That is the
+    /// case rather than an awkward one: `zipalign` aligns an ordinary stored
+    /// entry to 4 bytes, and the entry measured on a Unity Android build sat at
+    /// 24073616 — 1424 past a 4 KiB boundary and 5520 past a 16 KiB one.
+    ///
+    /// What this asserts is that the offset and length cross the C boundary and
+    /// the bound still holds. That `MmapOptions` maps correctly from below an
+    /// unaligned offset is `dashbuf`'s own claim, and
+    /// `a_document_at_an_offset_inside_a_container_loads_as_itself` derives the
+    /// host's page size to check it.
+    #[test]
+    fn a_mapped_range_inside_a_container_loads_and_stays_bounded() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let document = two_root_document(1);
+        let length = document.len() as u64;
+
+        // Three offsets, none page-aligned, one of them past the first page so
+        // the aligned-down mapping is exercised rather than only the easy case.
+        for offset in [1_u64, 4097, 40_961] {
+            for page in [4096, 16384] {
+                assert_ne!(
+                    offset % page,
+                    0,
+                    "offset {offset} is a multiple of {page}, so it is page-aligned on a host \
+                     with that page size and exercises nothing"
+                );
+            }
+            let path =
+                written_inside_a_container(&dir, &format!("apk-{offset}.bin"), offset, &document);
+
+            let mut runtime: DsRuntime = 0;
+            assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+            assert_eq!(
+                unsafe {
+                    ds_runtime_load_document_mapped_range(
+                        runtime,
+                        path.as_ptr(),
+                        offset,
+                        length,
+                        0,
+                        std::ptr::null(),
+                        0,
+                    )
+                },
+                DsStatus::Ok,
+                "at offset {offset}: root 1's payload is one byte wrong, and a load bounded to \
+                 root 0 must never read it"
+            );
+            // A frame is available without a tick, so the load really did
+            // install a document rather than merely not failing.
+            let mut frame = DsFrame::empty();
+            assert_eq!(
+                unsafe { ds_runtime_acquire_frame(runtime, &mut frame) },
+                DsStatus::Ok
+            );
+            assert!(
+                frame.rects.count > 0,
+                "at offset {offset}: the frame has rows"
+            );
+            assert_eq!(
+                unsafe { ds_runtime_release_frame(runtime, 0, std::ptr::null_mut()) },
+                DsStatus::Ok
+            );
+            assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+        }
+    }
+
+    /// The other direction: the residency check is reached through a range too.
+    ///
+    /// Without this, the test above would pass just as well over a range load
+    /// that verified nothing.
+    #[test]
+    fn a_corrupt_payload_in_the_shown_root_is_refused_through_a_range() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let document = two_root_document(0);
+        let offset = 4097;
+        let path = written_inside_a_container(&dir, "corrupt.bin", offset, &document);
+
+        let mut runtime: DsRuntime = 0;
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped_range(
+                    runtime,
+                    path.as_ptr(),
+                    offset,
+                    document.len() as u64,
+                    0,
+                    std::ptr::null(),
+                    0,
+                )
+            },
+            DsStatus::Payload
+        );
+        ds_runtime_free(runtime);
+    }
+
+    /// A range the file cannot satisfy is `DS_MAP`, and the message names the
+    /// range and the container **once each**.
+    ///
+    /// Four shapes, because each is a different arithmetic mistake a host can
+    /// make: a length past the end, an offset past the end, a length of zero,
+    /// and an offset that overflows when the length is added.
+    #[test]
+    fn a_range_the_file_cannot_satisfy_is_refused() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let document = two_root_document(1);
+        let length = document.len() as u64;
+        let offset = 4097;
+        let path = written_inside_a_container(&dir, "ranges.bin", offset, &document);
+        let file_len =
+            std::fs::metadata(std::str::from_utf8(path.as_bytes()).expect("the path is UTF-8"))
+                .expect("the container exists")
+                .len();
+
+        let mut runtime: DsRuntime = 0;
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+
+        // The fourth column is the substring the message must carry, chosen so
+        // an unrelated digit in the same sentence cannot match it — a bare
+        // `contains("0")` for the zero-length case matches "0 bytes" and
+        // "40-byte" alike. **Derived, never written down**: a literal here
+        // drifts the moment the fixture's size changes, and would then pass or
+        // fail for a reason that is not the message's.
+        let past_the_end = format!("{}", offset + file_len);
+        let file_is = format!("is {file_len} bytes");
+        let at_offset = format!("at offset {offset}");
+        for (name, at, len, wanted) in [
+            (
+                "a length past the end",
+                offset,
+                file_len,
+                past_the_end.as_str(),
+            ),
+            ("an offset past the end", file_len, length, file_is.as_str()),
+            ("a length of zero", offset, 0, at_offset.as_str()),
+            ("an offset that overflows", u64::MAX, length, "overflows"),
+        ] {
+            assert_eq!(
+                unsafe {
+                    ds_runtime_load_document_mapped_range(
+                        runtime,
+                        path.as_ptr(),
+                        at,
+                        len,
+                        0,
+                        std::ptr::null(),
+                        0,
+                    )
+                },
+                DsStatus::Map,
+                "{name} must be refused rather than mapped"
+            );
+
+            // **The message, not only the status.** Without this the
+            // interpolation of the range into `open_range`'s errors is pinned
+            // by nothing, and neither is the count: this loader passes those
+            // errors through unwrapped precisely because they already name the
+            // file, so a wrapper that prefixed it again would print the
+            // container twice and no status assertion would notice.
+            let message = last_error();
+            let container = std::str::from_utf8(path.as_bytes()).expect("the path is UTF-8");
+            assert_eq!(
+                message.matches(container).count(),
+                1,
+                "{name}: the container must be named exactly once, and the message was: {message}"
+            );
+
+            // **Per shape, never a disjunction over the two ends.** `contains`
+            // on a stringified 0 matches the "0" in "0 bytes" and in
+            // "40-byte", so `at | len` would have passed the zero-length case
+            // with the offset deleted from the message. Each shape names the
+            // number that is wrong about it.
+            assert!(
+                message.contains(wanted),
+                "{name}: the message must contain {wanted:?}, and said: {message}"
+            );
+        }
+
+        // And the range that does fit still loads, so the four refusals above
+        // are not this container being unloadable.
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped_range(
+                    runtime,
+                    path.as_ptr(),
+                    offset,
+                    length,
+                    0,
+                    std::ptr::null(),
+                    0,
+                )
+            },
+            DsStatus::Ok
+        );
+        ds_runtime_free(runtime);
+    }
+
+    /// A refused ranged load leaves the previously loaded document drawable,
+    /// which is the rule every loader on this surface keeps.
+    #[test]
+    fn a_refused_ranged_load_leaves_the_loaded_document_drawable() {
+        let dir = tempfile::tempdir().expect("a temp dir");
+        let document = two_root_document(1);
+        let offset = 4097;
+        let path = written_inside_a_container(&dir, "good.bin", offset, &document);
+
+        let mut runtime: DsRuntime = 0;
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped_range(
+                    runtime,
+                    path.as_ptr(),
+                    offset,
+                    document.len() as u64,
+                    0,
+                    std::ptr::null(),
+                    0,
+                )
+            },
+            DsStatus::Ok
+        );
+
+        // A range one byte short of the document: the file is fine, the range
+        // is inside it, and what it names is not a `.dsb`.
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped_range(
+                    runtime,
+                    path.as_ptr(),
+                    offset + 1,
+                    document.len() as u64 - 1,
+                    0,
+                    std::ptr::null(),
+                    0,
+                )
+            },
+            DsStatus::Open,
+            "a range that is inside the file and is not a document is DS_OPEN"
+        );
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+            DsStatus::Ok,
+            "the refused load must have left the previous document loaded"
+        );
+        ds_runtime_free(runtime);
+    }
+
+    /// A null path is reported rather than dereferenced, on this loader as on
+    /// the other one.
+    #[test]
+    fn a_ranged_load_with_a_null_path_is_refused() {
+        let mut runtime: DsRuntime = 0;
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_mapped_range(
+                    runtime,
+                    std::ptr::null(),
+                    0,
+                    1,
+                    0,
+                    std::ptr::null(),
+                    0,
+                )
+            },
+            DsStatus::NullArgument
+        );
+        ds_runtime_free(runtime);
+    }
+
     /// Loading bounded to the healthy root succeeds **because** the other
     /// root's payload is never touched.
     ///
@@ -3916,6 +4354,11 @@ mod tests {
         let text = fixture(FIXTURE_TEXT);
         let runtime = loaded(&text);
         let path = std::ffi::CString::new(FIXTURE_TEXT).expect("no interior NUL");
+        // The ranged loader takes a real range, so its refusal below is the
+        // lease's doing rather than a range this file could not satisfy.
+        let mapped_len = std::fs::metadata(FIXTURE_TEXT)
+            .expect("the fixture is on disk")
+            .len();
 
         assert_eq!(
             unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
@@ -3926,10 +4369,10 @@ mod tests {
         let frame = acquire(runtime);
         let before = census(&frame, runtime);
 
-        // All three loaders, not one: each replaces the arena outright, and
-        // `..._mapped` matters most because `image_payload` then points into a
+        // Every loader, not one: each replaces the arena outright, and the two
+        // mapped ones matter most because `image_payload` then points into a
         // mapping the reload would unmap.
-        let refusals: [(&str, &dyn Fn() -> DsStatus); 5] = [
+        let refusals: [(&str, &dyn Fn() -> DsStatus); 6] = [
             ("tick", &|| unsafe {
                 ds_runtime_tick(runtime, 0.016, std::ptr::null_mut())
             }),
@@ -3947,6 +4390,17 @@ mod tests {
             }),
             ("load_document_mapped", &|| unsafe {
                 ds_runtime_load_document_mapped(runtime, path.as_ptr(), 0, std::ptr::null(), 0)
+            }),
+            ("load_document_mapped_range", &|| unsafe {
+                ds_runtime_load_document_mapped_range(
+                    runtime,
+                    path.as_ptr(),
+                    0,
+                    mapped_len,
+                    0,
+                    std::ptr::null(),
+                    0,
+                )
             }),
             ("free", &|| ds_runtime_free(runtime)),
         ];

@@ -165,20 +165,104 @@ namespace Driftsys.Dashscene
         /// `DsStatus.NoSuchRoot` rather than a silent clamp.
         public void LoadDocumentMapped(string path, uint shownRoot)
         {
+            // **Empty as well as null**, and for the reason `DocumentRange`
+            // gives: the library reports `File::open("")` as `DsStatus.Map`
+            // with ": No such file or directory", naming neither the argument
+            // nor the caller's mistake. Both entry points into the same C call
+            // refuse it, rather than one of the two.
             if (path == null)
             {
                 throw new ArgumentNullException(nameof(path));
             }
 
-            // NUL-terminated UTF-8, which is what the header asks for. Done here
-            // rather than by the default string marshaller, which would encode
-            // as ANSI on some platforms and mangle any non-ASCII path.
-            var encoded = Encoding.UTF8.GetBytes(path + "\0");
+            if (path.Length == 0)
+            {
+                // **A `DashsceneException`, not an `ArgumentException`, and the
+                // difference is the caller's `catch`.** This overload has
+                // shipped since story #1121 answering `DsStatus.Map` for an
+                // empty path, and every host is told to wrap a load in
+                // `catch (DashsceneException)`. Raising a different type here
+                // would step around that catch — the same defect the
+                // symbol-missing rethrow above exists to avoid. So the
+                // diagnosis improves and the contract does not move.
+                //
+                // `null` stays an `ArgumentNullException`: it has always been
+                // one, it cannot arrive from data, and changing it would move a
+                // contract in the other direction.
+                throw new DashsceneException(
+                    DsStatus.Map,
+                    "ds_runtime_load_document_mapped",
+                    "the path is empty, so it names no file. An unset serialized field or a "
+                    + "config value that resolved to nothing is the usual cause.");
+            }
+
+            var encoded = NulTerminatedUtf8(path);
 
             Check(
                 Native.ds_runtime_load_document_mapped(
                     Handle(), encoded, shownRoot, null, UIntPtr.Zero),
                 "ds_runtime_load_document_mapped");
+        }
+
+        /// Loads a `.dsb` that is a byte range inside a larger file.
+        ///
+        /// **The path a document packed inside a container takes.** An Android
+        /// APK stores an uncompressed `StreamingAssets` entry as a range inside
+        /// `base.apk`, and `Application.streamingAssetsPath` resolves to a
+        /// `jar:file://…!/assets` URI there rather than to a path — so
+        /// `LoadDocumentMapped` answers `DsStatus.Map` on that platform.
+        /// Extracting the document to `Application.persistentDataPath` so that
+        /// call could take it costs a full copy of the file on first run, which
+        /// is the cost mapping exists to avoid.
+        ///
+        /// A `DocumentRange.WholeFile` is `LoadDocumentMapped`, and is routed
+        /// to it: the C ABI has no sentinel length meaning "to the end of the
+        /// file", so the two are separate calls rather than one with a magic
+        /// value.
+        ///
+        /// Everything `LoadDocumentMapped` documents holds here — the mapping
+        /// is the runtime's, the root is named once, and a load that FAILS
+        /// releases nothing.
+        public void LoadDocumentMapped(DocumentRange range, uint shownRoot)
+        {
+            if (range.ContainerPath == null)
+            {
+                throw new ArgumentException(
+                    "the range names no container. Build it with DocumentRange.WholeFile or "
+                    + "DocumentRange.Window rather than with default(DocumentRange).",
+                    nameof(range));
+            }
+
+            if (range.IsWholeFile)
+            {
+                LoadDocumentMapped(range.ContainerPath, shownRoot);
+                return;
+            }
+
+            var encoded = NulTerminatedUtf8(range.ContainerPath);
+
+            DsStatus status;
+            try
+            {
+                status = Native.ds_runtime_load_document_mapped_range(
+                    Handle(), encoded, range.Offset, range.Length, shownRoot, null, UIntPtr.Zero);
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // **The one mismatch `ds_abi_version` cannot report**, because
+                // adding a symbol deliberately does not move it. A package this
+                // new against a library built before story #1124 passes the
+                // handshake at 2 and then fails here, lazily, where .NET binds
+                // the import. Rethrown as the type R-E16 already makes every
+                // host handle — `DashsceneSymbolMissingException` carries the
+                // whole argument.
+                throw new DashsceneSymbolMissingException(
+                    "ds_runtime_load_document_mapped_range",
+                    Native.AbiVersion,
+                    Native.ds_abi_version());
+            }
+
+            Check(status, "ds_runtime_load_document_mapped_range");
         }
 
         /// Advances the scene by `dt` seconds.
@@ -313,6 +397,16 @@ namespace Driftsys.Dashscene
                 : $"{LastDisposeDetail}; then ds_runtime_free answered {status}: {freeDetail}";
             LastDisposeStatus = status;
         }
+
+        /// A path as the header asks for it: NUL-terminated UTF-8.
+        ///
+        /// Done here rather than by the default string marshaller, which would
+        /// encode as ANSI on some platforms and mangle any non-ASCII path. One
+        /// function rather than one per loader, so a later change — a check for
+        /// an interior NUL, which the library would see as a truncated path —
+        /// is made once.
+        private static byte[] NulTerminatedUtf8(string path) =>
+            Encoding.UTF8.GetBytes(path + "\0");
 
         private ulong Handle()
         {

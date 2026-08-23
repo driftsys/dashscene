@@ -20,6 +20,7 @@
 
 #include <stdio.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int failures = 0;
@@ -266,6 +267,88 @@ int main(void) {
   check(ds_runtime_load_document_mapped(runtime, "/nonexistent/no-such.dsb", 0,
                                         NULL, 1) == DS_NULL_ARGUMENT,
         "NULL faces with a non-zero count is DS_NULL_ARGUMENT from C");
+
+  /* The ranged mapped load (story #1124), which is the one entry point where a
+   * C caller can check something the Rust tests structurally cannot: that the
+   * two uint64_t slots bind. A length declared here at a narrower width than
+   * the library takes leaves the upper half of the register unspecified, and
+   * the pairs below are one byte apart across the file's end — so a length that
+   * did not arrive intact turns a DS_OPEN into a DS_MAP.
+   *
+   * That needs a real file, which the tests above deliberately avoid. It is
+   * 200 bytes of junk rather than a .dsb: this file checks that the declaration
+   * binds, and the loader itself is covered on the Rust side over a two-root
+   * fixture.
+   *
+   * **Written under the temporary directory, not under target/.** A relative
+   * path would resolve against the caller's working directory, so running this
+   * binary from anywhere but the repository root — which is what a developer
+   * debugging it does — would fail the open and SKIP every range check below
+   * rather than run it. The write is asserted even so. */
+  {
+    const char *tmp = getenv("TMPDIR");
+    char range_path[512];
+    unsigned char junk[200];
+    size_t i;
+    FILE *f;
+
+    if (tmp == NULL || tmp[0] == '\0') {
+      tmp = "/tmp";
+    }
+    /* snprintf truncates rather than overflowing, and a truncated path simply
+     * fails to open below, which is reported. */
+    snprintf(range_path, sizeof range_path, "%s/c-abi-range-fixture.bin", tmp);
+
+    for (i = 0; i < sizeof junk; i++) {
+      junk[i] = (unsigned char)(i % 251u + 1u);
+    }
+    f = fopen(range_path, "wb");
+    check(f != NULL, "the range fixture opens for writing");
+    if (f != NULL) {
+      check(fwrite(junk, 1, sizeof junk, f) == sizeof junk,
+            "the range fixture is written whole");
+      check(fclose(f) == 0, "the range fixture closes");
+
+      /* The whole file as a range: inside the file, so it reaches the parser
+       * and fails as bytes rather than as a range. */
+      check(ds_runtime_load_document_mapped_range(runtime, range_path, 0,
+                                                  sizeof junk, 0, NULL,
+                                                  0) == DS_OPEN,
+            "a range that is inside the file reaches the parser from C");
+      /* One byte more, and it is a range failure instead. The pair is what
+       * says the length slot arrived intact. */
+      check(ds_runtime_load_document_mapped_range(runtime, range_path, 0,
+                                                  sizeof junk + 1, 0, NULL,
+                                                  0) == DS_MAP,
+            "one byte past the end is DS_MAP from C");
+      /* And the same pair moved off zero, so the offset slot is not simply
+       * being ignored. */
+      check(ds_runtime_load_document_mapped_range(runtime, range_path, 100, 100,
+                                                  0, NULL, 0) == DS_OPEN,
+            "a range at a non-zero offset reaches the parser from C");
+      check(ds_runtime_load_document_mapped_range(runtime, range_path, 100, 101,
+                                                  0, NULL, 0) == DS_MAP,
+            "one byte past the end from a non-zero offset is DS_MAP from C");
+      check(ds_runtime_load_document_mapped_range(runtime, range_path, 0, 0, 0,
+                                                  NULL, 0) == DS_MAP,
+            "a length of 0 is DS_MAP from C");
+      /* faces NULL with a non-zero count is refused before the range is
+       * touched, the same ordering the other loaders keep. */
+      check(ds_runtime_load_document_mapped_range(runtime, range_path, 0,
+                                                  sizeof junk, 0, NULL,
+                                                  1) == DS_NULL_ARGUMENT,
+            "NULL faces with a non-zero count is DS_NULL_ARGUMENT from C");
+      check(remove(range_path) == 0, "the range fixture is removed");
+    }
+
+    check(ds_runtime_load_document_mapped_range(runtime, NULL, 0, 1, 0, NULL,
+                                                0) == DS_NULL_ARGUMENT,
+          "a NULL path is DS_NULL_ARGUMENT from C on the ranged loader");
+    check(ds_runtime_load_document_mapped_range(0, "/nonexistent/no-such.dsb",
+                                                0, 1, 0, NULL,
+                                                0) == DS_NULL_ARGUMENT,
+          "a 0 handle is DS_NULL_ARGUMENT from C on the ranged loader");
+  }
 
   /* Discriminants pinned by value.
    *

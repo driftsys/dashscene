@@ -78,7 +78,7 @@ than merely documented.
 **D3 — the refused set is "anything that can commit", plus `ds_runtime_free` and
 a second acquire.**
 
-`ds_runtime_tick` and the three loaders are the only paths to a commit.
+`ds_runtime_tick` and the loaders are the only paths to a commit.
 `ds_runtime_free` is refused as well, because it drops the arena under a host
 still reading it — the undefined behaviour the handle ruling removed from every
 other path, reintroduced at teardown. Refusing is recoverable: release, then
@@ -184,11 +184,12 @@ it is the intended one: it is diagnosable, where reading a freed table is not.
 It is named in the header, in the rustdoc and in `docs/design/c-abi.md`.
 
 **One new `DsStatus` variant — `FrameLeased`, the twentieth — and two new entry
-points of the fourteen, and `DS_ABI_VERSION` stays 2.** Adding a symbol and
-appending a variant are both free by the rule in `docs/design/c-abi.md`. Unlike
-`SurfaceLost`, which that record uses to show the rule's gap, `FrameLeased`
-re-routes no existing condition: nothing could reach it before leases existed,
-so a host on an older header meets it only on a call it could not have made.
+points, taking the surface to fourteen at the time, and `DS_ABI_VERSION` stays
+2.** Adding a symbol and appending a variant are both free by the rule in
+`docs/design/c-abi.md`. Unlike `SurfaceLost`, which that record uses to show the
+rule's gap, `FrameLeased` re-routes no existing condition: nothing could reach
+it before leases existed, so a host on an older header meets it only on a call
+it could not have made.
 
 **The glyph atlases do not cross.** `dashpaint::Atlas` owns an encoded sheet and
 a glyph list; it is not a row and has no C representation. `GlyphRun` and

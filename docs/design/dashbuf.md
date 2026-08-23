@@ -130,10 +130,14 @@ pair split by target rather than two designs. `dashbuf::map::MappedFile` (story
 #595) is one memory mapping of the whole file, which is the loading model
 `docs/decisions/dsb-sectioned-container.md` has specified since v0.11; it is
 native-only, and `memmap2` is target-gated so a wasm build links no part of it.
-`dashbuf::prefix` (story #587) is the other side of that split: wasm has no
-mapping, so a browser host reads the envelope out of a fetched prefix and asks
-for the rest by byte range. `Container::parse` stays strict for both, which is
-the choice
+`MappedFile::open_range` (story #1124) is the same mapping over a byte range
+inside a larger file, for a document that does not begin one — an uncompressed
+entry inside an Android APK is the case that needed it, and
+`docs/decisions/the-document-is-mapped-where-it-is-packed.md` carries what a
+non-page-aligned offset costs. `dashbuf::prefix` (story #587) is the other side
+of that split: wasm has no mapping, so a browser host reads the envelope out of
+a fetched prefix and asks for the rest by byte range. `Container::parse` stays
+strict for both, which is the choice
 `docs/decisions/container-parse-reads-a-prefix-through-a-host-reader.md`
 records.
 

@@ -107,7 +107,7 @@
 //! crate declares no `crate-type`, so `cargo build` produces a plain rlib;
 //! nothing in the workspace depends on it; and
 //! `crates/dashscene-ffi/include/dashscene.h` declares none of them — that
-//! library exports fourteen `ds_*` symbols and nothing else.
+//! library exports `ds_*` symbols and nothing else.
 //!
 //! **Story #859 settled which of the two routes a host takes, and it took the
 //! second**: these functions are not re-exported through `dashscene-ffi`, and

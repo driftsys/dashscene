@@ -28,3 +28,19 @@ memmap2.workspace = true
 # `tests/mapped.rs` writes a file to map. A mapping is of a path, so the one
 # thing that test cannot do is work from bytes in memory.
 tempfile.workspace = true
+
+# `tests/mapped.rs` asks the host what `MmapOptions::offset` rounds down to.
+# That is deliberately not `container::PAGE_ALIGN`, which is the format's 4096
+# and a property of the file: this workspace builds on a 16 KiB-page host, so a
+# test that conflated them would credit an offset memmap2 had aligned to 0.
+#
+# **Target-gated for the reason `memmap2` above is, and then one more.**
+# `sysconf` and `_SC_PAGESIZE` live in libc's `unix` module and do not exist on
+# Windows, where `dashbuf::map` is otherwise compiled — an ungated entry breaks
+# `cargo test -p dashbuf` on a target D3 of
+# `docs/decisions/the-native-library-ships-inside-the-unity-package.md` puts in
+# scope. And the value would be wrong there in any case: memmap2's Windows
+# backend rounds to `allocation_granularity()`, which is 64 KiB, not to the page
+# size.
+[target.'cfg(unix)'.dev-dependencies]
+libc.workspace = true

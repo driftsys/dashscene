@@ -9,10 +9,13 @@
 // suffix — one of the four shapes R-E2 enumerates — so it needs no `.meta` and
 // is outside the compile gate.
 //
-// Everything this file does that is worth testing lives in `Runtime/` and is
-// executed by `just unity-ffi`. What is left here is the part that genuinely
-// needs an editor: `Time.deltaTime`, a component lifecycle, and a place to put
-// the painter when story #1122 lands.
+// What is left here is the part that genuinely needs an editor:
+// `Time.deltaTime`, a component lifecycle, and where the painter hangs.
+// Everything carrying a claim lives in `Runtime/`, where a gate compiles it —
+// `DocumentRange` and the loader in the engine-free half, which
+// `just unity-ffi` executes against the real library, and
+// `StreamingAssetDocument` in `Runtime/Engine/`, which `just unity-editor`
+// compiles (`docs/decisions/r-e10-is-checked-in-two-halves.md`).
 //
 // **This draws nothing.** `AcquireFrame` hands over the committed tables and
 // the painter that consumes them is story #1122; the glyph atlases those runs
@@ -30,12 +33,13 @@ namespace Driftsys.Dashscene.Samples
     public sealed class DashsceneFrameLoop : MonoBehaviour
     {
         // **On Android, StreamingAssets is not a filesystem path.** It resolves
-        // to a `jar:file://…!/assets` URI inside the APK, and the mapped loader
-        // mmaps a real file, so it answers DS_MAP there. Give an absolute path
-        // under Application.persistentDataPath on that platform, or copy the
-        // document out first. Issue #1288 tracks doing that here.
-        [Tooltip("Absolute path to a .dsb, or a path under Application.streamingAssetsPath. "
-                 + "On Android use an absolute path — StreamingAssets is inside the APK.")]
+        // to a `jar:file://…!/assets` URI inside the APK.
+        // `StreamingAssetDocument.Resolve` is what turns a relative path into
+        // something loadable on both shapes of platform, and story #1124 is why
+        // it does it without a copy.
+        [Tooltip("Absolute path to a .dsb, or a path relative to StreamingAssets. "
+                 + "A relative path works on Android too — the document is mapped "
+                 + "in place inside the APK.")]
         [SerializeField]
         private string documentPath = "scene.dsb";
 
@@ -96,20 +100,46 @@ namespace Driftsys.Dashscene.Samples
                 return;
             }
 
-            var path = Path.IsPathRooted(documentPath)
-                ? documentPath
-                : Path.Combine(Application.streamingAssetsPath, documentPath);
+            DocumentRange range;
+            try
+            {
+                range = StreamingAssetDocument.Resolve(documentPath);
+            }
+            catch (Exception e)
+            {
+                // Broad on purpose, and it is the one place on this path that
+                // is. `AndroidJavaException` is what a JNI call throws and it
+                // cannot be named in a build where `UNITY_ANDROID` is not
+                // defined, so a narrower list here would compile on one
+                // platform and not the other.
+                Debug.LogError(
+                    $"[dashscene] could not locate {documentPath}: {e.Message}", this);
+                enabled = false;
+                return;
+            }
 
             try
             {
                 // The mapped path rather than the owning one: it costs the
                 // artboard being shown rather than the whole file, and on
                 // Android it is what keeps demand paging (story #1124).
-                _runtime.LoadDocumentMapped(path, shownRoot);
+                _runtime.LoadDocumentMapped(range, shownRoot);
+            }
+            catch (DashsceneAbiMismatchException e)
+            {
+                // **A second catch for this, at the load site, and it is not
+                // redundant with the one around the constructor.**
+                // `DashsceneSymbolMissingException` is the library missing an
+                // entry point that `ds_abi_version` agreed about, so it arrives
+                // at the first call to that symbol rather than at the
+                // handshake — and it derives from `Exception`, not from
+                // `DashsceneException`, so the catch below does not see it.
+                Debug.LogError($"[dashscene] {e.Message}", this);
+                enabled = false;
             }
             catch (DashsceneException e)
             {
-                Debug.LogError($"[dashscene] could not load {path}: {e.Message}", this);
+                Debug.LogError($"[dashscene] could not load {range}: {e.Message}", this);
                 enabled = false;
             }
 

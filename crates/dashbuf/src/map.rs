@@ -37,7 +37,7 @@ use std::io;
 use std::ops::Deref;
 use std::path::Path;
 
-use memmap2::Mmap;
+use memmap2::{Mmap, MmapOptions};
 
 /// A `.dsb` file, mapped read-only into this process's address space.
 ///
@@ -87,13 +87,18 @@ impl MappedFile {
     /// makes it false.
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref();
-        let file = File::open(path)?;
-        let len = file.metadata()?.len();
+        // Every error out of this function names the file, including the ones
+        // the operating system produces — see [`Self::open_range`], which keeps
+        // the same rule so that a caller can pass either through unwrapped.
+        let named =
+            |error: io::Error| io::Error::new(error.kind(), format!("{}: {error}", path.display()));
+        let file = File::open(path).map_err(named)?;
+        let len = file.metadata().map_err(named)?.len();
         if len == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
-                    "{} is empty, and a .dsb begins with a {}-byte header",
+                    "{}: the file is empty, and a .dsb begins with a {}-byte header",
                     path.display(),
                     crate::container::HEADER_SIZE
                 ),
@@ -103,7 +108,123 @@ impl MappedFile {
         // nothing in this process writes the file, and the hazard that remains
         // — another process changing the file underneath a live mapping — is
         // inherent to mapping and is not removable by any check here.
-        let map = unsafe { Mmap::map(&file)? };
+        let map = unsafe { Mmap::map(&file).map_err(named)? };
+        Ok(Self { map })
+    }
+
+    /// Maps the `length` bytes at `offset` inside `path`, read-only.
+    ///
+    /// [`Self::open`] is this call over the whole file, and the two exist
+    /// separately because a `.dsb` does not always begin a file. A container
+    /// format that stores entries uncompressed — an Android APK is the case
+    /// story #1124 met — holds the document at an offset inside a larger file,
+    /// and reading it out to a path of its own is the copy mapping exists to
+    /// avoid.
+    ///
+    /// `offset` needs no alignment. [`MmapOptions::offset`] maps from the page
+    /// below it and returns a slice starting at the byte asked for, so the
+    /// caller passes the offset a container reports rather than one it has
+    /// rounded.
+    ///
+    /// **What a misaligned offset costs is real and is not correctness.**
+    /// `docs/design/dsb-container-format.md` requires page alignment in exactly
+    /// one place — the hot/cold boundary, so
+    /// [`crate::container::Container::verify_hot`] faults no cold page — and
+    /// leaves every other alignment to writer policy, which a reader does not
+    /// enforce. A document at an offset shifts the required boundary against
+    /// the process's pages.
+    ///
+    /// **On most hosts it is already shifted**, which is what makes this a cost
+    /// of degree rather than of kind: [`crate::container::PAGE_ALIGN`] is 4096
+    /// and is a property of the file, while this machine's pages are 16 KiB and
+    /// Android 15 requires 16 KB page support on new devices. So the guarantee
+    /// is approximate at offset 0 there too. `madvise` is not called and nothing
+    /// reads alignment, so the cost is extra pages faulted, not a wrong answer.
+    /// `docs/decisions/the-document-is-mapped-where-it-is-packed.md` D4 carries
+    /// the full argument.
+    ///
+    /// # Errors
+    ///
+    /// `length` is 0, the range ends past the end of the file, `offset +
+    /// length` overflows, `length` exceeds this target's address space, or the
+    /// file cannot be opened or mapped. A range naming bytes the file does not
+    /// have is refused here rather than mapped: `mmap` past the end of a file
+    /// succeeds and answers `SIGBUS` on touch, which arrives with nothing
+    /// naming the range that caused it.
+    ///
+    /// # Safety of the mapping
+    ///
+    /// The same standing caveat [`Self::open`] states, and one addition that
+    /// matters for a container: the range is checked against the file's length
+    /// as it is at this moment, and another process truncating the file
+    /// afterwards turns an already-mapped page into `SIGBUS` on touch. No check
+    /// here removes that.
+    pub fn open_range(path: impl AsRef<Path>, offset: u64, length: u64) -> io::Result<Self> {
+        let path = path.as_ref();
+        // **Every error out of this function names the file**, including the
+        // ones the operating system produces — `File::open` answers a bare "No
+        // such file or directory" that names nothing. That uniformity is what
+        // lets `dashscene-ffi`'s mapped loader pass these through unwrapped,
+        // where it prefixes [`Self::open`]'s. Without it the range arm reported
+        // a failure naming no container.
+        let named =
+            |error: io::Error| io::Error::new(error.kind(), format!("{}: {error}", path.display()));
+        let file = File::open(path).map_err(named)?;
+        let file_len = file.metadata().map_err(named)?.len();
+
+        if length == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{} at offset {offset}: a range of 0 bytes names no document, and a .dsb \
+                     begins with a {}-byte header",
+                    path.display(),
+                    crate::container::HEADER_SIZE
+                ),
+            ));
+        }
+
+        let end = offset.checked_add(length).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{}: offset {offset} plus length {length} overflows",
+                    path.display()
+                ),
+            )
+        })?;
+        if end > file_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{}: bytes {offset}..{end} were asked for and the file is {file_len} bytes",
+                    path.display()
+                ),
+            ));
+        }
+
+        let len = usize::try_from(length).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{}: a length of {length} bytes does not fit this target's address space",
+                    path.display()
+                ),
+            )
+        })?;
+
+        // SAFETY: see "Safety of the mapping" above and on `open`. The mapping
+        // is read-only, the range has been checked against the file's length,
+        // and the hazard that remains — another process changing the file
+        // underneath a live mapping — is inherent to mapping and is not
+        // removable by any check here.
+        let map = unsafe {
+            MmapOptions::new()
+                .offset(offset)
+                .len(len)
+                .map(&file)
+                .map_err(named)?
+        };
         Ok(Self { map })
     }
 

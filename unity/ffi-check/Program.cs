@@ -89,7 +89,7 @@ Check("every declared entry point resolves in the library", () =>
     // entry point the checks below never call would gate nothing at all: the
     // four surface-handing calls a Unity host does not make would sit here
     // unverified until some later story called one and found it renamed.
-    // Looking each symbol up is what makes declaring all fourteen worth doing.
+    // Looking each symbol up is what makes declaring every one of them worth doing.
     //
     // A lookup proves the NAME exists, not that the signature matches — C
     // exports carry no signature to compare. The behavioural checks below are
@@ -104,9 +104,9 @@ Check("every declared entry point resolves in the library", () =>
 
     // **The SET, not the count.** A count assertion pins cardinality and not
     // identity, so deleting one declaration and adding a duplicate binding for
-    // another entry point keeps it at fourteen, resolves, and passes — leaving
-    // the deleted one bound by nothing. That mutation was run against the count
-    // form of this check and reported every check green.
+    // another entry point keeps the count where it was, resolves, and passes —
+    // leaving the deleted one bound by nothing. That mutation was run against
+    // the count form of this check and reported every check green.
     var expected = new SortedSet<string>(StringComparer.Ordinal)
     {
         "ds_abi_version",
@@ -118,6 +118,7 @@ Check("every declared entry point resolves in the library", () =>
         "ds_runtime_free",
         "ds_runtime_load_document",
         "ds_runtime_load_document_mapped",
+        "ds_runtime_load_document_mapped_range",
         "ds_runtime_load_document_with_text",
         "ds_runtime_new",
         "ds_runtime_release_frame",
@@ -146,9 +147,9 @@ Check("every declared entry point resolves in the library", () =>
     }
 
     // **What this still does not catch, stated rather than implied:** the
-    // library gaining a FIFTEENTH entry point that nothing declares. The set
-    // above is this gate's own copy of the contract, so it moves only when a
-    // person edits it. Catching that direction needs the library's export table
+    // library gaining an entry point that nothing declares. The set above is
+    // this gate's own copy of the contract, so it moves only when a person
+    // edits it. Catching that direction needs the library's export table
     // enumerated, which .NET cannot do portably — `NativeLibrary` resolves a
     // name you supply and cannot list what is there. `just c-abi` compiling
     // `tests/abi.c` against the committed header is what holds the header to
@@ -293,6 +294,253 @@ Check("a mapped load of a missing path is Map", () =>
             e.Detail.Contains(missing),
             $"the detail did not name the path the caller gave: '{e.Detail}'");
     }
+});
+
+Check("a document at an OFFSET inside a container loads (story #1124)", () =>
+{
+    // **The one check that executes the ranged loader's two `ulong` slots.**
+    // Everything else on this surface is reachable by a path, and a document
+    // packed inside an APK is not — `AssetManager.openFd` reports a start
+    // offset and a length into `base.apk` and no path of its own.
+    //
+    // The container is built here rather than committed: what is under test is
+    // the offset arithmetic across the boundary, and a committed container
+    // would freeze one offset. **The offset is deliberately a multiple of no
+    // page size in scope** — neither the format's 4096 nor the 16384 this host
+    // and a 16 KB-page Android device use — and it is past the first page on
+    // both, so it is not the trivial case either. That is what a real APK
+    // gives: `zipalign` aligns an ordinary stored entry to 4 bytes, and the
+    // entry measured on a Unity Android build sat at 24073616, which is 1424
+    // past a 4 KiB boundary and 5520 past a 16 KiB one.
+    var document = File.ReadAllBytes(fixture);
+    var container = Path.Combine(
+        Path.GetTempPath(), $"ffi-check-container-{Guid.NewGuid():N}.bin");
+    const ulong offset = 40961;
+    try
+    {
+        // Padded with bytes that are not zeros: a loader that ignored the
+        // offset would otherwise meet a plausible run of nulls rather than
+        // bytes that cannot be a header.
+        var padding = new byte[offset];
+        for (var i = 0; i < padding.Length; i++)
+        {
+            padding[i] = (byte)(i % 251 + 1);
+        }
+
+        using (var stream = File.Create(container))
+        {
+            stream.Write(padding, 0, padding.Length);
+            stream.Write(document, 0, document.Length);
+            stream.Write(padding, 0, padding.Length);
+        }
+
+        var range = DocumentRange.Window(container, offset, (ulong)document.Length);
+
+        // **Against the whole-file load, not against zero.** "Some rects
+        // arrived" is satisfied by any range that happens to parse — a shifted
+        // but still-parseable window, or a dropped `shownRoot`. Comparing all
+        // nineteen slice counts against the same document loaded from its own
+        // path is what says the range named THIS document and showed the same
+        // root.
+        var viaRange = SliceCounts(r => r.LoadDocumentMapped(range, 0));
+        var viaWholeFile = SliceCounts(r => r.LoadDocumentMapped(fixture, 0));
+        Expect(
+            viaWholeFile["Rects"] > 0,
+            "the whole-file load committed no rects, so there is nothing to compare against");
+        Expect(
+            viaRange.Count == viaWholeFile.Count
+            && viaRange.All(e => viaWholeFile.TryGetValue(e.Key, out var n) && n == e.Value),
+            "the document at the offset produced a different frame from the same document "
+            + $"loaded whole: [{Describe(viaRange)}] against [{Describe(viaWholeFile)}]");
+
+        // And the refusals, on the same container so a failure cannot be the
+        // file being unreadable.
+        using (var runtime = new DashsceneRuntime())
+        {
+            var past = DocumentRange.Window(container, offset, (ulong)document.Length + 1_000_000);
+            try
+            {
+                runtime.LoadDocumentMapped(past, 0);
+                throw new Exception("a range past the end of the container loaded");
+            }
+            catch (DashsceneException e)
+            {
+                Expect(e.Status == DsStatus.Map, $"status was {e.Status}");
+                Expect(
+                    e.Detail.Contains(container),
+                    $"the detail did not name the container: '{e.Detail}'");
+            }
+        }
+    }
+    finally
+    {
+        // After the runtimes are disposed, so no mapping is outstanding.
+        File.Delete(container);
+    }
+});
+
+Check("DocumentRange refuses a range that cannot name bytes, before any call", () =>
+{
+    // The managed guard, which exists because a host that arrived at 0 got it
+    // from a container query that failed rather than from a real entry — and
+    // because `AssetFileDescriptor.UNKNOWN_LENGTH` is -1, which becomes a very
+    // large `ulong` rather than 0.
+    try
+    {
+        DocumentRange.Window("/some/container", 0, 0);
+        throw new Exception("a length of 0 was accepted");
+    }
+    catch (ArgumentOutOfRangeException)
+    {
+    }
+
+    try
+    {
+        DocumentRange.Window("/some/container", ulong.MaxValue, 2);
+        throw new Exception("an overflowing range was accepted");
+    }
+    catch (ArgumentOutOfRangeException)
+    {
+    }
+
+    try
+    {
+        DocumentRange.Window(null, 0, 1);
+        throw new Exception("a null container was accepted");
+    }
+    catch (ArgumentNullException)
+    {
+    }
+
+    // Empty, not only null. Without this the library reports it as
+    // `File::open("")` — Map, with a message naming no argument.
+    foreach (var (what, build) in new (string, Action)[]
+             {
+                 ("Window", () => DocumentRange.Window(string.Empty, 0, 1)),
+                 ("WholeFile", () => DocumentRange.WholeFile(string.Empty)),
+             })
+    {
+        try
+        {
+            build();
+            throw new Exception($"{what} accepted an empty container path");
+        }
+        catch (ArgumentException e) when (!(e is ArgumentNullException))
+        {
+            Expect(
+                e.Message.Contains("names no file"),
+                $"{what}'s refusal did not say what was wrong: {e.Message}");
+            Expect(e.ParamName != null, $"{what}'s refusal named no argument");
+        }
+    }
+
+    // **The other door into the same C call, and it refuses differently on
+    // purpose.** `LoadDocumentMapped(string, uint)` has answered
+    // `DsStatus.Map` for a bad path since story #1121 and every host wraps a
+    // load in `catch (DashsceneException)`, so its empty-path guard improves
+    // the diagnosis without moving the type. Asserted, because "both refuse it"
+    // would otherwise be true of a version that raised something the
+    // prescribed catch does not see.
+    using (var runtime = new DashsceneRuntime())
+    {
+        try
+        {
+            runtime.LoadDocumentMapped(string.Empty, 0);
+            throw new Exception("LoadDocumentMapped accepted an empty path");
+        }
+        catch (DashsceneException e)
+        {
+            Expect(e.Status == DsStatus.Map, $"status was {e.Status}");
+            Expect(
+                e.Message.Contains("names no file"),
+                $"the refusal did not say what was wrong: {e.Message}");
+        }
+    }
+});
+
+Check("a missing entry point is reported as an ABI mismatch with equal numbers", () =>
+{
+    // **The mismatch `ds_abi_version` cannot see.** Adding a symbol does not
+    // move `DS_ABI_VERSION`, so a package built after story #1124 loaded
+    // against a library from before passes the handshake and then meets an
+    // `EntryPointNotFoundException` at the first call — which is not a
+    // `DashsceneException` and escapes every catch a host was told to write.
+    // `DashsceneRuntime` rethrows it as the type R-E16 already makes every host
+    // handle, and this is that type's contract.
+    //
+    // **What this does NOT do is provoke the binding failure**, and it cannot.
+    // .NET consults an assembly's `DllImportResolver` once per library name and
+    // caches the module, and `SetDllImportResolver` throws if called a second
+    // time for one assembly — so this gate, which has already resolved
+    // `dashscene_ffi` to a library that DOES export the symbol, has no way to
+    // present one that does not. Reaching the `catch` needs a second process or
+    // a second load context. What is checked here is everything downstream of
+    // it; `docs/design/unity-csharp-host.md` names the gap.
+    // **Constructed directly, not through reflection.** This project compiles
+    // the package's own sources, so the type and its internal constructor are
+    // in scope — and a rename then fails to compile here rather than becoming a
+    // NullReferenceException out of a `GetProperty` that returned null.
+    var thrown = new DashsceneSymbolMissingException(
+        "ds_runtime_load_document_mapped_range",
+        DashsceneRuntime.PackageAbiVersion,
+        DashsceneRuntime.LibraryAbiVersion);
+
+    Expect(
+        thrown is DashsceneAbiMismatchException,
+        "it must be a DashsceneAbiMismatchException, or an R-E16 catch does not see it");
+    Expect(
+        thrown.Expected == thrown.Actual,
+        $"against this library the two numbers must AGREE — that they do is why the handshake "
+        + $"misses this class: {thrown.Expected} against {thrown.Actual}");
+    Expect(
+        thrown.Symbol == "ds_runtime_load_document_mapped_range",
+        "the refusal must name the symbol");
+    Expect(
+        thrown.Message.Contains("Rebuild the native library"),
+        $"the refusal must say what to do: {thrown.Message}");
+});
+
+Check("the ranged loader over a whole file equals the path loader, and so does WholeFile", () =>
+{
+    // **Three loads, because two of them would have been the same call.**
+    // `DocumentRange.WholeFile` routes to `LoadDocumentMapped(string, uint)` by
+    // design — the C ABI has no sentinel length — so comparing those two
+    // exercises one native entry point twice and can only fail by throwing.
+    // An earlier form of this check did exactly that.
+    //
+    // The pair with teeth is the **ranged** loader over the whole file against
+    // the path loader: two distinct C symbols, the same bytes, so a defect in
+    // the offset or length arithmetic at 0 shows up here. `WholeFile` is then
+    // compared as a third, which is what pins the routing: sent through the
+    // ranged call with a length of 0 it would throw `Map`, and sent to the
+    // owning loader its `ImagePayload` would be the payloads rather than the
+    // file.
+    var fileLength = (ulong)new FileInfo(fixture).Length;
+    var viaPath = SliceCounts(r => r.LoadDocumentMapped(fixture, 0));
+    var viaRange = SliceCounts(
+        r => r.LoadDocumentMapped(DocumentRange.Window(fixture, 0, fileLength), 0));
+    var viaWholeFile = SliceCounts(
+        r => r.LoadDocumentMapped(DocumentRange.WholeFile(fixture), 0));
+
+    // **By name, never by position.** `SliceCounts` is keyed on the field name
+    // because `Type.GetFields`'s order is not guaranteed: a positional guard
+    // could land on `GlyphRuns` — empty for this fixture — and redden the gate
+    // over loaders that agree exactly.
+    Expect(
+        viaPath["Rects"] > 0,
+        "the path loader committed no rects, so there is nothing to compare");
+
+    bool Same(Dictionary<string, long> a, Dictionary<string, long> b) =>
+        a.Count == b.Count && a.All(e => b.TryGetValue(e.Key, out var n) && n == e.Value);
+
+    Expect(
+        Same(viaPath, viaRange),
+        "the ranged loader over the whole file produced a different frame from the path "
+        + $"loader: [{Describe(viaPath)}] against [{Describe(viaRange)}]");
+    Expect(
+        Same(viaPath, viaWholeFile),
+        "a whole-file DocumentRange produced a different frame from the path loader: "
+        + $"[{Describe(viaPath)}] against [{Describe(viaWholeFile)}]");
 });
 
 Check("a retired handle is BadHandle", () =>
@@ -659,6 +907,29 @@ static DsStatus InvokeRaw(string entryPoint, params object[] args)
 
     return (DsStatus)(method.Invoke(null, full) ?? DsStatus.Panic);
 }
+
+/// Every slice's row count for one load, **keyed by field name**.
+///
+/// Keyed rather than positional because `Type.GetFields`'s order is not
+/// guaranteed, and one load rather than two because a caller wanting both the
+/// whole-frame comparison and a single array's count would otherwise map and
+/// parse the document twice.
+static Dictionary<string, long> SliceCounts(Action<DashsceneRuntime> load)
+{
+    using var runtime = new DashsceneRuntime();
+    load(runtime);
+    using var lease = runtime.AcquireFrame();
+    var frame = lease.Frame;
+    return typeof(DsFrame)
+        .GetFields(BindingFlags.Public | BindingFlags.Instance)
+        .Where(f => f.FieldType == typeof(DsSlice))
+        .ToDictionary(f => f.Name, f => ((DsSlice)f.GetValue(frame)!).CountAsLong);
+}
+
+/// Two frames' counts, as a message a failure can be read from.
+static string Describe(Dictionary<string, long> counts) =>
+    string.Join(", ", counts.OrderBy(e => e.Key, StringComparer.Ordinal)
+        .Select(e => $"{e.Key}={e.Value}"));
 
 static IEnumerable<DsSlice> AllSlices(DsFrame frame)
 {

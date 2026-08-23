@@ -21,8 +21,10 @@ What is here:
 
 - `Runtime/BoundaryB.cs` — the value types that cross boundary B, declared so a
   painter written against them agrees with the Rust side byte for byte.
-- `Runtime/Native.cs` — the C ABI's fourteen entry points, as
+- `Runtime/Native.cs` — the C ABI's entry points, as
   `crates/dashscene-ffi/include/dashscene.h` declares them.
+- `Runtime/DocumentRange.cs` — where a `.dsb` is, when it does not begin a file.
+  On Android that is a byte range inside `base.apk`.
 - `Runtime/DashsceneRuntime.cs`, `DashsceneException.cs`, `FrameLease.cs` — the
   host: version negotiation, runtime lifetime, document load, the tick, and the
   committed frame under a lease.

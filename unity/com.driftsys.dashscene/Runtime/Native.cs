@@ -224,8 +224,8 @@ namespace Driftsys.Dashscene
 
     /// The `extern "C"` surface, one declaration per entry point.
     ///
-    /// **All fourteen are declared, including the four a Unity host does not
-    /// call.** `ds_runtime_attach_surface`, `ds_runtime_detach_surface`,
+    /// **Every entry point is declared, including the four a Unity host does
+    /// not call.** `ds_runtime_attach_surface`, `ds_runtime_detach_surface`,
     /// `ds_runtime_resize` and `ds_runtime_draw` belong to a host that hands
     /// dashscene a surface, which a Unity host does not do. They are here
     /// because an unbound symbol is an ungated one. `unity/ffi-check` looks
@@ -278,6 +278,16 @@ namespace Driftsys.Dashscene
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern DsStatus ds_runtime_load_document_mapped(
             ulong runtime, byte[] path, uint shownRoot, DsFontFace[] faces, UIntPtr faceCount);
+
+        /// `offset` and `length` are `uint64_t`, so they bind as `ulong` — not
+        /// as `long`, and not as `UIntPtr`. A container entry's offset is a
+        /// file offset and is unsigned on the header's side; `UIntPtr` would be
+        /// 32 bits wide on a 32-bit player and truncate one past 4 GiB, which
+        /// is inside the range an APK can reach.
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern DsStatus ds_runtime_load_document_mapped_range(
+            ulong runtime, byte[] path, ulong offset, ulong length, uint shownRoot,
+            DsFontFace[] faces, UIntPtr faceCount);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern DsStatus ds_runtime_attach_surface(

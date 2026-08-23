@@ -10,10 +10,17 @@ the Cargo workspace rather than moving on its own.
 
 - The C# declaration of boundary B — the value types `crates/dashpaint-abi`
   holds to a C representation (story #1239).
-- The C# host on the C ABI: P/Invoke declarations for all fourteen entry points,
-  a thread-affine managed lifetime, the `ds_last_error_message` channel on every
+- The C# host on the C ABI: a P/Invoke declaration for every entry point, a
+  thread-affine managed lifetime, the `ds_last_error_message` channel on every
   failure a `DsStatus` describes, and the committed frame under a lease that
   checks each array's stride before a row is read (story #1121).
+- `DocumentRange`, and `LoadDocumentMapped(DocumentRange, uint)` over it: a
+  `.dsb` held as a byte range inside a larger file is mapped where it lies. That
+  is what makes a document in `StreamingAssets` loadable on Android, where the
+  path resolves to a `jar:file://…!/assets` URI inside the APK and the
+  whole-file mapped loader answers `DsStatus.Map`. No copy to
+  `Application.persistentDataPath`, so demand paging survives the first run
+  (story #1124, issue #1288).
 - `CommitPacer`, for committing below the display rate without drifting off it.
 - A `Frame Loop` sample — a `MonoBehaviour` that loads a `.dsb`, ticks it, and
   takes each committed frame. It draws nothing; the painter is story #1122.
