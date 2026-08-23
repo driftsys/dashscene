@@ -119,8 +119,15 @@ reason. Anything under about 50 ms would be wrong for that reason alone.
 **The upper bound is not chosen.** Nothing distinguishes 100 ms from 333 ms.
 Deriving it needs two things: the stiffest spring the vocabulary permits, and a
 frame budget for the animation update to fit the resulting substep burst inside.
-**Epic #476 states there is no frame budget and no target-hardware
-measurement**, so the second input does not exist.
+**There is no frame budget**, so the second input does not exist. Epic #476 used
+to be cited here for both halves of that — no frame budget and no
+target-hardware measurement — and since 2026-08-18 the second half is wrong: GPU
+cost has been measured on an SA8255P with an Adreno 663
+(`docs/design/android-toolchain.md`). It does not supply what this bound needs.
+A frame budget is a share of a frame allocated to the animation update, and
+deriving one needs a pinned display geometry, which #549 records that this
+project does not have. A cost per megapixel, on two adapters or on twenty, is
+not that.
 
 **What would settle it**, in the order the inputs become available:
 

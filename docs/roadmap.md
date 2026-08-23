@@ -1048,9 +1048,15 @@ with the future Unity painter. The crate is named for the role rather than for
 records Skia-GPU as **not planned** rather than as a fallback.
 
 **This slice does not switch the entry tier.** Skia stays the entry-tier bridge
-until wgpu is measured on a real entry SoC, and no such hardware is in the loop
-(epic #476 — no frame budget, no target-hardware measurement). That switch is a
-later, separate decision.
+until wgpu is measured on a real entry SoC, and no such hardware is in the loop.
+**That is still true after 2026-08-18**, and the reason is worth stating rather
+than assuming: the target hardware measured that day is an **SA8255P**, which
+`docs/decisions/native-astc-codec-table.md` names as the **HiFi** default. The
+entry default is the **SA7255**, and nothing has run on one. So the
+parenthetical this line used to carry — "no frame budget, no target-hardware
+measurement" — is now half wrong: there is no frame budget, and there is a
+target-hardware measurement, on the wrong end of the fleet for this particular
+decision. That switch is a later, separate decision.
 
 **Skia does not leave the workspace either.** It is permanently the bit-exact
 CPU oracle, so `skia-safe` stays. What wgpu retires is the trim profile: the
@@ -1983,7 +1989,12 @@ the bullet on it here is the current reading.
   device work by definition, and it is in #1107's definition of done. It waits
   on #1106 rather than on a device being absent. The measurements are in
   [`design/android-toolchain.md`](design/android-toolchain.md) under "What the
-  device measured", and every number there is a number about one device.
+  device measured". **Every number there was a number about one device until
+  2026-08-18**, when the GPU-cost sweep was re-run on an SA8255P with an Adreno
+  663 — target hardware rather than a handset. The fill-rate model reproduced
+  and only its constant moved, which is the first evidence that a figure from
+  that record transfers between adapters at all. Everything else in it is still
+  the Pixel 5, and the CPU half is unmeasured on the second device.
 - **Nine open issues on this milestone belonged to no epic**, which is v0.20's
   own opening failure one level down — that slice was planned because 55 issues
   carried no milestone. All nine are now placed: #1226 to #1106, #1215 and #1236
