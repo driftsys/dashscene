@@ -16,7 +16,7 @@
 // records that no CI runner here can host — so this runs on a developer's
 // machine and CI runs the other half.
 //
-// It answers three questions and refuses to answer any of them vacuously.
+// It answers four questions and refuses to answer any of them vacuously.
 
 using System;
 using System.Collections.Generic;
@@ -60,6 +60,34 @@ public static class DashsceneEditorCompat
                 + "name.");
         }
 
+        // 1b. The SAMPLE compiled, which nothing else in this repository asks.
+        //
+        // `Samples~` is hidden from Unity's importer by its `~`, and
+        // `package-compat` and `ffi-check` glob `Runtime/**/*.cs` — so the
+        // sample was compiled by nothing until issue #1298 put the painter's
+        // wiring into it. The recipe copies it into `Assets/Samples/`, where it
+        // lands in `Assembly-CSharp`; if it did not compile, the editor refuses
+        // to run this method at all, so reaching here with the assembly present
+        // is the assertion.
+        var sampleAssembly = Path.Combine("Library", "ScriptAssemblies", "Assembly-CSharp.dll");
+        var sampleSources = Directory.Exists(Path.Combine("Assets", "Samples"))
+            ? Directory.GetFiles(Path.Combine("Assets", "Samples"), "*.cs")
+            : Array.Empty<string>();
+        if (sampleSources.Length == 0)
+        {
+            failures.Add(
+                "no sample source under Assets/Samples. The recipe copies "
+                + "Samples~/FrameLoop/ there so that something compiles it; without it "
+                + "the package's only MonoBehaviour is compiled by nothing.");
+        }
+        else if (!File.Exists(sampleAssembly))
+        {
+            failures.Add(
+                $"{sampleSources.Length} sample source(s) are under Assets/Samples and "
+                + "Assembly-CSharp.dll is not in Library/ScriptAssemblies, so they compiled "
+                + "into nothing.");
+        }
+
         // 2. R-E10's actual subject: the API compatibility level.
         //
         // A project that compiled the package under .NET Framework would say
@@ -90,12 +118,18 @@ public static class DashsceneEditorCompat
         // draws with. A gate that stopped at the import would report that the
         // painter's shaders compile, having never compiled the code path the
         // painter uses.
-        var shaderDir = Path.Combine("Packages", PackageName, "Runtime", "Shaders");
-        // **Recursive, like `unity/package-gate`'s collector.** A shader in
-        // `Runtime/Shaders/Lit/` is found by `Shader.Find` at run time and by
-        // that crate's pragma checks; a non-recursive enumeration here would
-        // leave it the one shader nothing in the repository ever compiles,
-        // while both emptiness guards below stayed satisfied by its siblings.
+        //
+        // **The whole of `Runtime/`, recursively, and not one directory.**
+        // `unity/package-gate` collects for the same reason and over a wider
+        // scope — the whole package, so it also sees a shader placed outside
+        // `Runtime/`, which this gate would not import anyway:
+        // the shaders moved once already — issue #1313 put them under
+        // `Runtime/Resources/` so a player build keeps them — and a gate
+        // pointed at a directory answers "every shader I found there compiles",
+        // which is not the question. A shader this enumeration misses is one
+        // nothing in the repository ever compiles, with both emptiness guards
+        // below still satisfied by its siblings.
+        var shaderDir = Path.Combine("Packages", PackageName, "Runtime");
         var shaderPaths = Directory.Exists(shaderDir)
             ? Directory.GetFiles(shaderDir, "*.shader", SearchOption.AllDirectories)
             : Array.Empty<string>();
@@ -105,8 +139,8 @@ public static class DashsceneEditorCompat
         if (shaderPaths.Length == 0)
         {
             failures.Add(
-                $"no .shader under {shaderDir}. This check would then report that every "
-                + "shader compiles, having compiled none.");
+                $"no .shader anywhere under {shaderDir}. This check would then report that "
+                + "every shader compiles, having compiled none.");
         }
 
         // The target fleet's two graphics APIs, plus the one this editor runs

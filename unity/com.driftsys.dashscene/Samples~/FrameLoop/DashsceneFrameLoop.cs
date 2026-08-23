@@ -17,9 +17,19 @@
 // `StreamingAssetDocument` in `Runtime/Engine/`, which `just unity-editor`
 // compiles (`docs/decisions/r-e10-is-checked-in-two-halves.md`).
 //
-// **This draws nothing.** `AcquireFrame` hands over the committed tables and
-// the painter that consumes them is story #1122; the glyph atlases those runs
-// sample do not cross the ABI at all until story #1123.
+// **It draws.** `AcquireFrame` hands over the committed tables and `BrgPainter`
+// consumes them, which is issue #1298's wiring. What it does not draw is
+// listed by `PackDiagnostics` — shadows, blurs, image fills, baked vector nodes
+// and render-target groups — and text, whose glyph atlases do not cross the ABI
+// at all until story #1123.
+//
+// **Two host-project settings decide whether anything appears**, and neither is
+// this component's to set: R-E5's `m_UseSRPBatcher` on the active render
+// pipeline asset, and R-E6's `m_BrgStripping` of `2`. At R-E6's default of `0`
+// the painter packs and submits every instance and nothing is drawn, while
+// Unity logs `Trying to render a BatchRendererGroup batch with wrong cbuffer
+// setup. Missing DOTS_INSTANCING_ON variant?` on every frame — measured on
+// 2026-08-23, macOS/Metal, Unity 6000.3.22f1.
 
 using System;
 using System.IO;
@@ -51,8 +61,15 @@ namespace Driftsys.Dashscene.Samples
         [SerializeField]
         private int commitHz;
 
+        [Tooltip("The camera the document is drawn for. Unassigned takes Camera.main. "
+                 + "An orthographic camera is what BrgPainter.EdgeWidth is derived from; "
+                 + "under a perspective one the painter keeps its own default.")]
+        [SerializeField]
+        private Camera viewCamera;
+
         private DashsceneRuntime _runtime;
         private CommitPacer _pacer;
+        private BrgPainter _painter;
 
         private void Awake()
         {
@@ -99,6 +116,66 @@ namespace Driftsys.Dashscene.Samples
                 enabled = false;
                 return;
             }
+
+            // **After the runtime and before the document**, which is the
+            // order a developer meets the failures in: a process with no
+            // graphics device or no render pipeline cannot draw whatever it
+            // loads, and both are project configuration rather than content.
+            try
+            {
+                // The overlay class: the one of the three that expresses
+                // partial coverage, so corners, strokes and clip edges are
+                // anti-aliased. `MaterialClass` is a host choice — nothing on
+                // boundary B says which node is lit.
+                _painter = new BrgPainter(MaterialClass.UnlitOverlay);
+            }
+            catch (DashscenePainterException e)
+            {
+                // R-E4 and R-E14 both land here: no ScriptableRenderPipeline is
+                // active, or the process holds no graphics device. A developer
+                // meets one of them before anything else, and the message says
+                // which.
+                Debug.LogError($"[dashscene] the painter could not be created: {e.Message}", this);
+                enabled = false;
+                return;
+            }
+
+            if (_painter.Rung == BrgRung.InstancedWithoutBrg)
+            {
+                // **R-E19's rung, and nothing is built for it.** The
+                // constructor selects it where `BatchRendererGroup` is
+                // unsupported and returns without building a group, so `Draw`
+                // returns before it binds anything and every frame is blank —
+                // with no exception and no log. **R-E6's default produces a
+                // blank frame too and is NOT silent**: Unity itself logs the
+                // missing `DOTS_INSTANCING_ON` variant on every frame, measured
+                // on 2026-08-23 and recorded at the top of this file. So the
+                // two look identical on screen and differ entirely in the
+                // console, and this is the one that would say nothing at all.
+                Debug.LogError(
+                    $"[dashscene] the painter is on rung {_painter.Rung} — "
+                    + "BatchRendererGroup is unsupported on this graphics API, and nothing "
+                    + "is built for that rung, so this component would draw nothing without "
+                    + "reporting it (docs/decisions/unity-painter-uses-brg.md D3).",
+                    this);
+                enabled = false;
+                return;
+            }
+
+            // **The document's y runs down**, so scaling y by -1 is the
+            // identity placement: one document unit on one world unit, the
+            // document's origin at the world origin, and its y axis pointing
+            // down — which is what a camera looking along +z sees upright.
+            _painter.DocumentToWorld = Matrix4x4.Scale(new Vector3(1, -1, 1));
+
+            // **`GlobalBounds` is left at the painter's own default**, which is
+            // a 10000-unit cube centred on the world origin. A host that knows
+            // its document's extent should set it; this component cannot,
+            // because nothing on boundary B reports the shown root's size, and
+            // a bound guessed from nothing is worse than a generous one. A
+            // document reaching past 5000 units from the origin needs it set,
+            // and the symptom of not setting it is a document that vanishes
+            // when the camera moves.
 
             DocumentRange range;
             try
@@ -148,7 +225,11 @@ namespace Driftsys.Dashscene.Samples
 
         private void Update()
         {
-            if (_runtime == null)
+            // **Both, not just the runtime.** `enabled` is set false on every
+            // failure path in `Awake`, and a developer or a script can set it
+            // back to true — at which point a null painter would be a
+            // NullReferenceException per frame rather than a silent no-op.
+            if (_runtime == null || _painter == null)
             {
                 return;
             }
@@ -157,6 +238,17 @@ namespace Driftsys.Dashscene.Samples
             {
                 return;
             }
+
+            // Re-derived on every commit rather than once: the value depends
+            // on the screen's height and the camera's size, and a window resize
+            // or an orthographic-size tween changes both without this component
+            // hearing about it. **On every commit and not every frame** — it
+            // sits below the pacer's early return, so at a reduced commit rate
+            // a resize is picked up at the next commit rather than the next
+            // frame. That is the right side of the trade for a sample: the
+            // value is only ever used by the `Draw` below it, which is on the
+            // same cadence.
+            UpdateEdgeWidth();
 
             try
             {
@@ -173,11 +265,45 @@ namespace Driftsys.Dashscene.Samples
                     OnDocumentReplaced();
                 }
 
-                // Story #1122's painter reads frame.Frame here and calls
-                // frame.MarkDrawn() when it has. Until then nothing paints, so
-                // the commit is deliberately NOT marked shown — claiming it was
-                // drawn would make a settled scene stop reporting that it has
-                // something worth drawing.
+                _painter.Draw(frame);
+
+                // **`Draw` does not mark it, and the caller must.** The painter
+                // packs and uploads; whether the frame reached a screen is
+                // decided by Unity, later. A lease disposed unmarked leaves
+                // every commit unshown, so a settled document reports that it
+                // advanced forever and this loop re-acquires and re-packs
+                // frames that will never change.
+                frame.MarkDrawn();
+            }
+            catch (DashsceneAbiMismatchException e)
+            {
+                // **A third catch for this type, and the frame loop is where it
+                // actually arrives.** `DashsceneSymbolMissingException` is the
+                // library missing an entry point that `ds_abi_version` agreed
+                // about, so it is raised at the first call to that symbol —
+                // and `ds_runtime_acquire_frame` arrived at story #859, which
+                // puts it squarely in the population a package newer than its
+                // library can miss. The two catches in `Awake` cannot see it,
+                // because the call is here; `catch (DashsceneException)` below
+                // cannot either, because this type derives from `Exception`.
+                // Without this, the sample throws once per frame rather than
+                // reporting once and disabling itself, which is what it does
+                // for every other failure it names. Issue #1315.
+                Debug.LogError($"[dashscene] {e.Message}", this);
+                enabled = false;
+            }
+            catch (DashscenePainterException e)
+            {
+                // **`DashscenePainterException` derives from `Exception`, not
+                // from `DashsceneException`**, so the catch below does not see
+                // it — the same shape as the load site's second catch above.
+                // `Draw` reaches it through `EnsureCapacity`, which refuses a
+                // constant-buffer window it cannot fit an instance into. That
+                // is the `ConstantBuffer` rung, which no gate and no device in
+                // this repository has exercised, so an uncaught throw here
+                // would be once per frame on the one path nothing has tested.
+                Debug.LogError($"[dashscene] the painter refused the frame: {e.Message}", this);
+                enabled = false;
             }
             catch (DashsceneStrideMismatchException e)
             {
@@ -206,6 +332,13 @@ namespace Driftsys.Dashscene.Samples
 
         private void Teardown()
         {
+            // **The painter before the runtime.** It holds no runtime handle,
+            // but it reads the borrowed tables the runtime owns, and disposing
+            // the owner of a mapping while something may still read it is the
+            // ordering worth stating rather than the one worth discovering.
+            _painter?.Dispose();
+            _painter = null;
+
             // On the main thread, which is where Awake minted it. There is no
             // finalizer on DashsceneRuntime precisely because the GC's thread
             // is not this one and a free from there would be refused.
@@ -228,9 +361,38 @@ namespace Driftsys.Dashscene.Samples
             _runtime = null;
         }
 
-        /// Hook for story #1122: rect indices have been renumbered.
+        /// The rect indices have been renumbered by a load.
+        ///
+        /// **Empty, and correctly so for this component.** `BrgPainter` repacks
+        /// every rect from the committed tables on every `Draw` and caches
+        /// nothing keyed by rect index, so it needs no notification. A host
+        /// that anchors its own objects to rect indices is the one this hook is
+        /// for.
         private void OnDocumentReplaced()
         {
+        }
+
+        /// Set the painter's anti-aliasing ramp to one device pixel.
+        ///
+        /// [`BrgPainter.EdgeWidth`] is in the document's own units, and the
+        /// placement above puts one document unit on one world unit — so the
+        /// value wanted is world units per device pixel. An orthographic camera
+        /// reports that directly: its `orthographicSize` is half the view's
+        /// height in world units.
+        ///
+        /// **A perspective camera cannot answer it**, because the ramp's width
+        /// in world units varies with a fragment's depth and one scalar cannot
+        /// express that. The painter's own default is left in place there,
+        /// which draws a ramp one document unit wide.
+        private void UpdateEdgeWidth()
+        {
+            var camera = viewCamera != null ? viewCamera : Camera.main;
+            if (camera == null || !camera.orthographic || camera.pixelHeight <= 0)
+            {
+                return;
+            }
+
+            _painter.EdgeWidth = camera.orthographicSize * 2.0f / camera.pixelHeight;
         }
 
         /// **Pick a divisor of the display rate** (issue #851, issue #1121).

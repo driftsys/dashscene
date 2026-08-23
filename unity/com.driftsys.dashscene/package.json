@@ -16,7 +16,7 @@
   "samples": [
     {
       "displayName": "Frame Loop",
-      "description": "A MonoBehaviour that loads a .dsb, ticks it, and takes each committed frame. It does not yet hand those tables to BrgPainter, which this package now ships — wiring the two together is a follow-up.",
+      "description": "A MonoBehaviour that loads a .dsb, ticks it, hands each committed frame to BrgPainter and marks it drawn. Needs a host project meeting R-E4, R-E5 and R-E6 — a URP asset with the SRP Batcher on, and m_BrgStripping set to 2 — or the painter refuses to construct, or packs every instance and draws nothing.",
       "path": "Samples~/FrameLoop"
     }
   ]

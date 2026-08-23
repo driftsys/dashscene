@@ -180,8 +180,9 @@ namespace Driftsys.Dashscene
     /// `catch (DashsceneException)` does **not** see it. Since issue #1308 the
     /// translation is on every entry point, so a tick and a frame acquire raise
     /// it where only a load could before — `Samples~/FrameLoop/` carries the
-    /// catch around the constructor and around the load and not around the
-    /// frame loop, which is issue #1315. Deriving from `DashsceneException`
+    /// catch in all three places, around the constructor, around the load and
+    /// around the frame loop, the last of which was issue #1315. Deriving from
+    /// `DashsceneException`
     /// instead would have needed a `DsStatus`, and there is none to give
     /// honestly — no call reached the library.
     ///

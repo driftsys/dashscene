@@ -1,7 +1,7 @@
 // Committing below the display rate, without drifting off it.
 //
 // This is the arithmetic half of a host's frame loop, and it is here rather
-// than in `Samples~/FrameLoop/` for one reason: nothing compiles a sample.
+// than in `Samples~/FrameLoop/` for one reason: no CI job compiles a sample.
 // `unity/package-compat` and `unity/ffi-check` both glob `Runtime/**/*.cs`, and
 // no CI job runs a Unity editor, so logic left in the sample is checked by
 // nobody. It is pure — no `UnityEngine` reference — so it costs the package

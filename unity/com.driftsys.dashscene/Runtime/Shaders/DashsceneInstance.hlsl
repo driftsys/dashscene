@@ -146,12 +146,22 @@ struct DsVaryings
 // material through a MeshRenderer, so it is written down rather than left to be
 // rediscovered.
 //
-// **Whether `_DsCutoff` resolves under `DOTS_INSTANCING_ON` is unverified.**
-// URP's own Lit declares its `_Cutoff` as a DOTS instanced property with a
-// default rather than relying on this buffer, which is evidence that the
-// fallback path may not be what a BRG draw reads. Nothing here can tell: `just
-// unity-editor` compiles and does not evaluate, and no frame has been drawn.
-// Issue #1307 carries it.
+// **`_DsCutoff` DOES resolve under `DOTS_INSTANCING_ON`, measured rather than
+// reasoned.** URP's own Lit declares its `_Cutoff` as a DOTS instanced property
+// with a default rather than relying on this buffer, which was evidence that a
+// BatchRendererGroup draw might not read `UnityPerMaterial` at all — so this
+// block carried an open question until `just unity-render` drew the cutout
+// class twice at two thresholds. Unity 6000.3.22f1, macOS/Metal, Apple M3,
+// 2026-08-23: at a cutoff of 0.5 the class inked all 13 sampled node centres,
+// and at a cutoff of 2 — above any coverage a fragment can have, so `clip`
+// must discard every one — it inked none, with 601144 of 786432 pixels
+// differing between the two frames. A value that did not reach the stage would
+// have drawn the same picture both times, whatever the stage read instead.
+// Issue #1307.
+//
+// **That is one graphics API.** Metal is a translation of this HLSL, and issue
+// #1195 is a measured case of a translation differing from what the source
+// says; GLES 3.2 and Vulkan on the target fleet are untested here.
 CBUFFER_START(UnityPerMaterial)
     float4 _DsQuad;
     float4 _DsCorners;

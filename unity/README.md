@@ -41,8 +41,20 @@ repository builds and records.
                               Unity project: the committed layer-2 probe table
                               evaluated through the generated Sdf.hlsl on a real
                               graphics device (issue #1312). The only check here
-                              that RUNS shader code and reads the numbers back.
+                              that reads a shader's own computed VALUES back and
+                              compares them against a committed table — the one
+                              below runs shader code too, and reads PIXELS.
                               Needs an editor, so it runs on no CI runner
+    render-gate/              two scripts `just unity-render` copies into
+                              another throwaway project: it builds a PLAYER,
+                              runs it, draws a document into a RenderTexture
+                              and reads that back. The only thing here that
+                              draws. A player because a player is where Unity
+                              strips a shader nothing references, which is the
+                              class no check above can see (issue #1313) — so
+                              this project deliberately adds nothing to Always
+                              Included Shaders. Needs an editor, so it runs on
+                              no CI runner
 
 Sited in this repository rather than in a separate one by the owner's ruling of
 2026-08-17, recorded in
@@ -53,8 +65,9 @@ consumable.
 **Sharing a repository gains nothing on its own** — that record says so, and the
 checks here are what give it value. `just unity-abi` runs `abi-check` and
 `package-compat`, `just unity-ffi` runs `ffi-check`, `just test` runs
-`package-gate`, `just unity-editor` runs `editor-compat`, and
-`just unity-conformance` runs `hlsl-conformance`.
+`package-gate`, `just unity-editor` runs `editor-compat`,
+`just unity-conformance` runs `hlsl-conformance` and `just unity-render` runs
+`render-gate`.
 
 They ask different questions and none subsumes another. `abi-check` compares
 boundary B's value types against a `dashpaint-abi` build, member by member;
@@ -63,14 +76,15 @@ netstandard2.1, and executes nothing; `ffi-check` loads `dashscene-ffi` and
 calls it, and loads deliberately incomplete libraries beside it, each in its own
 `AssemblyLoadContext`, to watch a missing entry point become the R-E16 type
 (issue #1308); `package-gate` reads sources and re-derives the generated HLSL;
-`editor-compat` is the only one that compiles a Unity `.shader`;
-`hlsl-conformance` is the only one that dispatches shader code and compares the
-values it computed against a committed table. Until story #1121 nothing compiled
-a C# P/Invoke against `crates/dashscene-ffi/include/dashscene.h`, which is item
-2 of issue #1266 — but `abi-check` has always executed: it declares sixty
+`editor-compat` is the only one that compiles a Unity `.shader` without building
+a player; `hlsl-conformance` is the only one that dispatches shader code and
+compares the values it computed against a committed table; `render-gate` is the
+only one that builds a player and draws. Until story #1121 nothing compiled a C#
+P/Invoke against `crates/dashscene-ffi/include/dashscene.h`, which is item 2 of
+issue #1266 — but `abi-check` has always executed: it declares sixty
 `[DllImport]`s and round-trips structs by value through the library.
 
-None of them reads a shipped binary. The three that build a Rust half build both
+None of them reads a shipped binary. Those that build a Rust half build both
 halves from one tree, so they observe only a disagreement this repository
 already contains — a stale committed library is what `DsSlice::stride` catches
 at run time, which is why `07-embedding-and-distribution.md` R-E17 makes that

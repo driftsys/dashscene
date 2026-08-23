@@ -160,12 +160,14 @@ package against netstandard2.1, and its P/Invoke declarations executed against
 `dashscene-ffi`; a Rust one, `unity/package-gate`, holding the generated HLSL to
 its WGSL source and the shaders to R-E11, R-E12 and R-E10's split;
 `unity/editor-compat`, which compiles the whole package in a Unity editor and is
-the only thing here that compiles a Unity `.shader`; and
+the only thing that compiles a Unity `.shader` without building a player;
 `unity/hlsl-conformance`, which evaluates the committed layer-2 probe table
 through the generated `Sdf.hlsl` on a real graphics device and is the only one
-that runs shader code and reads the numbers back (issue #1312). The package
-landed at v0.21 by story #1239, gained the C# host at story #1121 and the
-BatchRendererGroup painter at story #1122; it still carries no native library).
+that reads a shader's own computed VALUES back and compares them against a
+committed table (issue #1312); and `unity/render-gate`, which builds a player
+and is the only one that draws a document. The package landed at v0.21 by story
+#1239, gained the C# host at story #1121 and the BatchRendererGroup painter at
+story #1122; it still carries no native library).
 
 Seven of those directories hold workspace members that are never published:
 `demo/`, `demo-web/` (the browser host — a canvas, the lean painter, and a
@@ -275,10 +277,13 @@ members in total, nineteen of them the crates above.
                       and it runs on CoreCLR rather than on Mono or IL2CPP,
                       which is issue #1322
     just unity-editor  R-E10's SECOND check, the only thing in this
-                      repository that compiles a Unity `.shader`, and the only
-                      one whose PURPOSE is to compile `Runtime/Engine/` —
-                      `unity-conformance` imports the same package into an
-                      editor and compiles that assembly incidentally. Creates a
+                      repository that compiles a Unity `.shader` WITHOUT
+                      building a player, and the only one whose PURPOSE is to
+                      compile `Runtime/Engine/` — `unity-conformance` imports
+                      the same package into an editor and compiles that
+                      assembly incidentally, and `unity-render` compiles both
+                      as a side effect of a player build that takes tens of
+                      minutes. Creates a
                       throwaway Unity project
                       under `target/`, imports the package as a `file:`
                       dependency, compiles it, reads
@@ -298,10 +303,39 @@ members in total, nineteen of them the crates above.
                       CI runner here can host
                       (`docs/decisions/the-native-library-ships-inside-the-unity-package.md`
                       D4), so it is outside `check` and outside CI — a
-                      developer runs it before a PR touching `Runtime/Engine/`
-                      or `Runtime/Shaders/`. It also WRITES the `.meta` files
-                      R-E2 requires, because a `file:` dependency is a mutable
-                      package: check `git status` after a run that added a file
+                      developer runs it before a PR touching `Runtime/Engine/`,
+                      `Runtime/Shaders/`, `Runtime/Resources/` or
+                      `Samples~/FrameLoop/` — the last because it copies the
+                      sample into its project and is the ONLY thing anywhere
+                      that compiles it (issue #1298). It also WRITES the `.meta`
+                      files R-E2 requires, because a `file:` dependency is a
+                      mutable package: check `git status` after a run that added
+                      a file
+    just unity-render  the only thing here that DRAWS a dashscene document
+                      through the Unity painter. Same throwaway-project shape
+                      as `unity-editor`, and then it builds a **player** and
+                      runs it: the package's shaders reach a player only if the
+                      package itself makes them reachable, and this project
+                      adds nothing to Always Included Shaders on purpose. That
+                      is the class no tree-derived check can catch, and issue
+                      #1313 is the instance — every gate passed while the
+                      package could not draw as installed. **Its negative
+                      control runs on every pass**: a frame the painter
+                      deliberately did not draw is put through the same ink
+                      predicate first, and the run fails if that frame passes
+                      (issue #1029 is this repository's own black-frame gate).
+                      It also settles issue #1307 by drawing the cutout class
+                      at two cutoffs and comparing. It measures ONE graphics
+                      API — Metal on macOS — over ONE document, and asserts
+                      that ink landed where a node is, not that the ink is
+                      right; issue #828's suite is what judges the colour.
+                      Needs a Unity editor, so it is outside `check` and
+                      outside CI. Costs tens of minutes: the project is rebuilt
+                      from scratch each run and R-E6's `KeepAll` makes the
+                      player compile a large variant set. Like `unity-editor`
+                      it imports the package as a `file:` dependency, so it
+                      WRITES the `.meta` files R-E2 requires into the working
+                      tree: check `git status` after a run that added a file
     just sdf-hlsl     regenerate the Unity package's `Sdf.hlsl` from
                       `crates/dashscene-gpu/src/shaders/sdf.wgsl` with `naga` —
                       R-T5's mechanism, so the HLSL is the WGSL compiled rather

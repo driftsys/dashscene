@@ -36,14 +36,23 @@ the Cargo workspace rather than moving on its own.
   `Application.persistentDataPath`, so demand paging survives the first run
   (story #1124, issue #1288).
 - `CommitPacer`, for committing below the display rate without drifting off it.
-- A `Frame Loop` sample — a `MonoBehaviour` that loads a `.dsb`, ticks it, and
-  takes each committed frame. It draws nothing; the painter is story #1122.
+- A `Frame Loop` sample — a `MonoBehaviour` that loads a `.dsb`, ticks it, hands
+  each committed frame to `BrgPainter` and marks it drawn (story #1121, issue
+  #1298). It needs a host project meeting R-E4, R-E5 and R-E6.
 - The `BatchRendererGroup` painter, in three material classes — unlit-overlay,
   lit-opaque and lit-cutout (story #1122). It draws fills, both solid and
   gradient, corner radii, strokes, clips, per-node opacity and rotation.
   Shadows, blurs, image fills, baked vector nodes, render-target groups and text
   are **not** drawn and each is reported by name through `PackDiagnostic` — P4
   forbids a silent drop.
+- The three material classes' `.shader` files sit under
+  `Runtime/Resources/Dashscene/`, one per class, and `BrgPainter` loads each
+  with `Resources.Load<Shader>` by the shader's own declared name. They were
+  under `Runtime/Shaders/` and resolved with `Shader.Find` until issue #1313,
+  which measured that a player build strips a shader no scene and no material
+  references — so the painter threw its R-E2 diagnostic in the one configuration
+  a consumer ships. A host referencing one of these by asset path has to follow
+  the move.
 - `Runtime/Shaders/Sdf.hlsl`, generated from
   `crates/dashscene-gpu/src/shaders/sdf.wgsl` by `naga` rather than ported by
   hand. The signed-distance, coverage and gradient math a Unity shader evaluates

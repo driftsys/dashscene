@@ -1205,7 +1205,9 @@ sdf-hlsl:
 # `docs/decisions/the-native-library-ships-inside-the-unity-package.md` D4
 # records that no CI runner here can host a Unity install. So this is a
 # developer's gate: run it before opening a pull request that touches
-# `Runtime/Engine/` or `Runtime/Shaders/`. CI runs the other half on every pull
+# `Runtime/Engine/`, `Runtime/Shaders/`, `Runtime/Resources/` or
+# `Samples~/FrameLoop/` — the last because this is the only thing anywhere that
+# compiles the sample. CI runs the other half on every pull
 # request, and `unity/package-gate` runs the parts that need no editor.
 #
 # **It also writes the `.meta` files R-E2 requires.** A `file:` dependency is a
@@ -1312,6 +1314,18 @@ unity-editor unity_version="6000.3.22f1":
     JSON
 
     cp "${root}/unity/editor-compat/DashsceneEditorCompat.cs" "${project}/Assets/Editor/"
+
+    # **The sample is copied in so that something compiles it.** `Samples~` is
+    # hidden from Unity's importer by its `~`, and `package-compat` and
+    # `ffi-check` both glob `Runtime/**/*.cs` — so nothing in this repository
+    # compiled `Samples~/FrameLoop/` at all until issue #1298 put the painter's
+    # wiring there. A syntax error in it survived every gate, measured.
+    #
+    # Into `Assets/` rather than into the package: copying it back under
+    # `Samples~` would leave it hidden again, and writing it into the package
+    # directory would make this recipe modify the thing it is checking.
+    mkdir -p "${project}/Assets/Samples"
+    cp "${package}"/Samples~/FrameLoop/*.cs "${project}/Assets/Samples/"
 
     # NET_Standard is Unity's default, and this gate asserts it rather than
     # assuming it — the editor script reads the level back and fails if it is
@@ -1489,6 +1503,260 @@ unity-ffi:
       DASHSCENE_FFI_STUB_LEASE_REFUSES="${older_lease}" \
       DASHSCENE_PACKAGE="unity/com.driftsys.dashscene" \
       dotnet run --project unity/ffi-check
+
+# Draw a document in a built PLAYER and check that ink landed where the
+# committed tables put it.
+#
+# **The only thing in this repository that draws a dashscene document through
+# the Unity painter.** Every other gate over the package compiles, links or
+# executes on the CPU; `docs/design/unity-csharp-host.md` says so and this is
+# what changes it.
+#
+# **A player, not a batchmode editor render, and that distinction is the
+# reason the recipe exists at all.** Unity strips a shader that no scene or
+# material references out of a player build and strips nothing in an editor —
+# so `just unity-editor` passed over a package that could not draw as installed
+# (issue #1313), and a batchmode editor render would have inherited that
+# blindness exactly. This project adds NOTHING to Always Included Shaders: how
+# the package's shaders reach a player is the package's problem, and refusing
+# to configure it host-side is what makes the run an answer.
+#
+# **The negative control is in the run, not in this comment.** The gate
+# captures a frame the painter deliberately did not draw and evaluates its own
+# verdict predicate on it FIRST; a run where that frame passes fails, and says
+# why. Issue #1029 is this repository's own case of a "did it draw" check
+# passing over a fully black frame, and #1232 and #1191 are two more.
+#
+# **What a green run does not license.** It measures one graphics API — Metal
+# on macOS, whatever the developer's editor targets elsewhere — over one
+# document, and it asserts that ink landed where a node is, not that the ink is
+# right. Issue #1195 is a measured case of the API mattering; issue #828's
+# portable conformance suite is what judges the colour.
+#
+# Needs a Unity editor, which no CI runner here can host
+# (`docs/decisions/the-native-library-ships-inside-the-unity-package.md` D4), so
+# it is outside `check` and outside CI — a developer runs it before a PR
+# touching `Runtime/Engine/`, `Runtime/Shaders/` or `Runtime/Resources/`.
+#
+# **It also writes the `.meta` files R-E2 requires**, for `unity-editor`'s
+# reason: the package is imported as a `file:` dependency, which is a MUTABLE
+# package, so the editor writes a `.meta` beside every asset it imports that
+# lacks one — into the working tree. Check `git status` after a run that added
+# a file.
+#
+# Draw a .dsb in a built player and assert the painter inked every node.
+unity-render unity_version="6000.3.22f1" timeout="180":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # **The editor resolution below is `unity-editor`'s, repeated.** Not
+    # factored out here: that recipe is R-E10's only engine-half check and this
+    # one is a different gate, and a shared helper written from one lane would
+    # make a change to either able to break the other silently. **Issue #1316
+    # carries factoring the copies out together** rather than any one recipe
+    # doing it to the others.
+    editor="${DASHSCENE_UNITY:-/Applications/Unity/Hub/Editor/{{unity_version}}/Unity.app/Contents/MacOS/Unity}"
+    if [ ! -x "${editor}" ]; then
+      echo "unity-render: no Unity executable at ${editor}" >&2
+      echo "unity-render:   install {{unity_version}} with the Hub, pass a version:" >&2
+      echo "unity-render:     just unity-render 6000.3.22f1" >&2
+      echo "unity-render:   or point at one directly:" >&2
+      echo "unity-render:     DASHSCENE_UNITY=/path/to/Unity just unity-render" >&2
+      exit 1
+    fi
+    editor_dir="$(dirname "${editor}")"
+    builtin=""
+    for candidate in \
+      "${editor_dir}/../Resources/PackageManager/BuiltInPackages" \
+      "${editor_dir}/Data/PackageManager/BuiltInPackages" \
+      "${editor_dir}/../Data/PackageManager/BuiltInPackages"; do
+      if [ -d "${candidate}" ]; then
+        builtin="$(cd "${candidate}" && pwd)"
+        break
+      fi
+    done
+    if [ -z "${builtin}" ]; then
+      echo "unity-render: no BuiltInPackages directory near ${editor}" >&2
+      exit 1
+    fi
+
+    root="$(git rev-parse --show-toplevel)"
+    project="${root}/target/unity-render-gate"
+    package="${root}/unity/com.driftsys.dashscene"
+    frames="${project}/frames"
+
+    urp_json="${builtin}/com.unity.render-pipelines.universal/package.json"
+    if [ ! -f "${urp_json}" ]; then
+      echo "unity-render: this editor ships no built-in URP at ${urp_json}" >&2
+      exit 1
+    fi
+    urp="$(jq -r .version "${urp_json}")"
+
+    # **The package's URP pin has to be one this editor can satisfy**, the check
+    # `unity-editor` makes and an earlier version of this recipe dropped. A
+    # UPM dependency is a MINIMUM, so only a pin the editor is BELOW is a
+    # problem — and without this the whole player build runs before UPM fails
+    # to resolve, which is tens of minutes to reach a one-line answer.
+    pinned="$(jq -r '.dependencies["com.unity.render-pipelines.universal"] // empty' \
+      "${package}/package.json")"
+    if [ -n "${pinned}" ]; then
+      lowest="$(printf '%s\n%s\n' "${pinned}" "${urp}" | sort -V | head -1)"
+      if [ "${lowest}" != "${pinned}" ]; then
+        echo "unity-render: package.json pins URP ${pinned} and this editor ships ${urp}," >&2
+        echo "unity-render: which is older — a consumer of this package could not resolve it." >&2
+        exit 1
+      fi
+    fi
+
+    # **The path comes from cargo rather than from a `uname` mapping plus a file
+    # test**, on the rule `host-lib`, `unity-abi` and `unity-ffi` all state:
+    # `cargo build` does not delete the artifacts of a crate type that has been
+    # removed, so a `[ -f … ]` guard passes over a stale library. That is the
+    # shape of issue #1057. Release, because the player runs it.
+    cargo build -p dashscene-ffi --release
+    lib=$(cargo build -p dashscene-ffi --release --message-format=json | jq -r '
+        select(.reason == "compiler-artifact")
+        | select(.target.name == "dashscene_ffi")
+        | .filenames[]
+        | select(endswith(".dylib") or endswith(".so") or endswith(".dll"))
+      ' | tail -n 1)
+    if [ -z "${lib}" ]; then
+      echo "unity-render: cargo emitted no dynamic library for dashscene-ffi." >&2
+      echo 'unity-render: is cdylib still in [lib] crate-type?' >&2
+      exit 1
+    fi
+
+    # The same committed document `unity-ffi` checks its frame against: the
+    # richest compiled fixture in the tree, and one this repository already
+    # pins byte for byte.
+    fixture="${root}/goldens/dsb/v03-paint.dsb"
+    if [ ! -f "${fixture}" ]; then
+      echo "unity-render: ${fixture} is missing; the gate needs a document" >&2
+      exit 1
+    fi
+
+    # Rebuilt from scratch each run, for `unity-editor`'s reason: a reused
+    # Library/ can hold a stale compiled assembly or a stale player, and this
+    # gate's whole answer is about the CURRENT sources.
+    rm -rf "${project}"
+    mkdir -p "${project}/Packages" "${project}/ProjectSettings" \
+      "${project}/Assets/Editor" "${project}/Assets/Plugins" \
+      "${project}/Assets/StreamingAssets" "${frames}"
+
+    cat > "${project}/Packages/manifest.json" <<JSON
+    {
+      "dependencies": {
+        "com.driftsys.dashscene": "file:${package}",
+        "com.unity.render-pipelines.universal": "${urp}"
+      }
+    }
+    JSON
+
+    cp "${root}/unity/render-gate/DashsceneRenderGate.cs" "${project}/Assets/"
+    cp "${root}/unity/render-gate/RenderGateBuild.cs" "${project}/Assets/Editor/"
+    cp "${lib}" "${project}/Assets/Plugins/"
+    cp "${fixture}" "${project}/Assets/StreamingAssets/document.dsb"
+
+    cat > "${project}/ProjectSettings/ProjectSettings.asset" <<'YAML'
+    %YAML 1.1
+    %TAG !u! tag:unity3d.com,2011:
+    --- !u!129 &1
+    PlayerSettings:
+      m_ObjectHideFlags: 0
+      productName: RenderGate
+      companyName: driftsys
+      apiCompatibilityLevel: 6
+      apiCompatibilityLevelPerPlatform: {}
+    YAML
+
+    log="${project}/editor.log"
+    echo "unity-render: building the player in {{unity_version}} (log: ${log})"
+    set +e
+    "${editor}" -batchmode -quit -projectPath "${project}" \
+      -executeMethod RenderGateBuild.Build -logFile "${log}"
+    status=$?
+    set -e
+    grep -E "^\[render-gate-build\]|error CS|Shader error|Compilation failed" "${log}" || true
+    if [ "${status}" -ne 0 ]; then
+      echo "unity-render: the player build FAILED (exit ${status}). Full log: ${log}" >&2
+      exit "${status}"
+    fi
+
+    player_path="${project}/Build/player-path.txt"
+    if [ ! -f "${player_path}" ]; then
+      echo "unity-render: the build wrote no ${player_path}" >&2
+      exit 1
+    fi
+    player="$(cd "${project}" && cat Build/player-path.txt)"
+    case "${player}" in /*) ;; *) player="${project}/${player}" ;; esac
+    if [ ! -x "${player}" ]; then
+      echo "unity-render: ${player} is not executable" >&2
+      exit 1
+    fi
+
+    # **`-batchmode`, and NOT `-nographics`.** Two measurements decided this,
+    # both on 6000.3.22f1, macOS/Metal, 2026-08-23:
+    #
+    #   - a WINDOWED player launched from a shell the window server never
+    #     composites stops making progress within a few frames — its main
+    #     thread and UnityGfxDeviceWorker both sit in semaphore_wait_trap
+    #     waiting for a drawable — so a gate that opened a window would hang
+    #     depending on where that window happened to be stacked;
+    #   - `-batchmode` alone keeps the graphics device: this player reports
+    #     Metal on an Apple M3 under it, and the gate refuses to run without a
+    #     device (R-E14). `-nographics` is what removes the device, and it is
+    #     deliberately absent.
+    #
+    # Batch mode renders no camera by itself, which is why the gate asks for
+    # each frame through `RenderPipeline.SubmitRenderRequest` rather than
+    # letting Unity draw the camera.
+    #
+    # **A watchdog, because a player that never quits is the failure this gate
+    # is most likely to produce.** `timeout(1)` is GNU coreutils and is not on a
+    # stock macOS, so the wait is written out. The player's own exit code is
+    # what decides the run — never a grep over its log, which cannot tell a
+    # verdict line from a line of prose that quotes one.
+    player_log="${project}/player.log"
+    echo "unity-render: running ${player}"
+    "${player}" -batchmode -ds-out "${frames}" -logFile "${player_log}" &
+    pid=$!
+    waited=0
+    while kill -0 "${pid}" 2>/dev/null; do
+      if [ "${waited}" -ge {{timeout}} ]; then
+        kill -9 "${pid}" 2>/dev/null || true
+        wait "${pid}" 2>/dev/null || true
+        echo "unity-render: the player did not exit within {{timeout}}s; killed." >&2
+        echo "unity-render: log ${player_log}" >&2
+        exit 1
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+    set +e
+    wait "${pid}"
+    verdict=$?
+    set -e
+
+    if [ -f "${frames}/report.txt" ]; then
+      sed 's/^/unity-render: /' "${frames}/report.txt"
+    else
+      echo "unity-render: the player wrote no report; its log follows" >&2
+      grep -E "^\[render-gate\]|Exception|error" "${player_log}" || true
+    fi
+
+    if [ "${verdict}" -ne 0 ]; then
+      echo "unity-render: FAILED (player exit ${verdict})." >&2
+      echo "unity-render: frames ${frames}, log ${player_log}" >&2
+      exit "${verdict}"
+    fi
+    # **Both, and the exit code is the one that decides.** A player killed by a
+    # signal, or one that never reached its own verdict, can still leave a
+    # report from an earlier run — this project is rebuilt from scratch each
+    # run, so it cannot, and the check is here for the day that changes.
+    if [ ! -f "${frames}/report.txt" ] || ! grep -qx "PASS" "${frames}/report.txt"; then
+      echo "unity-render: the player exited 0 without recording a verdict." >&2
+      exit 1
+    fi
+    echo "unity-render: OK — frames in ${frames}"
 
 # The committed probe table, evaluated through the GENERATED HLSL.
 #

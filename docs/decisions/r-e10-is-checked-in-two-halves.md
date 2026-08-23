@@ -93,7 +93,9 @@ package — engine half included — in a Unity editor, asserting the project's 
 compatibility level is `NET_Standard` rather than assuming it. It needs an
 editor, so it is outside CI and outside `just check`, and it says so. It is a
 developer's gate, run before opening a pull request that touches
-`Runtime/Engine/` or `Runtime/Shaders/`.
+`Runtime/Engine/`, `Runtime/Shaders/`, `Runtime/Resources/` — where the
+`.shader` files moved at issue #1313 — or `Samples~/FrameLoop/`, which it copies
+into its project and which nothing else anywhere compiles.
 
 **D4 — the split is guarded by three assertions, not by review.** They are in
 `unity/package-gate`, a Rust crate in the sanity test tier, so they run on every
@@ -140,8 +142,12 @@ unnecessary.
 **The editor gate is not only R-E10's.** It compiles the package's shaders as
 well, which is the half `unity/package-gate` cannot reach: that crate reads the
 `#pragma` lines R-E11 and R-E12 require, and a pragma that is present while an
-include path is wrong passes it. Nothing else in this repository compiles a
-shader.
+include path is wrong passes it. It is the only thing here that compiles a Unity
+`.shader` **without building a player**: `just unity-render` (issue #1298) does
+so as a side effect of `BuildPipeline.BuildPlayer`, and takes tens of minutes to
+do it, so it is not a substitute for this gate. `just unity-conformance` (issue
+#1312) compiles a `.compute` in an editor, which is a different artifact and
+neither a substitute nor a counter-example.
 
 **It also writes the `.meta` files R-E2 requires.** A `file:` dependency is a
 mutable package, so the editor writes a `.meta` beside every asset it imports —
