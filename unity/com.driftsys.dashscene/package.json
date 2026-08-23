@@ -2,7 +2,7 @@
   "name": "com.driftsys.dashscene",
   "version": "0.0.0",
   "displayName": "dashscene",
-  "description": "The C# side of dashscene. The boundary-B value types, the host that sits on the C ABI — version negotiation, runtime lifetime, document load, the tick and the committed frame — and the BatchRendererGroup painter that draws those tables. No native library yet, and the painter draws fills, strokes, corners and clips but no shadows, blurs, images or text. See docs/roadmap.md for the slices that add them.",
+  "description": "The C# side of dashscene. The boundary-B value types, the host that sits on the C ABI — version negotiation, runtime lifetime, document load, the tick and the committed frame — and the BatchRendererGroup painter that draws those tables. No native library yet, and the painter draws a subset of the document: this package's README lists what it draws and what it does not, and PackDiagnostic names the gap at run time rather than dropping it quietly.",
   "author": {
     "name": "driftsys",
     "url": "https://github.com/driftsys/dashscene"

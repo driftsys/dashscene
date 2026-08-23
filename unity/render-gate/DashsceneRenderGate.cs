@@ -231,6 +231,14 @@ public sealed class DashsceneRenderGate : MonoBehaviour
     private readonly StringBuilder _report = new StringBuilder();
     private readonly List<string> _failures = new List<string>();
 
+    /// Every R-E5 warning the painter logged during this run.
+    ///
+    /// **This gate's project meets R-E5**, so the correct count is zero and any
+    /// entry is issue #1317 restored. Collected rather than asserted at the
+    /// point of logging, because the painter reports from `Draw` and this
+    /// object judges at the end.
+    private readonly List<string> _batcherWarnings = new List<string>();
+
     private int _overlayInstances;
     private int _cutoutInstances;
 
@@ -243,6 +251,16 @@ public sealed class DashsceneRenderGate : MonoBehaviour
 
     private void Awake()
     {
+        // **The measurement, made by the gate rather than by a person.** Issue
+        // #1317 was `BrgPainter` warning that R-E5 was unmet on a project that
+        // meets it. This project sets `useSRPBatcher` true
+        // (`RenderGateBuild.cs`) and fails if it reads back false, so any such
+        // warning here is that defect returning. Until this handler, the check
+        // was a developer grepping `player.log` once and writing the result
+        // into a record — which the next run could not repeat and no run could
+        // fail on.
+        Application.logMessageReceived += OnPainterLog;
+
         Application.targetFrameRate = 60;
         _outDir = ArgumentAfter("-ds-out") ?? Application.persistentDataPath;
         Directory.CreateDirectory(_outDir);
@@ -454,8 +472,10 @@ public sealed class DashsceneRenderGate : MonoBehaviour
             // INSTANCE, at the first render. Measured on 6000.3.22f1,
             // macOS/Metal, 2026-08-23: a player whose URP asset had
             // `useSRPBatcher` true reported this global false in `Awake` and
-            // true four frames later. `BrgPainter` reads it in its own
-            // constructor and so warns on a correctly configured project.
+            // true four frames later. `BrgPainter` read it in its own
+            // constructor and so warned on a correctly configured project,
+            // which is issue #1317; it now guards the read on
+            // `RenderPipelineManager.currentPipeline` and takes it from `Draw`.
             ReadBatcherOnce();
         }
 
@@ -510,6 +530,30 @@ public sealed class DashsceneRenderGate : MonoBehaviour
             return;
         }
         _readBatcher = true;
+
+        // **The painter's guard rests on this, so measure it rather than
+        // assume it.** Since issue #1317 `BrgPainter.ReportBatcherOnce` says
+        // nothing while `RenderPipelineManager.currentPipeline` is null, on the
+        // grounds that the global is not a verdict before URP has constructed
+        // an instance. This gate drives rendering with `SubmitRenderRequest`
+        // rather than letting Unity render a camera, and nothing established
+        // that a pipeline instance exists under that arrangement — so the
+        // painter staying silent here would be indistinguishable from a guard
+        // that never opens, and the absence of an R-E5 warning would be
+        // evidence of nothing. Failing is right rather than merely reporting:
+        // the batcher read on the next line is meaningless without an instance,
+        // which is the whole reason this method is called late.
+        var live = RenderPipelineManager.currentPipeline != null;
+        Line($"render pipeline instance live {live}");
+        if (!live)
+        {
+            Fail(
+                "no render pipeline instance exists after a frame has rendered, so "
+                + "GraphicsSettings.useScriptableRenderPipelineBatching has not been assigned "
+                + "and neither this gate nor BrgPainter.ReportBatcherOnce can read it as a "
+                + "verdict (issue #1317).");
+            return;
+        }
 
         var on = GraphicsSettings.useScriptableRenderPipelineBatching;
         Line($"srp batcher after the first render {on}");
@@ -833,6 +877,20 @@ public sealed class DashsceneRenderGate : MonoBehaviour
     /// Every assertion, and the negative control that makes them mean something.
     private void Judge()
     {
+        // **The painter's silence, checked rather than assumed.** Liveness
+        // above says the painter's guard could open; this says that when it
+        // did, it found R-E5 met. Both halves are needed: without liveness a
+        // silent painter proves nothing, and without this a painter that
+        // warned on every frame of a conforming project would still pass.
+        Line($"painter R-E5 warnings {_batcherWarnings.Count}");
+        if (_batcherWarnings.Count > 0)
+        {
+            Fail(
+                $"the painter logged {_batcherWarnings.Count} R-E5 warning(s) on a project "
+                + "whose URP asset has useSRPBatcher true, which is issue #1317: the SRP "
+                + $"Batcher read is not a verdict where it was taken. First: {_batcherWarnings[0]}");
+        }
+
         if (_samples == null || _overlayInstances == 0)
         {
             Fail("no frame was packed, so the gate has nowhere to look for ink.");
@@ -1493,8 +1551,24 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         return null;
     }
 
+    /// Collect the painter's R-E5 warning, if it ever emits one.
+    ///
+    /// Matched on the sentence rather than on a type or a code, because the
+    /// package has neither — `BrgPainter` reports R-E5 with
+    /// `Debug.LogWarning` and a message. `unity/package-gate` holds that
+    /// message's text on the painter's side, so the two cannot drift apart
+    /// silently.
+    private void OnPainterLog(string condition, string stackTrace, LogType type)
+    {
+        if (type == LogType.Warning && condition.Contains("the SRP Batcher is off"))
+        {
+            _batcherWarnings.Add(condition);
+        }
+    }
+
     private void OnDestroy()
     {
+        Application.logMessageReceived -= OnPainterLog;
         _painter?.Dispose();
         _painter = null;
         _runtime?.Dispose();

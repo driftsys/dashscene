@@ -2013,10 +2013,13 @@ unity-conformance table="conformance/layer2-probes.json" unity_version="6000.3.2
 #
 # **A gate nobody has watched fail is a gate with no measured teeth.** This
 # copies the committed table and moves TWO recorded expectations by one unit —
-# `erf_approx`'s first probe, a scalar, and the first component of
-# `gradient_ramp`'s first probe, which is a `vec4f` row. Then it requires three
-# things of the run, and each closes a way this control could pass over a gate
-# that is not working:
+# `erf_approx`'s probe 7, a scalar, and `gradient_ramp`'s probe 3 component 2,
+# which is a `vec4f` row. **Every index here is zero-based**, matching the `jq`
+# filter, the harness labels the greps require, and the argument above the
+# filter, which is where the choice of indices is made. Neither is at index
+# zero, and that is the point of the pair.
+# Then it requires three things of the run, and each closes a way this control
+# could pass over a gate that is not working:
 #
 #   1. a non-zero exit — but only as the weakest of the three, since a run with
 #      no editor, a bad path or a shader that did not compile all exit non-zero;

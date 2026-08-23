@@ -169,6 +169,28 @@ namespace Driftsys.Dashscene
         /// leaves it untouched in both directions.
         private bool _counted;
 
+        /// The pipeline instance R-E5 was last decided against, so the warning
+        /// is reported once per instance rather than once per frame.
+        ///
+        /// **An instance rather than a `bool`, because the global is per
+        /// instance.** URP assigns it in each pipeline instance's constructor,
+        /// so a host that assigns a different render pipeline asset gets a
+        /// fresh instance and a freshly assigned global. A quality-level switch
+        /// does so only when the level names a different asset; naming the same
+        /// one reconstructs nothing, and this then correctly says nothing. A
+        /// latched `bool` would report the old, correct verdict once and stay
+        /// silent when a new asset turned the batcher off — the painter would
+        /// then draw nothing, for a reason it had already decided not to
+        /// mention.
+        ///
+        /// Only identity is ever read from this, never a member, so a disposed
+        /// pipeline here is harmless to correctness. It is still a strong
+        /// reference to an instance this painter does not own, so `Dispose`
+        /// clears it: a painter kept alive after its last `Draw` would
+        /// otherwise be the last thing rooting a pipeline the host has
+        /// replaced.
+        private RenderPipeline _batcherReportedFor;
+
         /// The rung this painter is on, read from Unity at construction.
         public BrgRung Rung { get; }
 
@@ -299,9 +321,31 @@ namespace Driftsys.Dashscene
                 case BatchBufferTarget.UnsupportedByUnderlyingGraphicsApi:
                     // R-E19: this selects rung 3, not "draw nothing quietly".
                     // Nothing is built for rung 3, so the painter stops here
-                    // and says which rung it is on — descending below rung 1 is
-                    // D3's trigger to raise the R-T4 conflict.
+                    // and says which rung it is on — the `Debug.LogWarning`
+                    // below is what says it, and `Draw`'s own remarks rely on
+                    // it having been said. Descending below rung 1 is D3's
+                    // trigger to raise the R-T4 conflict.
                     Rung = BrgRung.InstancedWithoutBrg;
+                    // **The log is what makes this arm a report rather than a
+                    // silent selection.** `Rung` is a public property, which is
+                    // availability rather than a report: a host that never
+                    // reads it sees a blank screen and a clean console.
+                    // **R-E6's default produces a blank frame too and is NOT
+                    // silent** — Unity itself logs `Trying to render a
+                    // BatchRendererGroup batch with wrong cbuffer setup.
+                    // Missing DOTS_INSTANCING_ON variant?` on every frame,
+                    // measured 2026-08-23 on macOS/Metal, Unity 6000.3.22f1.
+                    // So the two blank frames look identical on screen and
+                    // differ entirely in the console, and without this line
+                    // rung 3 is the one a host cannot tell apart from a bug in
+                    // its own document (issue #1326).
+                    Debug.LogWarning(
+                        $"[dashscene] BatchRendererGroup.BufferTarget reports {target} on this "
+                        + $"graphics API, so this painter is on rung {Rung} and draws nothing "
+                        + "(docs/decisions/unity-painter-uses-brg.md D3, R-E19). Nothing is "
+                        + "built for that rung: Draw returns without drawing and without "
+                        + "throwing, so every frame is blank. Read BrgPainter.Rung to branch "
+                        + "on this.");
                     // **Not counted, and `Dispose` will not decrement it.** A
                     // rung-3 painter constructs no group and `Draw` returns
                     // before `BindGlobals`, so it binds nothing globally and
@@ -325,18 +369,20 @@ namespace Driftsys.Dashscene
                         + "BatchRendererGroup was constructed.");
             }
 
-            if (!GraphicsSettings.useScriptableRenderPipelineBatching)
-            {
-                // R-E5 is the host project's requirement rather than this
-                // painter's, so this reports instead of throwing: Unity's own
-                // refusal — "Please turn SRP Batcher ON to use the
-                // BatchRendererGroup API" — has never been observed in this
-                // repository, and a host meeting it late should see why.
-                Debug.LogWarning(
-                    "[dashscene] the SRP Batcher is off. BatchRendererGroup needs it "
-                    + "(docs/specification/07-embedding-and-distribution.md R-E5): set "
-                    + "m_UseSRPBatcher on the active render pipeline asset.");
-            }
+            // **R-E5 is NOT read here**, and that is issue #1317.
+            // `GraphicsSettings.useScriptableRenderPipelineBatching` is a
+            // verdict only once a pipeline INSTANCE exists, and this
+            // constructor runs before one does in a host that builds a painter
+            // in `Awake` of the FIRST frame — which the package's own
+            // `Samples~/FrameLoop` does. A painter built later, once rendering
+            // has begun, would read a decided global here, and a constructor
+            // CAN tell the two apart with the same
+            // `RenderPipelineManager.currentPipeline` test the read now uses —
+            // issue #1317 names that shape as one of the two acceptable ones.
+            // The read is moved rather than guarded here because a constructor
+            // reads once and the global is reassigned by every later pipeline
+            // instance, which is what `ReportBatcherOnce` re-decides against;
+            // see its remarks.
 
             // **`Resources.Load`, not `Shader.Find`, and that is issue
             // #1313.** Unity strips a shader that no scene and no material
@@ -589,6 +635,88 @@ namespace Driftsys.Dashscene
             _atlases = TextAtlasSet.Empty;
         }
 
+        /// Report R-E5 once per pipeline instance, and only from a read that
+        /// can decide it.
+        ///
+        /// **The read is a verdict only once a pipeline INSTANCE exists**,
+        /// which is issue #1317. URP assigns
+        /// `GraphicsSettings.useScriptableRenderPipelineBatching` from the
+        /// asset's `useSRPBatcher` inside `UniversalRenderPipeline`'s own
+        /// constructor — one line of `UniversalRenderPipeline.cs`, verified
+        /// against URP 17.3.0, the version this package depends on — and Unity
+        /// runs that constructor when it first creates a pipeline instance, at
+        /// the first render. So the global is `false` in `Awake` of the first
+        /// frame however the project is configured. Measured on `6000.3.22f1`,
+        /// macOS/Metal, 2026-08-23, in a player whose asset had
+        /// `useSRPBatcher` true: `False` at `Awake`, `True` four frames later.
+        /// Reading it in this painter's constructor therefore warned on every
+        /// correctly configured host, which is a diagnostic a developer learns
+        /// to ignore.
+        ///
+        /// **`RenderPipelineManager.currentPipeline` is the guard, not a frame
+        /// counter.** It is non-null exactly once Unity has constructed a
+        /// pipeline instance, so the assignment above has already happened.
+        /// The same test is used for "a pipeline is live" in
+        /// `com.unity.render-pipelines.core` — in editor code, `DebugWindow`
+        /// and `DisplayWindow` — and at run time in HDRP's
+        /// `HDRenderPipeline`; SRP core's runtime half does not use it, so
+        /// this is a precedent rather than a rule the packages enforce. While
+        /// it is null the read cannot decide anything, so this
+        /// says nothing and tries again next frame rather than saying the
+        /// wrong thing. That is also why the instance is recorded inside the
+        /// guard and not above it: a painter whose first `Draw` runs before the
+        /// first render must still get its verdict on a later frame.
+        ///
+        /// **Two hosts this does not decide correctly, and neither is a host
+        /// that merely never draws.** They fail in opposite directions, which
+        /// is why they are not one bullet: the first is told nothing, the
+        /// second is told something false.
+        ///
+        /// - A process that draws every frame and renders through no pipeline
+        ///   gets none, because no instance is ever constructed and the guard
+        ///   is closed forever. That is not hypothetical: `unity/render-gate`
+        ///   records a batch-mode player doing exactly this, which is why it
+        ///   drives rendering with `SubmitRenderRequest` rather than leaving it
+        ///   to Unity. The old constructor read reported such a host, but
+        ///   reported every host the same way whatever it was configured to, so
+        ///   what is lost is a warning that was never evidence. R-E5 is
+        ///   undecidable there, and saying nothing is the honest answer — but
+        ///   nothing says "undecided" either, and that is the gap. Issue #1340
+        ///   carries it.
+        /// - A host on a pipeline that does not assign the global at all gets
+        ///   the wrong verdict, not none: `currentPipeline` says an instance
+        ///   exists, not that URP's constructor ran. The global would stay
+        ///   `false` and this would warn about a project that meets R-E5,
+        ///   which is issue #1317 on a different pipeline. This package
+        ///   declares a dependency on
+        ///   `com.unity.render-pipelines.universal` and R-E5 names URP's own
+        ///   `m_UseSRPBatcher`, so that host is out of scope by construction;
+        ///   the guard is deliberately not narrowed to a URP type, which would
+        ///   make this file reference URP for a diagnostic.
+        ///
+        /// R-E5 is the host project's requirement rather than this painter's,
+        /// so this reports instead of throwing: Unity's own refusal — "Please
+        /// turn SRP Batcher ON to use the BatchRendererGroup API" — has never
+        /// been observed in this repository, and a host meeting it late should
+        /// see why.
+        private void ReportBatcherOnce()
+        {
+            var pipeline = RenderPipelineManager.currentPipeline;
+            if (pipeline == null || ReferenceEquals(pipeline, _batcherReportedFor))
+            {
+                return;
+            }
+            _batcherReportedFor = pipeline;
+
+            if (!GraphicsSettings.useScriptableRenderPipelineBatching)
+            {
+                Debug.LogWarning(
+                    "[dashscene] the SRP Batcher is off. BatchRendererGroup needs it "
+                    + "(docs/specification/07-embedding-and-distribution.md R-E5): set "
+                    + "m_UseSRPBatcher on the active render pipeline asset.");
+            }
+        }
+
         /// Pack and upload one committed frame.
         ///
         /// The lease's arrays are read here and nowhere else, so the caller may
@@ -602,8 +730,9 @@ namespace Driftsys.Dashscene
         /// re-packs frames that will never change.
         ///
         /// A painter on [`BrgRung.InstancedWithoutBrg`] returns without drawing
-        /// and without throwing: the rung was already reported at construction,
-        /// and throwing once per frame would bury it.
+        /// and without throwing: the rung was already reported at construction
+        /// — the `Debug.LogWarning` on that arm of the constructor's switch is
+        /// the report — and throwing once per frame would bury it.
         public void Draw(FrameLease lease)
         {
             if (lease == null)
@@ -616,6 +745,12 @@ namespace Driftsys.Dashscene
             {
                 return;
             }
+
+            // **After the rung-3 return, not before it.** A rung-3 painter
+            // builds no group and draws nothing whatever the batcher is set
+            // to, so warning about R-E5 there would add a second cause to a
+            // blank frame that already has one.
+            ReportBatcherOnce();
 
             // **A set installed for the PREVIOUS document is dropped.** An
             // atlas index is meaningful only against the set the load that
@@ -1342,6 +1477,10 @@ namespace Driftsys.Dashscene
                 return;
             }
             _disposed = true;
+            // The R-E5 latch is identity only, but it is a strong reference to
+            // a pipeline this painter does not own; releasing it here keeps a
+            // disposed painter from being that instance's last root.
+            _batcherReportedFor = null;
             if (_counted)
             {
                 System.Threading.Interlocked.Decrement(ref _liveCount);

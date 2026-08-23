@@ -37,6 +37,8 @@ use std::path::{Path, PathBuf};
 ///
 /// The two are held together by [`WGSL_IS_THE_CRATE_S_OWN`]'s test, which
 /// asserts this path is the one `shader.rs` includes.
+pub mod cs_scan;
+
 pub const WGSL_PATH: &str = "crates/dashscene-gpu/src/shaders/sdf.wgsl";
 
 /// The generated HLSL, relative to the repository root.

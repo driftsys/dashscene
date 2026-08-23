@@ -19,9 +19,26 @@
 //
 // **It draws.** `AcquireFrame` hands over the committed tables and `BrgPainter`
 // consumes them, which is issue #1298's wiring. What it does not draw is
-// listed by `PackDiagnostics` — shadows, blurs, image fills, baked vector nodes
-// and render-target groups — and text, whose glyph atlases do not cross the ABI
-// at all until story #1123.
+// reported by name through `PackDiagnostic` — the painter logs each one when
+// the set changes, and `BrgPainter.Diagnostics` carries it for a host that
+// wants to read rather than watch. Take the list from there rather than from a
+// copy here: the copy this replaces named text, and went stale the day story
+// #1123 landed the text seam.
+//
+// **`PackDiagnostic` reports what the painter declined to draw, not what never
+// reached it**, and this sample's text falls in the second class. See below:
+// with no font cascade nothing is staged, so `PackDiagnostic.GlyphRun` never
+// sets and a document's text disappears with a clean console.
+//
+// **Text is the package's, and not yet this sample's.** Story #1123 landed the
+// seam: the glyph atlas crosses the C ABI and `Dashscene/Text` draws the runs.
+// Two things here stop it, not one. This component loads with
+// `LoadDocumentMapped` rather than `LoadDocumentWithText`, so with no font
+// cascade a document's text shapes to nothing and no glyph run is staged at
+// all; and the painter samples an atlas set the HOST installs, which this
+// component never does — it calls neither `DashsceneRuntime.ReadAtlases` nor
+// `BrgPainter.SetAtlases`. Issue #1337 carries both, and it is not the two-call
+// change it looks like: a sample needs somewhere to get fonts from first.
 //
 // **Two host-project settings decide whether anything appears**, and neither is
 // this component's to set: R-E5's `m_UseSRPBatcher` on the active render
@@ -145,18 +162,22 @@ namespace Driftsys.Dashscene.Samples
                 // **R-E19's rung, and nothing is built for it.** The
                 // constructor selects it where `BatchRendererGroup` is
                 // unsupported and returns without building a group, so `Draw`
-                // returns before it binds anything and every frame is blank —
-                // with no exception and no log. **R-E6's default produces a
-                // blank frame too and is NOT silent**: Unity itself logs the
-                // missing `DOTS_INSTANCING_ON` variant on every frame, measured
-                // on 2026-08-23 and recorded at the top of this file. So the
-                // two look identical on screen and differ entirely in the
-                // console, and this is the one that would say nothing at all.
+                // returns before it binds anything and every frame is blank,
+                // without an exception. **R-E6's default produces a blank frame
+                // too**: Unity itself logs the missing `DOTS_INSTANCING_ON`
+                // variant on every frame, measured on 2026-08-23 and recorded
+                // at the top of this file. The two look identical on screen and
+                // differ entirely in the console, so each blank frame has to
+                // name itself. Since issue #1326 the painter warns on this arm
+                // of its own constructor; this component escalates to an error
+                // and stops, because a sample that draws nothing every frame
+                // has nothing left to demonstrate.
                 Debug.LogError(
                     $"[dashscene] the painter is on rung {_painter.Rung} — "
                     + "BatchRendererGroup is unsupported on this graphics API, and nothing "
-                    + "is built for that rung, so this component would draw nothing without "
-                    + "reporting it (docs/decisions/unity-painter-uses-brg.md D3).",
+                    + "is built for that rung, so every frame would be blank. The painter "
+                    + "warns about this too; this component stops rather than drawing nothing "
+                    + "for the rest of the run (docs/decisions/unity-painter-uses-brg.md D3).",
                     this);
                 enabled = false;
                 return;

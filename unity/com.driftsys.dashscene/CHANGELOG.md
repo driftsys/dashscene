@@ -52,11 +52,11 @@ the Cargo workspace rather than moving on its own.
   #1298). It needs a host project meeting R-E4, R-E5 and R-E6.
 - The `BatchRendererGroup` painter, in three material classes — unlit-overlay,
   lit-opaque and lit-cutout (story #1122). It draws fills, both solid and
-  gradient, corner radii, strokes, clips, per-node opacity and rotation.
-  Shadows, blurs, image fills, baked vector nodes and render-target groups are
-  **not** drawn and each is reported by name through `PackDiagnostic` — P4
-  forbids a silent drop. Text was in that list until story #1123, the first
-  entry above.
+  gradient, corner radii, strokes, clips, per-node opacity and rotation. What it
+  does **not** draw is reported by name through `PackDiagnostic` rather than
+  listed here — P4 forbids a silent drop, and the list belongs where it cannot
+  go stale. It was written out here until this entry, and text sat in it until
+  story #1123, the first entry above.
 - The three material classes' `.shader` files sit under
   `Runtime/Resources/Dashscene/`, one per class, and `BrgPainter` loads each
   with `Resources.Load<Shader>` by the shader's own declared name. They were
@@ -75,3 +75,29 @@ the Cargo workspace rather than moving on its own.
   declarations a `BatchRendererGroup` needs.
 - `.meta` files for every path Unity imports, without which a Git-URL package
   delivers nothing (R-E2), and a `unity` field declaring `6000.3` (R-E1).
+
+### Fixed
+
+- **The manifest no longer says the painter draws no text.** `package.json`'s
+  `description` — what a UPM registry listing shows — still said the painter
+  draws "no shadows, blurs, images or text" after story #1123 had landed the
+  text seam. It now points at this package's README and at `PackDiagnostic`
+  instead of carrying a list of its own (issue #1325).
+- **The R-E5 warning no longer fires on a correctly configured host.**
+  `BrgPainter` read `GraphicsSettings.useScriptableRenderPipelineBatching` in
+  its constructor, and URP assigns that global inside its own pipeline
+  instance's constructor — which Unity runs at the first render, after the
+  `Awake` of the first frame where a host builds a painter. The global was
+  therefore `false` in every process that had not yet rendered, whatever the
+  project was set to. The read now happens in `Draw`, guarded on
+  `RenderPipelineManager.currentPipeline`, and is decided once per pipeline
+  instance rather than once per painter — so a host that switches to an asset
+  with the batcher off is told (issue #1317).
+- **Rung 3 is reported rather than selected silently.** Where
+  `BatchRendererGroup.BufferTarget` answers
+  `UnsupportedByUnderlyingGraphicsApi`, the painter took
+  `BrgRung.InstancedWithoutBrg`, built no group and drew nothing, logging
+  nothing — while R-E6's default produces a blank frame that Unity itself names
+  on every frame. The two were indistinguishable from the console, and reading
+  `Rung` was the only way to tell them apart. The constructor now warns on that
+  arm (issue #1326).

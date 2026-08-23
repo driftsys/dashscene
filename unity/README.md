@@ -26,8 +26,11 @@ repository builds and records.
                               That file enumerates the builds
     package-gate/             a Rust workspace member, in the sanity test tier:
                               the HLSL derived from the WGSL shader library,
-                              the shader pragmas R-E11 and R-E12 require, and
-                              the R-E10 split above. The only check here with
+                              the shader pragmas R-E11 and R-E12 require, the
+                              R-E10 split above, and BrgPainter's two
+                              diagnostics — where R-E5's read sits and what
+                              guards it, and that the rung-3 arm reports the
+                              rung. Text over a file no CI job compiles. The only check here with
                               no .NET and no editor prerequisite, so the only
                               one with no .NET SDK and no editor prerequisite,
                               so the only one that runs on any pull request

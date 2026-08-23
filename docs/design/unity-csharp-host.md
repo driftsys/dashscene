@@ -151,11 +151,39 @@ that is not a verdict — it is the hazard D4 names and story #1125 measured.
 `RawBuffer` and `ConstantBuffer` are rung 1;
 `UnsupportedByUnderlyingGraphicsApi` selects **rung 3**, and since nothing is
 built for rung 3 the painter records the rung on its `Rung` property and draws
-nothing rather than pretending to be on rung 1. **It logs nothing there**, so a
-host that neither reads `Rung` nor is told gets a blank screen in silence — the
-`Samples~/FrameLoop` component reads it and reports, and issue #1326 is the
-painter's own half. `Unknown` is documented as a value Unity never returns, so
-D4's table assigns it none: the painter names it and constructs no group.
+nothing rather than pretending to be on rung 1. **It warns there as well as
+recording the rung** (issue #1326): `Rung` is availability rather than a report,
+so a host that never reads it would otherwise get a blank screen and a clean
+console. R-E6's default produces a blank frame too, and Unity itself names that
+one on every frame, so rung 3 was the blank frame a host could not tell apart
+from a defect in its own document. The `Samples~/FrameLoop` component reads
+`Rung` and escalates to an error on top of that. `Unknown` is documented as a
+value Unity never returns, so D4's table assigns it none: the painter names it
+and constructs no group.
+
+**R-E5 is read from `Draw`, not from the constructor** (issue #1317). URP
+assigns `GraphicsSettings.useScriptableRenderPipelineBatching` inside its own
+pipeline instance's constructor, which Unity runs at the first render — so the
+global is `false` in `Awake` of the first frame whatever the project is set to,
+and a painter built there warned about every correctly configured host.
+`ReportBatcherOnce` guards the read on `RenderPipelineManager.currentPipeline`
+and reports once per pipeline instance: while that is null the read decides
+nothing and the painter says nothing, and a later instance — a quality-level
+switch, a different asset — is decided again rather than latched.
+
+`just unity-render` holds all of this: a pipeline instance is live once a frame
+has rendered, and the painter logged no R-E5 warning on a project that meets
+R-E5. Restoring the read to the constructor makes that run report one warning
+and fail, which is the negative control for it.
+
+**Two hosts this does not decide correctly, and they fail in opposite
+directions** — both named in the method's own remarks. A process that draws
+every frame but renders through no pipeline is told nothing: the guard never
+opens, and nothing says "undecided" (issue #1340). A host on a pipeline that
+does not assign the global is told something false — it would warn about a
+project that meets R-E5, which is issue #1317 on a different pipeline. The
+second is out of scope — this package depends on URP and R-E5 names URP's own
+`m_UseSRPBatcher` — and the guard is deliberately not narrowed to a URP type.
 
 **Under `ConstantBuffer` both bounds come from the device** (R-E15). The window
 size and the offset alignment are read with `GetConstantBufferMaxWindowSize()`
@@ -371,12 +399,14 @@ failing.
                                                           material per sheet
 
 **Read the atlases and install them on the frame that reports
-`DocumentReplaced`, before `Draw`** — which is the order this package's sample
-and every doc comment already prescribe. `Draw` drops a set that was installed
-for a previous document, and what tells the two apart is whether `SetAtlases`
-has been called since the last `Draw`, not the flag alone: the flag is raised by
-every load and cleared by the acquire that reports it, so a painter keying on it
-alone would destroy the set the host had just minted.
+`DocumentReplaced`, before `Draw`** — which is what the two calls' own doc
+comments describe, though neither spells out the ordering against `Draw`. **The
+package's sample does not**: it loads without a font cascade and installs no
+atlas set, so it demonstrates none of this (issue #1337). `Draw` drops a set
+that was installed for a previous document, and what tells the two apart is
+whether `SetAtlases` has been called since the last `Draw`, not the flag alone:
+the flag is raised by every load and cleared by the acquire that reports it, so
+a painter keying on it alone would destroy the set the host had just minted.
 
 `NativeText` declares its two imports in a private nested type and reaches them
 through a forwarder each, calling `Native.SymbolMissing` — the shape `Native`'s
@@ -682,15 +712,15 @@ resolver lets `openFd`'s exception through rather than falling back to a copy.
 
 ## What the gates see, and what none of them does
 
-| gate                     | question                                                                             | recipe                   | in CI  |
-| ------------------------ | ------------------------------------------------------------------------------------ | ------------------------ | ------ |
-| `unity/abi-check`        | do boundary B's C# types match the Rust ones?                                        | `just unity-abi`         | yes    |
-| `unity/package-compat`   | would Unity compile the engine-free half at netstandard2.1?                          | `just unity-abi`         | yes    |
-| `unity/ffi-check`        | do the P/Invoke declarations match the library?                                      | `just unity-ffi`         | yes    |
-| `unity/package-gate`     | is the HLSL the WGSL's? do the shaders carry the pragmas? is the R-E10 split intact? | `just test`              | yes    |
-| `unity/editor-compat`    | does the WHOLE package compile, shaders included?                                    | `just unity-editor`      | **no** |
-| `unity/hlsl-conformance` | does the generated HLSL evaluate to the committed probe table?                       | `just unity-conformance` | **no** |
-| `unity/render-gate`      | does the package DRAW, in a player, as a consumer installs it?                       | `just unity-render`      | **no** |
+| gate                     | question                                                                                                                                                         | recipe                   | in CI  |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ------ |
+| `unity/abi-check`        | do boundary B's C# types match the Rust ones?                                                                                                                    | `just unity-abi`         | yes    |
+| `unity/package-compat`   | would Unity compile the engine-free half at netstandard2.1?                                                                                                      | `just unity-abi`         | yes    |
+| `unity/ffi-check`        | do the P/Invoke declarations match the library?                                                                                                                  | `just unity-ffi`         | yes    |
+| `unity/package-gate`     | is the HLSL the WGSL's? do the shaders carry the pragmas? is the R-E10 split intact? does the painter still take R-E5's read behind its guard and report rung 3? | `just test`              | yes    |
+| `unity/editor-compat`    | does the WHOLE package compile, shaders included?                                                                                                                | `just unity-editor`      | **no** |
+| `unity/hlsl-conformance` | does the generated HLSL evaluate to the committed probe table?                                                                                                   | `just unity-conformance` | **no** |
+| `unity/render-gate`      | does the package DRAW, in a player, as a consumer installs it?                                                                                                   | `just unity-render`      | **no** |
 
 `unity/editor-compat` and `unity/package-gate` are story #1122's,
 `unity/hlsl-conformance` is issue #1312's and `unity/render-gate` is issue
