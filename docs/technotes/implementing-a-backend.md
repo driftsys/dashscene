@@ -160,6 +160,17 @@ the instance buffer rather than whole-buffer writes.
 language is the cost you are taking on, and keeping the port in step is the
 obligation R-T5 creates.
 
+**`conformance/layer2-probes.json` is what says your port is right.** The
+inputs, the expected values and the tolerances for every function of that file
+the suite probes, as data — so what you write is the harness that feeds them,
+not the expectations. `conformance/README.md` is the entry point, and
+`crates/dashscene-gpu/tests/layer2_conformance.rs` is this seam's worked example
+as `goldens/tooling/tests/worked_example.rs` is seam 1's. Read the rule for what
+the file **cannot** carry before you decide a port is conformant because the
+file loads: some of what layer 2 asserts is a property, which ports as a
+property (`docs/design/dashscene-gpu.md`, "The probe table, and what stays a
+property").
+
 **The binding budget is `downlevel_defaults`, not a desktop limit** — four
 fragment-stage storage buffers, and the painter binds four. The paint-parameter
 heap exists because of that ceiling; the next fragment-side table extends the
@@ -175,9 +186,11 @@ is correct, and one that uses `bounds` as the quad clips every shadow and blur.
 
 ## What this guide does not settle
 
-- **A portable conformance suite.** R-T5's promise is better served by a suite a
-  second painter can port than by a description of one. That is its own story;
-  layer 2's suite is `dashscene-gpu`'s today.
+**A portable conformance suite was here and is not any more.** It was this
+guide's one deliberate omission — "R-T5's promise is better served by a suite a
+second painter can port than by a description of one" — and issue #828 closed it
+at v0.21. Seam 2 above says where it is.
+
 - **Whether this becomes the public book's chapter.** It would bind the shape to
   `docs/decisions/repo-staging-and-public-facade.md`, which was undecided and is
   now settled — one repository, the facade role folded in. The question is live

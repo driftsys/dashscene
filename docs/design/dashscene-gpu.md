@@ -759,8 +759,131 @@ removes the rasteriser, the antialiasing resolve, the blend stage and the
 texture sampler, leaving float arithmetic. The same software rasteriser is
 untrustworthy for layer 4 for the same reason.
 
-Layers 1 and 2 are shared with the future Unity painter, which makes R-T5 an
-executable conformance suite both painters run rather than a review promise.
+**Layer 2 is a file, and any painter can run it.** Its expectations left this
+crate's Rust in v0.21 (issue #828) and now live in
+`conformance/layer2-probes.json` — the inputs, the expected values and the
+tolerances for every function `tests/shaders/conformance.wgsl` has a probe entry
+point for. `layer2_conformance.rs` is that file's first consumer rather than its
+definition, which is what makes R-T5 an executable conformance suite a second
+painter runs rather than a review promise it makes separately. Layer 1 is not
+portable in the same sense: its goldens are this crate's instance rows, which
+only a seam-2 consumer reads (`docs/technotes/implementing-a-backend.md`).
+
+### The probe table, and what stays a property
+
+`conformance/layer2-probes.json` does not carry everything the suite asserts,
+and pretending otherwise would lose the half that matters. **The file carries
+the claims that are one value at one input. Everything else a painter
+implements.** This is the rule for which is which, and it is what a second
+painter's author reads before deciding the work is done when the file loads.
+
+**A claim is a table row when the function has one right answer at that input.**
+`rounded_box_sdf` at a point owes a distance; `erf_approx` at an `x` owes the
+error function there; `blurred_rounded_box` at a point owes the true coverage of
+the blurred shape. Any correct implementation reproduces those numbers within
+the stated tolerance, whatever language it is written in and whatever internal
+arrangement it uses. Every function `tests/shaders/conformance.wgsl` has an
+entry point for is in the file on that basis, the two the shader only
+approximates included — a tolerance is what turns "approximates" into a number
+to meet.
+
+**Four of `sdf.wgsl`'s functions have no probe of their own**, and the
+_membership_ is asserted even though the count here is not.
+`every_function_in_the_shader_library_is_probed_or_named_as_a_helper` reads the
+function names out of `SDF_WGSL` and requires each to be either probed or listed
+in the suite's `UNPROBED_HELPERS`, so a function **added to the shader library**
+and never probed fails rather than going unnoticed. What it does not hold is the
+number four in this sentence: a fifth helper added to both sides passes, leaving
+this paragraph stale. Without it every other assertion in the suite is keyed to
+the probe entry points, and a new function would be invisible to all of them.
+The four, and what reaches each: `gradient_local` through the four
+`gradient_*_t` parameterizations, `gradient_segment_t` through `gradient_ramp`,
+and `half_extent_at` and `blur_row` through `blurred_rounded_box`. That is the
+probe set the suite has always had, unchanged by the move to a file, and it is
+adequate rather than accidental — each helper's whole output reaches its
+caller's return value. It is worth knowing before assuming a green run exercised
+a helper directly: `gradient_segment_t`'s zero-width answer, in particular, is
+observable only when the zero-width segment is the **last** one `gradient_ramp`
+visits, which is why the recorded stop lists put a repeated offset in that
+position. `the_stop_ramps_in_the_file_can_fail_a_wrong_painter` requires **one**
+such list, not both — either can be deleted and re-recorded with the guard still
+green, so keeping two is a fixture choice rather than an enforced one. What it
+does assert is the branch's observable directly: at the offset of a **final**
+zero-width segment the ramp is right-continuous, so the answer owed is the later
+stop's colour. An earlier version took any step across any repeated offset as
+evidence, which the middle-repeat list satisfies on its own — so the two
+observing lists could have been deleted with the guard still calling the fixture
+adequate, and a mutation confirmed exactly that.
+
+**A claim stays a property when freezing it into rows would keep a sample and
+throw away the claim.** Three shapes do, and each is in `layer2_conformance.rs`
+under the name of the claim it makes:
+
+- **It quantifies over inputs the file does not enumerate.**
+  `the_error_function_saturates_rather_than_overflowing` is about every large
+  `|x|`, not about the eight probed; the fitted polynomial grows as `t^7` and
+  `y * y` overflowed f32 near `|x| = 962`, so the claim is that the function is
+  finite and saturates _out there_, which no finite row set states.
+  `a_blurred_box_saturates_inside_and_vanishes_outside` and
+  `a_hairline_blur_on_a_wide_element_still_covers_it` are the same shape:
+  behaviour in a regime, sampled at four points and five.
+- **The assertion depends on something other than a value at a point.**
+  `a_stroke_band_sits_where_its_alignment_puts_it` derives its expectation from
+  what the alignment _means_ — Inside within the shape, Outside without, Center
+  straddling — over a hard-edged sweep whose two band endpoints are **ties**:
+  the shader answers 1 at the upper edge and 0 at the lower, because its two
+  ramps are half-open in the same direction, while "inside the band" says 1 at
+  both. A table row cannot say "either answer is right", so the sweep skips the
+  ties and the file carries the soft-edged case instead. The same test also
+  asserts a relation _between_ probes — an Inside and an Outside stroke of one
+  width cover disjoint sides — which is not a row either.
+- **It is a fixture-validity guard**, asserting that the probes could fail.
+  `the_gradient_frames_in_the_file_can_fail_a_wrong_painter` and
+  `the_stop_ramps_in_the_file_can_fail_a_wrong_painter` read the committed file
+  and check the ways it could stop discriminating: gradient handles of equal
+  length cannot tell an elliptical radial from a circular one, perpendicular
+  handles cannot tell `gradient_local` from a projection onto the primary axis
+  alone — for a right angle the two agree identically in `x` — and a stop list
+  with no repeated offset leaves `gradient_segment_t`'s zero-width answer
+  unobserved. A second painter inherits these as guards on the data it loads,
+  not as expectations.
+
+Two more are properties without fitting those three shapes cleanly, and saying
+so is better than a partition that does not hold.
+`a_sample_on_the_edge_is_half_covered` states the ramp's defining property at
+every width rather than at the three the `coverage` table shares with it, two of
+its five being widths the table does not carry at all.
+`every_point_inside_a_pill_is_inside_the_shape` is the awkward one: its four
+points **are** rows of the committed table, and it asserts only the sign of a
+distance the file already pins exactly — so under the rule above it is not a
+property at all. It is kept because the sign is the claim story #579 existed
+for, and it reads as the claim where a distance does not; a second painter that
+runs the table has already covered it.
+
+`the_adapter_is_recorded` is in neither half: it prints the device rather than
+asserting anything, because layer 2's claim is that this arithmetic is stable
+across adapters and pinning one would be a weaker claim.
+
+**Five checks hold the file, and the first two are each other's independent
+word.** `the_shader_matches_the_committed_probe_table` runs the WGSL against it
+— the test a second painter ports. One `the_recorded_*` test per function runs
+the Rust references against the same file on no device at all, which is what
+says the file is right and is why those references stay in the tree after they
+recorded it. `every_probe_entry_point_is_reached_by_the_table` reads the entry
+points out of `tests/shaders/conformance.wgsl` and refuses a case that stopped
+running: a suite reading expectations from a file otherwise passes over a
+deleted case with less to do.
+`the_committed_table_matches_the_specs_that_recorded_it` closes the symmetric
+hole — a tolerance or a probe changed in the **source** and never re-recorded,
+which passed every tier while gating nothing. And
+`every_function_in_the_shader_library_is_probed_or_named_as_a_helper` closes the
+gap none of the others can see, above.
+
+**The file is recorded, not computed.** `record_the_probe_table` is `#[ignore]`d
+and no tier runs it, so no consumer regenerates the data from its own
+implementation and then tests that implementation against itself. See
+`conformance/README.md` for the re-record procedure and
+`docs/decisions/shader-library-and-layer-2.md` D7 for the decision.
 
 **What layer 4 found was the opposite of what the slice expected.** The
 breakdown predicted the bands would move — different antialiasing, different
@@ -809,7 +932,10 @@ there, and the last paragraph of this section says where it is:
   goldens, stated over the rows rather than the parameters behind them, since a
   wrong parameter is a defect in the table and boundary B's own tests own it.
 - `layer2_conformance.rs` with `tests/shaders/conformance.wgsl` — the compute
-  harness over `SDF_WGSL`.
+  harness over `SDF_WGSL`, reading its expectations from
+  `conformance/layer2-probes.json` rather than computing them, plus the
+  properties that file cannot carry and the `#[ignore]`d recorder that wrote it.
+  The section above says which claims are in the file and which are not.
 - `layer3_render_smoke.rs`, `layer3_text_and_fields.rs`,
   `layer3_image_fills.rs`, `layer3_backdrop_blur.rs` — pipeline, bind group and
   format validation, plus coverage inside versus outside a shape, clip
@@ -836,6 +962,10 @@ hardware named beside every number.
   the ruled-out crates, the pinned helper stack) and
   `docs/archive/2026-07-29-v014-v015-showcase-and-wgpu-wbs.md` (the work
   breakdown and the four-layer verification net).
+- Portable artifact: `conformance/layer2-probes.json` and
+  `conformance/README.md` — layer 2's expectations as data, so R-T5's
+  single-sourcing claim is checkable by a painter in another shading language
+  (issue #828).
 - Related decisions: `docs/decisions/wgpu-is-the-lean-painter.md`,
   `docs/decisions/instance-buffer-contract.md`,
   `docs/decisions/shader-library-and-layer-2.md`,
