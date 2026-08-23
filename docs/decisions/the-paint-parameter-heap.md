@@ -73,8 +73,11 @@ holds what it had to hold to fit, and nothing else.
 what `dashpaint::Gradient` carries.
 
 **D6 — the stop ramp is `sdf.wgsl`'s, and takes fixed-size arrays.** It is
-conformance-tested by layer 2 like every other function in that file, and it
-reads no buffer.
+conformance-tested by layer 2, which since issue #828 means a row in
+`conformance/layer2-probes.json` any painter can run, and it reads no buffer.
+Four of **`sdf.wgsl`'s** functions have no probe of their own and are reached
+through their callers — `gradient_segment_t`, which this ramp calls, is one
+(`docs/design/dashscene-gpu.md`).
 
 **D7 — `wgsl_to_wgpu` is revisited here, and still not adopted.**
 `docs/decisions/pipelines-and-layer-3.md` D6 named the growing binding surface

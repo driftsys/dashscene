@@ -36,7 +36,16 @@ divergence real, "rather than discovering the divergence at the parity gate".
 The gate it means is cross-painter conformance:
 `docs/specification/03-target-hardware-rules.md` R-T5 asks for the SDF shader
 math to be single-sourced into both painters' shading languages, and issue #828
-is the portable suite that would test it. A clip edge falls inside that math.
+is the portable suite that tests it. A clip edge falls inside that math, and
+**#828 landed at v0.21 — but it reaches only half of this**. `clip_coverage`
+(`crates/dashscene-gpu/src/shaders/paint.wgsl`) calls `rounded_box_sdf` and
+`coverage` per box, and both are now pinned to a committed table any painter can
+run (`conformance/layer2-probes.json`). What that suite cannot reach is either
+half of the divergence below: the **combination** of two boxes is `min` in
+`paint.wgsl` rather than a function of `sdf.wgsl`, and comparing
+`dashscene-skia`'s analytic coverage against an SDF ramp needs two rendered
+images, where layer 2 evaluates by compute with no rasteriser in the loop. Both
+are #1281's.
 
 **Not E1.** #134's body and its 2026-07-19 triage comment both name E1 as the
 axis at risk, and both are wrong about it.
@@ -130,10 +139,13 @@ measurement therefore lacks an **input** as well as an oracle: a fixture with
 two fractionally-positioned boxes whose edges cross has to be built first.
 
 Deciding it needs that fixture and a cross-painter comparison rather than a
-preference — the comparison is #828. **Issue #1281 carries both.** Until it is
-decided, the Unity painter follows `dashscene-gpu`'s `min`, because matching a
-shipped painter is a better default than inventing a third behaviour. That is an
-interim default and not the ruling, and #1281 says so.
+preference, and **issue #1281 carries both.** The comparison was expected from
+#828; it is not what that issue delivered. #828's portable probe table pins the
+per-box ramp for any painter that runs it, and a `min`-versus-clip-stack
+disagreement is a rendered-pixel question that no compute-evaluated table can
+answer. Until it is decided, the Unity painter follows `dashscene-gpu`'s `min`,
+because matching a shipped painter is a better default than inventing a third
+behaviour. That is an interim default and not the ruling, and #1281 says so.
 
 ## Why this closes #134 rather than half-closing it
 
@@ -167,8 +179,11 @@ an interim rule unnoticed, which is why that issue says in its own words that
 
 **The two painters use the same form of edge, not provably the same numbers.**
 Skia's analytic coverage and an SDF `coverage(d, aa)` are different functions,
-and no fixture compares them at a clip boundary today — that is issue #828, the
-portable conformance suite, which epic #1106's definition of done rests on.
+and no fixture compares them at a clip boundary today — that is issue #1281.
+This paragraph named #828 until that issue closed at v0.21 without carrying it:
+the portable conformance suite pins `coverage(d, aa)` itself against a committed
+table, which any painter implementing that ramp can run, and says nothing about
+a painter that computes its coverage some other way. Skia is that painter.
 
 So a cross-painter claim at clipped edges stays tolerance-based, and the reason
 is GPU and floating-point arithmetic rather than clip semantics. The `v03-clips`

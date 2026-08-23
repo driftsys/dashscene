@@ -682,6 +682,8 @@ dependencies = [
  "objc2-core-graphics",
  "png",
  "pollster",
+ "serde",
+ "serde_json",
  "web-sys",
  "wgpu",
 ]

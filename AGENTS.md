@@ -147,18 +147,22 @@ Plus `importers/figma/` (Deno/TypeScript — the Figma REST importer and the
 reimplementing lowering/validation, see
 `docs/decisions/figma-importer-deno-plus-dashc-wasm.md`), `corpus/` (stress
 corpus + Figma fixture captures), `goldens/` (CI golden images + diff tooling),
-`demo/` (the windowed showcase host — the window, the event loop and the frame
-loop, landed at v0.14), `demo-web/` (the same showcase in a browser — a canvas,
-`requestAnimationFrame`, and a `.dsb` fetched by byte range, landed at v0.15),
-and `unity/` (the UPM package and five checks over it — three .NET ones,
-boundary B's declarations against the Rust layouts, the engine-free half of the
-package against netstandard2.1, and its P/Invoke declarations executed against
-`dashscene-ffi`; a Rust one, `unity/package-gate`, holding the generated HLSL to
-its WGSL source and the shaders to R-E11, R-E12 and R-E10's split; and
-`unity/editor-compat`, which compiles the whole package in a Unity editor and is
-the only thing here that compiles a Unity `.shader`. The package landed at v0.21
-by story #1239, gained the C# host at story #1121 and the BatchRendererGroup
-painter at story #1122; it still carries no native library).
+`conformance/` (layer 2's expectations as data — the SDF shader math's inputs,
+expected values and tolerances, so a painter in another shading language can
+check R-T5's single-sourcing rather than take it on trust; `dashscene-gpu`'s own
+suite is its first consumer, issue #828), `demo/` (the windowed showcase host —
+the window, the event loop and the frame loop, landed at v0.14), `demo-web/`
+(the same showcase in a browser — a canvas, `requestAnimationFrame`, and a
+`.dsb` fetched by byte range, landed at v0.15), and `unity/` (the UPM package
+and five checks over it — three .NET ones, boundary B's declarations against the
+Rust layouts, the engine-free half of the package against netstandard2.1, and
+its P/Invoke declarations executed against `dashscene-ffi`; a Rust one,
+`unity/package-gate`, holding the generated HLSL to its WGSL source and the
+shaders to R-E11, R-E12 and R-E10's split; and `unity/editor-compat`, which
+compiles the whole package in a Unity editor and is the only thing here that
+compiles a Unity `.shader`. The package landed at v0.21 by story #1239, gained
+the C# host at story #1121 and the BatchRendererGroup painter at story #1122; it
+still carries no native library).
 
 Seven of those directories hold workspace members that are never published:
 `demo/`, `demo-web/` (the browser host — a canvas, the lean painter, and a

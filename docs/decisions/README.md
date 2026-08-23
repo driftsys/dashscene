@@ -313,7 +313,9 @@ records below. Per-story decisions land here directly:
   owner's ruling on debt #134): clip coverage is anti-aliased and multiplies
   into the shape's own, which is what both shipped painters already do; it binds
   the Unity BRG painter to fold the clip into its instance SDF rather than reach
-  for a scissor rect. Same rule, not proven same numbers — that is issue #828.
+  for a scissor rect. Same rule, not proven same numbers — that is issue #1281
+  (it read #828 until that closed at v0.21 without carrying a rendered
+  cross-painter comparison).
 - [masks-and-group-opacity.md](masks-and-group-opacity.md) — masks resolve at
   commit into the clip-region table (a mask stencils its following siblings,
   drawing nothing itself); group opacity splits free (per-rect
@@ -609,7 +611,11 @@ their parent rather than apart from it:
   painter's SDF math is one WGSL file included textually by every consumer, and
   layer 2 evaluates it by compute shader against independently derived
   references; the shadow integrates twelve rows because four costs 5.1 code
-  points of 255 and twelve costs 0.83, measured (story #579).
+  points of 255 and twelve costs 0.83, measured (story #579). **D7, 2026-08-23**
+  (issue #828): those expectations are now a committed file,
+  `conformance/layer2-probes.json`, so a painter in another shading language
+  runs them rather than reimplementing the references — and what stays a
+  property instead is ruled in `docs/design/dashscene-gpu.md`.
 - [pipelines-and-layer-3.md](pipelines-and-layer-3.md) — the lean painter draws
   one instanced quad per instance row with no vertex buffer, offscreen into an
   `Rgba8Unorm` target so blending stays in sRGB-encoded space, and layer 3 gates

@@ -73,6 +73,24 @@ lru.workspace = true
 # wasm target of story #587 needs nothing else.
 png.workspace = true
 
+# The layer-2 probe table, read from `conformance/layer2-probes.json`.
+#
+# Test-only, and it has to stay that way: the probe entry points, the `Probe`
+# struct and the table itself exist only in the test-compiled module, and a
+# consumer of this crate carries none of them (`docs/design/dashscene-gpu.md`,
+# "The probe table, and what stays a property").
+[dev-dependencies]
+serde.workspace = true
+# `float_roundtrip` because this crate's use of serde_json is numeric
+# interchange, and its default **parser** is not exact. Measured: the file
+# carries `0.49000000953674316` — which serde_json wrote correctly — and reading
+# that same text back gives `0.4900000095367432`, a different double. Both
+# narrow to the same f32, so no probe's verdict moves; what broke is that the
+# file could not reproduce its own fixture, which is what
+# `the_committed_table_matches_the_specs_that_recorded_it` found. The writer was
+# never at fault, and a first draft of this comment said it was.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+
 # `wgpu`'s adapter and device requests are async and this painter's constructors
 # are not, so the native ones block on them. `pollster` does that without an
 # async runtime.
