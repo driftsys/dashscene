@@ -1993,11 +1993,11 @@ the bullet on it here is the current reading.
   and it now runs at the epic as well as at the milestone.
 - **#1226 became a gate rather than debt beside the slice, and was ruled on
   2026-08-18.** It asked whether the C ABI's runtime handle stays a raw pointer.
-  The answer changes the signature of ten of the twelve exported entry points —
-  `ds_abi_version` and `ds_last_error_message` take no runtime and keep theirs —
-  and therefore every P/Invoke declaration a C# host writes, so it was owed
-  before **#859** adds entry points and before **#1121** writes the host. **The
-  ruling is a generational handle in a thread-affine table** —
+  The answer changes the signature of ten of the twelve entry points the ABI
+  exported then — `ds_abi_version` and `ds_last_error_message` take no runtime
+  and keep theirs — and therefore every P/Invoke declaration a C# host writes,
+  so it was owed before **#859** adds entry points and before **#1121** writes
+  the host. **The ruling is a generational handle in a thread-affine table** —
   [`decisions/the-c-abi-runtime-handle-is-generational.md`](decisions/the-c-abi-runtime-handle-is-generational.md)
   carries it, its reasoning and its cost; they are not restated here. It is not
   an entry condition on the slice, and #1226 now carries the build.
@@ -2236,10 +2236,10 @@ same epic.
 which is what its own comment invited.
 
 **The Unity half's first build step is the data plane** — **superseded twice.**
-On 2026-08-18, because #1226's ruling had to land before it: that ruling changes
-the signature of every entry point the data plane would add to. Then on
-2026-08-20, because story #859 built it. The paragraph below describes the gap
-as it stood and is kept for what it says about why the step came first.
+On 2026-08-18, because #1226's ruling had to land before it: that ruling decides
+the signature of every entry point the data plane would add. Then on 2026-08-20,
+because story #859 built it. The paragraph below describes the gap as it stood
+and is kept for what it says about why the step came first.
 
 `dashscene-ffi` was shaped around a surface handle: a host gives dashscene a
 surface and dashscene draws into it. A host that draws the frame itself — which

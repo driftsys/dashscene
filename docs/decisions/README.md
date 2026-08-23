@@ -690,14 +690,16 @@ their parent rather than apart from it:
   implied.
 - [the-c-abi-runtime-handle-is-generational.md](the-c-abi-runtime-handle-is-generational.md)
   — the C ABI identifies a runtime by a **generational integer in a
-  thread-affine table**, not by a pointer, so a handle that is stale or misused
-  produces a `DsStatus` the host can act on rather than undefined behaviour
-  (owner's ruling on issue #1226, 2026-08-18). Lands in v0.21 before story #859,
-  while the only consumers were this repository's own JNI layer and its C
-  conformance test; the Unity C# host became a third at story #1121. The record
-  rules those three things and **hands the mechanics to the implementing pull
-  request as seven questions**; it is neither an `unsafe` reduction nor a CodeQL
-  fix, and it corrects #1226's figures for both.
+  thread-affine table**, not by a pointer, and **a handle value identifies at
+  most one runtime for the life of the process** — so a handle that is stale,
+  forged or from another thread produces a `DsStatus` the host can act on rather
+  than undefined behaviour (owner's ruling on issue #1226, 2026-08-18). It
+  landed in v0.21 before story #859, while the only consumers were this
+  repository's own JNI layer and its C conformance test; the Unity C# host
+  followed at story #1121. The record rules those three things, **hands the
+  mechanics to the implementing pull request as seven questions**, and carries
+  what that implementation answered; it is neither an `unsafe` reduction nor a
+  CodeQL fix.
 - [the-frame-crosses-under-a-lease.md](the-frame-crosses-under-a-lease.md) — the
   committed tables reach a host that draws its own frames as **borrowed views
   under an acquire/release lease**, never as an owned snapshot, and every call

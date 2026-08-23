@@ -253,14 +253,27 @@ members in total, nineteen of them the crates above.
                       pacer's cadence and time conservation. **Two perform the mutation
                       their requirement's own check asks for**, R-E16's and
                       R-E17's, rather than a developer doing it once by
-                      hand. **Needs no Unity editor and no plugin layout**: the
+                      hand. It also requires a guarded forwarder for every
+                      `[DllImport]` the package declares, and builds more
+                      libraries from `unity/ffi-check/older-library.c`, each
+                      exporting less than the package calls, driving the
+                      package against each in its own `AssemblyLoadContext`.
+                      That file enumerates them; no count lives here.
+                      That is what provokes a package newer than the library
+                      it loads — it passes the version handshake, because
+                      adding a symbol does not move `DS_ABI_VERSION`, and
+                      then fails where .NET binds an import (issue #1308). A
+                      second process would do the same and costs more.
+                      **Needs no Unity editor and no plugin layout**: the
                       library is resolved by explicit path, so nothing here
-                      depends on where a shipped one sits. Needs the .NET SDK,
-                      so it is outside `check`; CI's `unity-ffi` job runs
-                      exactly it. What it cannot see: both halves come from one
-                      tree, so it observes only a disagreement this repository
-                      already contains — a stale shipped binary is
-                      `DsSlice::stride`'s job at run time
+                      depends on where a shipped one sits. Needs the .NET SDK
+                      and a C compiler, so it is outside `check`; CI's
+                      `unity-ffi` job runs exactly it. What it cannot see:
+                      both halves come from one tree, so it observes only a
+                      disagreement this repository already contains — a stale
+                      shipped binary is `DsSlice::stride`'s job at run time,
+                      and it runs on CoreCLR rather than on Mono or IL2CPP,
+                      which is issue #1322
     just unity-editor  R-E10's SECOND check, the only thing in this
                       repository that compiles a Unity `.shader`, and the only
                       one whose PURPOSE is to compile `Runtime/Engine/` —

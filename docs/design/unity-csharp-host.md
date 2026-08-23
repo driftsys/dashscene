@@ -40,8 +40,9 @@ painter reports it, which is P4.
                          |
                          +--> DocumentRange    (where the .dsb is)
                          |
-                         +--> DashsceneRuntime --+--> Native (one DllImport
-                         |    FrameLease --------+     per entry point)
+                         +--> DashsceneRuntime --+--> Native (a forwarder per
+                         |    FrameLease --------+     entry point, over a
+                         |                       |     private DllImport each)
                          |                       |
                          |                 dashscene_ffi (cdylib)
                          |
@@ -278,6 +279,65 @@ is what R-T5 forbids; it goes in the WGSL and is regenerated.
 
 ## Decisions in the binding, each of which is a defect if reversed
 
+**Every `[DllImport]` is private, and every caller goes through a same-named
+forwarder that translates a missing entry point.** .NET binds an import lazily,
+at the first call, so a package built after a symbol arrived and loaded against
+a library from before passes the `ds_abi_version` handshake — adding a symbol
+deliberately does not move `DS_ABI_VERSION` — and then fails at that call with
+an `EntryPointNotFoundException`, which is neither a `DashsceneException` nor a
+`DashsceneAbiMismatchException` and escapes every catch a host is told to write.
+The forwarder turns it into `DashsceneSymbolMissingException`. Story #1124 wrote
+that catch by hand for the one symbol it added; issue #1308 was the other
+fourteen, which had the same exposure and no catch at all.
+
+Three details are the design rather than the mechanism:
+
+- **A forwarder per import, not one wrapper taking a delegate.** The issue asked
+  for the second, and it allocates: a call passed as a closure costs a display
+  class and a delegate, and `Tick`, `AcquireFrame` and the lease release are
+  per-frame calls. R-T4 bounds a frame's CPU cost and this document tracks the
+  allocation half of it, so a per-frame allocation to serve a first-call failure
+  is the wrong trade. **The trade is an allocation against a call frame, not
+  against nothing**: a `try` block entered and not thrown through allocates
+  nothing and adds no work at run time, but a method carrying one may not be
+  inlined, so each of these is a real call. Neither side of that is measured
+  here, and the runtime that ships this package is not the one any gate here
+  runs (issue #1322).
+- **The symbol name comes from `[CallerMemberName]`**, so it is the forwarder's
+  own name. A literal per forwarder is one copy-paste from naming a symbol that
+  resolved perfectly well, and nothing downstream could tell.
+- **`Actual` is read from the library, and a library that exports neither the
+  symbol nor `ds_abi_version` gets no translation at all.** That one is not a
+  build of this library, so there is no version to report and no disagreement to
+  describe; its `EntryPointNotFoundException` travels beside the
+  `DllNotFoundException` a host already handles, which is this package's shipped
+  state.
+
+`Dispose` is the one place the translation must not surface as a throw, and two
+routes had to be closed for that to be true. A `ds_runtime_free` that never
+reached the library is recorded on `LastDisposeDetail` with `LastDisposeStatus`
+left at `Ok`, because no call answered a status — and `LastMessage`, the channel
+`Dispose` asks for the text of a free the library **did** refuse, absorbs the
+same failure rather than raising it. A diagnostic channel that throws replaces
+the diagnosis: without that, a library refusing the free and exporting no
+`ds_last_error_message` hands a host a symbol-missing exception where its
+`DsStatus` should be, out of a method running during unwinding.
+
+**`LastDisposeStatus` is not a "was it freed" flag**, and the lease is why: a
+lease release that fails records its own status there and the free that follows
+can still succeed. What holds in every case is that `Dispose` may be called
+again — it returns at once when the runtime was freed and retries when it was
+not.
+
+**A host needs the R-E16 catch wherever it calls, not only around the
+constructor**, and that is the cost of this shape rather than a detail.
+`DashsceneAbiMismatchException` derives from `Exception`, so a
+`catch (DashsceneException)` does not see it — and the translation now reaches
+every entry point, so a tick and a frame acquire can raise it where only a load
+could before. `Samples~/FrameLoop/` carries the catch around the constructor and
+around the load and not around the frame loop; issue #1315 is that half, filed
+rather than fixed because that file belongs to another lane this wave.
+
 **Every `bool` on the surface binds as `byte`.** C's `bool` is one byte and
 .NET's default marshalling for `bool` is the four-byte Win32 `BOOL`, so an
 out-parameter left to the default writes three bytes past its target. Binding
@@ -307,14 +367,15 @@ handle is left live so a later `Dispose` on the owning thread can retry; zeroing
 it would make that retry hit the `_handle == 0` guard and do nothing, turning a
 reported failure into an unrecoverable leak.
 
-Every status other than `Ok` means the runtime was not freed — `WrongThread`
+Every status the FREE answers means the runtime was not freed — `WrongThread`
 from a foreign thread, `FrameLeased` from a release that did not complete,
-`BadHandle` from a double dispose — and all of them are recorded. An earlier
-form reported only `WrongThread` and discarded the rest, and a later one threw,
-which contradicted the reason written beside it. A failing lease release is
-caught rather than propagated for the same reason, and its detail is kept
-alongside the free's rather than overwritten, because it is the usual cause of a
-`FrameLeased` free.
+`BadHandle` from a double dispose — and all of them are recorded. A status the
+lease release answered is a different thing and reads the same, which is why the
+property above is not a "was it freed" flag. An earlier form reported only
+`WrongThread` and discarded the rest, and a later one threw, which contradicted
+the reason written beside it. A failing lease release is caught rather than
+propagated for the same reason, and its detail is kept alongside the free's
+rather than overwritten, because it is the usual cause of a `FrameLeased` free.
 
 **The stride table is derived from `frame_of`, not from the member names.** Two
 of the nineteen arrays do not hold the type their name suggests: `extra_fills`
@@ -470,11 +531,25 @@ declaration up in the loaded library, so a rename fails now rather than in the
 story that first calls one. A lookup proves the name and not the signature; the
 behavioural checks prove the signatures of what they exercise.
 
+**And the lazy bind is provoked rather than argued about.** `just unity-ffi`
+compiles `unity/ffi-check/older-library.c` several ways and hands each build to
+its own copy of the package assembly in its own `AssemblyLoadContext`. A
+resolver is consulted once per library name per assembly and the module is
+cached, and `SetDllImportResolver` throws on a second call for one assembly, so
+the copy that already resolved the real library can never be shown a different
+one; a second context is what can, and a second process would do as well and
+costs more. Each reaches a different failure — a package newer than its library,
+one reporting a version it was not built against, one exporting nothing at all,
+one whose free refuses while the channel describing the refusal cannot bind, one
+whose lease release fails while the free succeeds. **That file is where they are
+enumerated**, and this record deliberately does not count them.
+
 **None of them reads a shipped binary.** The three that build a Rust half build
 both halves from one tree, and the other three read this repository's own
-sources — so all six observe only a disagreement it already contains. A stale
-committed library is what `DsSlice::stride` catches at run time, which is why
-R-E17 makes that check mandatory in the host rather than advisory.
+sources — so all six observe only a disagreement it already contains, the older
+libraries above included: those are built here too, from a C file in this tree.
+A stale committed library is what `DsSlice::stride` catches at run time, which
+is why R-E17 makes that check mandatory in the host rather than advisory.
 
 **And none of them draws.** Five compile, link or execute on the CPU;
 `unity/hlsl-conformance` executes on a graphics device, but as a compute
@@ -583,21 +658,25 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   that painter's declaration is the one in force. It costs nothing today because
   this painter uploads no image at all, and it is the first thing story #1123's
   successor meets. Issue #1292 carries it.
-- **The `catch` that turns a missing entry point into an ABI mismatch is
-  reachable by no gate.** Adding a symbol deliberately does not move
-  `DS_ABI_VERSION`, so a package newer than the library it loads passes the
-  handshake and fails at the first call to the new symbol —
-  `DashsceneSymbolMissingException` is what
-  `LoadDocumentMapped(DocumentRange, uint)` rethrows that as. **A host needs the
-  R-E16 catch at every load site as well as around the constructor** — the base
-  type derives from `Exception`, so a `catch (DashsceneException)` around a load
-  does not see it, and the sample carries both. **`unity/ffi-check` checks the
-  exception's contract and cannot provoke the binding failure**: .NET consults
-  an assembly's `DllImportResolver` once per library name and caches the module,
-  and `SetDllImportResolver` throws on a second call for one assembly, so a gate
-  that has already resolved `dashscene_ffi` to a library exporting the symbol
-  cannot then present one that does not. It needs a second process or a second
-  load context.
+- **Every forwarder is driven against a library that does not export it**, and
+  watched reporting its own symbol — so one that rethrows untranslated, or
+  catches and swallows, fails whichever entry point it belongs to, including the
+  five no managed code calls. `ds_abi_version`'s is the one whose absence is
+  handed back rather than translated, because translating needs a version read
+  from the library and it IS the read; that hand-back is driven too, and it is
+  asserted to name the symbol that failed rather than the version read. Which
+  library stages which absence is `unity/ffi-check/older-library.c`. Measured on
+  pull request #1319: before this drive existed, a bare rethrow in
+  `ds_runtime_draw`'s forwarder, a swallow in `ds_runtime_attach_surface`'s and
+  an import called outside its own `try` in `ds_runtime_resize`'s each left the
+  gate green, and each turns it red now.
+- **The translation is verified on CoreCLR and on no Unity runtime.**
+  `unity/ffi-check` runs under the .NET SDK, and `just unity-editor` loads no
+  native library — so nothing here observes what Mono or IL2CPP does when a
+  symbol is absent. If IL2CPP raises a different type, or resolves at load
+  rather than at the first call, every forwarder's catch is dead code on the
+  target that ships. It cannot be closed while the package ships no native
+  library; issue #1322 carries it.
 - **No native library and no release.** R-E3, R-E18 and R-E21 stay unmet, and
   they are about shipping rather than about this directory: `just host-lib`
   builds the cdylib and nothing places it into the package. Committing it was
@@ -607,15 +686,18 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   managed surface exposes the loaders that need no font cascade; that one takes
   `DsFontFace` arrays whose atlases story #1123 owns. The two mapped loaders are
   wrapped and pass `(null, 0)` for the same reason.
-- **Two fixed behaviours are pinned by nothing**: `ReleaseLease` clearing its
-  managed handle only after the library has released, and `Dispose` reporting a
-  failed free. Both need `ds_runtime_release_frame` or `ds_runtime_free` to fail
-  with a live handle. `DsStatus.Panic` is one route the gate cannot induce;
-  `DsStatus.WrongThread` is another and IS reachable, by disposing from a second
-  thread — so a check can be written and has not been. An earlier draft of this
-  bullet said it could not, which was wrong. Mutating the release ordering back
-  leaves the gate green, measured rather than assumed. Issue #1289 carries the
-  threaded harness it needs.
+- **`ReleaseLease` clearing its managed handle only after the library has
+  released is pinned by nothing**, and `Dispose` is pinned for both of its
+  failing frees. Both need `ds_runtime_release_frame` or `ds_runtime_free` to
+  fail with a live handle, which the older libraries now supply: one where the
+  free never reaches the library, one where it answers a refusal while the
+  channel describing it cannot bind, and one where the lease release answers a
+  failure and the free that follows succeeds. What stays out of reach is
+  `ReleaseLease`'s ordering itself and `DsStatus.WrongThread`, which IS
+  reachable by disposing from a second thread — so a check can be written and
+  has not been. An earlier draft of this bullet said it could not, which was
+  wrong. Mutating the release ordering back leaves the gate green, measured
+  rather than assumed. Issue #1289 carries the threaded harness it needs.
 - **No gate compiles `Samples~/FrameLoop/`.** Not because of the `~`, which only
   hides it from Unity's importer: `package-compat` and `ffi-check` glob
   `Runtime/**/*.cs`, so anything outside `Runtime/` is out of scope wherever it

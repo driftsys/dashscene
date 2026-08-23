@@ -383,15 +383,20 @@ a host that draws its own frames; it does not reverse anything there.
 
 **Which thread schedules it is constrained by a second ruling of the same day.**
 [`the-c-abi-runtime-handle-is-generational.md`](the-c-abi-runtime-handle-is-generational.md)
-makes the runtime table **thread-affine**, so a `ds_runtime_*` call from a
-thread other than the one that created the runtime is a diagnosable bad handle
-rather than a working call. An engine host must therefore decide which of its
-threads owns the runtime, and the answer is not automatically the one an
-engine's callbacks run on. **This clause assumed a `BatchRendererGroup` culling
-callback is invoked off the main thread, and that assumption was wrong** — story
-#1125 read it on 2026-08-21 and it is the main thread; see below. The warning it
-raised was still the right one to raise, because nothing had read it, and story
-#859's data plane is what such a callback reads either way.
+makes the runtime table **thread-affine**, and a handle value unique for the
+life of the process — so a `ds_runtime_*` call from a thread other than the one
+that created the runtime answers `DS_WRONG_THREAD` rather than resolving against
+the calling thread's own table and driving a runtime nobody named. **Thread
+affinity does not give that on its own**, and that record's decision 2 is where
+the uniqueness clause it needs lives: with slots and generations numbered per
+thread, each thread's first runtime takes the same handle value and a foreign
+one resolves. An engine host must therefore decide which of its threads owns the
+runtime, and the answer is not automatically the one an engine's callbacks run
+on. **This clause assumed a `BatchRendererGroup` culling callback is invoked off
+the main thread, and that assumption was wrong** — story #1125 read it on
+2026-08-21 and it is the main thread; see below. The warning it raised was still
+the right one to raise, because nothing had read it, and story #859's data plane
+is what such a callback reads either way.
 
 **Settled by the owner on 2026-08-19 and built by that story**: the callback's
 workers make no call into the library at all. `ds_runtime_acquire_frame` and

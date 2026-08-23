@@ -1365,8 +1365,16 @@ unity-editor unity_version="6000.3.22f1":
 # `docs/decisions/the-native-library-ships-inside-the-unity-package.md` D2, and
 # it is deliberately not exercised here.
 #
-# Needs the .NET SDK, which bootstrap does not install, so it is outside
-# `check`; CI's `unity-ffi` job runs exactly it.
+# **It builds `unity/ffi-check/older-library.c` several ways**, into libraries
+# that export less than the package calls, and presents each to its own copy of
+# the package assembly in its own `AssemblyLoadContext`. That is what provokes
+# issue #1308's failure — a package newer than the library it loads passes the
+# version handshake and fails where .NET binds an import — and it is the reason
+# this recipe now needs a C toolchain as well. That file enumerates the builds;
+# nothing here restates the count.
+#
+# Needs the .NET SDK and a C compiler, neither of which bootstrap installs, so
+# it is outside `check`; CI's `unity-ffi` job runs exactly it.
 #
 # Execute the UPM package's C# P/Invoke declarations against dashscene-ffi.
 unity-ffi:
@@ -1376,6 +1384,15 @@ unity-ffi:
       echo "unity-ffi: the .NET SDK is not installed" >&2
       echo "unity-ffi:   brew install dotnet" >&2
       echo "unity-ffi:   or https://dotnet.microsoft.com/download" >&2
+      exit 1
+    fi
+    # **Beside the SDK check rather than beside its use**, because the point of
+    # naming a prerequisite is to name it before the build: the recipe compiles
+    # `dashscene-ffi` twice and runs `dotnet format` below, and a developer
+    # without a C toolchain should not pay for that before being told.
+    if ! command -v "${CC:-cc}" >/dev/null 2>&1; then
+      echo "unity-ffi: no C compiler (${CC:-cc}); the older-library checks need one" >&2
+      echo "unity-ffi:   xcode-select --install, or apt-get install build-essential" >&2
       exit 1
     fi
     # Presence is not enough, and the failure it leaves is unhelpful: an older
@@ -1426,7 +1443,51 @@ unity-ffi:
       echo "unity-ffi: ${fixture} is missing; the frame checks need a document" >&2
       exit 1
     fi
+
+    # **The older libraries, each exporting less than this package calls** —
+    # they are what let the gate provoke issue #1308's failure instead of
+    # describing it: a package newer than the library it loads passes the
+    # version handshake, because adding a symbol does not move
+    # `DS_ABI_VERSION`, and then fails where .NET binds the import. The gate
+    # presents each to its own copy of the package assembly in its own
+    # `AssemblyLoadContext`; `unity/ffi-check/older-library.c` says what each
+    # build reaches that the others cannot, and it is the one place they are
+    # enumerated.
+    #
+    # C rather than Rust, and compiled here rather than declared as a workspace
+    # member: it includes `dashscene.h`, so the version it reports is the
+    # header's and cannot drift, and this repository already compiles C in a
+    # gate (`just c-abi`). A toolchain is the price, and it is reported rather
+    # than discovered as a `cc: command not found`.
+    case "$(uname -s)" in
+      Darwin) ext=dylib ;;
+      *)      ext=so ;;
+    esac
+    mkdir -p target/debug
+    older="target/debug/libdashscene_ffi_older.${ext}"
+    older_skew="target/debug/libdashscene_ffi_older_skew.${ext}"
+    older_silent="target/debug/libdashscene_ffi_older_silent.${ext}"
+    older_refuses="target/debug/libdashscene_ffi_older_refuses.${ext}"
+    older_lease="target/debug/libdashscene_ffi_older_lease.${ext}"
+    build_stub() {
+      "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -shared -fPIC ${2} \
+        -I crates/dashscene-ffi/include \
+        unity/ffi-check/older-library.c \
+        -o "${1}"
+    }
+    build_stub "${older}" ""
+    build_stub "${older_skew}" "-DDS_STUB_SKEW=7"
+    build_stub "${older_silent}" "-DDS_STUB_SILENT"
+    build_stub "${older_refuses}" "-DDS_STUB_REFUSES_FREE"
+    build_stub "${older_lease}" "-DDS_STUB_LEASE_REFUSES"
+
     DASHSCENE_FFI_LIB="${lib}" DASHSCENE_FFI_FIXTURE="${fixture}" \
+      DASHSCENE_FFI_STUB="${older}" \
+      DASHSCENE_FFI_STUB_SKEW="${older_skew}" \
+      DASHSCENE_FFI_STUB_SILENT="${older_silent}" \
+      DASHSCENE_FFI_STUB_REFUSES_FREE="${older_refuses}" \
+      DASHSCENE_FFI_STUB_LEASE_REFUSES="${older_lease}" \
+      DASHSCENE_PACKAGE="unity/com.driftsys.dashscene" \
       dotnet run --project unity/ffi-check
 
 # The committed probe table, evaluated through the GENERATED HLSL.

@@ -116,16 +116,29 @@ namespace Driftsys.Dashscene
         /// it. Exposed so a host's "not found" message can name what is missing.
         public static string LibraryName => Native.Lib;
 
-        /// What `ds_runtime_free` answered on the last `Dispose`, or
-        /// `DsStatus.Ok` if it has not run or succeeded.
+        /// What the last `Dispose` has to report, or `DsStatus.Ok` if it has
+        /// not run and nothing went wrong.
         ///
-        /// **Anything else means the runtime was not freed**, and the handle is
-        /// still live so a later `Dispose` on the owning thread can retry. A
-        /// host that wants to know should read this after disposing; `Dispose`
-        /// deliberately does not throw, because it is called during unwinding.
+        /// **It is not a "was it freed" flag, and the lease is why.** A lease
+        /// release that fails records its own status here and the free that
+        /// follows can still succeed, so `DsStatus.Panic` on a runtime that
+        /// WAS freed is reachable. `Ok` with a non-empty `LastDisposeDetail`
+        /// is the other direction: a call that never reached the library —
+        /// a package newer than the library it loaded, where a symbol that
+        /// build does not export leaves no status to report because nothing
+        /// answered (issue #1308).
+        ///
+        /// **What is true in every case is that `Dispose` may be called
+        /// again**: it returns at once when the runtime was freed, and retries
+        /// on the owning thread when it was not. A host that wants the detail
+        /// should read both properties after disposing; `Dispose` deliberately
+        /// does not throw, because it is called during unwinding.
         public DsStatus LastDisposeStatus { get; private set; }
 
-        /// The library's description of a failed free, or an empty string.
+        /// Why the last `Dispose` did not free, or an empty string.
+        ///
+        /// The library's description of a failed free, or — when the free never
+        /// reached the library — the refusal that says so.
         public string LastDisposeDetail { get; private set; } = string.Empty;
 
         /// Whether a frame lease is outstanding. Every call that would commit is
@@ -241,28 +254,14 @@ namespace Driftsys.Dashscene
 
             var encoded = NulTerminatedUtf8(range.ContainerPath);
 
-            DsStatus status;
-            try
-            {
-                status = Native.ds_runtime_load_document_mapped_range(
-                    Handle(), encoded, range.Offset, range.Length, shownRoot, null, UIntPtr.Zero);
-            }
-            catch (EntryPointNotFoundException)
-            {
-                // **The one mismatch `ds_abi_version` cannot report**, because
-                // adding a symbol deliberately does not move it. A package this
-                // new against a library built before story #1124 passes the
-                // handshake at 2 and then fails here, lazily, where .NET binds
-                // the import. Rethrown as the type R-E16 already makes every
-                // host handle — `DashsceneSymbolMissingException` carries the
-                // whole argument.
-                throw new DashsceneSymbolMissingException(
-                    "ds_runtime_load_document_mapped_range",
-                    Native.AbiVersion,
-                    Native.ds_abi_version());
-            }
-
-            Check(status, "ds_runtime_load_document_mapped_range");
+            // **The catch that was written here is now in `Native`**, and for
+            // every entry point rather than this one. Story #1124 added the
+            // symbol and the hand-written rethrow beside it; issue #1308 was
+            // the other fourteen, which had the same exposure and no catch.
+            Check(
+                Native.ds_runtime_load_document_mapped_range(
+                    Handle(), encoded, range.Offset, range.Length, shownRoot, null, UIntPtr.Zero),
+                "ds_runtime_load_document_mapped_range");
         }
 
         /// Advances the scene by `dt` seconds.
@@ -310,7 +309,21 @@ namespace Driftsys.Dashscene
                 // **Release before rethrowing.** The acquire succeeded, so a
                 // lease is outstanding; throwing straight out would leave it
                 // held and refuse every later tick for the life of the runtime.
-                Native.ds_runtime_release_frame(_handle, 0, out _);
+                try
+                {
+                    Native.ds_runtime_release_frame(_handle, 0, out _);
+                }
+                catch (DashsceneAbiMismatchException)
+                {
+                    // **Swallowed so it cannot replace the diagnosis it is
+                    // rolling back**, which is R-E17's stride mismatch — the
+                    // thing a host must see. A library that cannot bind the
+                    // release cannot have bound the acquire either, since both
+                    // arrived at story #859, so no build from this tree
+                    // reaches here; that is why it is swallowed rather than
+                    // recorded somewhere a host would have to read.
+                }
+
                 throw;
             }
 
@@ -367,9 +380,41 @@ namespace Driftsys.Dashscene
                     LastDisposeStatus = e.Status;
                     LastDisposeDetail = $"the frame lease could not be released: {e.Message}";
                 }
+                catch (DashsceneAbiMismatchException e)
+                {
+                    // **A second catch, because it is a second hierarchy.**
+                    // `DashsceneSymbolMissingException` derives from
+                    // `Exception` through `DashsceneAbiMismatchException`, so
+                    // the catch above does not see it —
+                    // `ds_runtime_release_frame` arrived at story #859 and is
+                    // exactly the kind of symbol a library older than this
+                    // package does not export. Recorded rather than
+                    // propagated, for the reason the catch above is: this runs
+                    // during unwinding. No status is set, because no call
+                    // answered one; the free below reports what it finds.
+                    LastDisposeDetail = $"the frame lease could not be released: {e.Message}";
+                }
             }
 
-            var status = Native.ds_runtime_free(_handle);
+            DsStatus status;
+            try
+            {
+                status = Native.ds_runtime_free(_handle);
+            }
+            catch (DashsceneAbiMismatchException e)
+            {
+                // **The free never reached the library**, so there is no
+                // `DsStatus` to report and nothing was freed. The handle is
+                // left live, as it is for every failed free, and
+                // `LastDisposeStatus` stays `Ok` because no call answered —
+                // which is why that property documents the pair rather than
+                // itself.
+                LastDisposeDetail = LastDisposeDetail.Length == 0
+                    ? e.Message
+                    : $"{LastDisposeDetail}; then ds_runtime_free did not reach the library: "
+                      + e.Message;
+                return;
+            }
 
             // **Cleared only when the runtime was actually freed.** Zeroing it
             // otherwise would make the retry `LastDisposeStatus` invites hit the

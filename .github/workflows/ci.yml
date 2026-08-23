@@ -958,6 +958,14 @@ jobs:
     # `android-build` and `unity-abi` already state: a second copy of the
     # commands in YAML drifts against the justfile.
     #
+    # **It needs a C compiler as well as the .NET SDK**, since issue #1308: the
+    # recipe builds deliberately incomplete libraries from
+    # `unity/ffi-check/older-library.c` to provoke a package newer than the
+    # library it loads. `ubuntu-latest` ships `gcc`, and `just c-abi` already
+    # compiles the same header with the same flags on the same image, so no
+    # setup step is installed here — but the prerequisite is real and the
+    # recipe reports its absence rather than failing as `cc: not found`.
+    #
     # Compile-heavy: skipped when the diff is documentation only, on the same
     # reading of `scripts/is-code-change` that `unity-abi` records — a change
     # under `unity/` is code, so editing a declaration alone still runs this.
