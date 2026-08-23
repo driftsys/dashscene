@@ -158,16 +158,18 @@ v0.15), and `unity/` (the UPM package and the checks over it — three .NET ones
 boundary B's declarations against the Rust layouts, the engine-free half of the
 package against netstandard2.1, and its P/Invoke declarations executed against
 `dashscene-ffi`; a Rust one, `unity/package-gate`, holding the generated HLSL to
-its WGSL source and the shaders to R-E11, R-E12 and R-E10's split;
-`unity/editor-compat`, which compiles the whole package in a Unity editor and is
-the only thing that compiles a Unity `.shader` without building a player;
-`unity/hlsl-conformance`, which evaluates the committed layer-2 probe table
-through the generated `Sdf.hlsl` on a real graphics device and is the only one
-that reads a shader's own computed VALUES back and compares them against a
-committed table (issue #1312); and `unity/render-gate`, which builds a player
-and is the only one that draws a document. The package landed at v0.21 by story
-#1239, gained the C# host at story #1121 and the BatchRendererGroup painter at
-story #1122; it still carries no native library).
+its WGSL source, the shaders to R-E11, R-E12 and R-E10's split, and
+`BrgPainter`'s two diagnostics to the positions their records describe — the
+only gate on a pull request that reads `Runtime/Engine/` at all, since nothing
+in CI compiles it; `unity/editor-compat`, which compiles the whole package in a
+Unity editor and is the only thing that compiles a Unity `.shader` without
+building a player; `unity/hlsl-conformance`, which evaluates the committed
+layer-2 probe table through the generated `Sdf.hlsl` on a real graphics device
+and is the only one that reads a shader's own computed VALUES back and compares
+them against a committed table (issue #1312); and `unity/render-gate`, which
+builds a player and is the only one that draws a document. The package landed at
+v0.21 by story #1239, gained the C# host at story #1121 and the
+BatchRendererGroup painter at story #1122; it still carries no native library).
 
 Seven of those directories hold workspace members that are never published:
 `demo/`, `demo-web/` (the browser host — a canvas, the lean painter, and a

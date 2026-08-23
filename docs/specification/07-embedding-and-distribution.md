@@ -124,9 +124,36 @@ and false for the whole life of a batch-mode editor that renders nothing.
 asset had `useSRPBatcher` true: the global read `False` in `Awake` and `True`
 once a frame had been rendered. So `just unity-render` checks the asset's
 `useSRPBatcher` on the editor side and the global on the player side, after its
-first render — and `BrgPainter`, which reads the global in its own constructor,
-warns that this requirement is unmet on hosts that meet it. Issue #1317 carries
-that.
+first render.
+
+`BrgPainter` reads the global too, and reads it late for the same reason: not in
+its constructor, which runs before a pipeline instance exists in a host that
+builds a painter in `Awake` of the first frame, but from `Draw`, guarded on
+`RenderPipelineManager.currentPipeline`. While that is null the read decides
+nothing and the painter says nothing. It read the global in its constructor
+until issue #1317, and so warned that this requirement was unmet on hosts that
+met it.
+
+**What holds that arrangement, and what does not.** No CI job compiles
+`Runtime/Engine/`, so nothing on a pull request executes any of this.
+`unity/package-gate` pins where the read sits and that it refuses a null
+pipeline, as text over the file — enough to catch the read moving back, not
+enough to say it fires. `just unity-render` measures the rest and needs an
+editor: it asserts a pipeline instance is live once a frame has rendered — the
+premise the painter's guard rests on — and then that the painter logged no R-E5
+warning on a project meeting R-E5. Both halves are needed: without liveness a
+silent painter proves nothing, and without the second a painter warning on every
+frame would still pass. Measured 2026-08-24 over a player whose asset had
+`useSRPBatcher` true: `render pipeline instance live True`,
+`srp batcher after
+the first render True`, `painter R-E5 warnings 0`.
+
+**That check has a measured negative control.** Restoring the read to the
+constructor made the same run report `painter R-E5 warnings 1` and fail, naming
+the warning — so the zero above is a result rather than a check that cannot
+fire. **The other direction is measured by nothing**: no gate here builds a
+project with the batcher off, so the warning firing when it should has still
+never been observed.
 
 **R-E6** — `ProjectSettings/GraphicsSettings.asset` shall set `m_BrgStripping`
 to `2` (`BatchRendererGroupStrippingMode.KeepAll`). _Check:_ read the field.
