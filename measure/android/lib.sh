@@ -51,7 +51,14 @@ ds_adb() {
 ds_has_device() {
     local adb
     adb="$1"
-    [ -n "$("${adb}" devices | sed '1d' | grep -w device || true)" ]
+    # **The state field, matched exactly, not `grep -w device`.** `adb devices`
+    # prints `<serial>\t<state>`, and its no-permissions line ends
+    # `…/tools/device.html]` — `.` and `]` are non-word characters, so `-w`
+    # accepts `device` inside that URL and a device adb refuses to talk to
+    # counts as attached. Verified by piping that literal line through the old
+    # form. `offline`, `unauthorized` and `no permissions` all correctly answer
+    # no here.
+    [ -n "$("${adb}" devices | sed '1d' | awk -F'\t' '$2 == "device"' || true)" ]
 }
 
 # Echoes `emulator` or `device`, and that word decides how every artifact in the
@@ -85,6 +92,28 @@ ds_source() {
         *emulator*) printf 'emulator\n'; return ;;
     esac
     printf 'device\n'
+}
+
+# What to tell an operator when no device is listed, which is not the same as no
+# emulator running.
+#
+# **`ds_has_device` greps for `device`, so an emulator sitting at `offline` fails
+# it while its qemu process is alive.** Telling that operator to start an
+# emulator is the worst available advice: the AVD lock refuses the second one
+# through a log they are not reading, so nothing starts, and if the first
+# recovers they then measure the old emulator believing it is the one they just
+# launched. `docs/design/android-toolchain.md` carries the three ways it goes
+# away and what each wants.
+ds_warn_no_device() {
+    ds_warn "no device is listed by adb, which is not the same as none running."
+    ds_warn "Check first: pgrep -f qemu-system"
+    ds_warn "  a process alive  -> it is listed \`offline\`; do NOT start another,"
+    ds_warn "                      the AVD lock refuses it silently. See"
+    ds_warn "                      docs/design/android-toolchain.md."
+    ds_warn "  nothing alive    -> start one, with -gpu host on a handheld image"
+    ds_warn "                      (issue #1158):"
+    ds_warn "    \$(just _android-sdk)/emulator/emulator -avd <avd> -gpu host &"
+    ds_warn "Or attach a device. Then re-run."
 }
 
 # One line naming what ran this, for a bundle read by someone who was not there.
@@ -180,16 +209,18 @@ ds_pid() {
 # capture that died one second in `readable`.
 #
 # `device-gone` and `capture-died` are two routes to the same silence and the
-# caller can tell them apart cheaply: `ds_has_device` for the first, `kill -0` on
-# the follower for the second. Both are reported because they send a reader to
-# different places. Measured on 2026-08-23, with six worktrees of this repository
-# compiling on one 8-core 16 GB host: the automotive emulator dropped to
-# `offline` to adb while its qemu process was still running, and was killed
-# outright later the same day as the pressure continued. `pgrep -f qemu-system`
-# is what tells those two apart, and neither is visible from adb alone — an
-# empty `adb devices` and a `logcat -d` that does not return look like a slow
-# device and are not one. The host condition is recorded in
-# `docs/design/android-toolchain.md`; this comment does not restate it.
+# caller can tell them apart cheaply: `ds_has_device` for the first, and whether
+# the follower is still one of its own running jobs for the second — **not
+# `kill -0`**, which cannot tell a live follower from a reused pid; see
+# `attach-timing.sh`. Both are reported because they send a reader to
+# different places. **A device that has gone away is not one that is slow**, and
+# the automotive emulator this apparatus was run against has stopped answering
+# in three different ways under memory pressure. **An empty listing means the process is gone and an `offline` one does
+# not**, and the two states behind `offline` cannot be told apart while it is
+# happening — so `device-gone` below is the name of a symptom, not a diagnosis.
+# `docs/design/android-toolchain.md` carries the three, what can and cannot be
+# distinguished, and whose run measured it; this comment carries neither the
+# list nor the figures, because a second copy of them is what drifts.
 #
 # The device is asked about **after** the wait rather than before it: it was
 # there at the start, or there would have been no launch to time.
@@ -197,7 +228,7 @@ ds_capture_state() {
     local log device_present capture_alive
     log="$1"
     # Both `yes` or anything else. The caller passes what `ds_has_device` and
-    # `kill -0` answered; they are arguments rather than calls so that this is
+    # `jobs -pr` answered; they are arguments rather than calls so that this is
     # reachable from `attach-outcome-test.sh` with no device and no follower.
     device_present="$2"
     # **No default.** This is the argument that says whether anything watched,

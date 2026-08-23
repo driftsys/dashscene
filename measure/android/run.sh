@@ -53,13 +53,7 @@ GPU_SCENE="${DS_GPU_SCENE:-surfaces}"
 
 adb=$(ds_adb)
 if ! ds_has_device "${adb}"; then
-    ds_warn "no device attached."
-    ds_warn "Start the emulator **with a host GPU** — on a handheld image the"
-    ds_warn "painter obtains no device in the default mode and every frame is"
-    ds_warn "black (issue #1158). The automotive image gives it a SwiftShader"
-    ds_warn "device instead, which draws and is not worth timing:"
-    ds_warn "  \$(just _android-sdk)/emulator/emulator -avd <avd> -gpu host &"
-    ds_warn "Or attach a device. Then re-run."
+    ds_warn_no_device
     exit 1
 fi
 
