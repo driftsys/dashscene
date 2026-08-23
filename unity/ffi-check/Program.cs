@@ -91,6 +91,28 @@ NativeLibrary.SetDllImportResolver(
 Console.WriteLine($"ffi-check: library {libPath}");
 Console.WriteLine($"ffi-check: fixture {fixture}");
 
+// The text seam's inputs: a document that carries text, and the corpus face
+// and sheet to load it with. Refused rather than skipped, on the rule the two
+// above state — a gate that quietly runs fewer checks reports on less than it
+// claims.
+var corpus = Environment.GetEnvironmentVariable("DASHSCENE_FFI_CORPUS");
+if (string.IsNullOrWhiteSpace(corpus) || !Directory.Exists(corpus))
+{
+    Console.Error.WriteLine("ffi-check: set DASHSCENE_FFI_CORPUS to the repository's corpus/.");
+    Console.Error.WriteLine("ffi-check: `just unity-ffi` sets it.");
+    return 2;
+}
+
+var textFixture = Environment.GetEnvironmentVariable("DASHSCENE_FFI_TEXT_FIXTURE");
+if (string.IsNullOrWhiteSpace(textFixture) || !File.Exists(textFixture))
+{
+    Console.Error.WriteLine("ffi-check: set DASHSCENE_FFI_TEXT_FIXTURE to a .dsb carrying text.");
+    Console.Error.WriteLine("ffi-check: `just unity-ffi` points it at goldens/dsb/.");
+    return 2;
+}
+
+Console.WriteLine($"ffi-check: text fixture {textFixture}");
+
 var failures = new List<string>();
 var checks = 0;
 
@@ -123,6 +145,107 @@ void Expect(bool condition, string message)
     }
 }
 
+/// Two floats agree to within a tolerance a float32 round trip can carry.
+///
+/// Exact equality would be sound for most of these — the packer copies or
+/// multiplies — but `1.0f / width` and `range * size / pxPerEm` are computed
+/// twice from the same operands in two orders, and pinning them exactly makes
+/// the check about the compiler rather than about the geometry.
+void Near(float actual, float expected, string what)
+{
+    var tolerance = Math.Max(Math.Abs(expected) * 1e-5f, 1e-6f);
+    if (Math.Abs(actual - expected) > tolerance)
+    {
+        throw new Exception($"{what}: expected {expected}, got {actual}");
+    }
+}
+
+/// One corpus face: a family, a weight, a font file and a committed sheet.
+TextFontFace Face(string family, ushort weight, string font, string atlas)
+{
+    return new TextFontFace
+    {
+        Family = family,
+        Weight = weight,
+        FontBytes = File.ReadAllBytes(Path.Combine(corpus, font)),
+        AtlasPng = File.ReadAllBytes(Path.Combine(corpus, $"atlas/{atlas}/atlas.png")),
+        AtlasMetrics = File.ReadAllBytes(Path.Combine(corpus, $"atlas/{atlas}/atlas.metrics")),
+    };
+}
+
+/// The corpus Inter face with its committed ASCII sheet.
+TextFontFace InterFace() =>
+    Face("Inter", 400, "fonts/inter/Inter-Regular.otf", "inter-ascii");
+
+/// Inter's bold face — the SAME family as `InterFace`, which is what makes the
+/// cascade group the two together whatever order a caller listed them in.
+TextFontFace InterBoldFace() =>
+    Face("Inter", 700, "fonts/inter/Inter-Bold.otf", "inter-ascii-bold");
+
+/// A second family, listed between Inter's two so the two orders differ.
+TextFontFace ArabicFace() =>
+    Face(
+        "Noto Sans Arabic",
+        400,
+        "fonts/noto-sans-arabic/NotoSansArabic-Regular.ttf",
+        "arabic");
+
+/// A PNG's extent, from its own IHDR — big-endian at bytes 16 and 20.
+///
+/// Read here rather than taken from the atlas, so the atlas's own extent is
+/// compared against something other than itself.
+int PngWidth(byte[] png) =>
+    (png[16] << 24) | (png[17] << 16) | (png[18] << 8) | png[19];
+
+int PngHeight(byte[] png) =>
+    (png[20] << 24) | (png[21] << 16) | (png[22] << 8) | png[23];
+
+/// `atlases` with only its first entry — a set that is non-empty and too short.
+///
+/// The one shape that reaches `PackGlyphRuns`'s out-of-range producer: an empty
+/// set is reported as "no atlas set installed" instead, and a complete one
+/// resolves every run.
+TextAtlasSet TruncateToFirst(TextAtlasSet atlases) =>
+    new TextAtlasSet(new[] { atlases[0] });
+
+/// How many glyph instances a frame's runs should place against `atlases`.
+///
+/// **`EmitRun`'s own two skips, recomputed rather than reused**: a glyph the
+/// sheet has no row for, and a quad with no area on either the plane or the
+/// atlas rectangle. Sharing the packer's code would make this an echo; writing
+/// the predicate again is what makes a packer that drops glyphs fail.
+unsafe int ExpectedGlyphInstances(DsFrame frame, TextAtlasSet atlases)
+{
+    var runs = (int)frame.GlyphRuns.CountAsLong;
+    var rows = (GlyphRun*)frame.GlyphRuns.Ptr;
+    var quads = (GlyphQuad*)frame.GlyphQuads.Ptr;
+    var total = 0;
+    for (var r = 0; r < runs; r++)
+    {
+        var run = rows[r];
+        if (!atlases.TryGet(run.Atlas, out var atlas))
+        {
+            continue;
+        }
+        for (var g = 0u; g < run.Glyphs.Count; g++)
+        {
+            if (!atlas.TryGlyph(quads[run.Glyphs.Offset + g].GlyphId, out var glyph))
+            {
+                continue;
+            }
+            var w = (glyph.PlaneEm.E2 - glyph.PlaneEm.E0) * run.Size;
+            var h = (glyph.PlaneEm.E3 - glyph.PlaneEm.E1) * run.Size;
+            var aw = glyph.AtlasPx.E2 - glyph.AtlasPx.E0;
+            var ah = glyph.AtlasPx.E3 - glyph.AtlasPx.E1;
+            if (w > 0.0f && h > 0.0f && aw > 0.0f && ah > 0.0f)
+            {
+                total++;
+            }
+        }
+    }
+    return total;
+}
+
 // ------------------------------------------------------------ symbol resolution
 
 Check("every declared entry point resolves in the library", () =>
@@ -146,6 +269,8 @@ Check("every declared entry point resolves in the library", () =>
         "ds_abi_version",
         "ds_last_error_message",
         "ds_runtime_acquire_frame",
+        "ds_runtime_atlas",
+        "ds_runtime_atlas_count",
         "ds_runtime_attach_surface",
         "ds_runtime_detach_surface",
         "ds_runtime_draw",
@@ -790,6 +915,25 @@ object ConstructProbeRuntime()
     }
 }
 
+// One face for a probe call, in the probe's own assembly.
+//
+// **Its bytes are never read.** The call fails where .NET binds the import,
+// before the library sees an argument; what the face has to carry is what
+// `TextFontFace.ThrowIfUnusable` demands, which is a family and some bytes.
+object ProbeFaceList()
+{
+    var faceType = older.Assembly.GetType("Driftsys.Dashscene.TextFontFace")
+        ?? throw new Exception("Driftsys.Dashscene.TextFontFace is gone");
+    var face = Activator.CreateInstance(faceType);
+    faceType.GetProperty("Family").SetValue(face, "Inter");
+    faceType.GetProperty("FontBytes").SetValue(face, new byte[] { 1, 2, 3, 4 });
+
+    var list = (System.Collections.IList)Activator.CreateInstance(
+        typeof(List<>).MakeGenericType(faceType));
+    list.Add(face);
+    return list;
+}
+
 // What a probe call threw, unwrapped from reflection's own exception.
 Exception ProbeThrow(Func<object> call)
 {
@@ -1073,6 +1217,18 @@ Check("every managed entry point a host can call reports the missing symbol", ()
             () => Call("Tick", new[] { typeof(float) }, new object[] { 0.016f })),
         ("ds_runtime_acquire_frame",
             () => Call("AcquireFrame", Type.EmptyTypes, null)),
+        // Story #1123 wrapped the loader that takes a font cascade, so it moves
+        // out of the "declared and unreachable" list below and is driven like
+        // the other four.
+        ("ds_runtime_load_document_with_text",
+            () => Call(
+                "LoadDocumentWithText",
+                new[] { typeof(byte[]), ProbeFaceList().GetType().GetInterfaces()
+                    .First(i => i.IsGenericType
+                                && i.GetGenericTypeDefinition() == typeof(IReadOnlyList<>)) },
+                new object[] { new byte[] { 1, 2, 3, 4 }, ProbeFaceList() })),
+        ("ds_runtime_atlas_count",
+            () => Call("ReadAtlases", Type.EmptyTypes, null)),
     };
 
     // **Every import is accounted for, or this list is not total.** The
@@ -1094,19 +1250,26 @@ Check("every managed entry point a host can call reports the missing symbol", ()
         // Reached only after a call returned a failing status, which is what
         // the refusing-free and refusing-release libraries produce.
         "ds_last_error_message",
+        // Reached only after `ds_runtime_atlas_count` returns a non-zero count,
+        // which no library here can stage: the count is itself missing from
+        // every stub, so `ReadAtlases` throws before it. Driving it needs a
+        // stub that exports the count and not the atlas, which belongs in
+        // `unity/ffi-check/older-library.c` beside the five that are there.
+        // Its forwarder is covered structurally by the check above.
+        "ds_runtime_atlas",
     };
 
     var noWrapper = new SortedSet<string>(StringComparer.Ordinal)
     {
-        // Four belong to a host that hands dashscene a surface, which a Unity
-        // host does not do, and the fifth takes the font cascade whose atlases
-        // story #1123 owns. They are declared because an unbound symbol is an
-        // ungated one, and the forwarder drive is what covers them.
+        // All four belong to a host that hands dashscene a surface, which a
+        // Unity host does not do. They are declared because an unbound symbol
+        // is an ungated one, and the forwarder drive is what covers them.
+        // `ds_runtime_load_document_with_text` was the fifth until story #1123
+        // wrapped it; it is driven above.
         "ds_runtime_attach_surface",
         "ds_runtime_detach_surface",
         "ds_runtime_draw",
         "ds_runtime_resize",
-        "ds_runtime_load_document_with_text",
     };
 
     var covered = new SortedSet<string>(driven.Select(d => d.Symbol), StringComparer.Ordinal);
@@ -1764,8 +1927,8 @@ Check("the packer turns a real frame into instances (D5)", () =>
     {
         var kind = packer.Paint[i * 4];
         Expect(
-            kind <= (uint)PaintKindTag.Stroke,
-            $"instance {i} carries kind {kind}, which is not one of the three declared");
+            kind <= (uint)PaintKindTag.Text,
+            $"instance {i} carries kind {kind}, which is not one of the four declared");
     }
 
     // The heap is sized as the layout says: solids are one `float4` each and
@@ -2032,6 +2195,628 @@ Check("the opaque material class refuses each thing it cannot express (P4)", () 
         foreach (var handle in pinned)
         {
             handle.Free();
+        }
+    }
+});
+
+// -------------------------------------------------------------- the text seam
+
+// **The half of story #1123 that has no Unity type in it, executed.** The sheet
+// a glyph run samples crosses on its own call rather than in the frame, and the
+// atlas set, the packer's glyph geometry and the run heap are all engine
+// independent — so this gate can run all of it. What it cannot do is draw: the
+// material, the texture and the draw commands are `Runtime/Engine/`, which
+// needs an editor.
+//
+// **Four of #851's six rules are pinned here and two are not**, and saying which
+// is the point: rules 2, 3, 4 and 6 are asserted below against the row the
+// packer wrote. Rule 1 — a linear, unmipped, bilinear texture — lives in
+// `Runtime/Engine/AtlasTexture.cs`, which this gate cannot compile; rule 5, the
+// median3 resolve, is held by `unity/package-gate` re-deriving `Sdf.hlsl` from
+// the WGSL, and the CALLER of it is held by nothing.
+
+Check("a document loaded with faces reports its atlas, and one without reports none", () =>
+{
+    using (var runtime = new DashsceneRuntime())
+    {
+        runtime.LoadDocumentWithText(File.ReadAllBytes(textFixture), new[] { InterFace() });
+        var atlases = runtime.ReadAtlases();
+        Expect(atlases.Count == 1, $"one face carrying a sheet gave {atlases.Count} atlases");
+
+        var atlas = atlases[0];
+        var png = File.ReadAllBytes(Path.Combine(corpus, "atlas/inter-ascii/atlas.png"));
+
+        // **The extent against the sheet's own IHDR**, not against itself. The
+        // C# `DsAtlas` is a third declaration of the header's struct and its
+        // four scalars are all four bytes wide, so a `Width`/`Height` swap is
+        // invisible to `Marshal.SizeOf` and to every check that reads them back
+        // through the same two members. The corpus sheets are 512 x 256, so the
+        // swap is visible here.
+        Expect(
+            atlas.Width == PngWidth(png) && atlas.Height == PngHeight(png),
+            $"the atlas reports {atlas.Width} x {atlas.Height} and the sheet's IHDR "
+            + $"declares {PngWidth(png)} x {PngHeight(png)}");
+
+        // **And the other two scalars, by domain rather than by literal.** A
+        // `PxPerEm`/`DistanceRangePx` swap reads a float's bit pattern as an
+        // integer — around 1.08 billion for a range of 4 — and an integer's as
+        // a denormal float. Neither survives a plausible range, and both
+        // survive `> 0`, which is what an earlier version of this check tested.
+        Expect(
+            atlas.PxPerEm > 8 && atlas.PxPerEm <= 4096,
+            $"px_per_em is {atlas.PxPerEm}, which is outside any size a sheet is baked at "
+            + "— the likeliest cause is that it and distance_range_px are exchanged");
+        Expect(
+            atlas.DistanceRangePx >= 0.5f && atlas.DistanceRangePx <= 64.0f,
+            $"the distance range is {atlas.DistanceRangePx} atlas texels, which is outside "
+            + "any range a sheet is baked with");
+
+        Expect(atlas.GlyphCount > 0, "the sheet places no glyph");
+
+        // **The bytes, not merely a non-empty array.** The whole reason the
+        // sheet crosses rather than being paired up host-side is that an atlas
+        // index is a font slot; a check that only counted bytes would pass over
+        // an export that handed back the wrong face's sheet.
+        Expect(
+            atlas.Png.Length == png.Length && atlas.Png.AsSpan().SequenceEqual(png),
+            $"the sheet that crossed is {atlas.Png.Length} bytes and the corpus file is "
+            + $"{png.Length}");
+    }
+
+    using (var runtime = new DashsceneRuntime())
+    {
+        // The same document, loaded WITHOUT faces. "No document" and "a
+        // document with no text" are different answers, and this is the second.
+        runtime.LoadDocument(File.ReadAllBytes(textFixture));
+        Expect(
+            runtime.ReadAtlases().Count == 0,
+            "a document loaded without faces reported an atlas");
+    }
+});
+
+Check("an atlas index is a font slot, and the C# loop reads each one (#1123 D2)", () =>
+{
+    // **Three faces, with one family's two listed non-contiguously.** The
+    // cascade groups by family before flattening, so slot 1 is Inter's BOLD
+    // sheet — the host's face 2 — and slot 2 is the Arabic one. A host pairing
+    // by its own array index would upload the Arabic sheet for Inter's bold
+    // runs and sample the wrong glyphs rather than fail.
+    //
+    // It is also what makes the C# loop that walks the set mean anything.
+    // With one atlas, `ds_runtime_atlas(handle, i, …)` and
+    // `ds_runtime_atlas(handle, 0, …)` are the same call, so a loop that read
+    // index 0 every time would pass — and that loop is where a host would lose
+    // the very property this story exists to establish.
+    using var runtime = new DashsceneRuntime();
+    runtime.LoadDocumentWithText(
+        File.ReadAllBytes(textFixture),
+        new[] { InterFace(), ArabicFace(), InterBoldFace() });
+
+    var atlases = runtime.ReadAtlases();
+    Expect(atlases.Count == 3, $"three faces with sheets gave {atlases.Count} atlases");
+
+    var regular = File.ReadAllBytes(Path.Combine(corpus, "atlas/inter-ascii/atlas.png"));
+    var bold = File.ReadAllBytes(Path.Combine(corpus, "atlas/inter-ascii-bold/atlas.png"));
+    var arabic = File.ReadAllBytes(Path.Combine(corpus, "atlas/arabic/atlas.png"));
+
+    Expect(atlases[0].Png.AsSpan().SequenceEqual(regular), "slot 0 is not Inter's regular sheet");
+    Expect(
+        atlases[1].Png.AsSpan().SequenceEqual(bold),
+        "slot 1 is not Inter's BOLD sheet — the cascade groups a family's faces together "
+        + "whatever order the host listed them in");
+    Expect(
+        !atlases[1].Png.AsSpan().SequenceEqual(arabic),
+        "slot 1 is the host's face 1, which is what pairing by array index would upload");
+    Expect(atlases[2].Png.AsSpan().SequenceEqual(arabic), "slot 2 is not the Arabic sheet");
+});
+
+Check("an index past the set is NoSuchAtlas, and the package's enum names it", () =>
+{
+    // **Provoked by a real call, not read out of the header.** The value the
+    // library returns is the contract; what this asserts is that the package's
+    // own `DsStatus` has a member for it, so a host can write
+    // `case DsStatus.NoSuchAtlas:` rather than matching a bare 20. A status the
+    // library can return and the enum does not name is silent everywhere else:
+    // `DashsceneException.Status` carries it, `ToString` prints the number, and
+    // nothing fails.
+    using var runtime = new DashsceneRuntime();
+    runtime.LoadDocumentWithText(File.ReadAllBytes(textFixture), new[] { InterFace() });
+    var atlases = runtime.ReadAtlases();
+    Expect(atlases.Count == 1, "one face gave one atlas to index past");
+
+    var status = NativeText.ds_runtime_atlas(
+        (ulong)typeof(DashsceneRuntime)
+            .GetField("_handle", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .GetValue(runtime)!,
+        (uint)atlases.Count,
+        out var atlas);
+
+    Expect(
+        status == DsStatus.NoSuchAtlas,
+        $"an index past the set answered {status} ({(int)status}), not NoSuchAtlas");
+    // **The naming half is enforced by the compiler**, on the line above: the
+    // file does not build unless `DsStatus.NoSuchAtlas` exists. What this adds
+    // is the direction a compiler cannot see — a value this gate provokes that
+    // the enum has no member for at all, which is what a FUTURE status added to
+    // the library and not to the package would be.
+    Expect(
+        Enum.IsDefined(typeof(DsStatus), status),
+        $"the library returned {(int)status} and the package's DsStatus has no member for "
+        + "it, so a host cannot branch on the discriminant the header calls the contract");
+    Expect(
+        atlas.Png.Ptr == IntPtr.Zero && atlas.Glyphs.Ptr == IntPtr.Zero
+            && atlas.Width == 0 && atlas.Height == 0 && atlas.PxPerEm == 0,
+        "a refused atlas was not emptied, so a caller that ignored the status would "
+        + "describe the atlas it asked about last");
+});
+
+Check("reading atlases with no document is refused rather than answered as none", () =>
+{
+    using var runtime = new DashsceneRuntime();
+    try
+    {
+        runtime.ReadAtlases();
+        throw new Exception("ReadAtlases succeeded with no document loaded");
+    }
+    catch (DashsceneException e)
+    {
+        Expect(e.Status == DsStatus.NoDocument, $"status was {e.Status}");
+    }
+});
+
+Check("the copied glyph table is sorted, and TryGlyph finds every row in it", () =>
+{
+    using var runtime = new DashsceneRuntime();
+    runtime.LoadDocumentWithText(File.ReadAllBytes(textFixture), new[] { InterFace() });
+    var atlases = runtime.ReadAtlases();
+    var atlas = atlases[0];
+
+    // **The COPY, not the exported table.** The Rust side asserts the exported
+    // rows are sorted; `TryGlyph` binary-searches the managed array this
+    // package built from them, and nothing else reads it. A copy that dropped
+    // or reordered rows would make some searches miss, and a miss is a
+    // legitimate outcome here — a space has no quad — so it is silent.
+    unsafe
+    {
+        using var lease = runtime.AcquireFrame();
+        var frame = lease.Frame;
+        var runs = (int)frame.GlyphRuns.CountAsLong;
+        Expect(runs > 0, "the text fixture staged no glyph run");
+
+        var rows = (GlyphRun*)frame.GlyphRuns.Ptr;
+        var quads = (GlyphQuad*)frame.GlyphQuads.Ptr;
+        var placed = 0;
+        var missed = 0;
+        for (var r = 0; r < runs; r++)
+        {
+            var run = rows[r];
+            Expect(
+                atlases.TryGet(run.Atlas, out _),
+                $"run {r} names atlas {run.Atlas} and the set holds {atlases.Count}");
+            for (var g = 0u; g < run.Glyphs.Count; g++)
+            {
+                var id = quads[run.Glyphs.Offset + g].GlyphId;
+                if (atlas.TryGlyph(id, out var found))
+                {
+                    Expect(found.GlyphId == id, $"TryGlyph({id}) answered row {found.GlyphId}");
+                    placed++;
+                }
+                else
+                {
+                    missed++;
+                }
+            }
+        }
+        Expect(placed > 0, "no glyph of any run resolved against the sheet");
+
+        // **Every id the sheet holds is findable.** `placed > 0` alone passes
+        // with a search that misses the table's upper half — measured as a
+        // mutation of `TryGlyph`'s initial `hi`. This walks the ids the search
+        // itself reports and asserts the count matches the table's own, which
+        // no partial search can satisfy.
+        var reachable = 0;
+        for (uint id = 0; id <= ushort.MaxValue; id++)
+        {
+            if (atlas.TryGlyph(id, out _))
+            {
+                reachable++;
+            }
+        }
+        // **Against what the LIBRARY reported, not against the copy's own
+        // length.** `GlyphCount` is `_glyphs.Length`, so comparing the search's
+        // reach to it compares the copy with itself: a copy that dropped half
+        // the rows is perfectly self-consistent, and every other question here
+        // — how many instances a run places, which ids resolve — is asked of
+        // that same copy. `NativeGlyphRows` is the one value that comes from
+        // the other side.
+        Expect(
+            atlas.GlyphCount == atlas.NativeGlyphRows,
+            $"the copy holds {atlas.GlyphCount} rows and the library reported "
+            + $"{atlas.NativeGlyphRows}");
+        Expect(
+            reachable == atlas.NativeGlyphRows,
+            $"TryGlyph finds {reachable} of the sheet's {atlas.NativeGlyphRows} glyphs — a "
+            + "binary search that cannot reach part of the table drops those glyphs "
+            + "silently, because an absent glyph is a legitimate outcome here");
+        Expect(
+            missed < placed,
+            $"{missed} of this document's quads resolved against no glyph and {placed} did "
+            + "— a sheet baked for this text should cover most of it");
+    }
+});
+
+Check("the packer turns glyph runs into instances, and says so when it cannot", () =>
+{
+    using var runtime = new DashsceneRuntime();
+    runtime.LoadDocumentWithText(File.ReadAllBytes(textFixture), new[] { InterFace() });
+    var atlases = runtime.ReadAtlases();
+    using var lease = runtime.AcquireFrame();
+
+    var withText = new FramePacker();
+    withText.Pack(lease.Frame, MaterialClass.UnlitOverlay, atlases);
+
+    var glyphInstances = 0;
+    for (var i = 0; i < withText.InstanceCount; i++)
+    {
+        if (withText.Paint[(i * 4) + 0] == (uint)PaintKindTag.Text)
+        {
+            glyphInstances++;
+            var runRow = withText.Paint[(i * 4) + 1];
+            unsafe
+            {
+                var run = ((GlyphRun*)lease.Frame.GlyphRuns.Ptr)[runRow];
+                // **The instance's atlas is its RUN's atlas**, not merely
+                // non-negative. The painter routes a draw command by this
+                // value, so a constant here would send every glyph to one
+                // sheet — which is the same wrong-letters failure the export
+                // exists to prevent, one layer up.
+                Expect(
+                    withText.InstanceAtlas[i] == (int)run.Atlas,
+                    $"instance {i} names atlas {withText.InstanceAtlas[i]} and its run "
+                    + $"{runRow} names {run.Atlas}");
+            }
+        }
+        else
+        {
+            Expect(
+                withText.InstanceAtlas[i] < 0,
+                $"instance {i} is not a glyph and names an atlas");
+        }
+    }
+
+    // **How many, not merely some.** `glyphInstances > 0` passes with a packer
+    // that emits one glyph per run and drops the rest — every line of text
+    // draws one letter. The expected count is recomputed here from the frame
+    // and the sheet, applying the same two skips `EmitRun` applies: a glyph the
+    // sheet has no row for, and a quad with no area.
+    var expected = ExpectedGlyphInstances(lease.Frame, atlases);
+    Expect(
+        glyphInstances == expected,
+        $"the packer emitted {glyphInstances} glyph instances and the frame's runs place "
+        + $"{expected}");
+    Expect(expected > 1, "the fixture places more than one glyph, or this check proves little");
+
+    Expect(
+        (withText.Diagnostics.Flags & PackDiagnostic.GlyphRun) == 0,
+        "the packer reported glyph runs as undrawn while it drew them");
+    Expect(
+        (withText.Diagnostics.Flags & PackDiagnostic.CorruptRow) == 0,
+        "the packer reported a corrupt row for a committed document");
+
+    var runs = (int)lease.Frame.GlyphRuns.CountAsLong;
+    Expect(
+        withText.GlyphFloats == runs * PaintHeap.GlyphWords * 4,
+        $"the run heap holds {withText.GlyphFloats} floats for {runs} runs at "
+        + $"{PaintHeap.GlyphWords} words each");
+
+    // **The same frame with no atlas set.** P4: a document carrying text
+    // nothing can shade says so rather than coming out blank, and it must draw
+    // no glyph instance at all rather than one that samples nothing.
+    var without = new FramePacker();
+    without.Pack(lease.Frame, MaterialClass.UnlitOverlay, null);
+    Expect(
+        (without.Diagnostics.Flags & PackDiagnostic.GlyphRun) != 0,
+        "a painter with no atlas set drew a document with runs and reported nothing");
+    for (var i = 0; i < without.InstanceCount; i++)
+    {
+        Expect(
+            without.Paint[(i * 4) + 0] != (uint)PaintKindTag.Text,
+            $"instance {i} is a glyph and no atlas was installed");
+    }
+});
+
+Check("a run naming an atlas the installed set does not hold is a corrupt row", () =>
+{
+    // The producer of `CorruptRow` this story adds, reached by installing a set
+    // that is non-empty and too short. Without a second atlas there is no such
+    // set, which is why this check loads two faces and packs against a
+    // one-atlas set.
+    // **The Arabic family FIRST**, so the flattened cascade puts it at slot 0
+    // and Inter — which this document's text style names — at slot 1. Listing
+    // Inter first would leave every run naming slot 0, and a set truncated to
+    // slot 0 would then resolve every one of them: the producer would be
+    // unreachable and this check would pass having exercised nothing.
+    using var runtime = new DashsceneRuntime();
+    runtime.LoadDocumentWithText(
+        File.ReadAllBytes(textFixture),
+        new[] { ArabicFace(), InterFace() });
+    var full = runtime.ReadAtlases();
+    Expect(full.Count == 2, "two faces gave a set to truncate");
+
+    using var lease = runtime.AcquireFrame();
+
+    // A set holding only slot 0, so every run naming slot 1 is out of range.
+    var truncated = TruncateToFirst(full);
+    var packer = new FramePacker();
+    packer.Pack(lease.Frame, MaterialClass.UnlitOverlay, truncated);
+
+    unsafe
+    {
+        var runs = (int)lease.Frame.GlyphRuns.CountAsLong;
+        var rows = (GlyphRun*)lease.Frame.GlyphRuns.Ptr;
+        var outOfRange = 0;
+        for (var r = 0; r < runs; r++)
+        {
+            if (rows[r].Atlas >= 1)
+            {
+                outOfRange++;
+            }
+        }
+
+        // **Refused rather than skipped.** If every run named slot 0 the
+        // truncation would resolve all of them and this check would pass
+        // having exercised nothing — which is the shape of a gate that reports
+        // on an empty set.
+        Expect(
+            outOfRange > 0,
+            "every run names atlas 0, so truncating the set to one entry reaches the "
+            + "out-of-range producer not at all — the face order above is what puts "
+            + "this document's family at a slot above zero, and it has stopped doing so");
+
+        Expect(
+            (packer.Diagnostics.Flags & PackDiagnostic.CorruptRow) != 0,
+            "a run naming an atlas the set does not hold was not reported");
+
+        // **The rect it names, not merely that it named one.** Any constant
+        // satisfies `AffectedRects > 0 && FirstRect >= 0` — including the
+        // `rectCount - 1` this story deliberately stopped using. The first
+        // out-of-range run's own anchor is the answer.
+        var firstAnchor = -1;
+        for (var r = 0; r < runs && firstAnchor < 0; r++)
+        {
+            if (rows[r].Atlas >= 1)
+            {
+                firstAnchor = (int)rows[r].Rect;
+            }
+        }
+        Expect(
+            packer.Diagnostics.FirstRect == firstAnchor,
+            $"the corrupt row was attributed to rect {packer.Diagnostics.FirstRect} and the "
+            + $"first run the set cannot resolve is anchored to {firstAnchor}");
+
+        // **No glyph instance at all for those runs, which a CLAMP would not
+        // satisfy.** Resolving an out-of-range index to slot 0 keeps every
+        // assertion about `InstanceAtlas` true and samples another face's
+        // sheet — the wrong-letters failure this whole export exists to
+        // prevent. The count is what refuses it: only the runs the truncated
+        // set really holds may place anything.
+        var expectedUnderTruncation = ExpectedGlyphInstances(lease.Frame, truncated);
+        var emitted = 0;
+        for (var i = 0; i < packer.InstanceCount; i++)
+        {
+            if (packer.Paint[(i * 4) + 0] == (uint)PaintKindTag.Text)
+            {
+                emitted++;
+            }
+        }
+        Expect(
+            emitted == expectedUnderTruncation,
+            $"the packer emitted {emitted} glyph instances against a set that resolves "
+            + $"{expectedUnderTruncation} — a run outside the set was clamped rather than "
+            + "refused");
+
+        // And its heap row is zeroed, which is what makes an unresolved row
+        // draw nothing rather than the run's colour at half alpha.
+        for (var r = 0; r < runs; r++)
+        {
+            if (rows[r].Atlas < 1)
+            {
+                continue;
+            }
+            var row = r * PaintHeap.GlyphWords * 4;
+            for (var w = 4; w < 8; w++)
+            {
+                Expect(
+                    packer.Glyphs[row + w] == 0.0f,
+                    $"run {r} names an atlas the set does not hold and its heap row's "
+                    + $"word [{w - 4}] is {packer.Glyphs[row + w]}");
+            }
+        }
+    }
+});
+
+Check("the glyph geometry is the reference painter's, rule by rule (#851)", () =>
+{
+    using var runtime = new DashsceneRuntime();
+    runtime.LoadDocumentWithText(File.ReadAllBytes(textFixture), new[] { InterFace() });
+    var atlases = runtime.ReadAtlases();
+    var atlas = atlases[0];
+    using var lease = runtime.AcquireFrame();
+
+    var packer = new FramePacker();
+    packer.Pack(lease.Frame, MaterialClass.UnlitOverlay, atlases);
+
+    unsafe
+    {
+        var rects = (RectEntry*)lease.Frame.Rects.Ptr;
+        var regions = (ClipRegion*)lease.Frame.ClipRegions.Ptr;
+        var runRows = (GlyphRun*)lease.Frame.GlyphRuns.Ptr;
+        var quads = (GlyphQuad*)lease.Frame.GlyphQuads.Ptr;
+
+        // **Every glyph instance, against the quad the packer drew it from.**
+        // Checking only the first would pass over a packer that emitted the
+        // right instance once and the wrong metrics thereafter, and the pairing
+        // has to walk `EmitRun`'s OWN skip set — a glyph the sheet has no row
+        // for AND a quad with no area — or instance N is compared against quad
+        // M the moment one glyph is degenerate.
+        // The text instances, in the order the packer emitted them. A document
+        // whose rects carry fills interleaves those with the glyphs — a rect's
+        // own ink, then the runs anchored to it — so the k-th glyph is not the
+        // k-th instance.
+        var textInstances = new List<int>();
+        for (var i = 0; i < packer.InstanceCount; i++)
+        {
+            if (packer.Paint[(i * 4) + 0] == (uint)PaintKindTag.Text)
+            {
+                textInstances.Add(i);
+            }
+        }
+
+        var checked_ = 0;
+        var runs = (int)lease.Frame.GlyphRuns.CountAsLong;
+        for (var r = 0; r < runs; r++)
+        {
+            var run = runRows[r];
+            var rect = rects[run.Rect];
+            var region = regions[rect.Clip];
+            for (var g = 0u; g < run.Glyphs.Count; g++)
+            {
+                var quad = quads[run.Glyphs.Offset + g];
+                if (!atlas.TryGlyph(quad.GlyphId, out var glyph))
+                {
+                    continue;
+                }
+                var size = run.Size;
+                var w = (glyph.PlaneEm.E2 - glyph.PlaneEm.E0) * size;
+                var h = (glyph.PlaneEm.E3 - glyph.PlaneEm.E1) * size;
+                var aw = glyph.AtlasPx.E2 - glyph.AtlasPx.E0;
+                var ah = glyph.AtlasPx.E3 - glyph.AtlasPx.E1;
+                if (!(w > 0.0f && h > 0.0f && aw > 0.0f && ah > 0.0f))
+                {
+                    continue;
+                }
+
+                Expect(
+                    checked_ < textInstances.Count,
+                    $"glyph {g} of run {r} placed no instance, and the packer emitted "
+                    + $"only {textInstances.Count} — the walk here and EmitRun's skip set "
+                    + "have gone out of step");
+                var instance = textInstances[checked_];
+                var f = instance * 4;
+
+                // **Rule 3: `plane_em` is y-up from the baseline and document
+                // space is y-down.** The top edge SUBTRACTS, and a descender
+                // makes the bottom term negative. Getting this wrong moves
+                // every glyph by its own height, which reads as a baseline
+                // offset rather than as a transposition.
+                Near(packer.Quad[f + 0], quad.X + (glyph.PlaneEm.E0 * size), "quad x");
+                Near(packer.Quad[f + 1], quad.Y - (glyph.PlaneEm.E3 * size), "quad y");
+                Near(packer.Quad[f + 2], w, "quad w");
+                Near(packer.Quad[f + 3], h, "quad h");
+
+                // **Rule 2: `atlas_px` is bottom-left origin and so is a Unity
+                // texture coordinate, so NOTHING is flipped.** `dashscene-skia`
+                // subtracts from the sheet's height because Skia's images are
+                // top-left; the LEAN painter subtracts too, because wgpu's
+                // coordinates are top-left as well — so this is the one place
+                // where copying either reference painter's line is wrong.
+                //
+                // All four components, because `_DsCorners.zw` is what the
+                // shader multiplies by the atlas scale to size the sub-rect: a
+                // packer writing the absolute right and top edges there samples
+                // the wrong texels for every glyph and leaves `xy` correct.
+                Near(packer.Corners[f + 0], glyph.AtlasPx.E0, "atlas left");
+                Near(packer.Corners[f + 1], glyph.AtlasPx.E1, "atlas bottom");
+                Near(packer.Corners[f + 2], aw, "atlas width");
+                Near(packer.Corners[f + 3], ah, "atlas height");
+
+                // **Rule 6: the run's opacity reaches the shader.** It rides on
+                // `_DsShade.x`, which `DsShade` multiplies into the coverage —
+                // the same term, in the same product, in the same place the
+                // lean painter puts it. `outset` is zero: a glyph's ink is the
+                // field inside its own quad.
+                Near(packer.Shade[f + 0], run.Opacity, "run opacity");
+                Near(packer.Shade[f + 1], 0.0f, "glyph outset");
+
+                // The anchor rect's rotation about the anchor rect's pivot, not
+                // the glyph's own: the reference painter turns an anchored run
+                // inside the rect's rotation so a line turns as one, where
+                // turning each glyph about itself leaves the line straight and
+                // the letters tilted.
+                Near(packer.Shade[f + 2], rect.Rotation, "anchor rotation");
+                Near(packer.Pivot[f + 0], rect.X + rect.RotationAnchor.X, "pivot x");
+                Near(packer.Pivot[f + 1], rect.Y + rect.RotationAnchor.Y, "pivot y");
+
+                // The run's clip is its anchor rect's, which is what confines a
+                // glyph to the region the document cut its node to.
+                Expect(
+                    packer.Paint[f + 2] == region.Offset && packer.Paint[f + 3] == region.Count,
+                    $"instance {instance} carries clip range "
+                    + $"({packer.Paint[f + 2]}, {packer.Paint[f + 3]}) and its anchor rect's "
+                    + $"region is ({region.Offset}, {region.Count})");
+
+                checked_++;
+            }
+        }
+
+        Expect(checked_ > 1, "fewer than two glyph instances were checked");
+        Expect(
+            checked_ == textInstances.Count,
+            $"the walk paired {checked_} glyphs and the packer emitted "
+            + $"{textInstances.Count} text instances — the pairing above is comparing "
+            + "shifted rows");
+
+        // **Rule 4: `px_range = distance_range_px * size / px_per_em`**, and
+        // the rest of the run's heap row, per run rather than per glyph.
+        for (var r = 0; r < runs; r++)
+        {
+            var run = runRows[r];
+            var row = r * PaintHeap.GlyphWords * 4;
+            Near(packer.Glyphs[row + 0], run.Color.R, "run colour r");
+            Near(packer.Glyphs[row + 1], run.Color.G, "run colour g");
+            Near(packer.Glyphs[row + 2], run.Color.B, "run colour b");
+            Near(packer.Glyphs[row + 3], run.Color.A, "run colour a");
+            Near(packer.Glyphs[row + 4], 1.0f / atlas.Width, "atlas u scale");
+            Near(packer.Glyphs[row + 5], 1.0f / atlas.Height, "atlas v scale");
+            Near(
+                packer.Glyphs[row + 6],
+                atlas.DistanceRangePx * run.Size / atlas.PxPerEm,
+                "px range");
+            Near(packer.Glyphs[row + 7], 1.0f, "resolved");
+        }
+    }
+});
+
+Check("a run the packer could not resolve gets a ZEROED heap row", () =>
+{
+    // **The gate that makes an unresolved row draw nothing.** A zeroed row has
+    // a zero `px_range`, and `msdf_coverage` then answers 0.5 whatever the
+    // sample was — the run's colour at half alpha over the whole quad, in a
+    // picture that is meant to be empty. It is `resolved`, not the colour, that
+    // stops it. The geometry check reads that word on a RESOLVED row; this is
+    // what reads it on a row the packer could not resolve.
+    using var runtime = new DashsceneRuntime();
+    runtime.LoadDocumentWithText(File.ReadAllBytes(textFixture), new[] { InterFace() });
+    using var lease = runtime.AcquireFrame();
+
+    var packer = new FramePacker();
+    packer.Pack(lease.Frame, MaterialClass.UnlitOverlay, null);
+
+    var runs = (int)lease.Frame.GlyphRuns.CountAsLong;
+    Expect(runs > 0, "the fixture staged no run to leave unresolved");
+    Expect(
+        packer.GlyphFloats == runs * PaintHeap.GlyphWords * 4,
+        "a heap row is written for every run, resolved or not");
+    for (var r = 0; r < runs; r++)
+    {
+        var row = r * PaintHeap.GlyphWords * 4;
+        for (var w = 4; w < 8; w++)
+        {
+            Expect(
+                packer.Glyphs[row + w] == 0.0f,
+                $"run {r}'s second heap word [{w - 4}] is {packer.Glyphs[row + w]} and the "
+                + "run resolved against no atlas — a non-zero px_range or resolved word "
+                + "makes msdf_coverage paint the whole quad");
         }
     }
 });

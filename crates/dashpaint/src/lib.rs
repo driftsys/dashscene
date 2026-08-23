@@ -3203,6 +3203,32 @@ impl Atlas {
             .ok()
             .map(|i| &self.glyphs[i])
     }
+
+    /// Every glyph this atlas places, sorted and unique by `glyph_id`.
+    ///
+    /// The whole table, for a consumer that cannot call
+    /// [`glyph`](Self::glyph) once per glyph because it is not in this
+    /// process: `crates/dashscene-ffi` hands this slice across the C ABI so a
+    /// host can resolve a `glyph_id` on its own side, and a host that copies
+    /// it may binary-search it exactly as `glyph` does.
+    ///
+    /// **A borrow of the field rather than a widening of it.** The field stays
+    /// private, so [`Atlas::new`]'s refusal of an id above `u16::MAX` still
+    /// holds for every row a caller can reach — which is what a `pub` field
+    /// would give away.
+    ///
+    /// **The sortedness is not this crate's guarantee in a release build**, and
+    /// naming it here would name the weaker of the two: [`Atlas::new`] asserts
+    /// it with a `debug_assert!`, which is compiled out. What refuses an
+    /// unsorted table in every profile is `AtlasMetrics::from_bytes` in
+    /// `dashscene-typeset`, which is where every atlas on the **document path**
+    /// comes from — `dashscene-engine`'s `atlas_from_bytes`. [`Atlas::new`] is
+    /// `pub` and takes a caller-supplied `Vec`, so an embedder assembling one
+    /// from parts carries the invariant itself, which is what that
+    /// constructor's own documentation already says of it.
+    pub fn glyphs(&self) -> &[AtlasGlyph] {
+        &self.glyphs
+    }
 }
 
 /// Where one run's quads sit in the [`GlyphRunTable`]'s flat quad array.

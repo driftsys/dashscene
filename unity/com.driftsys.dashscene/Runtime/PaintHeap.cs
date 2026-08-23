@@ -50,6 +50,28 @@ namespace Driftsys.Dashscene
         /// review removed.
         public const int StrokeWords = 2;
 
+        /// `float4`s per glyph-run row: **the run's fill**, then
+        /// `(1/atlas width, 1/atlas height, px range, resolved)`.
+        ///
+        /// **Not the lean painter's `GpuGlyphRun` word for word, and the
+        /// divergence is stated rather than tidied.** That row carries the
+        /// atlas payload's own rectangle inside a shared residency texture —
+        /// `uv = (u, v, sx, sy)` — because `dashscene-gpu` packs every sheet
+        /// into one atlas. This painter gives each sheet its own `Texture2D`
+        /// and its own material, so that origin is structurally `(0, 0)` and
+        /// only the scale survives. Carrying a constant zero to look alike
+        /// would tell a reader a residency atlas exists here, which it does
+        /// not. The half-texel inset `msdf_sample` clamps with is `0.5 *`
+        /// this scale and is derived in the shader rather than stored, for the
+        /// same reason.
+        ///
+        /// `resolved` is `0` for a row nothing wrote, and the shader draws
+        /// nothing for it — the gate `paint.wgsl` carries on both its MSDF
+        /// arms, because a zeroed row has a zero `px_range` and
+        /// `msdf_coverage` then answers `0.5` whatever the sample was, which
+        /// paints the run's colour over the whole quad.
+        public const int GlyphWords = 2;
+
         /// The stop slots a gradient row has, and the hard bound on what one
         /// gradient can carry.
         ///
@@ -89,6 +111,22 @@ namespace Driftsys.Dashscene
         /// [`MaterialClass.LitCutout`]'s shader.
         public const string LitCutout = "Dashscene/LitCutout";
 
+        /// The text shader, which every material class draws its glyph runs
+        /// with.
+        ///
+        /// **Not a [`MaterialClass`], and that is the design rather than an
+        /// omission.** A class decides how a NODE is drawn — blended, opaque,
+        /// or thresholded — and MSDF coverage is partial coverage by
+        /// construction, so a glyph cannot be drawn by the opaque class at all.
+        /// Text is therefore always blended and always drawn through this one
+        /// shader, whichever class the painter was built with, and
+        /// [`For`](PaintShaders.For) does not answer it because no class
+        /// selects it.
+        ///
+        /// It carries its own material per atlas rather than per class: a
+        /// sheet is a texture, and a texture is a per-material binding.
+        public const string Text = "Dashscene/Text";
+
         /// The shader one material class draws with.
         ///
         /// A `switch` with no default arm reaching a throw, rather than an
@@ -114,8 +152,17 @@ namespace Driftsys.Dashscene
             }
         }
 
-        /// Every shader this package ships, in [`MaterialClass`] order.
-        public static readonly string[] All = { UnlitOverlay, LitOpaque, LitCutout };
+        /// Every shader this package ships, for a host that wants to enumerate
+        /// them — the three material classes and the text shader, which is not
+        /// one of them.
+        ///
+        /// **Nothing in this repository reads it, and its order is not a
+        /// contract.** `unity/package-gate` derives the registered set from the
+        /// `const string` declarations above rather than from this array, so a
+        /// shader added there and forgotten here is caught by nothing. Said
+        /// out loud because the alternative is a reader taking the order for a
+        /// meaning it does not carry.
+        public static readonly string[] All = { UnlitOverlay, LitOpaque, LitCutout, Text };
     }
 
     /// One instance's kind, as the shader branches on it.
@@ -134,6 +181,14 @@ namespace Driftsys.Dashscene
 
         /// A stroke band around the node's rounded box.
         Stroke = 2,
+
+        /// One glyph of one run: an MSDF quad sampled from its run's atlas.
+        ///
+        /// **Renumbered, like the three above.** `paint.wgsl` numbers text `7`
+        /// among eight kinds; this painter emits four, and a constant that
+        /// means something different in each painter is worse than one that
+        /// exists in only one of them.
+        Text = 3,
     }
 
     /// Which material class a painter draws a document with.

@@ -104,9 +104,50 @@ namespace Driftsys.Dashscene
         private GraphicsBuffer _paintBuffer;
         private GraphicsBuffer _clipBuffer;
         private GraphicsBuffer _strokeBuffer;
+        private GraphicsBuffer _glyphBuffer;
+
+        /// The document's MSDF sheets, or [`TextAtlasSet.Empty`] until a host
+        /// installs them.
+        ///
+        /// **`Empty` and not `null`**, so `Draw` has one shape to hand the
+        /// packer: a document with no text and a host that has not called
+        /// [`SetAtlases`] produce the same picture, and only the second is a
+        /// mistake worth reporting — which `PackDiagnostic.GlyphRun` does, and
+        /// only when the frame actually carries runs.
+        private TextAtlasSet _atlases = TextAtlasSet.Empty;
+
+        /// One texture, one material and one registration per atlas, in atlas
+        /// order.
+        ///
+        /// **A material per sheet rather than per class.** A texture is a
+        /// per-material binding, so a document naming two faces needs two
+        /// materials over one shader, and the culling callback emits a draw
+        /// command per contiguous run of instances that share one.
+        private Texture2D[] _atlasTextures = Array.Empty<Texture2D>();
+        private Material[] _textMaterials = Array.Empty<Material>();
+        private BatchMaterialID[] _textMaterialIds = Array.Empty<BatchMaterialID>();
+
+        /// Whether [`SetAtlases`] has been called since the last [`Draw`].
+        ///
+        /// **What tells a set installed FOR this document from one left over
+        /// from the last.** `DsFrame.DocumentReplaced` says a load has happened
+        /// and is cleared by the acquire that reports it, so it cannot say
+        /// which side of that load a set came from — and the order the package
+        /// documents puts the install on the reporting frame itself. This bit
+        /// is what makes the drop in [`Draw`] fire on a stale set and not on a
+        /// fresh one.
+        private bool _atlasesInstalledSinceDraw;
 
         private BatchID[] _batches = Array.Empty<BatchID>();
         private int _batchCount;
+
+        /// How many draw commands the last [`Draw`] laid out.
+        ///
+        /// Computed once per frame, where the run boundaries are decided, and
+        /// read by every camera's culling callback. It has to be exactly what
+        /// the emission loop produces: Unity allocates the command array from
+        /// it and that loop writes into it.
+        private int _commandCount;
         private int _instancesPerBatch;
         private int _batchStrideBytes;
 
@@ -114,6 +155,7 @@ namespace Driftsys.Dashscene
         private float[] _paintStaging = Array.Empty<float>();
         private float[] _clipStaging = Array.Empty<float>();
         private float[] _strokeStaging = Array.Empty<float>();
+        private float[] _glyphStaging = Array.Empty<float>();
         private float _cutoff = 0.5f;
         private Bounds _globalBounds = new Bounds(Vector3.zero, Vector3.one * 10000.0f);
         private PackDiagnostics _lastDiagnostics;
@@ -378,6 +420,175 @@ namespace Driftsys.Dashscene
             }
         }
 
+        /// Install the document's MSDF sheets, so its glyph runs can be drawn.
+        ///
+        /// **Once per load, not once per frame.** The set is installed by a
+        /// load and replaced only by another, so a host reads it with
+        /// `DashsceneRuntime.ReadAtlases` when a frame reports
+        /// `DocumentReplaced` and calls this. Nothing here is per commit, which
+        /// is why the sheets cross the C ABI on their own call rather than in
+        /// the frame.
+        ///
+        /// Each sheet becomes one linear, unmipped texture and one material
+        /// over `Dashscene/Text`, registered with the group. Passing `null` or
+        /// an empty set releases what was installed and returns the painter to
+        /// drawing no text.
+        ///
+        /// **A painter with no atlas set still draws every other node**, and
+        /// reports `PackDiagnostic.GlyphRun` for a frame that carries runs. It
+        /// does not throw: a document whose text cannot be shaded is a picture
+        /// missing its text, which P4 asks be named rather than raised.
+        ///
+        /// # Exceptions
+        ///
+        /// [`DashscenePainterException`] when the text shader is missing, or
+        /// for any reason `AtlasTexture.Decode` refuses a sheet — it does not
+        /// decode, its decoded extent disagrees with the one its metrics
+        /// declared, it carries a mip chain, or it came back in an sRGB
+        /// format. That list lives on `Decode` and is not restated here, so a
+        /// reason added there does not have to be added twice. **The painter is left with no atlas set in every one of
+        /// those cases** rather than with a half-built one, so a host that
+        /// catches and carries on draws its document without text rather than
+        /// with some of it.
+        ///
+        /// [`ObjectDisposedException`] once the painter is disposed.
+        public void SetAtlases(TextAtlasSet atlases)
+        {
+            ThrowIfDisposed();
+
+            // **Nothing this painter packed earlier is drawn again**, and that
+            // closes a real window rather than tidying: `OnPerformCulling` runs
+            // when Unity renders, not when `Draw` returns, so a set installed
+            // between the two would meet the PREVIOUS document's instances —
+            // whose atlas indices are meaningful only against the set they were
+            // packed with. The next `Draw` refills both.
+            InstanceCount = 0;
+            _commandCount = 0;
+
+            // Released first, and unconditionally: a second call replaces the
+            // set, and the textures the previous one minted are reachable from
+            // nothing afterwards.
+            ReleaseAtlases();
+
+            if (atlases == null || atlases.Count == 0)
+            {
+                _atlases = TextAtlasSet.Empty;
+                return;
+            }
+
+            if (_brg == null)
+            {
+                // A rung-3 painter constructs no group, so there is nothing to
+                // register a material with. The rung was reported at
+                // construction and `Draw` returns before packing anything, so
+                // this is not a second failure to raise.
+                _atlases = TextAtlasSet.Empty;
+                return;
+            }
+
+            // `Resources.Load`, not `Shader.Find`, for the reason the
+            // constructor gives at length: issue #1313 measured a player build
+            // stripping a shader nothing references, where an editor strips
+            // nothing. The name doubles as the path.
+            var shaderName = PaintShaders.Text;
+            var shader = Resources.Load<Shader>(shaderName);
+            if (shader == null)
+            {
+                throw new DashscenePainterException(
+                    $"the shader '{shaderName}' was not found. It ships in this package at "
+                    + $"Runtime/Resources/{shaderName}.shader and is loaded with "
+                    + "Resources.Load, so it is included in a player build without the host "
+                    + "configuring anything. Two things make it absent: a Git-URL install "
+                    + "that lost the shader's .meta file, or one that lost the .meta of a "
+                    + "folder on that path — both are R-E2.");
+            }
+
+            // **Built into locals and assigned at the end.** A throw partway
+            // through would otherwise leave the painter holding a set whose
+            // later atlases have no material — and the culling callback indexes
+            // that array by an instance's atlas, so it would read past its end
+            // on the first frame carrying such a run.
+            var textures = new Texture2D[atlases.Count];
+            var materials = new Material[atlases.Count];
+            var ids = new BatchMaterialID[atlases.Count];
+            try
+            {
+                for (var i = 0; i < atlases.Count; i++)
+                {
+                    textures[i] = AtlasTexture.Decode(atlases[i], i);
+                    materials[i] = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+                    materials[i].SetTexture(PaintMaterialProperties.Atlas, textures[i]);
+                    ids[i] = _brg.RegisterMaterial(materials[i]);
+                }
+            }
+            catch
+            {
+                for (var i = 0; i < atlases.Count; i++)
+                {
+                    if (ids[i] != default)
+                    {
+                        _brg.UnregisterMaterial(ids[i]);
+                    }
+                    if (materials[i] != null)
+                    {
+                        UnityEngine.Object.DestroyImmediate(materials[i]);
+                    }
+                    if (textures[i] != null)
+                    {
+                        UnityEngine.Object.DestroyImmediate(textures[i]);
+                    }
+                }
+                throw;
+            }
+
+            _atlasTextures = textures;
+            _textMaterials = materials;
+            _textMaterialIds = ids;
+            _atlases = atlases;
+            // Set AFTER the assignments, so a throw above leaves the painter
+            // with no set and no claim that one was installed for this frame.
+            _atlasesInstalledSinceDraw = true;
+        }
+
+        /// Unregister, destroy and forget every text material and sheet.
+        ///
+        /// Called by [`SetAtlases`], by [`Dispose`], and by [`Draw`] when a
+        /// frame reports a document this set was not installed for. Three
+        /// callers freeing the same objects is the reason it is a method: one
+        /// that freed a subset would leak exactly what nobody can reach.
+        private void ReleaseAtlases()
+        {
+            for (var i = 0; i < _textMaterialIds.Length; i++)
+            {
+                // **Unregistered before the group is disposed, not after.** A
+                // `BatchRendererGroup` disposed with a material registered
+                // leaves Unity holding a handle to an object this painter is
+                // about to destroy.
+                if (_brg != null && _textMaterialIds[i] != default)
+                {
+                    _brg.UnregisterMaterial(_textMaterialIds[i]);
+                }
+            }
+            foreach (var material in _textMaterials)
+            {
+                if (material != null)
+                {
+                    UnityEngine.Object.DestroyImmediate(material);
+                }
+            }
+            foreach (var texture in _atlasTextures)
+            {
+                if (texture != null)
+                {
+                    UnityEngine.Object.DestroyImmediate(texture);
+                }
+            }
+            _textMaterialIds = Array.Empty<BatchMaterialID>();
+            _textMaterials = Array.Empty<Material>();
+            _atlasTextures = Array.Empty<Texture2D>();
+            _atlases = TextAtlasSet.Empty;
+        }
+
         /// Pack and upload one committed frame.
         ///
         /// The lease's arrays are read here and nowhere else, so the caller may
@@ -406,7 +617,42 @@ namespace Driftsys.Dashscene
                 return;
             }
 
-            _packer.Pack(lease.Frame, _materialClass);
+            // **A set installed for the PREVIOUS document is dropped.** An
+            // atlas index is meaningful only against the set the load that
+            // staged the runs installed; resolving a new document's runs
+            // against the previous document's sheets would leave every index
+            // that happens to be in range resolving, with `resolved = 1` and a
+            // texture from the wrong document — the glyph ids still resolve,
+            // the rectangles are still in range, and the text draws the wrong
+            // letters rather than failing. That is the hazard
+            // `the-glyph-atlas-crosses-the-c-abi-as-a-call.md` D2 closes for
+            // the face order, reached here through a different door.
+            //
+            // **The test is `_atlasesInstalledSinceDraw`, not
+            // `DocumentReplaced` alone**, and the difference is the whole of
+            // this block. `DocumentReplaced` is raised by every load —
+            // including the first — and is cleared by the acquire that reports
+            // it, so it is true on exactly the frame a host following this
+            // package's own instructions has just called `SetAtlases` for:
+            // acquire, see the flag, read the atlases, install them, draw.
+            // Dropping on the flag alone destroys the set two lines after it
+            // was minted, no later frame raises the flag again, and the
+            // document's text never draws — reported as "no atlas set was
+            // installed", which is the opposite of what happened.
+            //
+            // So what is asked is "was this set installed for the document
+            // this frame belongs to". A `SetAtlases` between the previous
+            // `Draw` and this one answers yes, whichever side of the acquire
+            // it happened on; no call at all, on a frame that reports a
+            // replacement, answers no. A host that installs AFTER drawing
+            // loses one frame of text and is told why.
+            if (lease.DocumentReplaced && !_atlasesInstalledSinceDraw && _atlases.Count > 0)
+            {
+                ReleaseAtlases();
+            }
+            _atlasesInstalledSinceDraw = false;
+
+            _packer.Pack(lease.Frame, _materialClass, _atlases);
             InstanceCount = _packer.InstanceCount;
 
             if (_packer.Diagnostics != _lastDiagnostics)
@@ -428,6 +674,15 @@ namespace Driftsys.Dashscene
             UploadHeap();
             UploadInstances();
             BindGlobals();
+
+            // After `UploadInstances`, which is what settles `_batchCount` and
+            // `_instancesPerBatch` — the two the run boundaries are counted
+            // over.
+            _commandCount = 0;
+            for (var b = 0; b < _batchCount; b++)
+            {
+                _commandCount += CommandsInBatch(b);
+            }
         }
 
         private unsafe JobHandle OnPerformCulling(
@@ -453,13 +708,16 @@ namespace Driftsys.Dashscene
                 return default;
             }
 
-            // How many draw commands: one per batch, split again where a batch
-            // holds more visible instances than one command may carry.
-            var commandCount = 0;
-            for (var b = 0; b < _batchCount; b++)
-            {
-                commandCount += CommandsInBatch(b);
-            }
+            // How many draw commands: one per contiguous run of instances that
+            // share a material, split again where such a run holds more visible
+            // instances than one command may carry.
+            //
+            // **Counted in `Draw` rather than here.** The answer cannot change
+            // between the two — nothing writes `InstanceAtlas` outside `Draw` —
+            // and this callback runs once per camera per frame, so counting
+            // here walked every instance a second time for a value already
+            // known. The emission loop below is the walk that has to happen.
+            var commandCount = _commandCount;
 
             // Unity frees all of these. `Allocator.TempJob` is what the API
             // documents for a callback that returns a handle, and this one
@@ -494,11 +752,12 @@ namespace Driftsys.Dashscene
             var command = 0;
             for (var b = 0; b < _batchCount; b++)
             {
-                var inBatch = InstancesInBatch(b);
-                var emitted = 0;
-                while (emitted < inBatch)
+                var first = b * _instancesPerBatch;
+                var limit = first + InstancesInBatch(b);
+                for (var at = first; at < limit;)
                 {
-                    var run = Math.Min(inBatch - emitted, MaxInstancesPerDrawCommand);
+                    var end = RunEnd(at, limit);
+                    var run = end - at;
 
                     // Every instance's index is relative to its BATCH, not to
                     // the buffer: the metadata offsets are window-relative, so
@@ -506,7 +765,7 @@ namespace Driftsys.Dashscene
                     // window's own property arrays.
                     for (var i = 0; i < run; i++)
                     {
-                        drawCommands->visibleInstances[visible + i] = emitted + i;
+                        drawCommands->visibleInstances[visible + i] = at - first + i;
                     }
 
                     drawCommands->drawCommands[command] = new BatchDrawCommand
@@ -514,7 +773,7 @@ namespace Driftsys.Dashscene
                         visibleOffset = (uint)visible,
                         visibleCount = (uint)run,
                         batchID = _batches[b],
-                        materialID = _materialId,
+                        materialID = MaterialOf(at),
                         meshID = _meshId,
                         submeshIndex = 0,
                         splitVisibilityMask = 0xff,
@@ -523,12 +782,59 @@ namespace Driftsys.Dashscene
                     };
 
                     visible += run;
-                    emitted += run;
                     command++;
+                    at = end;
                 }
             }
 
             return default;
+        }
+
+        /// The material instance `at` draws with.
+        ///
+        /// A glyph draws with its atlas's text material and everything else
+        /// with the class material. **Bounded rather than trusted**: the packer
+        /// only writes an atlas it resolved against the set this painter was
+        /// given, so an index past the material array means the two went out of
+        /// step — and following it would read a `BatchMaterialID` out of a
+        /// managed array's end.
+        ///
+        /// The fallback is the class material, and what that draws is **not
+        /// predictable**: a `DS_KIND_TEXT` instance shaded by a node shader
+        /// takes the final `else` of `DsShade`, which reads `_DsCorners` as
+        /// corner radii where a glyph instance holds atlas texels, and indexes
+        /// the paint heap with a glyph-run row. The point of the bound is that
+        /// it is a wrong picture rather than an out-of-range managed read; it
+        /// is not that the wrong picture is a tidy one.
+        private BatchMaterialID MaterialOf(int at)
+        {
+            var atlas = _packer.InstanceAtlas[at];
+            return atlas >= 0 && atlas < _textMaterialIds.Length
+                ? _textMaterialIds[atlas]
+                : _materialId;
+        }
+
+        /// The end, exclusive, of the run of instances from `at` that share one
+        /// material.
+        ///
+        /// **A draw command names one material, so a run that changes material
+        /// ends here.** Instances are emitted in the lean painter's order and
+        /// the runs are contiguous, so splitting on a change preserves that
+        /// order exactly — which is what decides the picture for a class that
+        /// writes no depth and tests none.
+        ///
+        /// Bounded by R-E20's 256 as well, for the reason
+        /// [`CommandsInBatch`] gives.
+        private int RunEnd(int at, int limit)
+        {
+            var atlas = _packer.InstanceAtlas[at];
+            var max = Math.Min(limit, at + MaxInstancesPerDrawCommand);
+            var end = at + 1;
+            while (end < max && _packer.InstanceAtlas[end] == atlas)
+            {
+                end++;
+            }
+            return end;
         }
 
         /// How many instances batch `b` holds, of the ones being drawn.
@@ -544,15 +850,30 @@ namespace Driftsys.Dashscene
 
         /// How many draw commands batch `b` needs.
         ///
-        /// **R-E20, and the reason it is a division rather than an assertion.**
-        /// At most 256 visible instances per `BatchDrawCommand`, because the
-        /// SRP core shader library declares an array of exactly that length. A
-        /// painter that asserted the bound would refuse documents it can draw;
-        /// splitting is what honours it.
+        /// **R-E20, and the reason it splits rather than asserting.** At most
+        /// 256 visible instances per `BatchDrawCommand`, because the SRP core
+        /// shader library declares an array of exactly that length. A painter
+        /// that asserted the bound would refuse documents it can draw;
+        /// splitting is what honours it. Since story #1123 a run also ends
+        /// where the material changes, which is why this counts rather than
+        /// divides.
         private int CommandsInBatch(int b)
         {
-            var inBatch = InstancesInBatch(b);
-            return (inBatch + MaxInstancesPerDrawCommand - 1) / MaxInstancesPerDrawCommand;
+            // **The same walk the emission loop makes, and that is the whole
+            // reason it is a loop rather than a division.** The count and the
+            // emission must agree exactly: Unity allocates the command array
+            // from this answer and the loop writes into it, so a count taken
+            // any other way writes past the end the moment a batch holds two
+            // materials. A division over 256 was correct while every instance
+            // drew with one material, and story #1123 ended that.
+            var start = b * _instancesPerBatch;
+            var limit = start + InstancesInBatch(b);
+            var commands = 0;
+            for (var at = start; at < limit; at = RunEnd(at, limit))
+            {
+                commands++;
+            }
+            return commands;
         }
 
         private static unsafe T* Malloc<T>(int count) where T : unmanaged
@@ -886,6 +1207,7 @@ namespace Driftsys.Dashscene
             Upload(ref _paintBuffer, ref _paintStaging, _packer.Paints, _packer.PaintFloats);
             Upload(ref _clipBuffer, ref _clipStaging, _packer.ClipBoxes, _packer.ClipFloats);
             Upload(ref _strokeBuffer, ref _strokeStaging, _packer.Strokes, _packer.StrokeFloats);
+            Upload(ref _glyphBuffer, ref _glyphStaging, _packer.Glyphs, _packer.GlyphFloats);
         }
 
         /// Upload one heap table as `float4` rows.
@@ -941,6 +1263,13 @@ namespace Driftsys.Dashscene
             Shader.SetGlobalBuffer(PaintGlobals.Paints, _paintBuffer);
             Shader.SetGlobalBuffer(PaintGlobals.ClipBoxes, _clipBuffer);
             Shader.SetGlobalBuffer(PaintGlobals.Strokes, _strokeBuffer);
+            // The glyph-run rows, bound globally like the other three and
+            // carrying the same collision issue #1297 names: the last painter
+            // to draw supplies the runs every painter shades from. **The sheet
+            // itself is not here** — it is per material, one per atlas, because
+            // a texture is a per-material binding and a document may name more
+            // than one.
+            Shader.SetGlobalBuffer(PaintGlobals.Glyphs, _glyphBuffer);
             Shader.SetGlobalVector(
                 PaintGlobals.Scalars,
                 new Vector4(EdgeWidth, _packer.SolidBase, _packer.GradientBase, 0.0f));
@@ -1019,6 +1348,10 @@ namespace Driftsys.Dashscene
             }
 
             RemoveBatches();
+            // **Before the group goes**, so every material this painter
+            // registered is unregistered while the group that holds it still
+            // exists.
+            ReleaseAtlases();
             ReleaseUnityObjects();
 
             // **Unbound before they are freed.** `BindGlobals` binds these
@@ -1030,6 +1363,7 @@ namespace Driftsys.Dashscene
             Shader.SetGlobalBuffer(PaintGlobals.Paints, (GraphicsBuffer)null);
             Shader.SetGlobalBuffer(PaintGlobals.ClipBoxes, (GraphicsBuffer)null);
             Shader.SetGlobalBuffer(PaintGlobals.Strokes, (GraphicsBuffer)null);
+            Shader.SetGlobalBuffer(PaintGlobals.Glyphs, (GraphicsBuffer)null);
 
             _instanceBuffer?.Dispose();
             _instanceBuffer = null;
@@ -1039,6 +1373,8 @@ namespace Driftsys.Dashscene
             _clipBuffer = null;
             _strokeBuffer?.Dispose();
             _strokeBuffer = null;
+            _glyphBuffer?.Dispose();
+            _glyphBuffer = null;
 
         }
 

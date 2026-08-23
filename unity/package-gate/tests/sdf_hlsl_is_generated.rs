@@ -308,9 +308,16 @@ fn the_heap_row_widths_agree_across_the_three_places_that_state_them() {
          word 1 of the row."
     );
 
+    // The rows the C# and the HLSL state and `paint.wgsl` does not — it
+    // expresses them as structs rather than as a word count, so these are held
+    // to each other only. **`GlyphWords` has no third copy at all**: the lean
+    // painter's glyph-run row carries a residency rectangle this painter has no
+    // equivalent for, so the two rows are deliberately different widths and
+    // `PaintHeap.GlyphWords` says why.
     for (cs_name, hlsl_name) in [
         ("ClipWords", "DS_CLIP_WORDS"),
         ("StrokeWords", "DS_STROKE_WORDS"),
+        ("GlyphWords", "DS_GLYPH_WORDS"),
     ] {
         let a = package_gate::cs_const_int(heap, cs_name)
             .unwrap_or_else(|| panic!("PaintHeap.cs declares {cs_name}"));
@@ -319,6 +326,56 @@ fn the_heap_row_widths_agree_across_the_three_places_that_state_them() {
         assert_eq!(
             a, b,
             "PaintHeap.cs's {cs_name} is {a} and the shading's {hlsl_name} is {b}"
+        );
+    }
+
+    // **The kind tags, which decide which arm of the shader an instance takes
+    // and are silent when they disagree.** `_DsPaint.x` is written from
+    // `PaintKindTag` and branched on against `DS_KIND_*`: a glyph instance
+    // whose tag the shader's text arm does not match falls through to the fill
+    // arm, which reads `_DsCorners` as corner radii — where a glyph holds atlas
+    // texels — and indexes the paint heap with a glyph-run row. Nothing else
+    // compares the two, and every gate stays green.
+    let kinds = [
+        ("FillSolid", "DS_KIND_FILL_SOLID"),
+        ("FillGradient", "DS_KIND_FILL_GRADIENT"),
+        ("Stroke", "DS_KIND_STROKE"),
+        ("Text", "DS_KIND_TEXT"),
+    ];
+    for (member, define) in kinds {
+        let cs = package_gate::cs_enum_value(heap, "PaintKindTag", member)
+            .unwrap_or_else(|| panic!("PaintHeap.cs declares PaintKindTag.{member}"));
+        let hlsl_value = package_gate::hlsl_define_u32(&hlsl, define)
+            .unwrap_or_else(|| panic!("the shading defines {define}"));
+        assert_eq!(
+            cs, hlsl_value,
+            "PaintKindTag.{member} is {cs} and the shading's {define} is {hlsl_value}. The \
+             packer writes one tag and the fragment stage branches on another, so that \
+             kind takes the wrong arm and shades a plausible wrong picture."
+        );
+    }
+    // **The NAMES, not the count**, and every member must carry an explicit
+    // value. A count comparison passes over a member added without one — the
+    // helper reports those as `None` for exactly this reason — and over a
+    // rename that keeps the arity.
+    let members = package_gate::cs_enum_members(heap, "PaintKindTag");
+    for (member, value) in &members {
+        assert!(
+            value.is_some(),
+            "PaintKindTag.{member} carries no explicit value, so what it is depends on \
+             where it sits in the declaration and nothing holds it to a shader define."
+        );
+        assert!(
+            kinds.iter().any(|(named, _)| named == member),
+            "PaintKindTag.{member} is named by no entry in this list, so it is held to no \
+             DS_KIND_* define at all — an instance carrying it takes whichever arm of the \
+             shading matches by accident."
+        );
+    }
+    for (member, _) in kinds {
+        assert!(
+            members.iter().any(|(name, _)| name == member),
+            "this list names PaintKindTag.{member}, which the enum does not declare."
         );
     }
 

@@ -55,12 +55,14 @@ namespace Driftsys.Dashscene
         /// than the parametric rounded box this painter's SDF evaluates.
         VectorField = 1 << 4,
 
-        /// The document carries glyph runs.
+        /// The document carries glyph runs and the painter was given no
+        /// atlas set to shade them from.
         ///
-        /// **Not this painter's to fix.** `dashpaint::Atlas` owns the sheet a
-        /// run samples and has no C representation, so the runs cross the ABI
-        /// and the sheet does not — story #1123. A host can lay text out and
-        /// cannot shade it.
+        /// **A host step, not a missing capability.** The sheets cross the C
+        /// ABI on their own call rather than in the frame, because they belong
+        /// to the load: read them with `DashsceneRuntime.ReadAtlases` whenever
+        /// a frame reports `DocumentReplaced`, and hand them to the painter.
+        /// A painter with none draws every other node and reports this.
         GlyphRun = 1 << 5,
 
         /// The document carries render-target groups. A translucent group's
@@ -87,12 +89,18 @@ namespace Driftsys.Dashscene
         /// A row named a table entry that does not exist, or a range ran past
         /// its table.
         ///
-        /// Nine producers, not the three an earlier revision listed: a rect
-        /// whose paint or clip index is past its table; a clip-box, blur or
-        /// extra-fill range past its own; a stroke row past the stroke table or
-        /// a stroke range of arity above one; a solid or gradient row index past
-        /// its table; a gradient stop range past the stop table; a stacked layer
-        /// tagged `None`; and a tag outside the four boundary B declares.
+        /// A rect whose paint or clip index is past its table; a clip-box,
+        /// blur or extra-fill range past its own; a stroke row past the stroke
+        /// table or a stroke range of arity above one; a solid or gradient row
+        /// index past its table; a gradient stop range past the stop table; a
+        /// stacked layer tagged `None`; a tag outside the four boundary B
+        /// declares; a glyph run naming an atlas the set does not hold, a quad
+        /// range past the quad table, or an anchor the rect walk has already
+        /// passed.
+        ///
+        /// The producers are not enumerated by count here: the list has been
+        /// wrong twice, once as "three" and once as "nine", and the number is
+        /// not what a reader of a diagnostic needs.
         ///
         /// **Not a document defect this painter can repair**, and not one it
         /// can ignore either: the tables are raw pointers, so following the
@@ -197,8 +205,9 @@ namespace Driftsys.Dashscene
                 + "field rather than the parametric rounded box shaded here."),
             new KeyValuePair<PackDiagnostic, string>(
                 PackDiagnostic.GlyphRun,
-                "glyph runs: not drawn — the atlas a run samples does not cross "
-                + "the C ABI (story #1123), so text can be laid out and not shaded."),
+                "glyph runs: not drawn — no atlas set was installed. Read the "
+                + "sheets with DashsceneRuntime.ReadAtlases after each load and "
+                + "hand them to the painter."),
             new KeyValuePair<PackDiagnostic, string>(
                 PackDiagnostic.RenderTargetGroup,
                 "render-target groups: not composited — a translucent group's "

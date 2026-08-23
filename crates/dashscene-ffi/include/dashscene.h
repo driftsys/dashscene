@@ -139,7 +139,20 @@ typedef enum DsStatus {
    * Additive in effect as well as in value: nothing could reach this before the
    * lease existed, so a host built against an older header meets it only on a
    * call it could not have made. DS_ABI_VERSION does not move. */
-  DS_FRAME_LEASED = 19
+  DS_FRAME_LEASED = 19,
+
+  /* ds_runtime_atlas was asked for an index the loaded document's atlas set
+   * does not hold.
+   *
+   * A caller error rather than a document one: a GlyphRun's atlas field always
+   * names a row of the set the same load installed, so an index past the end
+   * came from the caller. NEVER A CLAMP — the nearest atlas is a different
+   * face's sheet, and sampling it draws the wrong glyphs rather than failing.
+   *
+   * Additive in effect as well as in value, like DS_FRAME_LEASED: nothing
+   * could reach it before ds_runtime_atlas existed. DS_ABI_VERSION does not
+   * move. */
+  DS_NO_SUCH_ATLAS = 20
 } DsStatus;
 
 /* Which platform handle ds_runtime_attach_surface's pointers carry. */
@@ -493,10 +506,12 @@ typedef struct DsSlice {
  * a second declaration is a second place for them to go stale, and the layout
  * functions in that crate are how a consumer checks its own.
  *
- * WHAT IS NOT HERE. The glyph atlases. dashpaint::Atlas owns an encoded sheet
- * and a glyph list, it is not a row, and it has no C representation — so the
- * runs cross and the sheet they sample does not. Until that lands you can lay
- * text out and cannot shade it.
+ * WHAT IS NOT HERE. The glyph atlases, and they are not missing — they are
+ * somewhere else. dashpaint::Atlas is an encoded sheet, four scalars and a
+ * glyph list rather than a row, and it belongs to the LOAD rather than to the
+ * commit: nothing here replaces it, so re-reading it per frame would be work
+ * for a value that cannot have changed. Read it with ds_runtime_atlas, once
+ * per load, keyed by a GlyphRun's atlas field. See DsAtlas below.
  */
 typedef struct DsFrame {
   /* The commit this frame is. It moves when a tick commits.
@@ -630,6 +645,110 @@ DsStatus ds_runtime_acquire_frame(DsRuntime runtime, DsFrame *out);
  */
 DsStatus ds_runtime_release_frame(DsRuntime runtime, int32_t drawn,
                                   bool *out_was_leased);
+
+/*
+ * One MSDF glyph atlas: the sheet, the four scalars a painter shades with, and
+ * the per-glyph placement its runs resolve against.
+ *
+ * THE HALF OF THE TEXT SEAM A DsFrame CANNOT CARRY. The frame hands you the
+ * runs and their quads, and a quad is a glyph id and a pen position — from that
+ * alone you can compute neither the quad's corners nor its texture
+ * coordinates. This is what closes it.
+ *
+ * WHY THIS IS A CALL AND NOT A MEMBER OF DsFrame. An atlas set is installed by
+ * a LOAD and is not part of a commit. As a frame member it would say the set
+ * can change per commit — it cannot — and you would have to invent your own
+ * change detection to avoid re-uploading a texture every frame. It would also
+ * need a new boundary-B row type, because dashpaint::Atlas is not a row. And
+ * adding members to DsFrame changes its layout, where adding a symbol does
+ * not, so DS_ABI_VERSION stays where it is.
+ *
+ * THE SHEET CROSSES TOO, AND THAT IS NOT REDUNDANT. png carries the bytes you
+ * handed to ds_runtime_load_document_with_text as DsFontFace.atlas_png, so it
+ * may look as though you already hold them. You hold them and CANNOT TELL
+ * WHICH IS WHICH: an atlas index is the typesetter's font slot, and the
+ * library builds that order by grouping your faces by family — trimmed, and
+ * ASCII-case-insensitively — before flattening family-major. List one family's
+ * faces non-contiguously and the atlas order is not your argument order, so
+ * pairing
+ * by array index samples another face's sheet RATHER THAN FAILING. That is the
+ * hazard DsFontFace's own comment names for the library's internal pairing;
+ * this closes it for you, and costs a pointer and a length because the runtime
+ * already owns the encoded bytes.
+ *
+ * LIFETIME. Every pointer belongs to the runtime and is valid until the next
+ * load or ds_runtime_free, whichever comes first. NOT until the next commit:
+ * unlike a DsFrame, nothing here is replaced by a tick, which is what lets you
+ * upload a sheet once per document. No lease is taken and none is required.
+ */
+typedef struct DsAtlas {
+  /* The sheet's extent in texels. Never zero. */
+  uint32_t width;
+  uint32_t height;
+  /* The size, in texels per em, the sheet was rendered at. Never zero.
+   *
+   * A uint32_t here and a u16 inside the library, widened because a two-byte
+   * member among four-byte ones costs padding this header would have to name
+   * and saves nothing. The domain is unchanged. */
+  uint32_t px_per_em;
+  /* The MSDF distance range in atlas TEXELS. Always finite and greater than
+   * zero.
+   *
+   * Your screen-pixel range is distance_range_px * run.size / px_per_em.
+   * plane_em and atlas_px bake the range into the bounds, so this scales the
+   * sharpness of the edge and not the size. */
+  float distance_range_px;
+  /* uint8_t — the encoded sheet. ALWAYS A PNG: an atlas whose payload was not
+   * one was refused with DS_ATLAS at load, against a header carrying the
+   * extent above. */
+  DsSlice png;
+  /* dashpaint::AtlasGlyph rows — the placement of every glyph that paints,
+   * SORTED AND UNIQUE BY glyph_id, so you may binary-search them. The row type
+   * is boundary B's, held to a C representation by crates/dashpaint-abi like
+   * every row a DsFrame carries.
+   *
+   * A glyph id with no row here draws nothing: an empty outline such as a
+   * space, or a codepoint outside the sheet's charset. Coverage is settled at
+   * build time by the atlas closure, and there is no runtime atlas rebuild to
+   * ask for. */
+  DsSlice glyphs;
+} DsAtlas;
+
+/*
+ * How many glyph atlases the loaded document's runs sample.
+ *
+ * 0 for a document loaded without faces and for the measure-only cascade —
+ * both stage no glyph runs, so neither is an error. A GlyphRun's atlas field
+ * is an index below this count.
+ *
+ * Requires a document: without one this is DS_NO_DOCUMENT and not 0, because
+ * "no document" and "a document with no text" are different answers.
+ *
+ * Takes no lease and is refused by none: the set belongs to the load rather
+ * than to a commit, so this answers the same whether or not a frame is
+ * outstanding.
+ *
+ * Adding this symbol did not move DS_ABI_VERSION.
+ */
+DsStatus ds_runtime_atlas_count(DsRuntime runtime, size_t *out_count);
+
+/*
+ * Describes the atlas at index and writes it to out.
+ *
+ * index is a GlyphRun's atlas field. An index at or past
+ * ds_runtime_atlas_count's answer is DS_NO_SUCH_ATLAS rather than a clamp.
+ *
+ * READ IT ONCE PER LOAD, NOT ONCE PER FRAME. Upload each sheet when a frame
+ * reports document_replaced and keep the texture until the next one.
+ *
+ * ON FAILURE the atlas is emptied — every count 0, every pointer NULL, every
+ * scalar 0, every stride still this build's row size — so a caller that
+ * ignores the status holds an atlas describing nothing rather than
+ * uninitialised memory. The one case with no write is a NULL out itself.
+ *
+ * Adding this symbol did not move DS_ABI_VERSION.
+ */
+DsStatus ds_runtime_atlas(DsRuntime runtime, uint32_t index, DsAtlas *out);
 
 /*
  * Copies the last failure's message into buf as NUL-terminated UTF-8.

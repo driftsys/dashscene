@@ -33,8 +33,8 @@ reached their machine by different routes.
 
 `DS_ABI_VERSION` is **2**. It has moved once, at story #1226, when ten entry
 points changed signature for the generational handle. `DsStatus` has grown from
-nine variants to twenty without moving it, because every addition went on the
-tail.
+nine variants to twenty-one without moving it, because every addition went on
+the tail.
 
 ## Decision
 

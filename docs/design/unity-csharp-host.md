@@ -30,11 +30,10 @@ document load, the tick, the committed frame under a lease, and — since story
 #1122 — the painter that draws those tables through `BatchRendererGroup`.
 
 **What it draws is a subset, and every gap is a named diagnostic.** Fills, both
-solid and gradient, corner radii, strokes, clips, per-node opacity and rotation.
-Not shadows, not blurs, not image fills, not baked vector nodes, not
-render-target groups, and not text — the atlas a glyph run samples does not
-cross the ABI at all until story #1123. `PackDiagnostic` names each one and the
-painter reports it, which is P4.
+solid and gradient, corner radii, strokes, clips, per-node opacity and rotation
+— and, since story #1123, text. Not shadows, not blurs, not image fills, not
+baked vector nodes and not render-target groups. `PackDiagnostic` names each one
+and the painter reports it, which is P4.
 
     Samples~/FrameLoop --+--> CommitPacer      (when to commit)
                          |
@@ -43,6 +42,7 @@ painter reports it, which is P4.
                          +--> DashsceneRuntime --+--> Native (a forwarder per
                          |    FrameLease --------+     entry point, over a
                          |                       |     private DllImport each)
+                         |    TextAtlasSet ------+     NativeText (the atlas)
                          |                       |
                          |                 dashscene_ffi (cdylib)
                          |
@@ -50,7 +50,8 @@ painter reports it, which is P4.
                               (Runtime/     |    PackDiagnostics
                                Engine/)     |
                                             +--> BatchRendererGroup
-                                                 GraphicsBuffer x4
+                                                 GraphicsBuffer x5
+                                                 AtlasTexture (one per sheet)
                                                  Dashscene/* shaders
 
 ## Compile territory: three tiers, and why each file sits where it does
@@ -74,13 +75,14 @@ compatibility level actually is — which is what story #1121 predicted as issue
 **The split is drawn so that what decides the picture stays in the checked
 half.** `FramePacker` reads the committed tables, resolves each rect's kind and
 row, packs the paint heap and produces the five per-instance arrays — all of it
-engine-independent, all of it compiled on every pull request, and all of it
-**executed** by `unity/ffi-check`: against a real committed frame, and against
-synthetic frames built from pinned managed arrays, which is what lets a single
-property be varied at a time. `Runtime/Engine/BrgPainter.cs` holds the
-`BatchRendererGroup` lifetime, the buffer upload and the culling callback, and
-decides nothing about what is drawn. A file that could be written without the
-engine and is not is a defect against that rule.
+engine-independent, all of it compiled on any pull request whose diff is not
+documentation-only, and all of it **executed** by `unity/ffi-check`: against a
+real committed frame, and against synthetic frames built from pinned managed
+arrays, which is what lets a single property be varied at a time.
+`Runtime/Engine/BrgPainter.cs` holds the `BatchRendererGroup` lifetime, the
+buffer upload and the culling callback, and decides nothing about what is drawn.
+A file that could be written without the engine and is not is a defect against
+that rule.
 
 **The exclusion is itself asserted**, in `unity/package-gate`: the `Exclude` in
 `PackageCompat.csproj` is exactly `Runtime/Engine/**/*.cs` and is the only one,
@@ -101,9 +103,10 @@ asserts it compiled, which is a developer's gate and not CI's.
 
 ## The painter, and where each rule it obeys comes from
 
-`BrgPainter` is one `BatchRendererGroup`, one mesh, one material and four
-`GraphicsBuffer`s. Per frame it packs the lease's tables, writes one staging
-buffer and issues draw commands from the culling callback.
+`BrgPainter` is one `BatchRendererGroup`, one mesh, one material for the class
+it was built with plus one per glyph atlas, and five `GraphicsBuffer`s. Per
+frame it packs the lease's tables, writes one staging buffer and issues draw
+commands from the culling callback.
 
 **The instance layout is the lean painter's in size and in what it carries, and
 that is the point.** Five `float4`-sized per-instance properties — the node's
@@ -342,6 +345,148 @@ arithmetic over its arguments with no texture sample, no derivative and no
 uniform, which is what makes it both compute-testable and translatable. Adding a
 function that computes a distance or a coverage ramp to `DashsceneInstance.hlsl`
 is what R-T5 forbids; it goes in the WGSL and is regenerated.
+
+## Text: the sheet crosses on its own call, and the six rules it obeys
+
+Story #1123. `ds_runtime_acquire_frame` hands over the glyph runs and their
+quads, and a quad is a glyph id and a pen position — from that alone neither the
+quad's corners nor its texture coordinates can be computed. The other half
+crosses through `ds_runtime_atlas_count` and `ds_runtime_atlas`, which
+`DashsceneRuntime.ReadAtlases` wraps.
+
+**Once per load, not once per frame.** An atlas set is installed by a load and
+replaced only by another, which is why it is a call rather than three more
+`DsSlice` members on `DsFrame` — that shape would say the set can change per
+tick, and would change `DsFrame`'s layout besides.
+[../decisions/the-glyph-atlas-crosses-the-c-abi-as-a-call.md](../decisions/the-glyph-atlas-crosses-the-c-abi-as-a-call.md)
+carries all of it, including why the **sheet** crosses as well as the glyph
+table: an atlas index is the typesetter's font slot, the cascade groups faces by
+family — trimmed and ASCII-case-insensitive — before flattening, and a host
+pairing sheets by its own array index samples another face's glyphs rather than
+failing.
+
+    DashsceneRuntime.LoadDocumentWithText(bytes, faces)   the cascade
+    DashsceneRuntime.ReadAtlases()  -> TextAtlasSet       the sheets
+    BrgPainter.SetAtlases(set)                            one texture and one
+                                                          material per sheet
+
+**Read the atlases and install them on the frame that reports
+`DocumentReplaced`, before `Draw`** — which is the order this package's sample
+and every doc comment already prescribe. `Draw` drops a set that was installed
+for a previous document, and what tells the two apart is whether `SetAtlases`
+has been called since the last `Draw`, not the flag alone: the flag is raised by
+every load and cleared by the acquire that reports it, so a painter keying on it
+alone would destroy the set the host had just minted.
+
+`NativeText` declares its two imports in a private nested type and reaches them
+through a forwarder each, calling `Native.SymbolMissing` — the shape `Native`'s
+own documentation prescribes for a sibling file and `unity/ffi-check` requires
+of every import in the package (story #1308).
+
+**`LoadDocumentWithText` had to land with it.** The package wrapped only the
+loaders that pass no cascade, so nothing on this side could produce a document
+carrying glyph runs at all — the seam would have had no reachable input.
+
+**The row split is per run and per glyph, and it is the lean painter's.** A
+run's fill and its screen-pixel MSDF range are one value for every glyph it
+places, so they are a row in `_DsGlyphs` that the instance's `_DsPaint.y`
+indexes. Which texels one quad samples is per glyph, so it rides on that
+instance's own `_DsCorners` — the member the other kinds spend on corner radii,
+and which a glyph has no use for. `dashscene-gpu` spends `Instance::corners` the
+same way on the same kind, and writes a **different value**: a top-left
+rectangle, because wgpu's texture coordinates are top-left. Both reference
+painters flip; Unity's coordinates and `atlas_px` are both bottom-left, so this
+one does not, which is why rule 2 says copying either of them is wrong.
+
+**`PaintHeap.GlyphWords` is 2 where the lean painter's row is three words**, and
+the difference is stated rather than tidied: that row carries the atlas
+payload's own rectangle inside a shared residency texture, and this painter
+gives each sheet its own `Texture2D`, so the origin is structurally `(0, 0)` and
+only the scale survives.
+
+**Text is not a fourth `MaterialClass`.** A class decides how a node is drawn —
+blended, opaque, or thresholded — and MSDF coverage is partial coverage by
+construction, so a glyph cannot be drawn by the non-blending opaque class at
+all. `Dashscene/Text` is therefore blended whichever class the painter draws its
+nodes with, and `PaintShaders.For` does not answer it because no class selects
+it. It carries **one material per atlas**, because a sheet is a texture and a
+texture is a per-material binding.
+
+**Two consequences are worth stating rather than discovering, and both are on
+the two lit classes rather than on the overlay class a UI takes.**
+
+`EmitRun` applies none of `PackRect`'s coverage refusals, because those are the
+class's and text does not take a class. So under `MaterialClass.LitOpaque` a
+text node whose anchor rect is refused — a corner radius, a clip, an opacity
+below one — still has its glyphs drawn: the text appears and its background does
+not, and the missing background is reported by name. That is the intended
+reading of "text is always blended whichever class the nodes take", and it is
+the one place a class's refusal applies to half a node.
+
+And `Dashscene/Text` sits in the **transparent** queue, as the overlay class
+does. Against the overlay class that changes nothing — both are in one queue and
+one pass, so submission order decides the picture as it always did. Against
+`LitOpaque` (geometry) or `LitCutout` (alpha test) it does: a render pipeline
+sorts by queue before it sorts by anything a draw command carries, so every
+glyph is submitted after every node fill whatever order the document put them
+in. A later node that overlaps a text node covers its glyphs in both reference
+painters and does not here. This is not fixed by the per-material command split,
+which preserves order only inside one pass, and it is a property of drawing
+blended text beside opaque geometry rather than of this painter.
+
+**The culling callback emits one command per contiguous run of instances that
+share a material**, which preserves the emission order that decides the picture
+— and it is the first thing here that makes the command count depend on
+**which** nodes a document holds rather than on how many, which a 256-instance
+split already did.
+
+### The six rules, and where each one is held
+
+`#851` verified six mechanical rules for this seam on 2026-08-09, and each is
+silent when broken — thin stems, upside-down glyphs, or text at the wrong
+baseline is a plausible wrong picture rather than a failure. **Five of the six
+are held by something that runs in CI. The exception is rule 1**, whose guard is
+a run-time check inside `Runtime/Engine/`, which no CI job compiles and only a
+device runs — so a mutation to it reaches hardware before it reaches a gate. The
+list says which each one is rather than implying they are alike:
+
+1. **The sheet is linear, bilinear, no mips.** `AtlasTexture.Decode` **reads the
+   format back** and refuses an sRGB one, rather than trusting the
+   `linear: true` it asked for — the same posture the painter takes to
+   `BatchRendererGroup.BufferTarget`. **Nothing here runs it**: that file is
+   `Runtime/Engine/`, so a mutation to `mipChain` or `filterMode` reaches a
+   device before it reaches a gate.
+2. **`atlas_px` is bottom-left and so is a Unity UV, so nothing is flipped.**
+   `unity/ffi-check`'s geometry check asserts the bottom edge is the bottom edge
+   and not `height - top`, which is `dashscene-skia`'s convention and would flip
+   every glyph.
+3. **`plane_em` is y-up from the baseline while document space is y-down.** The
+   same check, on all four components of the quad.
+4. **`px_range = distance_range_px * size / px_per_em`.** The same check,
+   against the row the packer wrote.
+5. **The resolve is `median3(sample) - 0.5` then
+   `clamp(sd * px_range + 0.5, 0, 1)`, with `px_range` a uniform.** Not written
+   here at all: `DashsceneInstance.hlsl` calls `msdf_coverage` out of the
+   generated `Sdf.hlsl`, and `unity/package-gate` re-derives that file from the
+   WGSL on every run of the sanity tier — which is in CI. **What is not held is
+   the caller**: a text arm rewritten to take its range from `fwidth` would
+   leave every gate green, and rule 5 exists because that form has a documented
+   failure where `fwidth` returns zero and the division paints a hole.
+6. **`GlyphRun::opacity` reaches the fill alpha.** The same check, on
+   `_DsShade.x`, which `DsShade` multiplies into the coverage.
+
+Two of those were **mutated** rather than reasoned about, on 2026-08-23 against
+`just unity-ffi` on the branch that landed them: reverting the y-up flip fails
+with `quad y: expected 36.40625, got 58.71875`, and adopting Skia's atlas flip
+fails with `atlas bottom: expected 153.5, got 74.5`. Each fails on its own.
+
+**What the sampling composition is, and why it is not generated.** R-T5
+single-sources the _resolve_; `paint.wgsl`'s `msdf_sample` — the map from a
+point in the glyph's quad to a texel in the sheet — has no generated twin,
+because a texture sample's binding does not survive translation. `DsMsdfSample`
+in `DashsceneInstance.hlsl` is that mapping rewritten, and the section above
+draws the line it stays on: the mapping is composition, the resolve is
+arithmetic, and only the second is generated.
 
 ## Decisions in the binding, each of which is a defect if reversed
 
@@ -785,17 +930,31 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   Issue #1314 carries all three. Two narrower gaps sit beside it: nothing holds
   the harness's own pinned probe counts against the table (issue #1323), and
   layer 2's properties are not ported alongside its table (issue #1324).
-- **No text.** Story #1123. `dashpaint::Atlas` owns the sheet a glyph run
-  samples and has no C representation, so the runs cross the ABI and the sheet
-  does not.
+- **No glyph has been drawn, and the half that is checked is the half with no
+  Unity type in it.** Story #1123 landed the seam: the atlas crosses, the packer
+  turns runs into instances, and `unity/ffi-check` executes the geometry, the
+  run heap and the atlas lookup on any pull request whose diff is not
+  documentation-only. The material, the texture and the draw commands are
+  `Runtime/Engine/`, which only a Unity editor compiles and only a device runs —
+  so the sampling itself, the linear texture and the per-atlas draw-command
+  split rest on reading rather than on running.
+- **The `px_range` formula has two copies and nothing compares them.**
+  `dashscene-gpu`'s `gpu_glyph_run` computes
+  `distance_range_px * size /
+  px_per_em` in Rust and `TextAtlas.PixelRange`
+  computes it in C#. The same shape the heap row widths had before
+  `unity/package-gate` held those together; issue #828's portable conformance
+  suite is where the comparison belongs.
 - **The C ABI has no `samples` channel.** `dashpaint::Painter::samples` is how a
   painter declares which image formats it can be handed, and the default —
   `format.is_encoded()` — is what makes a silent painter pay a decode. A Unity
   host sits behind `ds_runtime_acquire_frame` rather than behind the Rust trait,
   so it cannot declare anything: `crates/dashscene-ffi` holds a `GpuPainter` and
   that painter's declaration is the one in force. It costs nothing today because
-  this painter uploads no image at all, and it is the first thing story #1123's
-  successor meets. Issue #1292 carries it.
+  this painter uploads no image FILL at all — story #1123's atlas is a sheet the
+  host decodes itself with `ImageConversion.LoadImage`, which asks the library
+  nothing about formats — and it is the first thing an image-fill story meets.
+  Issue #1292 carries it.
 - **Every forwarder is driven against a library that does not export it**, and
   watched reporting its own symbol — so one that rethrows untranslated, or
   catches and swallows, fails whichever entry point it belongs to, including the
@@ -820,10 +979,12 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   builds the cdylib and nothing places it into the package. Committing it was
   considered and deferred — it is about 9.6 MB of undeltifiable binary in a
   public repository's permanent history for a package that cannot yet draw.
-- **`ds_runtime_load_document_with_text` is declared and not wrapped.** The
-  managed surface exposes the loaders that need no font cascade; that one takes
-  `DsFontFace` arrays whose atlases story #1123 owns. The two mapped loaders are
-  wrapped and pass `(null, 0)` for the same reason.
+- **The two mapped loaders still pass `(null, 0)` for their cascade.** Story
+  #1123 wrapped `ds_runtime_load_document_with_text`, so the byte-taking path
+  can load a document with fonts and sheets — and it is driven against a library
+  that lacks it, like the other five. The mapped pair cannot take a cascade at
+  all, which is the path a shipped document takes: a host that wants both a
+  bounded load and text has neither call.
 - **`ReleaseLease` clearing its managed handle only after the library has
   released is pinned by nothing**, and `Dispose` is pinned for both of its
   failing frees. Both need `ds_runtime_release_frame` or `ds_runtime_free` to

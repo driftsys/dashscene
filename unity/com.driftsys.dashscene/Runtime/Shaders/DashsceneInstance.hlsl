@@ -1,4 +1,5 @@
-// The BRG painter's shading, shared by its three material classes.
+// The BRG painter's shading, shared by its three material classes and by the
+// text shader beside them.
 //
 // **The arithmetic is not here.** Every signed-distance, coverage and gradient
 // function this file calls comes from `Sdf.hlsl`, which is generated from
@@ -16,10 +17,13 @@
 // chance of drawing the same picture, and it is what issue #828's portable
 // conformance suite will be stated over.
 //
-// Three material classes include this file, each defining exactly one of
-// `DASHSCENE_CLASS_UNLIT_OVERLAY`, `DASHSCENE_CLASS_LIT_OPAQUE` or
-// `DASHSCENE_CLASS_LIT_CUTOUT` before it —
-// `docs/decisions/unity-painter-uses-brg.md` D1's three.
+// Four shaders include this file, each defining exactly one of
+// `DASHSCENE_CLASS_UNLIT_OVERLAY`, `DASHSCENE_CLASS_LIT_OPAQUE`,
+// `DASHSCENE_CLASS_LIT_CUTOUT` or `DASHSCENE_CLASS_TEXT` before it. The first
+// three are `docs/decisions/unity-painter-uses-brg.md` D1's material classes;
+// the fourth is **not** a class — MSDF coverage is partial coverage by
+// construction, so a glyph cannot be drawn by the non-blending opaque class at
+// all, and text is always blended whichever class the NODES take.
 
 #ifndef DASHSCENE_INSTANCE_INCLUDED
 #define DASHSCENE_INSTANCE_INCLUDED
@@ -44,17 +48,20 @@
 // Exactly one class, and the shader that includes this says which. A file
 // reached with none defined would compile — silently, as an overlay — which is
 // the failure mode `#error` exists for.
-#if !defined(DASHSCENE_CLASS_UNLIT_OVERLAY) && !defined(DASHSCENE_CLASS_LIT_OPAQUE) && !defined(DASHSCENE_CLASS_LIT_CUTOUT)
-#error "define one of DASHSCENE_CLASS_UNLIT_OVERLAY, DASHSCENE_CLASS_LIT_OPAQUE or DASHSCENE_CLASS_LIT_CUTOUT before including DashsceneInstance.hlsl"
+#if !defined(DASHSCENE_CLASS_UNLIT_OVERLAY) && !defined(DASHSCENE_CLASS_LIT_OPAQUE) && !defined(DASHSCENE_CLASS_LIT_CUTOUT) && !defined(DASHSCENE_CLASS_TEXT)
+#error "define one of DASHSCENE_CLASS_UNLIT_OVERLAY, DASHSCENE_CLASS_LIT_OPAQUE, DASHSCENE_CLASS_LIT_CUTOUT or DASHSCENE_CLASS_TEXT before including DashsceneInstance.hlsl"
 #endif
 // **Two is as wrong as none**, and a first version guarded only the second: a
 // shader defining two compiled, and `unity/package-gate` then read whichever
 // appeared first, so a shader could declare the right class and the wrong one
 // together and pass.
-#if defined(DASHSCENE_CLASS_UNLIT_OVERLAY) && (defined(DASHSCENE_CLASS_LIT_OPAQUE) || defined(DASHSCENE_CLASS_LIT_CUTOUT))
+#if defined(DASHSCENE_CLASS_UNLIT_OVERLAY) && (defined(DASHSCENE_CLASS_LIT_OPAQUE) || defined(DASHSCENE_CLASS_LIT_CUTOUT) || defined(DASHSCENE_CLASS_TEXT))
 #error "exactly one DASHSCENE_CLASS_* may be defined"
 #endif
-#if defined(DASHSCENE_CLASS_LIT_OPAQUE) && defined(DASHSCENE_CLASS_LIT_CUTOUT)
+#if defined(DASHSCENE_CLASS_LIT_OPAQUE) && (defined(DASHSCENE_CLASS_LIT_CUTOUT) || defined(DASHSCENE_CLASS_TEXT))
+#error "exactly one DASHSCENE_CLASS_* may be defined"
+#endif
+#if defined(DASHSCENE_CLASS_LIT_CUTOUT) && defined(DASHSCENE_CLASS_TEXT)
 #error "exactly one DASHSCENE_CLASS_* may be defined"
 #endif
 
@@ -70,6 +77,11 @@
 #define DS_KIND_FILL_SOLID    0u
 #define DS_KIND_FILL_GRADIENT 1u
 #define DS_KIND_STROKE        2u
+// One glyph of one run. Only the text class emits or shades it: MSDF coverage
+// is partial coverage by construction, so a glyph cannot be drawn by the
+// non-blending opaque class at all, and text is therefore always drawn through
+// `Dashscene/Text` whichever class the painter draws its NODES with.
+#define DS_KIND_TEXT          3u
 
 #define DS_GRADIENT_LINEAR  0u
 #define DS_GRADIENT_RADIAL  1u
@@ -82,6 +94,7 @@
 #define DS_GRADIENT_WORDS 12u
 #define DS_CLIP_WORDS      2u
 #define DS_STROKE_WORDS    2u
+#define DS_GLYPH_WORDS     2u
 
 // The paint heap: solid colours and gradient rows in one buffer, at the two
 // bases `_DsGlobals` carries. One buffer rather than two because the lean
@@ -90,6 +103,32 @@
 StructuredBuffer<float4> _DsPaints;
 StructuredBuffer<float4> _DsClipBoxes;
 StructuredBuffer<float4> _DsStrokes;
+
+#ifdef DASHSCENE_CLASS_TEXT
+// One row per glyph run: `(r, g, b, a)` then `(1/atlas width, 1/atlas height,
+// px range, resolved)`. `Runtime/PaintHeap.cs` carries the other copy of the
+// layout, and `unity/package-gate` holds the two together.
+//
+// **Declared for the text class alone**, so the three node classes compile
+// exactly as they did: a `StructuredBuffer` costs a `t` register whether or not
+// anything reads it, and none of them can reach `DS_KIND_TEXT`.
+StructuredBuffer<float4> _DsGlyphs;
+
+// The MSDF sheet this material's runs sample.
+//
+// **Per material, not global**, which is why the name lives in
+// `PaintMaterialProperties` beside `_DsCutoff` rather than in `PaintGlobals`. A
+// document may name more than one sheet — one per face of the cascade — and a
+// texture is a per-material binding, so the painter mints one text material per
+// atlas and the draw commands for a run name the material its sheet is on.
+//
+// The texture is LINEAR and not sRGB: the three channels are distances, not
+// colour. Bilinear, no mips. That is the painter's to set up, and
+// `Runtime/Engine/AtlasTexture.cs` reads the format back rather than assuming
+// it.
+TEXTURE2D(_DsAtlas);
+SAMPLER(sampler_DsAtlas);
+#endif
 
 // (aa, solid base, gradient base, unused).
 //
@@ -287,6 +326,50 @@ float4 DsGradientColour(uint row, float4 bounds, float2 p)
     return gradient_ramp(t, offsets, colours, count);
 }
 
+#ifdef DASHSCENE_CLASS_TEXT
+// One MSDF sample for the fragment at document point `p`.
+//
+// **This is composition and not arithmetic, which is why it is here.** R-T5
+// single-sources the RESOLVE — `median3` and `msdf_coverage` — into `Sdf.hlsl`,
+// generated from the WGSL, and this file calls it. A texture sample cannot be
+// generated from WGSL at all, because its binding is not portable, so
+// `paint.wgsl`'s `msdf_sample` has no generated twin and its mapping is
+// rewritten here. What is rewritten is the mapping and never the resolve.
+//
+// `rect` is the glyph's rectangle in NORMALISED texture coordinates,
+// `[u, v, du, dv]`, all four positive. `quad` is the document-space rectangle
+// it covers, `[x, y, w, h]`, y-DOWN. `half` is half a source texel in the same
+// normalised units, and it is the parameter named `half_texel` below —
+// `half` is an HLSL type keyword.
+//
+// **The v axis runs opposite to `t.y` and nothing is flipped to make it do
+// so.** `dashpaint::AtlasGlyph::atlas_px` has a bottom-left origin and so does
+// a Unity texture coordinate, so the rectangle crosses unchanged and `rect.y`
+// is the glyph's BOTTOM edge; document space is y-down, so `t.y` is 0 at the
+// glyph's top, which is `rect.y + rect.w`. `dashscene-skia` subtracts from the
+// sheet's height instead, because Skia's images are top-left — copying that
+// line here would flip twice and draw every glyph upside down in a way that
+// looks like a transform bug.
+//
+// **The clamp is what keeps the sample inside this glyph.** The quad is
+// deliberately grown by the antialiasing width, so without it every glyph would
+// read its neighbour along a one-unit fringe. Half a texel in is also exactly
+// what makes filtering safe: a bilinear footprint taken from a texel's own
+// centre weights that texel alone at the edge, so no gutter is needed.
+// `min`/`max` around the bounds rather than the bounds themselves, as
+// `paint.wgsl` does: a rectangle under two texels wide has `lo` past `hi`, and
+// `clamp` with a reversed range is not defined to do anything sensible.
+float3 DsMsdfSample(float4 rect, float4 quad, float2 half_texel, float2 p)
+{
+    float2 t = (p - quad.xy) / quad.zw;
+    float2 uv = float2(rect.x + t.x * rect.z, rect.y + rect.w - t.y * rect.w);
+    float2 lo = rect.xy + half_texel;
+    float2 hi = rect.xy + rect.zw - half_texel;
+    uv = clamp(uv, min(lo, hi), max(lo, hi));
+    return SAMPLE_TEXTURE2D_LOD(_DsAtlas, sampler_DsAtlas, uv, 0).rgb;
+}
+#endif
+
 DsVaryings DsVertex(DsAttributes input)
 {
     UNITY_SETUP_INSTANCE_ID(input);
@@ -347,15 +430,59 @@ float4 DsShade(DsVaryings input)
     uint4 paint = _DsPaint;
     float aa = _DsGlobals.x;
 
-    float2 halfSize = quad.zw * 0.5;
-    float2 centre = quad.xy + halfSize;
-    float d = rounded_box_sdf(input.local - centre, halfSize, _DsCorners);
-
     uint kind = paint.x;
     uint row = paint.y;
 
     float4 colour;
     float shape;
+#ifdef DASHSCENE_CLASS_TEXT
+    if (kind == DS_KIND_TEXT)
+    {
+        // Word 0 is the run's fill, which the coverage below modulates. Word 1
+        // is `(1/atlas width, 1/atlas height, px range, resolved)`.
+        colour = _DsGlyphs[row * DS_GLYPH_WORDS];
+        float4 msdf = _DsGlyphs[row * DS_GLYPH_WORDS + 1u];
+
+        // The glyph's own rectangle, in texels on `_DsCorners` and scaled here
+        // into normalised coordinates. `_DsCorners` carries the atlas rectangle
+        // on a text instance because a glyph has no rounded box — the same
+        // member the lean painter's `Instance::corners` spends the same way.
+        // Hoisted, as `quad` and `paint` are above: under
+        // `DOTS_INSTANCING_ON` the name is a macro expanding to a metadata
+        // load, so two swizzles of it are two loads of the same sixteen bytes,
+        // per fragment, on the one hot path this story adds.
+        float4 corners = _DsCorners;
+        float2 scale = msdf.xy;
+        float4 rect = float4(corners.xy * scale, corners.zw * scale);
+
+        // **A row nothing resolved draws nothing, and it is the gate rather
+        // than the colour that says so.** A zeroed row has a zero `px_range`,
+        // and `msdf_coverage` is then 0.5 whatever the sample was — the run's
+        // colour at half alpha over the whole quad, in a picture that is meant
+        // to be empty. `paint.wgsl` carries the same gate on both its MSDF
+        // arms.
+        shape = 0.0;
+        if (msdf.w != 0.0)
+        {
+            shape = msdf_coverage(
+                DsMsdfSample(rect, quad, 0.5 * scale, input.local),
+                msdf.z);
+        }
+    }
+    else
+#endif
+    {
+    // **The rounded box, computed only where a rounded box is what is drawn.**
+    // `_DsCorners` carries the glyph's rectangle in ATLAS TEXELS on a text
+    // instance, so on the text arm above this would evaluate `rounded_box_sdf`
+    // against radii of a few hundred texels for a box a few document units
+    // across — per fragment, in the one hot path text adds, for a value that
+    // arm never reads. `paint.wgsl` computes it unconditionally because one
+    // shader there serves every kind; here the text class serves exactly one.
+    float2 halfSize = quad.zw * 0.5;
+    float2 centre = quad.xy + halfSize;
+    float d = rounded_box_sdf(input.local - centre, halfSize, _DsCorners);
+
     if (kind == DS_KIND_STROKE)
     {
         // Colour first, then `(width, align, 0, 0)` — the order
@@ -378,6 +505,7 @@ float4 DsShade(DsVaryings input)
         {
             colour = _DsPaints[(uint)_DsGlobals.y + row];
         }
+    }
     }
 
     float cover = shape * DsClipCoverage(paint.z, paint.w, input.placed) * _DsShade.x;

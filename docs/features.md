@@ -586,21 +586,23 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       refuses any call that would commit, and `ds_runtime_release_frame` ends
       it. Seventeen carry a gated boundary-B row type; the other two are
       primitives — the dirty set of `u32` rect indices, and the image payload
-      bytes an `ImageEntry` indexes. The glyph **atlases** do not cross: an
-      `Atlas` is not a table of rows but a sheet with a glyph list hanging off
-      it, so neither it nor its `AtlasGlyph`s travel even though `AtlasGlyph` is
-      on the gated surface. A host can lay text out and cannot shade it until
-      story #1123. Boundary B itself has two consumers, both Rust painters; the
-      **C#** projection of it gained its first at story #1239, a check rather
-      than a painter, and its second at story #1121 — `FrameLease`, which takes
-      the `sizeof` of boundary B's row types in shipped `Runtime/` code and
-      compares each against the stride the library reports. `unity/` declares
-      those types in C# and `unity/abi-check` compiles those declarations and
-      compares them against the Rust build on any pull request whose diff is not
-      documentation-only, without a Unity editor — every member's name, offset
-      and size, not only each type's total. What it does not check is that a
-      member's C# type means what the Rust one means: a `uint` declared as
-      `float` has the right size at the right offset. It draws no pixel.
+      bytes an `ImageEntry` indexes. The glyph **atlases** do not cross in the
+      frame, and since story #1123 they cross beside it: an `Atlas` is not a
+      table of rows but a sheet with a glyph list hanging off it, and it belongs
+      to the load rather than to the commit, so `ds_runtime_atlas` hands it out
+      keyed by a `GlyphRun`'s atlas index — the sheet, four scalars and the
+      `AtlasGlyph` rows together. Boundary B itself has two consumers, both Rust
+      painters; the **C#** projection of it gained its first at story #1239, a
+      check rather than a painter, and its second at story #1121 — `FrameLease`,
+      which takes the `sizeof` of boundary B's row types in shipped `Runtime/`
+      code and compares each against the stride the library reports. `unity/`
+      declares those types in C# and `unity/abi-check` compiles those
+      declarations and compares them against the Rust build on any pull request
+      whose diff is not documentation-only, without a Unity editor — every
+      member's name, offset and size, not only each type's total. What it does
+      not check is that a member's C# type means what the Rust one means: a
+      `uint` declared as `float` has the right size at the right offset. It
+      draws no pixel.
 
       **The C# host is built since story #1121** and it draws no pixel either.
       The package binds every C ABI entry point, negotiates
@@ -623,9 +625,12 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       draws them through `BatchRendererGroup` in the three material classes
       `unity-painter-uses-brg.md` D1 names. It covers fills — solid and
       gradient — corner radii, strokes, clips, per-node opacity and rotation,
-      and it covers **none** of shadows, blurs, image fills, baked vector
-      nodes, render-target groups or text; each of those is a named
-      `PackDiagnostic` it reports rather than a silent drop. The SDF math is
+      and, since story #1123, text: MSDF quads sampled from the sheet a glyph
+      run names, through a fourth shader that is not a material class and one
+      material per sheet. It covers **none** of shadows, blurs, image fills,
+      baked vector nodes or render-target groups; each of those is a named
+      `PackDiagnostic` it reports rather than a silent drop, and so is a
+      document carrying glyph runs when no atlas set has been installed. The SDF math is
       not ported into HLSL but **generated** from
       `crates/dashscene-gpu/src/shaders/sdf.wgsl` by `naga`, with a test that
       re-derives the committed file — which is the mechanism R-T5 asks for.
@@ -637,7 +642,7 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       language rather than resting on the file re-derivation alone (issue
       #1312). That was run on Metal only, in an editor, and on neither
       graphics API the target fleet runs (issue #1314). The package and
-      its three shaders compile in a Unity 6000.3.22f1 editor, and every pass
+      its four shaders compile in a Unity 6000.3.22f1 editor, and every pass
       is compiled with `DOTS_INSTANCING_ON` for Vulkan and GLES3x on Android
       and Metal on macOS — `just unity-editor`, which needs an editor and so
       runs on no CI runner here. **What that establishes differs by stage**:

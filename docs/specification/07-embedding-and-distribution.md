@@ -213,19 +213,22 @@ with nothing saying so. This requirement is met today.
 `BatchRendererGroup.RegisterMaterial` shall declare `#pragma target 4.5` or a
 higher target level. _Check:_ read each such shader's source, **and assert the
 set of them is not empty** — no shader existed under `unity/` until story #1122,
-so a check that only greps would have passed having read nothing. Three exist
-now, `unity/package-gate` gates them **per program rather than per file** (a
-`#pragma` in one pass does not reach another), and it discovers them
-recursively. **Met** by story #1122. Target 4.5 is satisfied by GLES 3.1 and
-above, so this does not conflict with the GLES 3.2 fleet
-`03-target-hardware-rules.md` names.
+so a check that only greps would have passed having read nothing. Four exist now
+— the three material classes and the text shader story #1123 added, which is not
+a class — `unity/package-gate` gates them **per program rather than per file**
+(a `#pragma` in one pass does not reach another), and it discovers them
+recursively. **Met** by story #1122, and by story #1123 for the fourth. Target
+4.5 is satisfied by GLES 3.1 and above, so this does not conflict with the GLES
+3.2 fleet `03-target-hardware-rules.md` names.
 
 **R-E12** — every shader the painter passes to
 `BatchRendererGroup.RegisterMaterial` shall declare
 `#pragma multi_compile _ DOTS_INSTANCING_ON`. _Check:_ as R-E11, including its
 non-empty assertion and its per-program reading. Unity refuses a pass without
-the variant, naming it. **Met** by story #1122, by the same three shaders and
-the same gate.
+the variant, naming it. **Met** by story #1122 and by story #1123, by the same
+four shaders and the same gate — and observed rather than only gated: a painter
+whose shader lacked the variant packed and submitted every instance and drew
+nothing, with the reason only in Unity's log.
 
 **R-E13** —
 `unity/com.driftsys.dashscene/Runtime/Driftsys.Dashscene.Runtime.asmdef` shall

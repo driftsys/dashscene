@@ -110,6 +110,38 @@ namespace Driftsys.Dashscene
         private float[] _clipBoxes = new float[Float4 * 64];
         private float[] _strokes = new float[Float4 * 64];
 
+        /// The glyph-run heap: two `float4`s per run of the committed table.
+        private float[] _glyphs = new float[Float4 * 64];
+
+        /// The value [`_runAtlas`] carries for a run naming an atlas slot the
+        /// installed set does not hold.
+        ///
+        /// Distinct from -1, which means no set was installed at all: the first
+        /// is a frame this package cannot read and is reported per node, the
+        /// second is a host step that has not happened and is reported once.
+        private const int OutOfRangeAtlas = -2;
+
+        /// Which atlas each glyph-run row samples, [`OutOfRangeAtlas`], or -1
+        /// for a run this pack could not resolve.
+        ///
+        /// **Parallel to the run table, not to the instances.** The instance
+        /// array below is what a painter groups draw commands by; this is what
+        /// says which sheet a run's row was written for, and the two are
+        /// filled in different passes.
+        private int[] _runAtlas = new int[64];
+
+        /// The atlas each INSTANCE samples, or -1 for an instance that is not
+        /// a glyph.
+        ///
+        /// **A painter cannot draw a text instance with the material it draws
+        /// fills with**: a sheet is a per-material texture, so a document
+        /// naming two sheets needs two text materials and a draw command per
+        /// contiguous run of instances that share one. This is what a painter
+        /// walks to find those runs, and it is why an instance carries the
+        /// atlas rather than a material index — nothing here knows what a
+        /// material is.
+        private int[] _instanceAtlas = new int[64];
+
         private PackDiagnostic _flags;
         private int _affectedRects;
         private int _firstAffectedRect = -1;
@@ -162,6 +194,19 @@ namespace Driftsys.Dashscene
         /// How many floats of [`Strokes`] the last pack filled.
         public int StrokeFloats { get; private set; }
 
+        /// The glyph-run heap, [`PaintHeap.GlyphWords`] `float4`s per run.
+        public float[] Glyphs => _glyphs;
+
+        /// How many floats of [`Glyphs`] the last pack filled.
+        public int GlyphFloats { get; private set; }
+
+        /// The atlas each instance samples, or -1 for one that is not a glyph.
+        ///
+        /// Only the first [`InstanceCount`] entries are this pack's; what sits
+        /// past them is whatever a previous pack left, on the same rule the
+        /// instance arrays follow.
+        public int[] InstanceAtlas => _instanceAtlas;
+
         /// What the last pack was handed and did not draw.
         public PackDiagnostics Diagnostics { get; private set; }
 
@@ -180,6 +225,26 @@ namespace Driftsys.Dashscene
         /// truncation from a `long` to an `int`.
         public unsafe void Pack(DsFrame frame, MaterialClass materialClass)
         {
+            Pack(frame, materialClass, null);
+        }
+
+        /// Pack one committed frame, resolving its glyph runs against
+        /// `atlases`.
+        ///
+        /// `atlases` is what
+        /// [`DashsceneRuntime.ReadAtlases`](DashsceneRuntime.ReadAtlases)
+        /// answered for the loaded document — read once per load, because the
+        /// set is installed by a load and is not part of a commit. A `null` or
+        /// empty set draws no text and reports
+        /// [`PackDiagnostic.GlyphRun`], which is P4: a document carrying runs
+        /// nothing can shade says so rather than coming out blank.
+        ///
+        /// # Exceptions
+        ///
+        /// [`ArgumentOutOfRangeException`] when a table is longer than
+        /// `int.MaxValue` rows.
+        public unsafe void Pack(DsFrame frame, MaterialClass materialClass, TextAtlasSet atlases)
+        {
             _flags = PackDiagnostic.None;
             _affectedRects = 0;
             _firstAffectedRect = -1;
@@ -189,6 +254,7 @@ namespace Driftsys.Dashscene
             PackHeap(frame);
             PackClipBoxes(frame);
             PackStrokes(frame);
+            PackGlyphRuns(frame, atlases);
 
             if (Rows(frame.Groups) > 0)
             {
@@ -196,11 +262,6 @@ namespace Driftsys.Dashscene
                 // rect it would be reported against is the range's first, which
                 // is not the node a reader would look for.
                 _flags |= PackDiagnostic.RenderTargetGroup;
-            }
-
-            if (Rows(frame.GlyphRuns) > 0)
-            {
-                _flags |= PackDiagnostic.GlyphRun;
             }
 
             var rectCount = Rows(frame.Rects);
@@ -224,6 +285,19 @@ namespace Driftsys.Dashscene
             var strokes = (Stroke*)frame.Strokes.Ptr;
             var blurs = (Blur*)frame.Blurs.Ptr;
 
+            var runs = (GlyphRun*)frame.GlyphRuns.Ptr;
+            var runCount = Rows(frame.GlyphRuns);
+            var quads = (GlyphQuad*)frame.GlyphQuads.Ptr;
+            var quadCount = Rows(frame.GlyphQuads);
+            // **A forward cursor, because commit orders the run table by
+            // anchor.** `dashscene-gpu`'s packer walks the two tables the same
+            // way and for the same reason: a run draws at its anchor rect's
+            // index, immediately after that rect's own ink, which is what puts
+            // it inside that rect's clip. A cursor that walked past a run would
+            // draw a picture missing its text with nothing reported, so what
+            // the cursor did not consume is checked below.
+            var nextRun = 0;
+
             for (var i = 0; i < rectCount; i++)
             {
                 PackRect(
@@ -244,6 +318,57 @@ namespace Driftsys.Dashscene
                         solidCount,
                         gradientCount),
                     materialClass);
+
+                // Behind the walk rather than at it: a run anchored to a rect
+                // already passed can never be reached by a forward cursor, so
+                // it and every run after it would be dropped in silence.
+                //
+                // **No rect is named, and neither candidate is right.** The
+                // rect the walk is at had nothing to do with the run, and the
+                // run's own anchor is behind `Affect`'s ascending-order
+                // contract. What is wrong here is the run TABLE's order, which
+                // is a property of the frame rather than of any node — the
+                // same shape `RenderTargetGroup` and `GradientStopsTruncated`
+                // report, and what `Describe`'s "no individual rect was
+                // implicated" line exists for.
+                while (nextRun < runCount && runs[nextRun].Rect < (uint)i)
+                {
+                    _flags |= PackDiagnostic.CorruptRow;
+                    nextRun++;
+                }
+
+                while (nextRun < runCount && runs[nextRun].Rect == (uint)i)
+                {
+                    EmitRun(
+                        i,
+                        rects[i],
+                        (uint)nextRun,
+                        runs[nextRun],
+                        quads,
+                        quadCount,
+                        regions,
+                        regionCount,
+                        boxCount,
+                        atlases);
+                    nextRun++;
+                }
+            }
+
+            // A run anchored past the rect table draws nothing, and it is the
+            // one failure the cursor cannot report from inside the walk. The
+            // lean painter asserts the same thing by name; this painter reports
+            // it, because a committed frame it cannot read is a diagnostic here
+            // rather than a broken contract between two crates.
+            if (nextRun < runCount)
+            {
+                // **No rect is implicated, so none is named.** The runs left
+                // over are anchored PAST the rect table — that is what makes
+                // them unreachable — so there is no node to attribute this to,
+                // and `Affect(rectCount - 1, …)` would point a reader at the
+                // last node in the document, which had nothing to do with it.
+                // `Describe`'s "no individual rect was implicated" line is
+                // written for exactly this shape.
+                _flags |= PackDiagnostic.CorruptRow;
             }
 
             Diagnostics = new PackDiagnostics(_flags, _affectedRects, _firstAffectedRect);
@@ -527,6 +652,12 @@ namespace Driftsys.Dashscene
             _paint[f + 2] = clipOffset;
             _paint[f + 3] = clipCount;
 
+            // Not a glyph, so it draws with the class material. Written rather
+            // than left: the array grows by doubling and never shrinks, so a
+            // slot a previous pack wrote a real atlas into would otherwise send
+            // this instance to a text material.
+            _instanceAtlas[at] = -1;
+
             InstanceCount = at + 1;
         }
 
@@ -664,6 +795,281 @@ namespace Driftsys.Dashscene
             PaintFloats = at;
         }
 
+        /// The glyph-run heap: two `float4`s per run of the committed table.
+        ///
+        /// **Per run rather than per glyph**, which is the lean painter's
+        /// split: a run's fill and its screen-pixel MSDF range are one value
+        /// for every glyph it places, and the per-glyph half — which texels
+        /// this quad samples — rides on the instance's own `_DsCorners`.
+        ///
+        /// A run whose atlas index this set does not hold gets a **zeroed**
+        /// row, whose `resolved` word is `0`, and no instances: the row is
+        /// zeroed as well as skipped because `msdf_coverage` with a zero
+        /// `px_range` answers `0.5` whatever the sample was, which would paint
+        /// the run's colour over the whole quad rather than nothing.
+        private unsafe void PackGlyphRuns(DsFrame frame, TextAtlasSet atlases)
+        {
+            var runs = (GlyphRun*)frame.GlyphRuns.Ptr;
+            var count = Rows(frame.GlyphRuns);
+            EnsureFloats(ref _glyphs, count * PaintHeap.GlyphWords * Float4);
+            EnsureInts(ref _runAtlas, count);
+
+            if (count > 0 && (atlases == null || atlases.Count == 0))
+            {
+                // P4: a document carrying text that nothing here can shade says
+                // so rather than coming out blank. **Not per rect** — the host
+                // did not install an atlas set, which is a property of the
+                // load and not of any one node.
+                _flags |= PackDiagnostic.GlyphRun;
+            }
+
+            var at = 0;
+            for (var i = 0; i < count; i++)
+            {
+                var run = runs[i];
+                _runAtlas[i] = -1;
+
+                TextAtlas atlas = null;
+                var resolved = atlases != null && atlases.TryGet(run.Atlas, out atlas);
+                if (resolved)
+                {
+                    _runAtlas[i] = (int)run.Atlas;
+                }
+                else if (atlases != null && atlases.Count > 0)
+                {
+                    // A set was installed and this run names a slot outside it,
+                    // which is a frame this package cannot read rather than a
+                    // document without text.
+                    //
+                    // **Marked here and REPORTED in the rect walk**, by
+                    // `EmitRun`, which runs inside it. `Affect` dedupes against
+                    // the rect it was last called for and records the first it
+                    // ever saw, so both hold only while its callers walk rects
+                    // in ascending order — and this pass runs before the walk
+                    // begins. Reporting from here made `FirstRect` the first
+                    // rect the GLYPH pass touched rather than the first in the
+                    // document, and counted a rect twice when both passes
+                    // implicated it with another rect between them.
+                    _runAtlas[i] = OutOfRangeAtlas;
+                }
+
+                // Word 0: the run's fill. The MSDF coverage modulates it, and
+                // the run's own free-path alpha reaches the shader on the
+                // instance's `_DsShade.x` rather than being folded in here —
+                // the same term, in the same product, in the same place the
+                // lean painter puts it.
+                _glyphs[at++] = run.Color.R;
+                _glyphs[at++] = run.Color.G;
+                _glyphs[at++] = run.Color.B;
+                _glyphs[at++] = run.Color.A;
+
+                // Word 1: the texel-to-UV scale, the screen-pixel range, and
+                // whether this row was resolved.
+                if (resolved)
+                {
+                    _glyphs[at++] = 1.0f / atlas.Width;
+                    _glyphs[at++] = 1.0f / atlas.Height;
+                    _glyphs[at++] = atlas.PixelRange(run.Size);
+                    _glyphs[at++] = 1.0f;
+                }
+                else
+                {
+                    _glyphs[at++] = 0.0f;
+                    _glyphs[at++] = 0.0f;
+                    _glyphs[at++] = 0.0f;
+                    _glyphs[at++] = 0.0f;
+                }
+            }
+
+            GlyphFloats = at;
+        }
+
+        /// One run's glyphs, as one instance each, in the run's own draw order.
+        ///
+        /// **The geometry is the reference painter's, resolved here rather than
+        /// re-derived.** `PlaneEm` is y-up in ems from the baseline and
+        /// document space is y-down, so the top of the quad is `y - top * size`
+        /// and the bottom is `y - bottom * size`. Getting that flip wrong moves
+        /// every glyph by its own height, which reads as a baseline offset
+        /// rather than as a transposition.
+        ///
+        /// **`AtlasPx` is NOT flipped, and that is the difference from
+        /// `dashscene-skia`.** Both `AtlasPx` and a Unity texture coordinate
+        /// have a bottom-left origin, so the rectangle crosses unchanged;
+        /// Skia's images are top-left, which is why that painter subtracts from
+        /// the sheet's height, and copying its line here would flip twice and
+        /// draw every glyph upside down in a way that looks like a transform
+        /// bug.
+        ///
+        /// A glyph the sheet has no quad for produces no instance — an empty
+        /// outline such as a space, or a codepoint outside the charset. That is
+        /// `dashpaint::Atlas::glyph`'s own contract rather than a filter
+        /// invented here, and it is not a diagnostic: coverage is settled at
+        /// build time by the atlas closure.
+        private unsafe void EmitRun(
+            int rectIndex,
+            in RectEntry rect,
+            uint runRow,
+            in GlyphRun run,
+            GlyphQuad* quads,
+            int quadCount,
+            ClipRegion* regions,
+            int regionCount,
+            int boxCount,
+            TextAtlasSet atlases)
+        {
+            // **The frame is judged before the atlas set is.** A quad range
+            // past its table, or a clip index past its own, is a committed
+            // frame this package cannot read — and it is that whether or not a
+            // host has installed sheets. Returning on the atlas first would
+            // mean a painter with no atlas set reports only "no atlas set was
+            // installed", and installing one is what first surfaces the
+            // corruption.
+            //
+            // The run's clip is its anchor rect's, which is what puts a run
+            // inside the region the document cut its node to. Re-derived here
+            // rather than taken from `PackRect`, which may have returned early
+            // on a corrupt row: a run is anchored to the rect and not to that
+            // rect's ink, so it draws even where the node's own fill did not.
+            if (rect.Clip >= (uint)regionCount)
+            {
+                Affect(rectIndex, PackDiagnostic.CorruptRow);
+                return;
+            }
+            var region = regions[rect.Clip];
+            var clipOffset = region.Offset;
+            var clipCount = region.Count;
+            if (clipCount > 0
+                && (clipOffset > (uint)boxCount || clipCount > (uint)boxCount - clipOffset))
+            {
+                Affect(rectIndex, PackDiagnostic.CorruptRow);
+                return;
+            }
+
+            // The run's own range into the flat quad array. Followed through a
+            // raw pointer, so a range past its table is an out-of-bounds read
+            // of the host process rather than an exception.
+            if (run.Glyphs.Count > 0
+                && (run.Glyphs.Offset > (uint)quadCount
+                    || run.Glyphs.Count > (uint)quadCount - run.Glyphs.Offset))
+            {
+                Affect(rectIndex, PackDiagnostic.CorruptRow);
+                return;
+            }
+
+            if (_runAtlas[runRow] == OutOfRangeAtlas)
+            {
+                // **Reported here rather than where the row was written**, so
+                // that it lands inside the rect walk in ascending order like
+                // every other producer: `PackGlyphRuns` runs before the walk,
+                // and `Affect`'s "first rect" and its consecutive-rect dedupe
+                // both rest on the caller walking rects in order.
+                Affect(rectIndex, PackDiagnostic.CorruptRow);
+                return;
+            }
+            if (_runAtlas[runRow] < 0)
+            {
+                // No atlas set was installed at all, which `PackGlyphRuns`
+                // reported once for the document rather than once per node.
+                // Nothing to draw here, and the frame above has already been
+                // judged.
+                return;
+            }
+            var atlas = atlases[_runAtlas[runRow]];
+
+            var size = run.Size;
+            var pivotX = rect.X + rect.RotationAnchor.X;
+            var pivotY = rect.Y + rect.RotationAnchor.Y;
+
+            for (var g = 0u; g < run.Glyphs.Count; g++)
+            {
+                var quad = quads[run.Glyphs.Offset + g];
+                if (!atlas.TryGlyph(quad.GlyphId, out var glyph))
+                {
+                    continue;
+                }
+
+                var left = glyph.PlaneEm.E0;
+                var bottom = glyph.PlaneEm.E1;
+                var right = glyph.PlaneEm.E2;
+                var top = glyph.PlaneEm.E3;
+                var width = (right - left) * size;
+                var height = (top - bottom) * size;
+
+                var al = glyph.AtlasPx.E0;
+                var ab = glyph.AtlasPx.E1;
+                var ar = glyph.AtlasPx.E2;
+                var at = glyph.AtlasPx.E3;
+
+                // **A quad with no area draws nothing rather than something.**
+                // `paint.wgsl` refuses the same quantity with the same
+                // spelling, and `dashscene-skia` refuses the atlas rectangle's:
+                // the fragment stage divides by the document quad's extent to
+                // find its place in the sheet, and a zero there takes an edge
+                // of the sub-rect and paints whatever it resolves to over a
+                // region that is meant to be empty — measured on the lean
+                // painter as four pixels of the run's colour around a glyph's
+                // pen. Spelled as a negated positive so a NaN is refused rather
+                // than admitted: `NaN <= 0.0` is false.
+                if (!(width > 0.0f && height > 0.0f && ar - al > 0.0f && at - ab > 0.0f))
+                {
+                    continue;
+                }
+
+                var slot = InstanceCount;
+                Grow(slot + 1);
+                var f = slot * Float4;
+
+                _quad[f] = quad.X + (left * size);
+                _quad[f + 1] = quad.Y - (top * size);
+                _quad[f + 2] = width;
+                _quad[f + 3] = height;
+
+                // The glyph's rectangle in ATLAS TEXELS, which is what
+                // `_DsCorners` carries on a text instance. A glyph has no
+                // rounded box, so the member the other kinds spend on radii is
+                // free — the lean painter spends `Instance::corners` the same
+                // way, for the same reason.
+                //
+                // **The same member and not the same value.** That painter
+                // writes `[al, height - at, ar - al, at - ab]`, a TOP-left
+                // rectangle, because wgpu's texture coordinates are top-left —
+                // so it flips, exactly as `dashscene-skia` does. Unity's are
+                // bottom-left and so is `atlas_px`, so this one does not. Both
+                // reference painters flip here; copying either is what draws
+                // every glyph upside down.
+                _corners[f] = al;
+                _corners[f + 1] = ab;
+                _corners[f + 2] = ar - al;
+                _corners[f + 3] = at - ab;
+
+                // The run's free-path alpha, and the anchor rect's rotation
+                // about the anchor rect's pivot — not the glyph's own. The
+                // reference painter draws an anchored run inside the rect's
+                // rotation so a rotated text node's line turns as one; turning
+                // each glyph about itself would leave the line straight and the
+                // letters tilted. `outset` is zero: a glyph's ink is the field
+                // inside its own quad.
+                _shade[f] = run.Opacity;
+                _shade[f + 1] = 0.0f;
+                _shade[f + 2] = rect.Rotation;
+                _shade[f + 3] = 0.0f;
+
+                _pivot[f] = pivotX;
+                _pivot[f + 1] = pivotY;
+                _pivot[f + 2] = 0.0f;
+                _pivot[f + 3] = 0.0f;
+
+                _paint[f] = (uint)PaintKindTag.Text;
+                _paint[f + 1] = runRow;
+                _paint[f + 2] = clipOffset;
+                _paint[f + 3] = clipCount;
+
+                _instanceAtlas[slot] = _runAtlas[runRow];
+                InstanceCount = slot + 1;
+            }
+        }
+
         private unsafe void PackClipBoxes(DsFrame frame)
         {
             var boxes = (ClipBox*)frame.ClipBoxes.Ptr;
@@ -759,6 +1165,7 @@ namespace Driftsys.Dashscene
             KeepFloats(ref _shade, floats);
             KeepFloats(ref _pivot, floats);
             KeepUints(ref _paint, floats);
+            KeepInts(ref _instanceAtlas, instances);
         }
 
         /// Grows by doubling, never shrinks, and copies what was there.
@@ -778,6 +1185,19 @@ namespace Driftsys.Dashscene
                 return;
             }
             Array.Resize(ref array, Capacity(array.Length, words));
+        }
+
+        /// Grows by doubling, never shrinks, and copies what was there.
+        ///
+        /// One entry per INSTANCE rather than per float4, because it carries an
+        /// index rather than a shader word.
+        private static void KeepInts(ref int[] array, int wanted)
+        {
+            if (array.Length >= wanted)
+            {
+                return;
+            }
+            Array.Resize(ref array, Capacity(array.Length, wanted));
         }
 
         /// Grows by doubling, never shrinks, and **preserves nothing**.
@@ -802,6 +1222,19 @@ namespace Driftsys.Dashscene
                 return;
             }
             array = new bool[Capacity(array.Length, wanted)];
+        }
+
+        /// Grows an index array, preserving nothing — it is rewritten per pack.
+        ///
+        /// Only for the per-run array, which is sized once and then written
+        /// from index zero. Never for the per-instance one: [`Grow`] says why.
+        private static void EnsureInts(ref int[] array, int wanted)
+        {
+            if (array.Length >= wanted)
+            {
+                return;
+            }
+            array = new int[Capacity(array.Length, wanted)];
         }
 
         /// The next power-of-two multiple of `have` that reaches `want`.

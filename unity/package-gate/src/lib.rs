@@ -665,6 +665,67 @@ pub fn cs_const_int(source: &str, name: &str) -> Option<i64> {
     rest[..end].parse().ok()
 }
 
+/// The members of a C# `enum <name> : <base> { … }`, in declaration order, as
+/// `(member, value)` — with `None` for a member that carries no explicit value.
+///
+/// **A member with no `= <n>` is COLLECTED, with `None`.** Skipping it was the
+/// obvious reading and it fails open in exactly the direction the only caller
+/// cares about: that caller compares this list's length against its own
+/// hand-written one, so a member added without a value left both at the same
+/// length and the new kind was held to no shader define at all. The caller
+/// refuses a `None` instead.
+pub fn cs_enum_members(source: &str, name: &str) -> Vec<(String, Option<i64>)> {
+    let Some(at) = source.find(&format!("enum {name} :")) else {
+        return Vec::new();
+    };
+    let Some(open) = source[at..].find('{') else {
+        return Vec::new();
+    };
+    let open = at + open;
+    let Some(close) = source[open..].find('}') else {
+        return Vec::new();
+    };
+    let body = &source[open + 1..open + close];
+
+    let mut out = Vec::new();
+    for line in body.lines() {
+        let line = line.trim();
+        // A member is `Name,` or `Name = <digits>,`. Everything else in the
+        // block is a doc comment, an attribute or a blank — and a member is
+        // what ends in a comma, which is the one shape those do not share.
+        let Some(declaration) = line.strip_suffix(',') else {
+            continue;
+        };
+        let (member, value) = match declaration.split_once(" = ") {
+            Some((member, rest)) => {
+                let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                (member, digits.parse().ok())
+            }
+            None => (declaration, None),
+        };
+        let member = member.trim();
+        if member.is_empty()
+            || !member
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+            || member.chars().next().is_some_and(|c| c.is_ascii_digit())
+        {
+            continue;
+        }
+        out.push((member.to_string(), value));
+    }
+    out
+}
+
+/// One member of a C# enum, by name — `None` if it is absent or carries no
+/// explicit value.
+pub fn cs_enum_value(source: &str, enum_name: &str, member: &str) -> Option<i64> {
+    cs_enum_members(source, enum_name)
+        .into_iter()
+        .find(|(name, _)| name == member)
+        .and_then(|(_, value)| value)
+}
+
 /// `#define NAME <n>u` in an HLSL source.
 pub fn hlsl_define_u32(source: &str, name: &str) -> Option<i64> {
     source.lines().find_map(|line| {

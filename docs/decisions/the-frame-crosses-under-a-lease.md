@@ -110,10 +110,18 @@ in `crates/dashpaint-abi` is what says which rows those are, rather than a
 second informal answer to "what may cross boundary B" invented here.
 
 **Being on that gated set is necessary and not sufficient**, and `AtlasGlyph` is
-the case that shows the difference: it has a C representation and does not
-cross, because it is not a committed table — it is a list hanging off an
+the case that shows the difference: it has a C representation and does not cross
+**here**, because it is not a committed table — it is a list hanging off an
 `Atlas`, and an `Atlas` is not a row. The line is drawn at the tables; the gate
 decides whether a table's rows may travel.
+
+Story #1123 then made the other half of that sentence true as well: those rows
+**do** cross, on `ds_runtime_atlas` rather than in a frame, because an atlas set
+belongs to the load and not to the commit
+([the-glyph-atlas-crosses-the-c-abi-as-a-call.md](the-glyph-atlas-crosses-the-c-abi-as-a-call.md)).
+The rule this decision states is unchanged — the frame carries committed tables
+— and `crates/dashscene-ffi`'s own disposition table now records `AtlasGlyph` as
+crossing beside the frame rather than not at all.
 
 One type joined that gate for this story. `GroupComposite` — a group's rect
 range and the alpha its offscreen layer composites at — is passed to
@@ -191,11 +199,15 @@ rule's gap, `FrameLeased` re-routes no existing condition: nothing could reach
 it before leases existed, so a host on an older header meets it only on a call
 it could not have made.
 
-**The glyph atlases do not cross.** `dashpaint::Atlas` owns an encoded sheet and
-a glyph list; it is not a row and has no C representation. `GlyphRun` and
-`GlyphQuad` cross, so a host can lay text out and cannot shade it until story
-#1123 — the Unity text seam — lands. That is the one thing #1122 and #1123 must
-not assume this story delivered.
+**The glyph atlases do not cross _here_.** `dashpaint::Atlas` owns an encoded
+sheet and a glyph list; it is not a row, so `GlyphRun` and `GlyphQuad` cross in
+the frame and the sheet does not. Story #1123 landed it beside the frame rather
+than inside it — an atlas set is installed by a load and is not part of a
+commit, so `ds_runtime_atlas` hands one out keyed by a `GlyphRun`'s atlas index
+and a host uploads once per document
+([the-glyph-atlas-crosses-the-c-abi-as-a-call.md](the-glyph-atlas-crosses-the-c-abi-as-a-call.md)).
+The sentence this replaces said #1122 and #1123 must not assume this story
+delivered the atlases, and neither did.
 
 **`image_payload` for a mapped load is the whole `.dsb` file, not the assets.**
 A mapped table's pool is the mapping, so an entry's `offset` is a file offset. A
@@ -262,5 +274,7 @@ built — that nothing related `DsFrame`'s arrays to the gated types, so a row
 type could join the gate and reach no host — is closed:
 `every_gated_row_type_either_crosses_or_says_why_not` gives each of the 28 a
 disposition and fails until a new one has one. It could not be "every gated type
-appears", because `AtlasGlyph` is gated and deliberately does not cross, so each
-type says which it is and a non-crossing one has to say why.
+appears **in a frame**", because `AtlasGlyph` is gated and crosses somewhere
+else — `ds_runtime_atlas`, since story #1123 — so each type says which it is and
+one that does not cross here has to say where it does, or why it does not at
+all.

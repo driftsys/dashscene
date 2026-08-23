@@ -711,8 +711,22 @@ their parent rather than apart from it:
   in the same change — it was the last row type on that boundary with no C
   representation. The frame also carries `document_replaced`, because
   `generation` restarts on a load and a host-draws embedder has no surface for
-  `Present::document_replaced` to reach. The glyph atlases still do not cross,
-  and story #1123 owns them.
+  `Present::document_replaced` to reach. The glyph atlases do not cross in the
+  frame and do cross beside it, which story #1123 settled — see the record
+  below.
+- [the-glyph-atlas-crosses-the-c-abi-as-a-call.md](the-glyph-atlas-crosses-the-c-abi-as-a-call.md)
+  — the MSDF sheet a glyph run samples reaches a host through
+  **`ds_runtime_atlas`, keyed by a `GlyphRun`'s atlas index**, rather than as
+  members of `DsFrame` (story #1123, 2026-08-23). An atlas set is installed by a
+  **load** and is not part of a commit, so a frame member would say it can
+  change per tick and would make a host invent its own change detection; a call
+  says "read it once per document" by its shape, adds no member to `DsFrame`,
+  and leaves `DS_ABI_VERSION` at 2. The **sheet crosses as well as the glyph
+  table**, which is not redundant with the bytes the host supplied: an atlas
+  index is the typesetter's font slot and the cascade groups faces by family
+  before flattening, so a host pairing sheets by its own array index samples
+  another face's glyphs rather than failing — measured, with three faces listed
+  Inter, Arabic, Inter-Bold.
 - [the-document-is-mapped-where-it-is-packed.md](the-document-is-mapped-where-it-is-packed.md)
   — a `.dsb` that does not begin a file is mapped **where it lies**, through
   `ds_runtime_load_document_mapped_range` taking a path plus an offset and a
