@@ -150,19 +150,22 @@ corpus + Figma fixture captures), `goldens/` (CI golden images + diff tooling),
 `conformance/` (layer 2's expectations as data — the SDF shader math's inputs,
 expected values and tolerances, so a painter in another shading language can
 check R-T5's single-sourcing rather than take it on trust; `dashscene-gpu`'s own
-suite is its first consumer, issue #828), `demo/` (the windowed showcase host —
-the window, the event loop and the frame loop, landed at v0.14), `demo-web/`
-(the same showcase in a browser — a canvas, `requestAnimationFrame`, and a
-`.dsb` fetched by byte range, landed at v0.15), and `unity/` (the UPM package
-and five checks over it — three .NET ones, boundary B's declarations against the
-Rust layouts, the engine-free half of the package against netstandard2.1, and
-its P/Invoke declarations executed against `dashscene-ffi`; a Rust one,
-`unity/package-gate`, holding the generated HLSL to its WGSL source and the
-shaders to R-E11, R-E12 and R-E10's split; and `unity/editor-compat`, which
-compiles the whole package in a Unity editor and is the only thing here that
-compiles a Unity `.shader`. The package landed at v0.21 by story #1239, gained
-the C# host at story #1121 and the BatchRendererGroup painter at story #1122; it
-still carries no native library).
+suite is its first consumer and `unity/hlsl-conformance` the second, issues #828
+and #1312), `demo/` (the windowed showcase host — the window, the event loop and
+the frame loop, landed at v0.14), `demo-web/` (the same showcase in a browser —
+a canvas, `requestAnimationFrame`, and a `.dsb` fetched by byte range, landed at
+v0.15), and `unity/` (the UPM package and the checks over it — three .NET ones,
+boundary B's declarations against the Rust layouts, the engine-free half of the
+package against netstandard2.1, and its P/Invoke declarations executed against
+`dashscene-ffi`; a Rust one, `unity/package-gate`, holding the generated HLSL to
+its WGSL source and the shaders to R-E11, R-E12 and R-E10's split;
+`unity/editor-compat`, which compiles the whole package in a Unity editor and is
+the only thing here that compiles a Unity `.shader`; and
+`unity/hlsl-conformance`, which evaluates the committed layer-2 probe table
+through the generated `Sdf.hlsl` on a real graphics device and is the only one
+that runs shader code and reads the numbers back (issue #1312). The package
+landed at v0.21 by story #1239, gained the C# host at story #1121 and the
+BatchRendererGroup painter at story #1122; it still carries no native library).
 
 Seven of those directories hold workspace members that are never published:
 `demo/`, `demo-web/` (the browser host — a canvas, the lean painter, and a
@@ -258,9 +261,12 @@ members in total, nineteen of them the crates above.
                       tree, so it observes only a disagreement this repository
                       already contains — a stale shipped binary is
                       `DsSlice::stride`'s job at run time
-    just unity-editor  R-E10's SECOND check, and the only thing in this
-                      repository that compiles a Unity `.shader` or compiles
-                      `Runtime/Engine/`. Creates a throwaway Unity project
+    just unity-editor  R-E10's SECOND check, the only thing in this
+                      repository that compiles a Unity `.shader`, and the only
+                      one whose PURPOSE is to compile `Runtime/Engine/` —
+                      `unity-conformance` imports the same package into an
+                      editor and compiles that assembly incidentally. Creates a
+                      throwaway Unity project
                       under `target/`, imports the package as a `file:`
                       dependency, compiles it, reads
                       `PlayerSettings.GetApiCompatibilityLevel` back rather
@@ -289,6 +295,30 @@ members in total, nineteen of them the crates above.
                       than a port of it. Forgetting is not silent: a test in
                       `unity/package-gate` re-derives the file on every run of
                       the sanity tier and names the first line that differs
+    just unity-conformance  every probe of the committed layer-2 table,
+                      `conformance/layer2-probes.json`, evaluated through the
+                      GENERATED `Sdf.hlsl` as a Unity compute shader and
+                      compared against the recorded expectations. The counts
+                      are not repeated here: the harness pins them and prints
+                      them in its OK line, which is where to read them. The
+                      table's second consumer, and the first that is not WGSL
+                      (issue #1312). `package-gate` compares
+                      that file as TEXT, which says the generator ran; this
+                      says the arithmetic evaluates to these numbers. **Names
+                      the backend it measured** and does not generalise past
+                      it: Unity translates per graphics API, so a pass on the
+                      editor's Metal is not a pass on the fleet's GLES or
+                      Vulkan, and an editor run is not a player build (issues
+                      #1195, #1313, #1314). Needs a Unity editor, so it is
+                      outside `check` and outside CI, like `unity-editor`.
+                      Nothing in any tier compiles its C# or holds its pinned
+                      counts against the table (issue #1323).
+                      `just unity-conformance-negative` is its negative
+                      control: it corrupts two expectations in a copy under
+                      `target/` and requires the gate to name exactly those two.
+                      Like `unity-editor` it imports the package as a `file:`
+                      dependency, so a run can WRITE a `.meta` into the working
+                      tree; check `git status` afterwards
     just secrets      gitleaks over HEAD and over history, plus a pattern-grep
                       backstop over every object git would push. Unreachable
                       objects are deliberately out of scope — see the recipe.

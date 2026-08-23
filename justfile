@@ -1429,6 +1429,371 @@ unity-ffi:
     DASHSCENE_FFI_LIB="${lib}" DASHSCENE_FFI_FIXTURE="${fixture}" \
       dotnet run --project unity/ffi-check
 
+# The committed probe table, evaluated through the GENERATED HLSL.
+#
+# **This is the second consumer of `conformance/layer2-probes.json`, and the
+# first that is not WGSL.** Issue #828 produced the table and one consumer,
+# `crates/dashscene-gpu/tests/layer2_conformance.rs`, which dispatches
+# `sdf.wgsl`. `unity/package-gate`'s
+# `the_committed_hlsl_is_what_the_wgsl_compiles_to` re-derives
+# `Runtime/Shaders/Sdf.hlsl` and compares the TEXT, which says the generator
+# ran. Neither evaluates the generated arithmetic — issue #1312. This recipe
+# does: every probe of every function, dispatched as a compute shader that
+# `#include`s the package's own `Sdf.hlsl`, compared against the recorded
+# expectation within that function's tolerance.
+#
+# **Say which backend it measured, because a pass does not generalise.** Unity
+# translates the HLSL for whatever graphics device the editor obtained, which on
+# macOS is Metal — not HLSL on D3D, and not the GLES 3.2 or Vulkan the target
+# fleet runs. The harness reads the device back and prints it in the OK line
+# rather than assuming it. Issue #1195 is a measured instance of a backend
+# changing exactly this class of arithmetic: Metal folded `(o + b) - (o + a)` to
+# `b - a` and erased a cancellation the shader depended on. **A pass here is not
+# a pass on the fleet.**
+#
+# **And an editor is not a player.** Issue #1313 is the measured instance: the
+# package's shaders are stripped out of a player build while every gate here
+# passes. This gate resolves its compute shader through `AssetDatabase`, which
+# exists only in an editor, so it says nothing about stripping. What it measures
+# is arithmetic.
+#
+# **Not in CI, and not in `check`.**
+# `docs/decisions/the-native-library-ships-inside-the-unity-package.md` D4
+# records that no CI runner here can host a Unity install, which is the same
+# reason `unity-editor` is outside both. Run it before opening a pull request
+# that touches `sdf.wgsl`, `Sdf.hlsl` or `conformance/layer2-probes.json`.
+#
+# **No `-nographics`.** A compute dispatch needs a real device, and the harness
+# fails rather than passing when it finds none — the same hazard `unity-editor`
+# names, and the shape issue #1158 measured on an emulator.
+#
+# Takes the table as a parameter so `unity-conformance-negative` can point it at
+# a deliberately corrupted copy. It defaults to the committed file, and nothing
+# here writes to it.
+#
+# Evaluate every probe of the committed table through the generated Sdf.hlsl.
+unity-conformance table="conformance/layer2-probes.json" unity_version="6000.3.22f1":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # **The editor resolution below is `unity-editor`'s, repeated**, for the
+    # same reason it gives: this is a developer's gate and a hardcoded macOS
+    # path would put it out of reach on Linux or Windows entirely. It is the
+    # SECOND copy in this tree; issue #1313's lane adds a third, and factoring
+    # all of them is issue #1316 rather than a restructuring of another lane's
+    # recipe from this one.
+    editor="${DASHSCENE_UNITY:-/Applications/Unity/Hub/Editor/{{unity_version}}/Unity.app/Contents/MacOS/Unity}"
+    if [ ! -x "${editor}" ]; then
+      echo "unity-conformance: no Unity executable at ${editor}" >&2
+      echo "unity-conformance:   install {{unity_version}} with the Hub, pass a version:" >&2
+      echo "unity-conformance:     just unity-conformance conformance/layer2-probes.json 6000.3.22f1" >&2
+      echo "unity-conformance:   or point at one directly:" >&2
+      echo "unity-conformance:     DASHSCENE_UNITY=/path/to/Unity just unity-conformance" >&2
+      echo "unity-conformance: docs/technotes/unity-toolchain.md records what is installed" >&2
+      exit 1
+    fi
+    # Searched rather than derived from the executable, because the offset
+    # differs per platform — `unity-editor`'s comment carries the measurement.
+    editor_dir="$(dirname "${editor}")"
+    builtin=""
+    for candidate in \
+      "${editor_dir}/../Resources/PackageManager/BuiltInPackages" \
+      "${editor_dir}/Data/PackageManager/BuiltInPackages" \
+      "${editor_dir}/../Data/PackageManager/BuiltInPackages"; do
+      if [ -d "${candidate}" ]; then
+        builtin="$(cd "${candidate}" && pwd)"
+        break
+      fi
+    done
+    if [ -z "${builtin}" ]; then
+      echo "unity-conformance: no BuiltInPackages directory near ${editor}" >&2
+      echo "unity-conformance: looked under ../Resources/, Data/ and ../Data/" >&2
+      exit 1
+    fi
+
+    root="$(git rev-parse --show-toplevel)"
+    project="${root}/target/unity-hlsl-conformance"
+    package="${root}/unity/com.driftsys.dashscene"
+    harness="${root}/unity/hlsl-conformance"
+
+    # Absolute, because the editor runs with the throwaway project as its
+    # working directory and the harness reads the file by an explicit path
+    # rather than guessing one.
+    case "{{table}}" in
+      /*) table="{{table}}" ;;
+      *)  table="${root}/{{table}}" ;;
+    esac
+    if [ ! -f "${table}" ]; then
+      echo "unity-conformance: no probe table at ${table}" >&2
+      exit 1
+    fi
+    # **Refused rather than deleted out from under the editor.** The `rm -rf`
+    # below rebuilds `${project}` from scratch, so a table passed from inside
+    # that directory disappears between this check and the editor's read, and
+    # the run then fails for a missing file with no connection to the recipe
+    # that removed it. `unity-conformance-negative` hit exactly that and
+    # repaired it in the caller; the mechanism is here.
+    case "${table}" in
+      "${project}"/*)
+        echo "unity-conformance: ${table} is inside ${project}, which this recipe" >&2
+        echo "unity-conformance: deletes and rebuilds. Put the table anywhere else." >&2
+        exit 1
+        ;;
+    esac
+
+    # The package depends on URP, so the manifest must name the version this
+    # editor ships or the resolve reaches the network for nothing.
+    urp_json="${builtin}/com.unity.render-pipelines.universal/package.json"
+    if [ ! -f "${urp_json}" ]; then
+      echo "unity-conformance: this editor ships no built-in URP at ${urp_json}" >&2
+      exit 1
+    fi
+    urp="$(jq -r .version "${urp_json}")"
+
+    # **The package pins a URP version and this reads one; they must agree.**
+    # `unity-editor` carries the same comparison and the same reason: a UPM
+    # dependency is a MINIMUM, so an editor shipping a NEWER built-in URP is an
+    # ordinary consumer configuration and only an older one is a problem. Left
+    # out, the manifest below names a version under the package's own pin, UPM
+    # resolves that pin from the registry, and the network round trip reading
+    # `urp` exists to avoid happens anyway — offline, as a resolve failure
+    # naming neither number.
+    pinned="$(jq -r '.dependencies["com.unity.render-pipelines.universal"] // empty' \
+      "${package}/package.json")"
+    if [ -n "${pinned}" ]; then
+      lowest="$(printf '%s\n%s\n' "${pinned}" "${urp}" | sort -V | head -1)"
+      if [ "${lowest}" != "${pinned}" ]; then
+        echo "unity-conformance: package.json pins URP ${pinned} and this editor ships" >&2
+        echo "unity-conformance: ${urp}, which is older — the resolve would reach the" >&2
+        echo "unity-conformance: network for the pin, or fail offline." >&2
+        exit 1
+      fi
+    fi
+
+    # **The committed HLSL must be what the WGSL compiles to, before an editor
+    # is started over it.** This recipe's own advice is to run it after editing
+    # `sdf.wgsl`, and a developer who forgot `just sdf-hlsl` would otherwise buy
+    # a multi-minute editor run that evaluated the stale committed file and
+    # reported it green. `package-gate`'s test is the same re-derivation the
+    # sanity tier runs; it is seconds warm, and it is what makes this gate's
+    # answer mean what the comment above says.
+    #
+    # **A name filter alone is fail-open**, measured: `cargo test <filter>` with
+    # a filter that matches nothing prints `0 passed` and exits **0**. So a test
+    # renamed or `#[ignore]`d — that file holds six and issue #1307's lane is
+    # editing it — would leave this preflight passing over a re-derivation that
+    # never ran. The run's own `1 passed` is what says the test executed; a
+    # missing target exits 101 and a failing test exits non-zero, so the three
+    # ways this can go wrong are covered by the two conditions below.
+    probe="the_committed_hlsl_is_what_the_wgsl_compiles_to"
+    if ! rederived="$(cargo test -p package-gate --test sdf_hlsl_is_generated \
+         -- --exact "${probe}" 2>&1)" \
+       || ! printf '%s\n' "${rederived}" | grep -q "^test result: ok\. 1 passed"; then
+      printf '%s\n' "${rederived}" | tail -20 >&2
+      echo "unity-conformance: the committed Sdf.hlsl is not what sdf.wgsl compiles to," >&2
+      echo "unity-conformance: or ${probe} did not run." >&2
+      echo "unity-conformance:   just sdf-hlsl" >&2
+      echo "unity-conformance: refusing to evaluate a stale generated file." >&2
+      exit 1
+    fi
+
+    # Rebuilt from scratch each run: a reused Library/ can hold a stale
+    # compiled compute shader, and this gate's whole answer is what the CURRENT
+    # Sdf.hlsl evaluates to. That is the shape of issue #1057.
+    rm -rf "${project}"
+    mkdir -p "${project}/Packages" "${project}/Assets/Editor" "${project}/ProjectSettings"
+
+    cat > "${project}/Packages/manifest.json" <<JSON
+    {
+      "dependencies": {
+        "com.driftsys.dashscene": "file:${package}",
+        "com.unity.render-pipelines.universal": "${urp}"
+      }
+    }
+    JSON
+
+    # The compute shader sits in Assets/ rather than in the package: it is a
+    # test fixture and shipping it would put a conformance harness in a
+    # consumer's build. It reaches the arithmetic through the package's own
+    # include path, so what it evaluates is the installed file and not a copy.
+    cp "${harness}/DashsceneHlslConformance.cs" "${project}/Assets/Editor/"
+    cp "${harness}/ProbeJson.cs" "${project}/Assets/Editor/"
+    cp "${harness}/SdfConformance.compute" "${project}/Assets/"
+
+    cat > "${project}/ProjectSettings/ProjectSettings.asset" <<'YAML'
+    %YAML 1.1
+    %TAG !u! tag:unity3d.com,2011:
+    --- !u!129 &1
+    PlayerSettings:
+      m_ObjectHideFlags: 0
+      productName: dashscene-hlsl-conformance
+      companyName: driftsys
+      apiCompatibilityLevel: 6
+      apiCompatibilityLevelPerPlatform: {}
+    YAML
+
+    log="${project}/editor.log"
+    echo "unity-conformance: evaluating ${table} in {{unity_version}} (log: ${log})"
+    set +e
+    "${editor}" -batchmode -quit -projectPath "${project}" \
+      -executeMethod DashsceneHlslConformance.Run \
+      -dashsceneProbeTable "${table}" -logFile "${log}"
+    status=$?
+    set -e
+
+    # The harness's own report, whatever the exit code: a compile error stops
+    # the editor reaching the method, and Unity prints that rather than the
+    # harness.
+    grep -E "^\[unity-conformance\]|error CS|Shader error|Compute shader|Compilation failed" \
+      "${log}" || true
+
+    if [ "${status}" -ne 0 ]; then
+      echo "unity-conformance: FAILED (exit ${status}). Full log: ${log}" >&2
+      exit "${status}"
+    fi
+    # **A zero exit is not the verdict.** An editor that never reached
+    # `-executeMethod` — the argument dropped, `-quit` winning the race, the
+    # method renamed — opens the project and exits 0, and this recipe would
+    # print OK over a run that evaluated nothing. The harness's own OK line is
+    # the only thing that says every probe was dispatched, and it carries the
+    # backend the run measured. `ReportDevice` logs that separately before any
+    # dispatch, so this is the OK line's own copy rather than the only record.
+    if ! grep -q "^\\[unity-conformance\\] OK:" "${log}"; then
+      echo "unity-conformance: the editor exited 0 and wrote no OK line." >&2
+      echo "unity-conformance: nothing was evaluated. Full log: ${log}" >&2
+      exit 1
+    fi
+    echo "unity-conformance: OK"
+
+# The negative control for `unity-conformance`: a corrupted expectation must
+# make it fail, and only that expectation.
+#
+# **A gate nobody has watched fail is a gate with no measured teeth.** This
+# copies the committed table and moves TWO recorded expectations by one unit —
+# `erf_approx`'s first probe, a scalar, and the first component of
+# `gradient_ramp`'s first probe, which is a `vec4f` row. Then it requires three
+# things of the run, and each closes a way this control could pass over a gate
+# that is not working:
+#
+#   1. a non-zero exit — but only as the weakest of the three, since a run with
+#      no editor, a bad path or a shader that did not compile all exit non-zero;
+#   2. BOTH corrupted values named, which pins the index arithmetic that maps a
+#      flat value back to a probe and a component. A one-component corruption
+#      alone cannot: `at / 1` equals `at`, so a broken mapping is invisible;
+#   3. **exactly two of 2555 values differing.** Without this, any mutation that
+#      makes the gate reject EVERYTHING passes the control — setting the
+#      tolerance to zero, say — because the corrupted probes are then among the
+#      failures too. **It is a tight assertion on purpose and it can go red for
+#      an honest reason**: `blurred_rounded_box` sits at 89 % of its tolerance,
+#      so one probe drifting over on a different adapter reports "failing on
+#      more than them". Read that as a backend difference to investigate, not
+#      as a broken gate.
+#
+# It writes the corrupted copy under `target/` and never touches
+# `conformance/layer2-probes.json`, which is committed truth
+# (`conformance/README.md`, "Re-recording it").
+#
+# The positive half is `just unity-conformance` — the pair is the evidence, and
+# this recipe runs only the negative half because a developer runs the other one
+# anyway. Each is a full editor run.
+#
+# Corrupt two expectations and require `unity-conformance` to catch exactly them.
+unity-conformance-negative unity_version="6000.3.22f1":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$(git rev-parse --show-toplevel)"
+    # **Outside the directory `unity-conformance` rebuilds.** That recipe
+    # `rm -rf`s `target/unity-hlsl-conformance` before it starts, so a
+    # corrupted table written in there is deleted between this recipe's
+    # `[ -f ]` check and the editor's read — and the run then fails for a
+    # missing file, which is not the failure this control is measuring. The
+    # first version of this recipe did exactly that, and the grep below is what
+    # caught it.
+    mkdir -p "${root}/target/unity-hlsl-conformance-negative"
+    corrupt="${root}/target/unity-hlsl-conformance-negative/corrupted-probes.json"
+    log="${root}/target/unity-hlsl-conformance/editor.log"
+    # A log left by an earlier run is what the grep below would read if the
+    # editor never started — and an earlier NEGATIVE run's log names the very
+    # probe this one is looking for, so a missing editor would read as a pass.
+    rm -f "${log}"
+
+    table="${root}/conformance/layer2-probes.json"
+
+    # Two values: one scalar row and one component of a four-component row.
+    # `+ 1.0` is a thousand times `erf_approx`'s tolerance, a million times
+    # `gradient_ramp`'s, and well inside f32 — so what fails is the comparison
+    # and not an overflow.
+    #
+    # **Neither is at index zero, and that is the point of the pair.** The flat
+    # value index maps back as `row = at / components, component = at %
+    # components`, and at `at == 0` every wrong mapping agrees with the right
+    # one: `0 / 4`, `0 % 4` and `0` are all zero. `gradient_ramp`'s probe 3
+    # component 2 is flat index 14, which a dropped divisor reports as probe 14
+    # and a swapped mapping as probe 2 component 3 — both distinguishable from
+    # `probe 3[2]`, which is what the grep below requires.
+    jq '(.functions[] | select(.name == "erf_approx") | .probes[7].expected) += 1.0
+        | (.functions[] | select(.name == "gradient_ramp") | .probes[3].expected[2]) += 1.0' \
+      "${table}" > "${corrupt}"
+
+    # **The mutation is confirmed by reading the two values back, not by
+    # comparing the files.** `jq` re-serialises the whole document — it breaks
+    # the committed file's one-line arrays across lines — so `cmp` reports a
+    # difference whether or not the filter matched anything, and a guard built
+    # on it can never fire. Rename `erf_approx` and that guard would pass an
+    # UNCORRUPTED table to the gate, which would then correctly report OK, and
+    # this recipe would call a healthy gate toothless.
+    for probe in 'select(.name == "erf_approx") | .probes[7].expected' \
+                 'select(.name == "gradient_ramp") | .probes[3].expected[2]'; do
+      before="$(jq -r ".functions[] | ${probe}" "${table}")"
+      after="$(jq -r ".functions[] | ${probe}" "${corrupt}")"
+      if [ -z "${before}" ] || [ "${before}" = "${after}" ]; then
+        echo "negative: ${probe}" >&2
+        echo "negative: reads '${before}' before and '${after}' after, so the filter" >&2
+        echo "negative: matched nothing and this control proves nothing." >&2
+        exit 1
+      fi
+    done
+
+    echo "negative: running unity-conformance against ${corrupt}"
+    set +e
+    just unity-conformance "${corrupt}" "{{unity_version}}"
+    status=$?
+    set -e
+
+    if [ "${status}" -eq 0 ]; then
+      echo "negative: unity-conformance PASSED over a corrupted expectation." >&2
+      echo "negative: the gate has no teeth. Full log: ${log}" >&2
+      exit 1
+    fi
+    # **The log has to exist before it can be read.** Its path is written here
+    # and composed there, so the two can drift — and a `grep` over a missing
+    # file would turn a correct negative result into "failed for some other
+    # reason". Issue #1316's factoring is where that duplication goes.
+    if [ ! -f "${log}" ]; then
+      echo "negative: unity-conformance wrote no log at ${log}, so nothing was read." >&2
+      echo "negative: either it refused before starting an editor — read its output" >&2
+      echo "negative: above — or the two recipes' log paths have drifted apart." >&2
+      exit 1
+    fi
+    for named in "erf_approx probe 7:" "gradient_ramp probe 3\[2\]:"; do
+      if ! grep -q "${named}" "${log}"; then
+        echo "negative: unity-conformance failed and did not name '${named}'." >&2
+        echo "negative: it exited ${status} for some other reason. Full log: ${log}" >&2
+        exit 1
+      fi
+    done
+    # Exactly the two, and nothing else. A gate that rejects everything names
+    # them too, so without this the control passes over one with no teeth at
+    # all — a zeroed tolerance, a broken readback, a wrong kernel everywhere.
+    if ! grep -q "^\\[unity-conformance\\] 2 of 2555 value(s) differ" "${log}"; then
+      echo "negative: unity-conformance did not report exactly 2 of 2555 values as" >&2
+      echo "negative: differing. It named the corrupted probes, but it is failing on" >&2
+      echo "negative: more than them. Full log: ${log}" >&2
+      grep -m 1 "value(s) differ" "${log}" >&2 || true
+      exit 1
+    fi
+    echo "negative: OK — the gate reported exactly the two corrupted values:"
+    grep -E "probe 7:|probe 3\\[2\\]:|value\\(s\\) differ" "${log}" | head -3
+
 # The Android API level this repository links against.
 #
 # A floor rather than a target: the NDK ships wrappers from 21 up, and this is

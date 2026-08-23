@@ -1,0 +1,220 @@
+// Layer-2 conformance entry points for the GENERATED HLSL: one kernel per
+// probed function of the shader library, each evaluating it over a buffer of
+// probes and writing one float per probe.
+//
+// **This is the port of `crates/dashscene-gpu/tests/shaders/conformance.wgsl`,
+// and only of that file.** The arithmetic under test comes from
+// `Sdf.hlsl` — the file `just sdf-hlsl` generates from `sdf.wgsl` with naga,
+// included below at the path a consumer of the package includes it by. Nothing
+// here computes an expectation; `conformance/layer2-probes.json` carries those
+// and `DashsceneHlslConformance.cs` compares against them.
+//
+// Every kernel reads the same generic probe and writes the same output buffer.
+// The fields are named for their shape rather than their meaning, because what
+// a probe means differs per function; each kernel documents how it reads one.
+// The layout is `conformance.wgsl`'s `Probe`, member for member, so the two
+// harnesses pack the table's arguments the same way.
+
+#pragma kernel ProbeClampRadii
+#pragma kernel ProbeRoundedBoxSdf
+#pragma kernel ProbeCoverage
+#pragma kernel ProbeMedian3
+#pragma kernel ProbeMsdfCoverage
+#pragma kernel ProbeGradientLinear
+#pragma kernel ProbeGradientRadial
+#pragma kernel ProbeGradientAngular
+#pragma kernel ProbeGradientDiamond
+#pragma kernel ProbeGradientRamp
+#pragma kernel ProbeStrokeCoverage
+#pragma kernel ProbeErf
+#pragma kernel ProbeBlurredRoundedBox
+
+// The generated file, by the package path a consumer includes it by rather
+// than by a copy. A copy would make this gate a check on the copy.
+#include "Packages/com.driftsys.dashscene/Runtime/Shaders/Sdf.hlsl"
+
+struct Probe
+{
+    // Two four-float slots and two two-float slots, in that order, so the
+    // struct is 48 bytes with nothing padded and the C# side can write it
+    // field by field.
+    float4 v0;
+    float4 v1;
+    float2 p;
+    float2 q;
+};
+
+StructuredBuffer<Probe> _Probes;
+RWStructuredBuffer<float> _Results;
+// The stop colours `ProbeGradientRamp` mixes. One function takes an array
+// rather than a fixed number of floats, and a `Probe` has no room for eight
+// colours; only that kernel binds this.
+StructuredBuffer<float4> _StopColours;
+
+// How many probes this dispatch carries. A uniform rather than
+// `_Probes.GetDimensions`, because the bound buffer's length is the only thing
+// the bounds test needs and a uniform reads the same on every backend.
+uint _ProbeCount;
+
+// `clamp_radii(half_size, radii)` — half_size is `q`, radii is `v0`; the
+// result's component selected by `v1.x` (0..3) is written out, so one kernel
+// can check all four.
+[numthreads(64, 1, 1)]
+void ProbeClampRadii(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ProbeCount) { return; }
+    Probe probe = _Probes[i];
+    float4 r = clamp_radii(probe.q, probe.v0);
+    uint which = (uint)probe.v1.x;
+    if (which == 0u) { _Results[i] = r.x; }
+    else if (which == 1u) { _Results[i] = r.y; }
+    else if (which == 2u) { _Results[i] = r.z; }
+    else { _Results[i] = r.w; }
+}
+
+// `rounded_box_sdf(p, half_size, radii)` — p is `p`, half_size is `q`, radii is
+// `v0` as (top_left, top_right, bottom_right, bottom_left).
+[numthreads(64, 1, 1)]
+void ProbeRoundedBoxSdf(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ProbeCount) { return; }
+    Probe probe = _Probes[i];
+    _Results[i] = rounded_box_sdf(probe.p, probe.q, probe.v0);
+}
+
+// `coverage(d, width)` — d is `v1.x`, width is `v1.y`.
+[numthreads(64, 1, 1)]
+void ProbeCoverage(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ProbeCount) { return; }
+    Probe probe = _Probes[i];
+    _Results[i] = coverage(probe.v1.x, probe.v1.y);
+}
+
+// `median3(v)` — the three channels are `v0.xyz`. **The HLSL symbol is
+// `median3_`**: naga appends an underscore to a name ending in a digit. The
+// table keys on the WGSL name and this is where the two are tied together;
+// `DashsceneHlslConformance.cs` checks the symbol exists before compiling this.
+[numthreads(64, 1, 1)]
+void ProbeMedian3(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ProbeCount) { return; }
+    _Results[i] = median3_(_Probes[i].v0.xyz);
+}
+
+// `msdf_coverage(sample, px_range)` — the sample is `v0.xyz`, px_range `v0.w`.
+[numthreads(64, 1, 1)]
+void ProbeMsdfCoverage(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ProbeCount) { return; }
+    Probe probe = _Probes[i];
+    _Results[i] = msdf_coverage(probe.v0.xyz, probe.v0.w);
+}
+
+// The four gradient parameterizations — the point is `p`, the gradient origin
+// is `q`, the primary handle is `v0.xy` and the secondary is `v0.zw`.
+[numthreads(64, 1, 1)]
+void ProbeGradientLinear(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ProbeCount) { return; }
+    Probe probe = _Probes[i];
+    _Results[i] = gradient_linear_t(probe.p, probe.q, probe.v0.xy, probe.v0.zw);
+}
+
+[numthreads(64, 1, 1)]
+void ProbeGradientRadial(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ProbeCount) { return; }
+    Probe probe = _Probes[i];
+    _Results[i] = gradient_radial_t(probe.p, probe.q, probe.v0.xy, probe.v0.zw);
+}
+
+[numthreads(64, 1, 1)]
+void ProbeGradientAngular(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ProbeCount) { return; }
+    Probe probe = _Probes[i];
+    _Results[i] = gradient_angular_t(probe.p, probe.q, probe.v0.xy, probe.v0.zw);
+}
+
+[numthreads(64, 1, 1)]
+void ProbeGradientDiamond(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ProbeCount) { return; }
+    Probe probe = _Probes[i];
+    _Results[i] = gradient_diamond_t(probe.p, probe.q, probe.v0.xy, probe.v0.zw);
+}
+
+// `gradient_ramp(t, offsets, colours, count)` — the eight stop offsets are `v0`
+// then `v1`, `t` is `p.x`, the stop count is `p.y`, `q.x` selects which channel
+// of the resulting colour is written out (0..3, the way `ProbeClampRadii`
+// selects a radius), and `q.y` is where this probe's eight stop colours begin
+// in `_StopColours`.
+//
+// Eight colours are read whatever the count, because the read is what the
+// probe's own layout fixes; the count is what `gradient_ramp` walks, and the
+// slots past it are the fixture's business — they hold poison on purpose.
+[numthreads(64, 1, 1)]
+void ProbeGradientRamp(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ProbeCount) { return; }
+    Probe probe = _Probes[i];
+    uint stopBase = (uint)probe.q.y;
+    float offsets[MAX_GRADIENT_STOPS] = {
+        probe.v0.x, probe.v0.y, probe.v0.z, probe.v0.w,
+        probe.v1.x, probe.v1.y, probe.v1.z, probe.v1.w,
+    };
+    float4 colours[MAX_GRADIENT_STOPS] = {
+        _StopColours[stopBase], _StopColours[stopBase + 1u],
+        _StopColours[stopBase + 2u], _StopColours[stopBase + 3u],
+        _StopColours[stopBase + 4u], _StopColours[stopBase + 5u],
+        _StopColours[stopBase + 6u], _StopColours[stopBase + 7u],
+    };
+    float4 colour = gradient_ramp(probe.p.x, offsets, colours, (uint)probe.p.y);
+    uint which = (uint)probe.q.x;
+    if (which == 0u) { _Results[i] = colour.r; }
+    else if (which == 1u) { _Results[i] = colour.g; }
+    else if (which == 2u) { _Results[i] = colour.b; }
+    else { _Results[i] = colour.a; }
+}
+
+// `stroke_coverage(d, width, align, aa)` — d is `v1.x`, width `v1.y`, align
+// `v1.z`, aa `v1.w`.
+[numthreads(64, 1, 1)]
+void ProbeStrokeCoverage(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ProbeCount) { return; }
+    Probe probe = _Probes[i];
+    _Results[i] = stroke_coverage(probe.v1.x, probe.v1.y, probe.v1.z, probe.v1.w);
+}
+
+// `erf_approx(x)` — x is `v1.x`.
+[numthreads(64, 1, 1)]
+void ProbeErf(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ProbeCount) { return; }
+    _Results[i] = erf_approx(_Probes[i].v1.x);
+}
+
+// `blurred_rounded_box(p, half_size, radii, sigma)` — p is `p`, half_size is
+// `q`, radii is `v0`, sigma is `v1.x`.
+[numthreads(64, 1, 1)]
+void ProbeBlurredRoundedBox(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= _ProbeCount) { return; }
+    Probe probe = _Probes[i];
+    _Results[i] = blurred_rounded_box(probe.p, probe.q, probe.v0, probe.v1.x);
+}

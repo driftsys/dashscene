@@ -407,23 +407,27 @@ was `Stored` where every one of Unity's own `assets/` entries was `Defl:N`. A
 custom gradle template that drops that list breaks the Android path, and the
 resolver lets `openFd`'s exception through rather than falling back to a copy.
 
-## What the five gates see, and what none of them does
+## What the gates see, and what none of them does
 
-| gate                   | question                                                                             | recipe              | in CI  |
-| ---------------------- | ------------------------------------------------------------------------------------ | ------------------- | ------ |
-| `unity/abi-check`      | do boundary B's C# types match the Rust ones?                                        | `just unity-abi`    | yes    |
-| `unity/package-compat` | would Unity compile the engine-free half at netstandard2.1?                          | `just unity-abi`    | yes    |
-| `unity/ffi-check`      | do the P/Invoke declarations match the library?                                      | `just unity-ffi`    | yes    |
-| `unity/package-gate`   | is the HLSL the WGSL's? do the shaders carry the pragmas? is the R-E10 split intact? | `just test`         | yes    |
-| `unity/editor-compat`  | does the WHOLE package compile, shaders included?                                    | `just unity-editor` | **no** |
+| gate                     | question                                                                             | recipe                   | in CI  |
+| ------------------------ | ------------------------------------------------------------------------------------ | ------------------------ | ------ |
+| `unity/abi-check`        | do boundary B's C# types match the Rust ones?                                        | `just unity-abi`         | yes    |
+| `unity/package-compat`   | would Unity compile the engine-free half at netstandard2.1?                          | `just unity-abi`         | yes    |
+| `unity/ffi-check`        | do the P/Invoke declarations match the library?                                      | `just unity-ffi`         | yes    |
+| `unity/package-gate`     | is the HLSL the WGSL's? do the shaders carry the pragmas? is the R-E10 split intact? | `just test`              | yes    |
+| `unity/editor-compat`    | does the WHOLE package compile, shaders included?                                    | `just unity-editor`      | **no** |
+| `unity/hlsl-conformance` | does the generated HLSL evaluate to the committed probe table?                       | `just unity-conformance` | **no** |
 
-The last two are story #1122's. `unity/package-gate` is Rust and rides in the
-sanity test tier deliberately: the .NET gates are outside `just check` because
-bootstrap installs no SDK, and an editor is outside CI entirely, so it is the
-only check over the package that runs on every pull request without a
-prerequisite. `unity/editor-compat` is the only thing in this repository that
-compiles a Unity `.shader`, and the only thing that compiles `Runtime/Engine/`;
-it needs an editor install, which
+`unity/editor-compat` and `unity/package-gate` are story #1122's;
+`unity/hlsl-conformance` is issue #1312's. `unity/package-gate` is Rust and
+rides in the sanity test tier deliberately: the .NET gates are outside
+`just check` because bootstrap installs no SDK, and an editor is outside CI
+entirely, so it is the only check over the package that runs on every pull
+request without a prerequisite. `unity/editor-compat` is the only thing in this
+repository that compiles a Unity `.shader`, and the only thing whose **purpose**
+is to compile `Runtime/Engine/` — `unity/hlsl-conformance` imports the same
+package into an editor and so compiles that assembly incidentally, which is why
+a compile error there stops it too; it needs an editor install, which
 [../decisions/the-native-library-ships-inside-the-unity-package.md](../decisions/the-native-library-ships-inside-the-unity-package.md)
 D4 records no CI runner here can host.
 
@@ -466,15 +470,18 @@ declaration up in the loaded library, so a rename fails now rather than in the
 story that first calls one. A lookup proves the name and not the signature; the
 behavioural checks prove the signatures of what they exercise.
 
-**None of the five reads a shipped binary.** All build both halves from one
-tree, so they observe only a disagreement this repository already contains. A
-stale committed library is what `DsSlice::stride` catches at run time, which is
-why R-E17 makes that check mandatory in the host rather than advisory.
+**None of them reads a shipped binary.** The three that build a Rust half build
+both halves from one tree, and the other three read this repository's own
+sources — so all six observe only a disagreement it already contains. A stale
+committed library is what `DsSlice::stride` catches at run time, which is why
+R-E17 makes that check mandatory in the host rather than advisory.
 
-**And none of them draws.** Every gate above compiles, links or executes on the
-CPU. Whether the painter puts the right pixels on a screen is issue #828's
-portable conformance suite, and this record claims nothing about it — see the
-gaps below.
+**And none of them draws.** Five compile, link or execute on the CPU;
+`unity/hlsl-conformance` executes on a graphics device, but as a compute
+dispatch over the shader library's arithmetic — there is no rasteriser, no blend
+and no picture in it, which is what makes layer 2 meaningful on whatever adapter
+a machine offers. Whether the painter puts the right pixels on a screen is a
+question no gate here asks; see the gaps below.
 
 ## The `.meta` files, and how they were made
 
@@ -554,6 +561,17 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   composited, and a Unity host's target also holds the engine's own scene, so
   frosted glass over Unity 3D is a host material effect outside boundary B
   whatever this painter does.
+- **The SDF library's arithmetic is checked in this language on one backend, in
+  an editor.** `just unity-conformance` evaluates every probe of
+  `conformance/layer2-probes.json` through the generated `Sdf.hlsl` as a compute
+  shader and compares against the recorded expectations — issue #1312, and it is
+  what makes R-T5's single-sourcing a measured property here rather than a byte
+  comparison over a generated file. What it has run on is Metal, on the
+  developer's machine; neither GLES 3.2 nor Vulkan has evaluated a probe, no
+  player build has, and no CI job runs the gate because it needs an editor.
+  Issue #1314 carries all three. Two narrower gaps sit beside it: nothing holds
+  the harness's own pinned probe counts against the table (issue #1323), and
+  layer 2's properties are not ported alongside its table (issue #1324).
 - **No text.** Story #1123. `dashpaint::Atlas` owns the sheet a glyph run
   samples and has no C representation, so the runs cross the ABI and the sheet
   does not.

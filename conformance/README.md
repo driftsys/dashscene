@@ -68,6 +68,39 @@ stopped happening:
   from its own implementation tests that implementation against itself and
   proves nothing.
 
+### The second consumer
+
+`unity/hlsl-conformance/` is the port, and `just unity-conformance` runs it. It
+evaluates the same table through
+`unity/com.driftsys.dashscene/Runtime/Shaders/Sdf.hlsl` — the file `naga`
+generates from the same WGSL — as a Unity compute shader, one kernel per
+function, comparing against the recorded expectations. It ports
+`the_shader_matches_the_committed_probe_table` and nothing else: there is no
+reference implementation in that directory, which is the third obligation above.
+The properties `docs/decisions/shader-library-and-layer-2.md` also expects a
+second painter to port are not ported, which is issue #1324.
+
+**It exists because a byte comparison is not an evaluation.**
+`unity/package-gate` re-derives the generated HLSL and compares the file as
+text, which says the generator ran. Whether the generated arithmetic evaluates
+to these numbers on the hardware that runs it is a different question, and issue
+#1312 is the gap between them.
+
+**Say which backend a run measured.** Unity translates the HLSL for whatever
+graphics device the editor obtained — on macOS, Metal — so a pass is a statement
+about that backend and not about the GLES 3.2 or Vulkan an Android fleet runs.
+The harness reads `SystemInfo.graphicsDeviceType` back and prints it, rather
+than letting the gate's name imply more. Issue #1195 is a measured instance of
+why the distinction is not pedantry: Metal folded `(o + b) - (o + a)` to `b - a`
+and erased a cancellation the shader depended on.
+
+It needs a Unity editor, so no CI job runs it. `just unity-conformance-negative`
+is its negative control: it corrupts two expectations in a copy under `target/`
+— a scalar row and one component of a `vec4f` row, neither at index zero — and
+requires the gate to name exactly those two. The count matters: a control that
+only asks for the corrupted probe to be named passes over a gate that rejects
+everything.
+
 ### The envelope
 
 The top-level object carries five fields before `functions`, and one of them is

@@ -629,7 +629,13 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       `crates/dashscene-gpu/src/shaders/sdf.wgsl` by `naga`, with a test that
       re-derives the committed file — which is the mechanism R-T5 asks for.
 
-      **What has been checked is compilation, not a picture.** The package and
+      **What has been checked is compilation and the shader library's
+      arithmetic, not a picture.** `just unity-conformance` evaluates every
+      probe of `conformance/layer2-probes.json` through the generated HLSL as a
+      compute shader and compares against the recorded expectations, so R-T5's single-sourcing is measured in the second
+      language rather than resting on the file re-derivation alone (issue
+      #1312). That was run on Metal only, in an editor, and on neither
+      graphics API the target fleet runs (issue #1314). The package and
       its three shaders compile in a Unity 6000.3.22f1 editor, and every pass
       is compiled with `DOTS_INSTANCING_ON` for Vulkan and GLES3x on Android
       and Metal on macOS — `just unity-editor`, which needs an editor and so
@@ -640,10 +646,14 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       that shader as a control and scopes its emptiness check to the pairs
       where the call discriminates — so on the two target-fleet APIs the
       fragment evidence is the API's `Success` flag alone. **Nothing has run the painter**: no frame has been
-      drawn, nothing constructs it in this tree (issue #1298), and the epic's
-      own definition of done is issue #828's portable conformance suite. Read
-      "the renderer is built" as "the code exists and compiles", not as
-      "it draws".
+      drawn and nothing constructs it in this tree (issue #1298). The epic's
+      own definition of done has two halves — the painter draws a `.dsb`
+      through the C# host, and issue #828's portable conformance suite says it
+      drew the right thing. The gate above is the suite half's machinery, run
+      over synthetic probes rather than over a painted frame, so it does not
+      close that half either.
+      Read "the renderer is built" as "the code exists, compiles, and its
+      shader library evaluates correctly", not as "it draws".
 - [ ] **Browsers without WebGPU** — WebGPU is the newer browser graphics
       standard the lean renderer needs. A browser lacking it is told so and
       draws nothing. Supporting the older standard is a redesign, and a v1
