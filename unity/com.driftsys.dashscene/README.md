@@ -64,12 +64,16 @@ runtime leaks with nothing reported.
 
 ## What checks the declarations
 
-Five checks, asking five questions. `just unity-abi` runs the first two,
-`just unity-ffi` the third and `just test` the fourth — all four run on any pull
-request whose diff is not documentation-only, and **none of those four needs a
-Unity editor**. The fifth, `just unity-editor`, does need one and therefore runs
-on no CI runner; it is the only thing that compiles a Unity `.shader` or
-compiles `Runtime/Engine/`.
+`just unity-abi` runs the first two below, `just unity-ffi` the third and
+`just test` the fourth — all four run on any pull request whose diff is not
+documentation-only, and **none of those four needs a Unity editor**. Two do need
+one and therefore run on no CI runner: `just unity-editor`, the only thing that
+compiles a Unity `.shader` and the one whose purpose is to compile
+`Runtime/Engine/`, and `just unity-conformance`, which evaluates the committed
+layer-2 probe table through the generated `Runtime/Shaders/Sdf.hlsl` on a real
+graphics device (issue #1312). That last one checks arithmetic rather than a
+declaration, and it is the only one here that runs shader code and reads the
+numbers back.
 
 `unity/package-compat` compiles `Runtime/` **minus `Runtime/Engine/`** against
 **netstandard2.1**, which is what Unity's default API compatibility level

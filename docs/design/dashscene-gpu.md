@@ -769,6 +769,21 @@ painter runs rather than a review promise it makes separately. Layer 1 is not
 portable in the same sense: its goldens are this crate's instance rows, which
 only a seam-2 consumer reads (`docs/technotes/implementing-a-backend.md`).
 
+**The second painter now runs it, on the second backend.**
+`unity/hlsl-conformance/` evaluates the same file through the generated
+`unity/com.driftsys.dashscene/Runtime/Shaders/Sdf.hlsl` as a Unity compute
+shader — the port of `the_shader_matches_the_committed_probe_table`, one kernel
+per function, and issue #1312. It ports that test and **not** layer 2's
+properties, which `docs/decisions/shader-library-and-layer-2.md` also expects a
+second painter to carry — issue #1324. Until it landed, "a second painter runs
+it" was a property of the file rather than something that had happened: what the
+second painter had was `unity/package-gate` re-deriving that HLSL and comparing
+the **text**, which says the generator ran and not that the arithmetic evaluates
+to these numbers. It needs a Unity editor, so no CI job runs it, and **what it
+measures is the backend the editor obtained** — Metal on macOS, not the GLES 3.2
+or Vulkan of an Android fleet. Issue #1195 is a measured instance of that
+distinction mattering.
+
 ### The probe table, and what stays a property
 
 `conformance/layer2-probes.json` does not carry everything the suite asserts,

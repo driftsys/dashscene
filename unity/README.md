@@ -1,6 +1,7 @@
 # unity/
 
-The Unity C# package, and the five checks that hold it to the Rust build.
+The Unity C# package, and the checks that hold it to what the rest of this
+repository builds and records.
 
     com.driftsys.dashscene/   the UPM package — boundary B's types, the C#
                               host, and the BatchRendererGroup painter; no
@@ -29,6 +30,13 @@ The Unity C# package, and the five checks that hold it to the Rust build.
                               throwaway Unity project: the WHOLE package
                               compiled, shaders included. Needs an editor, so it
                               runs on no CI runner
+    hlsl-conformance/         a compute shader and an editor script
+                              `just unity-conformance` copies into a throwaway
+                              Unity project: the committed layer-2 probe table
+                              evaluated through the generated Sdf.hlsl on a real
+                              graphics device (issue #1312). The only check here
+                              that RUNS shader code and reads the numbers back.
+                              Needs an editor, so it runs on no CI runner
 
 Sited in this repository rather than in a separate one by the owner's ruling of
 2026-08-17, recorded in
@@ -37,20 +45,22 @@ UPM installs from a Git URL with `?path=`, so a subfolder is directly
 consumable.
 
 **Sharing a repository gains nothing on its own** — that record says so, and the
-checks here are what give it value. `just unity-abi` runs the first two,
-`just unity-ffi` the third, `just test` the fourth, and `just unity-editor` the
-fifth.
+checks here are what give it value. `just unity-abi` runs `abi-check` and
+`package-compat`, `just unity-ffi` runs `ffi-check`, `just test` runs
+`package-gate`, `just unity-editor` runs `editor-compat`, and
+`just unity-conformance` runs `hlsl-conformance`.
 
-The five ask different questions and none subsumes another. `abi-check` compares
+They ask different questions and none subsumes another. `abi-check` compares
 boundary B's value types against a `dashpaint-abi` build, member by member;
 `package-compat` asks whether Unity could compile the engine-free half at
 netstandard2.1, and executes nothing; `ffi-check` loads `dashscene-ffi` and
 calls it; `package-gate` reads sources and re-derives the generated HLSL;
-`editor-compat` is the only one that compiles a Unity shader. Until story #1121
-nothing compiled a C# P/Invoke against
-`crates/dashscene-ffi/include/dashscene.h`, which is item 2 of issue #1266 — but
-`abi-check` has always executed: it declares sixty `[DllImport]`s and
-round-trips structs by value through the library.
+`editor-compat` is the only one that compiles a Unity `.shader`;
+`hlsl-conformance` is the only one that dispatches shader code and compares the
+values it computed against a committed table. Until story #1121 nothing compiled
+a C# P/Invoke against `crates/dashscene-ffi/include/dashscene.h`, which is item
+2 of issue #1266 — but `abi-check` has always executed: it declares sixty
+`[DllImport]`s and round-trips structs by value through the library.
 
 None of them reads a shipped binary. The three that build a Rust half build both
 halves from one tree, so they observe only a disagreement this repository
