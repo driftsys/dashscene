@@ -375,6 +375,20 @@ pub enum DsStatus {
     /// older header meets it only on a call it could not have made, and
     /// [`DS_ABI_VERSION`] does not move.
     FrameLeased = 19,
+    /// [`ds_runtime_atlas`] was asked for an atlas index the loaded document's
+    /// set does not hold.
+    ///
+    /// The atlas-side twin of [`DsStatus::NoSuchRoot`], and it is a caller
+    /// error rather than a document one: a `GlyphRun`'s `atlas` always names a
+    /// row of the set the same load installed, so an index past the end came
+    /// from the caller and not from a run. **Never a clamp** — the nearest
+    /// atlas is a different sheet, and sampling it draws another face's glyphs
+    /// rather than failing.
+    ///
+    /// Additive in effect as well as in value, for the reason
+    /// [`DsStatus::FrameLeased`] gives: nothing could reach it before
+    /// [`ds_runtime_atlas`] existed, so [`DS_ABI_VERSION`] does not move.
+    NoSuchAtlas = 20,
 }
 
 /// Which platform handle the pointers in [`ds_runtime_attach_surface`] carry.
@@ -689,6 +703,27 @@ pub unsafe extern "C" fn ds_runtime_load_document(
 fn drop_document(runtime: &mut Runtime) {
     runtime.scene = None;
     runtime.arena = Arena::new();
+    // The outgoing document's sheets go with it. Every caller installs a new
+    // set a few lines later, so this is only reached as a value in the window
+    // between them — the window `dashlang::attach_live`'s own panic can end in.
+    // `ds_runtime_atlas` refuses that state on `scene`, and clearing here means
+    // it would refuse on the set as well rather than on one of the two.
+    runtime.atlases = Arc::new(Vec::new());
+}
+
+/// The atlas set a load installs: the solver's own, shared rather than copied.
+///
+/// **An `Arc` clone and not a `Vec` copy**, for the reason
+/// `dashscene_engine::TextResources::atlases` gives: the set is three sheets
+/// with their texel payloads, about a megabyte, and every producer of one
+/// already holds an `Arc`.
+///
+/// A load with no faces installs an empty set rather than leaving the previous
+/// document's — which is what makes `ds_runtime_atlas_count` answer `0` for a
+/// text-free document instead of the count of whatever was loaded before it.
+fn atlases_of(text: &Option<TextResources>) -> Arc<Vec<dashpaint::Atlas>> {
+    text.as_ref()
+        .map_or_else(|| Arc::new(Vec::new()), |text| Arc::clone(&text.atlases))
 }
 
 /// The load both entry points run. `text` is what the caller could supply.
@@ -727,10 +762,15 @@ fn load_into(runtime: &mut Runtime, bytes: &[u8], text: Option<TextResources>) -
     // `TaffySolver::boxed` rather than the same two arms written here: it
     // exists so that no document loader can disagree with another about what
     // `None` means, and `dashscene-desktop` and `dashscene-web` both call it.
+    // Taken before `text` is moved into the solver, which is the only reason
+    // this is a separate binding: it is the same `Arc` the solver goes on to
+    // hold, so the two cannot name different sets.
+    let atlases = atlases_of(&text);
     runtime.scene = Some(dashlang::attach_live(
         &mut runtime.arena,
         TaffySolver::boxed(text),
     ));
+    runtime.atlases = atlases;
     announce_document_replaced(runtime);
     DsStatus::Ok
 }
@@ -922,10 +962,15 @@ fn load_mapped_into(
         &mut runtime.arena,
     );
 
+    // Taken before `text` is moved into the solver, which is the only reason
+    // this is a separate binding: it is the same `Arc` the solver goes on to
+    // hold, so the two cannot name different sets.
+    let atlases = atlases_of(&text);
     runtime.scene = Some(dashlang::attach_live(
         &mut runtime.arena,
         TaffySolver::boxed(text),
     ));
+    runtime.atlases = atlases;
     announce_document_replaced(runtime);
     DsStatus::Ok
 }
@@ -1659,11 +1704,13 @@ fn slice_of<T>(rows: &[T]) -> DsSlice {
 ///
 /// # What is not here
 ///
-/// **The glyph atlases.** `dashpaint::Atlas` owns an encoded sheet and a glyph
-/// list; it is not a row and has no C representation, so the runs cross here
-/// and the sheet they sample does not. Story #1123 — the Unity text seam,
-/// atlas upload and the MSDF sampler — is where it lands, and until then a
-/// host can lay out text and cannot shade it.
+/// **The glyph atlases, and they are not missing — they are somewhere else.**
+/// `dashpaint::Atlas` is an encoded sheet, four scalars and a glyph list
+/// rather than a row, and it belongs to the **load** rather than to the
+/// commit: nothing here replaces it, so re-reading it per frame would be work
+/// for a value that cannot have changed. [`ds_runtime_atlas`] hands it out,
+/// keyed by a `GlyphRun`'s `atlas` field, and [`DsAtlas`] carries why that is
+/// a call rather than a member of this struct (story #1123).
 ///
 /// # Lifetime
 ///
@@ -1996,6 +2043,230 @@ pub unsafe extern "C" fn ds_runtime_release_frame(
             {
                 scene.mark_shown();
             }
+            DsStatus::Ok
+        })
+    })
+}
+
+/// One MSDF glyph atlas: the sheet, the four scalars a painter shades with,
+/// and the per-glyph placement its runs resolve against.
+///
+/// **The half of the text seam a `DsFrame` cannot carry.**
+/// [`ds_runtime_acquire_frame`] hands out the runs and their quads, and a quad
+/// is a glyph id and a pen position — a host cannot compute the quad's corners
+/// or its texture coordinates from that alone. This is what closes it
+/// (story #1123).
+///
+/// # Why this is a call and not a member of [`DsFrame`]
+///
+/// Because an atlas set is installed by a **load** and is not part of a
+/// commit. Three consequences follow, and
+/// `docs/decisions/the-glyph-atlas-crosses-the-c-abi-as-a-call.md` carries
+/// them:
+///
+/// - A member of [`DsFrame`] would say the set can change per commit, which it
+///   cannot, and a host would have to invent its own change detection to avoid
+///   re-uploading a texture every frame. Here the answer is the shape of the
+///   API: read it when a load reports
+///   [`document_replaced`](DsFrame::document_replaced), and not otherwise.
+/// - `dashpaint::Atlas` is not a row. As a frame member it would be a
+///   per-atlas entry row plus two flat arrays it indexes — a new boundary-B row
+///   type, for data that is not part of the frame.
+/// - Adding members to [`DsFrame`] changes its layout, so a host built against
+///   an older header would be written past. Adding a symbol does not, so
+///   [`DS_ABI_VERSION`] stays where it is.
+///
+/// # The sheet crosses too, and that is not redundant
+///
+/// The bytes in [`png`](Self::png) are the ones a host handed to
+/// [`ds_runtime_load_document_with_text`] as `DsFontFace::atlas_png` — so it
+/// may look as though a host already holds them and needs only the glyph
+/// table.
+///
+/// **It holds them and cannot tell which is which.** An `AtlasIndex` is the
+/// typesetter's font slot, and `dashscene_engine::TextResources::from_faces`
+/// builds that order by grouping the faces by family — through
+/// `FontFamily::name_matches`, which trims and compares
+/// ASCII-case-insensitively — before flattening family-major. A
+/// caller that lists one family's faces non-contiguously therefore gets an
+/// atlas order that is not its own argument order, and pairing by array index
+/// would sample another face's sheet **rather than failing**. The header's own
+/// `DsFontFace` comment names that hazard for the library's internal pairing;
+/// this member closes it for the host, and costs a pointer and a length
+/// because the runtime already owns the encoded bytes.
+///
+/// # Lifetime
+///
+/// Every pointer here belongs to the runtime and is valid until the next load
+/// or [`ds_runtime_free`], whichever comes first. **Not until the next
+/// commit**: unlike a [`DsFrame`], nothing here is replaced by a tick, which is
+/// what lets a host upload a sheet once per document. No lease is taken and
+/// none is required.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct DsAtlas {
+    /// The sheet's width in texels. Never zero — `dashpaint::Atlas::new`
+    /// refuses that.
+    pub width: u32,
+    /// The sheet's height in texels. Never zero, for the same reason.
+    pub height: u32,
+    /// The size, in texels per em, the sheet was rendered at. Never zero.
+    ///
+    /// **A `u32` here and a `u16` on `dashpaint::Atlas`**, widened on the rule
+    /// `docs/decisions/sub-word-members-widen-rather-than-pad.md` states: a
+    /// two-byte member among four-byte ones costs padding a header would have
+    /// to name and saves nothing. The domain is unchanged.
+    pub px_per_em: u32,
+    /// The MSDF distance range in atlas texels. Always finite and greater than
+    /// zero.
+    ///
+    /// A painter's screen-pixel range is `distance_range_px * run.size /
+    /// px_per_em`; `plane_em` and `atlas_px` bake the range into the bounds, so
+    /// this scales the sharpness of the edge and not the size.
+    pub distance_range_px: f32,
+    /// `uint8_t` — the encoded sheet.
+    ///
+    /// **Always a PNG.** `dashscene_engine::atlas_from_bytes` reads the header
+    /// through `image_id::identify` and refuses anything else with
+    /// [`DsStatus::Atlas`], so an atlas that exists is one whose payload
+    /// carried a PNG signature and an `IHDR` declaring the extent above.
+    pub png: DsSlice,
+    /// `dashpaint::AtlasGlyph` — the placement of every glyph that paints,
+    /// **sorted and unique by `glyph_id`**, so a host may binary-search it.
+    ///
+    /// A glyph id with no row here draws nothing: an empty outline such as a
+    /// space, or a codepoint outside the sheet's charset. That is coverage
+    /// settled at build time by the atlas closure
+    /// (`docs/decisions/glyph-coverage-is-declared-at-build-time.md`) and not a
+    /// per-frame decision — there is no runtime atlas rebuild to ask for.
+    pub glyphs: DsSlice,
+}
+
+impl DsAtlas {
+    /// An atlas naming nothing.
+    ///
+    /// Written to `out` before anything can fail, for the reason
+    /// [`DsFrame::empty`] is: a caller that ignores the status then holds an
+    /// atlas with no bytes rather than uninitialised memory.
+    const fn empty() -> Self {
+        Self {
+            width: 0,
+            height: 0,
+            px_per_em: 0,
+            distance_range_px: 0.0,
+            png: DsSlice::none::<u8>(),
+            glyphs: DsSlice::none::<dashpaint::AtlasGlyph>(),
+        }
+    }
+}
+
+/// How many glyph atlases the loaded document's runs sample.
+///
+/// `0` for a document loaded without faces and for the measure-only cascade —
+/// both stage no glyph runs, so neither is an error. A `GlyphRun`'s `atlas`
+/// field is an index below this count, and [`ds_runtime_atlas`] is what
+/// resolves it.
+///
+/// Requires a document: without one this is [`DsStatus::NoDocument`], not `0`,
+/// because "no document" and "a document with no text" are different answers
+/// and a host that conflated them would upload nothing and report nothing.
+///
+/// **Takes no lease and is refused by none.** The set is a property of the
+/// load rather than of a commit, so this answers the same value whether or not
+/// a frame is outstanding.
+///
+/// Adding this symbol did not move [`DS_ABI_VERSION`].
+///
+/// # Safety
+///
+/// `out_count` must be a valid, writable `size_t *`. The handle carries no
+/// safety obligation (story #1226).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ds_runtime_atlas_count(
+    runtime: DsRuntime,
+    out_count: *mut usize,
+) -> DsStatus {
+    guard(|| {
+        if out_count.is_null() {
+            set_last_error("ds_runtime_atlas_count: out_count is null");
+            return DsStatus::NullArgument;
+        }
+        // Written before anything else that can fail, the rule
+        // `ds_runtime_acquire_frame` states: a caller that ignores the status
+        // reads zero rather than its own stack.
+        unsafe { *out_count = 0 };
+
+        on_runtime(runtime, "ds_runtime_atlas_count", |runtime| {
+            if runtime.scene.is_none() {
+                set_last_error("ds_runtime_atlas_count: no document loaded");
+                return DsStatus::NoDocument;
+            }
+            unsafe { *out_count = runtime.atlases.len() };
+            DsStatus::Ok
+        })
+    })
+}
+
+/// Describes the atlas at `index` and writes it to `out`.
+///
+/// `index` is a `GlyphRun`'s `atlas` field: the value that names which sheet a
+/// run's glyphs were shaped against. An index at or past
+/// [`ds_runtime_atlas_count`]'s answer is [`DsStatus::NoSuchAtlas`] rather than
+/// a clamp — the nearest atlas is a different face's sheet, and sampling it
+/// draws the wrong glyphs rather than failing.
+///
+/// **Read it once per load, not once per frame.** The set is installed by a
+/// load and replaced only by another, so a host uploads each sheet when
+/// [`DsFrame::document_replaced`] reports a replacement and keeps the texture
+/// until the next one. See [`DsAtlas`] for the lifetime that rests on.
+///
+/// **On failure the atlas is emptied** — every count `0`, every pointer
+/// `NULL`, every scalar `0`, and every stride still this build's row size — so
+/// a caller that ignores the status holds an atlas that describes nothing
+/// rather than uninitialised memory. The one case with no write is a `NULL`
+/// `out` itself, where there is nowhere to write.
+///
+/// Adding this symbol did not move [`DS_ABI_VERSION`].
+///
+/// # Safety
+///
+/// `out` must be a valid, writable `DsAtlas *`. The handle carries no safety
+/// obligation (story #1226).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ds_runtime_atlas(
+    runtime: DsRuntime,
+    index: u32,
+    out: *mut DsAtlas,
+) -> DsStatus {
+    guard(|| {
+        if out.is_null() {
+            set_last_error("ds_runtime_atlas: out is null");
+            return DsStatus::NullArgument;
+        }
+        unsafe { *out = DsAtlas::empty() };
+
+        on_runtime(runtime, "ds_runtime_atlas", |runtime| {
+            if runtime.scene.is_none() {
+                set_last_error("ds_runtime_atlas: no document loaded");
+                return DsStatus::NoDocument;
+            }
+            let Some(atlas) = runtime.atlases.get(index as usize) else {
+                set_last_error(format!(
+                    "ds_runtime_atlas: no atlas {index}; this document's set holds {}",
+                    runtime.atlases.len()
+                ));
+                return DsStatus::NoSuchAtlas;
+            };
+            unsafe {
+                *out = DsAtlas {
+                    width: atlas.width(),
+                    height: atlas.height(),
+                    px_per_em: u32::from(atlas.px_per_em()),
+                    distance_range_px: atlas.distance_range_px(),
+                    png: slice_of(&atlas.image().bytes),
+                    glyphs: slice_of(atlas.glyphs()),
+                }
+            };
             DsStatus::Ok
         })
     })
@@ -2865,6 +3136,536 @@ mod tests {
         );
     }
 
+    /// One corpus face: its font, its sheet and its metrics, read from disk.
+    ///
+    /// A struct rather than a tuple so the three byte vectors have names at
+    /// every call site, and so the `CString` lives beside them — a
+    /// `DsFontFace` borrows all four and the pointers must outlive the call.
+    #[cfg(test)]
+    struct FaceFixture {
+        family: std::ffi::CString,
+        font: Vec<u8>,
+        png: Vec<u8>,
+        metrics: Vec<u8>,
+    }
+
+    impl FaceFixture {
+        /// The descriptor a loader takes, borrowing this fixture.
+        fn face(&self, weight: u16) -> DsFontFace {
+            DsFontFace {
+                family: self.family.as_ptr(),
+                weight,
+                face_index: 0,
+                font_bytes: self.font.as_ptr(),
+                font_len: self.font.len(),
+                atlas_png: self.png.as_ptr(),
+                atlas_png_len: self.png.len(),
+                atlas_metrics: self.metrics.as_ptr(),
+                atlas_metrics_len: self.metrics.len(),
+            }
+        }
+    }
+
+    /// A corpus face by family name, font path and atlas directory.
+    ///
+    /// Paths rather than a lookup table: the three arguments are what a reader
+    /// checks against `corpus/`, and a table would put the pairing somewhere
+    /// else.
+    fn face_fixture(family: &str, font: &str, atlas_dir: &str) -> FaceFixture {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+        FaceFixture {
+            family: std::ffi::CString::new(family).expect("no interior nul"),
+            font: std::fs::read(format!("{root}/{font}")).expect("the corpus font is present"),
+            png: std::fs::read(format!("{root}/corpus/atlas/{atlas_dir}/atlas.png"))
+                .expect("the committed sheet is present"),
+            metrics: std::fs::read(format!("{root}/corpus/atlas/{atlas_dir}/atlas.metrics"))
+                .expect("the committed metrics are present"),
+        }
+    }
+
+    /// The committed text fixture every atlas test below loads.
+    fn text_document() -> Vec<u8> {
+        std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../goldens/dsb/v07-text-hug-in-fill.dsb"
+        ))
+        .expect("the committed text fixture is present")
+    }
+
+    /// A live runtime holding `document`, loaded with `faces`.
+    ///
+    /// The handle is returned rather than a guard: every caller frees it at the
+    /// end of its own test, and a guard would need `live` to be reachable from
+    /// a `Drop`.
+    fn runtime_with_text(document: &[u8], faces: &[DsFontFace]) -> DsRuntime {
+        let mut runtime: DsRuntime = 0;
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_ne!(runtime, 0, "ds_runtime_new answered Ok");
+        assert_eq!(
+            unsafe {
+                ds_runtime_load_document_with_text(
+                    runtime,
+                    document.as_ptr(),
+                    document.len(),
+                    faces.as_ptr(),
+                    faces.len(),
+                )
+            },
+            DsStatus::Ok
+        );
+        runtime
+    }
+
+    /// One atlas as the C ABI hands it out, or the status that refused it.
+    fn atlas_at(runtime: DsRuntime, index: u32) -> Result<DsAtlas, DsStatus> {
+        let mut out = DsAtlas::empty();
+        match unsafe { ds_runtime_atlas(runtime, index, &mut out) } {
+            DsStatus::Ok => Ok(out),
+            other => Err(other),
+        }
+    }
+
+    /// A slice's rows, read back through the pointer and count it carries.
+    ///
+    /// # Safety
+    ///
+    /// `slice` must be one this process's runtime wrote and must still be under
+    /// the lifetime its call documents.
+    unsafe fn rows_of<T>(slice: DsSlice) -> &'static [T] {
+        assert_eq!(
+            slice.stride,
+            size_of::<T>(),
+            "the slice's stride is not this build's row size"
+        );
+        if slice.count == 0 {
+            assert!(slice.ptr.is_null(), "an empty slice carries a NULL pointer");
+            return &[];
+        }
+        unsafe { std::slice::from_raw_parts(slice.ptr.cast::<T>(), slice.count) }
+    }
+
+    /// **The story's deliverable on the C side**: a document loaded with a
+    /// sheet hands that sheet, its four scalars and its whole glyph table to a
+    /// host that draws its own frames.
+    ///
+    /// Every value is checked against something other than itself: the extent
+    /// against the PNG's own `IHDR`, the payload against the file the host
+    /// supplied, and the glyph table against `Atlas::glyph`'s lookup — so a
+    /// row hoisted from the wrong atlas, or a table exported at the wrong
+    /// stride, fails here rather than drawing another face's glyphs.
+    #[test]
+    fn one_atlas_crosses_with_its_sheet_its_scalars_and_its_glyph_table() {
+        let document = text_document();
+        let inter = face_fixture(
+            "Inter",
+            "corpus/fonts/inter/Inter-Regular.otf",
+            "inter-ascii",
+        );
+        let runtime = runtime_with_text(&document, &[inter.face(400)]);
+
+        let mut count = usize::MAX;
+        assert_eq!(
+            unsafe { ds_runtime_atlas_count(runtime, &mut count) },
+            DsStatus::Ok
+        );
+        assert_eq!(count, 1, "one face carrying a sheet is one atlas");
+
+        let atlas = atlas_at(runtime, 0).expect("the set holds atlas 0");
+
+        // The extent, against the sheet's own header rather than against a
+        // literal. `image_id::identify` is what the loader itself read, so
+        // agreeing with it is agreeing with the check that admitted the sheet.
+        let header = dashpaint::image_id::identify(&inter.png).expect("the corpus sheet is a PNG");
+        assert_eq!((atlas.width, atlas.height), (header.width, header.height));
+        assert!(atlas.px_per_em > 0, "Atlas::new refuses a zero px_per_em");
+        assert!(
+            atlas.distance_range_px.is_finite() && atlas.distance_range_px > 0.0,
+            "Atlas::new refuses a distance range that is not finite and positive"
+        );
+
+        // The sheet, byte for byte. This is what makes the export a
+        // replacement for the host's own pairing rather than a hint at it.
+        let png: &[u8] = unsafe { rows_of(atlas.png) };
+        assert_eq!(
+            png, inter.png,
+            "the payload that crosses is the one the host handed to the loader"
+        );
+
+        let glyphs: &[dashpaint::AtlasGlyph] = unsafe { rows_of(atlas.glyphs) };
+        assert!(!glyphs.is_empty(), "the ASCII sheet places glyphs");
+        assert!(
+            glyphs.windows(2).all(|w| w[0].glyph_id < w[1].glyph_id),
+            "the header promises the table is sorted and unique by glyph_id, which is what \
+             lets a host binary-search it"
+        );
+        // The exported table IS the atlas's own lookup, row for row — not a
+        // table built beside it that happens to be the same length.
+        live(runtime, |r| {
+            let atlas = &r.atlases[0];
+            for row in glyphs {
+                assert_eq!(
+                    atlas.glyph(row.glyph_id),
+                    Some(row),
+                    "glyph {} crossed as a row Atlas::glyph does not answer with",
+                    row.glyph_id
+                );
+            }
+            assert_eq!(atlas.glyphs().len(), glyphs.len());
+        });
+
+        ds_runtime_free(runtime);
+    }
+
+    /// **An atlas index is the typesetter's font slot and not the host's face
+    /// index**, which is the whole reason the sheet crosses rather than being
+    /// paired up on the host's side.
+    ///
+    /// `TextResources::from_faces` groups the faces by family before
+    /// flattening family-major, so listing one family's faces non-contiguously
+    /// makes the two orders differ. Here face 1 is Arabic and atlas 1 is
+    /// Inter's bold sheet: a host that paired by array index would upload the
+    /// Arabic sheet for Inter's bold runs and **sample the wrong glyphs rather
+    /// than fail**.
+    #[test]
+    fn an_atlas_index_is_a_font_slot_and_not_the_hosts_face_index() {
+        let document = text_document();
+        let inter = face_fixture(
+            "Inter",
+            "corpus/fonts/inter/Inter-Regular.otf",
+            "inter-ascii",
+        );
+        let arabic = face_fixture(
+            "Noto Sans Arabic",
+            "corpus/fonts/noto-sans-arabic/NotoSansArabic-Regular.ttf",
+            "arabic",
+        );
+        let bold = face_fixture(
+            "Inter",
+            "corpus/fonts/inter/Inter-Bold.otf",
+            "inter-ascii-bold",
+        );
+
+        // Inter's two faces are listed with the Arabic face BETWEEN them.
+        let faces = [inter.face(400), arabic.face(400), bold.face(700)];
+        let runtime = runtime_with_text(&document, &faces);
+
+        let mut count = 0;
+        assert_eq!(
+            unsafe { ds_runtime_atlas_count(runtime, &mut count) },
+            DsStatus::Ok
+        );
+        assert_eq!(count, 3);
+
+        let sheet = |index: u32| -> Vec<u8> {
+            let atlas = atlas_at(runtime, index).expect("the set holds this index");
+            let bytes: &[u8] = unsafe { rows_of(atlas.png) };
+            bytes.to_vec()
+        };
+
+        assert_eq!(sheet(0), inter.png, "slot 0 is Inter's regular face");
+        assert_eq!(
+            sheet(1),
+            bold.png,
+            "slot 1 is Inter's BOLD face — the host's face 2 — because the cascade groups a \
+             family's faces together whatever order the host listed them in"
+        );
+        assert_ne!(
+            sheet(1),
+            arabic.png,
+            "and it is not the host's face 1, which is what pairing by array index would have \
+             uploaded"
+        );
+        assert_eq!(sheet(2), arabic.png, "the Arabic family follows Inter's");
+
+        ds_runtime_free(runtime);
+    }
+
+    /// Every run in a loaded document names an atlas the set holds, so a host
+    /// that follows `GlyphRun::atlas` can never be handed `NoSuchAtlas`.
+    #[test]
+    fn every_staged_run_names_an_atlas_the_set_holds() {
+        let document = text_document();
+        let inter = face_fixture(
+            "Inter",
+            "corpus/fonts/inter/Inter-Regular.otf",
+            "inter-ascii",
+        );
+        let runtime = runtime_with_text(&document, &[inter.face(400)]);
+
+        let mut count = 0;
+        assert_eq!(
+            unsafe { ds_runtime_atlas_count(runtime, &mut count) },
+            DsStatus::Ok
+        );
+
+        let mut frame = DsFrame::empty();
+        assert_eq!(
+            unsafe { ds_runtime_acquire_frame(runtime, &mut frame) },
+            DsStatus::Ok
+        );
+        let runs: &[dashpaint::GlyphRun] = unsafe { rows_of(frame.glyph_runs) };
+        assert!(!runs.is_empty(), "the fixture stages runs to check");
+        for run in runs {
+            assert!(
+                (run.atlas.0 as usize) < count,
+                "run names atlas {} and the set holds {count}",
+                run.atlas.0
+            );
+        }
+        assert_eq!(
+            unsafe { ds_runtime_release_frame(runtime, 1, std::ptr::null_mut()) },
+            DsStatus::Ok
+        );
+        ds_runtime_free(runtime);
+    }
+
+    /// **The set belongs to the load, not to the commit** — which is what lets
+    /// a host upload each sheet once per document instead of once per frame,
+    /// and is the property that made this a call rather than a `DsFrame`
+    /// member.
+    ///
+    /// Asserted on the POINTERS rather than on the values: two equal sheets
+    /// would compare equal after a reallocation that invalidated every pointer
+    /// a host had cached, which is exactly the failure the claim rules out.
+    #[test]
+    fn a_tick_does_not_replace_the_atlas_set() {
+        let document = text_document();
+        let inter = face_fixture(
+            "Inter",
+            "corpus/fonts/inter/Inter-Regular.otf",
+            "inter-ascii",
+        );
+        let runtime = runtime_with_text(&document, &[inter.face(400)]);
+
+        let before = atlas_at(runtime, 0).expect("the set holds atlas 0");
+        for _ in 0..4 {
+            assert_eq!(
+                unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+                DsStatus::Ok
+            );
+        }
+        let after = atlas_at(runtime, 0).expect("the set still holds atlas 0");
+
+        assert_eq!(before.png.ptr, after.png.ptr);
+        assert_eq!(before.glyphs.ptr, after.glyphs.ptr);
+        assert_eq!(before.glyphs.count, after.glyphs.count);
+        assert_eq!(before.width, after.width);
+        assert_eq!(before.height, after.height);
+        assert_eq!(before.px_per_em, after.px_per_em);
+
+        ds_runtime_free(runtime);
+    }
+
+    /// A load **does** replace it, in both directions — so a second document
+    /// cannot be shaded from the first one's sheets.
+    ///
+    /// The text-free direction is the one worth having: a loader that left the
+    /// previous set in place would report an atlas count for a document that
+    /// stages no runs, and a host uploading on `document_replaced` would keep
+    /// a texture nothing samples.
+    #[test]
+    fn a_load_replaces_the_atlas_set_in_both_directions() {
+        let document = text_document();
+        let inter = face_fixture(
+            "Inter",
+            "corpus/fonts/inter/Inter-Regular.otf",
+            "inter-ascii",
+        );
+        let runtime = runtime_with_text(&document, &[inter.face(400)]);
+
+        let mut count = 0;
+        assert_eq!(
+            unsafe { ds_runtime_atlas_count(runtime, &mut count) },
+            DsStatus::Ok
+        );
+        assert_eq!(count, 1);
+
+        assert_eq!(
+            unsafe { ds_runtime_load_document(runtime, document.as_ptr(), document.len()) },
+            DsStatus::Ok
+        );
+        count = usize::MAX;
+        assert_eq!(
+            unsafe { ds_runtime_atlas_count(runtime, &mut count) },
+            DsStatus::Ok
+        );
+        assert_eq!(
+            count, 0,
+            "a load without faces installs an empty set rather than leaving the previous \
+             document's"
+        );
+        assert_eq!(
+            atlas_at(runtime, 0).err(),
+            Some(DsStatus::NoSuchAtlas),
+            "and nothing resolves against it"
+        );
+
+        ds_runtime_free(runtime);
+    }
+
+    /// An index past the set is `NoSuchAtlas` and **empties the out**, so a
+    /// caller that ignores the status reads an atlas describing nothing rather
+    /// than the one it asked about last.
+    ///
+    /// Never a clamp: the nearest atlas is a different face's sheet.
+    #[test]
+    fn an_index_past_the_set_is_refused_and_empties_the_out() {
+        let document = text_document();
+        let inter = face_fixture(
+            "Inter",
+            "corpus/fonts/inter/Inter-Regular.otf",
+            "inter-ascii",
+        );
+        let runtime = runtime_with_text(&document, &[inter.face(400)]);
+
+        // Filled with a real atlas first, so the emptying below is observable:
+        // an `out` that was already empty would pass whatever the call did.
+        let mut out = DsAtlas::empty();
+        assert_eq!(
+            unsafe { ds_runtime_atlas(runtime, 0, &mut out) },
+            DsStatus::Ok
+        );
+        assert!(!out.png.ptr.is_null());
+
+        assert_eq!(
+            unsafe { ds_runtime_atlas(runtime, 1, &mut out) },
+            DsStatus::NoSuchAtlas
+        );
+        assert!(out.png.ptr.is_null());
+        assert_eq!(out.png.count, 0);
+        assert!(out.glyphs.ptr.is_null());
+        assert_eq!(out.glyphs.count, 0);
+        assert_eq!((out.width, out.height, out.px_per_em), (0, 0, 0));
+        assert_eq!(out.distance_range_px, 0.0);
+        assert_eq!(
+            out.glyphs.stride,
+            size_of::<dashpaint::AtlasGlyph>(),
+            "a refused atlas still reports this build's row size, so a host can validate \
+             strides without a successful call"
+        );
+
+        ds_runtime_free(runtime);
+    }
+
+    /// Both calls need a document, and say so rather than answering zero.
+    ///
+    /// "No document" and "a document with no text" are different answers: a
+    /// host that conflated them would upload nothing and report nothing.
+    #[test]
+    fn the_atlas_calls_need_a_document() {
+        let mut runtime: DsRuntime = 0;
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+
+        let mut count = usize::MAX;
+        assert_eq!(
+            unsafe { ds_runtime_atlas_count(runtime, &mut count) },
+            DsStatus::NoDocument
+        );
+        assert_eq!(count, 0, "the out is written before anything can fail");
+        assert_eq!(atlas_at(runtime, 0).err(), Some(DsStatus::NoDocument));
+
+        ds_runtime_free(runtime);
+    }
+
+    /// A null out is a status on both calls, not a dereference.
+    #[test]
+    fn a_null_out_is_refused_by_both_atlas_calls() {
+        let document = text_document();
+        let inter = face_fixture(
+            "Inter",
+            "corpus/fonts/inter/Inter-Regular.otf",
+            "inter-ascii",
+        );
+        let runtime = runtime_with_text(&document, &[inter.face(400)]);
+
+        assert_eq!(
+            unsafe { ds_runtime_atlas_count(runtime, std::ptr::null_mut()) },
+            DsStatus::NullArgument
+        );
+        assert_eq!(
+            unsafe { ds_runtime_atlas(runtime, 0, std::ptr::null_mut()) },
+            DsStatus::NullArgument
+        );
+
+        ds_runtime_free(runtime);
+    }
+
+    /// A handle that names no runtime is a status on both calls.
+    #[test]
+    fn a_stale_handle_is_refused_by_both_atlas_calls() {
+        let mut runtime: DsRuntime = 0;
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        ds_runtime_free(runtime);
+
+        let mut count = usize::MAX;
+        assert_eq!(
+            unsafe { ds_runtime_atlas_count(runtime, &mut count) },
+            DsStatus::BadHandle
+        );
+        assert_eq!(count, 0);
+        assert_eq!(atlas_at(runtime, 0).err(), Some(DsStatus::BadHandle));
+    }
+
+    /// **Neither call takes a lease and neither is refused by one.** The set
+    /// belongs to the load, so a host may read it while its workers are still
+    /// reading a frame — which is exactly when a painter uploading a sheet
+    /// wants it.
+    #[test]
+    fn the_atlas_calls_are_not_refused_under_a_lease() {
+        let document = text_document();
+        let inter = face_fixture(
+            "Inter",
+            "corpus/fonts/inter/Inter-Regular.otf",
+            "inter-ascii",
+        );
+        let runtime = runtime_with_text(&document, &[inter.face(400)]);
+
+        let mut frame = DsFrame::empty();
+        assert_eq!(
+            unsafe { ds_runtime_acquire_frame(runtime, &mut frame) },
+            DsStatus::Ok
+        );
+        let mut count = 0;
+        assert_eq!(
+            unsafe { ds_runtime_atlas_count(runtime, &mut count) },
+            DsStatus::Ok,
+            "a lease refuses what would COMMIT, and reading the atlas set commits nothing"
+        );
+        assert_eq!(count, 1);
+        assert!(atlas_at(runtime, 0).is_ok());
+        assert_eq!(
+            unsafe { ds_runtime_release_frame(runtime, 0, std::ptr::null_mut()) },
+            DsStatus::Ok
+        );
+        ds_runtime_free(runtime);
+    }
+
+    /// The payload that crosses is a PNG, which is what the header promises a
+    /// host so it can hand the bytes straight to a decoder.
+    ///
+    /// Held by the loader's own refusal rather than by this call, so this
+    /// asserts the promise end to end rather than restating the check.
+    #[test]
+    fn the_exported_sheet_carries_a_png_signature() {
+        const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+
+        let document = text_document();
+        let inter = face_fixture(
+            "Inter",
+            "corpus/fonts/inter/Inter-Regular.otf",
+            "inter-ascii",
+        );
+        let runtime = runtime_with_text(&document, &[inter.face(400)]);
+
+        let atlas = atlas_at(runtime, 0).expect("the set holds atlas 0");
+        let png: &[u8] = unsafe { rows_of(atlas.png) };
+        assert!(
+            png.starts_with(&PNG_SIGNATURE),
+            "the header tells a host these bytes are a PNG"
+        );
+        ds_runtime_free(runtime);
+    }
+
     /// A null face array with a non-zero count is a status, not a dereference.
     #[test]
     fn a_null_face_array_with_a_count_is_a_status() {
@@ -3314,6 +4115,14 @@ mod tests {
         assert_eq!(DsStatus::BadHandle as i32, 16);
         assert_eq!(DsStatus::WrongThread as i32, 17);
         assert_eq!(DsStatus::HandlesExhausted as i32, 18);
+        // The one story #859 appended, and the one story #1123 did. **Every
+        // variant here carries an explicit discriminant**, so pinning one says
+        // nothing about the ones below it: an inserted variant either collides
+        // — a compile error — or takes its own value, and neither moves this
+        // one. A first version of this comment claimed the opposite and used
+        // it as the reason `FrameLeased` needed no line of its own.
+        assert_eq!(DsStatus::FrameLeased as i32, 19);
+        assert_eq!(DsStatus::NoSuchAtlas as i32, 20);
     }
 
     /// A two-root `.dsb`, RAW, with `corrupt`'s payload one byte wrong.
@@ -5207,6 +6016,77 @@ mod tests {
             members.len() - 2,
             "the header declares a DsSlice member this build does not, or the count moved",
         );
+
+        // `DsAtlas`, on the same list-of-two shape and for a sharper reason.
+        // **Three of its six members are `uint32_t` and a fourth is a
+        // four-byte `float`**, so any permutation of those four is invisible to
+        // `sizeof`, invisible to a C compiler, and invisible to `just c-abi` —
+        // which only ever reads a REFUSED atlas, whose every member is zero by
+        // construction. A host would then read `px_per_em` out of the
+        // `distance_range_px` slot, and `px_range = distance_range_px * size /
+        // px_per_em` comes out wrong by orders of magnitude: blurred or
+        // hard-edged text rather than a failure.
+        let atlas = block("DsAtlas");
+        let atlas_members: [(&str, usize); 6] = [
+            ("uint32_t width;", offset_of!(DsAtlas, width)),
+            ("uint32_t height;", offset_of!(DsAtlas, height)),
+            ("uint32_t px_per_em;", offset_of!(DsAtlas, px_per_em)),
+            (
+                "float distance_range_px;",
+                offset_of!(DsAtlas, distance_range_px),
+            ),
+            ("DsSlice png;", offset_of!(DsAtlas, png)),
+            ("DsSlice glyphs;", offset_of!(DsAtlas, glyphs)),
+        ];
+
+        let mut previous = None;
+        for (declaration, offset) in atlas_members {
+            if let Some((before, at)) = previous {
+                assert!(
+                    at < offset,
+                    "`{declaration}` is at offset {offset} and `{before}` at {at}: this \
+                     build declares them in the opposite order to this list",
+                );
+            }
+            previous = Some((declaration, offset));
+        }
+
+        let mut at = 0;
+        for (declaration, _) in atlas_members {
+            let found = atlas[at..].find(declaration).unwrap_or_else(|| {
+                panic!(
+                    "the header's DsAtlas must declare `{declaration}`, after the member \
+                     before it",
+                )
+            });
+            at += found + declaration.len();
+        }
+
+        // And nothing else. **Counted as every declaration line, not as the
+        // two type spellings this build happens to use**: a guard that counted
+        // `uint32_t` and `float` lines is blind to a `uint64_t`, an `int32_t`,
+        // a `size_t` or a `bool` appended to the header — which shifts nothing
+        // the ordered search above reads and nothing `just c-abi` reads, since
+        // that gate only ever inspects a REFUSED atlas.
+        //
+        // A declaration is a line ending in `;` that is not part of a comment.
+        // The block's own comments are `/* … */` spanning whole lines, so
+        // dropping any line whose first non-space character is `/` or `*`
+        // leaves exactly the members.
+        let atlas_declarations = atlas
+            .lines()
+            .map(str::trim_start)
+            .filter(|line| !line.starts_with('/') && !line.starts_with('*'))
+            .filter(|line| line.ends_with(';'))
+            .count();
+        assert_eq!(
+            atlas_declarations,
+            atlas_members.len(),
+            "the header's DsAtlas declares {atlas_declarations} members and this build has \
+             {}: a member appended to the header is invisible to the ordered search above, \
+             and `just c-abi` reads only a refused atlas, whose every member is zero",
+            atlas_members.len(),
+        );
     }
 
     /// Every row type on the boundary-B gate either crosses in a [`DsFrame`]
@@ -5218,12 +6098,13 @@ mod tests {
     /// to the frame was caught by no test, and a host would simply never
     /// receive it.
     ///
-    /// It cannot be "every gated type appears": `AtlasGlyph` is gated and does
-    /// not cross, because it is not a committed table but a list hanging off an
-    /// `Atlas`, and an `Atlas` is not a row
-    /// (`docs/decisions/the-frame-crosses-under-a-lease.md` D4). So each type
-    /// carries a disposition, and adding one to the gate fails here until
-    /// somebody writes down which it is.
+    /// It cannot be "every gated type appears **here**": `AtlasGlyph` is gated
+    /// and crosses on [`ds_runtime_atlas`] instead, because it is not a
+    /// committed table but a list hanging off an `Atlas`, and an `Atlas`
+    /// belongs to the load rather than to the commit
+    /// (`docs/decisions/the-glyph-atlas-crosses-the-c-abi-as-a-call.md`). So
+    /// each type carries a disposition, and adding one to the gate fails here
+    /// until somebody writes down which it is.
     #[test]
     fn every_gated_row_type_either_crosses_or_says_why_not() {
         /// Which `DsFrame` array carries this row type, or why none does.
@@ -5233,7 +6114,18 @@ mod tests {
             /// Part of a row that crosses, rather than an array of its own.
             Within(&'static str),
             /// Deliberately absent, with the reason.
+            #[allow(dead_code, reason = "no gated type takes this disposition today")]
             No(&'static str),
+            /// Crosses, and **not in a frame**: the named call hands it out.
+            ///
+            /// `AtlasGlyph` is the case and story #1123 made it one. It hangs
+            /// off an `Atlas`, which is installed by a load rather than by a
+            /// commit, so putting it in a `DsFrame` would say it can change per
+            /// tick — see `DsAtlas`. A disposition of its own rather than
+            /// widening `As`, because "which frame array is this" and "which
+            /// call hands this out" are different questions and a reader of
+            /// this table has to be able to tell them apart.
+            Beside(&'static str),
         }
         use Crosses::*;
 
@@ -5267,13 +6159,7 @@ mod tests {
             ("CornerRadii", Within("ClipBox and PaintEntry")),
             ("Vec2", Within("RectEntry, Gradient and Shadow")),
             ("Mat23", Within("ImageFill")),
-            (
-                "AtlasGlyph",
-                No(
-                    "the glyph list of an Atlas, and an Atlas is not a committed \
-                    table — story #1123 carries the atlas seam",
-                ),
-            ),
+            ("AtlasGlyph", Beside("ds_runtime_atlas's DsAtlas::glyphs")),
         ];
 
         let gated = dashpaint_abi::dashpaint_abi_type_count() as usize;
@@ -5305,7 +6191,7 @@ mod tests {
         for (name, crosses) in disposition {
             let reason = match crosses {
                 As(_) => continue,
-                Within(reason) | No(reason) => reason,
+                Within(reason) | No(reason) | Beside(reason) => reason,
             };
             assert!(
                 !reason.trim().is_empty(),

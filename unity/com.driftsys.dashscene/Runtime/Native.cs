@@ -106,6 +106,15 @@ namespace Driftsys.Dashscene
         /// views `ds_runtime_acquire_frame` handed out. The remedy is always
         /// `ds_runtime_release_frame`.
         FrameLeased = 19,
+
+        /// `ds_runtime_atlas` was asked for an index the loaded document's
+        /// atlas set does not hold.
+        ///
+        /// A caller error rather than a document one: a `GlyphRun.Atlas` always
+        /// names a row of the set the same load installed. **Never a clamp** —
+        /// the nearest atlas is a different face's sheet, and sampling it draws
+        /// the wrong glyphs rather than failing.
+        NoSuchAtlas = 20,
     }
 
     /// Which platform handle `ds_runtime_attach_surface`'s pointers carry.
@@ -183,10 +192,13 @@ namespace Driftsys.Dashscene
     /// B's, declared in `BoundaryB.cs` — this file does not redeclare them,
     /// because a second declaration is a second place for them to go stale.
     ///
-    /// **The glyph atlases are not here.** `dashpaint::Atlas` owns an encoded
-    /// sheet and a glyph list; it is not a row and has no C representation. So
-    /// the runs cross and the sheet they sample does not, and until story #1123
-    /// lands you can lay text out and cannot shade it.
+    /// **The glyph atlases are not here, and they are not missing either.**
+    /// `dashpaint::Atlas` is an encoded sheet, four scalars and a glyph list
+    /// rather than a row, and it belongs to the **load** rather than to the
+    /// commit — nothing here replaces it, so re-reading it per frame would be
+    /// work for a value that cannot have changed. `ds_runtime_atlas` hands it
+    /// out, keyed by a `GlyphRun.Atlas`; `DsAtlas` in `NativeText.cs` is the
+    /// declaration and `DashsceneRuntime.ReadAtlases` is the wrapper.
     [StructLayout(LayoutKind.Sequential)]
     public struct DsFrame
     {

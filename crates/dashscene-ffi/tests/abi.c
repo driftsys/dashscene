@@ -33,6 +33,25 @@ static int failures = 0;
  * on the Rust side, by `the_header_declares_the_frame_exactly_as_this_build_
  * lays_it_out` — a C compiler cannot see a permutation of same-typed members,
  * and neither can sizeof. */
+/* The row `DsAtlas.glyphs` carries, as C sees it.
+ *
+ * dashscene.h deliberately does not redeclare boundary B's row types — a
+ * second declaration is a second place for them to go stale, and
+ * crates/dashpaint-abi is what holds a consumer's own declaration to the Rust
+ * layout. This local mirror exists so the stride check below compares against
+ * something rather than against itself; it is this gate's declaration and not
+ * the header's, which is why it is here and not there.
+ *
+ * dashpaint::AtlasGlyph is { u32 glyph_id, [f32; 4] plane_em, [f32; 4]
+ * atlas_px } — 36 bytes at alignment 4, with nothing padded, which is what
+ * `docs/decisions/sub-word-members-widen-rather-than-pad.md` bought by
+ * widening glyph_id from u16. */
+typedef struct DsAtlasGlyphProbe {
+  uint32_t glyph_id;
+  float plane_em[4];
+  float atlas_px[4];
+} DsAtlasGlyphProbe;
+
 static int frame_is_empty(const DsFrame *f) {
   const DsSlice all[] = {
       f->rects,         f->groups,        f->dirty,
@@ -127,6 +146,34 @@ int main(void) {
    * sizeof(size_t)` — looked like a cross-check and was not. */
   check(sizeof frame == offsetof(DsFrame, glyph_quads) + sizeof(DsSlice),
         "glyph_quads is the last member of DsFrame, with nothing after it");
+
+  /* The text seam, from C. The atlas set belongs to the LOAD, so without a
+   * document both calls must say DS_NO_DOCUMENT rather than answer zero: "no
+   * document" and "a document with no text" are different answers, and a host
+   * that read 0 for both would upload nothing and report nothing. */
+  size_t atlases = 12345;
+  check(ds_runtime_atlas_count(runtime, &atlases) == DS_NO_DOCUMENT,
+        "counting atlases without a document reports DS_NO_DOCUMENT");
+  check(atlases == 0,
+        "and the out was written before anything could fail, so a caller that "
+        "ignored the status reads 0 rather than its own stack");
+
+  DsAtlas atlas;
+  memset(&atlas, 0xCD, sizeof atlas);
+  check(ds_runtime_atlas(runtime, 0, &atlas) == DS_NO_DOCUMENT,
+        "describing an atlas without a document reports DS_NO_DOCUMENT");
+  check(atlas.png.ptr == NULL && atlas.png.count == 0 &&
+            atlas.glyphs.ptr == NULL && atlas.glyphs.count == 0 &&
+            atlas.width == 0 && atlas.height == 0 && atlas.px_per_em == 0,
+        "a refused atlas is EMPTIED, so a caller that ignored the status "
+        "describes nothing rather than reading 0xCD as an extent");
+  check(atlas.glyphs.stride == sizeof(DsAtlasGlyphProbe),
+        "and it still reports this build's row size, so a host can validate "
+        "strides without a successful call");
+
+  check(ds_runtime_atlas_count(runtime, NULL) == DS_NULL_ARGUMENT &&
+            ds_runtime_atlas(runtime, 0, NULL) == DS_NULL_ARGUMENT,
+        "a null out is a status on both atlas calls, not a crash");
 
   /* Junk must fail as a status. An unwind across this boundary would be
    * undefined behaviour, so "it returned at all" is part of the assertion. */
@@ -385,6 +432,7 @@ int main(void) {
   check(DS_WRONG_THREAD == 17, "DS_WRONG_THREAD is 17 in the header");
   check(DS_HANDLES_EXHAUSTED == 18, "DS_HANDLES_EXHAUSTED is 18 in the header");
   check(DS_FRAME_LEASED == 19, "DS_FRAME_LEASED is 19 in the header");
+  check(DS_NO_SUCH_ATLAS == 20, "DS_NO_SUCH_ATLAS is 20 in the header");
 
   check(ds_runtime_free(runtime) == DS_OK, "a live handle frees");
   check(ds_runtime_free(runtime) == DS_BAD_HANDLE,

@@ -43,13 +43,14 @@ call at all.
 
 ## The entry points
 
-Five groups, and the grouping is the lifecycle. The last is the data plane.
-**What a host chooses between is `ds_runtime_draw` and the acquire pair**, not
-between the groups: a host that paints its own frames still creates a runtime,
-loads a document and calls `ds_runtime_tick` every frame. A load commits too, so
-a frame is available before the first tick — but only the tick can produce a
-_later_ one, and a host-draws host that skipped it would acquire the same frame
-for ever.
+Six groups, and the grouping is the lifecycle. The last two are the data plane:
+the committed tables, and the glyph atlases those tables' runs sample. **What a
+host chooses between is `ds_runtime_draw` and the acquire pair**, not between
+the groups: a host that paints its own frames still creates a runtime, loads a
+document and calls `ds_runtime_tick` every frame. A load commits too, so a frame
+is available before the first tick — but only the tick can produce a _later_
+one, and a host-draws host that skipped it would acquire the same frame for
+ever.
 
     ds_abi_version                       what this library implements
     ds_last_error_message                the last failure, as text
@@ -72,6 +73,11 @@ for ever.
 
     ds_runtime_acquire_frame             borrow the committed tables
     ds_runtime_release_frame             give them back
+
+    ds_runtime_atlas_count               how many glyph atlases the document
+                                         names
+    ds_runtime_atlas                     one of them: the sheet, its scalars
+                                         and its glyph table
 
 `ds_runtime_detach_surface` exists because of D4 rather than symmetry. The
 Android host must drop its surface and keep its document when `surfaceDestroyed`
@@ -127,21 +133,22 @@ version — it is what this library implements.
 
 **It moved once, at story #1226**, when `DsRuntime` stopped being a pointer and
 became a generational handle. Ten of the twelve exported entry points changed
-signature for it — twelve was the count then, and the surface has grown twice
-since, by story #859 and by story #1124; `ds_abi_version` and
-`ds_last_error_message` take no runtime and did not. That is the rule in this
-heading working as stated rather than an exception to it — a changed signature
-is exactly what is not free, and it is the only thing that has ever moved this
-number.
+signature for it — twelve was the count then, and the surface has grown three
+times since, by story #859, by story #1124 and by story #1123; `ds_abi_version`
+and `ds_last_error_message` take no runtime and did not. That is the rule in
+this heading working as stated rather than an exception to it — a changed
+signature is exactly what is not free, and it is the only thing that has ever
+moved this number.
 
-`DsStatus` has grown from nine variants to twenty without moving it, because
+`DsStatus` has grown from nine variants to twenty-one without moving it, because
 every addition went on the **tail**: `FontFace` and `Atlas` at #947, then `Map`,
 `NoSuchRoot`, `Derived` and `Payload` at #925, then `SurfaceLost` at #884, then
 `BadHandle`, `WrongThread` and `HandlesExhausted` at #1226, then `FrameLeased`
-at #859. `BadHandle`, `WrongThread` and `HandlesExhausted` arrived in the change
-that moved the version, and did not contribute to it: appending is still free,
-and ten changed signatures are what was not. A C caller compiled against an
-earlier header still reads every discriminant it knew at the value it knew.
+at #859, then `NoSuchAtlas` at #1123. `BadHandle`, `WrongThread` and
+`HandlesExhausted` arrived in the change that moved the version, and did not
+contribute to it: appending is still free, and ten changed signatures are what
+was not. A C caller compiled against an earlier header still reads every
+discriminant it knew at the value it knew.
 
 That is why the shapes above were chosen: a loader per shape of input rather
 than one with a widening signature, and a detach call rather than a flag on
@@ -149,6 +156,18 @@ free. Story #1124 is that rule paying: a document packed inside an APK needed a
 byte range, and it arrived as `ds_runtime_load_document_mapped_range` beside the
 whole-file loader rather than as two more parameters on it — so `DS_ABI_VERSION`
 did not move and no host had to be rebuilt.
+
+**Story #1123 is the same rule paying a second time, and it is the case where
+the alternative would have been expensive.** The glyph atlases had to reach a
+host that draws its own frames, and the obvious shape was three more `DsSlice`
+members on `DsFrame` — which changes that struct's layout, so a host built
+against an older header would allocate the smaller struct and be written past.
+`ds_runtime_atlas_count` and `ds_runtime_atlas` beside it cost nothing:
+`DS_ABI_VERSION` is still 2, and `DS_NO_SUCH_ATLAS` went on the tail of
+`DsStatus` where nothing could reach it before the call existed.
+`../decisions/the-glyph-atlas-crosses-the-c-abi-as-a-call.md` D1 carries the
+other two reasons, which are about the atlas belonging to the load rather than
+to the commit.
 
 **It is not the whole of the rule, and `SurfaceLost` is the case that shows the
 gap.** That variant did not only appear at the tail — it **re-routed an existing
@@ -348,10 +367,22 @@ make the counts unnecessary.
   type; the other two are primitives — the dirty set of `u32` rect indices and
   the image payload bytes an `ImageEntry` indexes. Its own gap is narrower and
   is named in the section below.
-- **The glyph atlases do not cross** — story #1123. `dashpaint::Atlas` owns an
-  encoded sheet and a glyph list rather than being a row, so the data plane
-  carries `GlyphRun` and `GlyphQuad` and not the sheet they sample. A host can
-  lay text out and cannot shade it until #1123 lands.
+- ~~The glyph atlases do not cross~~ — **closed (story #1123, 2026-08-23)**.
+  They cross on their own call rather than in the frame, because an atlas set is
+  installed by a load and is not part of a commit — so a host reads it once per
+  document instead of once per frame. `DsAtlas` carries the sheet as well as the
+  glyph table, which is not redundant with the bytes the host supplied: an atlas
+  index is the typesetter's font slot, and the cascade groups faces by family
+  before flattening, so pairing by array index samples another face's sheet
+  rather than failing.
+  `../decisions/the-glyph-atlas-crosses-the-c-abi-as-a-call.md` is the record.
+- **The `px_range` formula has two copies and nothing compares them** —
+  `dashscene-gpu`'s `gpu_glyph_run` in Rust and the Unity package's
+  `TextAtlas.PixelRange` in C#, both computing
+  `distance_range_px * size /
+  px_per_em`. The same shape the heap row widths
+  had before `unity/package-gate` held those together, and issue #828's portable
+  conformance suite is where the comparison belongs.
 - ~~No host calls the mapped load~~ — **closed 2026-08-16 (issue #1035)**, while
   this record was in review. `dashscene-android` gained
   `nativeSurfaceCreatedMapped`, which takes a path and an ordinal and reaches

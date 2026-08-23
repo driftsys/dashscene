@@ -8,6 +8,17 @@ the Cargo workspace rather than moving on its own.
 
 ### Added
 
+- **Text.** The MSDF glyph atlas a run samples crosses the C ABI on its own call
+  — `ds_runtime_atlas_count` and `ds_runtime_atlas`, keyed by a `GlyphRun`'s
+  atlas index and carrying the sheet as well as the per-glyph placement, because
+  an atlas index is the typesetter's font slot and not the index of the face a
+  host passed (story #1123). `DashsceneRuntime.ReadAtlases` wraps it and
+  `BrgPainter.SetAtlases` consumes it, one linear texture and one material over
+  `Dashscene/Text` per sheet. Read the atlases after each load, not each frame:
+  the set is installed by a load and is not part of a commit.
+- `DashsceneRuntime.LoadDocumentWithText` and `TextFontFace` — the loader that
+  takes a font cascade, which the package had left unwrapped, and without which
+  a document's text shapes to nothing (story #1123).
 - The C# declaration of boundary B — the value types `crates/dashpaint-abi`
   holds to a C representation (story #1239).
 - The C# host on the C ABI: a P/Invoke declaration for every entry point, a
@@ -42,9 +53,10 @@ the Cargo workspace rather than moving on its own.
 - The `BatchRendererGroup` painter, in three material classes — unlit-overlay,
   lit-opaque and lit-cutout (story #1122). It draws fills, both solid and
   gradient, corner radii, strokes, clips, per-node opacity and rotation.
-  Shadows, blurs, image fills, baked vector nodes, render-target groups and text
-  are **not** drawn and each is reported by name through `PackDiagnostic` — P4
-  forbids a silent drop.
+  Shadows, blurs, image fills, baked vector nodes and render-target groups are
+  **not** drawn and each is reported by name through `PackDiagnostic` — P4
+  forbids a silent drop. Text was in that list until story #1123, the first
+  entry above.
 - The three material classes' `.shader` files sit under
   `Runtime/Resources/Dashscene/`, one per class, and `BrgPainter` loads each
   with `Resources.Load<Shader>` by the shader's own declared name. They were

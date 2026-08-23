@@ -1,0 +1,6 @@
+[bootstrap] git-std already installed: /Users/sebastientasson/.local/bin/git-std
+[bootstrap] cargo-nextest already installed: /Users/sebastientasson/.cargo/bin/cargo-nextest
+[bootstrap] jq already installed: /opt/homebrew/bin/jq
+[bootstrap] prim v0.3.0 already installed: /Users/sebastientasson/.local/bin/prim
+[bootstrap] gitleaks present: /opt/homebrew/bin/gitleaks
+  ✓  git hooks configured

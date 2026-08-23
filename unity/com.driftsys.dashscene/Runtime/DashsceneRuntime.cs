@@ -7,8 +7,11 @@
 // reaches the tables through `AcquireFrame`.
 
 using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
+using Driftsys.Dashscene.BoundaryB;
 
 namespace Driftsys.Dashscene
 {
@@ -441,6 +444,269 @@ namespace Driftsys.Dashscene
                 ? freeDetail
                 : $"{LastDisposeDetail}; then ds_runtime_free answered {status}: {freeDetail}";
             LastDisposeStatus = status;
+        }
+
+        /// Loads a `.dsb` held in memory, with the font faces and MSDF sheets
+        /// its text needs.
+        ///
+        /// **Without this, a document's text shapes to nothing.** The other
+        /// loaders pass no cascade, which is the measure-only picture: the
+        /// solver measures every text node at zero and its siblings lay out
+        /// around a box the design did not specify. A face carrying a sheet is
+        /// also what puts an atlas in <see cref="ReadAtlases"/>'s answer, so a
+        /// painter drawing text takes this loader and no other.
+        ///
+        /// **The order of `faces` does not decide the order of the atlases.**
+        /// The cascade groups faces by family — case-insensitively — before
+        /// flattening family-major, so a `GlyphRun.Atlas` names a slot in that
+        /// flattened order. Read the sheets back through
+        /// <see cref="ReadAtlases"/> rather than pairing them up against this
+        /// argument, which samples another face's sheet rather than failing.
+        ///
+        /// # Exceptions
+        ///
+        /// `ArgumentNullException` for a null document or a null face list,
+        /// `ArgumentException` for a face carrying no family or no font bytes,
+        /// and `DashsceneException` for everything the library judges — a
+        /// weight outside 1..=1000, bytes that are not a font, a sheet that is
+        /// not a PNG, a face carrying exactly one of its two atlas members, or
+        /// a mixed set where some faces carry a sheet and some do not.
+        public void LoadDocumentWithText(byte[] bytes, IReadOnlyList<TextFontFace> faces)
+        {
+            if (bytes == null)
+            {
+                throw new ArgumentNullException(nameof(bytes));
+            }
+            if (faces == null)
+            {
+                throw new ArgumentNullException(nameof(faces));
+            }
+
+            // Every pin taken here is released in the `finally`, including on
+            // the throw paths above the call: the library borrows these
+            // pointers for the duration of the call and nothing may move
+            // underneath it, and a handle left pinned would hold the array for
+            // the life of the process.
+            var pins = new List<GCHandle>(faces.Count * 3);
+            var families = new List<IntPtr>(faces.Count);
+            try
+            {
+                var descriptors = new DsFontFace[faces.Count];
+                for (var i = 0; i < faces.Count; i++)
+                {
+                    var face = faces[i];
+                    if (face == null)
+                    {
+                        throw new ArgumentException(
+                            $"face {i} is null.", nameof(faces));
+                    }
+                    face.ThrowIfUnusable(i);
+
+                    // NUL-terminated UTF-8, for the reason `NulTerminatedUtf8`
+                    // gives for a path: the default string marshaller encodes
+                    // as ANSI on some platforms and would mangle any non-ASCII
+                    // family name.
+                    var family = Marshal.StringToCoTaskMemUTF8(face.Family);
+                    families.Add(family);
+
+                    descriptors[i] = new DsFontFace
+                    {
+                        Family = family,
+                        Weight = face.Weight,
+                        FaceIndex = face.FaceIndex,
+                        FontBytes = Pin(pins, face.FontBytes),
+                        FontLen = Length(face.FontBytes),
+                        AtlasPng = Pin(pins, face.AtlasPng),
+                        AtlasPngLen = Length(face.AtlasPng),
+                        AtlasMetrics = Pin(pins, face.AtlasMetrics),
+                        AtlasMetricsLen = Length(face.AtlasMetrics),
+                    };
+                }
+
+                Check(
+                    Native.ds_runtime_load_document_with_text(
+                        Handle(),
+                        bytes,
+                        new UIntPtr((ulong)bytes.Length),
+                        descriptors,
+                        new UIntPtr((ulong)descriptors.Length)),
+                    "ds_runtime_load_document_with_text");
+            }
+            finally
+            {
+                foreach (var pin in pins)
+                {
+                    pin.Free();
+                }
+                foreach (var family in families)
+                {
+                    Marshal.FreeCoTaskMem(family);
+                }
+            }
+        }
+
+        /// Pins `bytes` for the life of the call and returns its address, or
+        /// `IntPtr.Zero` for null.
+        ///
+        /// **Null stays null**, which is load-bearing rather than tidy: the
+        /// library reads a null `atlas_png` as "this face carries no sheet" and
+        /// a non-null one as a sheet to parse, so handing it the address of an
+        /// empty array would turn measure-only into `DsStatus.Atlas`.
+        private static IntPtr Pin(List<GCHandle> pins, byte[] bytes)
+        {
+            if (bytes == null)
+            {
+                return IntPtr.Zero;
+            }
+            var pin = GCHandle.Alloc(bytes, GCHandleType.Pinned);
+            pins.Add(pin);
+            // **`AddrOfPinnedObject` even for a zero-length array**, which is
+            // legal and returns an address no byte belongs to. That is
+            // deliberate: the library pairs every pointer with a length, and a
+            // NON-null pointer with a zero length is exactly the
+            // half-described atlas it refuses — which is the diagnostic a
+            // caller wants for an empty sheet, rather than the silent fall back
+            // to measure-only that returning `IntPtr.Zero` here would produce.
+            return pin.AddrOfPinnedObject();
+        }
+
+        private static UIntPtr Length(byte[] bytes)
+        {
+            return bytes == null ? UIntPtr.Zero : new UIntPtr((ulong)bytes.Length);
+        }
+
+        /// The glyph atlases the loaded document's runs sample, copied out.
+        ///
+        /// **Once per load, not once per frame.** The set is installed by a
+        /// load and replaced only by another, so a host calls this when a frame
+        /// reports `DocumentReplaced` and keeps its textures until the next
+        /// one. The library's own pointers stay valid until the next load; this
+        /// copies what it returns so a host holds nothing that a later load
+        /// invalidates.
+        ///
+        /// Answers <see cref="TextAtlasSet.Empty"/> for a document loaded
+        /// without faces — such a document stages no glyph runs, so an empty
+        /// set is the whole truth rather than a failure.
+        ///
+        /// **Every array's stride is checked against this package's row size**
+        /// before a row is read, which is R-E17 applied to the one table that
+        /// does not arrive in a `DsFrame`. A mismatch means the library and the
+        /// package came from different commits.
+        ///
+        /// # Exceptions
+        ///
+        /// `DashsceneException` when the library refuses — `DsStatus.NoDocument`
+        /// with nothing loaded. `DashsceneStrideMismatchException` when a glyph
+        /// row is not the size this package declares.
+        /// `DashsceneSymbolMissingException` when the loaded library predates
+        /// the text seam — adding a symbol does not move `DS_ABI_VERSION`, so
+        /// such a library passes the handshake and fails where .NET binds the
+        /// import. Either entry point can be the one it cannot bind, and each
+        /// forwarder names its own. `InvalidOperationException` when the
+        /// library reports a count or a row length this package cannot
+        /// represent.
+        public TextAtlasSet ReadAtlases()
+        {
+            // **No translation here.** `NativeText`'s forwarders make it, one
+            // per entry point, and each names its own symbol through
+            // `[CallerMemberName]` — so a library exporting one of the pair and
+            // not the other reports the one that failed rather than a guess
+            // made from the exception's message. That is story #1308's rule and
+            // `unity/ffi-check` requires it of every import in the package.
+            Check(
+                NativeText.ds_runtime_atlas_count(Handle(), out var count),
+                "ds_runtime_atlas_count");
+
+            var total = count.ToUInt64();
+            if (total == 0)
+            {
+                return TextAtlasSet.Empty;
+            }
+            if (total > int.MaxValue)
+            {
+                // **Not `ArgumentOutOfRangeException`**: this method takes no
+                // argument, so a host catching one would be told to correct a
+                // parameter it never passed. The count came from the library,
+                // and the call succeeded — so it is not a `DashsceneException`
+                // either, which carries a `DsStatus` a caller branches on.
+                throw new InvalidOperationException(
+                    $"ds_runtime_atlas_count reports {total} atlases, which is more than "
+                    + "int.MaxValue and cannot be read here.");
+            }
+
+            var atlases = new TextAtlas[(int)total];
+            for (var i = 0; i < atlases.Length; i++)
+            {
+                Check(
+                    NativeText.ds_runtime_atlas(Handle(), (uint)i, out var atlas),
+                    "ds_runtime_atlas");
+                atlases[i] = CopyAtlas(atlas);
+            }
+            return new TextAtlasSet(atlases);
+        }
+
+        /// One borrowed atlas, copied into managed memory.
+        private static unsafe TextAtlas CopyAtlas(DsAtlas atlas)
+        {
+            var glyphRow = Marshal.SizeOf<AtlasGlyph>();
+            if (atlas.Glyphs.StrideAsLong != glyphRow)
+            {
+                throw new DashsceneStrideMismatchException(
+                    "atlas glyphs", glyphRow, atlas.Glyphs.StrideAsLong);
+            }
+            if (atlas.Png.StrideAsLong != 1)
+            {
+                throw new DashsceneStrideMismatchException(
+                    "atlas png", 1, atlas.Png.StrideAsLong);
+            }
+
+            var pngLength = Rows(atlas.Png, "atlas png");
+            var png = new byte[pngLength];
+            if (pngLength > 0)
+            {
+                Marshal.Copy(atlas.Png.Ptr, png, 0, pngLength);
+            }
+
+            var glyphCount = Rows(atlas.Glyphs, "atlas glyphs");
+            var glyphs = new AtlasGlyph[glyphCount];
+            if (glyphCount > 0)
+            {
+                var rows = (AtlasGlyph*)atlas.Glyphs.Ptr;
+                for (var i = 0; i < glyphCount; i++)
+                {
+                    glyphs[i] = rows[i];
+                }
+            }
+
+            return new TextAtlas(
+                checked((int)atlas.Width),
+                checked((int)atlas.Height),
+                checked((int)atlas.PxPerEm),
+                atlas.DistanceRangePx,
+                png,
+                glyphs,
+                // What the LIBRARY said, carried beside the copy so a gate can
+                // compare the two. Everything else this type answers is a
+                // property of the copy, so a copy that dropped rows agrees with
+                // itself.
+                atlas.Glyphs.CountAsLong);
+        }
+
+        /// A slice's row count as an `int`, refused rather than truncated.
+        ///
+        /// Not an `ArgumentOutOfRangeException`: the count came from the
+        /// library, not from anything a caller passed, so naming a parameter
+        /// would send a host looking for one of its own.
+        private static int Rows(DsSlice slice, string what)
+        {
+            var count = slice.CountAsLong;
+            if (count > int.MaxValue)
+            {
+                throw new InvalidOperationException(
+                    $"ds_runtime_atlas reports {what} as {count} rows, which is longer "
+                    + "than int.MaxValue.");
+            }
+            return (int)count;
         }
 
         /// A path as the header asks for it: NUL-terminated UTF-8.

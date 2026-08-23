@@ -1457,6 +1457,20 @@ unity-ffi:
       echo "unity-ffi: ${fixture} is missing; the frame checks need a document" >&2
       exit 1
     fi
+    # A SECOND fixture, because the first carries no text: the atlas seam's
+    # checks need a document that stages glyph runs, and the corpus face and
+    # sheet to load it with. Both refused rather than skipped, on the rule the
+    # gate itself states — a gate that quietly runs fewer checks reports on less
+    # than it claims.
+    text_fixture="goldens/dsb/v07-text-hug-in-fill.dsb"
+    if [ ! -f "${text_fixture}" ]; then
+      echo "unity-ffi: ${text_fixture} is missing; the atlas checks need text" >&2
+      exit 1
+    fi
+    if [ ! -d corpus ]; then
+      echo "unity-ffi: corpus/ is missing; the atlas checks need a face and a sheet" >&2
+      exit 1
+    fi
 
     # **The older libraries, each exporting less than this package calls** —
     # they are what let the gate provoke issue #1308's failure instead of
@@ -1496,6 +1510,7 @@ unity-ffi:
     build_stub "${older_lease}" "-DDS_STUB_LEASE_REFUSES"
 
     DASHSCENE_FFI_LIB="${lib}" DASHSCENE_FFI_FIXTURE="${fixture}" \
+      DASHSCENE_FFI_TEXT_FIXTURE="${text_fixture}" DASHSCENE_FFI_CORPUS=corpus \
       DASHSCENE_FFI_STUB="${older}" \
       DASHSCENE_FFI_STUB_SKEW="${older_skew}" \
       DASHSCENE_FFI_STUB_SILENT="${older_silent}" \

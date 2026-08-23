@@ -28,7 +28,10 @@ use std::cell::RefCell;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use std::sync::Arc;
+
 use dashlang::LiveScene;
+use dashpaint::Atlas;
 use dashscene_core::Arena;
 use dashscene_gpu::{GpuPainter, SurfaceRenderer};
 
@@ -68,6 +71,22 @@ pub(crate) struct Runtime {
     /// reports it, so a host reading it every frame sees each replacement
     /// exactly once.
     pub(crate) document_replaced: bool,
+    /// The atlas set the loaded document's runs sample, in the cascade's
+    /// font-slot order — what `ds_runtime_atlas` hands out.
+    ///
+    /// **The same `Arc` the solver holds**, cloned where the load installs the
+    /// scene, so the `Vec` behind it is not copied and cannot go out of step
+    /// with the one a staged run's `AtlasIndex` resolves against.
+    ///
+    /// **Held here rather than read off the committed scene**, so its lifetime
+    /// is a property of this struct rather than of a chain through
+    /// `LiveScene`'s solver and both halves of the commit's double buffer. A
+    /// load replaces it; nothing else does, which is what lets a host upload a
+    /// sheet once per document instead of once per frame.
+    ///
+    /// Empty for the measure-only cascade and for a document loaded without
+    /// text, which is not an error: those documents stage no runs.
+    pub(crate) atlases: Arc<Vec<Atlas>>,
     /// Test-only. Held **for its `Drop`, never read** — hence the underscore:
     /// dropping this field is the observation, and a test asks the counter it
     /// carries rather than asking the runtime.
@@ -103,6 +122,7 @@ impl Runtime {
             painter: GpuPainter::new(),
             frame_leased: false,
             document_replaced: false,
+            atlases: Arc::new(Vec::new()),
             #[cfg(test)]
             _dropped: None,
         }

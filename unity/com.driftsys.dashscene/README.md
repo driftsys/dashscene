@@ -9,13 +9,14 @@ is built by `just host-lib` and placed by whoever ships a release
 unmet), so a fresh install meets a `DllNotFoundException` on its first call.
 
 **What the painter draws:** fills, both solid and gradient; corner radii;
-strokes; clips; per-node opacity and rotation. **What it does not:** shadows,
-layer blurs, backdrop blurs, image fills, baked vector nodes, render-target
-groups, and text — the atlas a glyph run samples does not cross the C ABI at
-all. Every one of those is reported by name through `PackDiagnostic` rather than
-skipped quietly. A backdrop blur is the one that is not merely unbuilt: it reads
-what the painter itself composited, and a Unity host's target also holds the
-engine's own scene.
+strokes; clips; per-node opacity and rotation; and text, as MSDF quads sampled
+from the atlas a glyph run names — call `DashsceneRuntime.ReadAtlases` after
+each load and hand the result to `BrgPainter.SetAtlases`. **What it does not:**
+shadows, layer blurs, backdrop blurs, image fills, baked vector nodes and
+render-target groups. Every one of those is reported by name through
+`PackDiagnostic` rather than skipped quietly. A backdrop blur is the one that is
+not merely unbuilt: it reads what the painter itself composited, and a Unity
+host's target also holds the engine's own scene.
 
 What is here:
 
@@ -39,18 +40,19 @@ What is here:
   everything else at this level.
 - `Runtime/Engine/BrgPainter.cs` — the `BatchRendererGroup` itself: the buffer
   target and its rung, the instance upload, the batches and the culling
-  callback. **The only file under `Runtime/` that references `UnityEngine`**,
-  which is why it is one directory down: `unity/package-compat` has no Unity
-  reference assemblies, so R-E10's netstandard check cannot compile it and a
-  Unity editor checks it instead
+  callback. **Everything under `Runtime/Engine/` references `UnityEngine`**,
+  which is why that directory is one level down: `unity/package-compat` has no
+  Unity reference assemblies, so R-E10's netstandard check cannot compile any of
+  it and a Unity editor checks it instead
   ([r-e10-is-checked-in-two-halves](../../docs/decisions/r-e10-is-checked-in-two-halves.md)).
-- `Runtime/Resources/Dashscene/` — the three material classes' `.shader` files,
-  one per class. **They sit in a `Resources` folder because a player build
-  strips a shader that no scene and no material references** — the painter loads
-  each with `Resources.Load<Shader>` by the shader's own declared name, so the
-  name doubles as the path and there is no second constant to drift. Issue #1313
-  is the run that measured the alternative failing.
-- `Runtime/Shaders/` — the shading those three include, and `Sdf.hlsl`. An
+- `Runtime/Resources/Dashscene/` — the `.shader` files: one per material class,
+  and the text shader beside them, which is not a class. **They sit in a
+  `Resources` folder because a player build strips a shader that no scene and no
+  material references** — the painter loads each with `Resources.Load<Shader>`
+  by the shader's own declared name, so the name doubles as the path and there
+  is no second constant to drift. Issue #1313 is the run that measured the
+  alternative failing.
+- `Runtime/Shaders/` — the shading those four include, and `Sdf.hlsl`. An
   `.hlsl` is not loaded at run time, so it needs no `Resources` folder.
   **`Sdf.hlsl` is generated** from the lean painter's WGSL shader library by
   `naga` and must not be edited: the point is that both painters evaluate one

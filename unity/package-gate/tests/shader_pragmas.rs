@@ -181,8 +181,15 @@ fn the_per_instance_properties_are_the_same_set_on_both_sides() {
     }
 }
 
-/// Each material class draws with **its own** shader, not merely with one of
-/// the package's shaders.
+/// Each shader constant names **its own** shader, not merely one of the
+/// package's.
+///
+/// **"Material class" is what this was written for and is no longer the whole
+/// set.** `shader_consts` reads every `Dashscene/…` constant in `PaintHeap.cs`,
+/// and story #1123 added `PaintShaders.Text`, which is deliberately not a
+/// class — so the tie below now covers four constants and three classes. The
+/// mechanism is unchanged: each constant's shader must define the
+/// `DASHSCENE_CLASS_*` macro spelled from that constant's own name.
 ///
 /// **The set comparison above cannot see a swap.** `declared` and `registered`
 /// are both sorted, so exchanging which C# constant holds which shader name
@@ -334,13 +341,38 @@ fn every_global_the_painter_binds_is_declared_by_the_shading() {
         let is_buffer = shading.contains(&format!("StructuredBuffer<float4> {name};"));
         let is_per_material = cbuffer.contains(&format!(" {name};"));
         let is_global_scalar = shading.contains(&format!("\nfloat4 {name};"));
+        // **A texture is none of the three above and cannot be made into one.**
+        // It is not a `StructuredBuffer`, it cannot be a `UnityPerMaterial`
+        // member — a sampler has no place in a constant buffer, and putting one
+        // there makes the shader SRP-Batcher-incompatible — and it is not a
+        // global scalar. Before story #1123 the package bound no texture, so
+        // the three arms were the whole set; the atlas a glyph run samples is
+        // the first, and it is bound per material because a document may name
+        // more than one sheet.
+        //
+        // **Both halves, and that is the strengthening rather than a
+        // formality.** `TEXTURE2D(name)` alone would be satisfied by a
+        // declaration nothing can sample: URP's `SAMPLE_TEXTURE2D*` macros take
+        // the sampler by name, and on a platform where `TEXTURE2D` expands to a
+        // plain `Texture2D` a missing `SAMPLER` is a compile error only in the
+        // pass that samples it — which the text class is and the other three
+        // are not, so a file-joined search that accepted the texture alone
+        // would pass over a package whose sampler had been deleted.
+        //
+        // **`sampler` then the name, with no separator of its own.** Unity's
+        // convention pairs `_MainTex` with `sampler_MainTex`, and every name
+        // here already begins with an underscore — a `sampler_` prefix would
+        // look for `sampler__DsAtlas` and fail on a correct declaration, which
+        // is what the first cut of this check did.
+        let is_texture = shading.contains(&format!("TEXTURE2D({name});"))
+            && shading.contains(&format!("SAMPLER(sampler{name});"));
         assert!(
-            is_buffer || is_per_material || is_global_scalar,
+            is_buffer || is_per_material || is_global_scalar || is_texture,
             "`{name}` is bound by the painter (Runtime/PaintBindings.cs) and is \
              declared by no shader source as a StructuredBuffer, a \
-             UnityPerMaterial member or a global scalar. The binding then \
-             reaches nothing and the shading reads an unbound buffer or a \
-             default."
+             UnityPerMaterial member, a global scalar, or a TEXTURE2D with its \
+             SAMPLER. The binding then reaches nothing and the shading reads an \
+             unbound buffer, an unbound sampler or a default."
         );
     }
 }
