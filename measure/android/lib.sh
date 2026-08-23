@@ -162,15 +162,76 @@ ds_pid() {
         | grep -E '^[0-9]+$' | head -1 || true
 }
 
+# ds_capture_state <log> <device_present> <capture_alive>
+#
+# Whether a capture can be read as evidence about the attach at all, and why not
+# when it cannot. Echoes `readable`, `empty`, `device-gone` or `capture-died`.
+#
+# **It is a separate question from `ds_attach_outcome`'s and has to be asked
+# first**, because a capture that stopped watching produces the same marker set
+# as an acquisition that never returned. Answering the second question over a
+# capture that failed the first turns "the measurement ended" into a claim about
+# the painter.
+#
+# `empty` is **no line beyond logcat's own preamble**, not a zero-byte file. The
+# follower is opened before the launch and `logcat` writes
+# `--------- beginning of main` as soon as it attaches to the buffer, so from
+# then on the file is non-empty whatever happens next — a size test would call a
+# capture that died one second in `readable`.
+#
+# `device-gone` and `capture-died` are two routes to the same silence and the
+# caller can tell them apart cheaply: `ds_has_device` for the first, `kill -0` on
+# the follower for the second. Both are reported because they send a reader to
+# different places. Measured on 2026-08-23, with six worktrees of this repository
+# compiling on one 8-core 16 GB host: the automotive emulator dropped to
+# `offline` to adb while its qemu process was still running, and was killed
+# outright later the same day as the pressure continued. `pgrep -f qemu-system`
+# is what tells those two apart, and neither is visible from adb alone — an
+# empty `adb devices` and a `logcat -d` that does not return look like a slow
+# device and are not one. The host condition is recorded in
+# `docs/design/android-toolchain.md`; this comment does not restate it.
+#
+# The device is asked about **after** the wait rather than before it: it was
+# there at the start, or there would have been no launch to time.
+ds_capture_state() {
+    local log device_present capture_alive
+    log="$1"
+    # Both `yes` or anything else. The caller passes what `ds_has_device` and
+    # `kill -0` answered; they are arguments rather than calls so that this is
+    # reachable from `attach-outcome-test.sh` with no device and no follower.
+    device_present="$2"
+    # **No default.** This is the argument that says whether anything watched,
+    # so a caller that forgets it must trip `set -u` and be refused rather than
+    # be told the capture is trustworthy. `$2` already behaves that way; the two
+    # are deliberately symmetric.
+    capture_alive="$3"
+    if [ ! -s "${log}" ] \
+        || ! grep -qvE '^-{3,} beginning of|^[[:space:]]*$' "${log}" 2>/dev/null; then
+        printf 'empty\n'
+        return
+    fi
+    # The device first when both are true, because a follower whose transport
+    # went with the device is the same event and the device is its cause.
+    if [ "${device_present}" != "yes" ]; then
+        printf 'device-gone\n'
+        return
+    fi
+    if [ "${capture_alive}" != "yes" ]; then
+        printf 'capture-died\n'
+        return
+    fi
+    printf 'readable\n'
+}
+
 # ds_attach_outcome <attaching> <attached> <drew> <failed> <timeout> <readable>
 #
 # Echoes which of the six outcomes an attach reached, from the marker
 # timestamps — each argument is a timestamp or empty.
 #
 # **`readable` is the sixth, and it is the difference between a verdict and a
-# failed measurement.** `attach-timing.sh` writes its capture with
-# `logcat -d ... || true`, so a dropped connection — which this file calls
-# ordinary on a USB-attached device — leaves an empty log, every marker empty, and
+# failed measurement.** `attach-timing.sh` captures with a `logcat` follower
+# opened before the launch, so a dropped connection — which this file calls
+# ordinary on a USB-attached device — leaves a truncated or empty log, and
 # the fall-through below then records `never attached` as a fact about the app.
 # That is a claim about the painter derived from a measurement that did not
 # happen, and it is exactly the distinction `assert-drew.py` keeps between its

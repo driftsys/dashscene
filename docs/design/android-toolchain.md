@@ -180,12 +180,21 @@ painter-capable adapter there is a CPU rasteriser.
   emulator cannot run this path. Cold launch to first frame, same emulator:
   **0.74 s for a release build**, and **over 218 s for a debug one**, abandoned
   before it completed. `just android` builds debug and `android-splitscreen`
-  packages what it built, so every run of that recipe has used the slow build.
-  With a release library the split-screen case passes end to end and the
-  handshake completes in **27 ms**.
+  packages what it built, so a run that names no profile uses the slow build.
+  **Not "every run", which this sentence said until 2026-08-23**: `_apk-harness`
+  honours `DASHSCENE_ANDROID_PROFILE`, and the passing split-screen run is the
+  one that sets it to `release`. It is the same claim issue #1187 corrected in
+  `handshake.rs`, in a third copy that correction did not reach. With a release
+  library the split-screen case passes end to end and the handshake completes in
+  **27 ms**. That 218 s was abandoned rather than bounded; "The debug attach on
+  the automotive image, bounded" below re-derives it on the same image and the
+  same GPU mode with the wait instrumented.
 
   **That run also needs the emulator started with `-gpu host`** (issue #1158,
-  measured 2026-08-16). Under the default GPU mode the painter cannot obtain a
+  measured 2026-08-16, **on the API 35 `medium_tablet` image and the harness
+  run** — see "The debug attach on the automotive image, bounded" below, where
+  the automotive image in default mode gives the painter a SwiftShader device
+  and draws). Under the default GPU mode there the painter cannot obtain a
   device — `Failed to open rendernode` — the harness draws a black frame, and
   the same release library fails at `assert-drew` instead. So the release build
   is necessary and not sufficient, and the sentence above holds only with the
@@ -610,10 +619,22 @@ measurement does settle is the shape of the answer:
 ### The attach, and what it does and does not say
 
 Recorded because the apparatus takes it and it is the first such figure from
-hardware. **It is not the answer to #960**, whose subject is a different thing —
-see the note below. (Phrased without the keyword deliberately: #960 is open, and
-a sentence saying an issue was _not_ closed fires exactly as well as one saying
-it was, in any pull-request body that quotes it.)
+hardware. **Under the reading issue #960's own most recent comments and epic
+#1107 both state, this table is that issue's hardware half** — the acquisition,
+in both profiles, on a target device.
+
+**This file said the opposite until 2026-08-23**, and the sentence is worth
+keeping visible: "It is not the answer to #960, whose subject is a different
+thing." That was written under #960's 2026-08-14 comment, which two comments of
+2026-08-16 superseded, and **the records have not been made to agree** —
+`docs/roadmap.md`'s 2026-08-18 revision block restates the 2026-08-14 reading
+while that same file's Track A bullet carries the later one. Which reading
+stands is a scope ruling on an open issue, so it is the owner's; it is filed as
+issue #1291 and nothing in this file resolves it. What this table is under
+either reading is a measurement, and it is read below on its own terms. (Phrased
+without the keyword deliberately: #960 is open, and a sentence saying an issue
+was _not_ closed fires exactly as well as one saying it was, in any pull-request
+body that quotes it.)
 
     run   profile   acquire   to first frame   am start -W TotalTime
     1     release   0.27 s    0.31 s           188 ms
@@ -673,21 +694,32 @@ block D4 bounds is smaller on the device than anywhere it had been measured.
 `--windowingMode 6` launch landed in `mWindowingMode=multi-window`; putting
 Settings in the other half destroyed one surface and every entry returned —
 `entering=1, complete=1`, no wedge. **That is the transition #960 was originally
-filed against**, as a 150 s deadlock on an emulator. It corroborates that
-issue's own 2026-08-14 correction: the emulator's painter had no GPU device, and
-`surfaceDestroyed` blocks for a frame loop that never started. With a device
-that draws, the handshake returns.
+filed against**, as what that issue called a 150 s deadlock on an emulator. It
+corroborates that issue's own 2026-08-14 correction: the emulator's painter had
+no GPU device, and `surfaceDestroyed` blocks for a frame loop that had not got
+past its attach. **"Deadlock" is that issue's word and it is wrong** — see "The
+debug attach on the automotive image, bounded" below, where a render thread
+inside the same acquisition is measured runnable and accumulating CPU rather
+than blocked. Not the same wait — that one is a cold launch with no destroy in
+it — and not a whole core throughout, which is why the figure there is split at
++467 s. With a device that draws, the handshake returns.
 
 ### What this run does not settle
 
 - **#874's third case is exercised but not closed here**: one clean split
   transition is evidence, not the repeated run that recipe performs, and
   `android-splitscreen` itself cannot pass while #1232 stands.
-- **#960** is, since its own 2026-08-14 comment, "a painter that cannot obtain a
-  device must say so" — a silent-failure defect, not a measurement. It is
-  untouched by this run, and in fact this device obtains a device, so the
-  failure path was not exercised at all. The epic's one-line summary of #960 as
-  "whether a debug attach ever completes" does not match the issue.
+- **#960 is not settled by this run under either reading of it**, and this
+  bullet asserted one of the two until 2026-08-23 — that the issue is "a painter
+  that cannot obtain a device must say so", a silent-failure defect rather than
+  a measurement, and that "the epic's one-line summary of #960 as 'whether a
+  debug attach ever completes' does not match the issue". The epic's summary is
+  the reading #960's two 2026-08-16 comments state, and issue #1291 carries the
+  disagreement. Under the silent-failure reading this run exercises nothing: the
+  device obtains a device, so the failure path is not reached. Under the
+  debug-attach reading the table above is evidence and not a close — two runs
+  that disagree by a factor of fifteen, neither labelled first-launch-after-
+  install.
 - **No frame budget is established.** The 16.67 ms above is a reference point
   for reading the table, not a requirement.
 - **One device.** Nothing here says what a different Adreno, a Mali or a PowerVR
@@ -744,10 +776,12 @@ follow:
       perfetto-*.md/pbtx   the trace configuration and the command that uses it
 
 **Start the emulator with `-gpu host`, and check the adapter before anything
-else.** The bundle runs the adapter probe first for exactly that reason: under
-the default GPU mode the painter obtains no device, every frame is black, and
-the cost of discovering that from a frame capture is minutes rather than seconds
-(issue #1158). The section above records what each mode reports.
+else.** The bundle runs the adapter probe first for exactly that reason: on the
+images this has been measured against — the API 35 `medium_tablet` one, not the
+automotive one, which gives the painter a SwiftShader device in default mode —
+under the default GPU mode the painter obtains no device, every frame is black,
+and the cost of discovering that from a frame capture is minutes rather than
+seconds (issue #1158). The section above records what each mode reports.
 
 ### The five parts, and what each can and cannot say
 
@@ -845,6 +879,40 @@ with none of those after it is the wedge; and no `attaching` at all means the
 loop never started. Reading "no `attached`" as a wedge on its own calls every
 failed attach one.
 
+**The capture streams into a host file opened before the launch, and that is new
+at 2026-08-23.** It dumped the whole device ring with `logcat -d` once per poll
+instead, which loses exactly the markers it reads for: the ring is bounded and
+the wait is not. On the automotive emulator, whose audio stack writes about 650
+lines a minute, a 90 s debug wait ended holding a capture that began **34 s
+after the launch** — the `attaching` line had aged out of the ring, and the run
+reported `never attached — no acquisition was attempted` for an acquisition that
+was in flight at that moment, with `surfaceDestroyed has been waiting 34 s` in
+the same capture. That is the one wrong answer this procedure must not give:
+those two outcomes are the pair it exists to tell apart, and a lost marker turns
+the wedge into "the loop never started". **`frame-capture.sh` and `run.sh` still
+capture the old way**, and the same argument applies to them unchanged; that is
+issue #1304.
+
+**The wiring between the two decisions is driven by a test rather than only by a
+device.** `attach-outcome-test.sh` calls `ds_attach_outcome` and
+`ds_capture_state` with synthetic arguments, which leaves the `case` that maps a
+capture state onto a verdict, the follower's trap and the suppression of the
+interval columns reachable only at a device — the one place this apparatus is
+meant to be already proven. `attach-timing-test.sh` runs the script itself
+against a stub `adb` and a stub `just`, over six cases: a run that drew, the
+wedge, and the three unreadable states, plus a launch refused after the follower
+is spawned, which is the only path the trap exists for. Both are inside
+`just harness-tests`, and so inside `check` and `build`.
+
+**A device that goes away mid-wait is checked for, and it is a different failure
+from a slow one.** Under memory pressure this emulator first drops to `offline`
+to adb and is later killed outright — the host condition that produces both is
+recorded with the measurement below. Either way the follower stops appending and
+the poll runs out its timeout, which would report `NO COMPLETION OBSERVED` — a
+statement about the acquisition — for a capture that had stopped watching. The
+procedure asks whether the device is still attached **after** the wait, and
+reports the capture as unreadable when it is not.
+
 `just android release` exists for this, and is new at this story: the profile is
 a parameter on `android`, `android-apk` and both `_apk-*` recipes, defaulted to
 `debug` so every existing caller is unchanged. Before it there was no recipe for
@@ -924,7 +992,12 @@ taken on the **automotive** image in its **default GPU mode**. So "a debug
 attach never completes" is not a property of the debug build on its own. Which
 of the two variables explains the earlier result is **not settled by this run**
 — one measurement in one configuration cannot refute a class — and #960's device
-half is what settles it.
+half is what settles it. **Neither variable is separated, and "The debug attach
+on the automotive image, bounded" below does not separate them either**: it
+holds the automotive image and the default GPU mode together, which is the same
+configuration as the 2026-08-15 run. What it adds is a bound and an instrument
+where that run had an abandoned wait — the pair is confirmed sufficient, and
+which half carries it is untouched.
 
 **The render-target sweep resolves on this GPU.** `just android-layer-cost` fits
 a line over 0 to 12 layers at 1920x1080 and reported **+0.198 ms per layer, with
@@ -955,6 +1028,191 @@ plain executable under `adb shell` with no host-side loop to bound it.
 on unknown hardware should lower both — a shorter sweep is a weaker measurement
 rather than a broken one, and the resolution test above reports the weakness
 instead of hiding it.
+
+### The debug attach on the automotive image, bounded (2026-08-23, #960)
+
+**An emulator result, and it settles no part of the device question.** No target
+device was reachable from the session that took it. What it does settle is what
+the same emulator, in the same GPU mode, in the same image that produced the
+"over 218 s, abandoned" figure of 2026-08-15, does when the wait is bounded and
+instrumented instead of abandoned.
+
+**The emulator.** `Automotive_1408p_landscape_with_Google_Play_API_34-ext9`,
+fingerprint
+`google/sdk_gcar_arm64/emulator_car64_arm64:14/UAA1.250512.001/13479943:user/release-keys`,
+Android 14 / API 34, emulator **36.3.10.0**, **default GPU mode — no `-gpu`
+flag**, drawable 1408x483. `just android-probe` on it reproduces this file's
+recorded automotive adapter set exactly: SwiftShader (Vulkan, `Cpu`) with
+`max_storage_buffers_per_shader_stage` 10 and the device request OK, and the
+GLES 3.0 translator at 0, failing on `max_compute_workgroups_per_dimension`. The
+painter picks the SwiftShader adapter and gets `Rgba8Unorm`. The AVD carried
+`immersive_mode_confirmations=confirmed`, set by another session earlier that
+day; it suppresses an overlay and nothing read here.
+
+`measure/android/attach-timing.sh`, both profiles in one run, both a first
+launch after install. **`DS_ATTACH_TIMEOUT=600`** — the default is 90 s, which
+would have bounded the debug row there and recorded a different number, so the
+value is part of the command:
+
+    ADB=$(just _android-adb) DS_ATTACH_TIMEOUT=600 \
+      ./measure/android/attach-timing.sh <outdir> release debug
+
+What it wrote, at a drawable of 1408x483:
+
+    profile   outcome                       acquire   to first frame   TotalTime
+    release   drew                          1.11 s    1.20 s           2123 ms
+    debug     no completion observed        —         —                1769 ms
+
+**The debug bound is 645.1 s**, taken from the device clock: the `attaching`
+marker at epoch 1787466557.237, and the last line of the capture at
+1787467202.373. Between them there is no `attached` marker, no `attach failed:`
+and no `first frame`. That is the **third** of the four outcomes this file
+enumerates above — still inside the call. Not the fourth, which is no
+`attaching` at all and means the loop never started; those are precisely the two
+the capture fix below exists to keep apart, and an earlier draft of this
+sentence numbered them the wrong way round.
+
+**A bound in wall clock is the weaker half of the answer, because this host was
+not quiet for all of it.** Two other sessions were compiling on the same machine
+and the load average went from 8 to 84 during the run. The figure that does not
+depend on host scheduling is the CPU the acquisition consumed without returning:
+
+    546.6 s of CPU on one thread, over 645.1 s of wall clock
+
+**And the contention is measured rather than assumed, which is what makes the
+rest usable.** `/proc/<pid>/task/<tid>/stat` was sampled every 10 s — 61
+samples, 60 intervals — and the CPU each interval bought divides the run in two
+at **+467 s**:
+
+    intervals        n    mean        min
+    before +467 s   44    0.95 core   0.81 core
+    from   +467 s   16    0.65 core   0.28 core
+
+**No committed instrument takes that series**, and this record does not pretend
+otherwise. `ds_cpu_sampler_start` in `measure/android/lib.sh` samples
+`/proc/<pid>/stat` — the process — and `attach-timing.sh` does not call it; the
+per-thread series here, the three hand readings and the thread sweep were all
+taken by an ad-hoc loop over `adb shell cat`, which is not in the repository. So
+the figures here are re-derivable only by writing that loop again. A per-thread
+option on the sampler is what would close it, and that is issue #1305.
+
+**Every interval below 0.80 of a core is in the second group and none is in the
+first**, so the first 467 s ran against an unloaded machine. By the end of them
+the acquisition had consumed **439.5 s of CPU and had not returned**. That is
+the figure that survives a contended host; 546.6 s is the figure for the whole
+run. An earlier draft of this paragraph said the thread held 0.88 to 1.00 of a
+core to 431 s, which was read off every sixth sample and is not what the series
+says.
+
+**The acquisition is computing, not blocked, and that is new.** 61 samples of
+the render thread, `dashscene-frame`:
+
+- **State `R` in all 61 of them**, with no other value seen.
+- **`majflt` at 1817 in all 61.** It is not paging the library in, and whatever
+  faulting the load cost had finished before the first sample.
+- **The core moved between 0, 1, 2 and 3** across samples — 23, 17, 15 and 6
+  samples on each — which is why the figure above is CPU-seconds and a core
+  number is recorded with every sample.
+
+Three further readings were taken by hand, 8 s apart, inside one 16 s window
+between roughly 55 s and 75 s into the run — placed by their CPU totals against
+the sampled series rather than by a recorded timestamp, which is why the bound
+is stated loosely. **They are three points and not a series, and the bullets
+below say only what three points can:**
+
+- **`voluntary_ctxt_switches` was 668 at all three**, while `nonvoluntary` went
+  1877, 2003, 2566. Over that window the thread made no blocking call and was
+  preempted 689 times.
+- **`minflt` was 2854 at all three.** Over that window it took no new pages.
+- **One sweep of every thread in the process**, taken once rather than
+  repeatedly, found only `dashscene-frame` with CPU worth reporting: the main
+  thread at 0.23 s and Android's `RenderThread` at 0.24 s against its 90.4 s,
+  both in state `S`.
+
+That refutes both mechanisms this issue has carried. It is **not a deadlock**,
+which is how the body of #960 describes it, and it is **not "wedged inside one
+uninterruptible FFI call"**, which is how that issue's 2026-08-15 comment
+describes it and how
+[`handshake.rs`](../../crates/dashscene-android/src/handshake.rs) still put it
+until this measurement. A thread inside an uninterruptible call accumulates no
+CPU and is not preempted at all; this one accumulated 546.6 s and was preempted
+689 times in the one window that was counted. It is one long computation that
+had not finished.
+
+**This file was not among the records that said it**, which an earlier draft of
+this paragraph claimed: `uninterruptible` appears nowhere in it before
+2026-08-23. What it did carry, and no longer does, is the deadlock reading — see
+the split-screen paragraph above.
+
+**What the split of that CPU does not say.** 99% of it is charged to system
+time, and this record does not report it as time in the kernel. With
+`voluntary_ctxt_switches` flat there are no blocking syscalls for it to be
+attributed to and with both fault counters flat there are no faults either, so
+on this emulator the user/system split has nothing behind it. Only the total is
+quoted. Attributing the computation to a function needs a profiler, and
+`simpleperf` cannot profile this process: the APK declares no
+`android:debuggable` and the image is a `user` build, so neither `run-as` nor
+root is available.
+
+**The artifact whose acquisition this is.** The showcase APK ships
+`lib/arm64-v8a/libdemo_android.so` at **245,166,024 bytes** in the debug profile
+against **8,815,336** in release — a ratio of 27.8. `just android` builds debug
+and `_apk-demo` defaults `DASHSCENE_ANDROID_PROFILE` to debug, so that is the
+library an ordinary run packages.
+
+**Release is not one number either.** Three release launches were taken on this
+emulator in one session: **0.72 s**, **1.11 s** and **1.17 s** to acquire. The
+last was taken while another session's Unity player was the resumed activity,
+and that run is also the one whose surface was destroyed under it; the other two
+were quiet. Nothing here is precise enough to read a trend into, and the table
+above quotes 1.11 s because it came from the same `attach-timing.sh` invocation
+as the debug row, which is what makes the pair one measurement rather than two —
+not because it was the cleanest, since 0.72 s was quiet too.
+
+**What this does and does not settle.**
+
+- It gives #960's debug half a number on a named emulator with the profile, the
+  harness and the bound all stated, which is what it did not have. "Never
+  completes" is still not what is measured: **it did not complete within 645.1 s
+  of wall clock and 546.6 s of CPU.**
+- It does **not** separate a first launch after install from a later one, and
+  its gap is wider than the Pixel 5 table's. That table has four rows — two
+  profiles over two runs — so it holds both conditions and lacks only the
+  deliberate labelling. **Both rows here are first launches after install**,
+  because `attach-timing.sh` uninstalls and installs before every profile, so
+  this pair holds only one of the two. The later launch was attempted twice on
+  2026-08-23 and abandoned both times. **The host condition is recorded because
+  it is what makes the decision legible**: an Apple M3 with 8 cores and 16 GB,
+  carrying six worktrees of this repository at once, a load average reaching
+  172, and `sysctl vm.swapusage` reporting 35 884 MB of 36 864 used — 97.3%.
+  Another session's `just build` was killed by SIGTERM in that state, which is
+  macOS reclaiming memory rather than anything about the code. **The emulator
+  fails in two stages under it**, and both differ from a slow run: it drops to
+  `offline` to adb while its qemu process is still running, and if the pressure
+  continues the process is killed as well — this one was, later the same day,
+  leaving `adb devices` empty and no qemu process at all. Either way a run can
+  lose the device part-way and still produce samples that read as data
+  afterwards. A guest-side CPU-bound interval cannot be measured on a host in
+  that state, and a figure taken anyway would not be separable from the
+  contention. It needs a machine running one session.
+- It does **not** say what a device does. The Pixel 5 pair above completed both
+  profiles, and the two results are not in tension: one is a CPU rasteriser on
+  an emulated arm64 guest and the other is an Adreno 620.
+- It **isolates neither of the two variables** the `medium_tablet` paragraph
+  above leaves open, and an earlier draft of this bullet claimed it isolated
+  one. That paragraph records a debug build reaching its first frame in 2.37 s
+  on the API 35 handheld image with `-gpu host`, and says the earlier automotive
+  result might be explained by the image or by the GPU mode, with neither
+  separated. This run holds the automotive image and the default GPU mode and
+  reproduces the non-completion, so the pair (image, default mode) is
+  sufficient. Which of the two carries it is still not separated — that needs
+  the automotive image with `-gpu host`, which
+  [the section below](#the-automotive-emulator-cannot-be-made-to-use-the-host-gpu-for-vulkan)
+  records this emulator does not offer for Vulkan.
+- **The painter obtained a device in the default GPU mode**, which corroborates
+  the 2026-08-15 automotive release run rather than adding anything: issue
+  #1158's `-gpu host` requirement is recorded against the `medium_tablet` image
+  and the harness run, not against this one.
 
 ## The probe
 
@@ -1104,9 +1362,12 @@ does not extend the probe's reach.
 `PowerPreference::default()` and a `compatible_surface` — and it need not be the
 one that passed. The emulator run recorded above is precisely that shape:
 adapter 0 (Vulkan, SwiftShader, a CPU device) passes and adapter 1 (the GLES
-translator, an integrated GPU) fails, while `PowerPreference::default()` is
-`LowPower`, which ranks an integrated GPU above a CPU one. Read the summary line
-as the at-least-one claim it makes.
+translator, an integrated GPU) fails. **The answer is now known for that one
+emulator and not for the question in general**: running the host on it, the
+painter took the SwiftShader adapter and got `Rgba8Unorm` — see "The debug
+attach on the automotive image, bounded" above. The concern is that
+`PowerPreference::default()` is `LowPower`, which ranks an integrated GPU above
+a CPU one. Read the summary line as the at-least-one claim it makes.
 
 **Whether a surface would offer a format the painter can blend in (issue
 #890).** `SurfaceRenderer::new_async` refuses with
@@ -1158,8 +1419,13 @@ that **"the GLES adapter reporting zero is D3a's mechanism, demonstrated" is a
 statement about a configuration**, not about the emulator — and any emulator
 number quoted here should name the `-gpu` mode that produced it.
 
-Until the hardware measurement exists, **nothing may describe Android as
-working** — not this record, not a design document, not an issue. D3a's status
-in
+**That measurement exists since 2026-08-17**, and this paragraph said it did not
+until 2026-08-23. It was taken on a Pixel 5 and is recorded under "What the
+device measured" above;
 [`../decisions/host-integration-in-three-layers.md`](../decisions/host-integration-in-three-layers.md)
-stays "a risk to check", and story #839 carries the step that changes it.
+records the verification beside the risk rather than in place of it — it still
+says D3a is stated "as a risk to check, not as a measured fact", and adds that
+it remains a property to check per device class. What the paragraph was
+protecting still holds in a narrower form: **one handset is not the target
+fleet**, so nothing may describe Android as working on the strength of it, and
+every number here remains a number about the device that produced it.

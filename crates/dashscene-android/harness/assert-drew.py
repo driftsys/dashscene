@@ -487,8 +487,10 @@ def main(argv):
         # issue whose body measures this symptom and names the remedy.
         print(
             "assert-drew: check logcat for 'Failed to open rendernode'. The painter "
-            "draws nothing when it cannot obtain a device, and on an emulator that "
-            "is the launch mode: restart it with `-gpu host` (issue #1158).",
+            "draws nothing when it cannot obtain a device, and on a handheld "
+            "emulator image that is the launch mode: restart it with `-gpu host` "
+            "(issue #1158). The automotive image gets a SwiftShader device "
+            "without it, so look elsewhere there.",
             file=sys.stderr,
         )
 
