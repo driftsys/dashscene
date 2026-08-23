@@ -693,8 +693,10 @@ sentence.
       backgrounding and split-screen have each confirmed, the third only since
       2026-08-15.
 
-      **It has run on an emulator and not on a device**, and the distinction is
-      the whole of what is unresolved. A compiled `.dsb` draws, rotation and
+      **It ran on an emulator until 2026-08-17 and on a Pixel 5 that day**, and
+      the distinction was the whole of what was unresolved. The emulator
+      evidence below is what stood before that run and is kept because the
+      device did not repeat all of it. A compiled `.dsb` draws, rotation and
       backgrounding each run the destroy handshake without a crash, and both
       were observed on the automotive emulator — which is interim evidence and
       is labelled as such, not the D3a measurement. **Split-screen took two
@@ -706,7 +708,11 @@ sentence.
       re-derived and explained**: the render thread never returned from its
       attach, and the cause is the build rather than the transition — 0.74 s
       from cold launch to first frame for a release build against over 218 s for
-      a debug one, on the same emulator. With a release library the split-screen
+      a debug one. **That pair was taken on the automotive image in its default
+      GPU mode, not on the handheld one this paragraph has been describing**;
+      this file said "on the same emulator" until 2026-08-23, and which image
+      produced 218 s is load-bearing — `docs/design/android-toolchain.md`
+      re-derives it there with a bound. With a release library the split-screen
       case passes end to end and the handshake completes in 27 ms.
       `just android-splitscreen` is that run, and it packages the profile
       `DASHSCENE_ANDROID_PROFILE` names — **defaulted to `debug`, which is what
@@ -717,9 +723,16 @@ sentence.
       painter obtains no device, the harness draws black and the run fails at
       `assert-drew` (issue #1158). The D3a measurement that
       says the painter's four fragment-stage storage buffers fit a target
-      device **has not been taken** — see `docs/design/android-toolchain.md`,
-      which records why an emulator cannot take it. Nothing here says Android
-      works.
+      device **was taken on 2026-08-17**. This paragraph said it had not been
+      until 2026-08-23, while the bullet on tuning above had said it was done
+      since the day it happened — the file carried both. On a Pixel 5 (Adreno
+      620) Vulkan reports 32 storage
+      buffers per fragment stage and GLES 3.2 reports **exactly 4**, and both
+      device requests pass — so the painter fits that device's GLES path with
+      nothing to spare, and one more fragment-stage storage buffer would put it
+      outside the contract. See `docs/design/android-toolchain.md` under "What
+      the device measured". That is one handset rather than the target fleet.
+      Nothing here says Android works.
 
       **The showcase runs on Android** (story #842). `demo-android` is a third
       demonstration host beside `demo` and `demo-web`: `typography` draws MSDF

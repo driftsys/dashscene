@@ -340,8 +340,15 @@ total, nineteen of them the crates above.
                       its CPU sampler, the compositor's frame statistics and the
                       attach procedure, in an order that requires no decision
                       (story #1229, docs/design/android-toolchain.md). Needs a
-                      device, and **an emulator must be started with `-gpu
-                      host`** or the painter obtains none (issue #1158). It
+                      device, and **a handheld emulator image must be started
+                      with `-gpu host`** or the painter obtains none (issue
+                      #1158). The automotive image gives it a SwiftShader device
+                      in the default mode instead, which is not the better
+                      outcome it sounds: that is a CPU rasteriser, and the
+                      bundle's attach step on it burns the whole
+                      `DS_ATTACH_TIMEOUT` in a debug build without returning
+                      (docs/design/android-toolchain.md, "The debug attach on
+                      the automotive image, bounded"). It
                       takes no measurement this repository may record: every
                       number belongs to #885, #960, #969, #842 or #1128, and
                       the bundle's own README says whether it is an emulator

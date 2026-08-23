@@ -65,8 +65,10 @@ directly:
 - [android-toolchain.md](android-toolchain.md) — the `aarch64-linux-android`
   target, the discovered NDK and the API floor, the `android-build` job, and the
   D3a probe: what the painter's own device request reports on an adapter,
-  measured on the host and on an emulator. **The target-hardware measurement is
-  not taken** (v0.19, story #839).
+  measured on the host, on an emulator and — since 2026-08-17 — **on a device**
+  (a Pixel 5), which is where D3a, the frame costs and the render-target budget
+  were taken. This entry said the target-hardware measurement was not taken
+  until 2026-08-23.
 - [goldens.md](goldens.md) — the golden-image diff tooling and the v0.1
   walking-skeleton golden scene, the v0.1 slice's closing component (story #6);
   the v0.2 flex-vocabulary goldens, closing epic #7 (story #11); the v0.3 paint

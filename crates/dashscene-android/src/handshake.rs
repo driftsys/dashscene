@@ -149,8 +149,11 @@ impl Handshake {
     /// duration. Measured on an emulator, from a cold launch to the first
     /// frame: **0.74 s for a release build**, and **over 218 s for a debug
     /// one**, which was still running when the measurement was abandoned
-    /// (issue #960). `just android` builds debug, so that is the build every
-    /// Android exercise of this repository has used.
+    /// (issue #960). `just android` builds debug, so it is the build an
+    /// ordinary run packages; [`REPORT_EVERY`] carries why it is no longer the
+    /// build every Android exercise has used. That correction landed on the
+    /// constant under issue #1187 and missed this copy, which went on asserting
+    /// it until 2026-08-23.
     ///
     /// # What `waiting` is for
     ///
@@ -221,9 +224,20 @@ impl Handshake {
         // wake: a wait that believed a single wake would return with the
         // surface still alive, which is the whole failure this type prevents.
         // `wait_timeout` rather than an untimed `wait` for the same reason the
-        // loop's own poll has a timeout — so a report is due even when nothing
-        // wakes this thread at all, which is what a render thread stuck inside
-        // one uninterruptible call looks like from here.
+        // loop's own poll has a timeout: a report is due even when nothing
+        // wakes this thread at all, and a render thread that is not coming back
+        // to the poll loop wakes nothing.
+        //
+        // **This comment said "stuck inside one uninterruptible call" until
+        // 2026-08-23, and that is not what it was doing.** Measured on an
+        // emulator that day, over a 645 s attach: runnable in all 61 samples,
+        // 546.6 s of CPU on one thread, and preempted rather than blocked —
+        // across all four cores, which is why the record states it in
+        // CPU-seconds. The
+        // timeout is unaffected — a thread computing without yielding wakes
+        // this one no more often than one that cannot wake it — but the
+        // mechanism named here was wrong. See `docs/design/android-toolchain.md`,
+        // "The debug attach on the automotive image, bounded".
         let mut reported = Duration::ZERO;
         loop {
             // **Tested before waiting, not after.** A loop that ended by itself

@@ -1432,13 +1432,20 @@ harness-tests:
     # which is the one place this apparatus exists to keep clear. Neither needs a
     # device, an SDK or an NDK.
     #
-    # The attach verdict is the sharper case: four of its five outcomes cannot be
-    # produced on an emulator whose painter works, and a short timeout does not
+    # The attach verdict is the sharper case: five of `ds_attach_outcome`'s six
+    # outcomes and three of `ds_capture_state`'s four cannot be produced on an
+    # emulator whose painter works, and a short timeout does not
     # produce them either — `am start -W` blocks until the activity is displayed,
     # by which time the marker has been written. Synthetic markers are the only
     # way to reach them.
     ./measure/android/frame-table-test.py
     ./measure/android/attach-outcome-test.sh
+    # And the wiring between those two decisions, which neither of them
+    # reaches: `attach-timing-test.sh` drives the script itself against a stub
+    # `adb` and a stub `just`, so the `case` that maps a capture state onto a
+    # verdict, the follower's trap and the suppression of the interval columns
+    # execute here rather than only at a device.
+    ./measure/android/attach-timing-test.sh
 
 # Succeed when adb reports at least one attached device.
 #
@@ -1909,9 +1916,14 @@ android-gpu-time:
 # the bundle says so in its own README rather than leaving it to whoever reads
 # the directory later.
 #
-# **Start the emulator with `-gpu host`** (issue #1158). Under the default mode
-# the painter obtains no device, every frame is black, and the frame capture
-# reports no samples after minutes. The adapter probe runs first precisely so
+# **Start the emulator with `-gpu host`** (issue #1158). On the images this has
+# been measured against, under the default mode the painter obtains no device,
+# every frame is black, and the frame capture reports no samples after minutes.
+# **Not every image**: the automotive one pins its Vulkan ICD to SwiftShader and
+# gives the painter a device in the default mode, which is a CPU rasteriser and
+# so answers "does it draw" and not "how fast" — see
+# `docs/design/android-toolchain.md`, "The debug attach on the automotive image,
+# bounded". The adapter probe runs first precisely so
 # that failure surfaces in seconds.
 #
 # Not in `check` and not in CI: it needs an attached device, and a runner has

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Exercises ds_attach_outcome in lib.sh beside it. Needs no device and no SDK.
+# Exercises ds_attach_outcome and ds_capture_state in lib.sh beside it. Needs no
+# device and no SDK.
 #
-# **Four of its five outcomes are unreachable on an emulator whose painter
-# works**, which is the whole reason this file exists. `verdict.sh` beside the
+# **Five of ds_attach_outcome's six outcomes are unreachable on an emulator whose
+# painter works, and three of ds_capture_state's four are**, which is the whole
+# reason this file exists. `verdict.sh` beside the
 # Android harness was extracted on the same argument, and its header records the
 # cost of reading the logic instead: five distinct false-verdict paths across two
 # review rounds, and a black frame passing for months.
@@ -79,6 +81,12 @@ check "attached, no frame" "attached, no frame in 90 s" \
 
 # The loop never started, so there is no acquisition to time. Distinct from the
 # wedge: nothing was entered.
+#
+# **The damaging shape of a rotated ring lands here too, and no argument tells
+# the two apart.** When the ring drops `attaching` *and* everything after it,
+# this function sees the same four empty markers as a loop that never started,
+# so it cannot be where that is caught — which is why the capture is opened
+# before the launch and `ds_capture_state` is asked first.
 check "no attach was ever attempted" "never attached — no acquisition was attempted" \
     "" "" "" ""
 
@@ -100,6 +108,67 @@ check "an unreadable capture holding some markers" \
 # while keeping the ones after it. It must not read as "never attached".
 check "attached with the attaching line rotated out" "drew" \
     "" "101.0" "101.5" ""
+
+# `ds_capture_state` — the question asked before any of the above, and three of
+# its four answers are unreachable on a run that works.
+#
+# It takes `device_present` and `capture_alive` as arguments rather than calling
+# `ds_has_device` and `kill -0` itself, which is what makes them reachable here
+# with no device and no follower.
+capture_check() {
+    local name expected got
+    name="$1"
+    expected="$2"
+    shift 2
+    total=$((total + 1))
+    got=$(ds_capture_state "$1" "$2" "$3")
+    if [ "${got}" = "${expected}" ]; then
+        printf '  ok   %-58s %s\n' "${name}" "${got}"
+    else
+        printf '  FAIL %-58s wanted %s, got %s\n' "${name}" "${expected}" "${got}"
+        failed=$((failed + 1))
+    fi
+}
+
+capture_log=$(mktemp)
+trap 'rm -f "${capture_log}"' EXIT
+
+# A capture with nothing in it at all.
+capture_check "an empty capture" "empty" "${capture_log}" "yes" "yes"
+capture_check "no capture file at all" "empty" "${capture_log}.absent" "yes" "yes"
+
+# **The case a size test gets wrong, and the reason this is not `[ -s ]`.** The
+# follower is opened before the launch and `logcat` writes its preamble
+# immediately, so from then on the file is non-empty whatever happens next. A
+# follower that died one second in leaves exactly this, and calling it readable
+# is how the run reports a verdict about an acquisition nothing watched.
+printf -- '--------- beginning of main\n' > "${capture_log}"
+capture_check "logcat's preamble and nothing else" "empty" "${capture_log}" "yes" "yes"
+
+printf -- '--------- beginning of main\n1787466557.237 I dashscene: attaching a 1408x483 surface\n' \
+    > "${capture_log}"
+
+# The ordinary answer, and the only one a working run produces.
+capture_check "markers, device present, follower alive" "readable" \
+    "${capture_log}" "yes" "yes"
+
+# **The two silences, reported apart because they send a reader to different
+# places.** Same marker set, same absence, different remedy: one is the
+# emulator, the other is the capture process.
+capture_check "markers, but the device went away" "device-gone" \
+    "${capture_log}" "no" "yes"
+capture_check "markers, device present, follower gone" "capture-died" \
+    "${capture_log}" "yes" "no"
+
+# The device is the cause when both are true, so it is named rather than the
+# follower it took with it.
+capture_check "device gone takes the follower with it" "device-gone" \
+    "${capture_log}" "no" "no"
+
+# An empty capture says nothing about the attach whatever else is true, so it
+# wins over both — there is no evidence to classify.
+capture_check "empty wins over a departed device" "empty" \
+    "${capture_log}.absent" "no" "no"
 
 echo
 if [ "${failed}" -gt 0 ]; then
