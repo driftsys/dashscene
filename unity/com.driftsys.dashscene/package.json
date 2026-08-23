@@ -2,18 +2,21 @@
   "name": "com.driftsys.dashscene",
   "version": "0.0.0",
   "displayName": "dashscene",
-  "description": "The C# side of dashscene. The boundary-B value types, and the host that sits on the C ABI: version negotiation, runtime lifetime, document load, the tick and the committed frame. No painter and no native library yet. See docs/roadmap.md for the slices that add them.",
+  "description": "The C# side of dashscene. The boundary-B value types, the host that sits on the C ABI — version negotiation, runtime lifetime, document load, the tick and the committed frame — and the BatchRendererGroup painter that draws those tables. No native library yet, and the painter draws fills, strokes, corners and clips but no shadows, blurs, images or text. See docs/roadmap.md for the slices that add them.",
   "author": {
     "name": "driftsys",
     "url": "https://github.com/driftsys/dashscene"
   },
   "license": "Apache-2.0",
   "unity": "6000.3",
+  "dependencies": {
+    "com.unity.render-pipelines.universal": "17.3.0"
+  },
   "hideInEditor": false,
   "samples": [
     {
       "displayName": "Frame Loop",
-      "description": "A MonoBehaviour that loads a .dsb, ticks it, and takes each committed frame. The painter that draws those tables is story #1122.",
+      "description": "A MonoBehaviour that loads a .dsb, ticks it, and takes each committed frame. It does not yet hand those tables to BrgPainter, which this package now ships — wiring the two together is a follow-up.",
       "path": "Samples~/FrameLoop"
     }
   ]

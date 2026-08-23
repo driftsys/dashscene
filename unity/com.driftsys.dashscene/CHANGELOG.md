@@ -17,5 +17,19 @@ the Cargo workspace rather than moving on its own.
 - `CommitPacer`, for committing below the display rate without drifting off it.
 - A `Frame Loop` sample — a `MonoBehaviour` that loads a `.dsb`, ticks it, and
   takes each committed frame. It draws nothing; the painter is story #1122.
+- The `BatchRendererGroup` painter, in three material classes — unlit-overlay,
+  lit-opaque and lit-cutout (story #1122). It draws fills, both solid and
+  gradient, corner radii, strokes, clips, per-node opacity and rotation.
+  Shadows, blurs, image fills, baked vector nodes, render-target groups and text
+  are **not** drawn and each is reported by name through `PackDiagnostic` — P4
+  forbids a silent drop.
+- `Runtime/Shaders/Sdf.hlsl`, generated from
+  `crates/dashscene-gpu/src/shaders/sdf.wgsl` by `naga` rather than ported by
+  hand. The signed-distance, coverage and gradient math a Unity shader evaluates
+  is the same compiled module the lean painter evaluates
+  (`docs/specification/03-target-hardware-rules.md` R-T5). Do not edit it.
+- A dependency on `com.unity.render-pipelines.universal`. The painter's shaders
+  include URP's `Core.hlsl`, which is what reaches the DOTS instancing
+  declarations a `BatchRendererGroup` needs.
 - `.meta` files for every path Unity imports, without which a Git-URL package
   delivers nothing (R-E2), and a `unity` field declaring `6000.3` (R-E1).

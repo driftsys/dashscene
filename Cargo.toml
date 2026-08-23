@@ -48,6 +48,13 @@ members = [
   # would oblige it to appear in the publish registries
   # (`demo/tests/registry_consistency.rs`).
   "measure/web-minimal",
+  # The Unity package's gates that need neither a Unity editor nor the .NET SDK
+  # (v0.21, story #1122). `publish = false`, like every member above that is a
+  # tool rather than a crate. Rust and in the test tier deliberately: the .NET
+  # checks beside it are outside `just check` because bootstrap installs no SDK,
+  # and an editor is outside CI entirely, so this is the only place a check over
+  # the package runs on every pull request.
+  "unity/package-gate",
 ]
 
 [workspace.package]

@@ -1134,15 +1134,219 @@ unity-abi:
       echo 'unity-abi: did cargo rustc --crate-type cdylib stop being accepted?' >&2
       exit 1
     fi
+    # The same formatting pass CI's `unity-abi` job runs before this recipe.
+    dotnet format unity/abi-check --verify-no-changes
     DASHPAINT_ABI_LIB="${lib}" dotnet run --project unity/abi-check
     # **A second question, and `abi-check` cannot answer it.** That project
     # targets net10.0, a strict superset of the .NET Standard 2.1 Unity
     # defaults to, so it accepts declarations Unity would refuse. This compiles
-    # the package's whole `Runtime/` against netstandard2.1 and is what
-    # `docs/specification/07-embedding-and-distribution.md` R-E10 names.
+    # the package's `Runtime/` against netstandard2.1 and is one of the two
+    # checks `docs/specification/07-embedding-and-distribution.md` R-E10 names.
     # Measured: a `System.Half` in `BoundaryB.cs` builds clean under net10.0
     # and fails here with CS0234.
-    dotnet build unity/package-compat -v q --nologo
+    #
+    # **It compiles `Runtime/` MINUS `Runtime/Engine/`**, which holds the
+    # engine-referencing half — this project has no Unity reference assemblies,
+    # so a `UnityEngine` type fails here whatever its API compatibility level
+    # actually is (issue #1286). The other half is R-E10's second check,
+    # `just unity-editor`, and the ruling is
+    # `docs/decisions/r-e10-is-checked-in-two-halves.md`. The project prints
+    # what it skipped on every run.
+    #
+    # The failure is caught rather than left bare because its cheap-looking
+    # repair is the wrong one: CS0246 on a new file says a type is missing, and
+    # widening this project's exclusion makes it green while narrowing R-E10 to
+    # whatever is left.
+    if ! dotnet build unity/package-compat -v q --nologo; then
+      echo "" >&2
+      echo "unity-abi: package-compat compiles Runtime/ MINUS Runtime/Engine/." >&2
+      echo "unity-abi: a CS0246 on a UnityEngine type means the file belongs in" >&2
+      echo "unity-abi:   unity/com.driftsys.dashscene/Runtime/Engine/" >&2
+      echo "unity-abi: MOVE IT THERE. Do not widen this project's Exclude — that" >&2
+      echo "unity-abi: narrows R-E10 to whatever is left, which is issue #1286." >&2
+      echo "unity-abi: docs/decisions/r-e10-is-checked-in-two-halves.md" >&2
+      exit 1
+    fi
+
+# Regenerate the Unity package's HLSL from the WGSL shader library.
+#
+# **R-T5's mechanism.** `docs/specification/03-target-hardware-rules.md` R-T5
+# asks for the SDF shader math to be single-sourced into both product painters'
+# shading languages. This compiles `crates/dashscene-gpu/src/shaders/sdf.wgsl`
+# to `unity/com.driftsys.dashscene/Runtime/Shaders/Sdf.hlsl` with `naga` — the
+# translator wgpu already runs that same file through for the lean painter — so
+# the HLSL is not a port of the WGSL, it is the WGSL compiled.
+#
+# **Run it after editing the WGSL.** Forgetting is not a silent divergence:
+# `the_committed_hlsl_is_what_the_wgsl_compiles_to` in `unity/package-gate`
+# re-derives the file on every test run and fails if the committed one differs,
+# naming the first line that moved. That test is in the sanity tier, so
+# `just test` catches it in seconds.
+#
+# Never edit `Sdf.hlsl` by hand. An edited file still compiles and still draws,
+# and is no longer the arithmetic the other painter evaluates — which is the one
+# failure a review does not catch and the reason this is generated at all.
+#
+# Generate the Unity package's Sdf.hlsl from the WGSL shader library.
+sdf-hlsl:
+    cargo run -q -p package-gate
+
+# R-E10's second check: the package compiled by a Unity editor.
+#
+# **`just unity-abi` cannot ask this question and this recipe cannot replace
+# it.** That one compiles `Runtime/` against `netstandard.dll` 2.1.0 with no
+# Unity reference assemblies, so it cannot compile a type that references
+# `UnityEngine` — issue #1286. This one compiles the whole package, engine half
+# included, in an editor that has the reference assemblies, under the API
+# compatibility level R-E10 is actually about. The ruling that splits them is
+# `docs/decisions/r-e10-is-checked-in-two-halves.md`.
+#
+# **Not in CI, and not in `check`.**
+# `docs/decisions/the-native-library-ships-inside-the-unity-package.md` D4
+# records that no CI runner here can host a Unity install. So this is a
+# developer's gate: run it before opening a pull request that touches
+# `Runtime/Engine/` or `Runtime/Shaders/`. CI runs the other half on every pull
+# request, and `unity/package-gate` runs the parts that need no editor.
+#
+# **It also writes the `.meta` files R-E2 requires.** A `file:` dependency is a
+# MUTABLE package, so the editor writes a `.meta` beside every asset it imports
+# — in the working tree, not in the throwaway project. That is how story #1121's
+# were made, and `07-embedding-and-distribution.md` R-E2 records that a
+# hand-written set would have to guess an importer class per extension. Check
+# `git status` after a run that added a file.
+#
+# **No `-nographics`.** The editor compiles shaders through a real graphics
+# device, and a run without one reports no shader errors rather than reporting
+# that it could not look. That is the same hazard `unity-painter-uses-brg.md` D4
+# names for the `BufferTarget` read.
+#
+# Compile the UPM package, its engine half included, in a Unity editor.
+unity-editor unity_version="6000.3.22f1":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # **`DASHSCENE_UNITY` overrides the path, and it has to exist.** The default
+    # below is the macOS Hub layout, and this recipe is R-E10's ONLY check over
+    # `Runtime/Engine/` — so a hardcoded path would put that half of the
+    # requirement out of reach for a developer on Linux or Windows entirely.
+    editor="${DASHSCENE_UNITY:-/Applications/Unity/Hub/Editor/{{unity_version}}/Unity.app/Contents/MacOS/Unity}"
+    if [ ! -x "${editor}" ]; then
+      echo "unity-editor: no Unity executable at ${editor}" >&2
+      echo "unity-editor:   install {{unity_version}} with the Hub, pass a version:" >&2
+      echo "unity-editor:     just unity-editor 6000.3.22f1" >&2
+      echo "unity-editor:   or point at one directly:" >&2
+      echo "unity-editor:     DASHSCENE_UNITY=/path/to/Unity just unity-editor" >&2
+      echo "unity-editor: docs/technotes/unity-toolchain.md records what is installed" >&2
+      exit 1
+    fi
+    # **The built-in packages sit at a DIFFERENT offset from the executable on
+    # each platform**, so they are searched for rather than derived. macOS puts
+    # them under `Unity.app/Contents/Resources/`; Linux and Windows put them
+    # under `Editor/Data/`. A first version derived one path arithmetically and
+    # was wrong by one directory — caught by this recipe's own URP check, which
+    # failed closed rather than resolving nothing quietly.
+    editor_dir="$(dirname "${editor}")"
+    builtin=""
+    for candidate in \
+      "${editor_dir}/../Resources/PackageManager/BuiltInPackages" \
+      "${editor_dir}/Data/PackageManager/BuiltInPackages" \
+      "${editor_dir}/../Data/PackageManager/BuiltInPackages"; do
+      if [ -d "${candidate}" ]; then
+        builtin="$(cd "${candidate}" && pwd)"
+        break
+      fi
+    done
+    if [ -z "${builtin}" ]; then
+      echo "unity-editor: no BuiltInPackages directory near ${editor}" >&2
+      echo "unity-editor: looked under ../Resources/, Data/ and ../Data/" >&2
+      exit 1
+    fi
+
+    root="$(git rev-parse --show-toplevel)"
+    project="${root}/target/unity-editor-compat"
+    package="${root}/unity/com.driftsys.dashscene"
+
+    # The URP version comes from the editor rather than from a literal here:
+    # 6.3 ships it as a built-in package, so the manifest must name the version
+    # that editor carries or the resolve reaches the network for nothing.
+    urp_json="${builtin}/com.unity.render-pipelines.universal/package.json"
+    if [ ! -f "${urp_json}" ]; then
+      echo "unity-editor: this editor ships no built-in URP at ${urp_json}" >&2
+      exit 1
+    fi
+    urp="$(jq -r .version "${urp_json}")"
+
+    # **The package pins a URP version and this reads one; they must agree.**
+    # `package.json`'s `dependencies` entry is what a consumer resolves, and it
+    # is a literal — so an editor carrying a different built-in URP would be
+    # checked against a version no consumer of this package ever gets.
+    pinned="$(jq -r '.dependencies["com.unity.render-pipelines.universal"] // empty' \
+      "${package}/package.json")"
+    # **A UPM dependency is a MINIMUM, not an exact version.** An editor
+    # shipping 17.3.1 against a pin of 17.3.0 is an ordinary and valid consumer
+    # configuration, and a first version of this check refused it — which would
+    # have removed R-E10's only engine-half check on the next Unity patch bump.
+    # Only a pin the editor cannot satisfy is a problem.
+    if [ -n "${pinned}" ]; then
+      lowest="$(printf '%s\n%s\n' "${pinned}" "${urp}" | sort -V | head -1)"
+      if [ "${lowest}" != "${pinned}" ]; then
+        echo "unity-editor: package.json pins URP ${pinned} and this editor ships ${urp}," >&2
+        echo "unity-editor: which is older — a consumer of this package could not resolve it." >&2
+        exit 1
+      fi
+    fi
+
+    # Rebuilt from scratch each run. A reused Library/ can hold a stale
+    # compiled assembly, and this gate's whole answer is whether the CURRENT
+    # sources compile — the shape of issue #1057, where a check reported on an
+    # artifact its own run had not produced.
+    rm -rf "${project}"
+    mkdir -p "${project}/Packages" "${project}/Assets/Editor" "${project}/ProjectSettings"
+
+    cat > "${project}/Packages/manifest.json" <<JSON
+    {
+      "dependencies": {
+        "com.driftsys.dashscene": "file:${package}",
+        "com.unity.render-pipelines.universal": "${urp}"
+      }
+    }
+    JSON
+
+    cp "${root}/unity/editor-compat/DashsceneEditorCompat.cs" "${project}/Assets/Editor/"
+
+    # NET_Standard is Unity's default, and this gate asserts it rather than
+    # assuming it — the editor script reads the level back and fails if it is
+    # anything else. Written here as well so the assertion has something to
+    # find on an editor whose default ever changes.
+    cat > "${project}/ProjectSettings/ProjectSettings.asset" <<'YAML'
+    %YAML 1.1
+    %TAG !u! tag:unity3d.com,2011:
+    --- !u!129 &1
+    PlayerSettings:
+      m_ObjectHideFlags: 0
+      productName: dashscene-editor-compat
+      companyName: driftsys
+      apiCompatibilityLevel: 6
+      apiCompatibilityLevelPerPlatform: {}
+    YAML
+
+    log="${project}/editor.log"
+    echo "unity-editor: compiling ${package} in {{unity_version}} (log: ${log})"
+    set +e
+    "${editor}" -batchmode -quit -projectPath "${project}" \
+      -executeMethod DashsceneEditorCompat.Run -logFile "${log}"
+    status=$?
+    set -e
+
+    # The editor's own report, whatever the exit code: a compile error is
+    # printed by Unity and not by the script, which never runs when one stops
+    # the editor reaching it.
+    grep -E "^\[unity-editor\]|error CS|Shader error|Compilation failed" "${log}" || true
+
+    if [ "${status}" -ne 0 ]; then
+      echo "unity-editor: FAILED (exit ${status}). Full log: ${log}" >&2
+      exit "${status}"
+    fi
+    echo "unity-editor: OK"
 
 # The package's C# P/Invoke declarations, executed against the library they
 # declare.
@@ -1186,6 +1390,14 @@ unity-ffi:
       echo "unity-ffi:   brew upgrade dotnet" >&2
       exit 1
     fi
+    # **Formatting first, because CI runs it and this recipe did not.** The
+    # `unity-ffi` job runs `dotnet format unity/ffi-check --verify-no-changes`
+    # BEFORE the recipe, so a local `just unity-ffi` could pass while CI failed
+    # on whitespace — which is exactly what happened on story #1122, after a
+    # clean local build reported nothing. `--verify-no-changes` rather than a
+    # rewrite: a gate that silently reformats the tree is not a gate.
+    dotnet format unity/ffi-check --verify-no-changes
+
     # **The path comes from cargo, not from a `uname` mapping plus a file
     # test**, on the rule `host-lib` and `unity-abi` both state: `cargo build`
     # does not delete the artifacts of a crate type that has been removed, so a

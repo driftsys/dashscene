@@ -613,9 +613,35 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       against `include/dashscene.h` at all. **No native library ships in the
       package** — `just host-lib` builds one and nothing places it — so a
       customer installing by Git URL gets declarations that resolve nothing
-      until they supply it. The renderer and its shader library are still
-      planned (v0.21, story #1122), in that same UPM package (ruled 2026-08-17,
-      reversing a separate repository).
+      until they supply it.
+
+      **The renderer itself is built since story #1122, and it has drawn
+      nothing.** `BrgPainter` turns the committed tables into instances and
+      draws them through `BatchRendererGroup` in the three material classes
+      `unity-painter-uses-brg.md` D1 names. It covers fills — solid and
+      gradient — corner radii, strokes, clips, per-node opacity and rotation,
+      and it covers **none** of shadows, blurs, image fills, baked vector
+      nodes, render-target groups or text; each of those is a named
+      `PackDiagnostic` it reports rather than a silent drop. The SDF math is
+      not ported into HLSL but **generated** from
+      `crates/dashscene-gpu/src/shaders/sdf.wgsl` by `naga`, with a test that
+      re-derives the committed file — which is the mechanism R-T5 asks for.
+
+      **What has been checked is compilation, not a picture.** The package and
+      its three shaders compile in a Unity 6000.3.22f1 editor, and every pass
+      is compiled with `DOTS_INSTANCING_ON` for Vulkan and GLES3x on Android
+      and Metal on macOS — `just unity-editor`, which needs an editor and so
+      runs on no CI runner here. **What that establishes differs by stage**:
+      the vertex stage produced shader bytes on all three, the fragment stage
+      on Metal only. Unity's `CompileVariant` returns no bytes for a fragment
+      on Vulkan or GLES3x even for URP's own unlit shader — the gate compiles
+      that shader as a control and scopes its emptiness check to the pairs
+      where the call discriminates — so on the two target-fleet APIs the
+      fragment evidence is the API's `Success` flag alone. **Nothing has run the painter**: no frame has been
+      drawn, nothing constructs it in this tree (issue #1298), and the epic's
+      own definition of done is issue #828's portable conformance suite. Read
+      "the renderer is built" as "the code exists and compiles", not as
+      "it draws".
 - [ ] **Browsers without WebGPU** — WebGPU is the newer browser graphics
       standard the lean renderer needs. A browser lacking it is told so and
       draws nothing. Supporting the older standard is a redesign, and a v1
@@ -779,13 +805,15 @@ sentence.
       one.
 
       iOS has no target, no toolchain and no automation, and is v1. **The Unity
-      host has a toolchain and automation since story #1121** — three .NET gates
-      run on any pull request that touches code, and none needs an editor —
-      but **no target**: nothing
-      here has run a Unity player on any device, and the `.meta` values that
-      decide whether a native library reaches an Android build are neither
-      written nor exercised, because the package ships no library (R-E21,
-      unmet).
+      host has a toolchain and automation since story #1121** — three .NET
+      gates and, since story #1122, a fourth in Rust run on any pull request
+      that touches code, and none of the four needs an editor — but **no
+      target**: nothing here has run a Unity player on any device. A fifth
+      check does need an editor and therefore runs on no CI runner
+      (`just unity-editor`, story #1122); it is the only thing here that
+      compiles a Unity `.shader`. The `.meta` values that decide whether a native
+      library reaches an Android build are neither written nor exercised,
+      because the package ships no library (R-E21, unmet).
 
 ## 11. Quality tooling and workflow
 

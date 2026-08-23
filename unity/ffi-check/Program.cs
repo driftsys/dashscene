@@ -19,6 +19,7 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
 using Driftsys.Dashscene;
+using Driftsys.Dashscene.BoundaryB;
 
 var libPath = Environment.GetEnvironmentVariable("DASHSCENE_FFI_LIB");
 if (string.IsNullOrWhiteSpace(libPath) || !File.Exists(libPath))
@@ -673,6 +674,314 @@ static IEnumerable<DsSlice> AllSlices(DsFrame frame)
 // --------------------------------------------------------------------- report
 
 Console.WriteLine();
+// ------------------------------------------------- the painter's packing half
+
+// **The half of the painter that decides the picture, executed.**
+// `docs/decisions/r-e10-is-checked-in-two-halves.md` D5 puts `FramePacker` in
+// `Runtime/` rather than `Runtime/Engine/` precisely so a check with no editor
+// can run it — and until these checks, nothing did. The review of story #1122
+// found that the entire kind/row resolution, the heap layout, the diagnostics
+// and the growth path had zero behavioural coverage while a decision record
+// cited their coverage as the reason for the split.
+//
+// These run against the same real frame every check above uses, so they assert
+// over a committed document rather than over a synthetic one.
+
+Check("the packer turns a real frame into instances (D5)", () =>
+{
+    using var runtime = new DashsceneRuntime();
+    runtime.LoadDocument(File.ReadAllBytes(fixture));
+    using var lease = runtime.AcquireFrame();
+
+    var packer = new FramePacker();
+    packer.Pack(lease.Frame, MaterialClass.UnlitOverlay);
+
+    Expect(packer.InstanceCount > 0, "the packer emitted no instance for a fixture that has rects");
+
+    // Every instance names a kind this painter declares. A `kind` outside the
+    // three would branch to the shader's fall-through and shade a wrong
+    // picture rather than fail.
+    for (var i = 0; i < packer.InstanceCount; i++)
+    {
+        var kind = packer.Paint[i * 4];
+        Expect(
+            kind <= (uint)PaintKindTag.Stroke,
+            $"instance {i} carries kind {kind}, which is not one of the three declared");
+    }
+
+    // The heap is sized as the layout says: solids are one `float4` each and
+    // the gradient base is where they end.
+    Expect(packer.SolidBase == 0, "the solid base moved off zero");
+    Expect(
+        packer.GradientBase >= 0 && packer.GradientBase * 4 <= packer.PaintFloats,
+        "the gradient base is outside the heap the packer filled");
+    Expect(
+        packer.PaintFloats % 4 == 0 && packer.ClipFloats % 8 == 0
+            && packer.StrokeFloats % 8 == 0,
+        "a heap table is not a whole number of rows");
+});
+
+Check("the packer's growth preserves the instances already written", () =>
+{
+    // **A synthetic frame, because the fixture is too small to grow anything.**
+    // `v03-paint.dsb` packs 16 instances and the packer's arrays start at 64,
+    // so two packs of it never reach the growth path — a first version of this
+    // check said it exercised the reuse and did not. This builds a frame with
+    // enough rects to force two doublings, which is the only shape in which a
+    // growth that discarded already-written instances is visible.
+    //
+    // The rows are pinned managed arrays: `DsSlice` is a pointer, a count and a
+    // stride, so a frame the library never produced is still a frame the packer
+    // reads exactly as it reads a real one.
+    const int rects = 300;
+
+    var rectRows = new RectEntry[rects];
+    for (var i = 0; i < rects; i++)
+    {
+        rectRows[i] = new RectEntry
+        {
+            X = i,
+            Y = 0,
+            W = 10,
+            H = 10,
+            Paint = 0,
+            Clip = 0,
+            Opacity = 1.0f,
+            Rotation = 0,
+        };
+    }
+    var entries = new[] { new PaintEntry { Fill = new PaintKind { Tag = PaintTag.Solid, Index = 0 } } };
+    var regions = new[] { new ClipRegion { Offset = 0, Count = 0 } };
+    var solids = new[] { new Driftsys.Dashscene.BoundaryB.Color { R = 1, G = 1, B = 1, A = 1 } };
+
+    var pinned = new List<GCHandle>();
+    DsSlice Slice<T>(T[] rows) where T : struct
+    {
+        var handle = GCHandle.Alloc(rows, GCHandleType.Pinned);
+        pinned.Add(handle);
+        return new DsSlice
+        {
+            Ptr = rows.Length == 0 ? IntPtr.Zero : handle.AddrOfPinnedObject(),
+            Count = (UIntPtr)(ulong)rows.Length,
+            Stride = (UIntPtr)(ulong)Marshal.SizeOf<T>(),
+        };
+    }
+
+    try
+    {
+        var frame = new DsFrame
+        {
+            Rects = Slice(rectRows),
+            PaintEntries = Slice(entries),
+            ClipRegions = Slice(regions),
+            Solids = Slice(solids),
+        };
+
+        var packer = new FramePacker();
+        packer.Pack(frame, MaterialClass.UnlitOverlay);
+
+        Expect(
+            packer.InstanceCount == rects,
+            $"the packer emitted {packer.InstanceCount} instances for {rects} single-fill rects");
+
+        // **Every instance, not just the last.** A growth that discarded would
+        // leave the ones written before the doubling zeroed, and the tail — the
+        // ones written after — correct. Checking the count alone, or the last
+        // row alone, is exactly what would miss it.
+        for (var i = 0; i < rects; i++)
+        {
+            Expect(
+                Math.Abs(packer.Quad[i * 4] - i) < 1e-3f,
+                $"instance {i} carries x={packer.Quad[i * 4]}, not {i} — the growth path "
+                + "discarded what was written before it");
+            Expect(
+                Math.Abs(packer.Quad[i * 4 + 2] - 10.0f) < 1e-3f,
+                $"instance {i} carries w={packer.Quad[i * 4 + 2]}, not 10");
+        }
+    }
+    finally
+    {
+        foreach (var handle in pinned)
+        {
+            handle.Free();
+        }
+    }
+});
+
+Check("the opaque material class refuses each thing it cannot express (P4)", () =>
+{
+    // **Synthetic, one term at a time.** A first version of this check compared
+    // instance counts on the real fixture and passed with `NeedsCoverage`
+    // gutted — the count still fell, because a translucent fill is refused by a
+    // different branch. Comparing totals cannot say WHICH term did the work.
+    // Each case below differs from the baseline in exactly one property.
+    var pinned = new List<GCHandle>();
+    DsSlice Slice<T>(T[] rows) where T : struct
+    {
+        var handle = GCHandle.Alloc(rows, GCHandleType.Pinned);
+        pinned.Add(handle);
+        return new DsSlice
+        {
+            Ptr = rows.Length == 0 ? IntPtr.Zero : handle.AddrOfPinnedObject(),
+            Count = (UIntPtr)(ulong)rows.Length,
+            Stride = (UIntPtr)(ulong)Marshal.SizeOf<T>(),
+        };
+    }
+
+    try
+    {
+        var opaqueWhite = new[]
+        {
+            new Driftsys.Dashscene.BoundaryB.Color { R = 1, G = 1, B = 1, A = 1 },
+            new Driftsys.Dashscene.BoundaryB.Color { R = 1, G = 1, B = 1, A = 0.5f },
+        };
+        // Region 0 is unclipped; region 1 names one box, so a rect can carry a
+        // real clip. `dashpaint` documents index 0 as a real entry rather than
+        // a sentinel, which is why the table has both.
+        var regions = new[]
+        {
+            new ClipRegion { Offset = 0, Count = 0 },
+            new ClipRegion { Offset = 0, Count = 1 },
+        };
+        var boxes = new[] { new ClipBox { X = 0, Y = 0, W = 5, H = 5 } };
+        var strokes = new[]
+        {
+            new Stroke
+            {
+                Width = 1,
+                Align = StrokeAlign.Center,
+                Color = new Driftsys.Dashscene.BoundaryB.Color { R = 0, G = 0, B = 0, A = 1 },
+            },
+        };
+        // Gradient 0 is opaque throughout; gradient 1 fades out, which only the
+        // stop walk can see — the sibling of the translucent-solid case, and
+        // the one an earlier version of this table had no case for.
+        var stops = new[]
+        {
+            new GradientStop { Offset = 0, Color = opaqueWhite[0] },
+            new GradientStop { Offset = 1, Color = opaqueWhite[0] },
+            new GradientStop { Offset = 0, Color = opaqueWhite[0] },
+            new GradientStop { Offset = 1, Color = opaqueWhite[1] },
+        };
+        var gradients = new[]
+        {
+            new Gradient { Kind = GradientKind.Linear, Stops = new StopRange { Offset = 0, Count = 2 } },
+            new Gradient { Kind = GradientKind.Linear, Stops = new StopRange { Offset = 2, Count = 2 } },
+        };
+        var solids = Slice(opaqueWhite);
+        var regionSlice = Slice(regions);
+        var boxSlice = Slice(boxes);
+        var strokeSlice = Slice(strokes);
+        var stopSlice = Slice(stops);
+        var gradientSlice = Slice(gradients);
+
+        // (name, the rect, the paint entry, must the opaque class refuse it?)
+        var cases = new (string Name, RectEntry Rect, PaintEntry Entry, bool Refused)[]
+        {
+            ("a plain opaque rectangle",
+             new RectEntry { W = 10, H = 10, Opacity = 1.0f },
+             new PaintEntry { Fill = new PaintKind { Tag = PaintTag.Solid, Index = 0 } },
+             false),
+            ("a corner radius",
+             new RectEntry { W = 10, H = 10, Opacity = 1.0f },
+             new PaintEntry
+             {
+                 Fill = new PaintKind { Tag = PaintTag.Solid, Index = 0 },
+                 Corners = new CornerRadii { TopLeft = 2 },
+             },
+             true),
+            ("a per-node opacity below one",
+             new RectEntry { W = 10, H = 10, Opacity = 0.4f },
+             new PaintEntry { Fill = new PaintKind { Tag = PaintTag.Solid, Index = 0 } },
+             true),
+            ("a translucent fill colour",
+             new RectEntry { W = 10, H = 10, Opacity = 1.0f },
+             new PaintEntry { Fill = new PaintKind { Tag = PaintTag.Solid, Index = 1 } },
+             true),
+            ("a stroke",
+             new RectEntry { W = 10, H = 10, Opacity = 1.0f },
+             new PaintEntry
+             {
+                 Fill = new PaintKind { Tag = PaintTag.Solid, Index = 0 },
+                 Stroke = new StrokeRange { Offset = 0, Count = 1 },
+             },
+             true),
+            ("a clip",
+             new RectEntry { W = 10, H = 10, Opacity = 1.0f, Clip = 1 },
+             new PaintEntry { Fill = new PaintKind { Tag = PaintTag.Solid, Index = 0 } },
+             true),
+            ("an opaque gradient",
+             new RectEntry { W = 10, H = 10, Opacity = 1.0f },
+             new PaintEntry { Fill = new PaintKind { Tag = PaintTag.Gradient, Index = 0 } },
+             false),
+            ("a gradient with a translucent stop",
+             new RectEntry { W = 10, H = 10, Opacity = 1.0f },
+             new PaintEntry { Fill = new PaintKind { Tag = PaintTag.Gradient, Index = 1 } },
+             true),
+        };
+
+        foreach (var (name, rect, entry, refused) in cases)
+        {
+            var frame = new DsFrame
+            {
+                Rects = Slice(new[] { rect }),
+                PaintEntries = Slice(new[] { entry }),
+                ClipRegions = regionSlice,
+                ClipBoxes = boxSlice,
+                Strokes = strokeSlice,
+                Solids = solids,
+                Gradients = gradientSlice,
+                GradientStops = stopSlice,
+            };
+
+            var overlay = new FramePacker();
+            overlay.Pack(frame, MaterialClass.UnlitOverlay);
+            Expect(
+                overlay.InstanceCount >= 1,
+                $"the overlay class refused {name}, which it can always express");
+            Expect(
+                (overlay.Diagnostics.Flags & PackDiagnostic.CoverageNotExpressible) == 0,
+                $"the overlay class reported CoverageNotExpressible for {name}");
+
+            var opaque = new FramePacker();
+            opaque.Pack(frame, MaterialClass.LitOpaque);
+            if (refused)
+            {
+                Expect(
+                    opaque.InstanceCount == 0,
+                    $"the opaque class drew {name}, which it cannot express — a silent drop");
+                Expect(
+                    (opaque.Diagnostics.Flags & PackDiagnostic.CoverageNotExpressible) != 0,
+                    $"the opaque class skipped {name} and reported no diagnostic (P4)");
+                Expect(
+                    opaque.Diagnostics.FirstRect == 0,
+                    $"the diagnostic for {name} named no rect");
+            }
+            else
+            {
+                Expect(
+                    opaque.InstanceCount == 1,
+                    $"the opaque class refused {name}, which it can express");
+                Expect(
+                    opaque.Diagnostics.IsClean,
+                    $"the opaque class reported a diagnostic for {name}, which it drew");
+            }
+        }
+    }
+    finally
+    {
+        foreach (var handle in pinned)
+        {
+            handle.Free();
+        }
+    }
+});
+
+// **The verdict, and it must come after EVERY check.** Story #1122 appended the
+// packer checks below this block and then, while rewriting one of them, spliced
+// the block itself away — so a failing check printed `FAIL` and the process
+// exited 0. Both mistakes have the same shape: a gate's own verdict is not a
+// section of the file, it is the last thing that runs.
 if (failures.Count > 0)
 {
     Console.Error.WriteLine($"ffi-check: {failures.Count} of {checks} checks failed");

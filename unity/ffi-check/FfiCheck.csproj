@@ -47,8 +47,13 @@
          own item name first, because `@(Compile)` is never empty — the SDK
          injects a generated AssemblyInfo — so testing that would not detect a
          glob that reached nothing. -->
-    <PackageRuntimeSource Include="../com.driftsys.dashscene/Runtime/**/*.cs" />
+    <PackageRuntimeSource Include="../com.driftsys.dashscene/Runtime/**/*.cs"
+                          Exclude="../com.driftsys.dashscene/Runtime/Engine/**/*.cs" />
     <Compile Include="@(PackageRuntimeSource)" />
+
+    <!-- What the exclusion above leaves out, so the target below can report on
+         it rather than leaving it invisible. -->
+    <PackageEngineSource Include="../com.driftsys.dashscene/Runtime/Engine/**/*.cs" />
     <Compile Include="Program.cs" />
   </ItemGroup>
 
@@ -56,6 +61,27 @@
   <Target Name="RefuseAnEmptyCompileSet" BeforeTargets="BeforeBuild">
     <Error Condition="'@(PackageRuntimeSource)' == ''"
            Text="ffi-check matched no package source. The glob reached nothing — has unity/com.driftsys.dashscene/Runtime/ moved? A gate over an empty set reports on nothing." />
+  </Target>
+
+  <!-- What this project does NOT compile, said out loud on every run.
+
+       `Runtime/Engine/` holds the BatchRendererGroup painter, and every file
+       in it references `UnityEngine`. This project has no Unity reference
+       assemblies, so those types fail to resolve here whatever their API
+       compatibility level actually is — issue #1286, and
+       `docs/decisions/r-e10-is-checked-in-two-halves.md` is the ruling.
+
+       **This project is not R-E10's check and still needs the exclusion.** Its
+       question is whether the package's P/Invoke declarations match the
+       library, and it compiles the whole of `Runtime/` only because that is
+       where those declarations live. Story #1122 hit the CS0246 here after
+       fixing `package-compat` alone — the glob is the same in both projects,
+       so a change to one that is not made to the other reads as an unrelated
+       failure. -->
+  <Target Name="ReportWhatIsNotCompiled" BeforeTargets="BeforeBuild">
+    <Message Importance="high"
+             Condition="'@(PackageEngineSource)' != ''"
+             Text="ffi-check: not compiled here (engine-referencing, checked by `just unity-editor`): @(PackageEngineSource->'%(Filename)%(Extension)', ', ')" />
   </Target>
 
 </Project>
