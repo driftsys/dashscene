@@ -79,8 +79,9 @@ typedef enum DsStatus {
    * mixed — some faces carrying a sheet and some not. */
   DS_ATLAS = 10,
   /* The path could not be used: nothing is there, it cannot be read, it is
-   * empty, or it is not UTF-8. Only ds_runtime_load_document_mapped reports
-   * it, because it is the only call that takes a path. */
+   * empty, or it is not UTF-8 — or, for ds_runtime_load_document_mapped_range,
+   * the byte range it names is not inside the file. Only the two calls that
+   * take a path report it. */
   DS_MAP = 11,
   /* The ordinal names no root in this document. The message from
    * ds_last_error_message carries the ordinal asked for and the count the
@@ -131,8 +132,8 @@ typedef enum DsStatus {
   DS_HANDLES_EXHAUSTED = 18,
 
   /* A frame lease is outstanding and the call would have invalidated the views
-   * ds_runtime_acquire_frame handed out. Reported by ds_runtime_tick, the three
-   * loaders, ds_runtime_free, and a second acquire. The remedy is always
+   * ds_runtime_acquire_frame handed out. Reported by ds_runtime_tick, every
+   * loader, ds_runtime_free, and a second acquire. The remedy is always
    * ds_runtime_release_frame.
    *
    * Additive in effect as well as in value: nothing could reach this before the
@@ -295,10 +296,10 @@ DsStatus ds_runtime_load_document_with_text(DsRuntime runtime,
  * and a load that SUCCEEDS installs a fresh arena, so the previous mapping is
  * released then or at ds_runtime_free.
  *
- * A LOAD THAT FAILS RELEASES NOTHING. Every status any of the three loaders
- * returns is raised before the arena is replaced, so a refused load leaves the
- * previously loaded document drawable and its mapping held. Do not unlink the
- * previous file until a later load has answered DS_OK. DS_PANIC is the one
+ * A LOAD THAT FAILS RELEASES NOTHING. Every status any loader returns is raised
+ * before the arena is replaced, so a refused load leaves the previously loaded
+ * document drawable and its mapping held. Do not unlink the previous file until
+ * a later load has answered DS_OK. DS_PANIC is the one
  * answer that says nothing either way: the runtime is alive, but where the
  * unwind happened decides what it still holds, and the next ds_runtime_tick
  * answers DS_NO_DOCUMENT when the load had got as far as replacing the arena.
@@ -313,6 +314,51 @@ DsStatus ds_runtime_load_document_mapped(DsRuntime runtime, const char *path,
                                          uint32_t shown_root,
                                          const DsFontFace *faces,
                                          size_t face_count);
+
+/*
+ * Loads a .dsb by MAPPING the length bytes at offset inside path, bounded by
+ * the root that is shown.
+ *
+ * ds_runtime_load_document_mapped is this call over a whole file, and
+ * everything it documents holds here: the bound on what is read, the arena
+ * owning the mapping, the root being named once, and a load that fails
+ * releasing nothing.
+ *
+ * WHY A BYTE RANGE AND NOT A SECOND PATH. A .dsb does not always begin a file.
+ * An Android APK stores an uncompressed asset as a range inside base.apk and
+ * the platform reports that range — AssetManager.openFd gives a start offset
+ * and a length — rather than a path of its own. Extracting the document so the
+ * call above could take it is a full copy of the file, which is the cost
+ * mapping exists to avoid.
+ *
+ * offset needs no alignment, and one that is not a page boundary is what an
+ * APK gives you: zipalign aligns an ordinary stored entry to 4 bytes and
+ * page-aligns shared objects only. That shifts the document's own page
+ * boundaries against the process's, so a load faults some pages it otherwise
+ * would not. It is a cost and not a refusal: nothing reads alignment, and the
+ * shift is already there at offset 0 on any host whose page size is LARGER
+ * than the format's 4096 — 16 KiB hosts included, which Android 15 requires
+ * new devices to support. A host whose page size divides 4096 does not have
+ * it, which is why the claim names the direction. See
+ * docs/decisions/the-document-is-mapped-where-it-is-packed.md D4.
+ *
+ * A RANGE NAMING BYTES THE FILE DOES NOT HAVE IS DS_MAP, refused here rather
+ * than mapped: mmap past the end of a file succeeds and answers SIGBUS when
+ * the page is touched, which arrives with nothing naming the range that caused
+ * it. So is a length of 0. There is no sentinel meaning "to the end of the
+ * file", for the same reason shown_root has none meaning "every root" — a
+ * caller that wants the whole file has ds_runtime_load_document_mapped.
+ *
+ * Adding this symbol did not move DS_ABI_VERSION, and it adds no DsStatus
+ * variant: every failure it reports is one the whole-file loader already
+ * reports.
+ */
+DsStatus ds_runtime_load_document_mapped_range(DsRuntime runtime,
+                                               const char *path, uint64_t offset,
+                                               uint64_t length,
+                                               uint32_t shown_root,
+                                               const DsFontFace *faces,
+                                               size_t face_count);
 
 /*
  * Hands a platform surface to the painter. width and height are device pixels.
@@ -508,7 +554,7 @@ typedef struct DsFrame {
  * Takes a lease on the committed frame and writes its arrays to out.
  *
  * THE LEASE. While one is outstanding, every call that would commit is refused
- * with DS_FRAME_LEASED: ds_runtime_tick, the three loaders, ds_runtime_free,
+ * with DS_FRAME_LEASED: ds_runtime_tick, every loader, ds_runtime_free,
  * and a second acquire. That is what makes the borrowed views safe rather than
  * merely documented — a commit is the only thing that replaces the tables they
  * point into.

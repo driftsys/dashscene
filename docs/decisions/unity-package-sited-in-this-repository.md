@@ -142,10 +142,10 @@ stood, and that was wrong.** What is accurate is the premise: no _shipped_
 artifact exports the layout and round-trip functions. The crate declares no
 `crate-type`, so `cargo build` produces a plain rlib, nothing in the workspace
 depends on it, and `crates/dashscene-ffi/include/dashscene.h` declares none of
-them — the host library exports fourteen `ds_*` symbols and nothing else. (The
-technote measured twelve at story #1230; story #859 added the data plane's two,
-and that measurement is left as it was taken.) **The step that does not follow
-is that a check therefore needs one.**
+them — the host library exports `ds_*` symbols and nothing else. (The technote
+measured twelve at story #1230; story #859 added the data plane's two and story
+#1124 the ranged loader, and that measurement is left as it was taken.) **The
+step that does not follow is that a check therefore needs one.**
 `cargo rustc -p dashpaint-abi --crate-type cdylib` emits a dynamic library
 carrying all **56** of them — two per gated type — with no manifest change,
 alongside the four table functions that make **60** `dashpaint_abi_*` exports in

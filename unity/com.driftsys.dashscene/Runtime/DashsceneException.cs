@@ -98,12 +98,77 @@ namespace Driftsys.Dashscene
         public uint Actual { get; }
 
         internal DashsceneAbiMismatchException(uint expected, uint actual)
-            : base($"dashscene ABI mismatch: this package was built against DS_ABI_VERSION "
-                   + $"{expected} and the native library reports {actual}. "
-                   + "The library and the C# package must come from one commit.")
+            : this(
+                expected,
+                actual,
+                $"dashscene ABI mismatch: this package was built against DS_ABI_VERSION "
+                + $"{expected} and the native library reports {actual}. "
+                + "The library and the C# package must come from one commit.")
+        {
+        }
+
+        /// For a mismatch the two numbers cannot express — see
+        /// `DashsceneSymbolMissingException`.
+        internal DashsceneAbiMismatchException(uint expected, uint actual, string message)
+            : base(message)
         {
             Expected = expected;
             Actual = actual;
+        }
+    }
+
+    /// The library is missing an entry point this package calls, and
+    /// `ds_abi_version` **agreed**.
+    ///
+    /// **This is the one mismatch the version number cannot report, and that is
+    /// by design rather than by oversight.** Adding a symbol does not move
+    /// `DS_ABI_VERSION` — the rule at the top of
+    /// `crates/dashscene-ffi/include/dashscene.h` — and it is right for a host
+    /// built against an OLDER header, which keeps working because it calls
+    /// nothing new. It says nothing about the other direction: a package built
+    /// after a symbol was added, loaded against a library from before, passes
+    /// the handshake and then fails at the first call to it.
+    ///
+    /// .NET binds a `DllImport` lazily, so that failure arrives as an
+    /// `EntryPointNotFoundException` from inside an ordinary call rather than
+    /// at load. Left alone it is not a `DashsceneException` either, so it
+    /// escapes the `catch` a host was told to write. This is that failure,
+    /// wearing R-E16's own type.
+    ///
+    /// **A host must catch it at every load site as well as around the
+    /// constructor**, and that is the cost of this shape rather than a detail:
+    /// `DashsceneAbiMismatchException` derives from `Exception`, so a
+    /// `catch (DashsceneException)` around a load does **not** see it. The
+    /// frame-loop sample carries both catches. Deriving from
+    /// `DashsceneException` instead would have needed a `DsStatus`, and there
+    /// is none to give honestly — no call reached the library.
+    ///
+    /// `Expected` and `Actual` are equal here, and that is the substance rather
+    /// than a defect: they agreeing is exactly why the handshake let this
+    /// through.
+    public sealed class DashsceneSymbolMissingException : DashsceneAbiMismatchException
+    {
+        /// The entry point the loaded library does not export.
+        public string Symbol { get; }
+
+        /// `expected` is this package's constant; `actual` must be **read from
+        /// the library**, because `Actual` is documented as the value the
+        /// library reports and a caller logging it would otherwise publish a
+        /// number nothing observed. They agree in practice — the constructor's
+        /// handshake would have refused a disagreement — and that is a fact
+        /// about the sequence rather than about this type, so it is not assumed
+        /// here.
+        internal DashsceneSymbolMissingException(string symbol, uint expected, uint actual)
+            : base(
+                expected,
+                actual,
+                $"the loaded '{Native.Lib}' exports no {symbol}, and it reports DS_ABI_VERSION "
+                + $"{actual} against this package's {expected}. Adding a symbol does not move "
+                + "that number, so a library older than the symbol passes the version check and "
+                + "fails at the first call. Rebuild the native library from the commit this "
+                + "package came from.")
+        {
+            Symbol = symbol;
         }
     }
 }

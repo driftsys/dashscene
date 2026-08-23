@@ -45,22 +45,23 @@ directly:
   shaped the paint heap, atlas residency, layers and the backdrop blur, and the
   four-layer verification net (v0.15, epic #569).
 - [unity-csharp-host.md](unity-csharp-host.md) — the C# host on the C ABI:
-  P/Invoke over all fourteen entry points, the thread-affine managed lifetime,
-  the frame lease and its stride check, and why the frame loop is a sample
-  rather than `Runtime/` code (v0.21, story #1121).
+  P/Invoke over every entry point, the thread-affine managed lifetime, the frame
+  lease and its stride check, how a document packed inside an APK is mapped
+  where it lies, and why the frame loop is a sample rather than `Runtime/` code
+  (v0.21, stories #1121 and #1124).
 - [host-integration.md](host-integration.md) — the two integration crates,
   `dashscene-web` and `dashscene-desktop`: the five pieces an embedder must
   have, the byte-range and mapped load paths, the two frame loops, the published
   `Present` seam, and the checks that keep the surface out of the demonstrations
   (v0.17, stories #741, #810, #794, #792).
 - [c-abi.md](c-abi.md) — `dashscene-ffi` as built: the entry points and the
-  lifecycle they form, why there are three loaders, the versioning rule that has
-  kept `DS_ABI_VERSION` unmoved across every status variant added since, and
-  moved it to 2 exactly once, for story #1226's ten changed signatures — and the
-  gap in it that `SurfaceLost` exposed — what a caller must guarantee, and the
-  gaps. It was a control plane and not a data plane until story #859 added one
-  (v0.19 story #840, amended 2026-08-20); the lease that data plane crosses
-  under is
+  lifecycle they form, why there is a loader per shape of input, the versioning
+  rule that has kept `DS_ABI_VERSION` unmoved across every status variant added
+  since, and moved it to 2 exactly once, for story #1226's ten changed
+  signatures — and the gap in it that `SurfaceLost` exposed — what a caller must
+  guarantee, and the gaps. It was a control plane and not a data plane until
+  story #859 added one (v0.19 story #840, amended 2026-08-20); the lease that
+  data plane crosses under is
   [../decisions/the-frame-crosses-under-a-lease.md](../decisions/the-frame-crosses-under-a-lease.md).
 - [android-toolchain.md](android-toolchain.md) — the `aarch64-linux-android`
   target, the discovered NDK and the API floor, the `android-build` job, and the

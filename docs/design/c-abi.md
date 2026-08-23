@@ -57,9 +57,12 @@ for ever.
     ds_runtime_new                       make a runtime
     ds_runtime_free                      drop it
 
-    ds_runtime_load_document             bytes
-    ds_runtime_load_document_with_text   bytes + font faces
-    ds_runtime_load_document_mapped      a path + fonts, bounded by a root
+    ds_runtime_load_document                 bytes
+    ds_runtime_load_document_with_text       bytes + font faces
+    ds_runtime_load_document_mapped          a path + fonts, bounded by a
+                                             root
+    ds_runtime_load_document_mapped_range    a byte range inside a path,
+                                             otherwise the same
 
     ds_runtime_attach_surface            a platform handle becomes a target
     ds_runtime_detach_surface            drop the target, keep the document
@@ -80,7 +83,7 @@ now states layer 0 in two forms. This ABI served only the runtime-draws one
 until story #859 added the data plane the other needs; it now serves both, and
 `ds_runtime_detach_surface` belongs to the first of them.
 
-## Three loaders, and why they are three rather than one
+## A loader per shape of input, and why they are not one
 
 They differ in what the caller can promise, not in what they produce.
 
@@ -97,11 +100,22 @@ They differ in what the caller can promise, not in what they produce.
   none. It maps the file and reads out of its cold half only the assets that
   root's subtree draws. Added at issue #925, which is where R5 first reached
   this ABI at all.
+- **`ds_runtime_load_document_mapped_range`** is the call above with an `offset`
+  and a `length` naming where inside the file the document is. Added at story
+  #1124, because a `.dsb` shipped in an Android APK **has no path**: it is an
+  uncompressed entry inside `base.apk`, `AssetManager.openFd` reports where it
+  lies rather than a filename, and extracting it so the call above could take it
+  is a full copy of the file. A range the file cannot satisfy — zero length,
+  past the end, or an overflowing offset — is `DS_MAP`, refused before anything
+  is mapped, because `mmap` past the end of a file succeeds and answers `SIGBUS`
+  on touch. `../decisions/the-document-is-mapped-where-it-is-packed.md` carries
+  why this is a byte range and not a file descriptor.
 
-**The root selection sits on the mapped load and on no other**, deliberately.
-The two byte-taking loaders own every payload already, so a bound there would be
-accepted and change nothing measurable — and would have cost an ABI version for
-it. A new symbol is free under the rule below; a changed signature is not.
+**The root selection sits on the two mapped loads and on neither byte-taking
+one**, deliberately. The two byte-taking loaders own every payload already, so a
+bound on them would be accepted and change nothing measurable — and would have
+cost an ABI version for it. A new symbol is free under the rule below; a changed
+signature is not.
 
 **The root is named once, at load.** No call changes it afterwards, so a host
 showing a different artboard loads again.
@@ -113,11 +127,12 @@ version — it is what this library implements.
 
 **It moved once, at story #1226**, when `DsRuntime` stopped being a pointer and
 became a generational handle. Ten of the twelve exported entry points changed
-signature for it — twelve was the count then, and it is fourteen since story
-#859; `ds_abi_version` and `ds_last_error_message` take no runtime and did not.
-That is the rule in this heading working as stated rather than an exception to
-it — a changed signature is exactly what is not free, and it is the only thing
-that has ever moved this number.
+signature for it — twelve was the count then, and the surface has grown twice
+since, by story #859 and by story #1124; `ds_abi_version` and
+`ds_last_error_message` take no runtime and did not. That is the rule in this
+heading working as stated rather than an exception to it — a changed signature
+is exactly what is not free, and it is the only thing that has ever moved this
+number.
 
 `DsStatus` has grown from nine variants to twenty without moving it, because
 every addition went on the **tail**: `FontFace` and `Atlas` at #947, then `Map`,
@@ -128,8 +143,12 @@ that moved the version, and did not contribute to it: appending is still free,
 and ten changed signatures are what was not. A C caller compiled against an
 earlier header still reads every discriminant it knew at the value it knew.
 
-That is why the shapes above were chosen: three loaders rather than one with a
-widening signature, and a detach call rather than a flag on free.
+That is why the shapes above were chosen: a loader per shape of input rather
+than one with a widening signature, and a detach call rather than a flag on
+free. Story #1124 is that rule paying: a document packed inside an APK needed a
+byte range, and it arrived as `ds_runtime_load_document_mapped_range` beside the
+whole-file loader rather than as two more parameters on it — so `DS_ABI_VERSION`
+did not move and no host had to be rebuilt.
 
 **It is not the whole of the rule, and `SurfaceLost` is the case that shows the
 gap.** That variant did not only appear at the tail — it **re-routed an existing

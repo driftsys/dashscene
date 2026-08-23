@@ -1,8 +1,9 @@
 # The C# host: P/Invoke over the C ABI, lifetime and the tick
 
     status  as-built at story #1121 (2026-08-21), with the painter added at
-            story #1122 (2026-08-23)
-    source  stories #1121 and #1122, epic #1106. The requirements are
+            story #1122 and the packed-document load at story #1124
+            (both 2026-08-23)
+    source  stories #1121, #1122 and #1124, epic #1106. The requirements are
             [../specification/07-embedding-and-distribution.md](../specification/07-embedding-and-distribution.md)
             R-E1, R-E2, R-E10 through R-E17 and R-E19 through R-E20, settled by
             story #1125, and
@@ -20,7 +21,9 @@
             [../decisions/r-e10-is-checked-in-two-halves.md](../decisions/r-e10-is-checked-in-two-halves.md)
             splits the compile gate the painter broke;
             [../decisions/clip-edge-semantics.md](../decisions/clip-edge-semantics.md)
-            fixes what a clip contributes.
+            fixes what a clip contributes;
+            [../decisions/the-document-is-mapped-where-it-is-packed.md](../decisions/the-document-is-mapped-where-it-is-packed.md)
+            rules how the document's bytes reach memory.
 
 The managed half a Unity host sits on: version negotiation, runtime lifetime,
 document load, the tick, the committed frame under a lease, and — since story
@@ -35,8 +38,10 @@ painter reports it, which is P4.
 
     Samples~/FrameLoop --+--> CommitPacer      (when to commit)
                          |
-                         +--> DashsceneRuntime --+--> Native (14 DllImports)
-                         |    FrameLease --------+
+                         +--> DocumentRange    (where the .dsb is)
+                         |
+                         +--> DashsceneRuntime --+--> Native (one DllImport
+                         |    FrameLease --------+     per entry point)
                          |                       |
                          |                 dashscene_ffi (cdylib)
                          |
@@ -327,6 +332,81 @@ already succeeded at that point, so throwing straight out would leave the lease
 held and refuse every later tick for the life of the runtime — turning a
 diagnosable version mismatch into a runtime that never advances again.
 
+## How the document's bytes reach memory
+
+**Three managed entry points, and the third is why this section exists.**
+`LoadDocument(byte[])` copies. `LoadDocumentMapped(string, uint)` maps a file
+and costs the artboard rather than the file.
+`LoadDocumentMapped(DocumentRange, uint)` maps a byte range **inside** a file.
+
+**Only the third loads a `StreamingAssets` document on Android**, and that is a
+statement about paths rather than about the others being unavailable. The byte
+loader works there — a host reads the asset with `UnityWebRequest` and hands
+over the bytes — and it is rejected on cost, not on capability:
+[../decisions/the-document-is-mapped-where-it-is-packed.md](../decisions/the-document-is-mapped-where-it-is-packed.md)
+costs it as giving up demand paging, which is what R5 asks for. The string
+loader is the one that genuinely cannot: there is no path.
+
+**`Application.streamingAssetsPath` is not a directory there.** It resolves to
+`jar:file:///data/app/<pkg>/base.apk!/assets`, and the document is an
+uncompressed entry inside that APK, so the whole-file mapped loader answers
+`DsStatus.Map`. That was the state the frame-loop sample shipped in — issue
+#1288 — with the sample's own default of `documentPath = "scene.dsb"`.
+
+`DocumentRange` is the value that says which of the two shapes a document is in:
+`WholeFile(path)`, which routes to the path loader, or
+`Window(container,
+offset, length)`, which routes to
+`ds_runtime_load_document_mapped_range`. **They are separate C entry points
+rather than one with a sentinel length**, so the routing is a branch on
+`IsWholeFile` and not a magic zero — the library refuses a zero length with
+`DsStatus.Map`.
+
+**The split between `Runtime/` and the sample is drawn at what a gate can
+execute.** `DocumentRange` and the loader over it are in `Runtime/`, where
+`unity/ffi-check` builds a container holding the fixture at a deliberately
+unaligned offset, loads it against the real library, and compares **all nineteen
+slice counts** against the same document loaded from its own path. That
+comparison is what proves the two `ulong` slots cross correctly; an earlier form
+asserted only that the frame had rows, which any range that happens to parse
+satisfies. The JNI query that asks the APK where the entry is needs
+`UnityEngine`, so `StreamingAssetDocument` sits in `Runtime/Engine/`, the half
+`just unity-editor` compiles.
+
+**It was in `Samples~/FrameLoop` when story #1124 wrote it**, because
+`Runtime/Engine/` did not exist and no gate here could compile a `UnityEngine`
+reference at all. Story #1122's two-halves ruling landed in the same slice and
+made that both unnecessary and wrong, so the resolver moved before #1124 merged
+— a package whose Android path a customer has to copy out of a sample is not the
+package this story set out to ship.
+
+**The compile is a gate; the behaviour is not.** Whether `openFd` reports the
+offset an APK actually holds is answered by a device, and the decision above
+records the run that answered it.
+
+**Two things the resolver does that are not obvious**, and both were measured
+rather than assumed:
+
+- **It reads the container path off `/proc/self/fd/<n>` rather than taking
+  `Application.dataPath`.** The two were the same `base.apk` on the install
+  measured, and they do not have to be: `AssetManager` serves an asset out of
+  whichever APK holds it, which for a split install is not the base.
+- **It closes the file descriptor before the load is issued**, and that is safe
+  because no descriptor of the host's is ever the one mapped: the resolver hands
+  back a path, and the library opens that path itself. That is also why the C
+  ABI takes a path rather than a descriptor at all. `AndroidJavaObject.Dispose`
+  is not what closes it — that releases the JNI global reference — so the
+  resolver calls `close()` explicitly, in a `finally`, logging rather than
+  throwing so a cleanup failure cannot discard a range already built.
+
+**One build setting this depends on, and a stock Unity build already satisfies
+it.** `AssetManager.openFd` refuses a compressed entry, and Unity's shipped
+`mainTemplate.gradle` sets `noCompress` from `unityStreamingAssets`, so a
+`StreamingAssets` file is `Stored`. Measured on a built APK: `assets/scene.dsb`
+was `Stored` where every one of Unity's own `assets/` entries was `Defl:N`. A
+custom gradle template that drops that list breaks the Android path, and the
+resolver lets `openFd`'s exception through rather than falling back to a copy.
+
 ## What the five gates see, and what none of them does
 
 | gate                   | question                                                                             | recipe              | in CI  |
@@ -485,14 +565,30 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   that painter's declaration is the one in force. It costs nothing today because
   this painter uploads no image at all, and it is the first thing story #1123's
   successor meets. Issue #1292 carries it.
+- **The `catch` that turns a missing entry point into an ABI mismatch is
+  reachable by no gate.** Adding a symbol deliberately does not move
+  `DS_ABI_VERSION`, so a package newer than the library it loads passes the
+  handshake and fails at the first call to the new symbol —
+  `DashsceneSymbolMissingException` is what
+  `LoadDocumentMapped(DocumentRange, uint)` rethrows that as. **A host needs the
+  R-E16 catch at every load site as well as around the constructor** — the base
+  type derives from `Exception`, so a `catch (DashsceneException)` around a load
+  does not see it, and the sample carries both. **`unity/ffi-check` checks the
+  exception's contract and cannot provoke the binding failure**: .NET consults
+  an assembly's `DllImportResolver` once per library name and caches the module,
+  and `SetDllImportResolver` throws on a second call for one assembly, so a gate
+  that has already resolved `dashscene_ffi` to a library exporting the symbol
+  cannot then present one that does not. It needs a second process or a second
+  load context.
 - **No native library and no release.** R-E3, R-E18 and R-E21 stay unmet, and
   they are about shipping rather than about this directory: `just host-lib`
   builds the cdylib and nothing places it into the package. Committing it was
   considered and deferred — it is about 9.6 MB of undeltifiable binary in a
   public repository's permanent history for a package that cannot yet draw.
 - **`ds_runtime_load_document_with_text` is declared and not wrapped.** The
-  managed surface exposes the two loaders that need no font cascade; the third
-  takes `DsFontFace` arrays whose atlases story #1123 owns.
+  managed surface exposes the loaders that need no font cascade; that one takes
+  `DsFontFace` arrays whose atlases story #1123 owns. The two mapped loaders are
+  wrapped and pass `(null, 0)` for the same reason.
 - **Two fixed behaviours are pinned by nothing**: `ReleaseLease` clearing its
   managed handle only after the library has released, and `Dispose` reporting a
   failed free. Both need `ds_runtime_release_frame` or `ds_runtime_free` to fail
@@ -507,8 +603,11 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   `Runtime/**/*.cs`, so anything outside `Runtime/` is out of scope wherever it
   sits, and no CI job runs an editor. That is why `CommitPacer` sits in
   `Runtime/` rather than in the sample: the pacing arithmetic carries a numeric
-  claim, so it lives where a gate can reach it. What is left in the sample is
-  Unity glue.
+  claim, so it lives where a gate can reach it. **Nothing in the sample carries
+  a claim today.** Story #1124's Android resolver briefly did, and moved to
+  `Runtime/Engine/` once the two-halves ruling gave engine-referencing code a
+  gate; what is left here is `Time.deltaTime`, a component lifecycle and where
+  the painter hangs.
 - **The thread-affinity question is narrowed, not closed.** Story #1125 measured
   `OnPerformCulling` on the main thread under `6000.3.22f1` with URP on macOS
   and Metal, so a host can bracket its job dispatch — but the target is Android,

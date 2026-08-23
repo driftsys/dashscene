@@ -154,7 +154,7 @@ own documentation says an embedder holding a path should not use it:
 `dashscene_core::load_document` copies every payload into an owned `ImageAsset`,
 so it needs bytes for every entry whether or not anything draws them.
 
-**All three load paths take the text a document cannot carry.** Each of
+**Every load path here takes the text a document cannot carry.** Each of
 `Document::load`, `load_bytes` and `dashscene_web::load_document` takes an
 `Option<TextResources>` — a `Typesetter` and the atlases its cascade samples —
 which the host supplies because the document does not. That is a ruling and not
@@ -631,11 +631,14 @@ gained a mapped load, was missing from the third host entirely.
   `Txn::show_root` and in
   [the-runtime-paints-the-shown-root.md](../decisions/the-runtime-paints-the-shown-root.md)
   D7. Nothing has asked for the switch, so nothing has been built for it.
-- **The C ABI carries root selection on its mapped entry point and on no
-  other**, since issue #925. `ds_runtime_load_document_mapped` takes a path and
-  a required ordinal, maps the file, and reads out of its cold half only the
-  assets the named root's subtree draws — the same bound `Document::load` gives
-  the desktop, reached through the same `dashscene-core` calls.
+- **The C ABI carries root selection on its mapped entry points and on neither
+  byte-taking one**, since issue #925. `ds_runtime_load_document_mapped` takes a
+  path and a required ordinal, maps the file, and reads out of its cold half
+  only the assets the named root's subtree draws — the same bound
+  `Document::load` gives the desktop, reached through the same `dashscene-core`
+  calls. `ds_runtime_load_document_mapped_range` is that call over a byte range
+  inside a larger file, added by story #1124 for a `.dsb` packed in an Android
+  APK, and it takes the same required ordinal.
 
   `ds_runtime_load_document` and `ds_runtime_load_document_with_text` keep no
   selection, and that asymmetry is the decision rather than an omission. They

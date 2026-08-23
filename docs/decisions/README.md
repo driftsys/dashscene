@@ -711,6 +711,21 @@ their parent rather than apart from it:
   `generation` restarts on a load and a host-draws embedder has no surface for
   `Present::document_replaced` to reach. The glyph atlases still do not cross,
   and story #1123 owns them.
+- [the-document-is-mapped-where-it-is-packed.md](the-document-is-mapped-where-it-is-packed.md)
+  — a `.dsb` that does not begin a file is mapped **where it lies**, through
+  `ds_runtime_load_document_mapped_range` taking a path plus an offset and a
+  length, rather than being extracted to app storage first (story #1124,
+  2026-08-23). A Unity Android build is the case that forced it: Unity stores
+  `StreamingAssets` uncompressed inside `base.apk` and
+  `Application.streamingAssetsPath` is a `jar:file://…!/assets` URI, so the
+  whole-file mapped loader answers `DS_MAP` and the frame-loop sample disabled
+  itself (issue #1288). A byte range rather than a file descriptor, because the
+  process can open its own APK by path — measured — and because `int fd` is not
+  portable to the Windows library D3 of
+  [the-native-library-ships-inside-the-unity-package.md](the-native-library-ships-inside-the-unity-package.md)
+  assigns. The record costs all four candidate shapes, records that **no
+  measurement here separates them** because every committed `.dsb` is under 5
+  KB, and rests the choice on R5 instead.
 - [slices-are-planned-against-their-inflow.md](slices-are-planned-against-their-inflow.md)
   — the v0.20 retrospective (2026-08-18). Epic #951 planned 13 issues and the
   milestone closed 142, of which 126 were filed while the slice ran, so a
