@@ -2,11 +2,23 @@
 
 The C# side of dashscene.
 
-**This package draws a subset, and ships no native library.** The
-`BatchRendererGroup` painter landed at story #1122; the library the host loads
-is built by `just host-lib` and placed by whoever ships a release
-([R-E3](../../docs/specification/07-embedding-and-distribution.md), still
-unmet), so a fresh install meets a `DllNotFoundException` on its first call.
+**This package draws a subset of the document, and it ships the library that
+draws it.** The `BatchRendererGroup` painter landed at story #1122; the native
+library travels inside the package under `Runtime/Plugins/`, so an install
+resolves it with nothing to build — on **macOS arm64 and Android arm64**, which
+are the two platforms that ship. On any other platform the first call still
+raises `DllNotFoundException`.
+
+**One case needs saying because Unity's default produces it**: a macOS _player_
+built for the universal `x64ARM64` architecture gets no library at all. Unity
+copies nothing rather than failing the build, and the player raises
+`DllNotFoundException` on its first call. Build a macOS player for Apple silicon
+only, or supply your own universal binary; issue #1348 is where that is being
+settled.
+
+[R-E21](../../docs/specification/07-embedding-and-distribution.md) is the
+[R-E21](../../docs/specification/07-embedding-and-distribution.md) is the
+requirement that governs which ones ship.
 
 **What the painter draws:** fills, both solid and gradient; corner radii;
 strokes; clips; per-node opacity and rotation; and text, as MSDF quads sampled
@@ -38,6 +50,13 @@ What is here:
   names, the packing of the committed tables into instances, and what was
   skipped. Engine-independent, so it compiles under netstandard2.1 like
   everything else at this level.
+- `Runtime/Plugins/` — the native libraries the host loads, one per platform
+  that ships: `macOS/libdashscene_ffi.dylib` and `Android/libdashscene_ffi.so`,
+  both arm64. Each carries a committed `.meta` declaring its platform and CPU,
+  and **that `.meta` is the mechanism, not the folder name**: a package's path
+  reaches no Unity path-inference rule, so a library without one is Editor-only
+  and silently absent from every player build
+  ([the-native-library-ships-inside-the-unity-package](../../docs/decisions/the-native-library-ships-inside-the-unity-package.md)).
 - `Runtime/Engine/BrgPainter.cs` — the `BatchRendererGroup` itself: the buffer
   target and its rung, the instance upload, the batches and the culling
   callback. **Everything under `Runtime/Engine/` references `UnityEngine`**,
@@ -146,7 +165,9 @@ story #1125.
 Story #1121 closed the ones about this package's own contents — the `.meta`
 files, the `unity` field, `allowUnsafeCode`, and the two the host owes the ABI.
 **What remains unmet is about a release rather than about this directory**: the
-native library and the git tag that names it.
+git tag that names one. The native library is here since story #1334 and R-E21
+is met. R-E18 is that tag. R-E3 needs it too and needs one thing more — nothing
+records which commit either binary was built from.
 
 Read
 [the requirements file](../../docs/specification/07-embedding-and-distribution.md)

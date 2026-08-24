@@ -535,8 +535,9 @@ namespace Driftsys.Dashscene
         /// build of this library at all**, so there is no version to report and
         /// no disagreement to describe. The original exception is rethrown
         /// there, beside the `DllNotFoundException` a host already handles
-        /// separately — this package's SHIPPED state carries no native library,
-        /// so that catch exists in every host anyway.
+        /// separately — a host meets that exception on any platform outside the
+        /// two this package ships a library for, so that catch exists in every
+        /// host anyway.
         ///
         /// **No caller with a runtime in hand can reach that branch**, and the
         /// managed surface leans on it: `DashsceneRuntime`'s constructor cannot

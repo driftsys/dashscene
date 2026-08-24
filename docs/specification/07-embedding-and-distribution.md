@@ -61,7 +61,14 @@ carry exactly those two keys and nothing else.
 
 **R-E3** — the C# declarations and the native library a package release carries
 shall be built from one commit. _Check:_ the tag R-E18 requires resolves to a
-commit containing both. **Unmet today**: the package carries no native library.
+commit containing both. **Still unmet after story #1334, and for a changed
+reason.** The package now carries the library, so both halves sit in one commit
+— which is **not** what this requirement asks. It asks that they were _built
+from_ one commit, and nothing in the tree records which commit either binary was
+built from: `just unity-plugins` writes whatever the developer's working tree
+produced. Its _check_ then runs through R-E18's tag, and no tag exists. So this
+stays unmet on two counts, and both resolve the same way — a release, built and
+named in one act.
 
 **R-E18** — a package release shall be named by one git tag, matching
 `.git-std.toml`'s `tag_prefix` followed by the version in
@@ -70,21 +77,48 @@ from those two files and assert **that** tag resolves — not merely that some t
 does, which any name would satisfy. **Unmet today**: `git tag` returns nothing
 and the repository has no releases, so no release is nameable.
 
+**Story #1334 deliberately did not create the first tag**, having the option to.
+Composed from `.git-std.toml`'s `tag_prefix = "v"` and `package.json`'s
+`"version": "0.0.0"`, the name this requirement asks for today is `v0.0.0` — a
+release of a placeholder version. The first real version is `0.2.0`
+([`../decisions/publishable-and-the-first-version.md`](../decisions/publishable-and-the-first-version.md)),
+and the whole `0.1.x` band is already spent on licence corrections. So until a
+release happens this requirement is about a release that has not happened, not
+about a tag someone forgot: creating `v0.0.0` would satisfy the letter of the
+check and name nothing.
+
 **R-E21** — each native library the package ships shall carry a `.meta`
 declaring the platform and CPU that
 [`../decisions/the-native-library-ships-inside-the-unity-package.md`](../decisions/the-native-library-ships-inside-the-unity-package.md)
 D3 assigns to its target, using that table's exact casing. _Check:_ read each
 `PluginImporter` block against D3's table and compare, byte for byte, every key
-that row states — `OS` is stated for the desktop rows and not for the Android or
-iOS ones, so the comparison is over the keys the row carries rather than over a
-fixed pair. **Casing is the substance of this requirement, not pedantry**: Unity
-parses the value through an enum converter and, on failure, substitutes the
-default with a warning rather than an error, and for Android its own
-documentation states it does not validate the setting — so a wrong value yields
-a library silently absent from every player build. The path a library sits at
-does **not** carry this: D2 records that a package's folder name reaches no
-Unity path-inference rule, and that the fallback is Editor-only. **Unmet
-today**: the package ships no native library and no `.meta`.
+that row states — `OS` is stated for the editor entry of every desktop row —
+macOS, Windows and Linux — and not for the macOS row's standalone entry, nor for
+the Android or iOS rows. So the comparison is over the keys each platform entry
+carries rather than over a fixed pair, and it is per entry rather than per row.
+**Casing is the substance of this requirement, not pedantry**: Unity parses the
+value through an enum converter and, on failure, substitutes the default with a
+warning rather than an error, and for Android its own documentation states it
+does not validate the setting — so a wrong value yields a library silently
+absent from every player build. The path a library sits at does **not** carry
+this: D2 records that a package's folder name reaches no Unity path-inference
+rule, and that the fallback is Editor-only. **Met** by story #1334 (2026-08-24),
+over the rows that ship.
+
+The package carries two libraries —
+`Runtime/Plugins/macOS/libdashscene_ffi.dylib` and
+`Runtime/Plugins/Android/libdashscene_ffi.so` — each beside a `.meta` an editor
+wrote rather than a hand, for R-E2's reason. **D3's Windows and Linux rows ship
+nothing and iOS is v1**, so this is met over what ships; a row that gains a
+binary gains a `.meta` and an entry in both checks with it.
+
+**Two checks, and they ask different questions.** `plugin_meta` in
+`unity/package-gate` compares the committed `.meta` text against D3's rows and
+runs on every pull request with no editor. `just unity-editor` reads the same
+values back through `PluginImporter` in a real editor, which is the only place
+Unity's own parse of them can be observed. The second was mutated to confirm it
+fails: `CPU: ARM64` changed to `arm64` in the Android `.meta` produced
+`Android data CPU reads 'arm64', D3 states 'ARM64'` and an exit status of 1.
 
 ## The host project
 

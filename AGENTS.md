@@ -158,20 +158,22 @@ v0.15), and `unity/` (the UPM package and the checks over it — three .NET ones
 boundary B's declarations against the Rust layouts, the engine-free half of the
 package against netstandard2.1, and its P/Invoke declarations executed against
 `dashscene-ffi`; a Rust one, `unity/package-gate`, holding the generated HLSL to
-its WGSL source, the shaders to R-E11, R-E12 and R-E10's split, and
-`BrgPainter`'s two diagnostics to the positions their records describe — the
-only gate on a pull request that reads `Runtime/Engine/` at all, since nothing
-in CI compiles it; `unity/editor-compat`, which compiles the whole package in a
-Unity editor and is the only thing that compiles a Unity `.shader` without
-building a player; `unity/hlsl-conformance`, which evaluates the committed
-layer-2 probe table through the generated `Sdf.hlsl` on a real graphics device
-and is the only one that reads a shader's own computed VALUES back and compares
-them against a committed table (issue #1312); and `unity/render-gate`, which
-builds a player and is the only CHECK that draws a document; and `unity/demo`,
-which builds a player that draws and asserts only that every document reached
-the painter — a demonstration rather than a check (issue #1329). The package
-landed at v0.21 by story #1239, gained the C# host at story #1121 and the
-BatchRendererGroup painter at story #1122; it still carries no native library).
+its WGSL source, the shaders to R-E11, R-E12 and R-E10's split, R-E21's platform
+data over each shipped native library, and `BrgPainter`'s two diagnostics to the
+positions their records describe — the only gate on a pull request that reads
+`Runtime/Engine/` at all, since nothing in CI compiles it;
+`unity/editor-compat`, which compiles the whole package in a Unity editor and is
+the only thing that compiles a Unity `.shader` without building a player;
+`unity/hlsl-conformance`, which evaluates the committed layer-2 probe table
+through the generated `Sdf.hlsl` on a real graphics device and is the only one
+that reads a shader's own computed VALUES back and compares them against a
+committed table (issue #1312); and `unity/render-gate`, which builds a player
+and is the only CHECK that draws a document; and `unity/demo`, which builds a
+player that draws and asserts only that every document reached the painter — a
+demonstration rather than a check (issue #1329). The package landed at v0.21 by
+story #1239, gained the C# host at story #1121 and the BatchRendererGroup
+painter at story #1122, and carries its native libraries — macOS arm64 and
+Android arm64 — since story #1334).
 
 Seven of those directories hold workspace members that are never published:
 `demo/`, `demo-web/` (the browser host — a canvas, the lean painter, and a
@@ -280,6 +282,29 @@ members in total, nineteen of them the crates above.
                       shipped binary is `DsSlice::stride`'s job at run time,
                       and it runs on CoreCLR rather than on Mono or IL2CPP,
                       which is issue #1322
+    just unity-plugins rebuild the two native libraries the UPM package ships
+                      — macOS arm64 and Android arm64 — and place them inside
+                      it. The package CARRIES its binaries
+                      (`docs/decisions/the-native-library-ships-inside-the-unity-package.md`
+                      D4), so refreshing one is a commit rather than something
+                      a consumer builds. Two rows because two have a consumer;
+                      D3's Windows and Linux rows ship nothing and iOS is v1.
+                      **A NEW library at a new path is three edits, not one**:
+                      this recipe's own body, the row list in
+                      `unity/editor-compat/DashsceneEditorCompat.cs`, and the
+                      one in `unity/package-gate/tests/plugin_meta.rs` — each
+                      hard-codes what ships, and a library named by none of
+                      them is written by nothing and checked by nothing. Then
+                      `just unity-editor WritePluginMeta` is what makes Unity
+                      write its `.meta`; a library replaced
+                      in place keeps the `.meta` and the guid it already has,
+                      which is why those files are committed. Both rows name
+                      their target triple rather than trusting the host's, so
+                      an Intel Mac cannot install an x86_64 dylib under a
+                      `.meta` declaring `ARM64`; it still refuses to run off
+                      macOS, where Apple's linker is not available at all.
+                      Needs the NDK for the Android half, so it is outside
+                      `check` for the reason `just android` is
     just unity-editor  R-E10's SECOND check, the only thing in this
                       repository that compiles a Unity `.shader` WITHOUT
                       building a player, and the only one whose PURPOSE is to
@@ -287,8 +312,7 @@ members in total, nineteen of them the crates above.
                       the same package into an editor and compiles that
                       assembly incidentally, and `unity-render` compiles both
                       as a side effect of a player build that takes tens of
-                      minutes. Creates a
-                      throwaway Unity project
+                      minutes. Creates a throwaway Unity project
                       under `target/`, imports the package as a `file:`
                       dependency, compiles it, reads
                       `PlayerSettings.GetApiCompatibilityLevel` back rather
@@ -315,7 +339,15 @@ members in total, nineteen of them the crates above.
                       Showcase sample while building its player. It also WRITES the `.meta`
                       files R-E2 requires, because a `file:` dependency is a
                       mutable package: check `git status` after a run that added
-                      a file
+                      a file.
+                      **It also holds R-E21**, reading each shipped plugin's
+                      platform data back through `PluginImporter` — the only
+                      place Unity's own parse of those values can be seen;
+                      `unity/package-gate`'s `plugin_meta` is the textual half
+                      that needs no editor. It VERIFIES and never repairs:
+                      `just unity-editor WritePluginMeta` is the separate
+                      authoring entry point, because a check that writes the
+                      values it reads cannot fail
     just unity-render  the only CHECK here that DRAWS a dashscene document
                       through the Unity painter — `just unity-demo` draws as
                       well and asserts nothing about what it drew. Same throwaway-project shape
@@ -325,7 +357,11 @@ members in total, nineteen of them the crates above.
                       adds nothing to Always Included Shaders on purpose. That
                       is the class no tree-derived check can catch, and issue
                       #1313 is the instance — every gate passed while the
-                      package could not draw as installed. **Its negative
+                      package could not draw as installed. **Since story #1334
+                      it stages NO native library**: the package carries its
+                      own, so the player resolves what the package ships rather
+                      than what the run built, and the gate asserts the library
+                      reached the built player. **Its negative
                       control runs on every pass**: a frame the painter
                       deliberately did not draw is put through the same ink
                       predicate first, and the run fails if that frame passes

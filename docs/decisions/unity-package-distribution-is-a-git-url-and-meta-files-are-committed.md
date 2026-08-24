@@ -88,9 +88,12 @@ It is stated there once rather than summarised here as well.
 ## Consequences
 
 - **R-E2 was unmet on `main`** and story #1121 closed it — the first story that
-  makes the package installable at all. It adds **no** native library: R-E3,
-  R-E18 and R-E21 stay unmet, so the `.meta` settings a plugin needs are still
-  unexercised, and story #1122 or a release is where they arrive.
+  makes the package installable at all. It added **no** native library: at that
+  story R-E3, R-E18 and R-E21 all stayed unmet and the `.meta` settings a plugin
+  needs were unexercised. **Story #1334 changed one of those on 2026-08-24** —
+  the package ships a library for macOS arm64 and Android arm64, R-E21 is met,
+  and two checks exercise those settings. R-E3 and R-E18 still wait on a release
+  to name.
 - **GUID stability becomes an obligation at story #1122**, when materials and
   shaders arrive — those genuinely are GUID-referenced. A regenerated GUID
   breaks every reference, so the committed values are permanent once published.

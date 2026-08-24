@@ -65,7 +65,7 @@ public static class RenderGateBuild
         CreatePipeline(failures);
         RefuseAlwaysIncludedShaders(failures);
         SetBrgStripping(failures);
-        ImportNativeLibrary(failures);
+        CheckPackageNativeLibrary(failures);
 
         // **Nothing is built once the verdict is already decided.** The player
         // build is the expensive half of a recipe AGENTS.md records as costing
@@ -257,56 +257,159 @@ public static class RenderGateBuild
         Debug.Log("[render-gate-build] m_BrgStripping = 2 (KeepAll), per R-E6");
     }
 
-    /// The native library into the player.
+    /// The package's own native library, checked and never configured.
     ///
-    /// **Set rather than left to the importer's default.** A native plugin's
-    /// default platform set is not the same across Unity versions, and one that
-    /// does not include the build target produces a player whose first P/Invoke
-    /// raises `DllNotFoundException` — which reads as the package shipping no
-    /// binary rather than as this project failing to carry one.
+    /// **This method used to stage one and set its platform data.** Until story
+    /// #1334 the recipe copied a freshly built cdylib into `Assets/Plugins/`
+    /// and this method marked it compatible with the active build target — so
+    /// the player resolved a library this run had produced, under settings this
+    /// file had applied. Both halves hid the question the gate exists to ask:
+    /// whether the PACKAGE draws as installed. Issue #1313 is the same class
+    /// one layer up, where every gate passed while the package's shaders were
+    /// stripped from a player.
     ///
-    /// This is the throwaway project's own plugin layout and says nothing about
-    /// the package's:
-    /// `docs/decisions/the-native-library-ships-inside-the-unity-package.md` D2
-    /// and D3 are what decide where a shipped library sits, and R-E21 is what
-    /// checks it. Nothing here is that check.
-    private static void ImportNativeLibrary(List<string> failures)
+    /// So nothing is set here. The library travels inside the package beside a
+    /// committed `.meta`
+    /// (`docs/decisions/the-native-library-ships-inside-the-unity-package.md`
+    /// D2 and D3), and this asks Unity whether that `.meta` makes it reachable
+    /// for the target being built. A failure is a defect in the package rather
+    /// than a gap in this project — which is the opposite of what the old
+    /// message said.
+    private static void CheckPackageNativeLibrary(List<string> failures)
     {
-        const string Plugins = "Assets/Plugins";
-        var libraries = Directory.Exists(Plugins)
-            ? Directory.GetFiles(Plugins, "*.*", SearchOption.TopDirectoryOnly)
-            : Array.Empty<string>();
+        var packagePlugins = $"Packages/{PackageName}/Runtime/Plugins/";
+        var target = EditorUserBuildSettings.activeBuildTarget;
 
-        var imported = 0;
-        foreach (var path in libraries)
+        var found = 0;
+        var compatible = new List<string>();
+        foreach (var path in AssetDatabase.GetAllAssetPaths())
         {
-            if (path.EndsWith(".meta", StringComparison.Ordinal))
+            if (!path.StartsWith(packagePlugins, StringComparison.Ordinal))
             {
                 continue;
             }
-            if (AssetImporter.GetAtPath(path.Replace('\\', '/')) is not PluginImporter importer)
+            if (AssetImporter.GetAtPath(path) is not PluginImporter importer)
             {
-                failures.Add($"{path} did not import as a native plugin.");
+                // Folders under `Plugins/` come back from this enumeration too,
+                // and they import through a DefaultImporter.
                 continue;
             }
 
-            importer.SetCompatibleWithAnyPlatform(false);
-            importer.SetCompatibleWithEditor(true);
-            importer.SetCompatibleWithPlatform(EditorUserBuildSettings.activeBuildTarget, true);
-            importer.SaveAndReimport();
-            imported++;
+            found++;
+            if (importer.GetCompatibleWithPlatform(target))
+            {
+                compatible.Add(path);
+            }
         }
 
-        if (imported == 0)
+        if (found == 0)
         {
+            // Two causes, and they need different remedies: no file at all, or
+            // a file Unity did not import as a native plugin. Saying only the
+            // first sends a developer to rebuild a library that is already
+            // there.
             failures.Add(
-                $"no native library under {Plugins}. The gate's player would raise "
+                $"no importable native library under {packagePlugins}. Either the package "
+                + "ships none — run `just unity-plugins` — or a file is there and Unity "
+                + "imported it as something other than a native plugin, which is what a "
+                + "missing or wrong `.meta` produces. The gate's player would raise "
                 + "DllNotFoundException on its first call into dashscene-ffi.");
             return;
         }
-        Debug.Log($"[render-gate-build] {imported} native plugin(s) enabled for "
-                  + $"{EditorUserBuildSettings.activeBuildTarget}");
+
+        // **Not every shipped library is for this target, and that is correct.**
+        // A macOS player build sees the Android `.so` as well; D3 gives it a
+        // `.meta` that excludes it here. What would be wrong is NONE being
+        // compatible, which is exactly the Editor-only fallback D2 describes for
+        // a library whose `.meta` is missing or wrong.
+        if (compatible.Count == 0)
+        {
+            failures.Add(
+                $"the package ships {found} native library(ies) and none is compatible with "
+                + $"{target}. That is what a missing or wrong `.meta` produces — D2's "
+                + "Editor-platform fallback — and R-E21 is the requirement it breaks.");
+            return;
+        }
+
+        // **Exactly one, and of the right kind.** Counting compatible libraries
+        // and stopping at "more than zero" would let the Android `.so` satisfy
+        // a macOS build: `found` is 2, `compatible` is 1, the message reads
+        // plausibly, and the run proceeds to a player that fails on ink tens of
+        // minutes later. Asking for the extension the target actually loads
+        // costs nothing and does not re-derive D3's table here — a third copy
+        // of that table is what this file must not become.
+        var wanted = ExpectedLibrarySuffix(target);
+        if (compatible.Count != 1 || !compatible[0].EndsWith(wanted, StringComparison.Ordinal))
+        {
+            failures.Add(
+                $"{target} needs exactly one compatible native library ending in {wanted}; "
+                + $"the package offers [{string.Join(", ", compatible)}]. A library of "
+                + "another platform marked compatible with this one builds a player that "
+                + "cannot load it.");
+            return;
+        }
+
+        _shippedLibrary = Path.GetFileName(compatible[0]);
+        Debug.Log(
+            $"[render-gate-build] {compatible.Count} of {found} shipped native library(ies) "
+            + $"compatible with {target}: {_shippedLibrary}, from the package's own .meta");
     }
+
+    /// Asserts the shipped native library is inside the built player.
+    ///
+    /// **Only the macOS layout is asserted, and the others are reported rather
+    /// than skipped.** A player's plugin folder differs per platform, and this
+    /// gate runs on macOS — a check that quietly passed on a layout it does not
+    /// know would be the fail-open shape this file exists to avoid.
+    private static void AssertLibraryReachedThePlayer(
+        BuildTarget target, string built, List<string> failures)
+    {
+        if (target != BuildTarget.StandaloneOSX)
+        {
+            Debug.Log(
+                $"[render-gate-build] the shipped library is NOT asserted inside a {target} "
+                + "player: this check knows the macOS layout only.");
+            return;
+        }
+
+        // **Searched, not composed.** Unity does not put a macOS plugin at the
+        // top of `Contents/PlugIns/`: it writes a per-architecture directory
+        // and puts it there — `Contents/PlugIns/ARM64/libdashscene_ffi.dylib`
+        // on this build. A check that composed the path instead reported the
+        // library missing from a player it was sitting inside, which is a
+        // false failure on the exact question this gate exists to answer.
+        // Asking whether the file is anywhere under the plugin folder is the
+        // question; where Unity files it is Unity's business.
+        var plugins = Path.Combine(built, "Contents", "PlugIns");
+        var landed = Directory.Exists(plugins)
+            ? Directory.GetFiles(plugins, _shippedLibrary, SearchOption.AllDirectories)
+            : Array.Empty<string>();
+        if (landed.Length == 0)
+        {
+            failures.Add(
+                $"the player built, and {_shippedLibrary} is not in {plugins}. Unity copies "
+                + "nothing rather than failing the build when the plugin matches no slice of "
+                + "the player's architecture, so the first P/Invoke raises "
+                + "DllNotFoundException. Issue #1348.");
+            return;
+        }
+
+        Debug.Log(
+            $"[render-gate-build] {_shippedLibrary} reached the player at {landed[0]}");
+    }
+
+    /// The file extension a player for <paramref name="target"/> loads.
+    private static string ExpectedLibrarySuffix(BuildTarget target) => target switch
+    {
+        BuildTarget.StandaloneOSX => ".dylib",
+        BuildTarget.StandaloneWindows64 => ".dll",
+        _ => ".so",
+    };
+
+    /// The library <see cref="CheckPackageNativeLibrary"/> accepted, so the
+    /// post-build check can look for that exact file rather than for a name it
+    /// composes a second time.
+    private static string _shippedLibrary;
 
     /// A camera, a light for the two lit classes, and the gate component.
     ///
@@ -358,6 +461,33 @@ public static class RenderGateBuild
         // Windows — the reason `just unity-editor` searches for the built-in
         // packages instead of deriving their offset.
         var target = EditorUserBuildSettings.activeBuildTarget;
+
+        // **The player must be built for the architecture the package ships,
+        // and this was measured rather than reasoned about.** Unity's default
+        // for a macOS player is the universal `x64ARM64`, and D3 ships one
+        // macOS library, arm64. A universal build asks for a slice the package
+        // does not carry, and Unity's answer is to copy NOTHING: the first run
+        // after story #1334 de-staged this gate reported the plugin compatible
+        // with StandaloneOSX, built with 0 errors, put no library in
+        // `Contents/PlugIns/` at all, and the player raised
+        // `DllNotFoundException: dashscene_ffi`.
+        //
+        // That is worth stating plainly, because it is a hole underneath
+        // R-E21: a correct `.meta` is necessary and not sufficient, and no
+        // check that reads the tree can see it. This gate is what does.
+        //
+        // **The pin is a statement about what the package ships, and issue
+        // #1348 is where it gets ruled.** D3's macOS row says arm64, so a
+        // universal player asks for something this package does not carry —
+        // and an integrator building one with Unity's defaults meets the same
+        // silence. Whether that row should ship a universal binary instead
+        // costs permanent history and is not this gate's call.
+        if (target == BuildTarget.StandaloneOSX)
+        {
+            UnityEditor.OSXStandalone.UserBuildSettings.architecture =
+                UnityEditor.Build.OSArchitecture.ARM64;
+        }
+
         var options = new BuildPlayerOptions
         {
             scenes = new[] { ScenePath },
@@ -383,6 +513,22 @@ public static class RenderGateBuild
         if (report.summary.result != BuildResult.Succeeded)
         {
             failures.Add($"the player build did not succeed: {report.summary.result}.");
+            return;
+        }
+
+        // **Did the library actually reach the player.** Everything above ran
+        // before the build and asked the importer a question; this asks the
+        // artifact. The two differ, and the difference is measured: at Unity's
+        // default universal macOS architecture the importer reported the plugin
+        // compatible, the build reported 0 errors, and `Contents/PlugIns/` held
+        // no dashscene library at all — the player then raised
+        // `DllNotFoundException` on its first call. Without this assertion that
+        // failure arrives as a black frame minutes later, indistinguishable
+        // from a painter defect. Issue #1348 carries the ruling on the
+        // architecture; this is what names the symptom.
+        AssertLibraryReachedThePlayer(target, options.locationPathName, failures);
+        if (failures.Count > 0)
+        {
             return;
         }
 

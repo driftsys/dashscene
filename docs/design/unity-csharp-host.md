@@ -714,15 +714,15 @@ resolver lets `openFd`'s exception through rather than falling back to a copy.
 
 ## What the gates see, and what none of them does
 
-| gate                     | question                                                                                                                                                         | recipe                   | in CI  |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ------ |
-| `unity/abi-check`        | do boundary B's C# types match the Rust ones?                                                                                                                    | `just unity-abi`         | yes    |
-| `unity/package-compat`   | would Unity compile the engine-free half at netstandard2.1?                                                                                                      | `just unity-abi`         | yes    |
-| `unity/ffi-check`        | do the P/Invoke declarations match the library?                                                                                                                  | `just unity-ffi`         | yes    |
-| `unity/package-gate`     | is the HLSL the WGSL's? do the shaders carry the pragmas? is the R-E10 split intact? does the painter still take R-E5's read behind its guard and report rung 3? | `just test`              | yes    |
-| `unity/editor-compat`    | does the WHOLE package compile, shaders included?                                                                                                                | `just unity-editor`      | **no** |
-| `unity/hlsl-conformance` | does the generated HLSL evaluate to the committed probe table?                                                                                                   | `just unity-conformance` | **no** |
-| `unity/render-gate`      | does the package DRAW, in a player, as a consumer installs it?                                                                                                   | `just unity-render`      | **no** |
+| gate                     | question                                                                                                                                                                                                                                   | recipe                   | in CI  |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ | ------ |
+| `unity/abi-check`        | do boundary B's C# types match the Rust ones?                                                                                                                                                                                              | `just unity-abi`         | yes    |
+| `unity/package-compat`   | would Unity compile the engine-free half at netstandard2.1?                                                                                                                                                                                | `just unity-abi`         | yes    |
+| `unity/ffi-check`        | do the P/Invoke declarations match the library?                                                                                                                                                                                            | `just unity-ffi`         | yes    |
+| `unity/package-gate`     | is the HLSL the WGSL's? do the shaders carry the pragmas? is the R-E10 split intact? does the painter still take R-E5's read behind its guard and report rung 3? does each shipped library's `.meta` and header match D3's row, per R-E21? | `just test`              | yes    |
+| `unity/editor-compat`    | does the WHOLE package compile, shaders included?                                                                                                                                                                                          | `just unity-editor`      | **no** |
+| `unity/hlsl-conformance` | does the generated HLSL evaluate to the committed probe table?                                                                                                                                                                             | `just unity-conformance` | **no** |
+| `unity/render-gate`      | does the package DRAW, in a player, as a consumer installs it?                                                                                                                                                                             | `just unity-render`      | **no** |
 
 `unity/editor-compat` and `unity/package-gate` are story #1122's,
 `unity/hlsl-conformance` is issue #1312's and `unity/render-gate` is issue
@@ -793,12 +793,20 @@ one whose free refuses while the channel describing the refusal cannot bind, one
 whose lease release fails while the free succeeds. **That file is where they are
 enumerated**, and this record deliberately does not count them.
 
-**None of them reads a shipped binary.** The ones that build a Rust half build
-both halves from one tree, and the others read this repository's own sources —
-so all of them observe only a disagreement it already contains, the older
-libraries above included: those are built here too, from a C file in this tree.
-A stale committed library is what `DsSlice::stride` catches at run time, which
-is why R-E17 makes that check mandatory in the host rather than advisory.
+**Two of them read a shipped binary, both since story #1334.**
+`unity/render-gate` was de-staged, so the player it builds loads the library the
+package ships and runs the version handshake and the per-array stride comparison
+against it; and `package-gate` reads each shipped library's header far enough to
+compare its architecture and container against D3. The ones that build a Rust
+half still build both halves from one tree, and the others read this
+repository's own sources — so those observe only a disagreement it already
+contains, the older libraries above included: those are built here too, from a C
+file in this tree.
+
+**What none of them does is compare a shipped binary against the sources of the
+commit that carries it.** An architecture match is not a freshness check. A
+stale committed library is what `DsSlice::stride` catches at run time, which is
+why R-E17 makes that check mandatory in the host rather than advisory.
 
 **One of them draws, and it is the last row.** The rest compile, link or execute
 on the CPU; `unity/hlsl-conformance` executes on a graphics device, but as a
@@ -1069,17 +1077,39 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   an import called outside its own `try` in `ds_runtime_resize`'s each left the
   gate green, and each turns it red now.
 - **The translation is verified on CoreCLR and on no Unity runtime.**
-  `unity/ffi-check` runs under the .NET SDK, and `just unity-editor` loads no
-  native library — so nothing here observes what Mono or IL2CPP does when a
-  symbol is absent. If IL2CPP raises a different type, or resolves at load
-  rather than at the first call, every forwarder's catch is dead code on the
-  target that ships. It cannot be closed while the package ships no native
-  library; issue #1322 carries it.
-- **No native library and no release.** R-E3, R-E18 and R-E21 stay unmet, and
-  they are about shipping rather than about this directory: `just host-lib`
-  builds the cdylib and nothing places it into the package. Committing it was
-  considered and deferred — it is about 9.6 MB of undeltifiable binary in a
-  public repository's permanent history for a package that cannot yet draw.
+  `unity/ffi-check` runs under the .NET SDK, and `just unity-editor` imports the
+  shipped library as an asset without ever calling into it — so nothing here
+  observes what Mono or IL2CPP does when a symbol is absent.
+  **`just unity-render` is the one that now could**: since story #1334 its
+  player loads the shipped library, so a Unity runtime reaches the C ABI for the
+  first time. **Which runtime is not recorded** — that project sets no scripting
+  backend, and R-E7's IL2CPP requirement is stated for Android while this gate
+  builds a macOS standalone player. So the gap is narrower than it was and is
+  not closed, and naming the backend needs a reading nobody has taken. If IL2CPP
+  raises a different type, or resolves at load rather than at the first call,
+  every forwarder's catch is dead code on the target that ships. It cannot be
+  closed while the package ships no native library for a platform a player runs
+  on. **Story #1334 met that condition** on 2026-08-24, so issue #1322 is now
+  reachable rather than blocked: a player can load a shipped library, and what
+  is untested is whether Mono and IL2CPP translate a missing symbol the way
+  CoreCLR does.
+- **No release, and therefore no tag.** Story #1334 landed the library on
+  2026-08-24: the package ships macOS arm64 and Android arm64 under
+  `Runtime/Plugins/`, each with a committed `.meta`, and **R-E21 is met**. R-E3
+  and R-E18 are not, and both now wait on the same thing — a release to name.
+  The version in `package.json` is the placeholder `0.0.0`, so the tag R-E18
+  composes would be `v0.0.0`.
+
+  **The committed binaries measured 3,118,792 and 6,541,424 bytes**, which is
+  9,660,216 together against D4's estimate of 9,598,896 — 0.64 % over it, not
+  under. Two rows ship because two have a consumer; the Windows and Linux editor
+  rows have none, and committing them would spend a public repository's
+  permanent history on nothing.
+
+  **A committed binary can go stale, and nothing here catches that.** It is
+  refreshed by `just unity-plugins` and the defences are the ones already named
+  in this document: `ds_abi_version`'s handshake, and `DsSlice::stride` read per
+  array at run time.
 - **The two mapped loaders still pass `(null, 0)` for their cascade.** Story
   #1123 wrapped `ds_runtime_load_document_with_text`, so the byte-taking path
   can load a document with fonts and sheets — and it is driven against a library

@@ -4,8 +4,9 @@ The Unity C# package, and the checks that hold it to what the rest of this
 repository builds and records.
 
     com.driftsys.dashscene/   the UPM package — boundary B's types, the C#
-                              host, and the BatchRendererGroup painter; no
-                              native library
+                              host, the BatchRendererGroup painter, and the
+                              native libraries for macOS arm64 and
+                              Android arm64
     abi-check/                a plain .NET check, no Unity editor needed
     package-compat/           a netstandard2.1 compile of the package's
                               Runtime/ MINUS Runtime/Engine/, which holds the
@@ -27,7 +28,8 @@ repository builds and records.
     package-gate/             a Rust workspace member, in the sanity test tier:
                               the HLSL derived from the WGSL shader library,
                               the shader pragmas R-E11 and R-E12 require, the
-                              R-E10 split above, and BrgPainter's two
+                              R-E10 split above, R-E21's platform data over
+                              each shipped native library, and BrgPainter's two
                               diagnostics — where R-E5's read sits and what
                               guards it, and that the rung-3 arm reports the
                               rung. Text over a file no CI job compiles. The only check here with
@@ -89,21 +91,30 @@ boundary B's value types against a `dashpaint-abi` build, member by member;
 netstandard2.1, and executes nothing; `ffi-check` loads `dashscene-ffi` and
 calls it, and loads deliberately incomplete libraries beside it, each in its own
 `AssemblyLoadContext`, to watch a missing entry point become the R-E16 type
-(issue #1308); `package-gate` reads sources and re-derives the generated HLSL;
-`editor-compat` is the only one that compiles a Unity `.shader` without building
-a player; `hlsl-conformance` is the only one that dispatches shader code and
-compares the values it computed against a committed table; `render-gate` is the
-only one that builds a player and asserts what it drew — `demo` builds one and
-asserts only that every document reached the painter. Until story #1121 nothing
-compiled a C# P/Invoke against `crates/dashscene-ffi/include/dashscene.h`, which
-is item 2 of issue #1266 — but `abi-check` has always executed: it declares
-sixty `[DllImport]`s and round-trips structs by value through the library.
+(issue #1308); `package-gate` re-derives the generated HLSL and holds each
+shipped library's `.meta` and header to D3; `editor-compat` is the only one that
+compiles a Unity `.shader` without building a player; `hlsl-conformance` is the
+only one that dispatches shader code and compares the values it computed against
+a committed table; `render-gate` is the only one that builds a player and
+asserts what it drew — `demo` builds one and asserts only that every document
+reached the painter. Until story #1121 nothing compiled a C# P/Invoke against
+`crates/dashscene-ffi/include/dashscene.h`, which is item 2 of issue #1266 — but
+`abi-check` has always executed: it declares sixty `[DllImport]`s and
+round-trips structs by value through the library.
 
-None of them reads a shipped binary. Those that build a Rust half build both
-halves from one tree, so they observe only a disagreement this repository
-already contains — a stale committed library is what `DsSlice::stride` catches
-at run time, which is why `07-embedding-and-distribution.md` R-E17 makes that
-check mandatory in the host rather than advisory.
+**Two of them read a shipped binary, both since story #1334.** `render-gate` was
+de-staged, so the player it builds loads the library the package ships and runs
+the `ds_abi_version` handshake and the per-array `DsSlice::stride` comparison
+against it; and `package-gate` reads each shipped library's header far enough to
+check its architecture and container against D3. The rest build both halves from
+one tree, so they observe only a disagreement this repository already contains.
+
+**No check compares a shipped binary against the sources of the commit that
+carries it**, which is the different question: an architecture match is not a
+freshness check, and a stale library of the right architecture passes every one
+of them. That is what `DsSlice::stride` catches at run time, which is why
+`07-embedding-and-distribution.md` R-E17 makes that check mandatory in the host
+rather than advisory.
 
 This directory is **almost** outside the Cargo workspace: `package-gate` is a
 workspace member (`publish = false`, added by story #1122) and everything else

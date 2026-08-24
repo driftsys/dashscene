@@ -16,7 +16,11 @@
 // records that no CI runner here can host — so this runs on a developer's
 // machine and CI runs the other half.
 //
-// It answers four questions and refuses to answer any of them vacuously.
+// Each question below is numbered where it starts. **Where a question examines
+// a SET, it carries an assertion that fails when that set turned out to be
+// empty** — a shader list, a variant count, the shipped plugins. The two that
+// read a single value instead, the compiled assembly and the API compatibility
+// level, cannot be vacuous in that way and carry no such assertion.
 
 using System;
 using System.Collections.Generic;
@@ -301,6 +305,25 @@ public static class DashsceneEditorCompat
                 + "nothing here.");
         }
 
+        // 4. Every native library the package ships is configured for the
+        //    platform D3 assigns it.
+        //
+        // **This reads the importer back, not the `.meta` text.**
+        // `unity/package-gate`'s `plugin_meta` test is the textual half and
+        // runs on every pull request without an editor. This is the half that
+        // asks the engine what it actually parsed, and the two are not
+        // redundant: Unity resolves a platform value through an enum converter
+        // and, on failure, substitutes the default with a warning rather than
+        // an error, so a `.meta` carrying `arm64` where D3 states `ARM64` is
+        // plausible as text and wrong here. R-E21 is about that difference.
+        //
+        // **It verifies and never repairs.** Applying the values here before
+        // reading them back would make the assertion pass by construction —
+        // the gate would be checking its own write. `WritePluginMeta` is the
+        // authoring entry point, and a developer runs it once when a platform
+        // is added, then commits what Unity wrote.
+        var pluginsChecked = CheckNativePlugins(failures);
+
         foreach (var failure in failures)
         {
             Debug.LogError($"[unity-editor] {failure}");
@@ -313,10 +336,272 @@ public static class DashsceneEditorCompat
         Debug.Log(
             failures.Count == 0
                 ? $"[unity-editor] OK: the package compiled under {level}, "
-                  + $"{shaderPaths.Length} shader(s) imported clean, and {variantsCompiled} "
-                  + "shader variant(s) compiled with DOTS_INSTANCING_ON."
+                  + $"{shaderPaths.Length} shader(s) imported clean, {variantsCompiled} "
+                  + "shader variant(s) compiled with DOTS_INSTANCING_ON, and "
+                  + $"{pluginsChecked} native plugin(s) carry D3's platform data."
                 : $"[unity-editor] FAILED with {failures.Count} problem(s).");
 
+        EditorApplication.Exit(failures.Count == 0 ? 0 : 1);
+    }
+
+    /// <summary>
+    /// One row of D3's per-platform matrix, for a library this package ships.
+    /// </summary>
+    ///
+    /// `EditorSettings` is empty where D3's row states no editor data — the
+    /// Android row is that case, and R-E21 compares over the keys a row
+    /// carries rather than over a fixed pair.
+    private struct NativePlugin
+    {
+        public string AssetPath;
+        public bool CompatibleWithEditor;
+        public (string Key, string Value)[] EditorSettings;
+        public BuildTarget Target;
+        public (string Key, string Value)[] TargetSettings;
+    }
+
+    /// D3's rows for the libraries this branch ships.
+    ///
+    /// **The Windows, Linux and iOS rows of D3 ship nothing today**, by a
+    /// scope decision recorded with story #1334: they have no consumer, and
+    /// D4 accepts a committed binary per platform in a public repository's
+    /// permanent history. A row added here without a binary beside it fails
+    /// the set comparison below rather than passing quietly.
+    private static NativePlugin[] ShippedPlugins()
+    {
+        var root = $"Packages/{PackageName}/Runtime/Plugins";
+        return new[]
+        {
+            new NativePlugin
+            {
+                AssetPath = $"{root}/macOS/libdashscene_ffi.dylib",
+                CompatibleWithEditor = true,
+                EditorSettings = new[] { ("OS", "OSX"), ("CPU", "ARM64") },
+                Target = BuildTarget.StandaloneOSX,
+                TargetSettings = new[] { ("CPU", "ARM64") },
+            },
+            new NativePlugin
+            {
+                AssetPath = $"{root}/Android/libdashscene_ffi.so",
+                CompatibleWithEditor = false,
+                EditorSettings = new (string, string)[0],
+                Target = BuildTarget.Android,
+                TargetSettings = new[] { ("CPU", "ARM64") },
+            },
+        };
+    }
+
+    /// The extensions Unity treats as a native plugin on the platforms in
+    /// scope. `.a` is iOS, which ships nothing yet and is listed so that
+    /// adding one is caught by the set comparison rather than ignored.
+    private static readonly string[] NativeLibraryExtensions =
+    {
+        ".dylib", ".so", ".dll", ".a",
+    };
+
+    /// <summary>
+    /// Reads back the platform data Unity parsed for each shipped library and
+    /// compares it against D3, per R-E21.
+    /// </summary>
+    private static int CheckNativePlugins(List<string> failures)
+    {
+        var expected = ShippedPlugins();
+
+        // **What is actually in the package, not what this file expects to be
+        // there.** A library committed at a path nobody updated this list for
+        // would otherwise be invisible here — and being invisible is the
+        // failure mode D2 describes, where a plugin with no correct `.meta`
+        // is Editor-only and silently absent from every player build.
+        var prefix = $"Packages/{PackageName}/Runtime/Plugins/";
+        var found = new List<string>();
+        foreach (var path in AssetDatabase.GetAllAssetPaths())
+        {
+            if (!path.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            foreach (var extension in NativeLibraryExtensions)
+            {
+                if (path.EndsWith(extension, StringComparison.Ordinal))
+                {
+                    found.Add(path);
+                    break;
+                }
+            }
+        }
+
+        // **The set, not the count.** A count would pass a commit that deleted
+        // one library and added a second copy of another, leaving the deleted
+        // one shipped by nothing. The same reasoning is written out in
+        // `unity/ffi-check`'s entry-point check.
+        found.Sort(StringComparer.Ordinal);
+        var wanted = new List<string>();
+        foreach (var plugin in expected)
+        {
+            wanted.Add(plugin.AssetPath);
+        }
+
+        wanted.Sort(StringComparer.Ordinal);
+        if (string.Join(", ", found) != string.Join(", ", wanted))
+        {
+            failures.Add(
+                "the native libraries under Runtime/Plugins/ are not the set D3's rows "
+                + $"declare. found: [{string.Join(", ", found)}]; declared: "
+                + $"[{string.Join(", ", wanted)}]. A library the package ships and this "
+                + "list does not name is checked by nothing.");
+            return 0;
+        }
+
+        foreach (var plugin in expected)
+        {
+            var importer = AssetImporter.GetAtPath(plugin.AssetPath) as PluginImporter;
+            if (importer == null)
+            {
+                failures.Add(
+                    $"{plugin.AssetPath} has no PluginImporter. Unity did not import it as a "
+                    + "native plugin at all, so no platform data can be set on it.");
+                continue;
+            }
+
+            // **`Any` must be off for the rest to mean anything.** A plugin
+            // compatible with any platform is included everywhere whatever the
+            // per-platform CPU values say, so a wrong CPU would not show as a
+            // missing library and this check would not be measuring R-E21.
+            if (importer.GetCompatibleWithAnyPlatform())
+            {
+                failures.Add(
+                    $"{plugin.AssetPath} is marked compatible with any platform, so its "
+                    + "per-platform CPU settings decide nothing.");
+            }
+
+            if (importer.GetCompatibleWithEditor() != plugin.CompatibleWithEditor)
+            {
+                failures.Add(
+                    $"{plugin.AssetPath}: editor compatibility is "
+                    + $"{importer.GetCompatibleWithEditor()}, D3's row states "
+                    + $"{plugin.CompatibleWithEditor}.");
+            }
+
+            foreach (var (key, value) in plugin.EditorSettings)
+            {
+                var actual = importer.GetEditorData(key);
+                if (!string.Equals(actual, value, StringComparison.Ordinal))
+                {
+                    failures.Add(
+                        $"{plugin.AssetPath}: editor data {key} reads '{actual}', D3 states "
+                        + $"'{value}'. Casing is the substance of R-E21 — Unity substitutes "
+                        + "the default with a warning rather than failing.");
+                }
+            }
+
+            if (!importer.GetCompatibleWithPlatform(plugin.Target))
+            {
+                failures.Add(
+                    $"{plugin.AssetPath} is not compatible with {plugin.Target}, so it is "
+                    + "absent from that platform's player build.");
+            }
+
+            foreach (var (key, value) in plugin.TargetSettings)
+            {
+                var actual = importer.GetPlatformData(plugin.Target, key);
+                if (!string.Equals(actual, value, StringComparison.Ordinal))
+                {
+                    failures.Add(
+                        $"{plugin.AssetPath}: {plugin.Target} data {key} reads '{actual}', "
+                        + $"D3 states '{value}'.");
+                }
+            }
+        }
+
+        return expected.Length;
+    }
+
+    /// <summary>
+    /// Writes D3's platform data onto each shipped library and saves it, so
+    /// Unity produces the `.meta` a developer then commits.
+    /// </summary>
+    ///
+    /// **A separate entry point from <see cref="Run"/> on purpose.** A check
+    /// that writes the values it is about to read cannot fail. This is run by
+    /// hand — `just unity-editor WritePluginMeta` — once, when a platform is
+    /// added, and the `.meta` it produces is the artifact. R-E2 requires those
+    /// files to be generated by an editor rather than written by hand, because
+    /// the guid is what an asset reference resolves through and nothing can
+    /// mint one later in an immutable package.
+    public static void WritePluginMeta()
+    {
+        var failures = new List<string>();
+        foreach (var plugin in ShippedPlugins())
+        {
+            var importer = AssetImporter.GetAtPath(plugin.AssetPath) as PluginImporter;
+            if (importer == null)
+            {
+                failures.Add(
+                    $"{plugin.AssetPath} has no PluginImporter — is the binary committed at "
+                    + "that path?");
+                continue;
+            }
+
+            importer.SetCompatibleWithAnyPlatform(false);
+            importer.SetCompatibleWithEditor(plugin.CompatibleWithEditor);
+
+            // **Cleared, not just set.** Setting only the row's own platform
+            // leaves anything enabled by hand — an inspector tick, an older
+            // authoring pass — enabled, and the arm64 dylib then travels inside
+            // every player build for that platform. **`plugin_meta` in
+            // `unity/package-gate` is what reports such an entry** — its
+            // exclusivity rule fails when a platform the row does not name is
+            // enabled. `CheckNativePlugins` below does not: it asks about the
+            // row's own platform and about `Any`, and never enumerates the
+            // rest. This loop is what removes what that gate reports.
+            //
+            // Some `BuildTarget` members are obsolete and refuse the call, so
+            // each one is attempted on its own rather than assuming the
+            // enumeration is uniform.
+            foreach (BuildTarget other in Enum.GetValues(typeof(BuildTarget)))
+            {
+                if (other == plugin.Target)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    if (importer.GetCompatibleWithPlatform(other))
+                    {
+                        importer.SetCompatibleWithPlatform(other, false);
+                        Debug.Log(
+                            $"[unity-editor] cleared {other} from {plugin.AssetPath}");
+                    }
+                }
+                catch (Exception)
+                {
+                    // An obsolete or unsupported target. It cannot be enabled
+                    // either, so there is nothing to clear.
+                }
+            }
+            foreach (var (key, value) in plugin.EditorSettings)
+            {
+                importer.SetEditorData(key, value);
+            }
+
+            importer.SetCompatibleWithPlatform(plugin.Target, true);
+            foreach (var (key, value) in plugin.TargetSettings)
+            {
+                importer.SetPlatformData(plugin.Target, key, value);
+            }
+
+            importer.SaveAndReimport();
+            Debug.Log($"[unity-editor] wrote platform data for {plugin.AssetPath}");
+        }
+
+        foreach (var failure in failures)
+        {
+            Debug.LogError($"[unity-editor] {failure}");
+        }
+
+        AssetDatabase.SaveAssets();
         EditorApplication.Exit(failures.Count == 0 ? 0 : 1);
     }
 }
