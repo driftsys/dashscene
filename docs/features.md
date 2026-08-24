@@ -764,7 +764,9 @@ sentence.
       second. The automotive image declares no multi-window, freeform or
       split-screen feature at all, so D4's third case was run against a handheld
       emulator image instead: on **2026-08-14** the harness entered the destroy
-      handshake and never returned (issue #960). **On 2026-08-15 that was
+      handshake and never returned — the observation issue #960 was filed on,
+      and not what that issue is: the owner ruled its scope on 2026-08-23 as the
+      debug attach, leaving the handshake case to #874. **On 2026-08-15 that was
       re-derived and explained**: the render thread never returned from its
       attach, and the cause is the build rather than the transition — 0.74 s
       from cold launch to first frame for a release build against over 218 s for

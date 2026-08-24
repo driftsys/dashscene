@@ -449,13 +449,19 @@ def main():
 
         # --- several captures at once, which is the only shape production uses -
         #
-        # **The captures overlap when `logcat -c` fails**, which `lib.sh`
-        # documents as ordinary on Android 11 and later and tolerates with
-        # `|| true`: each `frames-<scene>.log` is a full ring dump, so the later
-        # ones still hold the earlier scenes' sample lines. Before the
+        # **Overlapping captures, fed synthetically.** Before the
         # de-duplication this reported three drawn samples as six, and gave the
         # duplicated row a **negative** wall time — its interval opened at the
         # other copy's later timestamp.
+        #
+        # **The production shape that produced it is narrowed, not gone**: each
+        # `frames-<scene>.log` was a full ring dump, so a failed `logcat -c`
+        # between scenes left the later ones holding the earlier scenes' lines.
+        # Since issue #1304 each capture is a `-T 1` follower opened after the
+        # clear, and `-T 1` replays the one record already in the buffer — so a
+        # failed clear can still put the previous scene's last line into the
+        # next capture. This case feeds many, which is what pins the
+        # de-duplication rather than the one line production can produce.
         first = [sample("1786963760.000", 4014, scene="surfaces")]
         second = [
             sample("1786963760.000", 4014, scene="surfaces"),  # the failed clear

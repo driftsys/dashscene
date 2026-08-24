@@ -1856,7 +1856,7 @@ only the owner can supply, and those could be settled while this slice was
 built. That held: v0.21's own hardware arrived during it.
 
 **Two issues moved to v0.21 on 2026-08-16 as hardware-gated**, #960 and #969 — a
-reading that held for one of them, as this entry's "what left this milestone"
+reading that holds for both, as this entry's "what left this milestone"
 paragraph below records, and the v0.21 entry below gives the reasoning. **The
 slice then had no hardware-gated issue at all**: what was left of the Android
 half here was closable on an emulator, as is #874, which stays on v0.23.
@@ -1924,11 +1924,15 @@ same thing** — epic #951's closing comment groups both under "carried forward"
 which is a ruling rather than a milestone fact, and this entry separates them.
 
 **Moved off v0.20**: #979 (the CodeQL dismissal on the C ABI's own test) to
-v0.23, and #960 and #969 to v0.21 **as hardware-gated, which one of the two
-was** — #969 was measured on 2026-08-17. #960 is the other and the reading does
-not hold for it: its own 2026-08-14 correction had already re-scoped it to a
-painter that cannot obtain a device saying so, which no device run settles. It
-is still open, and the v0.21 entry below carries the correction.
+v0.23, and #960 and #969 to v0.21 **as hardware-gated, which both of them were**
+— #969 was measured on 2026-08-17 and #960 is still waiting for its run. **The
+owner ruled #960's scope on 2026-08-23**: it is the debug attach, and it closes
+on one acquisition measurement on target hardware, both profiles, from
+`measure/android/attach-timing.sh`. This paragraph said the opposite until then
+— that the issue's own 2026-08-14 correction had re-scoped it to a painter that
+cannot obtain a device saying so, which no device run settles. That half is
+split off and done, in PR #1077, and the v0.21 Track A bullet below has carried
+the governing reading since 2026-08-16.
 
 **Filed by this slice's work onto other milestones, never on this one**: #1226
 (the C ABI's runtime handle is a raw pointer) to v0.21, where the v0.20
@@ -1961,12 +1965,15 @@ later one, **with one exception added below on 2026-08-18 and named here so the
 rule still holds**: the owner ruled the two remaining entry conditions that
 evening, after this block was written, and the paragraph recording it sits under
 the "Three entry conditions" paragraph rather than here. On that count — and
-only that one — the later statement is the one below. Two readings below are
+only that one — the later statement is the one below. One reading below is
 superseded outright rather than by a count: the "Three entry conditions"
 paragraph lists the conditions rather than the unmet ones, and the third of them
-is now met; and **every paragraph below describing #960 as a device run that
-"owes only the run" is wrong** — its own 2026-08-14 correction re-scoped it, and
-the bullet on it here is the current reading.
+is now met. **A second exception stood here until 2026-08-23** — that every
+paragraph below describing #960 as a device run that "owes only the run" is
+wrong, on that issue's own 2026-08-14 correction — and the owner's ruling of
+that date removes it. #960 is the debug attach and it is a device run, so those
+paragraphs are correct as written and the bullet below is the one that was
+wrong.
 
 - **The hardware entry condition was met before the slice opened**, so of the
   three the paragraph below lists, two remained when this block was written.
@@ -1975,13 +1982,18 @@ the bullet on it here is the current reading.
   5 (`redfin`, Adreno 620, Android 14 / API 34) was measured on 2026-08-17, and
   #885, #969, #842 and #1128 all closed on it. **#1107's Track A owed five items
   and four are closed**; the two this revision adds to it, #1215 and #1236, make
-  it seven with three open. Of those three, none is a device run: #960 is a
-  silent-failure defect on its own 2026-08-14 correction, and #1215 and #1236
-  are defects in the harness and in the measurement's own table. **So no part of
-  Track A is waiting for hardware any longer** — which is a statement about that
-  track and not about the epic: **Track B is Unity on Android hardware**, it is
-  device work by definition, and it is in #1107's definition of done. It waits
-  on #1106 rather than on a device being absent. The measurements are in
+  it seven with three open. **Of those three, one is a device run**: #960, the
+  debug attach — #1215 and #1236 are defects in the harness and in the
+  measurement's own table. **So Track A is hardware-gated until #960's run.**
+  This bullet said the opposite until 2026-08-23: it read #960 as a
+  silent-failure defect on that issue's own 2026-08-14 correction and concluded
+  that no part of Track A was waiting for hardware any longer. The owner ruled
+  the scope on 2026-08-23 and issue #1291 records it; what governs is the
+  reading this file's own Track A bullet has carried since 2026-08-16. The
+  hardware statement is about that track and not about the epic either way:
+  **Track B is Unity on Android hardware**, it is device work by definition, and
+  it is in #1107's definition of done. It waits on #1106 rather than on a device
+  being absent. The measurements are in
   [`design/android-toolchain.md`](design/android-toolchain.md) under "What the
   device measured", and every number there is a number about one device.
 - **Nine open issues on this milestone belonged to no epic**, which is v0.20's

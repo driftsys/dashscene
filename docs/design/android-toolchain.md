@@ -153,26 +153,28 @@ painter-capable adapter there is a CPU rasteriser.
   needs a different emulator image. It does not need different hardware, which
   this record claimed until 2026-08-15: the case was run on 2026-08-14 against a
   handheld image, and the harness entered the destroy handshake and never
-  returned (issue #960, open). The recipe that runs it is `android-splitscreen`,
-  and it asserts on the markers `HarnessActivity` logs. Since 2026-08-15 the
-  completion marker is logged only inside the `handle != 0` guard, and a third
-  marker names the case where no runtime handle was obtained; a device that
-  could not be obtained is not that case, because it returns a non-zero handle.
-  **`nativeIsRunning` does not answer it either**, which this record said until
-  2026-08-15: it reports `Handshake::is_running`, true for `Starting` as well as
-  `Running`, and the render thread reports `started()` only once its attach has
-  returned — so a thread wedged inside an attach answers `true`, the same answer
-  a drawing loop gives. What does answer it is the pair of markers around the
-  attach **read together with the failure line**, which is a three-way reading
-  rather than the two-way one this record carried until issue #1080:
-  `attaching a WxH surface` is written before every acquisition, `attached`
-  after every one that succeeded, and `attach failed:` or
-  `could not rebuild the surface:` after one that finished and failed. Only
-  `attaching` followed by none of the three is the wedge. Reading "no
-  `attached`" on its own as a wedge calls every failed attach one, which is the
-  same shape of wrong advice #1080 was filed to remove. The
-  `android-splitscreen` recipe named `nativeIsRunning` in two comments until PR
-  #1098 corrected them under #1080. The v0.19 driver prompt asserted the
+  returned — the observation issue #960 was filed on, and **not what that issue
+  is**: its own 2026-08-14 correction re-scoped it and the owner's ruling of
+  2026-08-23 settled the scope as the debug attach, leaving the handshake case
+  to #874. The recipe that runs it is `android-splitscreen`, and it asserts on
+  the markers `HarnessActivity` logs. Since 2026-08-15 the completion marker is
+  logged only inside the `handle != 0` guard, and a third marker names the case
+  where no runtime handle was obtained; a device that could not be obtained is
+  not that case, because it returns a non-zero handle. **`nativeIsRunning` does
+  not answer it either**, which this record said until 2026-08-15: it reports
+  `Handshake::is_running`, true for `Starting` as well as `Running`, and the
+  render thread reports `started()` only once its attach has returned — so a
+  thread wedged inside an attach answers `true`, the same answer a drawing loop
+  gives. What does answer it is the pair of markers around the attach **read
+  together with the failure line**, which is a three-way reading rather than the
+  two-way one this record carried until issue #1080: `attaching a WxH surface`
+  is written before every acquisition, `attached` after every one that
+  succeeded, and `attach failed:` or `could not rebuild the surface:` after one
+  that finished and failed. Only `attaching` followed by none of the three is
+  the wedge. Reading "no `attached`" on its own as a wedge calls every failed
+  attach one, which is the same shape of wrong advice #1080 was filed to remove.
+  The `android-splitscreen` recipe named `nativeIsRunning` in two comments until
+  PR #1098 corrected them under #1080. The v0.19 driver prompt asserted the
   emulator could exercise all three cases; for this AVD that is false.
 
   **The measurement that explains it, taken 2026-08-15 (issue #960).** The
@@ -619,22 +621,23 @@ measurement does settle is the shape of the answer:
 ### The attach, and what it does and does not say
 
 Recorded because the apparatus takes it and it is the first such figure from
-hardware. **Under the reading issue #960's own most recent comments and epic
-#1107 both state, this table is that issue's hardware half** — the acquisition,
-in both profiles, on a target device.
+hardware. **This table is issue #960's hardware half** — the acquisition, in
+both profiles, on a target device. The owner ruled that issue's scope on
+2026-08-23: #960 is the debug attach, and the silent-failure half its title
+still describes is split off and done, in PR #1077.
 
 **This file said the opposite until 2026-08-23**, and the sentence is worth
 keeping visible: "It is not the answer to #960, whose subject is a different
 thing." That was written under #960's 2026-08-14 comment, which two comments of
-2026-08-16 superseded, and **the records have not been made to agree** —
-`docs/roadmap.md`'s 2026-08-18 revision block restates the 2026-08-14 reading
-while that same file's Track A bullet carries the later one. Which reading
-stands is a scope ruling on an open issue, so it is the owner's; it is filed as
-issue #1291 and nothing in this file resolves it. What this table is under
-either reading is a measurement, and it is read below on its own terms. (Phrased
-without the keyword deliberately: #960 is open, and a sentence saying an issue
-was _not_ closed fires exactly as well as one saying it was, in any pull-request
-body that quotes it.)
+2026-08-16 superseded, and the records then stated both readings at once —
+`docs/roadmap.md`'s 2026-08-18 revision block restated the 2026-08-14 one while
+that same file's Track A bullet carried the later one. Issue #1291 is the record
+of that disagreement and of the ruling that ended it, and the roadmap block was
+corrected in the same pass as this paragraph. What this table is under the
+governing reading is evidence and not a close, for the reason "What this run
+does not settle" gives below. (Phrased without the keyword deliberately: #960 is
+open, and a sentence saying an issue was _not_ closed fires exactly as well as
+one saying it was, in any pull-request body that quotes it.)
 
     run   profile   acquire   to first frame   am start -W TotalTime
     1     release   0.27 s    0.31 s           188 ms
@@ -709,17 +712,15 @@ it — and not a whole core throughout, which is why the figure there is split a
 - **#874's third case is exercised but not closed here**: one clean split
   transition is evidence, not the repeated run that recipe performs, and
   `android-splitscreen` itself cannot pass while #1232 stands.
-- **#960 is not settled by this run under either reading of it**, and this
-  bullet asserted one of the two until 2026-08-23 — that the issue is "a painter
-  that cannot obtain a device must say so", a silent-failure defect rather than
-  a measurement, and that "the epic's one-line summary of #960 as 'whether a
-  debug attach ever completes' does not match the issue". The epic's summary is
-  the reading #960's two 2026-08-16 comments state, and issue #1291 carries the
-  disagreement. Under the silent-failure reading this run exercises nothing: the
-  device obtains a device, so the failure path is not reached. Under the
-  debug-attach reading the table above is evidence and not a close — two runs
-  that disagree by a factor of fifteen, neither labelled first-launch-after-
-  install.
+- **#960 is not settled by this run**, and this bullet asserted a superseded
+  reading of that issue until 2026-08-23 — that it is "a painter that cannot
+  obtain a device must say so", a silent-failure defect rather than a
+  measurement, and that "the epic's one-line summary of #960 as 'whether a debug
+  attach ever completes' does not match the issue". **The epic's summary is the
+  governing reading**, ruled by the owner on 2026-08-23 and recorded on issue
+  #1291; the silent-failure half is split off and done, in PR #1077. Under the
+  governing reading the table above is evidence and not a close — two runs that
+  disagree by a factor of fifteen, neither labelled first-launch-after-install.
 - **No frame budget is established.** The 16.67 ms above is a reference point
   for reading the table, not a requirement.
 - **One device.** Nothing here says what a different Adreno, a Mali or a PowerVR
@@ -769,6 +770,11 @@ follow:
       layer-cost.txt       the render-target sweep — Q-6, #1128
       frames.md            one row per 240 drawn frames, with CPU beside it
       frames-<scene>.log   the raw logcat each row is derived from
+      unreadable-<scene>.log  a capture that stopped watching. That scene is
+                           absent from frames.md rather than reported
+      gpu-launch.log       the GPU pass's own launch capture. No table is
+                           derived from it; it says whether a frame was drawn
+                           before that pass started
       attach.md            cold launch to first frame, release against debug
       sf-timestats.txt     the compositor's own frame statistics over a window
       sf-latency.txt       superseded on Android 15 — see below
@@ -889,20 +895,77 @@ reported `never attached — no acquisition was attempted` for an acquisition th
 was in flight at that moment, with `surfaceDestroyed has been waiting 34 s` in
 the same capture. That is the one wrong answer this procedure must not give:
 those two outcomes are the pair it exists to tell apart, and a lost marker turns
-the wedge into "the loop never started". **`frame-capture.sh` and `run.sh` still
-capture the old way**, and the same argument applies to them unchanged; that is
-issue #1304.
+the wedge into "the loop never started".
+
+**All three capture paths under `measure/android/` use that shape**, through
+`ds_logcat_follow`, `ds_logcat_alive` and `ds_logcat_stop` in `lib.sh`.
+`frame-capture.sh` and `run.sh` kept the old one until the same argument was
+applied to them unchanged (issue #1304), and the mechanism moved into `lib.sh`
+in that pass rather than being hand-rolled a third time. **Neither of those two
+has been re-run on a device since**, so what is established of them is the shape
+and the stub tests below — and of `run.sh`, only the shape: nothing drives it,
+which is issue #1339.
+
+**That scope is `measure/android/` and not the repository.**
+`just android-splitscreen` still reads `adb logcat -d` after its own poll, at
+four sites, and it is the recipe that decides #874's surface-destroy verdict —
+so a lost marker there produces a wrong pass or fail rather than a degraded
+number. It is the remaining member of the class, blocked on the same device
+clause as #1304, and it is issue #1338.
+
+**What each script does with an unreadable capture differs, because their
+verdicts do.** `attach-timing.sh` records `CAPTURE UNREADABLE` for that profile
+and still writes the table for the other. `frame-capture.sh` drops that scene
+from the table — moving its capture to `unreadable-<scene>.log`, out of the glob
+`frame-table.py` is handed — and goes on to the next scene, so a transport that
+blips during the third of three scenes does not discard the two already
+captured. `run.sh` warns and continues, because every step there is guarded so
+the bundle index still gets written.
 
 **The wiring between the two decisions is driven by a test rather than only by a
 device.** `attach-outcome-test.sh` calls `ds_attach_outcome` and
 `ds_capture_state` with synthetic arguments, which leaves the `case` that maps a
 capture state onto a verdict, the follower's trap and the suppression of the
 interval columns reachable only at a device — the one place this apparatus is
-meant to be already proven. `attach-timing-test.sh` runs the script itself
-against a stub `adb` and a stub `just`, over six cases: a run that drew, the
-wedge, and the three unreadable states, plus a launch refused after the follower
-is spawned, which is the only path the trap exists for. Both are inside
-`just harness-tests`, and so inside `check` and `build`.
+meant to be already proven. `attach-timing-test.sh` and `frame-capture-test.sh`
+run their script against a stub `adb`, over the outcomes a working device cannot
+produce. Each file's own header states what it covers and, more usefully, which
+mutation each case is there to catch; the case counts are deliberately not
+repeated here, because a census in a document is a second copy that drifts. Both
+are inside `just harness-tests`, and so inside `check` and `build`.
+
+**What a stub can and cannot discriminate is worth stating, because the first
+version of `frame-capture-test.sh` discriminated almost none of it and a second
+version still missed half.** It now distinguishes a follower opened before each
+scene's launch from one opened after — the defect issue #1304 is about, and
+counted per scene, because a single "something launched" marker makes every
+scene after the first look late; a follower carrying `-T 1` from one without it;
+a capture that left the `frames-*.log` glob from one that merely held no rows,
+which needs the degraded scene's capture to hold samples; a poll that stops on a
+dead follower, which only a clock can see; and a count from a flag, in both the
+samples and the scenes.
+
+**None of the three unreadable states exits from that `case`**, and an earlier
+sentence here said each refusal had "its own exit". They warn, the scene is
+degraded, and the run's exit comes from the closing guard — which is why the
+single-scene cases assert that guard's text as well as the arm's. The degrade
+path has one exit of its own, for a move it cannot make.
+
+What no stub reaches is **the ring itself**: a stub `adb` has no bounded buffer,
+so these tests hold the verdict wiring, the follower's lifetime and its
+ordering, not the property that a stream keeps markers a dump would lose. That
+is a device question, and it is what issue #1304 still owes: each converted
+script needs one device run reproducing a figure it had already produced.
+
+**Some behaviour in the converted scripts is reached by no test, and the honest
+form of that is a rule rather than a count.** Anything whose effect is invisible
+in the output is not pinned — the post-stop re-read of the sample count, the
+parent-side truncation in `ds_logcat_follow`, the `am force-stop` on the degrade
+path — and neither is the `*)` unrecognised-capture-state arm, which no stub can
+reach because only `ds_capture_state` decides that value. **No closed count is
+kept here**: three review rounds each found the previous count already stale,
+which is what a census in a document does. `run.sh` is the larger case and has
+its own issue, #1339.
 
 **A device that goes away mid-wait is checked for, and it is a different failure
 from a slow one.** On a host under memory pressure this emulator has stopped
@@ -1264,13 +1327,14 @@ not because it was the cleanest, since 0.72 s was quiet too.
   established that the unresponsive one would not have recovered** — both
   absences are why the paragraphs above refuse a threshold.
 
-  Any of the three lets a run lose the device part-way. Whether that then
-  produces samples that read as data depends on the script: `attach-timing.sh`
-  asks after the wait and refuses to report intervals, and `frame-capture.sh`
-  and `run.sh` — the two issue #1304 covers — do not ask at all. A guest-side
-  CPU-bound interval cannot be measured on a host in that state, and a figure
-  taken anyway would not be separable from the contention. It needs a machine
-  running one session.
+  Any of the three lets a run lose the device part-way, and **all three scripts
+  under `measure/android/` now ask** — `attach-timing.sh` since PR #1300,
+  `frame-capture.sh` and `run.sh` since issue #1304. What each does with the
+  answer differs because their verdicts differ, and the attach section above
+  sets the three out. `just android-splitscreen` still does not ask, which is
+  issue #1338. A guest-side CPU-bound interval cannot be measured on a host in
+  that state, and a figure taken anyway would not be separable from the
+  contention. It needs a machine running one session.
 - It does **not** say what a device does. The Pixel 5 pair above completed both
   profiles, and the two results are not in tension: one is a CPU rasteriser on
   an emulated arm64 guest and the other is an Adreno 620.

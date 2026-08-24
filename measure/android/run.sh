@@ -161,6 +161,13 @@ fi
 ds_note "GPU pass — launching ${GPU_SCENE} for it"
 "${adb}" shell am force-stop "${PKG}" || true
 ds_logcat_clear "${adb}"
+# **Opened before the launch, and it streams into the bundle.** This wait read
+# the whole device ring on every iteration instead — the defect
+# `attach-timing.sh` was repaired for on 2026-08-23 and this script was not
+# (issue #1304). `ds_logcat_follow` in `lib.sh` owns the mechanism and the
+# measurement behind it; what it costs here is below, at the wait itself.
+gpu_log="${out}/gpu-launch.log"
+ds_logcat_follow "${adb}" "${gpu_log}"
 # **Guarded like every other step.** `ds_am_start` fails on a swallowed warm
 # start and on a refused launch, and unguarded that ends the run under `set -e`
 # before the index at the bottom is written — the one file that says what the
@@ -172,24 +179,98 @@ if [ "${launched}" = "no" ]; then
     ds_warn "could not launch ${GPU_SCENE} for the GPU pass; it will record what it"
     ds_warn "can and the bundle's index will mark the rest absent."
 fi
-# Wait for a frame before asking the compositor about frames. Inline rather than
-# shared: `frame-capture.sh` waits for a *count* of sample lines and
-# `attach-timing.sh` for the earliest of four markers, so the three waits are
-# three different questions.
+# Wait for a frame before asking the compositor about frames. The wait is inline
+# rather than shared, and only the capture under it is: `frame-capture.sh` waits
+# for a *count* of sample lines and `attach-timing.sh` for the earliest of four
+# markers, so the three waits are three different questions over one mechanism.
 #
-# **Captured, then matched in bash — never `logcat | grep -q`.** Under `pipefail`
-# grep exits at its first match, `adb logcat` dies on SIGPIPE, and the pipeline
-# reports 141, so a match inverts into a miss. `lib.sh`'s own `ds_am_start` says
-# this and this loop did it anyway: measured against a 400 000-line producer, 8
-# runs out of 8 read a match as a miss, and a 50-line one hid it in 0 of 8 — so a
-# real logcat ring after a launch is the case that breaks and a small test is the
-# case that does not. The loop then ran all 60 iterations every time, starting the
-# compositor's window a minute late and unable to tell a drawn frame from none.
-for _ in $(seq 1 60); do
-    seen=$("${adb}" logcat -d 2>/dev/null | grep -cF "first frame" || true)
+# **It reads the host file the follower is writing, and touches adb not at
+# all.** It used to run `adb logcat -d` once a second for up to sixty seconds,
+# which is the whole ring re-transferred and re-scanned per iteration, and the
+# ring is bounded while nothing bounds how long a launch takes to draw.
+#
+# **The SIGPIPE hazard that comment recorded belonged to an earlier `grep -q`
+# form, not to the `grep -c` pipeline removed here**, and this comment said
+# otherwise in its first draft. Under `pipefail` `grep -q` exits at its first
+# match, `adb logcat` dies on SIGPIPE, and the pipeline reports 141, so a match
+# inverts into a miss — measured against a 400 000-line producer, 8 runs out of
+# 8, while a 50-line one hid it in 0 of 8. `grep -c` reads all of its input and
+# so never carried it. What the removed pipeline did carry is the ring: 60 full
+# dumps of a bounded buffer over a wait nothing bounds. A `grep` over a file has
+# no upstream to signal and no ring to lose.
+frame_wait=60
+seen=0
+for _ in $(seq 1 "${frame_wait}"); do
+    seen=$(grep -cF "first frame" "${gpu_log}" 2>/dev/null || true)
     if [ "${seen:-0}" -gt 0 ]; then break; fi
+    # A follower that has exited will never add the marker, so the rest of the
+    # wait buys nothing. The state is classified below, not here.
+    ds_logcat_alive || break
     sleep 1
 done
+# **Asked before the follower is stopped**, or the stop is what the question
+# would observe. See `ds_logcat_alive` in `lib.sh`.
+gpu_capture_alive="no"
+if ds_logcat_alive; then
+    gpu_capture_alive="yes"
+fi
+ds_logcat_stop
+# **Re-read from the finished capture.** The loop's last look is up to a second
+# old, so a first frame that arrives inside the final window is in the file and
+# not in the variable — and the verdict below would then write "no first frame"
+# into the bundle about a capture that holds the marker.
+seen=$(grep -cF "first frame" "${gpu_log}" 2>/dev/null || true)
+seen="${seen:-0}"
+# **Whether the capture can be read at all, before "no frame was drawn" is said
+# about it.** The wait above ending with nothing is either the app not drawing
+# or the capture not watching, and those send a reader to different places; a
+# bundle that reports the first for the second describes a painter that was
+# never observed. This step warns rather than exits, because every step in this
+# script is guarded so the index at the bottom still gets written.
+gpu_present="no"
+if ds_has_device "${adb}"; then
+    gpu_present="yes"
+fi
+gpu_state=$(ds_capture_state "${gpu_log}" "${gpu_present}" "${gpu_capture_alive}")
+# **Each state is named**, because their remedies differ and the reader of a
+# bundle is not reading this file. An earlier draft collapsed all four into one
+# message that named none of them, which threw away the distinction
+# `ds_capture_state` exists to make.
+case "${gpu_state}" in
+readable)
+    if [ "${seen}" -eq 0 ]; then
+        ds_warn "no first frame in ${frame_wait} s, over a capture that watched the"
+        ds_warn "whole wait. The GPU pass below will describe a scene that drew"
+        ds_warn "nothing — on an emulator, restart it with -gpu host (issue #1158)."
+    fi
+    ;;
+empty)
+    ds_warn "the launch capture holds nothing but logcat's own preamble, so"
+    ds_warn "whether a frame was drawn before the GPU pass is unknown."
+    ;;
+device-gone)
+    ds_warn "adb no longer lists the device. It may be gone or it may be sitting"
+    ds_warn "at \`offline\` with its process alive — \`pgrep -f qemu-system\` says"
+    ds_warn "which. The launch capture stopped when it stopped answering, so"
+    ds_warn "whether a frame was drawn before the GPU pass is unknown."
+    ;;
+capture-died)
+    ds_warn "the logcat follower exited before the wait ended, with the device"
+    ds_warn "still attached. The launch capture is truncated at an unknown point,"
+    ds_warn "so whether a frame was drawn before the GPU pass is unknown."
+    ;;
+*)
+    # **Unlike both siblings, this warns and continues.** `attach-timing.sh` and
+    # `frame-capture.sh` exit on a state `ds_capture_state` grew and they do not
+    # handle; this script cannot, because every step here is guarded so the
+    # index at the bottom still names what the bundle holds. What it must not do
+    # is claim anything from a capture it cannot classify.
+    ds_warn "unrecognised capture state \`${gpu_state}\` for the launch capture."
+    ds_warn "Nothing is claimed about whether a frame was drawn."
+    ;;
+esac
+# The GPU pass runs whatever the answer: every step here is guarded so the
+# index at the bottom still names what the bundle holds.
 # A few seconds of drawing before the GPU pass starts its own collection
 # window, so the compositor is counting a steady scene rather than the launch.
 sleep 5
@@ -245,9 +326,13 @@ ds_note "attach procedure — release, then debug"
     done
     echo
     echo "Per-scene logcat captures are \`frames-<scene>.log\`, and each script's"
-    echo "own transcript is \`<name>.log\`. The captures are the raw evidence: every"
-    echo "table here is derived from them and can be re-derived with"
-    echo "\`measure/android/frame-table.py\`."
+    echo "own transcript is \`<name>.log\`. **Those captures are the raw evidence**:"
+    echo "every table here is derived from them and can be re-derived with"
+    echo "\`measure/android/frame-table.py\`. An \`unreadable-<scene>.log\` is a"
+    echo "capture that stopped watching — that scene is absent from the table"
+    echo "rather than reported. \`gpu-launch.log\` is the GPU pass's own launch"
+    echo "capture and no table is derived from it; it exists so a reader can see"
+    echo "whether a frame was drawn before that pass started."
     echo
     echo "## Which issue each artifact belongs to"
     echo

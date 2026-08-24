@@ -164,15 +164,27 @@ def read(paths):
     `samples` is a list of dicts in file order; `cpu` maps pid to a
     time-ordered list of (epoch, jiffies).
 
-    **Both kinds are de-duplicated by (pid, epoch), and the reason is that the
-    captures overlap.** `frame-capture.sh` passes every `frames-<scene>.log` at
-    once, and each is a full `logcat -d` dump — so when `logcat -c` fails between
-    scenes, which `lib.sh` documents as ordinary on Android 11 and later and
-    tolerates with `|| true`, the later dumps still hold the earlier scenes'
-    sample lines. Without this, three drawn samples were reported as six, and the
-    duplicated first row got a **negative** `wall s`: its interval opened at the
-    previous copy's later timestamp. A negative wall time presented as a
-    measurement is worse than a missing one.
+    **Both kinds are de-duplicated by (pid, epoch)**, and `frame-capture.sh`
+    passes every `frames-<scene>.log` at once, so a line present in two captures
+    would otherwise be counted twice. Without this, three drawn samples were
+    reported as six, and the duplicated first row got a **negative** `wall s`:
+    its interval opened at the previous copy's later timestamp. A negative wall
+    time presented as a measurement is worse than a missing one.
+
+    **The mechanism that produced the overlap is narrowed to one record, and
+    the de-duplication stays.** Each capture was a full `logcat -d` dump until
+    issue #1304, so a
+    failed `logcat -c` between scenes — which `lib.sh` documents as ordinary on
+    Android 11 and later and tolerates with `|| true` — left the later dumps
+    holding the earlier scenes' sample lines. Since #1304 each capture is a
+    `-T 1` follower opened after that clear. **That narrows the route to one
+    line rather than closing it**: `-T 1` prints the most recent record already
+    in the buffer before it follows, so on a failed clear the previous scene's
+    last line — which can be a sample — still enters the next capture. A whole
+    ring became one record, and this is what covers that record. It also costs
+    one dictionary, and a duplicate reaching the table is a wrong number rather
+    than a missing one. `frame-table-test.py` feeds the overlap synthetically
+    rather than relying on a capture shape to produce it.
 
     A pid and an epoch to the millisecond identify one logcat record, so this
     drops re-reads of the same record and keeps two genuinely distinct samples

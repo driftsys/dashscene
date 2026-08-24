@@ -23,14 +23,14 @@
 #     attaching a WxH surface -> first frame                to the first frame
 #
 # The **acquisition** is the adapter, the device and the whole pipeline set, and
-# it is what issue #960 asks about under the reading its own most recent comment
-# and epic #1107 both state. This comment asserted the opposite until 2026-08-23
-# — that the issue was a silent-failure defect and this interval was not its
-# subject — which was the reading of one earlier comment and is not the current
-# one. **`docs/design/android-toolchain.md` owns that scope**, and issue #1291
-# carries the disagreement between the records; this comment deliberately states
-# neither. The second interval adds the first tick and the first draw over
-# it.
+# **it is what issue #960 closes on**: the owner ruled that issue's scope on
+# 2026-08-23, and the reading that governs is the debug attach — one acquisition
+# measurement on target hardware, in both profiles, from this script. This
+# comment asserted the opposite until then, that #960 was a silent-failure
+# defect and this interval was not its subject; that half is split off and done,
+# in PR #1077. **`docs/design/android-toolchain.md` owns that scope** and issue
+# #1291 records the ruling. The second interval adds the first tick and the
+# first draw over it.
 #
 # `am start -W` reports `TotalTime` beside them, which is the framework's own
 # number for the activity being displayed. It is recorded and it is not the same
@@ -186,58 +186,21 @@ for profile in "${profiles[@]}"; do
     "${adb}" shell am force-stop "${PKG}" || true
     ds_logcat_clear "${adb}"
 
-    # **The capture streams, and it is opened before the launch.** This dumped
-    # the whole ring with `logcat -d` once per poll instead, and that loses the
-    # markers it is reading for: the ring is bounded, the wait is not, and a
-    # chatty device overwrites the beginning of the run while the poll is still
-    # going. Measured on 2026-08-23 on the automotive emulator, whose audio
-    # stack writes about 650 `audio_vbuffer_write` lines per minute: at 90 s the
-    # capture began 34 s AFTER the launch, the `attaching a WxH surface` line
-    # had aged out of the ring, and this script reported **`never attached — no
-    # acquisition was attempted`** for an acquisition that was in flight at that
-    # moment — the render thread was inside the call, and
-    # `surfaceDestroyed has been waiting 34 s` was in the same capture.
+    # **The capture streams, and it is opened before the launch.** Why that is
+    # the only shape that can tell this script's four outcomes apart, why `-T 1`
+    # matters as much as the follower, and why an EXIT trap comes with it are
+    # all in `ds_logcat_follow` in `lib.sh`, which owns the mechanism — one
+    # copy, because the second one diverged: this script was repaired on
+    # 2026-08-23 and the two siblings that had hand-rolled the same capture were
+    # not (issue #1304).
     #
-    # A verdict that reads "the loop never started" for a wedged attach is the
-    # one wrong answer this script must not give: those are the two outcomes it
-    # exists to tell apart. A follower cannot lose the beginning of the run,
-    # because it is draining the buffer from before there is anything in it.
-    #
-    # **`-T 1` matters as much as the follower does.** A bare `adb logcat`
-    # replays the whole device ring before it follows, and `ds_logcat_clear` is
-    # `logcat -c || true` because Android 11 and later refuse the clear often
-    # enough that `lib.sh` records a run aborting on it. So on any run where the
-    # clear fails, this capture would open holding the *previous* launch's
-    # `attaching`, `attached` and `first frame` — and `first_at` reads the first
-    # occurrence, so the debug row would be reported as `drew` with the release
-    # row's timings. The ring used to rotate those lines out over a long wait; a
-    # host file never does, so following without `-T` would make the stale
-    # markers permanent rather than transient. `-T 1` starts one line back.
-    "${adb}" logcat -T 1 -v epoch > "${log}" 2>/dev/null &
-    follower=$!
-    # **Trapped, not merely killed at the end of the loop.** Between here and
-    # that kill sits `ds_am_start`, which returns 1 on the three outcomes its
-    # own comment records `am start` reporting as success — a refused launch, an
-    # adb-level error, and a warm start. Under `set -euo pipefail` that ends the
-    # script with the follower still running, appending to a capture file the
-    # next run will truncate underneath it. `lib.sh` records the same hazard for
-    # the CPU sampler and bounds it with a tick count; a host-side background
-    # job needs the trap instead.
-    trap 'kill "${follower:-}" 2>/dev/null || true' EXIT
-    # **Narrows the window between the follower being spawned and the launch**,
-    # and does no more than that. `logcat` writes `--------- beginning of main`
-    # as soon as it opens the buffer, so a non-empty file says the capture is
-    # attached and the launch below will be inside it.
-    #
-    # **It enforces nothing, and this comment claimed it did until 2026-08-23.**
-    # Its result is discarded: whether it broke or ran out, the launch happens
-    # either way. A follower that never starts is caught downstream instead, by
-    # `ds_capture_state` answering `empty` — which is tested — so deleting this
-    # loop would change no outcome, only the size of the race it narrows.
-    for _ in $(seq 1 25); do
-        [ -s "${log}" ] && break
-        sleep 0.2
-    done
+    # What is specific to this script is what a lost marker costs here.
+    # `first_at` below reads the FIRST occurrence of each marker, so a capture
+    # holding a previous launch's lines reports one profile's row with another
+    # profile's timings, and a capture that opened late reports
+    # `never attached — no acquisition was attempted` for an acquisition that is
+    # in flight — the one verdict this script must not give.
+    ds_logcat_follow "${adb}" "${log}"
 
     bound=$(( ( (TIMEOUT + 4) / 5 ) * 5 ))
     ds_note "${profile}: cold launch, waiting up to ${bound} s for a first frame"
@@ -254,10 +217,12 @@ for profile in "${profiles[@]}"; do
     # three patterns never match on an ordinary run, so a per-second three-grep
     # loop rescans a file of megabytes some hundreds of times. That is host work
     # charged to the machine running the emulator being timed, and this record's
-    # own figure is weaker for host contention. `frame-capture.sh` bounds the
-    # same shape for the same stated reason: the poll was perturbing the
-    # measurement it was taking. Five seconds costs at most five seconds of
-    # resolution on an interval whose reportable outcomes are seconds or
+    # own figure is weaker for host contention. `frame-capture.sh` had the same
+    # shape for the same stated reason — the poll was perturbing the measurement
+    # it was taking — and since issue #1304 it polls its own host file, so it
+    # bounds nothing because it transfers nothing. Five seconds costs at most
+    # five seconds of resolution on an interval whose reportable outcomes are
+    # seconds or
     # hundreds of seconds.
     #
     # **The bound reported is the bound waited.** `TIMEOUT` is rounded up to the
@@ -280,31 +245,26 @@ for profile in "${profiles[@]}"; do
             break
         fi
         seen_lines=$(wc -l < "${log}" 2>/dev/null || echo 0)
+        # **A follower that has exited will never add any of the three markers**,
+        # so the rest of the bound buys nothing — up to 600 s on the run this
+        # apparatus was written for. The state is classified after the loop, not
+        # here; this only stops the waiting. `frame-capture.sh` and `run.sh` do
+        # the same, and this script had been left out of that sweep.
+        ds_logcat_alive || break
         sleep 5
         waited=$((waited + 5))
     done
-    # **Asked whether it is still there before it is stopped**, because that is
-    # the direct answer to "did the capture watch the whole wait": `adb logcat`
-    # exits when its transport drops, so a follower that is gone stopped early.
-    # Read before the kill, or the kill is what the test would observe.
-    # **Asked as "is it still one of this shell's running jobs", not
-    # `kill -0`.** A pid is reusable: the follower can exit at +30 s of a ten
-    # minute wait, be reaped, and its number be handed to something else on a
-    # host this loaded — and `kill -0` would then answer yes about a process
-    # that is not the capture. `jobs -pr` lists only this shell's own children
-    # that are still running, which is the question being asked.
+    # **Asked before the follower is stopped**, or the stop is what the question
+    # would observe. `ds_logcat_alive` in `lib.sh` carries why that is the
+    # direct answer to "did the capture watch the whole wait" and why it is
+    # `jobs -pr` rather than `kill -0`.
     capture_alive="no"
-    if jobs -pr | grep -qx "${follower}"; then
+    if ds_logcat_alive; then
         capture_alive="yes"
     fi
     # Stopped before the markers are read, so nothing is appended to the file
-    # while it is being parsed. `kill` reaches the local adb client; the
-    # device-side reader ends when its stdout closes, which is not the case
-    # `lib.sh` records for `ds_cpu_sampler_start` — that one writes through the
-    # device's own `log` and so does not notice.
-    kill "${follower}" 2>/dev/null || true
-    wait "${follower}" 2>/dev/null || true
-    trap - EXIT
+    # while it is being parsed.
+    ds_logcat_stop
 
     attaching=$(first_at "${log}" "attaching a")
     attached=$(first_at "${log}" "attached a")
