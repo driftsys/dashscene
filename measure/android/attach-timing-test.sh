@@ -10,7 +10,9 @@
 # suppression of the interval columns. Every one of those is reachable only with
 # a device, which is the one place this apparatus is supposed to be already
 # proven. A reviewer of PR #1300 pointed out that dropping `readable="no"` from
-# any arm left all 19 cases green, which is what this file exists to stop.
+# any arm left every one of those cases green, which is what this file exists to
+# stop. No number is quoted: that file has since grown more cases, and a count
+# repeated here is a second copy that drifts.
 #
 # The stubs are the whole trick: `adb` and `just` are resolved from `PATH` and
 # by the `ADB` variable, so a directory prepended to `PATH` supplies both.
@@ -67,7 +69,22 @@ case "$1" in
       esac
       # `capture-died` is the follower exiting while the device stays; every
       # other case keeps it alive for the whole wait.
-      [ "${DS_STUB_FOLLOWER:-alive}" = "alive" ] && sleep 120
+      #
+      # **Stays alive without `exec`, and cleans up its own child on TERM.**
+      # `exec sleep 120` was tried and it turned the orphan case below fail-open:
+      # after `exec` the process command line is `sleep 120`, so
+      # `pgrep -f "<work>/bin/adb logcat"` can never match the process it is
+      # written to find — deleting the EXIT trap from `ds_logcat_follow` then
+      # left all six cases green with a real orphan alive. Keeping this shell
+      # keeps the command line, and the trap is what stops the `sleep`
+      # outliving the suite.
+      if [ "${DS_STUB_FOLLOWER:-alive}" = "alive" ]; then
+          trap 'kill "${sleeper:-}" 2>/dev/null; exit 0' TERM
+          sleep 120 &
+          sleeper=$!
+          wait "${sleeper}"
+          exit 0
+      fi
       exit 0 ;;
   shell)
       shift
@@ -93,13 +110,16 @@ export DS_STUB_MARK="${work}/mark"
 
 # run <name> <expected outcome substring> <expected acquire cell>
 run() {
-    local name expect_outcome expect_acquire out report row
+    local name expect_outcome expect_acquire out report row started
     name="$1"; expect_outcome="$2"; expect_acquire="$3"
     total=$((total + 1))
     out="${work}/out-${total}"
     rm -f "${work}/mark"
-    ADB="${work}/bin/adb" DS_STUB_MARK="${work}/mark" DS_ATTACH_TIMEOUT=5 \
+    started=${SECONDS}
+    ADB="${work}/bin/adb" DS_STUB_MARK="${work}/mark" \
+        DS_ATTACH_TIMEOUT="${DS_ATTACH_TIMEOUT:-5}" \
         "${here}/attach-timing.sh" "${out}" release >/dev/null 2>&1
+    RUN_ELAPSED=$((SECONDS - started))
     report="${out}/attach.md"
     row=$(grep -E '^\| release \|' "${report}" 2>/dev/null || true)
     if [ -z "${row}" ]; then
@@ -138,9 +158,28 @@ DS_STUB_CASE=wedge DS_STUB_DEVICE=disappears run "the device went away" \
 DS_STUB_CASE=wedge DS_STUB_FOLLOWER=dies run "the follower exited early" \
     "CAPTURE UNREADABLE" "—"
 
+# **The early break on a dead follower, measured by the clock**, because "it
+# stops waiting" is invisible in the report. The follower exits at once and the
+# bound is ten times the poll cadence, so without the break this run takes the
+# whole bound. `frame-capture.sh`'s copy of this break has the same case; this
+# sibling had none, and deleting the line here left all six cases green.
+RUN_ELAPSED=0
+DS_ATTACH_TIMEOUT=50 DS_STUB_CASE=wedge DS_STUB_FOLLOWER=dies \
+    run "a dead follower ends the wait" "CAPTURE UNREADABLE" "—"
+total=$((total + 1))
+if [ "${RUN_ELAPSED}" -lt 25 ]; then
+    printf '  ok   %-46s %s s of a 50 s bound\n' \
+        "it did not wait out the bound" "${RUN_ELAPSED}"
+else
+    printf '  FAIL %-46s %s s of a 50 s bound\n' \
+        "it did not wait out the bound" "${RUN_ELAPSED}"
+    failed=$((failed + 1))
+fi
+
 # **The early exit, which is the only path the trap is for.** `ds_am_start`
 # returns 1 on a refused launch and `set -euo pipefail` ends the script there —
-# after the follower is spawned and before the `kill` at the end of the loop. So
+# after the follower is spawned and before `ds_logcat_stop` runs, which is where
+# the `kill` lives since issue #1304 moved the mechanism into `lib.sh`. So
 # a run that completes normally proves nothing about the trap: this case is the
 # one that does, and without the trap it leaves an `adb logcat` running.
 rm -f "${work}/mark"

@@ -170,6 +170,147 @@ capture_check "device gone takes the follower with it" "device-gone" \
 capture_check "empty wins over a departed device" "empty" \
     "${capture_log}.absent" "no" "no"
 
+# `ds_logcat_alive` — what supplies `ds_capture_state`'s third argument, and the
+# one decision in `lib.sh` that is about a process rather than a string.
+#
+# **`jobs -pr`, not `kill -0`, and only a pid this shell did not start tells
+# them apart.** That is the pid-reuse case `lib.sh` argues about: the follower
+# exits mid-wait, is reaped, and its number is handed to something else on a
+# loaded host. Both stub-driven tests kill their follower outright, where bash
+# has already reaped it and the two forms agree — so replacing the body with
+# `kill -0` left every one of their cases green, and this is where that is
+# caught.
+alive_check() {
+    local name expected got
+    name="$1"
+    expected="$2"
+    total=$((total + 1))
+    if ds_logcat_alive; then got="yes"; else got="no"; fi
+    if [ "${got}" = "${expected}" ]; then
+        printf '  ok   %-58s %s\n' "${name}" "${got}"
+    else
+        printf '  FAIL %-58s wanted %s, got %s\n' "${name}" "${expected}" "${got}"
+        failed=$((failed + 1))
+    fi
+}
+
+DS_FOLLOWER_PID=""
+alive_check "no follower recorded" "no"
+
+# The positive control: this shell's own running child.
+sleep 5 &
+DS_FOLLOWER_PID=$!
+alive_check "a running child of this shell" "yes"
+kill "${DS_FOLLOWER_PID}" 2>/dev/null || true
+wait "${DS_FOLLOWER_PID}" 2>/dev/null || true
+alive_check "the same child, once reaped" "no"
+
+# **The discriminating case.** This script's parent is alive and owned by this
+# user, so `kill -0` succeeds on it — verified below rather than assumed, since
+# a case whose premise does not hold would pass for the wrong reason. It is not
+# a job of this shell, so `ds_logcat_alive` must say no.
+if kill -0 "${PPID}" 2>/dev/null; then
+    DS_FOLLOWER_PID="${PPID}"
+    alive_check "a live pid this shell did not start" "no"
+else
+    total=$((total + 1))
+    printf '  FAIL %-58s kill -0 refused it, so the case proves nothing\n' \
+        "a live pid this shell did not start"
+    failed=$((failed + 1))
+fi
+DS_FOLLOWER_PID=""
+
+# `ds_logcat_follow` / `ds_logcat_stop` and the caller's own EXIT trap.
+#
+# **Nothing reached this until it was written**, and that is the point: the
+# three production callers set no EXIT trap of their own, so the saved handler
+# was always empty and deleting the whole restore block left all three suites
+# green. This file is the one caller in the directory that does set one — the
+# `rm -f` on its own temporary files — which is exactly the caller the
+# save/restore exists for.
+follow_dir=$(mktemp -d)
+trap 'rm -f "${capture_log}"; rm -rf "${follow_dir}"' EXIT
+cat > "${follow_dir}/adb" <<'DUMMY'
+#!/usr/bin/env bash
+case "$1" in
+  logcat)
+      # Stays alive without `exec`, and reaps its own child on TERM — the same
+      # shape the two stub-driven tests use, and for the same reason.
+      trap 'kill "${sleeper:-}" 2>/dev/null; exit 0' TERM
+      printf -- '--------- beginning of main\n'
+      sleep 10 &
+      sleeper=$!
+      wait "${sleeper}"
+      exit 0 ;;
+esac
+exit 0
+DUMMY
+chmod +x "${follow_dir}/adb"
+
+trap_check() {
+    local name expected got
+    name="$1"
+    expected="$2"
+    got="$3"
+    total=$((total + 1))
+    if [ "${got}" = "${expected}" ]; then
+        printf '  ok   %-58s %s\n' "${name}" "held"
+    else
+        printf '  FAIL %-58s wanted [%s], got [%s]\n' "${name}" "${expected}" "${got}"
+        failed=$((failed + 1))
+    fi
+}
+
+before="$(trap -p EXIT)"
+ds_logcat_follow "${follow_dir}/adb" "${follow_dir}/cap.log"
+during="$(trap -p EXIT)"
+total=$((total + 1))
+if [ "${during}" != "${before}" ]; then
+    printf '  ok   %-58s %s\n' "follow installs its own EXIT trap" "installed"
+else
+    printf '  FAIL %-58s the trap did not change\n' "follow installs its own EXIT trap"
+    failed=$((failed + 1))
+fi
+ds_logcat_stop
+trap_check "stop restores the caller's EXIT trap" "${before}" "$(trap -p EXIT)"
+
+# **A second stop must not clear what the first put back**, and an unguarded
+# `trap - EXIT` did exactly that.
+ds_logcat_stop
+trap_check "a second stop leaves it alone" "${before}" "$(trap -p EXIT)"
+
+# **And a stop in a shell that never followed must not touch the trap at all.**
+# That is the other half of the same defect: `ds_logcat_stop` ran `trap - EXIT`
+# whether or not `ds_logcat_follow` had installed one.
+#
+# **The variables are UNSET, not set to their post-stop values.** With them left
+# as the stop above leaves them, `DS_FOLLOWER_TRAP_SET` is already `no` and the
+# `${DS_FOLLOWER_TRAP_SET:-no}` DEFAULT — the only thing protecting a caller
+# that never followed — is never reached. Mutating that default to `:-yes` left
+# all cases green until this line was added.
+unset DS_FOLLOWER_PID DS_FOLLOWER_TRAP_SET DS_FOLLOWER_PRIOR_TRAP
+ds_logcat_stop
+trap_check "a stop in a never-followed shell leaves it alone" \
+    "${before}" "$(trap -p EXIT)"
+
+# **A second follow with no stop between.** `ds_logcat_follow` stops the first
+# rather than layering, so the caller's handler — not the kill trap the first
+# follow installed — must still be what a later stop restores.
+ds_logcat_follow "${follow_dir}/adb" "${follow_dir}/cap.log"
+first_follower="${DS_FOLLOWER_PID}"
+ds_logcat_follow "${follow_dir}/adb" "${follow_dir}/cap2.log" 2>/dev/null
+total=$((total + 1))
+if kill -0 "${first_follower}" 2>/dev/null; then
+    printf '  FAIL %-58s the first follower is still alive\n' \
+        "a second follow stops the first"
+    kill "${first_follower}" 2>/dev/null || true
+    failed=$((failed + 1))
+else
+    printf '  ok   %-58s %s\n' "a second follow stops the first" "reaped"
+fi
+ds_logcat_stop
+trap_check "and the caller's trap survives both" "${before}" "$(trap -p EXIT)"
+
 echo
 if [ "${failed}" -gt 0 ]; then
     echo "attach-outcome-test: ${failed} of ${total} case(s) failed"

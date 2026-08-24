@@ -2339,8 +2339,13 @@ _android-adb:
 # verdicts across two review rounds and a black frame passing for months
 # (issues #1006, #1029).
 #
-# Neither test needs a device, an SDK or an NDK, and together they take about
-# two seconds. So this is in `check`, which means `just build` runs it, and CI's
+# Neither test needs a device, an SDK or an NDK. **The recipe as a whole costs
+# about 47 s, measured on 2026-08-24** — the two named above are about two
+# seconds of it and the four added since are the rest, nearly all of it the
+# deliberate waiting the stub-driven tests do inside their script's own poll
+# loops. `.github/workflows/ci.yml` carries the same figure; both copies moved
+# together, because correcting one and not the other is how the first one drifted.
+# So this is in `check`, which means `just build` runs it, and CI's
 # `android-build` job runs this recipe rather than the two paths inline — the
 # rule that job's own comment gives about `just android`.
 #
@@ -2370,6 +2375,15 @@ harness-tests:
     # verdict, the follower's trap and the suppression of the interval columns
     # execute here rather than only at a device.
     ./measure/android/attach-timing-test.sh
+    # The same wiring in `frame-capture.sh`, which issue #1304 gave it. It is a
+    # second call site rather than a second opinion: the three unreadable states
+    # are decided in `lib.sh` and acted on per script, and none of them is
+    # reachable on a device whose painter works — an emulator under memory
+    # pressure reaches two of them, which is how they were found. None of the
+    # three exits from the `case` there: the scene is degraded and the run's
+    # exit comes from the closing guard, so the cases over a single scene assert
+    # the guard's text as well as the arm's.
+    ./measure/android/frame-capture-test.sh
 
 # Succeed when adb reports at least one attached device.
 #

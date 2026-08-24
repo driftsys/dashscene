@@ -146,11 +146,26 @@ fi
 ds_note "installed ${apk}"
 
 captured=0
+# Scenes whose capture could not be read. Counted rather than inferred from the
+# sample total: no sample and no readable capture are different results, and
+# the closing diagnosis below is only allowed to name the painter for the first.
+unreadable=0
 for scene in "${scenes[@]}"; do
     log="${out}/frames-${scene}.log"
     ds_note "capturing ${scene} — up to ${SAMPLES} sample(s), ${TIMEOUT} s at most"
     "${adb}" shell am force-stop "${PKG}" || true
     ds_logcat_clear "${adb}"
+    # **Opened before the launch, and it streams.** This script dumped the whole
+    # device ring into `${log}` after the poll instead, which is the defect
+    # `attach-timing.sh` was repaired for on 2026-08-23 and this one was not
+    # (issue #1304). The argument applies here unchanged: the ring is bounded
+    # and the wait is not, so on a chatty device a 240 s scene loses the very
+    # samples the table is built from. `frame-table.py`'s whole-line anchor is
+    # the same problem seen from the parsing end — it exists to REJECT a sample
+    # line the ring cut, which is a line lost either way.
+    # `ds_logcat_follow` in `lib.sh` owns the mechanism and the measurement
+    # behind it.
+    ds_logcat_follow "${adb}" "${log}"
 
     # Cold, and `-W` so a launch that never displays is reported here rather
     # than as an empty capture.
@@ -172,31 +187,144 @@ for scene in "${scenes[@]}"; do
     # **Poll for the samples rather than sleeping the timeout.** The spacing is
     # not predictable (see SAMPLES above), so a fixed sleep either wastes the
     # difference on every scene or truncates the one scene that idled.
-    # **Polled every POLL seconds over the last few hundred lines, not every
-    # second over the whole ring.** A full `logcat -d` is the entire buffer
-    # re-transferred and re-scanned; at one second per iteration over a window
-    # that can last 240 s, that is tens of megabytes of adb traffic and hundreds
-    # of device-side reads **concurrently with the frame timings and the CPU
-    # sampler it is collecting** — the poll was perturbing the measurement it was
-    # taking. Samples arrive every 10 to 57 s, so a 5 s cadence is still an order
-    # of magnitude finer than the thing being waited for, and `-t` bounds each
-    # dump: the host logs about one line every four seconds, so 2000 lines is far
-    # more than a poll interval can produce.
+    #
+    # **The poll reads the host file the follower is writing, and touches adb
+    # not at all.** It used to re-dump the device ring every iteration, and the
+    # cost that bounded to 2000 lines is the cost this shape removes outright:
+    # no adb traffic and no device-side read, taken **concurrently with the
+    # frame timings and the CPU sampler being collected**, which is what was
+    # perturbing the measurement. The cadence stays at POLL seconds because
+    # samples arrive every 10 to 57 s, so it is still an order of magnitude
+    # finer than the thing being waited for.
+    #
+    # **Rescanned from the start each time, unlike `attach-timing.sh`'s poll,
+    # and that is deliberate.** This one needs a COUNT rather than "has anything
+    # matched yet", and a count cannot be resumed from a line offset without a
+    # race that undercounts: lines arriving between the scan and the offset read
+    # are skipped by the next scan. Undercounting here means waiting out the
+    # whole timeout, so the whole-file scan is the correct trade — it is a local
+    # read of at most a few megabytes, which is not the cost the paragraph above
+    # is about.
+    #
+    # `tr -d '\r'` is gone with the dump it belonged to: the pattern matches
+    # mid-line, so a carriage return at the end of a record cannot hide it.
     seen=0
     for _ in $(seq 1 "$(( (TIMEOUT + POLL - 1) / POLL ))"); do
-        seen=$("${adb}" logcat -d -t 2000 -v epoch 2>/dev/null | tr -d '\r' \
-            | grep -c "I dashscene: ${scene} over " || true)
-        # **Defaulted, because an adb that failed yields an empty string**, and
-        # `[ "" -ge 3 ]` is a syntax error that `set -e` turns into a dead run
-        # rather than into one more poll. A dropped connection is ordinary on a
-        # USB-attached device, and it must cost a second, not the capture.
+        seen=$(grep -c "I dashscene: ${scene} over " "${log}" 2>/dev/null || true)
+        # **Defaulted, because a `grep` over a file that does not exist yet
+        # yields an empty string**, and `[ "" -ge 3 ]` is a syntax error that
+        # `set -e` turns into a dead run rather than into one more poll.
         seen="${seen:-0}"
         [ "${seen}" -ge "${SAMPLES}" ] && break
+        # **A follower that has exited will never add another line**, so the
+        # rest of the wait buys nothing and costs up to TIMEOUT seconds — 240 s
+        # per scene by default, three times over on the default scene list. The
+        # answer is local and free, and the state it detects is classified
+        # below rather than here: this only stops the waiting.
+        ds_logcat_alive || break
         sleep "${POLL}"
     done
     ds_cpu_sampler_stop
 
-    "${adb}" logcat -d -v epoch > "${log}" 2>/dev/null || true
+    # **Asked before the follower is stopped**, or the stop is what the question
+    # would observe. See `ds_logcat_alive` in `lib.sh`.
+    capture_alive="no"
+    if ds_logcat_alive; then
+        capture_alive="yes"
+    fi
+    ds_logcat_stop
+
+    # **Re-counted from the finished capture, because the poll's last read is up
+    # to POLL seconds stale.** A sample that lands between the final scan and
+    # `ds_logcat_stop` is in the file, so `frame-table.py` — which counts from
+    # this same file — tabulates it while the loop variable does not. Two
+    # numbers in one bundle disagreeing about one run is the unattributable
+    # result this apparatus exists to prevent, and now that both come from one
+    # host file, one more `grep` removes the interval between them.
+    #
+    # **They are still two counts and not one.** This one is an unanchored
+    # substring; `frame-table.py` requires the whole line and de-duplicates by
+    # `(pid, epoch)`, so a sample line the ring cut is counted here and rejected
+    # there — which is that file's stated purpose. What this re-read removes is
+    # the staleness, not the difference in what the two accept.
+    seen=$(grep -c "I dashscene: ${scene} over " "${log}" 2>/dev/null || true)
+    seen="${seen:-0}"
+
+    # **Whether this capture can be read at all, asked before anything is read
+    # out of it.** Every verdict below is an absence read as evidence: the scene
+    # attribution fails when no `scene <name>` line is present, the sample count
+    # is the number of lines that arrived, and the run's closing diagnosis names
+    # a painter that never drew. A capture that stopped watching produces all
+    # three, so without this the failed measurement is reported as a result
+    # about the painter — the same error `attach-timing.sh` made until
+    # 2026-08-23 and `ds_capture_state` exists to refuse.
+    present="no"
+    if ds_has_device "${adb}"; then
+        present="yes"
+    fi
+    state=$(ds_capture_state "${log}" "${present}" "${capture_alive}")
+    case "${state}" in
+    readable) ;;
+    empty)
+        ds_warn "${scene}: the capture holds nothing but logcat's own preamble."
+        ds_warn "Nothing about this scene can be read from it — a failed"
+        ds_warn "measurement, not a result."
+        ;;
+    device-gone)
+        ds_warn "${scene}: adb no longer lists the device. It may be gone or it"
+        ds_warn "may be sitting at \`offline\` with its process alive — \`pgrep -f"
+        ds_warn "qemu-system\` says which. Either way the capture stopped when it"
+        ds_warn "stopped answering, so nothing here describes this scene."
+        ;;
+    capture-died)
+        ds_warn "${scene}: the logcat follower exited before the wait ended, with"
+        ds_warn "the device still attached. The capture is truncated at an unknown"
+        ds_warn "point, so nothing here describes this scene."
+        ;;
+    *)
+        # **The one state that ends the run HERE**, for the reason
+        # `attach-timing.sh` gives: a state added to `ds_capture_state` and not
+        # handled says nothing about what to do with the capture, so continuing
+        # would report a result derived from one this script cannot classify.
+        #
+        # The three named states above do not exit from this `case` — they
+        # degrade the scene and the run continues. A single-scene run whose one
+        # capture is unreadable still ends non-zero, but the exit comes from the
+        # closing guard at the bottom of this file. The degrade path below has
+        # an exit of its own for one case only: a move it cannot make.
+        ds_warn "${scene}: unrecognised capture state \`${state}\`. Refusing to"
+        ds_warn "report a measurement derived from a capture this script cannot"
+        ds_warn "classify."
+        exit 1
+        ;;
+    esac
+    # **The scene is degraded, not the run**, which is the shape
+    # `attach-timing.sh` uses: it records `CAPTURE UNREADABLE` for one profile
+    # and still writes the table for the other. Ending here instead would throw
+    # away every scene already captured — on the default list, up to two clean
+    # scenes and about eight minutes of device time, for a transport that
+    # blipped during the third.
+    #
+    # **The capture is moved out of `frames-*.log`**, which is the glob
+    # `frame-table.py` is handed below. A truncated capture left in place would
+    # become rows in the table, which is the same absence-read-as-evidence this
+    # guard exists to refuse.
+    if [ "${state}" != "readable" ]; then
+        # **Guarded, because `set -e` here would discard the scenes this branch
+        # exists to preserve.** A read-only output directory, or an
+        # `unreadable-<scene>.log` left as a directory by an interrupted run,
+        # would otherwise end the script at the one point whose whole purpose is
+        # not ending it. If the move fails the capture stays in the glob, so the
+        # table is refused instead of built from it.
+        if ! mv "${log}" "${out}/unreadable-${scene}.log" 2>/dev/null; then
+            ds_warn "${scene}: could not move the unreadable capture out of"
+            ds_warn "${log}. Refusing to build a table that would include it."
+            exit 1
+        fi
+        unreadable=$((unreadable + 1))
+        "${adb}" shell am force-stop "${PKG}" || true
+        continue
+    fi
 
     # **The scene that drew is the scene that was asked for.** Read from the
     # host's own start line, and matched in bash rather than through a pipeline
@@ -231,11 +359,36 @@ for scene in "${scenes[@]}"; do
     "${adb}" shell am force-stop "${PKG}" || true
 done
 
+if [ "${captured}" -eq 0 ] && [ "${unreadable}" -eq "${#scenes[@]}" ]; then
+    # **Every scene unreadable — no measurement happened at all**, and it is the
+    # whole reason `unreadable` is counted. Naming the painter here would be a
+    # claim derived from captures that stopped watching.
+    #
+    # **The test is "every scene", not "any".** With `-gt 0` a run where one
+    # scene was readable and drew nothing and another was unreadable took this
+    # branch, and the readable scene DID support the painter diagnosis — so the
+    # `-gpu host` remedy was suppressed in the case an operator most often hits.
+    ds_warn "all ${#scenes[@]} scene(s) produced a capture that could not be read."
+    ds_warn "That is a failed measurement, not a result about the painter. The"
+    ds_warn "captures are ${out}/unreadable-*.log."
+    exit 1
+fi
 if [ "${captured}" -eq 0 ]; then
+    # **At least one capture above was readable and reported no sample**, which
+    # the branch directly above is what guarantees, so the painter is the right
+    # thing to name.
+    if [ "${unreadable}" -gt 0 ]; then
+        ds_warn "${unreadable} of ${#scenes[@]} scene(s) could not be read; the rest"
+        ds_warn "were readable and reported no sample."
+    fi
     ds_warn "no scene reported a single sample. The likeliest cause is that the"
     ds_warn "painter never drew: grep the captures for 'Failed to open rendernode'"
     ds_warn "and restart the emulator with -gpu host (issue #1158)."
     exit 1
+fi
+if [ "${unreadable}" -gt 0 ]; then
+    ds_warn "${unreadable} of ${#scenes[@]} scene(s) are absent from the table"
+    ds_warn "below: their captures could not be read and are ${out}/unreadable-*.log."
 fi
 
 table="${out}/frames.md"
@@ -244,7 +397,12 @@ python3 "$(dirname "$0")/frame-table.py" \
     --describe "${described}, ${profile} build" \
     --clk-tck "$("${adb}" shell getconf CLK_TCK | tr -d '\r')" \
     "${out}"/frames-*.log > "${table}"
-ds_note "${captured} sample(s) across ${#scenes[@]} scene(s) -> ${table}"
+# **The scenes whose capture was readable, not the scenes asked for.** Quoting
+# the requested count here contradicted the warning directly above it, which says
+# how many are absent — and this line is the one that gets quoted. It is still
+# not the same as "scenes with a row": a readable scene that reported no sample
+# is counted here and contributes nothing to the table.
+ds_note "${captured} sample(s) across $(( ${#scenes[@]} - unreadable )) of ${#scenes[@]} scene(s) -> ${table}"
 if [ "${source_label}" = "emulator" ]; then
     ds_note "EMULATOR RESULT — describes this host machine's GPU, not a device."
 fi

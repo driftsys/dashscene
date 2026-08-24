@@ -1067,9 +1067,18 @@ jobs:
       # `just android` note below gives about itself: a second copy of a path in
       # YAML is the drift issue #903 keeps producing.
       #
-      # Early in the job, and it costs about two seconds. A broken gate fails
-      # here rather than reaching whoever next spends ten minutes on an
-      # emulator.
+      # Early in the job. **It costs about 47 s, measured on 2026-08-24, and
+      # this comment said "about two seconds" until then** — the figure was
+      # written when the recipe ran two fast scripts, and it did not move as
+      # four more were added. Nearly all of it is deliberate waiting rather than
+      # work: the stub-driven tests drive their script's real poll loops, which
+      # sleep. Most cadences and bounds are shortened — `DS_POLL=1` against a
+      # default of 5, `DS_FRAME_TIMEOUT=3` against 240, `DS_ATTACH_TIMEOUT=5`
+      # against 90 — but not all of it is the floor: the cases that measure an
+      # early break deliberately set a long bound so there is something to
+      # break out of. Still early in the job,
+      # for the same reason: a broken gate fails here rather than reaching
+      # whoever next spends ten minutes on an emulator.
       - run: just harness-tests
       - run: just android
       # The C ABI's conformance check, here rather than in a job of its own: it

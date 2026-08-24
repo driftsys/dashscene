@@ -137,6 +137,137 @@ ds_logcat_clear() {
     "$1" logcat -c || true
 }
 
+# ds_logcat_follow <adb> <log>
+#
+# Starts a streaming logcat into a host file and records the job in
+# `DS_FOLLOWER_PID`. **Every capture in this directory goes through it**, which
+# is this file's own header rule: the first copy of this was hand-rolled in
+# `attach-timing.sh` and the two scripts that did not get it kept the defect it
+# was written to remove (issue #1304).
+#
+# **A follower opened before the launch, rather than `logcat -d` after the
+# wait.** A dump reads a bounded ring at the end of an unbounded wait, so it
+# loses the markers it is being read for. Measured on 2026-08-23 on the
+# automotive emulator, whose audio stack writes about 650 lines a minute: a 90 s
+# `attach-timing.sh` wait ended holding a capture that began **34 s after the
+# launch**, the `attaching a WxH surface` line had aged out, and the run
+# reported `never attached — no acquisition was attempted` for an acquisition
+# that was in flight at that moment — `surfaceDestroyed has been waiting 34 s`
+# was in the same capture. "The loop never started" and "still inside the call"
+# are the two outcomes that procedure exists to tell apart, so that is the one
+# verdict it must not give. A follower cannot lose the beginning of a run,
+# because it is draining the buffer from before there is anything in it.
+#
+# **A wider `-t` is not the same fix.** The defect is a bounded ring against an
+# unbounded wait, and a larger bound is the same defect with a different
+# constant.
+#
+# **`-T 1` matters as much as the follower does.** A bare `adb logcat` replays
+# the whole device ring before it follows, and `ds_logcat_clear` above is
+# `logcat -c || true` because Android 11 and later refuse the clear often enough
+# that issue #1006 §5 records a run aborting on it. So on a run where the clear
+# fails, a capture opened without `-T` holds the *previous* launch's markers —
+# and every reader in this directory takes the first occurrence, so one
+# profile's row would be reported with another's timings. The ring used to
+# rotate those lines out over a long wait; a host file never does, which makes
+# stale markers permanent rather than transient. `-T 1` starts one line back.
+#
+# **The EXIT trap is not optional, and it composes rather than replacing.**
+# Between the spawn and the stop sits a launch, and `ds_am_start` below returns
+# 1 on the three outcomes it records `am start` reporting as success. Under
+# `set -euo pipefail` that ends the caller with the follower still running,
+# appending to a capture file the next run truncates underneath it.
+#
+# **The caller's own EXIT trap is saved and put back**, and an earlier version
+# of this comment instead claimed no script in this directory has one. That was
+# false when it was written: `attach-outcome-test.sh` sources this file and sets
+# `trap 'rm -f …' EXIT` — so an unconditional `trap - EXIT` in `ds_logcat_stop`
+# was one call away from silently dropping a caller's cleanup. `trap -p EXIT`
+# prints the handler in a form `eval` restores; an absent handler prints
+# nothing, which is why the restore below is guarded rather than unconditional.
+# `attach-outcome-test.sh` drives that composition.
+ds_logcat_follow() {
+    local adb log
+    adb="$1"
+    log="$2"
+    # **A second follow with no stop between stops the first rather than
+    # layering on it.** Overwriting `DS_FOLLOWER_PID` leaks the first follower —
+    # which then goes on appending to a host file the next run truncates
+    # underneath it, the hazard this whole function exists to remove — and the
+    # second save would record this function's own kill trap as the caller's.
+    # The second follow is honoured; what is refused is running two.
+    if [ -n "${DS_FOLLOWER_PID:-}" ]; then
+        ds_warn "a logcat follower is already running; stopping it first."
+        ds_logcat_stop
+    fi
+    # **Truncated here, in the parent, and not left to the redirection.** Bash
+    # forks first and opens the target in the child, so between the `&` and that
+    # open the settle loop below can see a capture file left by a previous run
+    # into the same output directory — which is an ordinary way to invoke these
+    # scripts by hand — and break on it. The truncation still lands; the guard
+    # would just have been reading the wrong file until it did.
+    : > "${log}"
+    "${adb}" logcat -T 1 -v epoch > "${log}" 2>/dev/null &
+    DS_FOLLOWER_PID=$!
+    DS_FOLLOWER_PRIOR_TRAP="$(trap -p EXIT)"
+    DS_FOLLOWER_TRAP_SET="yes"
+    trap 'kill "${DS_FOLLOWER_PID:-}" 2>/dev/null || true' EXIT
+    # **Narrows the window between the spawn and the caller's launch, and does
+    # no more than that.** `logcat` writes `--------- beginning of main` as soon
+    # as it opens the buffer, so a non-empty file says the capture is attached.
+    # The result is discarded on purpose: whether the loop broke or ran out, the
+    # caller launches either way, and a follower that never started is caught
+    # downstream by `ds_capture_state` answering `empty` — which is tested.
+    for _ in $(seq 1 25); do
+        [ -s "${log}" ] && break
+        sleep 0.2
+    done
+}
+
+# True while the follower `ds_logcat_follow` started is still running.
+#
+# **Ask it before `ds_logcat_stop`, or the stop is what it observes.** It is the
+# direct answer to "did the capture watch the whole wait": `adb logcat` exits
+# when its transport drops, so a follower that is gone stopped early. It is what
+# `ds_capture_state`'s third argument — the one it refuses to default — is for.
+#
+# **`jobs -pr`, not `kill -0`.** A pid is reusable: the follower can exit at
+# +30 s of a ten-minute wait, be reaped, and its number handed to something else
+# on a loaded host — and `kill -0` would then answer yes about a process that is
+# not the capture. `jobs -pr` lists only this shell's own children that are
+# still running, which is the question being asked.
+ds_logcat_alive() {
+    [ -n "${DS_FOLLOWER_PID:-}" ] && jobs -pr | grep -qx "${DS_FOLLOWER_PID}"
+}
+
+# Stops the follower and removes the trap `ds_logcat_follow` installed.
+#
+# Call it before the capture is parsed, so nothing is appended to the file while
+# it is being read. `kill` reaches the local adb client and the device-side
+# reader ends when its stdout closes — not the case recorded below for
+# `ds_cpu_sampler_start`, which writes through the device's own `log` and so
+# does not notice.
+# **It touches the EXIT trap only if `ds_logcat_follow` installed one.** An
+# unconditional `trap - EXIT` here cleared the caller's handler whenever this ran
+# without a follow before it, and again on a second stop after the first had
+# already restored — which is the same defect the save/restore was added to
+# remove, one call site along. Both were reproduced before this guard.
+ds_logcat_stop() {
+    if [ -n "${DS_FOLLOWER_PID:-}" ]; then
+        kill "${DS_FOLLOWER_PID}" 2>/dev/null || true
+        wait "${DS_FOLLOWER_PID}" 2>/dev/null || true
+        DS_FOLLOWER_PID=""
+    fi
+    if [ "${DS_FOLLOWER_TRAP_SET:-no}" = "yes" ]; then
+        trap - EXIT
+        if [ -n "${DS_FOLLOWER_PRIOR_TRAP:-}" ]; then
+            eval "${DS_FOLLOWER_PRIOR_TRAP}"
+        fi
+        DS_FOLLOWER_PRIOR_TRAP=""
+        DS_FOLLOWER_TRAP_SET="no"
+    fi
+}
+
 # Starts the device-side CPU sampler for one pid, and echoes nothing.
 #
 # **It writes through the device's own `log` command**, so its readings land in
