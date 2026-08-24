@@ -72,8 +72,8 @@ namespace Driftsys.Dashscene
             // **A lock, not an interlocked latch, and the latch is set only
             // after the call returns.** Two defects live in the obvious
             // version. Setting a flag before calling `ds_abi_version` means any
-            // throw from it — `DllNotFoundException` when no native library is
-            // present, which is this package's SHIPPED state, or
+            // throw from it — `DllNotFoundException` on a platform this package
+            // ships no library for, or
             // `EntryPointNotFoundException` against a library old enough to
             // predate the symbol, which is the very mismatch this exists to
             // catch — leaves the flag set, and every later construction then

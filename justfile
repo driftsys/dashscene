@@ -1062,6 +1062,119 @@ host-lib:
     # repository, where a path relative to the workspace root is not usable.
     echo "host-lib: ${lib}"
 
+# **The package carries its binaries**, by
+# `docs/decisions/the-native-library-ships-inside-the-unity-package.md` D4, so
+# refreshing one is a commit rather than a build step a consumer runs. This
+# recipe is what produces that commit: a hand copy is how issue #1057 happened,
+# where a stale RELEASE `.so` was packaged and announced as the release library
+# while the debug one was the artifact being rebuilt.
+#
+# **Two platforms, because two have a consumer** — macOS arm64 for a developer's
+# editor and Android arm64 for a player on the target. D3's Windows and Linux
+# rows ship nothing today, and iOS is v1.
+#
+# After running it, run `just unity-editor WritePluginMeta` if a library is NEW
+# at its path, so Unity writes the `.meta` R-E21 requires; an existing library
+# replaced in place keeps its `.meta` and its guid, which is the point of
+# committing them. Then commit both.
+#
+# Needs the NDK for the Android half, which bootstrap does not install, so this
+# is outside `check` for the reason `just android` is.
+#
+# Rebuild the native libraries the UPM package ships and place them inside it.
+unity-plugins:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$(git rev-parse --show-toplevel)"
+    plugins="${root}/unity/com.driftsys.dashscene/Runtime/Plugins"
+
+    # **Both rows name their triple, and neither trusts the host's own.** An
+    # earlier version of this recipe built the macOS row with a plain
+    # `cargo build` behind a `uname -s` guard. That guard cannot tell an arm64
+    # Mac from an x86_64 one, and D3's macOS row is arm64 — so on an Intel host
+    # it installed an x86_64 dylib under a `.meta` declaring `CPU: ARM64`, which
+    # every check then passed: the text gate did not open the file, the editor
+    # gate reads the `.meta` rather than the binary, and the player that would
+    # fail is one an Intel host cannot run. **The text gate opens it now** — it
+    # compares each library's header against D3 — so this is the defect that
+    # motivated that check rather than one still open. Naming the triple removes the
+    # question instead of answering it.
+    #
+    # The `uname -s` refusal stays for a different reason: linking a Mach-O
+    # dylib needs Apple's linker, so this row cannot be produced off macOS at
+    # all, whatever triple is named.
+    if [ "$(uname -s)" != "Darwin" ]; then
+      echo "unity-plugins: D3's macOS row needs Apple's linker, so it can only" >&2
+      echo "unity-plugins: be built on macOS. This is $(uname -s)." >&2
+      exit 1
+    fi
+
+    # `install` does not create the destination directory, and a new platform
+    # row is exactly when one does not exist yet.
+    mkdir -p "${plugins}/macOS" "${plugins}/Android"
+
+    # **Nothing that identifies the machine that built it may reach a committed
+    # binary.** A release build embeds a path per panic location, so an
+    # unremapped library carries the builder's home directory — measured at 267
+    # `~/.cargo/registry` strings, 27 `~/.rustup/toolchains` and one workspace
+    # path in the first `.so` produced here — and this repository is public and
+    # its history permanent. The remapping also makes the output independent of
+    # WHERE it was built, so two developers produce the same bytes and a future
+    # staleness check can compare a hash rather than trusting a date.
+    #
+    # `--target` is what keeps this off the build scripts: with a triple named,
+    # cargo applies RUSTFLAGS to target artifacts only, and a build script
+    # compiled for the host keeps its own paths and ships nowhere.
+    export RUSTFLAGS="--remap-path-prefix=${HOME}/.cargo/registry=/cargo/registry"
+    RUSTFLAGS="${RUSTFLAGS} --remap-path-prefix=${HOME}/.rustup/toolchains=/rustup"
+    RUSTFLAGS="${RUSTFLAGS} --remap-path-prefix=${root}=/dashscene"
+
+    # The path comes from cargo, on the rule `host-lib` states in full: cargo
+    # does not delete the artifacts of a crate type that has been removed, so a
+    # file test over `target/` passes on a stale library.
+    emitted() {
+      cargo build "$@" --message-format=json | jq -r '
+        select(.reason == "compiler-artifact")
+        | select(.target.name == "dashscene_ffi")
+        | .filenames[]
+        | select(endswith(".dylib") or endswith(".so"))
+      ' | tail -n 1
+    }
+
+    echo "unity-plugins: macOS arm64"
+    cargo build -p dashscene-ffi --release --target aarch64-apple-darwin
+    host="$(emitted -p dashscene-ffi --release --target aarch64-apple-darwin)"
+    if [ -z "${host}" ]; then
+      echo "unity-plugins: cargo emitted no dynamic library for the host." >&2
+      echo 'unity-plugins: is cdylib still in [lib] crate-type?' >&2
+      exit 1
+    fi
+    install -m 755 "${host}" "${plugins}/macOS/libdashscene_ffi.dylib"
+
+    # **The install name is the one path remapping cannot reach.** rustc emits
+    # its own `-install_name` naming the output under `target/`, so the shipped
+    # dylib records an absolute path from the machine that built it — measured,
+    # after the remapping above had already cleared every other occurrence.
+    # A `-Clink-arg` does not win against the flag rustc itself passes, so it is
+    # rewritten here instead. `@rpath` is also the correct value: Unity resolves
+    # a plugin by the path it copied it to, not by this field.
+    install_name_tool -id @rpath/libdashscene_ffi.dylib \
+      "${plugins}/macOS/libdashscene_ffi.dylib"
+
+    echo "unity-plugins: android arm64"
+    android_env=$(just _android-env {{ ANDROID_API }})
+    eval "${android_env}"
+    cargo build --release -p dashscene-ffi --target aarch64-linux-android
+    droid="$(emitted --release -p dashscene-ffi --target aarch64-linux-android)"
+    if [ -z "${droid}" ]; then
+      echo "unity-plugins: cargo emitted no dynamic library for android." >&2
+      exit 1
+    fi
+    install -m 755 "${droid}" "${plugins}/Android/libdashscene_ffi.so"
+
+    echo "unity-plugins: wrote"
+    git -C "${root}" status --short -- "${plugins}"
+
 # Two gates over the UPM package, not one (the second added by story #1125).
 #
 # 1. Compiles `unity/com.driftsys.dashscene/Runtime/BoundaryB.cs` — the
@@ -1222,10 +1335,33 @@ sdf-hlsl:
 # that it could not look. That is the same hazard `unity-painter-uses-brg.md` D4
 # names for the `BufferTarget` read.
 #
+# `method` selects the entry point. `Run` is the gate. `WritePluginMeta`
+# is the authoring pass a developer runs ONCE when a native library is
+# added: it writes D3's platform data onto each shipped plugin, so Unity
+# produces the `.meta` that gets committed. It is a separate entry point
+# because a check that writes the values it then reads cannot fail.
 # Compile the UPM package, its engine half included, in a Unity editor.
-unity-editor unity_version="6000.3.22f1":
+unity-editor method="Run" unity_version="6000.3.22f1":
     #!/usr/bin/env bash
     set -euo pipefail
+    # **Refused rather than passed through**, on the grounds the `android`
+    # recipe states for its profile: anything but these two names is a typo, and
+    # the likely typo is a version string, because that is what this recipe's
+    # only positional parameter used to be. Unvalidated it reaches Unity as
+    # `-executeMethod DashsceneEditorCompat.6000.3.22f1`, failing after the
+    # editor has started; unquoted it splits on whitespace, so `"Run -nographics"`
+    # would add the argument this recipe's own comment says must never be present.
+    case "{{ method }}" in
+      Run|WritePluginMeta) ;;
+      *)
+        echo "unity-editor: method must be Run or WritePluginMeta, not '{{ method }}'" >&2
+        echo "unity-editor:   the version is the SECOND parameter:" >&2
+        echo "unity-editor:     just unity-editor Run 6000.3.22f1" >&2
+        exit 1
+        ;;
+    esac
+
+
     # **`DASHSCENE_UNITY` overrides the path, and it has to exist.** The default
     # below is the macOS Hub layout, and this recipe is R-E10's ONLY check over
     # `Runtime/Engine/` — so a hardcoded path would put that half of the
@@ -1234,7 +1370,7 @@ unity-editor unity_version="6000.3.22f1":
     if [ ! -x "${editor}" ]; then
       echo "unity-editor: no Unity executable at ${editor}" >&2
       echo "unity-editor:   install {{unity_version}} with the Hub, pass a version:" >&2
-      echo "unity-editor:     just unity-editor 6000.3.22f1" >&2
+      echo "unity-editor:     just unity-editor Run 6000.3.22f1" >&2
       echo "unity-editor:   or point at one directly:" >&2
       echo "unity-editor:     DASHSCENE_UNITY=/path/to/Unity just unity-editor" >&2
       echo "unity-editor: docs/technotes/unity-toolchain.md records what is installed" >&2
@@ -1347,10 +1483,10 @@ unity-editor unity_version="6000.3.22f1":
     YAML
 
     log="${project}/editor.log"
-    echo "unity-editor: compiling ${package} in {{unity_version}} (log: ${log})"
+    echo "unity-editor: {{ method }} over ${package} in {{unity_version}} (log: ${log})"
     set +e
     "${editor}" -batchmode -quit -projectPath "${project}" \
-      -executeMethod DashsceneEditorCompat.Run -logFile "${log}"
+      -executeMethod DashsceneEditorCompat.{{ method }} -logFile "${log}"
     status=$?
     set -e
 
@@ -1627,21 +1763,37 @@ unity-render unity_version="6000.3.22f1" timeout="180":
       fi
     fi
 
-    # **The path comes from cargo rather than from a `uname` mapping plus a file
-    # test**, on the rule `host-lib`, `unity-abi` and `unity-ffi` all state:
-    # `cargo build` does not delete the artifacts of a crate type that has been
-    # removed, so a `[ -f … ]` guard passes over a stale library. That is the
-    # shape of issue #1057. Release, because the player runs it.
-    cargo build -p dashscene-ffi --release
-    lib=$(cargo build -p dashscene-ffi --release --message-format=json | jq -r '
-        select(.reason == "compiler-artifact")
-        | select(.target.name == "dashscene_ffi")
-        | .filenames[]
-        | select(endswith(".dylib") or endswith(".so") or endswith(".dll"))
-      ' | tail -n 1)
-    if [ -z "${lib}" ]; then
-      echo "unity-render: cargo emitted no dynamic library for dashscene-ffi." >&2
-      echo 'unity-render: is cdylib still in [lib] crate-type?' >&2
+    # **Nothing is staged into this project any more, and that is the point.**
+    # Until story #1334 this recipe built the cdylib and copied it into
+    # `Assets/Plugins/`, so the player it built resolved a library this run had
+    # produced — and therefore passed whatever the package itself carried. That
+    # is the class issue #1313 is an instance of: every gate green while the
+    # package could not draw as installed. The library now travels inside the
+    # package, by
+    # `docs/decisions/the-native-library-ships-inside-the-unity-package.md` D4,
+    # and what this gate asks is whether Unity resolves it from there.
+    #
+    # **A file test is the right shape here, and not for the reason it first
+    # seems.** `host-lib` forbids one because it asks cargo where an artifact
+    # landed, and `cargo build` does not delete the artifacts of a crate type
+    # that has been removed — so `[ -f … ]` over `target/` passes on a stale
+    # build, which is issue #1057. There is no cargo invocation to query here:
+    # D2 and D3 fix this path, so it is read rather than discovered.
+    #
+    # **A committed binary is still a build output, and it can still be stale.**
+    # That hazard is real and this test does not address it: nothing in this
+    # repository compares a shipped library against the sources of the commit
+    # carrying it, and this recipe no longer builds `dashscene-ffi` at all, so a
+    # green run here says nothing about the Rust sources under review. What
+    # catches it is `ds_abi_version` and `DsSlice::stride` at run time, inside
+    # the player this gate builds.
+    #
+    # The test is here rather than left to the player build, which fails deep in
+    # an editor log with no path in the error.
+    shipped="${package}/Runtime/Plugins/macOS/libdashscene_ffi.dylib"
+    if [ ! -f "${shipped}" ]; then
+      echo "unity-render: the package ships no macOS library at ${shipped}." >&2
+      echo "unity-render: run \`just unity-plugins\` and commit what it writes." >&2
       exit 1
     fi
 
@@ -1659,7 +1811,7 @@ unity-render unity_version="6000.3.22f1" timeout="180":
     # gate's whole answer is about the CURRENT sources.
     rm -rf "${project}"
     mkdir -p "${project}/Packages" "${project}/ProjectSettings" \
-      "${project}/Assets/Editor" "${project}/Assets/Plugins" \
+      "${project}/Assets/Editor" \
       "${project}/Assets/StreamingAssets" "${frames}"
 
     cat > "${project}/Packages/manifest.json" <<JSON
@@ -1673,7 +1825,6 @@ unity-render unity_version="6000.3.22f1" timeout="180":
 
     cp "${root}/unity/render-gate/DashsceneRenderGate.cs" "${project}/Assets/"
     cp "${root}/unity/render-gate/RenderGateBuild.cs" "${project}/Assets/Editor/"
-    cp "${lib}" "${project}/Assets/Plugins/"
     cp "${fixture}" "${project}/Assets/StreamingAssets/document.dsb"
 
     cat > "${project}/ProjectSettings/ProjectSettings.asset" <<'YAML'

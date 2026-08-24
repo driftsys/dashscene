@@ -112,17 +112,20 @@ namespace Driftsys.Dashscene.Samples
             }
             catch (DllNotFoundException)
             {
-                // **The failure a customer actually meets first.** This package
-                // ships no native library, so the first call into it — the
-                // version handshake inside the constructor — is where a fresh
-                // Git-URL install lands. Left uncaught it is a bare loader
-                // stack trace naming `ds_abi_version`, while the rarer version
-                // mismatch above gets a sentence explaining itself.
+                // **Where a platform outside the shipped set lands.** The
+                // package carries a library for macOS arm64 and Android arm64,
+                // so on those this does not fire; on any other platform the
+                // first call into the library — the version handshake inside
+                // the constructor — is where an install lands. Left uncaught it
+                // is a bare loader stack trace naming `ds_abi_version`, while
+                // the rarer version mismatch above gets a sentence explaining
+                // itself.
                 Debug.LogError(
                     $"[dashscene] the native library '{DashsceneRuntime.LibraryName}' was not "
-                    + "found. This package ships no binary: build one with `just host-lib` and "
-                    + "place it under Runtime/Plugins/<platform>/ with a .meta declaring the "
-                    + "platform and CPU. See the package README.",
+                    + "found. This package ships one for macOS arm64 and Android arm64 only; "
+                    + "for another platform, build it with `just host-lib` and place it "
+                    + "under Runtime/Plugins/<platform>/ with a .meta declaring the platform "
+                    + "and CPU. See the package README.",
                     this);
                 enabled = false;
                 return;

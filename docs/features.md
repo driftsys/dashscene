@@ -614,10 +614,13 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       `DsSlice::stride` against its own row size before reading a row.
       `unity/ffi-check` executes those declarations against a `dashscene-ffi`
       cdylib on each pull request; before it, nothing compiled a C# P/Invoke
-      against `include/dashscene.h` at all. **No native library ships in the
-      package** — `just host-lib` builds one and nothing places it — so a
-      customer installing by Git URL gets declarations that resolve nothing
-      until they supply it.
+      against `include/dashscene.h` at all. **The package ships a native library for
+      macOS arm64 and Android arm64** since story #1334, so a customer
+      installing by Git URL on either resolves it with nothing to build; on any
+      other platform the declarations still resolve nothing until they supply
+      one. **A macOS player built at Unity's default universal architecture
+      gets no library either** — Unity copies nothing rather than failing the
+      build (issue #1348).
 
       **The renderer is built since story #1122, and since issue #1298 it has
       drawn a document that something checked.** `BrgPainter` turns the
@@ -853,8 +856,11 @@ sentence.
       committed layer-2 probe table through the generated `Sdf.hlsl` on a real
       graphics device, and `just unity-render` (issue #1298) builds a
       player on the developer's own machine and draws through it. The `.meta` values that decide whether a native
-      library reaches an Android build are neither written nor exercised,
-      because the package ships no library (R-E21, unmet).
+      library reaches an Android build are written and exercised since story
+      #1334 (R-E21, met): a Rust gate compares the committed `.meta` text
+      against D3's table on every pull request, and `just unity-editor` reads
+      the same values back through `PluginImporter` in an editor. No player
+      build has confirmed the Android row on a device.
 
 ## 11. Quality tooling and workflow
 

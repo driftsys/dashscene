@@ -3,6 +3,15 @@
     status   accepted (2026-08-21, story #1125's spike). Settles questions 2
              and 3 of issue #1125 — the native plugin's layout, and how the
              library is built and shipped.
+             **Built by story #1334 on 2026-08-24**, for two of D3's five rows
+             — macOS arm64 and Android arm64, the two with a consumer today.
+             The Windows and Linux editor rows ship nothing and iOS is v1, so
+             D3 is a table the tree implements in part and the two checks over
+             it compare only the rows that ship. D4's committed binaries
+             measured 3,118,792 and 6,541,424 bytes —
+             9,660,216 together, against its own estimate of 9,598,896, so
+             0.64 % over it rather than under. R-E21 is met; R-E3 and R-E18 are not, and
+             both wait on a release rather than on this record.
     date     2026-08-21
     scope    crates/dashscene-ffi's crate types, and where its build output
              sits inside unity/com.driftsys.dashscene
@@ -72,6 +81,21 @@ pattern; both commit an explicit `.meta` per binary.
 | Android player, arm64            | `cdylib`    | `libdashscene_ffi.so`    | `Android` `CPU=ARM64`                               |
 | iOS, v1                          | `staticlib` | `libdashscene_ffi.a`     | `iOS`, and the C# becomes `DllImport("__Internal")` |
 
+**Reading this table against a `.meta` file.** The rows name platforms the way a
+developer speaks about them, and a `.meta` names them the way Unity serialises
+them. In `serializedVersion: 3`, which is what an editor writes today,
+`platformData` is a mapping keyed by **build target** — so this table's
+`Standalone` for macOS is the key `OSXUniversal`, and `Editor` is `Editor`. In
+`serializedVersion: 2` the key is the **group**, `Standalone`, covering `Win64`
+and `OSXUniversal` together. `unity/package-gate`'s `plugin_meta` reads both
+shapes, and the second is exercised only by a fixture: no file of that vintage
+is in this repository.
+
+**The Windows and Linux rows state editor keys only, where the macOS row states
+both.** Nothing turns on it while those rows ship no binary. A row that gains
+one should first say whether a standalone entry is required of it, because a
+check transcribing the table would not demand one.
+
 **Casing is load-bearing and differs between platforms** — `x86_64` for Editor
 and Standalone, `ARM64`/`X86_64` for Android. Unity parses the value through an
 enum converter and, on failure, substitutes the default with a warning rather
@@ -102,8 +126,18 @@ binaries do not delta-compress and the distribution record rejects LFS under its
 "Alternatives considered". That is the reason this decision is scoped to the
 Git-URL form and moves with it.
 
-**D5 — nothing verifies a shipped binary against the declarations, under any of
-these options, and this record does not pretend otherwise.**
+**D5 — nothing verifies a shipped binary against the sources of the commit that
+carries it, under any of these options, and this record does not pretend
+otherwise.**
+
+**Amended by story #1334 (2026-08-24): the absolute form of this heading is no
+longer true.** Two checks now read a shipped binary — `package-gate` reads each
+one's header far enough to compare its architecture against D3, and the
+de-staged `unity/render-gate` builds a player that loads the shipped library and
+runs the `ds_abi_version` handshake and the per-array `DsSlice::stride`
+comparison against it. Neither is a freshness check, which is why the heading
+was narrowed rather than deleted: a stale library of the right architecture
+passes both.
 
 `just unity-abi` builds `dashpaint-abi` from source and compares it against the
 package's `BoundaryB.cs`. It never reads `dashscene-ffi` and never reads

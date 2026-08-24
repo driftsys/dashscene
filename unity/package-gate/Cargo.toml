@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "The Unity package's gates that need no Unity editor and no .NET SDK: the HLSL derivation of the WGSL shader library, the pragma rules over the shaders that consume it, and R-E10's engine/engine-free split of Runtime/."
+description = "The Unity package's gates that need no Unity editor and no .NET SDK: the HLSL derivation of the WGSL shader library, the pragma rules over the shaders that consume it, R-E10's engine/engine-free split of Runtime/, and R-E21's platform data over each shipped native library."
 publish = false
 
 [dependencies]
