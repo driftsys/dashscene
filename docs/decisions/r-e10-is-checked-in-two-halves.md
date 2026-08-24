@@ -94,8 +94,10 @@ compatibility level is `NET_Standard` rather than assuming it. It needs an
 editor, so it is outside CI and outside `just check`, and it says so. It is a
 developer's gate, run before opening a pull request that touches
 `Runtime/Engine/`, `Runtime/Shaders/`, `Runtime/Resources/` — where the
-`.shader` files moved at issue #1313 — or `Samples~/FrameLoop/`, which it copies
-into its project and which nothing else anywhere compiles.
+`.shader` files moved at issue #1313 — or `Samples~/`, whose every sample it
+copies into its project and which no other CHECK compiles. `just unity-demo`
+compiles the `Showcase` sample too, as a side effect of building the player it
+runs, and it is a demonstration rather than a gate.
 
 **D4 — the split is guarded by three assertions, not by review.** They are in
 `unity/package-gate`, a Rust crate in the sanity test tier, so they run on every

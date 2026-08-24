@@ -8,6 +8,16 @@ the Cargo workspace rather than moving on its own.
 
 ### Added
 
+- **A showcase sample, and `just unity-demo` to build and run it.**
+  `Samples~/Showcase` reads a manifest of documents from `StreamingAssets`,
+  switches on the arrow keys or on a `-cycle <seconds>` argument, and reports
+  the rung, the instance count and every construct the painter refused. The
+  recipe stages the committed documents, the font cascade and — because the
+  package ships no binary — the native library itself, which is why it
+  demonstrates the package's C# and shaders as installed but says nothing about
+  a released plugin layout (issue #1334). It is a demonstration rather than a
+  gate: its `cycle` action asserts that every document reached the painter, and
+  `unity/render-gate` is what asserts anything about the picture (issue #1329).
 - **Text.** The MSDF glyph atlas a run samples crosses the C ABI on its own call
   — `ds_runtime_atlas_count` and `ds_runtime_atlas`, keyed by a `GlyphRun`'s
   atlas index and carrying the sheet as well as the per-glyph placement, because

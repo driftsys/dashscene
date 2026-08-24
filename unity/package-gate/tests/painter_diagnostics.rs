@@ -8,7 +8,7 @@
 //! `Runtime/Engine/**` out of their compile sets and `unity/abi-check` compiles
 //! one file that is not in it, `unity-editor` and
 //! `unity-conformance` compile it without constructing a painter, and
-//! `just unity-render` — the only recipe that constructs one — calls `Fail` the
+//! `just unity-render` and `just unity-demo` — the two recipes that construct one — calls `Fail` the
 //! moment it sees rung 3, so the rung-3 arm is never taken by a passing run.
 //!
 //! **So these are text assertions, and that trade is already made here.**

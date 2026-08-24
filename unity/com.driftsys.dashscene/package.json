@@ -18,6 +18,11 @@
       "displayName": "Frame Loop",
       "description": "A MonoBehaviour that loads a .dsb, ticks it, hands each committed frame to BrgPainter and marks it drawn. Needs a host project meeting R-E4, R-E5 and R-E6 — a URP asset with the SRP Batcher on, and m_BrgStripping set to 2 — or the painter refuses to construct, or packs every instance and draws nothing.",
       "path": "Samples~/FrameLoop"
+    },
+    {
+      "displayName": "Showcase",
+      "description": "The demonstration: several committed documents from a manifest in StreamingAssets, switched on the arrow keys or on a timer, with the rung, the instance count and every construct the painter refused reported on screen. Needs the same host project R-E4, R-E5 and R-E6 describe. It draws committed documents rather than the showcase scenes the desktop, web and Android hosts draw, because those are built in Rust code and are emitted as no .dsb; see the dashscene repository's issue 1342.",
+      "path": "Samples~/Showcase"
     }
   ]
 }
