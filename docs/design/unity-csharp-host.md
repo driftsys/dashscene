@@ -36,6 +36,7 @@ baked vector nodes and not render-target groups. `PackDiagnostic` names each one
 and the painter reports it, which is P4.
 
     Samples~/FrameLoop --+--> CommitPacer      (when to commit)
+    Samples~/Showcase ---+    (both samples)
                          |
                          +--> DocumentRange    (where the .dsb is)
                          |
@@ -60,11 +61,11 @@ and the painter reports it, which is P4.
 rather than a filing convention
 ([../decisions/r-e10-is-checked-in-two-halves.md](../decisions/r-e10-is-checked-in-two-halves.md)).
 
-| where                 | references the engine | checked by                             | runs in CI |
-| --------------------- | --------------------- | -------------------------------------- | ---------- |
-| `Runtime/`            | no                    | `unity/package-compat`, netstandard2.1 | yes        |
-| `Runtime/Engine/`     | yes                   | `just unity-editor`, a Unity editor    | no         |
-| `Samples~/FrameLoop/` | yes                   | `just unity-editor`, copied in         | no         |
+| where             | references the engine | checked by                             | runs in CI |
+| ----------------- | --------------------- | -------------------------------------- | ---------- |
+| `Runtime/`        | no                    | `unity/package-compat`, netstandard2.1 | yes        |
+| `Runtime/Engine/` | yes                   | `just unity-editor`, a Unity editor    | no         |
+| `Samples~/*/`     | yes                   | `just unity-editor`, copied in         | no         |
 
 R-E10 requires every C# type under `Runtime/` to compile against
 `netstandard.dll` 2.1.0. `unity/package-compat` carries no Unity reference
@@ -400,10 +401,11 @@ failing.
 
 **Read the atlases and install them on the frame that reports
 `DocumentReplaced`, before `Draw`** — which is what the two calls' own doc
-comments describe, though neither spells out the ordering against `Draw`. **The
-package's sample does not**: it loads without a font cascade and installs no
-atlas set, so it demonstrates none of this (issue #1337). `Draw` drops a set
-that was installed for a previous document, and what tells the two apart is
+comments describe, though neither spells out the ordering against `Draw`.
+**`Samples~/FrameLoop` does not**: it loads without a font cascade and installs
+no atlas set, so it demonstrates none of this (issue #1337). `Samples~/Showcase`
+does both, on the entries its manifest marks as carrying text. `Draw` drops a
+set that was installed for a previous document, and what tells the two apart is
 whether `SetAtlases` has been called since the last `Draw`, not the flag alone:
 the flag is raised by every load and cleared by the acquire that reports it, so
 a painter keying on it alone would destroy the set the host had just minted.
@@ -833,6 +835,75 @@ that set would print an otherwise identical report.
   arithmetic this gate exists not to re-implement. The cost is a smaller
   stronger-form set, which the run prints.
 
+## The demonstration, and what it is not
+
+`just unity-demo` builds a windowed player from this package and runs it. It is
+the fourth throwaway Unity project in this repository and a fourth copy of the
+bring-up the other three carry, which issue #1316 factors out together rather
+than any one of them doing it to the others.
+
+**What it draws**: committed documents staged into `StreamingAssets` with a
+manifest, switched on the arrow keys or on a `-cycle <seconds>` argument, with
+the font cascade — `corpus/fonts/inter/Inter-Regular.otf` and the
+`corpus/atlas/inter-ascii` sheet and metrics — beside them for the document that
+carries text.
+
+**Measured on 2026-08-24**, `6000.3.22f1`, macOS/Metal, Apple M3, in a player
+built by `just unity-demo 6000.3.22f1 cycle`: `v03-paint.dsb` packed 16
+instances on rung `RawBuffer` and reported its one image fill refused;
+`v07-variant-topology.dsb` 2 instances; `v018-variant-shelf.dsb` 3; and
+`v07-text-hug-in-fill.dsb` 16 with **no diagnostic at all**, which is the text
+seam of story #1123 shading glyphs through the cascade in a player rather than
+in an editor.
+
+**The `cycle` action re-derives that** rather than leaving it to a person
+watching: the player walks every entry once, quits, and the recipe fails unless
+the log carries the line the sample writes when all of them have drawn. It is
+bounded at 90 seconds, because a document that never draws and a player that
+never exits look the same from outside — the foreground shape it replaced drew
+the first document and then sat for one hour and fifty-four minutes.
+
+**It is a demonstration and not a gate.** `cycle` asserts that every document
+reached the painter and nothing more: there is no negative control, no ink
+predicate, and a person still decides whether the picture is right.
+`unity/render-gate` is what puts a frame through an ink predicate and fails on a
+frame the painter did not draw. A green `unity-demo run` says a player built and
+ran; a green `cycle` adds that every document reached the painter, and nothing
+about what landed on the screen.
+
+**Three things it deliberately does not do.**
+
+- **It runs on a staged library.** The recipe copies the cdylib into the
+  project, as `unity-render` does. The shipped form — `Runtime/Plugins/`, the
+  `.meta` files and the tag R-E18 wants — is issue #1334, and nothing here
+  stands in for it.
+- **It does not draw the showcase scenes** the desktop, web and Android hosts
+  draw. Those are built in Rust against a live arena and are emitted as no
+  `.dsb`; issue #1342 carries what it would take, including the wall that is the
+  painter's rather than the demo's.
+- **It shows no motion a host has to drive.** The C ABI has no producer-side
+  entry point, and signal binding is layer 1, which is `v1` for every host
+  (issues #1261 and #1262). What ticks is the runtime's own time.
+
+**One thing it did not find, and the correction is the point.** A first run of
+this demo logged `the SRP Batcher is off` on a project that meets R-E5, and that
+was written up here as issue #1317 reproducing in a player. It was measured
+against `463febd5`, before the fix for #1317 landed — commit `937e539a`, merged
+as `539096ed`, which moved the read into `ReportBatcherOnce` behind
+`RenderPipelineManager.currentPipeline` and which `unity/package-gate`'s
+`r_e5_is_latched_on_the_pipeline_instance_not_on_a_flag` pins. On a tree
+carrying that fix the warning does not appear — measured rather than inferred:
+the `cycle` run above logged no R-E5 line at all, on a project configured by the
+same sequence that produced the original observation. The paragraph that said
+otherwise would have sent the next reader to reopen a closed issue.
+
+**And one coincidence worth keeping.** Its text document and the cascade beside
+it are the ones `crates/dashscene-android/harness/build.sh` already stages, so
+that harness and this demo draw the same file with the same fonts through two
+different painters — the lean one on Android, the BRG one here. Track B of epic
+#1107 wants exactly that comparison, and this is the shared content it can be
+taken over.
+
 ## The `.meta` files, and how they were made
 
 R-E2 requires a committed `.meta` beside every path Unity imports, because a
@@ -1027,13 +1098,15 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   has not been. An earlier draft of this bullet said it could not, which was
   wrong. Mutating the release ordering back leaves the gate green, measured
   rather than assumed. Issue #1289 carries the threaded harness it needs.
-- **No CI job compiles `Samples~/FrameLoop/`, and one developer gate does.** Not
-  because of the `~`, which only hides it from Unity's importer:
-  `package-compat` and `ffi-check` glob `Runtime/**/*.cs`, so anything outside
-  `Runtime/` is out of scope wherever it sits, and no CI job runs an editor.
-  That is why `CommitPacer` sits in `Runtime/` rather than in the sample: the
-  pacing arithmetic carries a numeric claim, so it lives where a gate can reach
-  it. Story #1124's Android resolver briefly carried one too, and moved to
+- **No CI job compiles `Samples~/`, and two developer gates do** —
+  `just unity-editor`, whose purpose it is, and `just unity-demo`, which
+  compiles the Showcase sample while building its player. Not because of the
+  `~`, which only hides it from Unity's importer: `package-compat` and
+  `ffi-check` glob `Runtime/**/*.cs`, so anything outside `Runtime/` is out of
+  scope wherever it sits, and no CI job runs an editor. That is why
+  `CommitPacer` sits in `Runtime/` rather than in the sample: the pacing
+  arithmetic carries a numeric claim, so it lives where a gate can reach it.
+  Story #1124's Android resolver briefly carried one too, and moved to
   `Runtime/Engine/` once the two-halves ruling gave engine-referencing code a
   gate.
 

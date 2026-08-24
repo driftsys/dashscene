@@ -71,14 +71,15 @@ public static class DashsceneEditorCompat
         // is the assertion.
         var sampleAssembly = Path.Combine("Library", "ScriptAssemblies", "Assembly-CSharp.dll");
         var sampleSources = Directory.Exists(Path.Combine("Assets", "Samples"))
-            ? Directory.GetFiles(Path.Combine("Assets", "Samples"), "*.cs")
+            ? Directory.GetFiles(
+                Path.Combine("Assets", "Samples"), "*.cs", SearchOption.AllDirectories)
             : Array.Empty<string>();
         if (sampleSources.Length == 0)
         {
             failures.Add(
                 "no sample source under Assets/Samples. The recipe copies "
-                + "Samples~/FrameLoop/ there so that something compiles it; without it "
-                + "the package's only MonoBehaviour is compiled by nothing.");
+                + "Samples~/*/ there so that something compiles them; without it "
+                + "the package's sample MonoBehaviours are compiled by nothing.");
         }
         else if (!File.Exists(sampleAssembly))
         {

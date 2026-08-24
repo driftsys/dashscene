@@ -222,8 +222,9 @@ rather than assuming it. It needs an editor install, which
 [`../decisions/the-native-library-ships-inside-the-unity-package.md`](../decisions/the-native-library-ships-inside-the-unity-package.md)
 D4 records no CI runner here can host, so it runs on a developer's machine
 before a pull request that touches `Runtime/Engine/`, `Runtime/Shaders/`,
-`Runtime/Resources/` or `Samples~/FrameLoop/` — the last because it is the only
-thing anywhere that compiles the sample.
+`Runtime/Resources/` or `Samples~/` — the last because it is the only check that
+compiles the samples. `just unity-demo` compiles one of them while building its
+player, and is a demonstration rather than a check.
 
 **The exclusion is itself checked**, in `unity/package-gate`, which runs in the
 sanity test tier with no editor and no .NET SDK: **every** project that globs

@@ -1206,8 +1206,8 @@ sdf-hlsl:
 # records that no CI runner here can host a Unity install. So this is a
 # developer's gate: run it before opening a pull request that touches
 # `Runtime/Engine/`, `Runtime/Shaders/`, `Runtime/Resources/` or
-# `Samples~/FrameLoop/` — the last because this is the only thing anywhere that
-# compiles the sample. CI runs the other half on every pull
+# `Samples~/` — the last because this is the only CHECK that compiles the
+# samples; `unity-demo` compiles the Showcase sample while building its player. CI runs the other half on every pull
 # request, and `unity/package-gate` runs the parts that need no editor.
 #
 # **It also writes the `.meta` files R-E2 requires.** A `file:` dependency is a
@@ -1315,7 +1315,10 @@ unity-editor unity_version="6000.3.22f1":
 
     cp "${root}/unity/editor-compat/DashsceneEditorCompat.cs" "${project}/Assets/Editor/"
 
-    # **The sample is copied in so that something compiles it.** `Samples~` is
+    # **Every sample is copied in so that something compiles them**, and
+    # `cp -R` rather than a flat glob: a flat copy puts two samples' files in
+    # one directory, where a shared basename silently overwrites, and skips any
+    # subdirectory a sample has — which would be compiled by nothing at all. `Samples~` is
     # hidden from Unity's importer by its `~`, and `package-compat` and
     # `ffi-check` both glob `Runtime/**/*.cs` — so nothing in this repository
     # compiled `Samples~/FrameLoop/` at all until issue #1298 put the painter's
@@ -1325,7 +1328,7 @@ unity-editor unity_version="6000.3.22f1":
     # `Samples~` would leave it hidden again, and writing it into the package
     # directory would make this recipe modify the thing it is checking.
     mkdir -p "${project}/Assets/Samples"
-    cp "${package}"/Samples~/FrameLoop/*.cs "${project}/Assets/Samples/"
+    cp -R "${package}"/Samples~/. "${project}/Assets/Samples/"
 
     # NET_Standard is Unity's default, and this gate asserts it rather than
     # assuming it — the editor script reads the level back and fails if it is
@@ -1522,8 +1525,10 @@ unity-ffi:
 # Draw a document in a built PLAYER and check that ink landed where the
 # committed tables put it.
 #
-# **The only thing in this repository that draws a dashscene document through
-# the Unity painter.** Every other gate over the package compiles, links or
+# **The only CHECK in this repository that draws a dashscene document through
+# the Unity painter.** `just unity-demo` draws as well; its `cycle` action
+# asserts that every document reached the painter, and nothing about what
+# landed on the screen. Every other gate over the package compiles, links or
 # executes on the CPU; `docs/design/unity-csharp-host.md` says so and this is
 # what changes it.
 #
@@ -2327,6 +2332,353 @@ _android-adb:
       exit 1
     fi
     echo "${adb}"
+
+# The Unity showcase — the demonstration a person runs, not a gate. Issue #1329.
+#
+# Same throwaway-project shape as `unity-render`, and a **fourth** copy of that
+# bring-up on purpose: issue #1316 carries factoring the copies out together,
+# and a shared helper written from one lane can break the others silently.
+#
+# **The library is staged, not shipped.** The package carries no binary, so this
+# copies the cdylib into the project the way `unity-render` does. It therefore
+# demonstrates the package's C# and its shaders **as installed** — that is
+# issue #1313's lesson and the reason the build script refuses the Always
+# Included Shaders workaround — and says nothing about a released plugin layout,
+# which is issue #1334.
+#
+# **What it deliberately does not show.** No signal sweep and no variant switch:
+# `include/dashscene.h` exports no producer-side entry point and signal binding
+# is layer 1, which is `v1` for every host (issues #1261 and #1262). And not the
+# showcase scenes — those are built in Rust code against a live arena and are
+# emitted as no `.dsb` anywhere in this repository, which issue #1329's comment
+# sets out.
+#
+# Needs a Unity editor, so it is outside `check` and outside CI, like
+# `unity-editor` and `unity-render`. Costs tens of minutes for the same two
+# reasons: the project is rebuilt from scratch each run and R-E6's `KeepAll`
+# makes the player compile a large variant set.
+#
+# **Three actions.** `run` (the default) opens the window a person drives;
+# `build` stops after the build; `cycle` walks every document once, quits, and
+# fails unless the player reported that all of them drew — the one shape that
+# reports rather than being watched. Anything else is refused rather than
+# treated as "do not run".
+#
+# **It imports the package as a `file:` dependency**, so the editor WRITES the
+# `.meta` files R-E2 requires into the working tree, exactly as `unity-editor`,
+# `unity-render` and `unity-conformance` do: check `git status` after a run
+# that added a file.
+#
+# Build the Unity showcase player from this package and run it.
+unity-demo unity_version="6000.3.22f1" action="run":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The editor resolution `unity-editor` and `unity-render` both use. Issue
+    # #1316 is where the three copies are factored out together.
+    editor="${DASHSCENE_UNITY:-/Applications/Unity/Hub/Editor/{{unity_version}}/Unity.app/Contents/MacOS/Unity}"
+    if [ ! -x "${editor}" ]; then
+      echo "unity-demo: no Unity executable at ${editor}" >&2
+      echo "unity-demo:   install {{unity_version}} with the Hub, pass a version:" >&2
+      echo "unity-demo:     just unity-demo 6000.3.22f1" >&2
+      echo "unity-demo:   or point at one directly:" >&2
+      echo "unity-demo:     DASHSCENE_UNITY=/path/to/Unity just unity-demo" >&2
+      exit 1
+    fi
+    editor_dir="$(dirname "${editor}")"
+    builtin=""
+    for candidate in \
+      "${editor_dir}/../Resources/PackageManager/BuiltInPackages" \
+      "${editor_dir}/Data/PackageManager/BuiltInPackages" \
+      "${editor_dir}/../Data/PackageManager/BuiltInPackages"; do
+      if [ -d "${candidate}" ]; then
+        builtin="$(cd "${candidate}" && pwd)"
+        break
+      fi
+    done
+    if [ -z "${builtin}" ]; then
+      echo "unity-demo: no BuiltInPackages directory near ${editor}" >&2
+      exit 1
+    fi
+
+    root="$(git rev-parse --show-toplevel)"
+    project="${root}/target/unity-demo"
+    package="${root}/unity/com.driftsys.dashscene"
+
+    urp_json="${builtin}/com.unity.render-pipelines.universal/package.json"
+    if [ ! -f "${urp_json}" ]; then
+      echo "unity-demo: this editor ships no built-in URP at ${urp_json}" >&2
+      exit 1
+    fi
+    urp="$(jq -r .version "${urp_json}")"
+
+    # A UPM dependency is a MINIMUM, so only a pin the editor is BELOW is a
+    # problem — and without this the whole player build runs before UPM fails to
+    # resolve, which is tens of minutes to reach a one-line answer.
+    pinned="$(jq -r '.dependencies["com.unity.render-pipelines.universal"] // empty' \
+      "${package}/package.json")"
+    if [ -n "${pinned}" ]; then
+      lowest="$(printf '%s\n%s\n' "${pinned}" "${urp}" | sort -V | head -1)"
+      if [ "${lowest}" != "${pinned}" ]; then
+        echo "unity-demo: package.json pins URP ${pinned} and this editor ships ${urp}," >&2
+        echo "unity-demo: which is older — a consumer of this package could not resolve it." >&2
+        exit 1
+      fi
+    fi
+
+    # From cargo rather than from a `uname` mapping plus a file test: `cargo
+    # build` does not delete the artifacts of a crate type that has been
+    # removed, so a `[ -f … ]` guard passes over a stale library. Release,
+    # because the player runs it.
+    cargo build -p dashscene-ffi --release
+    lib=$(cargo build -p dashscene-ffi --release --message-format=json | jq -r '
+        select(.reason == "compiler-artifact")
+        | select(.target.name == "dashscene_ffi")
+        | .filenames[]
+        | select(endswith(".dylib") or endswith(".so") or endswith(".dll"))
+      ' | tail -n 1)
+    if [ -z "${lib}" ]; then
+      echo "unity-demo: cargo emitted no dynamic library for dashscene-ffi." >&2
+      echo 'unity-demo: is cdylib still in [lib] crate-type?' >&2
+      exit 1
+    fi
+
+    # The documents the showcase offers, and the cascade the text one needs —
+    # the same font, sheet and metrics the Android harness stages (issue #969).
+    # Every input is committed; nothing here is generated at build time.
+    documents=(
+      "v03-paint.dsb|paint: fills, strokes, corners, and one image fill the painter refuses|0|false"
+      "v07-variant-topology.dsb|layout: a variant set, at rest — nothing here can switch it|0|false"
+      "v018-variant-shelf.dsb|layout: the variant shelf|0|false"
+      "v07-text-hug-in-fill.dsb|text: MSDF glyphs through the cascade|0|true"
+    )
+    font="${root}/corpus/fonts/inter/Inter-Regular.otf"
+    atlas="${root}/corpus/atlas/inter-ascii"
+    for input in "${font}" "${atlas}/atlas.png" "${atlas}/atlas.metrics"; do
+      if [ ! -f "${input}" ]; then
+        echo "unity-demo: ${input} is missing; the text document cannot be shaded" >&2
+        exit 1
+      fi
+    done
+
+    # Rebuilt from scratch each run, for `unity-render`'s reason: a reused
+    # Library/ can hold a stale compiled assembly or a stale player, and this
+    # demonstration is about the CURRENT sources.
+    rm -rf "${project}"
+    mkdir -p "${project}/Packages" "${project}/ProjectSettings" \
+      "${project}/Assets/Editor" "${project}/Assets/Plugins" \
+      "${project}/Assets/StreamingAssets/documents" \
+      "${project}/Assets/StreamingAssets/cascade"
+
+    cat > "${project}/Packages/manifest.json" <<JSON
+    {
+      "dependencies": {
+        "com.driftsys.dashscene": "file:${package}",
+        "com.unity.render-pipelines.universal": "${urp}"
+      }
+    }
+    JSON
+
+    cp "${root}/unity/demo/DemoBuild.cs" "${project}/Assets/Editor/"
+    cp "${lib}" "${project}/Assets/Plugins/"
+
+    # **`Samples~` is hidden from Unity's importer by its `~`**, so the sample
+    # is copied in rather than reached inside the package — the same reason
+    # `unity-editor` copies it.
+    cp "${package}"/Samples~/Showcase/*.cs "${project}/Assets/"
+
+    cp "${font}" "${project}/Assets/StreamingAssets/cascade/Inter-Regular.otf"
+    cp "${atlas}/atlas.png" "${project}/Assets/StreamingAssets/cascade/atlas.png"
+    cp "${atlas}/atlas.metrics" "${project}/Assets/StreamingAssets/cascade/atlas.metrics"
+
+    manifest="${project}/Assets/StreamingAssets/showcase.json"
+    printf '{ "documents": [' > "${manifest}"
+    separator=""
+    for entry in "${documents[@]}"; do
+      # **Checked on the raw row, before the split.** A `|` in a label is
+      # taken as a field separator, so the check has to run here: after
+      # `read` the label is already truncated and the damage has moved into
+      # the fields behind it.
+      case "${entry}" in
+        *'"'* | *'\'*)
+          echo "unity-demo: ${entry}" >&2
+          echo "unity-demo: a row carries a quote or a backslash, which the" >&2
+          echo "unity-demo: generated showcase.json cannot hold" >&2
+          exit 1
+          ;;
+      esac
+      if [ "$(printf '%s' "${entry}" | tr -cd '|' | wc -c | tr -d ' ')" != "3" ]; then
+        echo "unity-demo: ${entry}" >&2
+        echo "unity-demo: a row must carry exactly four fields separated by |" >&2
+        exit 1
+      fi
+
+      IFS='|' read -r file label root_ordinal text <<< "${entry}"
+      # **The label is written into JSON by `printf`, so it may not carry a
+      # quote or a backslash.** A label that did would produce a manifest the
+      # sample cannot parse, and the player would come up with no documents.
+      # The labels are written a few lines above, so this refuses a mistake
+      # rather than escaping around one.
+      case "${label}" in
+        *'"'* | *'\'*)
+          echo "unity-demo: the label for ${file} carries a quote or a backslash," >&2
+          echo "unity-demo: which the generated showcase.json cannot hold" >&2
+          exit 1
+          ;;
+      esac
+      if [ ! -f "${root}/goldens/dsb/${file}" ]; then
+        echo "unity-demo: goldens/dsb/${file} is missing" >&2
+        exit 1
+      fi
+      cp "${root}/goldens/dsb/${file}" "${project}/Assets/StreamingAssets/documents/"
+      printf '%s{"path":"documents/%s","label":"%s","shownRoot":%s,"text":%s}' \
+        "${separator}" "${file}" "${label}" "${root_ordinal}" "${text}" >> "${manifest}"
+      separator=","
+    done
+    printf '] }\n' >> "${manifest}"
+
+    cat > "${project}/ProjectSettings/ProjectSettings.asset" <<'YAML'
+    %YAML 1.1
+    %TAG !u! tag:unity3d.com,2011:
+    --- !u!129 &1
+    PlayerSettings:
+      m_ObjectHideFlags: 0
+      productName: DashsceneShowcase
+      companyName: driftsys
+      apiCompatibilityLevel: 6
+      apiCompatibilityLevelPerPlatform: {}
+    YAML
+
+    log="${project}/editor.log"
+    echo "unity-demo: building the player in {{unity_version}} (log: ${log})"
+    set +e
+    "${editor}" -batchmode -quit -projectPath "${project}" \
+      -executeMethod DemoBuild.Build -logFile "${log}"
+    status=$?
+    set -e
+    grep -E "^\[demo-build\]|error CS|Shader error|Compilation failed" "${log}" || true
+    if [ "${status}" -ne 0 ]; then
+      echo "unity-demo: the player build FAILED (exit ${status}). Full log: ${log}" >&2
+      exit "${status}"
+    fi
+
+    player_path="${project}/Build/player-path.txt"
+    if [ ! -f "${player_path}" ]; then
+      echo "unity-demo: the build reported success and wrote no player path" >&2
+      exit 1
+    fi
+    player="$(cat "${player_path}")"
+    echo "unity-demo: player ${player}"
+
+    if [ "{{action}}" = "build" ]; then
+      echo "unity-demo: built and not run, as asked"
+      exit 0
+    fi
+
+    player_log="${project}/player.log"
+
+    # **`-logFile`, because every word this demo says goes to a log.** The
+    # sample reports each document it drew, and every failure it meets, through
+    # `Debug.Log`; without this they land in the platform's default player log,
+    # at a path this recipe never prints. `unity-render` passes it for the same
+    # reason.
+    if [ "{{action}}" = "cycle" ]; then
+      # The run that reports rather than the run a person watches: the player
+      # walks every document once and quits, and the log must then carry the
+      # line the sample writes when all of them have drawn.
+      #
+      # **`-batchmode`, and not a window — the shape `unity-render` uses.**
+      # A WINDOWED player stalls in `semaphore_wait_trap` waiting for a
+      # drawable whenever the window server is not compositing its window, and
+      # this action met that twice on 2026-08-24: run in the foreground it drew
+      # the first document and then sat for one hour and fifty-four minutes,
+      # and handed to `open` it did the same on an unattended machine, failing
+      # at its bound after the display had been idle for seventeen minutes.
+      # `-batchmode` alone keeps the graphics device — `unity-render`'s own
+      # note records that measurement, and `-nographics` is what would take the
+      # device away — so the painter still constructs, packs and reports.
+      #
+      # **What that costs is honest to state**: with no swapchain this action
+      # asserts that every document reached the painter, which is what its
+      # output says, and nothing about pixels. `run` is the action with a
+      # window, and `unity-render` is what reads pixels back.
+      rm -f "${player_log}"
+
+      # **Derived from the path the build reported**, not composed from the
+      # product name: `DemoBuild` says in terms that one place knows where the
+      # executable is, and a second copy of that name here would fall back to
+      # the launch shape measured to stall the moment it drifted.
+      "${player}" -batchmode -logFile "${player_log}" -cycle 3 -quit &
+      player_pid=$!
+
+      # Bounded, because the failure this action exists to catch is a document
+      # that never draws — which looks exactly like a player that never exits.
+      # The bound follows the count and the interval rather than standing
+      # beside them: four documents at three seconds need twelve, and the rest
+      # is the editor's startup.
+      bound=$(( ${#documents[@]} * 3 + 60 ))
+      drew=""
+      for _ in $(seq 1 "${bound}"); do
+        if [ -f "${player_log}" ] \
+          && grep -q "^\[showcase\] all ${#documents[@]} document(s) drew" "${player_log}"; then
+          drew="yes"
+          break
+        fi
+        sleep 1
+      done
+      # This run's own process, by pid: an unscoped `pkill` would take down a
+      # `run` window a developer has open from another worktree.
+      kill "${player_pid}" 2>/dev/null || true
+      wait "${player_pid}" 2>/dev/null || true
+
+      # **Both prefixes.** Every failure the sample reports is a `[dashscene]`
+      # line, so printing only the draws hides the reason exactly when the
+      # reason is what is wanted.
+      grep -E "^\[showcase\]|^\[dashscene\]" "${player_log}" || true
+      if [ -z "${drew}" ]; then
+        echo "unity-demo: the player did not report all ${#documents[@]} documents" >&2
+        echo "unity-demo: drawn within ${bound} s. Full log at ${player_log}" >&2
+        exit 1
+      fi
+
+      # **A document that packed nothing is not a document that drew.** The
+      # per-document line carries the count, so refusing a zero costs a grep
+      # and closes the gap between reaching the painter and drawing.
+      if grep -qE "^\[showcase\] drew .*: 0 instance\(s\)" "${player_log}"; then
+        echo "unity-demo: a document packed no instances at all" >&2
+        echo "unity-demo: full log at ${player_log}" >&2
+        exit 1
+      fi
+      echo "unity-demo: all ${#documents[@]} documents reached the painter, none empty"
+      exit 0
+    fi
+
+    if [ "{{action}}" != "run" ]; then
+      echo "unity-demo: unknown action '{{action}}' — pass run, build or cycle" >&2
+      exit 1
+    fi
+
+    # Foreground, windowed, and it exits when the person closes it. Left and
+    # right switch documents; what the painter refused is on screen.
+    #
+    # **A windowed player wants a session with a window server**, and so does
+    # `cycle`: both hand the bundle to `open`. This repository has measured a
+    # windowed player launched from a shell that never composites it stalling
+    # in `semaphore_wait_trap` waiting for a drawable — see the note in
+    # `unity-render`, which is why that gate is `-batchmode`. Neither action
+    # works on a session with no display at all; `cycle` at least fails at its
+    # bound rather than hanging.
+    echo "unity-demo: left/right switch documents, close the window to finish"
+    echo "unity-demo: log at ${player_log}"
+    bundle="${player%/Contents/MacOS/*}"
+    if [ -d "${bundle}" ]; then
+      # `-W` waits for the app to exit, which keeps this action's contract —
+      # it returns when the person closes the window — while taking the launch
+      # path the `cycle` note above measured. A foreground launch here is what
+      # stalled.
+      open -W "${bundle}" --args -logFile "${player_log}"
+    else
+      "${player}" -logFile "${player_log}"
+    fi
 
 # Run the Android harness's own tests — the two gates that decide what a device
 # run means.

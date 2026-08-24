@@ -51,13 +51,24 @@ repository builds and records.
     render-gate/              two scripts `just unity-render` copies into
                               another throwaway project: it builds a PLAYER,
                               runs it, draws a document into a RenderTexture
-                              and reads that back. The only thing here that
-                              draws. A player because a player is where Unity
+                              and reads that back. The only CHECK here that
+                              draws — `demo/` below draws too, and asserts
+                              nothing. A player because a player is where Unity
                               strips a shader nothing references, which is the
                               class no check above can see (issue #1313) — so
                               this project deliberately adds nothing to Always
                               Included Shaders. Needs an editor, so it runs on
                               no CI runner
+    demo/                     an editor script `just unity-demo` copies into a
+                              throwaway project: it configures the project the
+                              way R-E4, R-E5 and R-E6 require, builds a
+                              windowed PLAYER over the package's Showcase
+                              sample and runs it. A demonstration rather than a
+                              check: its `cycle` action asserts that every
+                              document reached the painter, and a person
+                              decides whether the picture is right (issue
+                              #1329). Needs an editor,
+                              so it runs on no CI runner
 
 Sited in this repository rather than in a separate one by the owner's ruling of
 2026-08-17, recorded in
@@ -69,8 +80,8 @@ consumable.
 checks here are what give it value. `just unity-abi` runs `abi-check` and
 `package-compat`, `just unity-ffi` runs `ffi-check`, `just test` runs
 `package-gate`, `just unity-editor` runs `editor-compat`,
-`just unity-conformance` runs `hlsl-conformance` and `just unity-render` runs
-`render-gate`.
+`just unity-conformance` runs `hlsl-conformance`, `just unity-render` runs
+`render-gate` and `just unity-demo` runs `demo`.
 
 They ask different questions and none subsumes another. `abi-check` compares
 boundary B's value types against a `dashpaint-abi` build, member by member;
@@ -82,10 +93,11 @@ calls it, and loads deliberately incomplete libraries beside it, each in its own
 `editor-compat` is the only one that compiles a Unity `.shader` without building
 a player; `hlsl-conformance` is the only one that dispatches shader code and
 compares the values it computed against a committed table; `render-gate` is the
-only one that builds a player and draws. Until story #1121 nothing compiled a C#
-P/Invoke against `crates/dashscene-ffi/include/dashscene.h`, which is item 2 of
-issue #1266 — but `abi-check` has always executed: it declares sixty
-`[DllImport]`s and round-trips structs by value through the library.
+only one that builds a player and asserts what it drew — `demo` builds one and
+asserts only that every document reached the painter. Until story #1121 nothing
+compiled a C# P/Invoke against `crates/dashscene-ffi/include/dashscene.h`, which
+is item 2 of issue #1266 — but `abi-check` has always executed: it declares
+sixty `[DllImport]`s and round-trips structs by value through the library.
 
 None of them reads a shipped binary. Those that build a Rust half build both
 halves from one tree, so they observe only a disagreement this repository

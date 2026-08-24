@@ -57,6 +57,10 @@ What is here:
   **`Sdf.hlsl` is generated** from the lean painter's WGSL shader library by
   `naga` and must not be edited: the point is that both painters evaluate one
   compiled module rather than two ports of one file.
+- `Samples~/Showcase/` — the demonstration: several documents from a manifest in
+  `StreamingAssets`, switched on the arrow keys, with the rung, the instance
+  count and every construct the painter refused reported on screen.
+  `just unity-demo` builds a player over it.
 - `Samples~/FrameLoop/` — a `MonoBehaviour` driving all of it from
   `Time.deltaTime`. It is a sample rather than `Runtime/` code because R-E10
   requires every type under `Runtime/` to compile against netstandard2.1 and

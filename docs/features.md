@@ -655,8 +655,10 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
 
       **And it has been run.** `just unity-render` builds a **player**, draws
       `goldens/dsb/v03-paint.dsb` and reads the pixels back. The package's
-      `Samples~/FrameLoop` also constructs the painter and draws, but nothing
-      here runs it: `just unity-editor` compiles it and that is all. Measured on
+      `Samples~/Showcase` draws as well, and `just unity-demo` runs it: a
+      player over four committed documents, which asserts nothing about what
+      it drew. `Samples~/FrameLoop` is compiled by `just unity-editor` and run
+      by nothing. Measured on
       Unity 6000.3.22f1, macOS/Metal, Apple M3: 16 instances on rung
       `RawBuffer`, ink at all 13 sampled node centres, and the one rect
       carrying an image fill refused and reported. The gate's verdict predicate
