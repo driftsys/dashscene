@@ -2490,8 +2490,12 @@ _android-adb:
 # bring-up on purpose: issue #1316 carries factoring the copies out together,
 # and a shared helper written from one lane can break the others silently.
 #
-# **The library is staged, not shipped.** The package carries no binary, so this
-# copies the cdylib into the project the way `unity-render` does. It therefore
+# **The library is staged here, though the package ships one.** Story #1334 put
+# `libdashscene_ffi.dylib` and `libdashscene_ffi.so` inside the package and
+# de-staged `unity-render`; this recipe still copies the cdylib into the project.
+# Issue #1352 is the follow-up, and it will meet the architecture pin
+# `unity-render` carries — a macOS player at Unity's default universal
+# architecture gets no library at all. It therefore
 # demonstrates the package's C# and its shaders **as installed** — that is
 # issue #1313's lesson and the reason the build script refuses the Always
 # Included Shaders workaround — and says nothing about a released plugin layout,

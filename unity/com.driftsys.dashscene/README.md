@@ -13,10 +13,10 @@ raises `DllNotFoundException`.
 built for the universal `x64ARM64` architecture gets no library at all. Unity
 copies nothing rather than failing the build, and the player raises
 `DllNotFoundException` on its first call. Build a macOS player for Apple silicon
-only, or supply your own universal binary; issue #1348 is where that is being
-settled.
+only. That is a supported configuration rather than a limitation awaiting a fix:
+this package ships arm64 for macOS because the editor that consumes it is itself
+arm64-only.
 
-[R-E21](../../docs/specification/07-embedding-and-distribution.md) is the
 [R-E21](../../docs/specification/07-embedding-and-distribution.md) is the
 requirement that governs which ones ship.
 

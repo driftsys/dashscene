@@ -390,7 +390,7 @@ public static class RenderGateBuild
                 $"the player built, and {_shippedLibrary} is not in {plugins}. Unity copies "
                 + "nothing rather than failing the build when the plugin matches no slice of "
                 + "the player's architecture, so the first P/Invoke raises "
-                + "DllNotFoundException. Issue #1348.");
+                + "DllNotFoundException. The pin above is what prevents it.");
             return;
         }
 
@@ -476,8 +476,10 @@ public static class RenderGateBuild
         // R-E21: a correct `.meta` is necessary and not sufficient, and no
         // check that reads the tree can see it. This gate is what does.
         //
-        // **The pin is a statement about what the package ships, and issue
-        // #1348 is where it gets ruled.** D3's macOS row says arm64, so a
+        // **The pin is a supported configuration, ruled on 2026-08-25.**
+        // `a-platform-is-product-or-development-and-its-runtime-follows.md` D4
+        // settled issue #1348: the macOS row ships arm64 and no universal
+        // binary, because the editor that consumes it has no x86_64 slice. D3's macOS row says arm64, so a
         // universal player asks for something this package does not carry —
         // and an integrator building one with Unity's defaults meets the same
         // silence. Whether that row should ship a universal binary instead
@@ -524,8 +526,8 @@ public static class RenderGateBuild
         // no dashscene library at all — the player then raised
         // `DllNotFoundException` on its first call. Without this assertion that
         // failure arrives as a black frame minutes later, indistinguishable
-        // from a painter defect. Issue #1348 carries the ruling on the
-        // architecture; this is what names the symptom.
+        // from a painter defect. The architecture is ruled — see the pin
+        // below — and this is what names the symptom when it regresses.
         AssertLibraryReachedThePlayer(target, options.locationPathName, failures);
         if (failures.Count > 0)
         {
