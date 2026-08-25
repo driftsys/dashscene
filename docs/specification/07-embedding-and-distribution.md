@@ -122,6 +122,22 @@ fails: `CPU: ARM64` changed to `arm64` in the Android `.meta` produced
 
 ## The host project
 
+**Which host project — for R-E7, R-E8 and R-E9 only.** Those three bind the
+project that produces the **shipping** artifact, and
+[`../decisions/a-platform-is-product-or-development-and-its-runtime-follows.md`](../decisions/a-platform-is-product-or-development-and-its-runtime-follows.md)
+is why the distinction is stated: a project built to drive an emulator is a
+different project with its own settings, not a relaxation of them. **This
+repository contains no committed Unity project**, so those three bind an
+artifact that does not exist here, which is how they came to have no check at
+all.
+
+**The rest of this section is not scoped that way and must not be read as if it
+were.** R-E4, R-E5 and R-E6 are properties of any project that draws through
+BatchRendererGroup — R-E6 exists because Unity's default `m_BrgStripping` made
+the painter submit instances and draw nothing — and `just unity-render` checks
+them in a throwaway project today. R-E10 binds the package's own sources and no
+host project at all.
+
 **R-E4** — `UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline` shall
 be non-null in the host project before the painter constructs a
 `BatchRendererGroup`. _Check:_ assert **both** limbs — that a group was
@@ -217,11 +233,15 @@ measured here.
 `ScriptingImplementation.IL2CPP`. _Check:_ read `PlayerSettings`. Unity ships no
 arm64 Mono runtime:
 `PlaybackEngines/AndroidPlayer/Variations/mono/Release/Libs/` contains
-`armeabi-v7a` only.
+`armeabi-v7a` only. **Unchecked**: nothing reads `PlayerSettings` for this
+requirement (issue #1353); the reads that exist serve R-E10.
 
 **R-E8** — the host project shall set `AndroidTargetArchitectures` to exactly
 `AndroidArchitecture.ARM64`. _Check:_ read `PlayerSettings` and compare for
 equality rather than membership — a value that also carries `ARMv7` fails.
+**Unchecked**, as R-E7 (issue #1353). The equality is the point of the rule, so
+a project needing a second ABI — an emulator farm — is a separate project rather
+than a reason to widen this.
 
 **R-E9** — the host project shall set `AndroidMinSdkVersion` to the value of
 `ANDROID_API` in the `justfile`, or higher. _Check:_ read `PlayerSettings` and
@@ -231,7 +251,8 @@ target through `aarch64-linux-android<ANDROID_API>-clang` — including the
 `libdashscene_ffi.so` a Unity host loads, which is the only Android binary this
 package ships. Issue #1235 argues the number can drop to 29; writing the
 requirement against the variable rather than the literal means closing #1235
-lowers the floor without amending this file.
+lowers the floor without amending this file. **Unchecked**, as R-E7 (issue
+#1353).
 
 **R-E10** — every C# type under `unity/com.driftsys.dashscene/Runtime/` shall
 compile against `netstandard.dll` version 2.1.0, so the package builds under

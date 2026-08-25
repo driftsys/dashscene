@@ -651,6 +651,14 @@ their parent rather than apart from it:
   — **accepted** (2026-08-21, story #1125): a Unity host takes the `cdylib` on
   every platform in scope, the library is committed under `Runtime/Plugins/`,
   and its `.meta` rather than its path is what assigns the platform and CPU.
+- [a-platform-is-product-or-development-and-its-runtime-follows.md](a-platform-is-product-or-development-and-its-runtime-follows.md)
+  — **accepted** (2026-08-25, the owner): a platform row is product or
+  development and the two are governed differently; a row ships when a machine
+  runs it; the product is embedded Android arm64 on IL2CPP because Unity ships
+  no arm64 Mono runtime; demonstrations shall run Mono explicitly, which nothing
+  does yet (#1360), and one gate over the P/Invoke boundary covers IL2CPP; R-E8
+  binds the shipping project and a farm project is a separate one. Settles issue
+  #1348; the farm's ABI is left open.
 - [the-package-and-its-library-are-one-versioned-artifact.md](the-package-and-its-library-are-one-versioned-artifact.md)
   — **accepted** (2026-08-21, story #1125): the package version tracks the Cargo
   workspace, one git tag selects both halves, `ds_abi_version` is a mandatory

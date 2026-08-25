@@ -620,7 +620,8 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       other platform the declarations still resolve nothing until they supply
       one. **A macOS player built at Unity's default universal architecture
       gets no library either** — Unity copies nothing rather than failing the
-      build (issue #1348).
+      build, so a macOS player is built for Apple silicon, which is a supported
+      configuration rather than a gap.
 
       **The renderer is built since story #1122, and since issue #1298 it has
       drawn a document that something checked.** `BrgPainter` turns the

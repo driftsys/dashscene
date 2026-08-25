@@ -1083,13 +1083,14 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   **`just unity-render` is the one that now could**: since story #1334 its
   player loads the shipped library, so a Unity runtime reaches the C ABI for the
   first time. **Which runtime is not recorded** — that project sets no scripting
-  backend, and R-E7's IL2CPP requirement is stated for Android while this gate
-  builds a macOS standalone player. So the gap is narrower than it was and is
-  not closed, and naming the backend needs a reading nobody has taken. If IL2CPP
-  raises a different type, or resolves at load rather than at the first call,
-  every forwarder's catch is dead code on the target that ships. It cannot be
-  closed while the package ships no native library for a platform a player runs
-  on. **Story #1334 met that condition** on 2026-08-24, so issue #1322 is now
+  backend, and issue #1360 is what makes it set one and report it, and R-E7's
+  IL2CPP requirement is stated for Android while this gate builds a macOS
+  standalone player. So the gap is narrower than it was and is not closed, and
+  naming the backend needs a reading nobody has taken. If IL2CPP raises a
+  different type, or resolves at load rather than at the first call, every
+  forwarder's catch is dead code on the target that ships. It cannot be closed
+  while the package ships no native library for a platform a player runs on.
+  **Story #1334 met that condition** on 2026-08-24, so issue #1322 is now
   reachable rather than blocked: a player can load a shipped library, and what
   is untested is whether Mono and IL2CPP translate a missing symbol the way
   CoreCLR does.

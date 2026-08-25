@@ -81,6 +81,13 @@ pattern; both commit an explicit `.meta` per binary.
 | Android player, arm64            | `cdylib`    | `libdashscene_ffi.so`    | `Android` `CPU=ARM64`                               |
 | iOS, v1                          | `staticlib` | `libdashscene_ffi.a`     | `iOS`, and the C# becomes `DllImport("__Internal")` |
 
+**Which of these rows ship, and why, is not this table's decision.**
+[`a-platform-is-product-or-development-and-its-runtime-follows.md`](a-platform-is-product-or-development-and-its-runtime-follows.md)
+carries it: a row ships when a machine that runs it exists, the macOS row ships
+arm64 and no universal binary, and a second Android ABI requires the per-ABI
+directories that record's D7 describes. This table describes what a row looks
+like; it is not a list of work.
+
 **Reading this table against a `.meta` file.** The rows name platforms the way a
 developer speaks about them, and a `.meta` names them the way Unity serialises
 them. In `serializedVersion: 3`, which is what an editor writes today,
