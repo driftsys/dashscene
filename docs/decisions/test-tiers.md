@@ -429,10 +429,10 @@ push and pull request.
 event so a merge queue's batch gets the same `ci` check, and the tiers are
 scheduled there the same way they are on a pull request: the gates resolve from
 the batch's own `base_sha`/`head_sha`, so a documentation-only batch skips the
-compile half in the queue exactly as it does on the pull request. One difference
-is worth knowing when reading a merge group's run: `convco` is gated on
-`pull_request` and skips, because the commit messages were linted on the pull
-request that entered the queue.
+same jobs in the queue as it does on the pull request, `test` excepted for the
+reason above. One difference is worth knowing when reading a merge group's run:
+`convco` is gated on `pull_request` and skips, because the commit messages were
+linted on the pull request that entered the queue.
 
 The range those gates read is resolved **once**, by the
 `resolve the range this
@@ -539,12 +539,37 @@ that target. `atlas-repro` keeps its own for a subtler reason: it is the only
 matrix job, and its `arm64` leg would look up a key that only the `x86_64` jobs
 ever write, so sharing would leave that leg permanently cold rather than warm.
 
-Since 2026-08-01 the `test` job also skips entirely when the diff is
-documentation only, together with `clippy`, `demo-build`, `wasm-build`,
-`wasm-gates`, `android-build`, `atlas-repro`, `render-oracle`, `unity-abi`,
-`unity-ffi`, `exit-gate-tests` and `exit-gate` — every job carrying
-`needs.changes.outputs.code == 'true'`. The `changes` job decides this by asking
-whether every changed file is Markdown under `docs/` or Markdown at the
+Since 2026-08-01 a documentation-only diff skips `clippy`, `demo-build`,
+`wasm-build`, `wasm-gates`, `android-build`, `atlas-repro`, `render-oracle`,
+`unity-abi`, `unity-ffi`, `exit-gate-tests` and `exit-gate` — every job carrying
+`needs.changes.outputs.code == 'true'`.
+
+**`test` carried that condition too until issue #1361, and no longer does.** It
+runs the whole workspace, and the suite reads records —
+`unity/package-gate/tests/plugin_meta.rs` parses D3's table out of
+`the-native-library-ships-inside-the-unity-package.md`, and
+`goldens/tooling/tests/worked_example.rs` requires
+`docs/technotes/implementing-a-backend.md` to name the worked example by path.
+Editing either took the suite red in a diff this detector calls documentation.
+Declaring the doc paths tests read was the alternative and was rejected on
+completeness — a list is only as good as whoever remembers the next oracle — so
+one job runs unconditionally instead.
+
+**Ungating that one job is sufficient because it runs `--workspace`.** Three of
+the eleven still gated also run tests — `atlas-repro`, `render-oracle` and
+`exit-gate-tests` — but each selects a subset `test` has already run, so their
+skipping cannot hide a record-reading test; `exit-gate` runs none at all, it
+reads results. `demo/tests/ci_gating.rs` holds that rather than leaving it as
+reasoning: it requires the tests naming a file under `docs/` to be exactly the
+two above, and requires the profile `test` runs to select them.
+
+**The cost, from two separate measurements rather than one run.** `test` has
+taken 198-238 s on recent runs and 238 s on the branch that made this change. A
+documentation-only run's longest job is `fmt`, at 20-32 s. No run combines the
+two, because `test` had never executed on a documentation-only diff before this
+change — so the figure to expect is roughly four minutes where it was under a
+minute, not a measurement of one observed run. The `changes` job decides this by
+asking whether every changed file is Markdown under `docs/` or Markdown at the
 repository root. `fmt`, `prim`, `secrets` and `audit` stay unconditional, and
 `convco` runs on every pull request: a documentation-only diff still has to be
 formatted and linted, its commit messages still have to lint, and it still must

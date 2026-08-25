@@ -14,7 +14,8 @@ on:
   # carries `base_sha` and `head_sha` in its payload, and the `resolve the range`
   # step in `changes` is the one place that reads them — the filter and the code
   # detector both read that step's outputs (issue #1171). So a documentation-only
-  # batch skips the compile half here exactly as it does on the pull request.
+  # batch skips the same jobs here as on the pull request — `test` among
+  # neither, since issue #1361 left it ungated on both.
   # Forcing instead would put `calibration`'s 272 s on the front of every merge.
   #
   # `convco` is the one job that does not run here. It is gated on
@@ -511,7 +512,9 @@ jobs:
       # `RUSTUP_TOOLCHAIN` outranks `rust-toolchain.toml`, which is what we
       # want here and nowhere else. This is the one job that runs `cargo` with
       # no toolchain step, and it is ungated — it runs on documentation-only
-      # pull requests, where every compile job skips. Without this the rustup
+      # pull requests, where the eleven gated jobs skip. `test` runs there too,
+      # since issue #1361, and installs a toolchain; this remains the only
+      # `cargo` job that does not. Without this the rustup
       # shim would resolve the pinned toolchain and install it, with both cross
       # targets, before an audit that only reads `Cargo.lock` and compiles
       # nothing.
@@ -603,17 +606,40 @@ jobs:
       - run: just gpu-timing-lint
 
   test:
-    # Compile-heavy: skipped when the diff is documentation only
-    # (see the changes job's detect step).
-    needs: [changes]
-    if: needs.changes.outputs.code == 'true'
+    # **The one job with no documentation-only skip, deliberately.**
+    # This job runs `--workspace`, and the suite reads records: since
+    # story #1334 `unity/package-gate/tests/plugin_meta.rs` parses D3's table out
+    # of `the-native-library-ships-inside-the-unity-package.md` and requires it
+    # to equal the transcription it compares `.meta` files against, and
+    # `goldens/tooling/tests/worked_example.rs` requires
+    # `docs/technotes/implementing-a-backend.md` to name the worked example by
+    # path. Editing either takes the suite red in a diff `is-code-change`
+    # classifies as documentation, so the skip was fail-open here — issue #1361.
+    #
+    # **Ungating this job alone is sufficient because it runs the whole
+    # workspace.** Three of the eleven jobs still gated also run tests —
+    # `atlas-repro`, `render-oracle` and `exit-gate-tests` — but each selects a
+    # subset this job has already run, so their skipping cannot hide a
+    # record-reading test. `exit-gate` runs none: it reads results. The claim is
+    # not left as reasoning: `demo/tests/ci_gating.rs` requires the tests that
+    # read a file under `docs/` to be the two named above, and requires the
+    # profile this job runs to select them.
+    #
+    # Declaring the doc paths tests read was the alternative, and it was
+    # rejected on completeness: a list is only as good as whoever remembers to
+    # add the next oracle, and this repository now has prose that acts. Ungating
+    # one job removes the failure mode instead of detecting it. The cost is
+    # measured: 218 s on a documentation-only pull request that would otherwise
+    # finish its longest job in 32 s. The other eleven gated jobs are unchanged,
+    # and `demo/tests/ci_gating.rs` fails if this condition comes back.
     name: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       # This job writes the shared cache, because it is the member that runs
-      # most often: every push that changes code. `render-oracle` runs on the
+      # most often — since issue #1361 it runs on every push, not only on one
+      # that changes code. `render-oracle` runs on the
       # same condition but builds only a subset, and `calibration` needs a
       # `packer` path on top of it, so neither keeps the cache fresh enough
       # to be its writer. See the note on `calibration`.
@@ -1453,9 +1479,15 @@ jobs:
     # provision a runner for a result nobody is waiting for.
     #
     # `code == 'true'` so that a green exit-gate keeps meaning E1-E7 were
-    # asserted on this commit. On a documentation-only diff the jobs carrying
-    # the criteria skip by design, and a job that reported success there would
-    # be claiming an assertion it did not make.
+    # asserted on this commit. On a documentation-only diff most of the jobs
+    # carrying the criteria skip by design, and a job that reported success
+    # there would be claiming an assertion it did not make.
+    #
+    # **One of its required jobs no longer skips there**: `test` runs on every
+    # diff since issue #1361, so a documentation-only change that breaks a
+    # record-reading test turns `test` red while this job skips. The aggregate
+    # `ci` still fails the run — it accepts skipped and not failed — so the
+    # conjunction is reported by `ci` rather than here.
     if: ${{ !cancelled() && needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     steps:
@@ -1551,11 +1583,11 @@ jobs:
     # (docs/decisions/house-style.md). "skipped" is accepted: convco only runs on
     # pull requests, deno only when importers/figma/ changed, and calibration
     # only when the packer paths changed (docs/decisions/test-tiers.md).
-    # clippy, test, demo-build, wasm-build, wasm-gates, unity-abi, unity-ffi,
-    # android-build,
-    # atlas-repro, render-oracle, exit-gate-tests and exit-gate all skip when
-    # the diff is documentation only, which also skips deno through its
-    # dependency on wasm-build. The list is every job carrying
+    # The jobs carrying `needs.changes.outputs.code == 'true'` all skip when the
+    # diff is documentation only, which also skips deno through its dependency
+    # on wasm-build. They are not listed here: an enumeration beside a
+    # derivation rule is a second place for the set to go stale, and it did —
+    # it named `test`, which stopped carrying that condition at issue #1361. The list is every job carrying
     # `needs.changes.outputs.code == 'true'`, which is how to re-derive it
     # rather than trusting this sentence. This is the reason a
     # green aggregate cannot be read as "the suite ran": read the jobs, not the

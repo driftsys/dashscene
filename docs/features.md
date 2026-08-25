@@ -951,12 +951,13 @@ no steps — recorded here from 2026-08-08 — is over: no recent run on `main` 
 failed, which `gh run list --branch main --workflow ci` is the derivation for.
 Expect the occasional `cancelled` among them rather than an unbroken row of
 `success`; the workflow sets `cancel-in-progress`, so two merges close together
-leave one behind. What replaces that caveat is a narrower one. The compile and
-test jobs are gated on whether the diff touches code, so a documentation-only
-change skips them and the aggregate passes anyway, and the tier that re-derives
-the committed asset tables sits outside `just build` altogether. A ticked box
-here means the tests exist and pass, not that CI ran them on the change you are
-looking at (`docs/decisions/test-tiers.md`).
+leave one behind. What replaces that caveat is a narrower one. Eleven compile
+jobs are gated on whether the diff touches code, so a documentation-only change
+skips them and the aggregate passes anyway — **`test` is not among them since
+issue #1361**, so the regression tier does run there — and the tier that
+re-derives the committed asset tables sits outside `just build` altogether. A
+ticked box here means the tests exist and pass, not that CI ran them on the
+change you are looking at (`docs/decisions/test-tiers.md`).
 
 ## What this document is not
 

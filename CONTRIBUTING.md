@@ -62,8 +62,11 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
    exists nothing runs them for you: `ci.yml` fires on `pull_request` and on
    pushes to `main`, so a push to a branch with no PR open triggers no workflow.
    Once the PR is open, each further push re-runs `ci`. Even then a green `ci`
-   is not by itself a statement that a test tier ran — the compile and test jobs
-   are gated on whether the diff touches code (`docs/decisions/test-tiers.md`).
+   is not by itself a statement that everything ran — eleven compile jobs are
+   gated on whether the diff touches code, and `deno` and `calibration` on path
+   filters (`docs/decisions/test-tiers.md`). **The `test` job is not gated**: it
+   runs on every diff, so the regression tier does run on a documentation-only
+   change.
 
    The `secrets` step needs [gitleaks](https://github.com/gitleaks/gitleaks),
    which `./bootstrap` reports on but does not install —
@@ -85,9 +88,9 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
    Re-derive the list from `.github/workflows/ci.yml`'s `ci` job rather than
    trusting this sentence.
 
-   The compile and test jobs are gated on whether the diff touches code, and
-   `deno` and `calibration` on path filters, so a documentation-only change
-   skips most of them. It does **not** skip everything: `fmt`, `prim`, `audit`,
+   Eleven compile jobs are gated on whether the diff touches code, and `deno`
+   and `calibration` on path filters, so a documentation-only change skips most
+   of them. It does **not** skip everything: `test`, `fmt`, `prim`, `audit`,
    `secrets` and `convco` are ungated and still have to pass.
 
    `main` carries a ruleset, so a change reaches it through a pull request with
