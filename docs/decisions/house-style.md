@@ -146,11 +146,13 @@ The deferred bump is issue #1282.
 
 **One job is exempted, deliberately.** `audit` is the only one that runs `cargo`
 with no toolchain step, and it is ungated — it runs on documentation-only pull
-requests, where every compile job skips. It sets `RUSTUP_TOOLCHAIN: stable`,
-which outranks the toolchain file, so an audit that only reads `Cargo.lock` does
-not provision a compiler and two cross targets to do it. That is the one place a
-floating toolchain is correct: `cargo audit` compiles nothing, and this record
-already says the same commit audits differently tomorrow.
+requests, where the eleven gated jobs skip. `test` runs there too since issue
+#1361 and installs a toolchain, so this remains the only `cargo` job that does
+not. It sets `RUSTUP_TOOLCHAIN: stable`, which outranks the toolchain file, so
+an audit that only reads `Cargo.lock` does not provision a compiler and two
+cross targets to do it. That is the one place a floating toolchain is correct:
+`cargo audit` compiles nothing, and this record already says the same commit
+audits differently tomorrow.
 
 **Two verbs, not one.** `just prim` runs `prim fmt --check .` and then
 `prim lint .`. They are not redundant: `prim lint` reports format drift for

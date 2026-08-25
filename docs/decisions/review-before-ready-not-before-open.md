@@ -499,10 +499,13 @@ targets branches, so pushing that tag succeeds. A release therefore tags
 **after** the merge, on the commit that actually landed, rather than on the
 branch before it.
 
-It does not upgrade what `ci` means. On a documentation-only diff every compile
-and test job skips and the aggregate passes having run no test tier at all,
-which is what `AGENTS.md` already says and what this rule now mechanically
-requires: a green `ci`, not a suite that ran.
+It does not upgrade what `ci` means: a green `ci`, not a suite that ran. **The
+example that used to carry this sentence has expired** — a documentation-only
+diff once skipped every compile and test job, and since issue #1361 the `test`
+job runs on every diff, so the regression tier does run there. What is left is
+narrower and still true: `calibration` and `deno` are path-filtered, and a green
+aggregate means nothing red ran rather than that everything ran
+(`docs/decisions/test-tiers.md`).
 
 ## Consequences
 

@@ -681,12 +681,16 @@ as three tiers, so "tests pass" is no longer a claim about all of it:
   one run not driven by a path, and it is the backstop against a table drifting
   through a change the filter did not predict.
 - **Name the tier in the PR body.** Never report a tier as run that was not run.
-- **A green `ci` job does not mean the suite ran.** It means nothing red ran.
-  When the diff is documentation only — every changed file is Markdown under
-  `docs/` or Markdown at the repository root — `test`, `clippy`, `demo-build`,
-  `wasm-build`, `wasm-gates`, `android-build`, `atlas-repro`, `render-oracle`,
+- **A green `ci` job means nothing red ran, not that everything ran.** When the
+  diff is documentation only — every changed file is Markdown under `docs/` or
+  Markdown at the repository root — `clippy`, `demo-build`, `wasm-build`,
+  `wasm-gates`, `android-build`, `atlas-repro`, `render-oracle`,
   `exit-gate-tests`, `exit-gate`, `unity-abi` and `unity-ffi` all skip, and
-  `deno` skips with them. Read the individual jobs to see which tiers executed
+  `deno` skips with them. **`test` does not skip, and has not since issue
+  #1361**: the suite reads records — it parses D3's table out of a decision
+  record and requires a technote to name a worked example by path — so a
+  documentation-only diff can take it red, and the skip was fail-open for that
+  job alone. Read the individual jobs to see which tiers executed
   (`docs/decisions/test-tiers.md`).
 
 Branch workflow — the definition of done for every pull request against this

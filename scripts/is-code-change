@@ -2,7 +2,19 @@
 # Decide whether a change is documentation-only.
 #
 # Prints `true` when anything outside documentation changed and `false` when
-# only documentation did. The CI `changes` job gates every compile job on it.
+# only documentation did. The CI `changes` job gates eleven compile jobs on it.
+#
+# NOT the `test` job, since issue #1361. The test suite reads records — one
+# test parses a decision record's table, another requires a technote to name a
+# file by path — so a documentation-only diff can take it red. This
+# classification cannot see a test's inputs, so it must not decide whether tests
+# run.
+#
+# Three of the eleven jobs it does gate run tests as well (`atlas-repro`,
+# `render-oracle`, `exit-gate-tests`), and one runs nothing at all (`exit-gate`
+# reads results). Their skipping is safe for a different reason: each selects a
+# subset of what the ungated `test` job has already run.
+# `demo/tests/ci_gating.rs` holds every part of this.
 #
 # A script rather than inline shell in the workflow, for two reasons that are
 # not "reuse": the rule can be run and tested directly against a scratch

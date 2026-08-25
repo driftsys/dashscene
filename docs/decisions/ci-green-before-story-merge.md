@@ -50,7 +50,9 @@ bypass list is empty, so that holds for the repository admin too.
 Two things this does **not** change. The rule above is still the one to follow —
 a ruleset can only see the aggregate `ci` check, so repairing CI in its own
 minimal PR rather than folding the fix into a story PR remains a judgement no
-configuration makes for anyone. And a green `ci` still does not mean the suite
-ran: on a documentation-only diff every compile and test job skips and the
-aggregate passes anyway, which `AGENTS.md` and `docs/decisions/test-tiers.md`
-both say at more length.
+configuration makes for anyone. And a green `ci` still does not mean everything
+ran: `calibration` and `deno` are path-filtered, and eleven jobs skip on a
+documentation-only diff. **The `test` job is no longer among them** — issue
+#1361 ungated it, because the suite reads records and a documentation-only diff
+could take it red with CI green. `AGENTS.md` and `docs/decisions/test-tiers.md`
+carry it at more length.
