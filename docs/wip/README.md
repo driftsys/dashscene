@@ -11,19 +11,19 @@ convention.
 
 See the `sdd-working-memory-lifecycle` rule and the `sdd-gardening` skill.
 
-## Why the WIP gate currently reports nine files
+## Why the WIP gate currently reports ten files
 
 `wip-gate.sh` flags every tracked file here except this README, so it reports
-nine and exits non-zero. All nine are deliberate, accepted exceptions rather
-than ungardened debt, and they are recorded here so the gate's result is
-explained rather than merely tolerated.
+ten and exits non-zero. All ten are deliberate, accepted exceptions rather than
+ungardened debt, and they are recorded here so the gate's result is explained
+rather than merely tolerated.
 
-**All nine are design captures, and no driver prompt is held.** That is the
-state this file has been in at several earlier points — 2026-08-02, 2026-08-07
-and the v0.17 close among them — and it has held continuously since the v0.19
-close (story #843, 2026-08-16), because a prompt belongs to a slice and leaves
-with the work it carried. **v0.21's stories have each archived their working
-memory inside the pull request that landed the work**, so none of it is in this
+**All ten are design captures, and no driver prompt is held.** That is the state
+this file has been in at several earlier points — 2026-08-02, 2026-08-07 and the
+v0.17 close among them — and it has held continuously since the v0.19 close
+(story #843, 2026-08-16), because a prompt belongs to a slice and leaves with
+the work it carried. **v0.21's stories have each archived their working memory
+inside the pull request that landed the work**, so none of it is in this
 directory's history on `main`: story #1230's driver prompt is
 `2026-08-17-v021-UNITY-TOOLCHAIN-DRIVER-PROMPT.md`, story #1229's is
 `2026-08-17-v021-ANDROID-MEASUREMENT-DRIVER-PROMPT.md`, and story #1125 archived
@@ -44,11 +44,11 @@ written and kept outside this repository while it ran. Eighteen files are in
 `docs/archive/` under `2026-08-15-v020-wave2-*` and `2026-08-16-v020-wave3-*` —
 seventeen lane prompts and one serialised gate — archived at the slice close for
 the record rather than gardened into anything, the disposition this file's own
-rule gives a spent driver prompt. So the count above is nine because nine is
-what is held, not because v0.20 left nothing behind. `docs/archive/README.md`
-says what that set does and does not cover, including which lanes it misses.
+rule gives a spent driver prompt. So the count above is ten because ten is what
+is held, not because v0.20 left nothing behind. `docs/archive/README.md` says
+what that set does and does not cover, including which lanes it misses.
 
-Not all nine are untouched: several are **partly gardened**, their implemented
+Not all ten are untouched: several are **partly gardened**, their implemented
 halves already written into records and their `status` lines saying which half
 remains. The table below is what says which — read it rather than a count, which
 this file has already been wrong about twice.
@@ -200,6 +200,14 @@ than editing the number this file already carries** —
 `git ls-files docs/wip/ | grep -v 'README.md$' | wc -l` and
 `git ls-files docs/archive/ | grep -cE 'DRIVER-PROMPT|SPIKE'` are the whole
 derivation, and the second is what the paragraph further down asks for.
+
+**Ten, when the per-target codec-policy capture was added** (2026-08-25).
+`2026-08-25-per-target-codec-policy.md` is a design-discussion capture like the
+nine before it, and it is the first added since the v0.19 close took the count
+to nine. It holds no driver prompt, so this section's opening claim — that all
+of them are design captures and none is a driver prompt — still holds. Its
+condition is in the table below, and it is one commit with the file, per this
+file's own rule.
 
 **Two prompts for one slice has happened before and is not a supersession.**
 v0.19 carried an Android prompt and a debt prompt at once, each for a different
@@ -589,6 +597,7 @@ was actually true is in `docs/decisions/blur-blends-in-srgb-encoded-space.md`.
 | `2026-08-07-animated-content-import.md`                | an animated-content importer is built. Extends `docs/technotes/runtime-content.md` §4-§6 rather than replacing it. Its ThorVG half may garden separately and later, or never — the standing decision already covers it and this file only records two notes against it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `2026-08-07-asset-sourcing-and-residency.md`           | side-loading is built. Blocked on the schema's own deliberately-absent flavor/locator bit, so it cannot empty before that field has a producer and a consumer — the same condition the `AssetEntry` comment already states for itself                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `2026-08-09-svg-as-a-second-producer.md`               | the SVG importer is built, which is the profile half. **REFERENCE-SET HALF GARDENED 2026-08-11 at the v0.18 close**: Part 1 is now `docs/decisions/the-animation-reference-set-is-the-union-of-two-producers.md`, on this file's own stated condition, and the record corrects the table row that read the ambient loop as unbuilt. Two of its rulings stay marked **promote** in the file rather than gardened away, both belonging to the profile half: SVG support is a profile rather than a version, and SVGO is rejected as a preprocessor                                                                                                                                                                                                                                                                                                                                                                                  |
+| `2026-08-25-per-target-codec-policy.md`                | the per-target codec policy is built. May garden in two halves: the painter's decode policy (Part 1) and the packer's Web profile (Part 2). **Blocked on the packer's ingest** (Part 4.4), which is issue #1356 and is the prerequisite for Part 2. Reviewed before merge, and the review reversed two of its rulings — the desktop ASTC decode moved from the painter to the loader, and the photographic classifier was withdrawn. The rulings marked **promote** are decision-shaped: that "no codecs" is a target property rather than a painter property, that a desktop painter may declare a narrower capability set on purpose, and that AVIF is ruled out                                                                                                                                                                                                                                                                |
 
 Each row's entry is removed when its capture is gardened.
 
