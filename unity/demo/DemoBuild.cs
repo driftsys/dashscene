@@ -301,6 +301,19 @@ public static class DemoBuild
             locationPathName = Path.Combine("Build", ProductName + Extension(target)),
             target = target,
             options = BuildOptions.None,
+
+            // **What turns the showcase scenes on** (story #1342). The package's
+            // `Runtime/DemoProducer.cs` and the sample's scene half are both
+            // behind this symbol and compile to nothing without it, which is what
+            // a customer's own build of this sample does.
+            //
+            // `extraScriptingDefines` rather than
+            // `PlayerSettings.SetScriptingDefineSymbols`: this applies to the
+            // player build alone and leaves the editor's own assemblies as they
+            // were, so nothing recompiles underneath a batch-mode build. Nothing
+            // on the editor side here names the demo API — this method only adds
+            // the component to a scene, and the component type exists either way.
+            extraScriptingDefines = new[] { "DASHSCENE_DEMO_PRODUCER" },
         };
 
         BuildReport report;

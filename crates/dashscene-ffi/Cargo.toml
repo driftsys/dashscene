@@ -32,6 +32,14 @@ name = "dashscene_ffi"
 # (docs/decisions/the-native-library-ships-inside-the-unity-package.md, D1).
 crate-type = ["rlib", "cdylib", "staticlib"]
 
+[features]
+# The seam `unity/demo-producer` builds the showcase scenes through
+# (story #1342). Adds no dependency and no exported symbol — see `src/demo.rs`
+# for why it is a feature regardless, and
+# `docs/decisions/the-demo-producer-links-the-abi-rather-than-shipping-in-it.md`
+# for why the producer itself is not in this crate.
+demo-seam = []
+
 [dependencies]
 # The same set `dashscene-desktop` takes, minus `winit`: this crate is what a
 # host uses *instead of* a windowing library, so it takes none.

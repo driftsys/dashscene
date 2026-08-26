@@ -192,6 +192,12 @@
 //! it does not recognise, because the alternative is discovering the mismatch as
 //! a corrupted argument.
 
+/// The seam a demonstration producer builds a scene through (story #1342).
+///
+/// Off by default. It exports no C symbol and adds no dependency; what it adds
+/// is reach into the arena, which is why it is gated at all.
+#[cfg(feature = "demo-seam")]
+pub mod demo;
 mod handle;
 mod table;
 
@@ -798,6 +804,13 @@ fn announce_document_replaced(runtime: &mut Runtime) {
     // it: what is announced is a document that has been *replaced*, not one
     // that has been dropped (story #859).
     runtime.document_replaced = true;
+    // The out-of-crate producer's half of the same fact. A flag a consumer
+    // clears cannot answer "is the document I installed still the loaded one?"
+    // asked later; a monotonic count can. See `demo::with_scene`.
+    #[cfg(feature = "demo-seam")]
+    {
+        runtime.document_generation = runtime.document_generation.wrapping_add(1);
+    }
 }
 
 /// Which bytes of a file a mapped load covers.

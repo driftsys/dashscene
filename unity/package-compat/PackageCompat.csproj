@@ -35,6 +35,20 @@
     <RootNamespace>Driftsys.Dashscene.PackageCompat</RootNamespace>
   </PropertyGroup>
 
+  <!-- The demonstration configuration (story #1342), off unless asked for.
+
+       `Runtime/DemoProducer.cs` is behind `DASHSCENE_DEMO_PRODUCER`, so the
+       default pass compiles an empty file. `unity/ffi-check` compiles its real
+       body, but at net10.0 — a superset of what Unity accepts, which that
+       project's own comment says is why it cannot stand in for this one. So
+       without this pass the only thing that ever compiled that file the way
+       Unity will was `just unity-demo`'s player build: editor-only, outside CI,
+       tens of minutes. A netstandard2.1-unavailable API added there would have
+       been caught by nothing until then. Found by the review of PR #1365. -->
+  <PropertyGroup Condition="'$(DemoProducer)' == 'true'">
+    <DefineConstants>$(DefineConstants);DASHSCENE_DEMO_PRODUCER</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- Every runtime source in the package, by glob rather than by name, so a
          file story #1121 or #1122 adds is covered without editing this list.

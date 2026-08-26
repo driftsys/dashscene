@@ -771,6 +771,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "demo-producer"
+version = "0.0.0"
+dependencies = [
+ "dashscene-ffi",
+ "showcase",
+]
+
+[[package]]
 name = "demo-web"
 version = "0.0.0"
 dependencies = [

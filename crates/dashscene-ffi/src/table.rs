@@ -87,6 +87,18 @@ pub(crate) struct Runtime {
     /// Empty for the measure-only cascade and for a document loaded without
     /// text, which is not an error: those documents stage no runs.
     pub(crate) atlases: Arc<Vec<Atlas>>,
+    /// How many documents have been installed into this runtime.
+    ///
+    /// Bumped by `announce_document_replaced`, which every load runs and which
+    /// `demo::install_scene` runs too. It exists so that a producer **outside**
+    /// this crate can tell that the scene it installed is no longer the loaded
+    /// document: it holds the value the install returned and hands it back, and
+    /// `demo::with_scene` refuses on a mismatch. Nothing in this crate reads it
+    /// otherwise — a load already has `document_replaced` for the host-facing
+    /// half of the same fact, which is a flag the acquire clears rather than a
+    /// value a caller can compare against later.
+    #[cfg(feature = "demo-seam")]
+    pub(crate) document_generation: u64,
     /// Test-only. Held **for its `Drop`, never read** — hence the underscore:
     /// dropping this field is the observation, and a test asks the counter it
     /// carries rather than asking the runtime.
@@ -123,6 +135,8 @@ impl Runtime {
             frame_leased: false,
             document_replaced: false,
             atlases: Arc::new(Vec::new()),
+            #[cfg(feature = "demo-seam")]
+            document_generation: 0,
             #[cfg(test)]
             _dropped: None,
         }

@@ -102,10 +102,27 @@ was then undone — this decision publishes nothing.
 
 ## What is deliberately not publishable
 
-`demo/`, `demo-web/`, `corpus/showcase/` and `goldens/tooling/` carry
-`publish = false`. They are the demonstrations, the scenes they draw and the
-golden harness — none is something an embedder depends on, and each names
-content or fixtures that would be wrong to ship.
+Eight members carry `publish = false`: `demo/`, `demo-web/`, `demo-android/`,
+`corpus/showcase/`, `goldens/tooling/`, `measure/web-minimal/`,
+`unity/package-gate/` and `unity/demo-producer/`. They are the demonstrations,
+the scenes they draw, the golden harness, the measured artifact, and the gates
+over the Unity package — none is something an embedder depends on, and each
+names content, fixtures or paths that would be wrong to ship.
+
+Re-derive the list rather than trusting this sentence: it said four for three
+slices while the count grew to seven, and was corrected by story #1342 when the
+eighth arrived.
+
+    cargo metadata --format-version 1 --no-deps \
+      | jq -r '[.packages[] | select(.publish != null) | .name] | sort'
+
+**`corpus/showcase/` could not be published even if it were wanted**, which is
+load-bearing elsewhere: its `corpus_bytes!` reads paths under
+`CARGO_MANIFEST_DIR/../../corpus/`, outside its own package directory, so no
+`.crate` could carry what it reads. That is why the Unity demonstration's
+producer is a separate member rather than a feature of the published
+`dashscene-ffi` — see
+`the-demo-producer-links-the-abi-rather-than-shipping-in-it.md`.
 
 ## One thing this decision settles by leaving it out
 

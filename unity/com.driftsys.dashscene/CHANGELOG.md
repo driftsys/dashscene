@@ -8,6 +8,18 @@ the Cargo workspace rather than moving on its own.
 
 ### Added
 
+- **The showcase scenes draw in the demonstration, with their motion.**
+  `Samples~/Showcase` now walks the three `corpus/showcase` scenes — the ones
+  `demo`, `demo-web` and `demo-android` draw — ahead of the committed documents,
+  with the scripted pulse on `demo/src/shell.rs`'s own 2500 ms cadence and the
+  scene's own variant switch on the space bar where it declares one — of the
+  three, only `layout` does. `Runtime/` gains the `ds_demo_*` declarations for
+  it, behind `DASHSCENE_DEMO_PRODUCER`, which no shipped configuration defines:
+  the entry points are exported by `unity/demo-producer`, a demonstration
+  library that is `dashscene-ffi` plus six calls, and the shipped C ABI still
+  has no producer-side entry point. When layers 1 and 2 land the demonstration
+  moves to C# and all of this goes away (story #1342,
+  `docs/decisions/the-demo-producer-links-the-abi-rather-than-shipping-in-it.md`).
 - **A showcase sample, and `just unity-demo` to build and run it.**
   `Samples~/Showcase` reads a manifest of documents from `StreamingAssets`,
   switches on the arrow keys or on a `-cycle <seconds>` argument, and reports
@@ -16,7 +28,7 @@ the Cargo workspace rather than moving on its own.
   package ships no binary — the native library itself, which is why it
   demonstrates the package's C# and shaders as installed but says nothing about
   a released plugin layout (issue #1334). It is a demonstration rather than a
-  gate: its `cycle` action asserts that every document reached the painter, and
+  gate: its `cycle` action asserts that every entry reached the painter, and
   `unity/render-gate` is what asserts anything about the picture (issue #1329).
 - **Text.** The MSDF glyph atlas a run samples crosses the C ABI on its own call
   — `ds_runtime_atlas_count` and `ds_runtime_atlas`, keyed by a `GlyphRun`'s
