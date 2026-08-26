@@ -1,0 +1,35 @@
+[package]
+name = "demo-producer"
+version = "0.0.0"
+publish = false
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "The native producer the Unity demonstration draws the showcase scenes through (story #1342)."
+
+[lib]
+name = "demo_producer"
+# `cdylib` only. This is the library the demonstration player loads, and it is
+# `dashscene-ffi` plus an appendix: the seventeen shipped entry points arrive
+# through the `pub use` in `src/lib.rs`, compiled from the same crate a customer
+# gets, and `ds_demo_*` is added beside them. `just demo-exports` holds that
+# claim to the shipped library's own symbol table rather than asserting it in
+# prose.
+#
+# **No `rlib`**, because nothing links this as a Rust crate and offering one
+# would invite a second instantiation of `dashscene-ffi`'s runtime table.
+crate-type = ["cdylib"]
+
+[dependencies]
+# As an `rlib`, which is the whole point: this library carries ONE instantiation
+# of `dashscene-ffi`'s `thread_local!` runtime table, so a handle minted by
+# `ds_runtime_new` resolves in `ds_demo_build`. A demo library that linked the
+# shipped `cdylib` dynamically would get its own table and could not reach the
+# arena at all.
+dashscene-ffi = { path = "../../crates/dashscene-ffi", features = [
+  "demo-seam",
+] }
+# The scenes. `publish = false`, which is why this crate exists rather than the
+# producer living in `dashscene-ffi` — see that crate's `src/demo.rs`.
+showcase = { path = "../../corpus/showcase" }

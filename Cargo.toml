@@ -27,6 +27,15 @@ members = [
   # `publish = false`, like `goldens/tooling` and `demo`, so it is outside
   # `docs/decisions/crate-name-map.md`.
   "corpus/showcase",
+  # The native producer the Unity demonstration draws the showcase scenes
+  # through (v0.21, story #1342). `dashscene-ffi` linked as an rlib plus six
+  # `ds_demo_*` entry points, so it carries ONE runtime table and a handle
+  # `ds_runtime_new` mints resolves in `ds_demo_build`. A separate crate rather
+  # than a feature of `dashscene-ffi` because that crate is published and
+  # `corpus/showcase` is not — see
+  # `docs/decisions/the-demo-producer-links-the-abi-rather-than-shipping-in-it.md`.
+  # `publish = false`, so it is outside `docs/decisions/crate-name-map.md`.
+  "unity/demo-producer",
   # The windowed showcase host (v0.14, epic #568). A workspace member and not a
   # sixteenth published crate, following `goldens/tooling`: it carries
   # `publish = false`, it is absent from the justfile's `publish` recipe, and it
@@ -329,6 +338,29 @@ web-sys = { version = "0.3.103", features = [
   "Window",
   "console",
 ] }
+
+[profile.demo-release]
+# The profile `just unity-demo` stages, and it exists because the release
+# profile below cannot build `unity/demo-producer` at all.
+#
+# **Measured, not anticipated.** `cargo build -p demo-producer --release` fails
+# with `failed to get bitcode from object file for LTO (Can't find section
+# __bitcode)`. `dashscene-ffi` declares `crate-type = ["rlib", "cdylib",
+# "staticlib"]`, and the rlib rustc emits alongside the other two carries no
+# embedded bitcode — which fat LTO in a downstream cdylib requires. The demo
+# library is the only cdylib in this workspace that links another workspace
+# crate as an rlib, so it is the only member that meets this.
+#
+# It went unnoticed until the review of PR #1365, because the first release
+# build of that library happened to succeed against a differently-resolved
+# dependency graph and every later run reused the cached artifact. A rebuild
+# from clean fails, which is what a second developer would have got.
+#
+# `lto = "thin"` rather than `false`: it builds, and it keeps the demonstration
+# close to the optimisation the shipped library gets. This is a demonstration
+# artifact and no measurement in this repository is taken over it.
+inherits = "release"
+lto = "thin"
 
 [profile.release]
 lto = true

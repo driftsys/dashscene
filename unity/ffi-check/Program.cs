@@ -22,6 +22,41 @@ using System.Runtime.Loader;
 using Driftsys.Dashscene;
 using Driftsys.Dashscene.BoundaryB;
 
+// **The demonstration pass must be able to say it happened.**
+//
+// Everything demo-side in this file sits behind `DASHSCENE_DEMO_PRODUCER`,
+// which `just unity-ffi`'s second pass turns on with `-p:DemoProducer=true`.
+// Misspell either side — the MSBuild property, or the symbol in
+// `FfiCheck.csproj` — and this program compiles with every demo block removed,
+// runs the shipped checks a second time, and exits 0. Measured during the
+// review of PR #1365: `-p:DemoProducerTypo=true` reported "49 checks passed"
+// and the recipe went green having compared nothing.
+//
+// The recipe sets this variable on the pass where it expects the define, so the
+// two have to agree.
+var expectDemo = Environment.GetEnvironmentVariable("DASHSCENE_FFI_EXPECT_DEMO") == "1";
+#if !DASHSCENE_DEMO_PRODUCER
+if (expectDemo)
+{
+    Console.Error.WriteLine(
+        "ffi-check: DASHSCENE_FFI_EXPECT_DEMO=1 asks for the demonstration configuration, "
+        + "but this build has DASHSCENE_DEMO_PRODUCER undefined — so every ds_demo_* check "
+        + "was compiled out and this run would have reported the shipped checks a second "
+        + "time. Check -p:DemoProducer=true against the DefineConstants condition in "
+        + "FfiCheck.csproj.");
+    return 1;
+}
+#else
+if (!expectDemo)
+{
+    Console.Error.WriteLine(
+        "ffi-check: this build has DASHSCENE_DEMO_PRODUCER defined but "
+        + "DASHSCENE_FFI_EXPECT_DEMO is not set, so it is about to drive ds_demo_* against "
+        + "a library that need not export them. Run it through `just unity-ffi`.");
+    return 1;
+}
+#endif
+
 var libPath = Environment.GetEnvironmentVariable("DASHSCENE_FFI_LIB");
 if (string.IsNullOrWhiteSpace(libPath) || !File.Exists(libPath))
 {
@@ -284,6 +319,27 @@ Check("every declared entry point resolves in the library", () =>
         "ds_runtime_resize",
         "ds_runtime_tick",
     };
+
+#if DASHSCENE_DEMO_PRODUCER
+    // The demonstration configuration's six, which `unity/demo-producer`
+    // exports beside the shipped set. Listed here rather than derived, on this
+    // check's own grounds: the set is this gate's copy of the contract and
+    // moves only when a person moves it.
+    //
+    // `just demo-exports` asserts the other direction — that the library adds
+    // these and nothing else to the shipped seventeen. This asserts that the
+    // package declares them, that each resolves, and the checks further down
+    // that they work.
+    expected.UnionWith(new[]
+    {
+        "ds_demo_action",
+        "ds_demo_build",
+        "ds_demo_pulse",
+        "ds_demo_scene_count",
+        "ds_demo_scene_name",
+        "ds_demo_scene_summary",
+    });
+#endif
 
     var declared = new SortedSet<string>(
         PackageImports().Select(EntryPointOf),
@@ -1205,6 +1261,20 @@ Check("every managed entry point a host can call reports the missing symbol", ()
     object Call(string method, Type[] signature, object[] args) =>
         older.Runtime.GetMethod(method, signature).Invoke(runtime, args);
 
+#if DASHSCENE_DEMO_PRODUCER
+    // The probe's own `DemoScenes`, from the same copied assembly `older.Runtime`
+    // came from — not this program's, whose imports are bound to the real
+    // library and would answer rather than throw.
+    Type DemoScenesType() =>
+        older.Runtime.Assembly.GetType("Driftsys.Dashscene.DemoScenes")
+        ?? throw new Exception(
+            "the probe assembly carries no DemoScenes; is DASHSCENE_DEMO_PRODUCER "
+            + "defined for the copy this context loads?");
+
+    object CallDemoScenes(string method, int index) =>
+        DemoScenesType().GetMethod(method, new[] { typeof(int) }).Invoke(null, new object[] { index });
+#endif
+
     var driven = new (string Symbol, Func<object> Call)[]
     {
         ("ds_runtime_load_document",
@@ -1229,6 +1299,35 @@ Check("every managed entry point a host can call reports the missing symbol", ()
                 new object[] { new byte[] { 1, 2, 3, 4 }, ProbeFaceList() })),
         ("ds_runtime_atlas_count",
             () => Call("ReadAtlases", Type.EmptyTypes, null)),
+#if DASHSCENE_DEMO_PRODUCER
+        // The demonstration's six, driven rather than exempted (story #1342).
+        //
+        // **This is the whole reason the demo configuration exists.** These
+        // imports sit behind a `#if` the shipped pass never defines, so without
+        // this run they would be compiled by nothing and bound by nothing — and
+        // a renamed entry point would reach the demonstration as an unhandled
+        // `EntryPointNotFoundException` from inside a frame loop. That is issue
+        // #1308's class, and it is what the second condition on story #1342
+        // asks to be closed.
+        ("ds_demo_build",
+            () => Call(
+                "BuildDemoScene",
+                new[] { typeof(int), typeof(uint), typeof(uint) },
+                new object[] { 0, 1280u, 800u })),
+        ("ds_demo_pulse",
+            () => Call("PulseDemoScene", new[] { typeof(ulong) }, new object[] { 1ul })),
+        ("ds_demo_action",
+            () => Call("RunDemoAction", Type.EmptyTypes, null)),
+        // The three readers are static on `DemoScenes` rather than members of
+        // the runtime, so they are reached through the probe's own copy of that
+        // type rather than through `Call`.
+        ("ds_demo_scene_count",
+            () => DemoScenesType().GetProperty("Count").GetValue(null)),
+        ("ds_demo_scene_name",
+            () => CallDemoScenes("Name", 0)),
+        ("ds_demo_scene_summary",
+            () => CallDemoScenes("Summary", 0)),
+#endif
     };
 
     // **Every import is accounted for, or this list is not total.** The
@@ -2820,6 +2919,97 @@ Check("a run the packer could not resolve gets a ZEROED heap row", () =>
         }
     }
 });
+
+#if DASHSCENE_DEMO_PRODUCER
+Check("every showcase scene names itself, and an index past the end names nothing", () =>
+{
+    Expect(DemoScenes.Count > 0, "the library carries no showcase scene at all");
+
+    for (var i = 0; i < DemoScenes.Count; i++)
+    {
+        Expect(DemoScenes.Name(i).Length > 0, $"scene {i} reports no name");
+        Expect(DemoScenes.Summary(i).Length > 0, $"scene {i} reports no summary");
+    }
+
+    // **The one answer a caller cannot mistake for a name.** Without this the
+    // string reader passes over a producer that returns a fixed buffer length
+    // for every index, and the readout would name a scene that does not exist.
+    Expect(
+        DemoScenes.Name(DemoScenes.Count).Length == 0,
+        "an index one past the end reported a name");
+});
+
+Check("the producer builds a scene, and the shipped calls then work over it", () =>
+{
+    using var runtime = new DashsceneRuntime();
+
+    // **A pulse before a build is refused rather than ignored.** The producer
+    // holds which scene was installed, so a pulse against a runtime that has
+    // none has no script to run — and answering `Ok` would leave a host
+    // believing its animation was running.
+    try
+    {
+        runtime.PulseDemoScene(1);
+        throw new Exception("a pulse succeeded before any scene was built");
+    }
+    catch (DashsceneException e)
+    {
+        Expect(e.Status == DsStatus.NoDocument, $"status was {e.Status}");
+    }
+
+    runtime.BuildDemoScene(0, 1280, 800);
+    runtime.Tick(0.016f);
+
+    using var lease = runtime.AcquireFrame();
+
+    // The whole point of building through the seam rather than beside it: after
+    // it, the SHIPPED calls behave as they do over a loaded document.
+    Expect(lease.Frame.Rects.CountAsLong > 0, "the built scene committed no rects");
+
+    // **The scene's own solver carries a typesetter and its sheets**, which the
+    // untexted `.dsb` load path's does not (issue #863). If that stopped being true the
+    // scenes would lay out with collapsed text boxes and shade no glyphs, and
+    // nothing else here would say so.
+    Expect(
+        lease.Frame.GlyphRuns.CountAsLong > 0,
+        "the built scene staged no glyph runs — has the producer stopped installing "
+        + "the showcase solver, or its atlases?");
+
+    lease.MarkDrawn();
+});
+
+Check("the pulse and the variant switch reach the scene through the seam", () =>
+{
+    using var runtime = new DashsceneRuntime();
+
+    // The scene that declares a variant set is the one this exercises, so find
+    // it by asking rather than by hard-coding an ordinal that the corpus can
+    // reorder.
+    var switched = -1;
+    for (var i = 0; i < DemoScenes.Count && switched < 0; i++)
+    {
+        runtime.BuildDemoScene(i, 1280, 800);
+        if (runtime.RunDemoAction())
+        {
+            switched = i;
+        }
+    }
+
+    Expect(
+        switched >= 0,
+        "no showcase scene declares a variant set, so nothing here drives `SceneAction` "
+        + "and the demonstration's space bar is bound to nothing");
+
+    // A pulse stages; the tick commits. Both must survive the switch that just
+    // ran against the same arena.
+    runtime.PulseDemoScene(1);
+    runtime.Tick(0.016f);
+
+    using var lease = runtime.AcquireFrame();
+    Expect(lease.Frame.Rects.CountAsLong > 0, "the scene committed no rects after a switch");
+    lease.MarkDrawn();
+});
+#endif
 
 // **The verdict, and it must come after EVERY check.** Story #1122 appended the
 // packer checks below this block and then, while rewriting one of them, spliced

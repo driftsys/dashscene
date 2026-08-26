@@ -32,11 +32,11 @@ repository builds and records.
                               each shipped native library, and BrgPainter's two
                               diagnostics — where R-E5's read sits and what
                               guards it, and that the rung-3 arm reports the
-                              rung. Text over a file no CI job compiles. The only check here with
-                              no .NET and no editor prerequisite, so the only
-                              one with no .NET SDK and no editor prerequisite,
-                              so the only one that runs on any pull request
-                              whose diff touches code
+                              rung. Text over a file no CI job compiles. Needs
+                              no .NET SDK and no editor, so it runs on any pull
+                              request whose diff touches code — as, since story
+                              #1342, does `demo-producer/`'s `just
+                              demo-exports`. It is no longer the only one
     editor-compat/            an editor script `just unity-editor` copies into a
                               throwaway Unity project: the WHOLE package
                               compiled, shaders included. Needs an editor, so it
@@ -67,10 +67,24 @@ repository builds and records.
                               windowed PLAYER over the package's Showcase
                               sample and runs it. A demonstration rather than a
                               check: its `cycle` action asserts that every
-                              document reached the painter, and a person
+                              entry reached the painter, and a person
                               decides whether the picture is right (issue
                               #1329). Needs an editor,
                               so it runs on no CI runner
+    demo-producer/            the native producer that player draws the
+                              showcase scenes through: `dashscene-ffi` linked
+                              as an rlib plus six `ds_demo_*` entry points, so
+                              it carries ONE runtime table and a handle minted
+                              by `ds_runtime_new` resolves in `ds_demo_build`.
+                              A separate crate and not a feature of the shipped
+                              one because that crate is published and
+                              `corpus/showcase` is unpackageable in principle
+                              (story #1342). `just demo-exports` holds it to
+                              the shipped seventeen plus a set carrying only
+                              the `ds_demo_` prefix — `unity/ffi-check`'s
+                              demonstration pass is what names the six. Needs
+                              neither an editor nor the .NET SDK, so CI's
+                              `demo-build` job runs it on every code diff
 
 Sited in this repository rather than in a separate one by the owner's ruling of
 2026-08-17, recorded in
@@ -83,7 +97,7 @@ checks here are what give it value. `just unity-abi` runs `abi-check` and
 `package-compat`, `just unity-ffi` runs `ffi-check`, `just test` runs
 `package-gate`, `just unity-editor` runs `editor-compat`,
 `just unity-conformance` runs `hlsl-conformance`, `just unity-render` runs
-`render-gate` and `just unity-demo` runs `demo`.
+`render-gate`, and `just unity-demo` runs `demo` over `demo-producer`.
 
 They ask different questions and none subsumes another. `abi-check` compares
 boundary B's value types against a `dashpaint-abi` build, member by member;
@@ -96,7 +110,7 @@ shipped library's `.meta` and header to D3; `editor-compat` is the only one that
 compiles a Unity `.shader` without building a player; `hlsl-conformance` is the
 only one that dispatches shader code and compares the values it computed against
 a committed table; `render-gate` is the only one that builds a player and
-asserts what it drew — `demo` builds one and asserts only that every document
+asserts what it drew — `demo` builds one and asserts only that every entry
 reached the painter. Until story #1121 nothing compiled a C# P/Invoke against
 `crates/dashscene-ffi/include/dashscene.h`, which is item 2 of issue #1266 — but
 `abi-check` has always executed: it declares sixty `[DllImport]`s and

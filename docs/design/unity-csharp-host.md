@@ -761,6 +761,27 @@ the list. **No enumeration of them lives here**: one did, it was wrong about
 which statuses the gate produces, and it was falsified by an edit in the same
 pass that wrote it.
 
+**Since story #1342 it runs the whole program twice.** The second pass sets
+`-p:DemoProducer=true` and points at `unity/demo-producer`, and it is the only
+thing that compiles or binds `Runtime/DemoProducer.cs`'s P/Invokes — they sit
+behind a `#if` the shipped pass never defines, so without it they would be read
+by no gate at all, which is issue #1308's class. That pass drives the six
+`ds_demo_*` through the missing-symbol context alongside the shipped set and
+adds checks over the producer itself.
+
+**The pass refuses to run vacuously.** Misspell the MSBuild property or the
+symbol and the program compiles with every demo block removed, runs the shipped
+checks a second time and exits 0 — measured during the review of PR #1365, which
+reported "49 checks passed" against a comparison that never happened. The recipe
+now sets `DASHSCENE_FFI_EXPECT_DEMO=1` on that pass and the program refuses when
+the two disagree, in both directions.
+
+**`unity/package-compat` gained a second pass for the same file**, because that
+project is the one that asks the netstandard2.1 question. `unity/ffi-check`
+compiles `DemoProducer.cs`'s real body at net10.0, a superset of what Unity
+accepts; before story #1342 the only thing that compiled it the way Unity will
+was `just unity-demo`'s player build.
+
 **Two of them perform the mutation their requirement's own _Check_ asks for.**
 R-E16 says "build a host against a mismatched value and assert it refuses" and
 R-E17 says "mutate a row type's size and assert the host refuses rather than
@@ -850,48 +871,115 @@ the fourth throwaway Unity project in this repository and a fourth copy of the
 bring-up the other three carry, which issue #1316 factors out together rather
 than any one of them doing it to the others.
 
-**What it draws**: committed documents staged into `StreamingAssets` with a
-manifest, switched on the arrow keys or on a `-cycle <seconds>` argument, with
-the font cascade — `corpus/fonts/inter/Inter-Regular.otf` and the
+**What it draws**, in one list the arrow keys walk: the three `corpus/showcase`
+scenes first, then committed documents staged into `StreamingAssets` with a
+manifest, with the font cascade — `corpus/fonts/inter/Inter-Regular.otf` and the
 `corpus/atlas/inter-ascii` sheet and metrics — beside them for the document that
-carries text.
+carries text. A `-cycle <seconds>` argument advances without a key press.
+
+**The scenes arrive through a native producer** (story #1342). They are Rust,
+built into a live arena by `dashlang`, and their motion is host-driven — so a C#
+host cannot animate them while layers 1 and 2 are `v1`, and re-authoring them in
+C# would be a second definition that drifts from the one `demo-android` draws.
+`unity/demo-producer` is `dashscene-ffi` linked as an rlib plus six `ds_demo_*`
+entry points; `just unity-demo` builds and stages it in place of the shipped
+library and defines `DASHSCENE_DEMO_PRODUCER` for the player build.
+`docs/decisions/the-demo-producer-links-the-abi-rather-than-shipping-in-it.md`
+carries why it is a separate crate rather than a feature of the shipped one, and
+`just demo-exports` is what holds it to being the shipped seventeen plus a set
+carrying only the `ds_demo_` prefix. **That recipe pins the prefix, not the
+cardinality**: `unity/ffi-check`'s demonstration pass is what names the six and
+drives each one.
+
+**The camera is framed per entry class, and it was not at first.** A scene is
+built for the drawable in physical pixels, as the three Rust hosts build it, so
+its extent is the window's; a committed document carries a fixed extent of a few
+hundred units, and `unity/demo/DemoBuild.cs` picks a size that frames those. The
+sample framed only the second, so a scene drew at the ratio between the two —
+**measured at 2.25x on a 2994x1802 drawable against a camera showing 800
+units**, and found by a person opening the window rather than by any gate.
+`cycle` asserts that every entry reached the painter and says in its own output
+that it asserts nothing about pixels, so the whole branch passed with the scenes
+at that size. A scene is now framed at one document unit per pixel, from the
+size it was built at rather than from `Screen`, and the drawable is printed
+beside the census so the two numbers exist somewhere.
+
+**The scenes have motion; the documents do not**, and the difference is the
+boundary rather than the sample. A scene's scripted pulse runs on
+`demo/src/shell.rs`'s own 2500 ms cadence and its variant switch is on the space
+bar, both through `ds_demo_*`. A document has neither, because no **shipped**
+entry point mutates a document — that is layer 1, `v1` for every host (issues
+#1261 and #1262).
+
+**What a viewer will see missing from `surfaces`, and why that is P4 working.**
+`PackDiagnostic` names six refusals, five of them paint kinds both Rust painters
+draw (the sixth, a layer blur, both of them skip as well), so the image fill,
+the baked vector field and the shadows do not arrive; the backdrop blur is
+outside boundary B for a Unity host whatever this painter gains
+(`a-backdrop-blur-snapshots-the-target-it-draws-into.md` D3). The readout names
+what was refused for whatever is showing, so the difference from `demo-web` is
+visible in the demonstration instead of surprising. Issue #1344 is the painter
+request.
 
 **Measured on 2026-08-24**, `6000.3.22f1`, macOS/Metal, Apple M3, in a player
-built by `just unity-demo 6000.3.22f1 cycle`: `v03-paint.dsb` packed 16
-instances on rung `RawBuffer` and reported its one image fill refused;
-`v07-variant-topology.dsb` 2 instances; `v018-variant-shelf.dsb` 3; and
-`v07-text-hug-in-fill.dsb` 16 with **no diagnostic at all**, which is the text
-seam of story #1123 shading glyphs through the cascade in a player rather than
-in an editor.
+built by `just unity-demo 6000.3.22f1 cycle`. **It covers the document half
+only** — the scenes were added on 2026-08-26 by story #1342 and this run
+predates them, so it is four entries of what is now a longer list rather than
+the whole of it: `v03-paint.dsb` packed 16 instances on rung `RawBuffer` and
+reported its one image fill refused; `v07-variant-topology.dsb` 2 instances;
+`v018-variant-shelf.dsb` 3; and `v07-text-hug-in-fill.dsb` 16 with **no
+diagnostic at all**, which is the text seam of story #1123 shading glyphs
+through the cascade in a player rather than in an editor.
+
+**Measured on 2026-08-26**, same editor, machine and API, in a player built by
+`just unity-demo 6000.3.22f1 cycle` — the whole list this time:
+
+    scene surfaces      56 instances, rung RawBuffer, five kinds refused
+                        over 9 rects: shadows, backdrop blurs, image fills,
+                        baked vector nodes and render-target groups
+    scene typography   381 instances, no diagnostic
+    scene layout        29 instances, no diagnostic
+    v03-paint.dsb       16 instances, its one image fill refused
+    v07-variant-…       2 instances
+    v018-variant-shelf   3 instances
+    v07-text-hug-…      16 instances, no diagnostic
+
+`typography`'s 381 instances are the seam this producer exists to cross: the
+scene's own solver carries a typesetter and its atlases, so the glyphs shade
+here without the document-side cascade the last entry in the table above needs.
+`surfaces`'s five refusals are P4 working and are what issue #1344 is for.
 
 **The `cycle` action re-derives that** rather than leaving it to a person
 watching: the player walks every entry once, quits, and the recipe fails unless
 the log carries the line the sample writes when all of them have drawn. It is
-bounded at 90 seconds, because a document that never draws and a player that
-never exits look the same from outside — the foreground shape it replaced drew
-the first document and then sat for one hour and fifty-four minutes.
+bounded in two stages — up to 90 s for the player's own census line, then three
+seconds per entry plus thirty — because an entry that never draws and a player
+that never exits look the same from outside — the foreground shape it replaced
+drew the first document and then sat for one hour and fifty-four minutes.
 
-**It is a demonstration and not a gate.** `cycle` asserts that every document
+**It is a demonstration and not a gate.** `cycle` asserts that every entry
 reached the painter and nothing more: there is no negative control, no ink
 predicate, and a person still decides whether the picture is right.
 `unity/render-gate` is what puts a frame through an ink predicate and fails on a
 frame the painter did not draw. A green `unity-demo run` says a player built and
-ran; a green `cycle` adds that every document reached the painter, and nothing
+ran; a green `cycle` adds that every entry reached the painter, and nothing
 about what landed on the screen.
 
-**Three things it deliberately does not do.**
+**One thing it deliberately does not do, and two properties worth naming.**
 
 - **It runs on a staged library.** The recipe copies the cdylib into the
   project, as `unity-render` does. The shipped form — `Runtime/Plugins/`, the
   `.meta` files and the tag R-E18 wants — is issue #1334, and nothing here
   stands in for it.
-- **It does not draw the showcase scenes** the desktop, web and Android hosts
-  draw. Those are built in Rust against a live arena and are emitted as no
-  `.dsb`; issue #1342 carries what it would take, including the wall that is the
-  painter's rather than the demo's.
-- **It shows no motion a host has to drive.** The C ABI has no producer-side
-  entry point, and signal binding is layer 1, which is `v1` for every host
-  (issues #1261 and #1262). What ticks is the runtime's own time.
+- **It draws the scenes through a library a customer does not install.** The
+  producer's six entry points are not on the shipped ABI and are not proposed
+  for it: when layers 1 and 2 land, the demonstration moves to C# and
+  `unity/demo-producer` stops existing. Until then a C# demonstration would
+  advertise a capability the product does not ship.
+- **Its motion is the scenes' own script, not a host's.** The scene declares the
+  signal and owns the variant switch; this host binds a key to them and
+  constructs nothing, which is the seam `showcase::Showcase` exists to give it.
+  A document in the same list still shows only the runtime's own time.
 
 **One thing it did not find, and the correction is the point.** A first run of
 this demo logged `the SRP Batcher is off` on a project that meets R-E5, and that

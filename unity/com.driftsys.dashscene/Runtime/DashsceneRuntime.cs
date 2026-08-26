@@ -31,7 +31,7 @@ namespace Driftsys.Dashscene
     /// not pretend it can, so this one requires an explicit `Dispose` on the
     /// owning thread and says so rather than installing a finalizer that would
     /// silently do nothing.
-    public sealed class DashsceneRuntime : IDisposable
+    public sealed partial class DashsceneRuntime : IDisposable
     {
         private ulong _handle;
         private readonly int _ownerThreadId;

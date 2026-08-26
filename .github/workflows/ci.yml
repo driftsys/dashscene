@@ -770,6 +770,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # For `just demo-exports` below. Not preinstalled on the runner image.
+      - uses: extractions/setup-just@v4
       # `demo` reaches dashbuf through dashscene-core.
       - uses: ./.github/actions/install-flatc
       # skia-safe's prebuilt Linux binaries link the system fontconfig;
@@ -796,6 +798,17 @@ jobs:
             sudo apt-get install -y libfontconfig1-dev
           fi
       - run: cargo build -p demo
+
+      # The demonstration producer the Unity player draws the showcase scenes
+      # through, and the assertion that it is the shipped library plus an
+      # appendix rather than a fork of it (story #1342).
+      #
+      # Here rather than in a job of its own: this job is where the
+      # demonstration hosts are compiled, and the recipe needs neither a Unity
+      # editor nor the .NET SDK — only cargo, jq and nm. It builds
+      # `dashscene-ffi` and `demo-producer` itself, so no separate build step
+      # precedes it.
+      - run: just demo-exports
 
   convco:
     name: convco

@@ -660,8 +660,13 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       **And it has been run.** `just unity-render` builds a **player**, draws
       `goldens/dsb/v03-paint.dsb` and reads the pixels back. The package's
       `Samples~/Showcase` draws as well, and `just unity-demo` runs it: a
-      player over four committed documents, which asserts nothing about what
-      it drew. `Samples~/FrameLoop` is compiled by `just unity-editor` and run
+      player over the three showcase scenes and four committed documents,
+      which asserts nothing about what it drew. The scenes carry their
+      scripted pulse, and the one that declares a variant set carries that
+      too, while the documents carry neither, because the motion comes from `unity/demo-producer` — a
+      demonstration library that is `dashscene-ffi` plus six `ds_demo_*`
+      entry points — and not from the shipped ABI, which still has no
+      producer-side call (story #1342). `Samples~/FrameLoop` is compiled by `just unity-editor` and run
       by nothing. Measured on
       Unity 6000.3.22f1, macOS/Metal, Apple M3: 16 instances on rung
       `RawBuffer`, ink at all 13 sampled node centres, and the one rect

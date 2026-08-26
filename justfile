@@ -957,11 +957,12 @@ wasm-lint:
     # the workspace is gated by default, and one that cannot build for wasm32
     # fails loudly here instead of being skipped in silence.
     #
-    # The eight exclusions are the members that do not compile for this triple:
-    # `dashscene-desktop` and `dashscene-ffi` fail outright, and the other six
-    # carry native build scripts (skia, astcenc, zstd, nv-flip). Warm, this
-    # costs 1.1 s — no more than the four-package list it replaces.
-    RUSTDOCFLAGS='-D warnings' cargo doc --workspace --exclude dashscene-desktop --exclude dashscene-ffi --exclude dashscene-android --exclude dashscene-skia --exclude dashpack --exclude dashpack-astcenc-sys --exclude demo --exclude goldens --target wasm32-unknown-unknown {{ DOC_FLAGS }}
+    # The nine exclusions are the members that do not compile for this triple:
+    # `dashscene-desktop` and `dashscene-ffi` fail outright, `demo-producer`
+    # fails because it links the second of those, and the other six carry native
+    # build scripts (skia, astcenc, zstd, nv-flip). Warm, this costs 1.1 s — no
+    # more than the four-package list it replaces.
+    RUSTDOCFLAGS='-D warnings' cargo doc --workspace --exclude dashscene-desktop --exclude dashscene-ffi --exclude demo-producer --exclude dashscene-android --exclude dashscene-skia --exclude dashpack --exclude dashpack-astcenc-sys --exclude demo --exclude goldens --target wasm32-unknown-unknown {{ DOC_FLAGS }}
 
 #
 # The Rust tests in `dashscene-ffi` call the same functions, but they call them
@@ -1270,6 +1271,18 @@ unity-abi:
     # repair is the wrong one: CS0246 on a new file says a type is missing, and
     # widening this project's exclusion makes it green while narrowing R-E10 to
     # whatever is left.
+    # **Twice: the default configuration, and the demonstration one.** The
+    # second is what compiles `Runtime/DemoProducer.cs`'s real body against
+    # netstandard2.1 — the question this project exists to ask — rather than the
+    # empty file the `#if` leaves behind (story #1342).
+    if ! dotnet build unity/package-compat -v q --nologo -p:DemoProducer=true; then
+      echo "" >&2
+      echo "unity-abi: package-compat failed in its DEMONSTRATION configuration." >&2
+      echo "unity-abi: Runtime/DemoProducer.cs uses something netstandard2.1 does" >&2
+      echo "unity-abi:   not carry. unity/ffi-check compiles it at net10.0 and" >&2
+      echo "unity-abi:   would not have caught this." >&2
+      exit 1
+    fi
     if ! dotnet build unity/package-compat -v q --nologo; then
       echo "" >&2
       echo "unity-abi: package-compat compiles Runtime/ MINUS Runtime/Engine/." >&2
@@ -1658,12 +1671,49 @@ unity-ffi:
       DASHSCENE_PACKAGE="unity/com.driftsys.dashscene" \
       dotnet run --project unity/ffi-check
 
+    # **The demonstration configuration** (story #1342), the same program over
+    # `unity/demo-producer` with `DASHSCENE_DEMO_PRODUCER` defined.
+    #
+    # Without it the package's `ds_demo_*` declarations are compiled by nothing
+    # and bound by nothing: they sit behind a `#if` that the pass above never
+    # defines, so a renamed or deleted entry point would reach the demonstration
+    # as a `DllNotFoundException` at run time and no gate would have said so.
+    # That is issue #1308's class, and story #1342's second condition asks for
+    # this pass by name.
+    #
+    # **It runs every check above a second time**, against a different library,
+    # which is not waste: the demo library is `dashscene-ffi` plus an appendix,
+    # and a shipped check failing here would mean the appendix changed something
+    # it should not have.
+    cargo build -p demo-producer
+    demo_lib=$(cargo build -p demo-producer --message-format=json | jq -r '
+        select(.reason == "compiler-artifact")
+        | select(.target.name == "demo_producer")
+        | .filenames[]
+        | select(endswith(".dylib") or endswith(".so") or endswith(".dll"))
+      ' | tail -n 1)
+    if [ -z "${demo_lib}" ]; then
+      echo "unity-ffi: cargo emitted no dynamic library for demo-producer." >&2
+      exit 1
+    fi
+
+    DASHSCENE_FFI_LIB="${demo_lib}" DASHSCENE_FFI_FIXTURE="${fixture}" \
+      DASHSCENE_FFI_TEXT_FIXTURE="${text_fixture}" DASHSCENE_FFI_CORPUS=corpus \
+      DASHSCENE_FFI_STUB="${older}" \
+      DASHSCENE_FFI_STUB_SKEW="${older_skew}" \
+      DASHSCENE_FFI_STUB_SILENT="${older_silent}" \
+      DASHSCENE_FFI_STUB_REFUSES_FREE="${older_refuses}" \
+      DASHSCENE_FFI_STUB_LEASE_REFUSES="${older_lease}" \
+      DASHSCENE_PACKAGE="unity/com.driftsys.dashscene" \
+      DASHSCENE_FFI_EXPECT_DEMO=1 \
+      dotnet run --project unity/ffi-check -p:DemoProducer=true
+
 # Draw a document in a built PLAYER and check that ink landed where the
 # committed tables put it.
 #
 # **The only CHECK in this repository that draws a dashscene document through
 # the Unity painter.** `just unity-demo` draws as well; its `cycle` action
-# asserts that every document reached the painter, and nothing about what
+# asserts that every entry reached the painter, and nothing about what
 # landed on the screen. Every other gate over the package compiles, links or
 # executes on the CPU; `docs/design/unity-csharp-host.md` says so and this is
 # what changes it.
@@ -2484,6 +2534,182 @@ _android-adb:
     fi
     echo "${adb}"
 
+# The demo producer's exported symbols against the shipped library's.
+#
+# `unity/demo-producer` is the library the demonstration player loads, and the
+# claim that makes it acceptable is that it is `dashscene-ffi` PLUS an appendix
+# — the same seventeen entry points, compiled from the same crate linked as an
+# rlib, with `ds_demo_*` added beside them. This is what holds that claim.
+#
+# **It is not a formality, and it is not the `pub use` either.** Measured on
+# 2026-08-26: a cdylib that names NOTHING from the `dashscene-ffi` rlib exports
+# ZERO `ds_*` symbols, because the linker keeps no object nothing references —
+# `#[unsafe(no_mangle)]` does not change that. One that calls into the rlib
+# exports all seventeen whether or not it re-exports them, debug and release
+# alike. So the shipped set surviving is a property of the link, not of a line
+# anyone can read, and asserting it is the only way to know it still holds.
+# Without it the demonstration would fail at the first `DllImport` and nothing
+# else in this repository would have said why.
+#
+# **This recipe cannot catch the `pub use` being deleted**, and that is correct
+# rather than a gap: the property still holds without it, which the measurement
+# above is what establishes.
+#
+# **Takes a profile, because the link is what it inspects and the link differs
+# by profile.** `unity-demo` stages `demo-release` — release plus thin LTO, see
+# `[profile.demo-release]` in `Cargo.toml` for why a plain release build of this
+# member does not compile at all — and passes `demo-release` here, so the
+# artifact this recipe reads is the artifact the player loads. It ran on the
+# debug library until the review of PR #1365, which is to say it was answering
+# the question about a library nothing loads.
+#
+# **CI runs the DEBUG link only, and that is a stated gap rather than an
+# oversight.** `demo-release` inherits `release`, so running it on a pull
+# request would build the whole dependency tree optimized for a demonstration
+# library no product ships. The optimized link is checked where it is staged, by
+# `unity-demo`, which needs a Unity editor — so a release-only regression in
+# what the linker keeps reaches no pull request. `strip`, `codegen-units = 1`
+# and thin LTO are what could move it.
+#
+# Needs no Unity editor and no .NET SDK; CI's `demo-build` job runs it.
+demo-exports profile="debug":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    case "{{profile}}" in
+      debug)        flag="" ;;
+      demo-release) flag="--profile demo-release" ;;
+      *) echo "demo-exports: profile must be debug or demo-release, not {{profile}}" >&2
+         echo "demo-exports: (there is no plain release build of demo-producer —" >&2
+         echo "demo-exports:  see [profile.demo-release] in Cargo.toml for why)" >&2
+         exit 1 ;;
+    esac
+
+    # The dynamic library each crate emits, from cargo rather than a `uname`
+    # mapping plus a file test — `cargo build` does not delete the artifact of a
+    # crate type that has been removed, so `[ -f … ]` passes over a stale one.
+    # `$3...` are extra cargo arguments, so a feature-varied build reuses this
+    # rather than carrying another copy of the artifact-path query. Several
+    # recipes here carry one; `grep -c 'compiler-artifact' justfile` counts them.
+    library() {
+      local pkg="$1" target="$2"
+      shift 2
+      cargo build -p "${pkg}" ${flag} "$@" --message-format=json \
+        | jq -r --arg target "${target}" '
+            select(.reason == "compiler-artifact")
+            | select(.target.name == $target)
+            | .filenames[]
+            | select(endswith(".dylib") or endswith(".so") or endswith(".dll"))
+          ' | tail -n 1
+    }
+
+    # The `ds_*` symbols a library DEFINES.
+    #
+    # `$NF` and a stripped leading underscore rather than a `grep -o` for the
+    # name: Mach-O prefixes every symbol with `_`, ELF does not, and a substring
+    # match would also catch a `ds_` in the middle of an unrelated name.
+    # **The `|| true` on the grep is what makes the empty-set guard below
+    # reachable.** Under `set -euo pipefail` a `grep` that matches nothing exits
+    # 1, which kills the recipe at the assignment — so the two diagnostics
+    # written for exactly that case could never print, and a broken symbol
+    # reader failed with no output at all. Found by the review of PR #1365 and
+    # reproduced: `set -euo pipefail; x="$(printf nothing | grep ds_)"` exits
+    # before the next statement. The guard below is what turns the empty result
+    # into a message; this only stops the shell from exiting first.
+    exported() {
+      case "$(uname -s)" in
+        Darwin) nm -gU "$1" ;;
+        *)      nm --dynamic --defined-only "$1" ;;
+      esac | awk '{ print $NF }' | sed 's/^_//' | { grep -E '^ds_' || true; } | sort -u
+    }
+
+    shipped_lib="$(library dashscene-ffi dashscene_ffi)"
+    demo_lib="$(library demo-producer demo_producer)"
+    for pair in "dashscene-ffi:${shipped_lib}" "demo-producer:${demo_lib}"; do
+      if [ -z "${pair#*:}" ]; then
+        echo "demo-exports: cargo emitted no dynamic library for ${pair%%:*}" >&2
+        echo 'demo-exports: is cdylib still in its [lib] crate-type?' >&2
+        exit 1
+      fi
+    done
+
+    shipped="$(exported "${shipped_lib}")"
+    demo="$(exported "${demo_lib}")"
+
+    # **Checked before the comparison, because an empty set compares equal to
+    # everything.** The first hand-run of this check read a stale path, both
+    # sides came back empty, and it reported agreement. That is the fail-open
+    # shape this refuses.
+    if [ -z "${shipped}" ]; then
+      echo "demo-exports: ${shipped_lib} exports no ds_* symbol at all." >&2
+      echo "demo-exports: the symbol reader is broken, not the library." >&2
+      exit 1
+    fi
+
+    # **The feature's own claim, checked rather than asserted in prose.**
+    # `crates/dashscene-ffi/src/demo.rs` and D3 of the decision record both say
+    # the shipped cdylib exports the same set with `demo-seam` on as with it
+    # off — which is what makes a feature acceptable on a published crate. Until
+    # the review of PR #1365 nothing held it: a `#[unsafe(no_mangle)]` added
+    # inside `demo.rs` would grow the PUBLISHED crate's C surface under that
+    # feature, and the comparison above would never have seen it, because it
+    # builds `dashscene-ffi` with default features only.
+    #
+    # **Below the empty-set guard, not above it.** The first version of this
+    # block sat above it, where a broken symbol reader gives two empty sets that
+    # compare equal — the exact fail-open shape that guard exists to refuse.
+    seam_lib="$(library dashscene-ffi dashscene_ffi --features demo-seam)"
+    if [ -z "${seam_lib}" ]; then
+      echo "demo-exports: cargo emitted no dynamic library for dashscene-ffi" >&2
+      echo "demo-exports:   under --features demo-seam." >&2
+      exit 1
+    fi
+    seam="$(exported "${seam_lib}")"
+    if [ "${seam}" != "${shipped}" ]; then
+      echo "demo-exports: --features demo-seam changes the shipped library's C surface." >&2
+      echo "demo-exports: that feature is on a PUBLISHED crate and is documented as" >&2
+      echo "demo-exports:   adding no exported symbol. Difference:" >&2
+      diff <(printf '%s\n' "${shipped}") <(printf '%s\n' "${seam}") >&2 || true
+      exit 1
+    fi
+
+    missing="$(comm -23 <(printf '%s\n' "${shipped}") <(printf '%s\n' "${demo}"))"
+    if [ -n "${missing}" ]; then
+      echo "demo-exports: the demo library does not export every shipped entry point." >&2
+      echo "demo-exports: missing: ${missing}" >&2
+      echo "demo-exports: is 'pub use dashscene_ffi::*;' still in" >&2
+      echo "demo-exports:   unity/demo-producer/src/lib.rs? Without it the linker" >&2
+      echo "demo-exports:   keeps none of them." >&2
+      exit 1
+    fi
+
+    added="$(comm -13 <(printf '%s\n' "${shipped}") <(printf '%s\n' "${demo}"))"
+    if [ -z "${added}" ]; then
+      echo "demo-exports: the demo library adds no entry point to the shipped set," >&2
+      echo "demo-exports: so it is the shipped library under another name and the" >&2
+      echo "demo-exports: demonstration can drive nothing." >&2
+      exit 1
+    fi
+    stray="$(printf '%s\n' "${added}" | grep -vE '^ds_demo_' || true)"
+    if [ -n "${stray}" ]; then
+      echo "demo-exports: the demo library adds symbols outside the ds_demo_ prefix:" >&2
+      echo "demo-exports:   ${stray}" >&2
+      echo "demo-exports: story #1342's first condition is that a demo entry point" >&2
+      echo "demo-exports:   carries its own prefix, so a default build can be" >&2
+      echo "demo-exports:   asserted not to export one." >&2
+      exit 1
+    fi
+
+    # **The added count is printed, not asserted, and the difference matters.**
+    # This recipe requires the added set to be non-empty and wholly
+    # `ds_demo_`-prefixed; it does not pin how many there are, so a seventh
+    # entry point would pass here. `unity/ffi-check`'s `expected` set is what
+    # names the six, and it names what the PACKAGE declares. Four documents
+    # claimed "exactly six" of this recipe until the review of PR #1365.
+    echo "demo-exports: OK ({{profile}}) — $(printf '%s\n' "${shipped}" | wc -l | tr -d ' ') shipped entry \
+    points present unchanged, $(printf '%s\n' "${added}" | wc -l | tr -d ' ') ds_demo_ added:"
+    printf '  %s\n' ${added}
+
 # The Unity showcase — the demonstration a person runs, not a gate. Issue #1329.
 #
 # Same throwaway-project shape as `unity-render`, and a **fourth** copy of that
@@ -2501,12 +2727,14 @@ _android-adb:
 # Included Shaders workaround — and says nothing about a released plugin layout,
 # which is issue #1334.
 #
-# **What it deliberately does not show.** No signal sweep and no variant switch:
-# `include/dashscene.h` exports no producer-side entry point and signal binding
-# is layer 1, which is `v1` for every host (issues #1261 and #1262). And not the
-# showcase scenes — those are built in Rust code against a live arena and are
-# emitted as no `.dsb` anywhere in this repository, which issue #1329's comment
-# sets out.
+# **What it shows, and through what.** Since story #1342 the list is the three
+# `corpus/showcase` scenes and then the committed documents. The scenes carry
+# their scripted pulse, and the one that declares a variant set carries that
+# too — driven by `ds_demo_*`, which `unity/demo-producer` exports and this
+# recipe stages in place of the shipped library. `include/dashscene.h` still
+# exports no producer-side entry point, and signal binding is still layer 1 and
+# `v1` for every host (issues #1261 and #1262), so a DOCUMENT in this list has
+# no motion at all. That difference is the point rather than a gap.
 #
 # Needs a Unity editor, so it is outside `check` and outside CI, like
 # `unity-editor` and `unity-render`. Costs tens of minutes for the same two
@@ -2514,7 +2742,7 @@ _android-adb:
 # makes the player compile a large variant set.
 #
 # **Three actions.** `run` (the default) opens the window a person drives;
-# `build` stops after the build; `cycle` walks every document once, quits, and
+# `build` stops after the build; `cycle` walks every entry once, quits, and
 # fails unless the player reported that all of them drew — the one shape that
 # reports rather than being watched. Anything else is refused rather than
 # treated as "do not run".
@@ -2524,6 +2752,7 @@ _android-adb:
 # `unity-render` and `unity-conformance` do: check `git status` after a run
 # that added a file.
 #
+
 # Build the Unity showcase player from this package and run it.
 unity-demo unity_version="6000.3.22f1" action="run":
     #!/usr/bin/env bash
@@ -2580,19 +2809,31 @@ unity-demo unity_version="6000.3.22f1" action="run":
       fi
     fi
 
+    # **The demo producer, not the shipped library.** `demo-producer` is
+    # `dashscene-ffi` linked as an rlib plus the `ds_demo_*` entry points that
+    # build and drive the showcase scenes, and it carries ONE instantiation of
+    # the runtime table — which is why the producer is a separate crate rather
+    # than a feature of the shipped one
+    # (docs/decisions/the-demo-producer-links-the-abi-rather-than-shipping-in-it.md).
+    #
+    # `just demo-exports` is what holds it to being the shipped library plus an
+    # appendix rather than a fork of it, and it runs first so a divergence is
+    # reported before tens of minutes of player build.
+    just demo-exports demo-release
+    #
     # From cargo rather than from a `uname` mapping plus a file test: `cargo
     # build` does not delete the artifacts of a crate type that has been
     # removed, so a `[ -f … ]` guard passes over a stale library. Release,
     # because the player runs it.
-    cargo build -p dashscene-ffi --release
-    lib=$(cargo build -p dashscene-ffi --release --message-format=json | jq -r '
+    cargo build -p demo-producer --profile demo-release
+    lib=$(cargo build -p demo-producer --profile demo-release --message-format=json | jq -r '
         select(.reason == "compiler-artifact")
-        | select(.target.name == "dashscene_ffi")
+        | select(.target.name == "demo_producer")
         | .filenames[]
         | select(endswith(".dylib") or endswith(".so") or endswith(".dll"))
       ' | tail -n 1)
     if [ -z "${lib}" ]; then
-      echo "unity-demo: cargo emitted no dynamic library for dashscene-ffi." >&2
+      echo "unity-demo: cargo emitted no dynamic library for demo-producer." >&2
       echo 'unity-demo: is cdylib still in [lib] crate-type?' >&2
       exit 1
     fi
@@ -2634,7 +2875,21 @@ unity-demo unity_version="6000.3.22f1" action="run":
     JSON
 
     cp "${root}/unity/demo/DemoBuild.cs" "${project}/Assets/Editor/"
-    cp "${lib}" "${project}/Assets/Plugins/"
+    # **Staged under the shipped library's name, deliberately.** Every
+    # `[DllImport]` the package declares names `dashscene_ffi`, and the demo's
+    # own imports name it too — which is the point: the player must load ONE
+    # library, or `DashsceneRuntime` and `ds_demo_build` would resolve into two
+    # instantiations of a `thread_local!` runtime table and no handle minted by
+    # one would resolve in the other.
+    #
+    # It is a rename and not a disguise. `just demo-exports` above has already
+    # asserted that this file exports the shipped seventeen unchanged, compiled
+    # from the same crate, plus a set carrying only the `ds_demo_` prefix.
+    # (That recipe pins the prefix, not the cardinality; `unity/ffi-check`'s
+    # demonstration pass is what holds the six by name.)
+    staged="${project}/Assets/Plugins/$(basename "${lib}" | sed 's/demo_producer/dashscene_ffi/')"
+    cp "${lib}" "${staged}"
+    echo "unity-demo: staged $(basename "${lib}") as $(basename "${staged}")"
 
     # **`Samples~` is hidden from Unity's importer by its `~`**, so the sample
     # is copied in rather than reached inside the package — the same reason
@@ -2738,7 +2993,7 @@ unity-demo unity_version="6000.3.22f1" action="run":
     # reason.
     if [ "{{action}}" = "cycle" ]; then
       # The run that reports rather than the run a person watches: the player
-      # walks every document once and quits, and the log must then carry the
+      # walks every entry once and quits, and the log must then carry the
       # line the sample writes when all of them have drawn.
       #
       # **`-batchmode`, and not a window — the shape `unity-render` uses.**
@@ -2753,7 +3008,7 @@ unity-demo unity_version="6000.3.22f1" action="run":
       # device away — so the painter still constructs, packs and reports.
       #
       # **What that costs is honest to state**: with no swapchain this action
-      # asserts that every document reached the painter, which is what its
+      # asserts that every entry reached the painter, which is what its
       # output says, and nothing about pixels. `run` is the action with a
       # window, and `unity-render` is what reads pixels back.
       rm -f "${player_log}"
@@ -2765,16 +3020,80 @@ unity-demo unity_version="6000.3.22f1" action="run":
       "${player}" -batchmode -logFile "${player_log}" -cycle 3 -quit &
       player_pid=$!
 
-      # Bounded, because the failure this action exists to catch is a document
+      # **The player's own census first, because this recipe cannot know the
+      # whole list.** It writes the manifest, so it knows the document count;
+      # the scene count belongs to the staged library, which carries whatever
+      # `showcase::SCENES` holds. Reading it here is what lets the deadline and
+      # the expected total follow the list instead of standing beside it.
+      #
+      # Until story #1342 this loop grepped for a hard-coded
+      # "all N document(s) drew" built from the manifest count alone. The
+      # scenes made that line stop matching, the player drew all seven entries,
+      # and the run failed reporting that four documents had not drawn. The
+      # census is what stops the next such addition being silent.
+      census=""
+      for _ in $(seq 1 90); do
+        if [ -f "${player_log}" ]; then
+          census=$(grep -m1 -E \
+            '^\[showcase\] entries: [0-9]+ \([0-9]+ scene\(s\), [0-9]+ document\(s\)\)' \
+            "${player_log}" || true)
+          if [ -n "${census}" ]; then break; fi
+        fi
+        sleep 1
+      done
+      if [ -z "${census}" ]; then
+        kill "${player_pid}" 2>/dev/null || true
+        wait "${player_pid}" 2>/dev/null || true
+        grep -E "^\[showcase\]|^\[dashscene\]" "${player_log}" 2>/dev/null || true
+        echo "unity-demo: the player never reported its entry census within 90 s." >&2
+        echo "unity-demo: it did not reach the end of Awake. Full log at ${player_log}" >&2
+        exit 1
+      fi
+      total=$(printf '%s' "${census}" | sed -E 's/^.*entries: ([0-9]+) .*$/\1/')
+      scenes=$(printf '%s' "${census}" | sed -E 's/^.*\(([0-9]+) scene.*$/\1/')
+      docs=$(printf '%s' "${census}" | sed -E 's/^.*, ([0-9]+) document.*$/\1/')
+      echo "unity-demo: ${census#\[showcase\] }"
+
+      # **The document half is checkable and the scene half is not**, so each
+      # gets the strongest assertion available. This recipe wrote the manifest,
+      # so a mismatch means an entry was dropped between here and the player.
+      if [ "${docs}" != "${#documents[@]}" ]; then
+        kill "${player_pid}" 2>/dev/null || true
+        echo "unity-demo: the manifest lists ${#documents[@]} documents and the player" >&2
+        echo "unity-demo: loaded ${docs}. Full log at ${player_log}" >&2
+        exit 1
+      fi
+      # A player that carries no scene at all is one where the producer did not
+      # arrive — a staged library without `ds_demo_*`, or a build that did not
+      # define DASHSCENE_DEMO_PRODUCER. Both leave the documents drawing
+      # perfectly, which is why this is asserted rather than assumed.
+      # **Defaulted before it is compared.** `[ "" -lt 1 ]` is a syntax error
+      # that returns 2, and bash reads a non-zero status here as "false" — so a
+      # census line this recipe failed to parse would fall straight through the
+      # guard below rather than failing it.
+      case "${scenes}" in
+        ''|*[!0-9]*)
+          kill "${player_pid}" 2>/dev/null || true
+          echo "unity-demo: could not read a scene count out of the census line:" >&2
+          echo "unity-demo:   ${census}" >&2
+          exit 1 ;;
+      esac
+      if [ "${scenes}" -lt 1 ]; then
+        kill "${player_pid}" 2>/dev/null || true
+        echo "unity-demo: the player carries no showcase scene. The staged library" >&2
+        echo "unity-demo: exports no ds_demo_*, or the player build did not define" >&2
+        echo "unity-demo: DASHSCENE_DEMO_PRODUCER. Full log at ${player_log}" >&2
+        exit 1
+      fi
+
+      # Bounded, because the failure this action exists to catch is an entry
       # that never draws — which looks exactly like a player that never exits.
       # The bound follows the count and the interval rather than standing
-      # beside them: four documents at three seconds need twelve, and the rest
-      # is the editor's startup.
-      bound=$(( ${#documents[@]} * 3 + 60 ))
+      # beside them: every entry gets its three seconds, and the rest is slack.
+      bound=$(( total * 3 + 30 ))
       drew=""
       for _ in $(seq 1 "${bound}"); do
-        if [ -f "${player_log}" ] \
-          && grep -q "^\[showcase\] all ${#documents[@]} document(s) drew" "${player_log}"; then
+        if grep -q "^\[showcase\] all ${total} entries drew" "${player_log}"; then
           drew="yes"
           break
         fi
@@ -2790,7 +3109,7 @@ unity-demo unity_version="6000.3.22f1" action="run":
       # reason is what is wanted.
       grep -E "^\[showcase\]|^\[dashscene\]" "${player_log}" || true
       if [ -z "${drew}" ]; then
-        echo "unity-demo: the player did not report all ${#documents[@]} documents" >&2
+        echo "unity-demo: the player did not report all ${total} entries" >&2
         echo "unity-demo: drawn within ${bound} s. Full log at ${player_log}" >&2
         exit 1
       fi
@@ -2799,11 +3118,34 @@ unity-demo unity_version="6000.3.22f1" action="run":
       # per-document line carries the count, so refusing a zero costs a grep
       # and closes the gap between reaching the painter and drawing.
       if grep -qE "^\[showcase\] drew .*: 0 instance\(s\)" "${player_log}"; then
-        echo "unity-demo: a document packed no instances at all" >&2
+        echo "unity-demo: an entry packed no instances at all" >&2
         echo "unity-demo: full log at ${player_log}" >&2
         exit 1
       fi
-      echo "unity-demo: all ${#documents[@]} documents reached the painter, none empty"
+      # **Distinct scenes drew, not merely that many draws happened.** The
+      # count above comes from the player's own census, so a sample that built
+      # scene 0 three times would log three `drew scene` lines, none empty, and
+      # pass everything up to here — measured during the review of PR #1365.
+      # The names come from the library, so comparing distinct ones is the
+      # cheapest thing here that can tell three scenes from one drawn thrice.
+      # **`|| true`, for the reason `exported()` in `demo-exports` carries
+      # one.** A `grep` matching nothing exits 1, `pipefail` propagates it and
+      # `set -e` kills the recipe at this assignment — so the diagnostic below,
+      # which exists to say that zero distinct scenes drew, could never print.
+      # The fix round that added this line fixed that exact defect elsewhere in
+      # the same commit and reintroduced it here.
+      drew_scenes=$({ grep -E '^\[showcase\] drew scene ' "${player_log}" || true; } \
+        | sed -E 's/^\[showcase\] drew scene ([^:]*):.*$/\1/' | sort -u \
+        | grep -c . || true)
+      if [ "${drew_scenes}" != "${scenes}" ]; then
+        echo "unity-demo: the player reported ${scenes} scene(s) and drew ${drew_scenes}" >&2
+        echo "unity-demo: distinct one(s). A scene drawn twice under two labels, or one" >&2
+        echo "unity-demo: never reached. Full log at ${player_log}" >&2
+        exit 1
+      fi
+
+      echo "unity-demo: all ${total} entries (${scenes} distinct scene(s), ${docs} document(s))"
+      echo "unity-demo: reached the painter, none empty"
       exit 0
     fi
 

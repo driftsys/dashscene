@@ -156,7 +156,10 @@ the frame loop, landed at v0.14), `demo-web/` (the same showcase in a browser �
 a canvas, `requestAnimationFrame`, and a `.dsb` fetched by byte range, landed at
 v0.15), and `unity/` (the UPM package and the checks over it — three .NET ones,
 boundary B's declarations against the Rust layouts, the engine-free half of the
-package against netstandard2.1, and its P/Invoke declarations executed against
+package against netstandard2.1 — since story #1342 in two configurations, the
+second defining `DASHSCENE_DEMO_PRODUCER` so `Runtime/DemoProducer.cs`'s real
+body is compiled the way Unity will compile it rather than as the empty file its
+`#if` otherwise leaves — and its P/Invoke declarations executed against
 `dashscene-ffi`; a Rust one, `unity/package-gate`, holding the generated HLSL to
 its WGSL source, the shaders to R-E11, R-E12 and R-E10's split, R-E21's platform
 data over each shipped native library, and `BrgPainter`'s two diagnostics to the
@@ -169,13 +172,13 @@ through the generated `Sdf.hlsl` on a real graphics device and is the only one
 that reads a shader's own computed VALUES back and compares them against a
 committed table (issue #1312); and `unity/render-gate`, which builds a player
 and is the only CHECK that draws a document; and `unity/demo`, which builds a
-player that draws and asserts only that every document reached the painter — a
+player that draws and asserts only that every entry reached the painter — a
 demonstration rather than a check (issue #1329). The package landed at v0.21 by
 story #1239, gained the C# host at story #1121 and the BatchRendererGroup
 painter at story #1122, and carries its native libraries — macOS arm64 and
 Android arm64 — since story #1334).
 
-Seven of those directories hold workspace members that are never published:
+Eight of those directories hold workspace members that are never published:
 `demo/`, `demo-web/` (the browser host — a canvas, the lean painter, and a
 `.dsb` fetched by byte range, landed at v0.15), `demo-android/` (the third host
 — a SurfaceView, the native vsync loop and the showcase scenes, landed at
@@ -183,10 +186,18 @@ v0.19), `corpus/showcase/` (the scenes all three hosts draw), `goldens/tooling/`
 (the golden-image harness), `measure/web-minimal/` (the smallest browser
 embedder that draws a `.dsb` — an artifact built to be weighed, not run, and
 what the runtime payload budget is measured over; see
-`docs/decisions/publishable-and-the-first-version.md`) and `unity/package-gate/`
+`docs/decisions/publishable-and-the-first-version.md`), `unity/package-gate/`
 (the Unity package's gates that need neither a Unity editor nor the .NET SDK, so
-they run on every pull request; added at v0.21 by story #1122). Twenty-six
-members in total, nineteen of them the crates above.
+they run on every pull request; added at v0.21 by story #1122) and
+`unity/demo-producer/` (the native producer the Unity demonstration builds the
+showcase scenes through — `dashscene-ffi` linked as an rlib plus six `ds_demo_*`
+entry points, so it carries ONE runtime table and a handle minted by
+`ds_runtime_new` resolves in `ds_demo_build`. It is a separate crate and not a
+feature of `dashscene-ffi` because that crate is published and `showcase` is
+unpackageable in principle, which `just package` refuses at the manifest check;
+added at v0.21 by story #1342,
+`docs/decisions/the-demo-producer-links-the-abi-rather-than-shipping-in-it.md`).
+Twenty-seven members in total, nineteen of them the crates above.
 
 ## Commands
 
@@ -281,7 +292,25 @@ members in total, nineteen of them the crates above.
                       disagreement this repository already contains — a stale
                       shipped binary is `DsSlice::stride`'s job at run time,
                       and it runs on CoreCLR rather than on Mono or IL2CPP,
-                      which is issue #1322
+                      which is issue #1322. **Since story #1342 it runs the
+                      whole program TWICE**: once over the shipped library, and
+                      once with `-p:DemoProducer=true` over
+                      `unity/demo-producer`, which is what compiles and binds
+                      the package's `ds_demo_*` declarations — they sit behind
+                      a `#if` the shipped pass never defines, so without the
+                      second pass no gate would read them at all (#1308's
+                      class). That pass drives all six through the
+                      missing-symbol context and adds three checks over the
+                      producer: that every scene names and summarises itself
+                      and an index past the end names nothing; that a scene
+                      builds and commits rects AND glyph runs, with a pulse
+                      before any build refused; and that the pulse and the
+                      variant switch both reach the scene. **The pass refuses
+                      to run vacuously**: misspelling the MSBuild property used
+                      to compile every demo block out and report the shipped
+                      checks a second time, exit 0, so the recipe sets
+                      `DASHSCENE_FFI_EXPECT_DEMO=1` and the program refuses
+                      when the two disagree
     just unity-plugins rebuild the two native libraries the UPM package ships
                       — macOS arm64 and Android arm64 — and place them inside
                       it. The package CARRIES its binaries
@@ -381,7 +410,14 @@ members in total, nineteen of them the crates above.
     just unity-demo   the demonstration, and the one Unity recipe here that is
                       NOT a check: it builds a windowed player over the
                       package's `Samples~/Showcase` sample and runs it, and a
-                      person decides whether the picture is right. Same
+                      person decides whether the picture is right. **It draws
+                      the showcase scenes and the committed documents**, in one
+                      list: since story #1342 it builds and stages
+                      `unity/demo-producer` rather than `dashscene-ffi`, which
+                      is what gives the player `ds_demo_*` and so the scripted
+                      pulse and the variant switch the other three hosts have.
+                      It runs `just demo-exports` first, and defines
+                      `DASHSCENE_DEMO_PRODUCER` for the player build alone. Same
                       throwaway-project shape as `unity-render` — a fourth copy
                       of that bring-up, which issue #1316 factors out of all of
                       them together — and it stages the native library the
@@ -389,15 +425,39 @@ members in total, nineteen of them the crates above.
                       released plugin layout (issue #1334). Takes a version
                       and one of three actions: `run` opens the window a person
                       drives, `build` stops after the build, and `cycle` walks
-                      every document once, quits, and FAILS unless the player
-                      reported that all of them drew — the one shape that
-                      reports rather than being watched, bounded at 90 seconds
+                      every entry once — the scenes and the documents — quits,
+                      and FAILS unless the player reported that all of them
+                      drew. **It reads the count from the player** rather than
+                      holding one: the recipe knows the manifest it wrote and
+                      cannot know how many scenes the staged library carries,
+                      and a hard-coded count is what silently stopped matching
+                      when story #1342 added them. It also fails a player that
+                      reports zero scenes, which is what a library without
+                      `ds_demo_*` or a build without the define looks like —
+                      both leave the documents drawing perfectly. The one shape
+                      that
+                      reports rather than being watched, bounded in two stages
+                      — up to 90 s for the player's census line, then three
+                      seconds per entry plus thirty —
                       because a document that never draws and a player that
                       never exits look the same from outside. Anything else is
                       refused. Needs a Unity editor, so it is outside
                       `check` and outside CI, and it WRITES the `.meta` files
                       R-E2 requires into the working tree like the other three:
                       check `git status` after a run that added a file
+    just demo-exports the demo producer's exported symbols against the shipped
+                      library's: every `ds_*` the shipped `cdylib` exports must
+                      be present in `unity/demo-producer`'s, and everything it
+                      adds must carry the `ds_demo_` prefix. That is what makes
+                      "the demonstration runs the shipped library plus an
+                      appendix" a checked claim rather than an argument
+                      (story #1342). **What survives the link is a property of
+                      the link, not of a line anyone can read**: a cdylib
+                      naming nothing from the rlib exports zero, and one that
+                      calls into it exports all seventeen whether or not it
+                      re-exports them — so the recipe deliberately cannot catch
+                      the `pub use` being deleted, and says so. Needs no Unity
+                      editor and no .NET SDK; CI's `demo-build` job runs it
     just sdf-hlsl     regenerate the Unity package's `Sdf.hlsl` from
                       `crates/dashscene-gpu/src/shaders/sdf.wgsl` with `naga` —
                       R-T5's mechanism, so the HLSL is the WGSL compiled rather

@@ -7,23 +7,46 @@
 // Unity counterpart of `demo/`, `demo-web/` and `demo-android/`, and it is
 // deliberately narrower than they are. Issue #1329.
 //
-// **Three things it does not show, and none of them is an oversight.**
+// **What it shows, and how the two halves differ.** The list is the showcase
+// scenes first, then the committed documents, and left/right walks all of them:
 //
-// - **No signal sweep and no variant switch.** The three Rust hosts drive both
-//   every frame — `ScenePulse` sets a signal, `SceneAction` runs a variant
-//   switch. Not one entry point in `crates/dashscene-ffi/include/dashscene.h`
-//   mutates a document: a host loads, ticks, acquires a frame and draws. The
-//   count is deliberately not stated here — it moved twice in one slice, and
-//   `unity/ffi-check` is what holds the set. Signal binding is layer 1 and is `v1` for every
-//   host by the ruling of 2026-08-18 (issues #1261 and #1262), so this is a
-//   property of the boundary rather than of this file.
-// - **Not the showcase scenes.** `corpus/showcase` builds its scenes in Rust
-//   code against a live arena, and nothing in the repository emits them as a
-//   `.dsb`. What this draws is committed documents. Issue #1329's comment
-//   carries the three ways that could change.
-// - **No shipped native library.** The package ships no binary; the recipe that
-//   builds this demo stages one into the project. Issue #1334 is the shipped
-//   form.
+// - **The scenes** — `surfaces`, `typography` and `layout`, built into the
+//   runtime's arena by a native producer, with their scripted pulse and, where
+//   a scene declares one, their variant switch on the space bar. This is what
+//   `demo`, `demo-web` and `demo-android` draw, from the same
+//   `showcase::SCENES` definition rather than a C# re-authoring that would
+//   drift from it (story #1342).
+// - **The documents** — committed `.dsb` files, loaded, ticked and drawn. No
+//   pulse and no switch: not one entry point in the shipped C ABI mutates a
+//   document, because that is layer 1 and layer 1 is `v1` for every host
+//   (issues #1261 and #1262). The count of entry points is deliberately not
+//   stated here — it moved twice in one slice, and `unity/ffi-check` holds the
+//   set.
+//
+// **The scenes are drawn through a library a customer does not install.**
+// `ds_demo_*` is exported by `unity/demo-producer`, which is `dashscene-ffi`
+// plus those entry points; `just unity-demo` builds it and stages it under the
+// shipped library's file name, and `just demo-exports` asserts it is the
+// shipped seventeen unchanged plus a `ds_demo_`-prefixed set, and
+// `unity/ffi-check`'s demonstration pass names the six. With
+// `DASHSCENE_DEMO_PRODUCER` undefined this file compiles to the document half
+// alone, which is what a customer's own build of the sample does.
+//
+// **What a viewer will see missing, and why it is P4 working rather than a
+// defect.** `PackDiagnostic` names six refusals; five of them are kinds both
+// Rust painters draw, and the sixth, a layer blur, is one they skip too —
+// `PackDiagnostic` names them — so `surfaces` in particular arrives without its
+// image, its baked vector field and its shadows. The readout below reports what
+// was refused for whatever is showing, so the difference from `demo-web` is
+// visible here instead of surprising. Issue #1344 is the painter request; this
+// sample reports what was refused rather than drawing it.
+//
+// **The library this runs against is staged, though the package ships two.**
+// Story #1334 put `libdashscene_ffi.dylib` and `libdashscene_ffi.so` inside the
+// package, and `just unity-demo` copies the demo producer into the project
+// under that same file name — because the player must load ONE library, and the
+// package's own copy exports no `ds_demo_*`. Issue #1352 is the follow-up on
+// the shipped plugin layout, and nothing here stands in for it.
 //
 // **The cascade is read with `File`, so a text document is desktop-only here.**
 // `StreamingAssetDocument.Resolve` is what makes a document loadable inside an
@@ -102,7 +125,47 @@ namespace Driftsys.Dashscene.Samples
         [SerializeField]
         private Camera viewCamera;
 
+        /// How often the scripted pulse advances.
+        ///
+        /// **`demo/src/shell.rs`'s `PULSE_INTERVAL`, which is 2500 ms**, rather
+        /// than a number chosen here: a pulse rate that differed would make the
+        /// side-by-side comparison the demonstration exists for a comparison of
+        /// two different scripts.
+        ///
+        /// That file's other constant, `PULSES_PER_SCENE`, is deliberately NOT
+        /// mirrored: nothing here advances an entry on a pulse count. Without
+        /// `-cycle` this sample waits for an arrow key, and with it the switch
+        /// is on elapsed seconds. An earlier version of this comment claimed
+        /// both constants, which described behaviour this file does not have.
+        private const float PulseSeconds = 2.5f;
+
         private readonly List<ShowcaseEntry> _entries = new List<ShowcaseEntry>();
+
+        /// Seconds since the last scripted pulse, and which pulse is in effect.
+        ///
+        /// The scene is a pure function of its phase, which is why the phase is
+        /// a counter rather than a direction — the same reason `shell.rs` keeps
+        /// one so a rebuild on resize can re-apply it.
+        private float _sincePulse;
+
+        private ulong _phase;
+
+        /// The drawable the showing scene was built for, in document units.
+        ///
+        /// A scene is built for the drawable in physical pixels, which is what
+        /// the three Rust hosts do — so its extent is the window's, not a few
+        /// hundred units like a committed document. Kept because the camera has
+        /// to frame it, and because `Screen` can change under a resize while the
+        /// scene stays the size it was built at.
+        private uint _builtWidth;
+
+        private uint _builtHeight;
+
+        /// The framing `unity/demo/DemoBuild.cs` set up, read once rather than
+        /// restated here — it is the one that suits a committed document.
+        private float _documentSize;
+
+        private Vector3 _documentCameraPosition;
         private DashsceneRuntime _runtime;
         private BrgPainter _painter;
         private CommitPacer _pacer;
@@ -115,7 +178,7 @@ namespace Driftsys.Dashscene.Samples
         /// Seconds between automatic switches, from `-cycle <seconds>` on the
         /// command line. Zero leaves switching to the arrow keys.
         ///
-        /// **A demonstration takes a hand on a key; a check cannot.** Without
+        /// **A demonstration takes a key press; a check cannot.** Without
         /// this, whether every document in the manifest loads and draws is
         /// answered by a person watching, which is the shape a run cannot
         /// report.
@@ -136,6 +199,72 @@ namespace Driftsys.Dashscene.Samples
         private readonly HashSet<int> _drawnEntries = new HashSet<int>();
 
         private bool _announcedEveryEntry;
+
+        /// How many showcase scenes the staged library carries, or zero when
+        /// this build has no producer.
+        ///
+        /// **Asked of the library once, in `Awake`, and cached.** The value
+        /// cannot change for the life of the process, and the reason for asking
+        /// at all — that a count written in C# would be a second definition of
+        /// `showcase::SCENES` — is served by asking once. Reading it as a
+        /// property made a P/Invoke out of `TotalCount`, `IsScene`, `Label` and
+        /// `Summary`, several times per frame, in the demonstration whose whole
+        /// purpose is a per-frame comparison.
+        private int SceneCount => _sceneNames.Length;
+
+        /// Each scene's name and summary, read once beside the count.
+        ///
+        /// `OnGUI` runs at least twice a frame and asked for both every time,
+        /// which was two sizing calls, two reads, two `byte[]` allocations and
+        /// two strings per call.
+        private string[] _sceneNames = Array.Empty<string>();
+
+        private string[] _sceneSummaries = Array.Empty<string>();
+
+        /// Reads the scene table from the library, or reports why it could not.
+        ///
+        /// **This is the component's first native call, and until the review of
+        /// PR #1365 it was outside every `catch` this file has.** A player built
+        /// with `DASHSCENE_DEMO_PRODUCER` but running against a library with no
+        /// `ds_demo_*` — which the package's own shipped
+        /// `Runtime/Plugins/macOS/libdashscene_ffi.dylib` is — threw out of
+        /// `Awake`, so no census line was written, `Fail` was never reached, and
+        /// `just unity-demo cycle` reported only that the player had not
+        /// reached the end of `Awake`.
+        private bool ReadSceneTable()
+        {
+#if DASHSCENE_DEMO_PRODUCER
+            try
+            {
+                var count = DemoScenes.Count;
+                _sceneNames = new string[count];
+                _sceneSummaries = new string[count];
+                for (var i = 0; i < count; i++)
+                {
+                    _sceneNames[i] = DemoScenes.Name(i);
+                    _sceneSummaries[i] = DemoScenes.Summary(i);
+                }
+                return true;
+            }
+            catch (Exception e)
+            {
+                Fail($"the staged library exports no usable ds_demo_* ({e.GetType().Name}: "
+                     + $"{e.Message}). This player was built with DASHSCENE_DEMO_PRODUCER, so "
+                     + "it needs unity/demo-producer — the package's own shipped "
+                     + $"'{DashsceneRuntime.LibraryName}' does not export them, and both files "
+                     + "carry that name. `just unity-demo` builds and stages the right one.");
+                return false;
+            }
+#else
+            return true;
+#endif
+        }
+
+        /// Everything left and right walk: the scenes, then the documents.
+        private int TotalCount => SceneCount + _entries.Count;
+
+        /// Whether entry `index` is a scene rather than a document.
+        private bool IsScene(int index) => index < SceneCount;
 
         private void Awake()
         {
@@ -168,38 +297,96 @@ namespace Driftsys.Dashscene.Samples
             // placement.
             _painter.DocumentToWorld = Matrix4x4.Scale(new Vector3(1, -1, 1));
 
+            // **Read from the camera, not copied from `DemoBuild`.** That
+            // script picks a size framing the committed documents, and a second
+            // copy of the number here would drift from it.
+            var startingCamera = viewCamera != null ? viewCamera : Camera.main;
+            if (startingCamera != null)
+            {
+                _documentSize = startingCamera.orthographicSize;
+                _documentCameraPosition = startingCamera.transform.position;
+            }
+
             _cycleSeconds = CycleSecondsFromCommandLine();
             _quitWhenEveryEntryHasDrawn =
                 Array.IndexOf(Environment.GetCommandLineArgs(), "-quit") >= 0;
             LoadManifest();
 
-            if (_entries.Count == 0)
+            // **A failed manifest read stops here.** `LoadManifest` reports
+            // through `Fail` and returns void, so before the reorder below it
+            // relied on the `TotalCount == 0` guard to end `Awake` — which held
+            // only while a failed read left the total at zero. With the scenes
+            // counted first the total is non-zero, the guard is skipped, and
+            // `Show(0)` runs and clears `_status` at its end, erasing the one
+            // message that says why nothing will be drawn. The log still
+            // carries it; the readout, which `Fail`'s own comment calls the
+            // only place a person running the player learns anything, did not.
+            if (_failed)
             {
-                Fail($"no documents: {manifestPath} lists none. It is the only thing read — "
-                     + "nothing scans the directory beside it.");
                 return;
             }
+
+            // **Before the count below, not after it.** `SceneCount` is
+            // `_sceneNames.Length`, and that array is empty until this runs — so
+            // reading the total first made a player with three scenes and an
+            // empty manifest report that it carried no scenes either, abort
+            // `Awake`, and never write the census line. It was a P/Invoke
+            // property when the guard was written, which is why the order was
+            // not load-bearing then and is now.
+            if (!ReadSceneTable())
+            {
+                return;
+            }
+
+            if (TotalCount == 0)
+            {
+                Fail($"nothing to show: {manifestPath} lists no document, and this build "
+                     + "carries no showcase scenes either. A player built without "
+                     + "DASHSCENE_DEMO_PRODUCER has only the manifest, and nothing scans "
+                     + "the directory beside it.");
+                return;
+            }
+
+            // **The census, before anything is drawn.** `just unity-demo`'s
+            // `cycle` action reads it to learn how many entries to wait for and
+            // how long to wait — it knows the manifest it wrote and cannot know
+            // how many scenes the staged library carries. Without it that
+            // recipe would hold a count of its own, which is the drift this
+            // repository keeps finding, and it held exactly that until story
+            // #1342 added the scenes and the grep silently stopped matching.
+            Debug.Log($"[showcase] entries: {TotalCount} ({SceneCount} scene(s), "
+                      + $"{_entries.Count} document(s))");
+
+            // **The drawable, in the units a scene is built in.** A scene built
+            // for the drawable and a camera framing a fixed extent disagree by
+            // exactly the display's backing scale, and nothing printed either
+            // number — so the mismatch was visible only to a person looking at
+            // the window.
+            Debug.Log($"[showcase] drawable: {Screen.width}x{Screen.height} px, "
+                      + $"document framing {_documentSize}");
 
             Show(0);
         }
 
         private void Update()
         {
-            if (_failed || _painter == null || _entries.Count == 0)
+            if (_failed || _painter == null || TotalCount == 0)
             {
                 return;
             }
 
             ReadInput();
 
-            if (_cycleSeconds > 0.0f && _entries.Count > 1)
+            if (_cycleSeconds > 0.0f && TotalCount > 1)
             {
                 _sinceSwitch += Time.deltaTime;
                 if (_sinceSwitch >= _cycleSeconds)
                 {
-                    Show((_index + 1) % _entries.Count);
+                    Show((_index + 1) % TotalCount);
                 }
             }
+
+            PulseIfShowingAScene();
 
             // **`_failed` is re-read here** and not only above: `ReadInput` and
             // the cycle both reach `Show`, which fails on a document that will
@@ -227,7 +414,7 @@ namespace Driftsys.Dashscene.Samples
                     // frame would bury it.
                     _reported = true;
                     _drawnEntries.Add(_index);
-                    Debug.Log($"[showcase] drew {Label(_entries[_index])}: "
+                    Debug.Log($"[showcase] drew {Label(_index)}: "
                               + $"{_painter.InstanceCount} instance(s), rung {_painter.Rung}"
                               + (_painter.Diagnostics.IsClean
                                   ? string.Empty
@@ -258,18 +445,107 @@ namespace Driftsys.Dashscene.Samples
             }
         }
 
+        /// Advances the showing scene's scripted signal, on `demo`'s own
+        /// cadence.
+        ///
+        /// **Staged here and committed by the next `Tick`**, which is P3: the
+        /// producer mutates and the runtime owns time. Nothing in this method
+        /// commits.
+        ///
+        /// A document entry has no pulse to run, because no shipped entry point
+        /// mutates a document — the header above says why.
+        private void PulseIfShowingAScene()
+        {
+#if DASHSCENE_DEMO_PRODUCER
+            if (!IsScene(_index) || _runtime == null || _failed)
+            {
+                return;
+            }
+
+            _sincePulse += Time.deltaTime;
+            if (_sincePulse < PulseSeconds)
+            {
+                return;
+            }
+
+            // **Subtracted rather than zeroed**, so a frame that overran the
+            // interval does not lose the remainder and drift the cadence away
+            // from the 2500 ms the Rust hosts pulse at.
+            _sincePulse -= PulseSeconds;
+            _phase++;
+
+            try
+            {
+                _runtime.PulseDemoScene(_phase);
+            }
+            catch (DashsceneException e)
+            {
+                Fail($"the scripted pulse failed: {e.Message}");
+            }
+#endif
+        }
+
+        /// Runs the showing scene's own variant switch, and says so on screen
+        /// when the scene declares none.
+        ///
+        /// **The scene owns the switch, not this host.** `Txn.set_variant` is an
+        /// arena mutation with no signal equivalent, so a host that wanted to
+        /// offer one would have to author a variant set against a node it knew
+        /// by name — which is the host authoring content, the thing the `demo/`
+        /// and `corpus/showcase/` split exists to prevent.
+        private void RunTheScenesOwnSwitch()
+        {
+#if DASHSCENE_DEMO_PRODUCER
+            if (!IsScene(_index))
+            {
+                _status = "space runs a scene's variant switch; this entry is a document.";
+                return;
+            }
+
+            // **Defensive, and unreachable today.** `Update` returns before
+            // `ReadInput` when `_failed` is set, and every `Show` path that
+            // leaves `_runtime` null calls `Fail` — so no viewer sees this
+            // message. It is kept because the null dereference below is what
+            // would happen without it, and split from the branch above because
+            // one message for both told a viewer looking at a scene's own label
+            // that the entry was a document.
+            if (_failed || _runtime == null)
+            {
+                _status = "space does nothing while this entry has failed to load.";
+                return;
+            }
+
+            try
+            {
+                _status = _runtime.RunDemoAction()
+                    ? string.Empty
+                    : $"{_sceneNames[_index]} declares no variant set, so space does "
+                      + "nothing here rather than this host inventing something for it to do.";
+            }
+            catch (DashsceneException e)
+            {
+                Fail($"the variant switch failed: {e.Message}");
+            }
+#else
+            _status = "this build carries no showcase scenes (DASHSCENE_DEMO_PRODUCER is off).";
+#endif
+        }
+
         private void ReadInput()
         {
-            // Left and right only, which is what the readout and every
-            // document about this sample say. A third binding named nowhere is
-            // a smaller version of the same defect.
+            // Left, right and space. A binding named nowhere is a smaller
+            // version of the same defect, so the readout names all three.
             if (Input.GetKeyDown(KeyCode.RightArrow))
             {
-                Show((_index + 1) % _entries.Count);
+                Show((_index + 1) % TotalCount);
             }
             else if (Input.GetKeyDown(KeyCode.LeftArrow))
             {
-                Show((_index + _entries.Count - 1) % _entries.Count);
+                Show((_index + TotalCount - 1) % TotalCount);
+            }
+            else if (Input.GetKeyDown(KeyCode.Space))
+            {
+                RunTheScenesOwnSwitch();
             }
         }
 
@@ -285,15 +561,17 @@ namespace Driftsys.Dashscene.Samples
         {
             _index = index;
             _sinceSwitch = 0.0f;
+            _sincePulse = 0.0f;
+            _phase = 0;
             _reported = false;
-            var entry = _entries[index];
+            var entry = IsScene(index) ? null : _entries[index - SceneCount];
 
             // **Refused before a runtime is minted**, because this is a
             // property of the manifest rather than of the load: the loader
             // that takes a font cascade takes no root ordinal (issue #1332),
             // so a non-zero root on a text entry cannot be honoured whatever
             // the runtime does.
-            if (entry.text && entry.shownRoot != 0)
+            if (entry != null && entry.text && entry.shownRoot != 0)
             {
                 Fail($"{entry.path} asks for root {entry.shownRoot} and carries text. "
                      + "The loader that takes a font cascade takes no root ordinal "
@@ -320,8 +598,9 @@ namespace Driftsys.Dashscene.Samples
             catch (DllNotFoundException)
             {
                 Fail($"the native library '{DashsceneRuntime.LibraryName}' was not found. "
-                     + "This package ships no binary — `just unity-demo` stages one, and "
-                     + "issue #1334 is the shipped form.");
+                     + "The package ships one for this platform and `just unity-demo` "
+                     + "stages the demo producer over it; issue #1352 is the shipped "
+                     + "plugin layout.");
                 return;
             }
             catch (Exception e)
@@ -330,27 +609,106 @@ namespace Driftsys.Dashscene.Samples
                 return;
             }
 
+            if (entry == null)
+            {
+                if (!BuildScene(index))
+                {
+                    return;
+                }
+            }
+            else
+            {
+                try
+                {
+                    if (entry.text)
+                    {
+                        // The root was refused above, before this runtime existed.
+                        _runtime.LoadDocumentWithText(ReadBytes(entry.path), Cascade());
+                        _painter.SetAtlases(_runtime.ReadAtlases());
+                    }
+                    else
+                    {
+                        _runtime.LoadDocumentMapped(
+                            StreamingAssetDocument.Resolve(entry.path), entry.shownRoot);
+                    }
+                }
+                catch (Exception e)
+                {
+                    Fail($"could not load {entry.path}: {e.Message}");
+                    return;
+                }
+            }
+
+            FrameCamera();
+
+            // **Cleared only when this entry is actually showing.** `Show`
+            // raises two failures it does not return from: `ReportDisposeVerdict`
+            // above, whose `Fail` is the one in this method with no `return`
+            // after it, and a `Fail` raised earlier in the same frame by
+            // `RunTheScenesOwnSwitch` before the `-cycle` timer reaches `Show`.
+            // Either way the component is finished — `Update` returns at its
+            // `_failed` guard — so an unconditional clear erased the only
+            // description of why, which is what the readout exists for.
+            //
+            // Round three fixed this class in `Awake`; round four found these
+            // two, the first of them older than this branch.
+            if (!_failed)
+            {
+                _status = string.Empty;
+            }
+        }
+
+        /// Builds showcase scene `index` into the runtime just minted, in place
+        /// of a document load. Returns whether it worked.
+        ///
+        /// **The atlases are read back and handed to the painter, as the text
+        /// document path does.** A scene's own solver carries a typesetter and
+        /// its sheets — which a plain `LoadDocument` does not (issue #863;
+        /// `LoadDocumentWithText` is the loader that does, and it is why the
+        /// manifest marks one entry) — so
+        /// every scene here can shade text, not only the one entry the manifest
+        /// marks.
+        ///
+        /// **Sized from the screen rather than from a serialized field**, which
+        /// is what the three Rust hosts do: a scene is built for a drawable, and
+        /// `Screen` is this host's.
+        private bool BuildScene(int index)
+        {
+#if DASHSCENE_DEMO_PRODUCER
             try
             {
-                if (entry.text)
-                {
-                    // The root was refused above, before this runtime existed.
-                    _runtime.LoadDocumentWithText(ReadBytes(entry.path), Cascade());
-                    _painter.SetAtlases(_runtime.ReadAtlases());
-                }
-                else
-                {
-                    _runtime.LoadDocumentMapped(
-                        StreamingAssetDocument.Resolve(entry.path), entry.shownRoot);
-                }
+                _builtWidth = (uint)Screen.width;
+                _builtHeight = (uint)Screen.height;
+                _runtime.BuildDemoScene(index, _builtWidth, _builtHeight);
+                _painter.SetAtlases(_runtime.ReadAtlases());
+
+                // **Phase 0 is applied here, not skipped.** `demo/src/shell.rs`
+                // builds and then immediately calls `pulse(&mut live, phase)`,
+                // so the Rust hosts show phases 0, 1, 2, 3. Without this the
+                // first pulse increments to 1 and phase 0 is never seen — and
+                // for `layout` the two differ, because its phase 0 sets the
+                // spread and the topology explicitly rather than leaving the
+                // scene at its built-in default.
+                _runtime.PulseDemoScene(_phase);
+                return true;
+            }
+            catch (DllNotFoundException)
+            {
+                Fail($"the native library '{DashsceneRuntime.LibraryName}' was not found.");
+                return false;
             }
             catch (Exception e)
             {
-                Fail($"could not load {entry.path}: {e.Message}");
-                return;
+                Fail($"could not build scene {index}: {e.Message}. The staged library "
+                     + "exports ds_demo_* only when it is unity/demo-producer — "
+                     + "`just unity-demo` builds and stages that one.");
+                return false;
             }
-
-            _status = string.Empty;
+#else
+            Fail($"scene {index} was listed but this build carries no producer: "
+                 + "DASHSCENE_DEMO_PRODUCER is undefined, so nothing here can build one.");
+            return false;
+#endif
         }
 
         private IReadOnlyList<TextFontFace> Cascade()
@@ -436,6 +794,53 @@ namespace Driftsys.Dashscene.Samples
             }
         }
 
+        /// Frames the camera on the entry that is showing.
+        ///
+        /// **The two entry classes want different framing, and the camera only
+        /// ever had one** — which is the defect a person running this found and
+        /// no gate could. `just unity-demo cycle` asserts that every entry
+        /// reached the painter and says out loud that it asserts nothing about
+        /// pixels, so a scene drawn at twice its size passed every check.
+        ///
+        /// - **A scene** is built for the drawable in physical pixels, as the
+        ///   three Rust hosts build it, so its extent is the window's. Framing
+        ///   it means one document unit per pixel: half the built height, centred
+        ///   on the built rectangle. That is what `demo` shows, and what makes
+        ///   the two comparable.
+        /// - **A document** carries a fixed extent of a few hundred units, and
+        ///   `unity/demo/DemoBuild.cs` chose a size that frames the committed
+        ///   ones. That framing is restored rather than recomputed, because
+        ///   nothing on this ABI reports a document's size — the same reason
+        ///   `BrgPainter.GlobalBounds` is left at its default.
+        ///
+        /// **From the built size, not from `Screen`.** A window resized after a
+        /// scene was built leaves the scene the size it was built at; framing
+        /// the current screen would then crop or shrink it. The Rust hosts
+        /// rebuild on resize instead, which this sample does not do — issue
+        /// #1329's host is where that belongs.
+        private void FrameCamera()
+        {
+            var camera = viewCamera != null ? viewCamera : Camera.main;
+            if (camera == null || !camera.orthographic)
+            {
+                return;
+            }
+
+            var z = camera.transform.position.z;
+            if (IsScene(_index) && _builtHeight > 0)
+            {
+                camera.orthographicSize = _builtHeight / 2.0f;
+                camera.transform.position =
+                    new Vector3(_builtWidth / 2.0f, -(_builtHeight / 2.0f), z);
+            }
+            else
+            {
+                camera.orthographicSize = _documentSize;
+                camera.transform.position = new Vector3(
+                    _documentCameraPosition.x, _documentCameraPosition.y, z);
+            }
+        }
+
         private void UpdateEdgeWidth()
         {
             var camera = viewCamera != null ? viewCamera : Camera.main;
@@ -455,13 +860,14 @@ namespace Driftsys.Dashscene.Samples
         /// the field's own comment says is the shape a run cannot report.
         private void AnnounceIfEveryEntryHasDrawn()
         {
-            if (_announcedEveryEntry || _drawnEntries.Count < _entries.Count)
+            if (_announcedEveryEntry || _drawnEntries.Count < TotalCount)
             {
                 return;
             }
 
             _announcedEveryEntry = true;
-            Debug.Log($"[showcase] all {_entries.Count} document(s) drew");
+            Debug.Log($"[showcase] all {TotalCount} entries drew "
+                      + $"({SceneCount} scene(s), {_entries.Count} document(s))");
 
             if (_quitWhenEveryEntryHasDrawn)
             {
@@ -492,8 +898,15 @@ namespace Driftsys.Dashscene.Samples
             return 0.0f;
         }
 
-        private static string Label(ShowcaseEntry entry)
+        /// What entry `index` is called on screen and in the log.
+        private string Label(int index)
         {
+            if (IsScene(index))
+            {
+                return $"scene {_sceneNames[index]}";
+            }
+
+            var entry = index - SceneCount < _entries.Count ? _entries[index - SceneCount] : null;
             return entry == null
                 ? "no document"
                 : string.IsNullOrEmpty(entry.label)
@@ -501,10 +914,21 @@ namespace Driftsys.Dashscene.Samples
                     : entry.label;
         }
 
+        /// The one line describing what the showing entry is meant to show.
+        ///
+        /// For a scene it is `showcase::Showcase::summary`, read from the
+        /// library — so a viewer can hold what the scene claims to draw against
+        /// the refusals printed under it, which is the comparison story #1342
+        /// asks this sample to make visible.
+        private string Summary(int index)
+        {
+            return IsScene(index) ? _sceneSummaries[index] : string.Empty;
+        }
+
         private void OnGUI()
         {
-            var entry = _entries.Count > 0 ? _entries[_index] : null;
-            var label = Label(entry);
+            var label = TotalCount > 0 ? Label(_index) : "nothing to show";
+            var summary = TotalCount > 0 ? Summary(_index) : string.Empty;
 
             // **Sized from the surface rather than left at the default.** A
             // player on a high-density display reports its height in pixels —
@@ -528,11 +952,16 @@ namespace Driftsys.Dashscene.Samples
 
             var lines = new List<string>
             {
-                $"{label}   [{_index + 1}/{Math.Max(_entries.Count, 1)}]   "
-                + "left/right to switch",
+                $"{label}   [{_index + 1}/{Math.Max(TotalCount, 1)}]   "
+                + "left/right to switch, space for a scene's variant switch",
                 $"rung {_painter?.Rung.ToString() ?? "none"}   "
                 + $"{_painter?.InstanceCount ?? 0} instances",
             };
+
+            if (!string.IsNullOrEmpty(summary))
+            {
+                lines.Add(summary);
+            }
 
             // What the painter was handed and did not draw. P4 is why this is
             // reported rather than dropped.

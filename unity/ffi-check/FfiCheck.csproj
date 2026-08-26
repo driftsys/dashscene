@@ -37,6 +37,23 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <!-- The demonstration configuration (story #1342), off unless asked for.
+
+       `just unity-ffi` runs this project twice: once over the shipped library,
+       which is the default here, and once with `-p:DemoProducer=true` over
+       `unity/demo-producer`. Without the second pass the package's `ds_demo_*`
+       declarations would be compiled by nothing and bound by nothing — issue
+       #1308's class, which is the reason story #1342's second condition asks
+       for this configuration by name.
+
+       **A property rather than `-p:DefineConstants=…` on the command line.**
+       That form sets the property outright, so whether the SDK's own symbols
+       survive depends on evaluation order; appending to `$(DefineConstants)`
+       here does not. -->
+  <PropertyGroup Condition="'$(DemoProducer)' == 'true'">
+    <DefineConstants>$(DefineConstants);DASHSCENE_DEMO_PRODUCER</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <!-- The package's own sources, compiled rather than restated. Compiling
          them into this assembly is also what makes `Native`'s `internal`
