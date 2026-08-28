@@ -3177,6 +3177,208 @@ unity-demo unity_version="6000.3.23f1" action="run":
       "${player}" -logFile "${player_log}"
     fi
 
+# Build a Unity Android player from the package and read D4's rung on a device.
+#
+# **The first recipe in this repository that builds a Unity player for anything
+# but macOS**, and the first project R-E7, R-E8 and R-E9 bind — the
+# specification records that those three had no check because "this repository
+# contains no committed Unity project". `AndroidProbeBuild.cs` is where they
+# acquire one.
+#
+# **What it reports is a read, not a verdict about drawing.**
+# `docs/decisions/unity-painter-uses-brg.md` D4 selects a fallback rung from
+# `BatchRendererGroup.BufferTarget`, and that read has been taken on no device.
+# The probe emits it before constructing the painter, so a painter that throws
+# — a stripped shader, issue #1313 — still yields the answer.
+#
+# **A run that observes no read line exits non-zero.** An empty logcat and a
+# successful run are the same picture otherwise, which is the fail-open shape
+# this repository's memory records most often.
+#
+# Needs an editor with Android Build Support, and an attached device.
+unity-android unity_version="6000.3.23f1" timeout="300":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    editor="${DASHSCENE_UNITY:-/Applications/Unity/Hub/Editor/{{unity_version}}/Unity.app/Contents/MacOS/Unity}"
+    if [ ! -x "${editor}" ]; then
+      echo "unity-android: no Unity executable at ${editor}" >&2
+      echo "unity-android:   install {{unity_version}} with the Hub, pass a version:" >&2
+      echo "unity-android:     just unity-android 6000.3.23f1" >&2
+      echo "unity-android:   or point at one directly:" >&2
+      echo "unity-android:     DASHSCENE_UNITY=/path/to/Unity just unity-android" >&2
+      exit 1
+    fi
+    editor_dir="$(dirname "${editor}")"
+    # **Android Build Support, checked here rather than discovered mid-build.**
+    # Without it `SwitchActiveBuildTarget` returns false and every check in the
+    # build script would report on a macOS build instead.
+    android_player="${editor_dir}/../../../PlaybackEngines/AndroidPlayer"
+    if [ ! -d "${android_player}" ]; then
+      echo "unity-android: this editor has no Android Build Support at" >&2
+      echo "unity-android:   ${android_player}" >&2
+      echo "unity-android: install the 'android' module with --childModules." >&2
+      exit 1
+    fi
+    builtin=""
+    for candidate in \
+      "${editor_dir}/../Resources/PackageManager/BuiltInPackages" \
+      "${editor_dir}/Data/PackageManager/BuiltInPackages" \
+      "${editor_dir}/../Data/PackageManager/BuiltInPackages"; do
+      if [ -d "${candidate}" ]; then
+        builtin="$(cd "${candidate}" && pwd)"
+        break
+      fi
+    done
+    if [ -z "${builtin}" ]; then
+      echo "unity-android: no BuiltInPackages directory near ${editor}" >&2
+      exit 1
+    fi
+    root="$(git rev-parse --show-toplevel)"
+    project="${root}/target/unity-android-probe"
+    package="${root}/unity/com.driftsys.dashscene"
+    urp_json="${builtin}/com.unity.render-pipelines.universal/package.json"
+    if [ ! -f "${urp_json}" ]; then
+      echo "unity-android: this editor ships no built-in URP at ${urp_json}" >&2
+      exit 1
+    fi
+    urp="$(jq -r .version "${urp_json}")"
+    # The Android library, not the macOS one. A macOS `.dylib` present and an
+    # Android `.so` absent is exactly what an APK that raises
+    # DllNotFoundException on its first P/Invoke looks like from here.
+    shipped="${package}/Runtime/Plugins/Android/libdashscene_ffi.so"
+    if [ ! -f "${shipped}" ]; then
+      echo "unity-android: the package ships no Android library at ${shipped}." >&2
+      echo "unity-android: run \`just unity-plugins\` and commit what it writes." >&2
+      exit 1
+    fi
+    adb=$(just _android-adb)
+    if ! just _android-has-device; then
+      just _android-warn-no-device unity-android
+      exit 1
+    fi
+    device="$("${adb}" shell getprop ro.product.model | tr -d '\r')"
+    echo "unity-android: device is ${device}"
+    rm -rf "${project}"
+    mkdir -p "${project}/Packages" "${project}/ProjectSettings" "${project}/Assets/Editor"
+    cat > "${project}/Packages/manifest.json" <<JSON
+    {
+      "dependencies": {
+        "com.driftsys.dashscene": "file:${package}",
+        "com.unity.render-pipelines.universal": "${urp}"
+      }
+    }
+    JSON
+    cp "${root}/unity/android-probe/AndroidProbeBuild.cs" "${project}/Assets/Editor/"
+    cp "${root}/unity/android-probe/DashsceneAndroidProbe.cs" "${project}/Assets/"
+    log="${project}/editor.log"
+    echo "unity-android: building the APK in {{unity_version}} (log: ${log})"
+    set +e
+    # **R-E9's floor is passed in rather than written in the build script.** The
+    # requirement says to compare against this variable; a literal in C# would
+    # be a second copy of it.
+    DASHSCENE_ANDROID_API={{ ANDROID_API }} \
+      "${editor}" -batchmode -quit -projectPath "${project}" \
+      -executeMethod AndroidProbeBuild.Build -logFile "${log}"
+    status=$?
+    set -e
+    grep -E "^\[android-probe-build\]|error CS|Shader error|Compilation failed" "${log}" || true
+    if [ "${status}" -ne 0 ]; then
+      echo "unity-android: the APK build FAILED (exit ${status}). Full log: ${log}" >&2
+      exit "${status}"
+    fi
+    apk="${project}/Build/AndroidProbe.apk"
+    if [ ! -f "${apk}" ]; then
+      echo "unity-android: the build wrote no ${apk}" >&2
+      exit 1
+    fi
+    echo "unity-android: installing $(basename "${apk}")"
+    "${adb}" install -r "${apk}" >/dev/null
+    # The id the build wrote, not a literal repeated here — the two drift, and
+    # the failure that produces is monkey reporting "No activities found to
+    # run" into a stream this recipe would then blame on the device.
+    app_id="$(cat "${project}/Build/application-id.txt")"
+    "${adb}" logcat -c
+    # **stdout discarded, stderr kept.** monkey is chatty on success and its
+    # only useful output is the failure line. It also aborts non-zero when the
+    # app crashes during its run, which is one of the outcomes this probe
+    # exists to distinguish — so the status is caught and reported rather than
+    # killing the recipe under `set -e` before logcat is ever read.
+    # **Kept, and shown only on failure.** monkey narrates its arguments on
+    # every successful launch, which buries the run's actual output; its one
+    # useful line — "No activities found to run" — appears only when it fails.
+    # Discarding both streams, as a first version did, loses that line and
+    # leaves a launch failure looking like a silent device.
+    launch_log="${project}/monkey.log"
+    set +e
+    "${adb}" shell monkey -p "${app_id}" -c android.intent.category.LAUNCHER 1 \
+      >/dev/null 2>"${launch_log}"
+    launch=$?
+    set -e
+    if [ "${launch}" -ne 0 ]; then
+      echo "unity-android: monkey exited ${launch} launching ${app_id}:" >&2
+      cat "${launch_log}" >&2
+      echo "unity-android: reading logcat anyway — a crash at launch is a result." >&2
+    fi
+    # Poll rather than stream: a `logcat` left running is a process this recipe
+    # then has to reap on every exit path, and the probe reports within a frame
+    # or two of launching.
+    waited=0
+    captured=""
+    while [ "${waited}" -lt {{ timeout }} ]; do
+      # **`adb` failure separated from an empty result.** Folding both into
+      # `|| true` reports an unplugged cable as "the player reported no read",
+      # which sends whoever reads it to the device rather than to the cable.
+      set +e
+      dump="$("${adb}" logcat -d 2>/dev/null)"
+      dumped=$?
+      set -e
+      if [ "${dumped}" -ne 0 ]; then
+        echo "unity-android: adb logcat failed (exit ${dumped}) after ${waited}s." >&2
+        exit 1
+      fi
+      # **Accumulated, not overwritten.** logcat's ring buffer can wrap during a
+      # long wait, so a line seen early is not guaranteed to be in the last
+      # dump. Keeping every match makes the verdict monotonic.
+      # **`awk`, not `grep -v`, to drop the blanks.** An earlier version piped
+      # through `grep -vE '^$'`, which exits 1 on empty input — and under
+      # `set -euo pipefail` that killed the recipe silently on the first poll,
+      # before the app had logged anything. It was caught by a mutation run
+      # failing with no verdict message rather than by reading.
+      matches="$(printf '%s' "${dump}" | grep -F "[android-probe]" || true)"
+      captured="$(printf '%s\n%s\n' "${captured}" "${matches}" \
+        | awk 'NF && !seen[$0]++')"
+      if printf '%s' "${captured}" | grep -qF "[android-probe] DONE"; then
+        break
+      fi
+      sleep 2
+      waited=$((waited + 2))
+    done
+    echo "unity-android: ---- what the device reported ----"
+    printf '%s\n' "${captured}"
+    echo "unity-android: -----------------------------------"
+    if ! printf '%s' "${captured}" | grep -qF "[android-probe] READ"; then
+      echo "unity-android: the player reported NO read in ${waited}s." >&2
+      echo "unity-android: a run that observes nothing is not a run that passed." >&2
+      exit 1
+    fi
+    # **The runtime half is a verdict too, and it was not one until 2026-08-28.**
+    # The READ line is emitted BEFORE the runtime is constructed, so a stale or
+    # ABI-mismatched Android library gave a green run: the APK built, installed,
+    # reported the read, threw on ds_runtime_new, and this recipe exited 0 while
+    # `docs/design/unity-csharp-host.md` claimed the library had loaded. Neither
+    # the package gate nor the build script catches it — one reads ELF headers
+    # and the other reads a `.meta`, and a stale library passes both.
+    #
+    # The PAINTER line is deliberately not fatal: rung 3 and a stripped shader
+    # are answers this probe exists to report, not failures of it.
+    if printf '%s' "${captured}" | grep -qF "the runtime did not construct"; then
+      echo "unity-android: the shipped library did not load on ${device}." >&2
+      echo "unity-android: R-E21 is the requirement that breaks; see the line above." >&2
+      exit 1
+    fi
+    echo "unity-android: the read above was taken on ${device}."
+    echo "unity-android: record it in docs/decisions/unity-painter-uses-brg.md D4 (issue #1345)."
+
 # Run the Android harness's own tests — the two gates that decide what a device
 # run means.
 #

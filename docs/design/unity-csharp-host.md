@@ -1064,18 +1064,20 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   #708 is the same gap in the lean painter.
 - **Two code paths have never been exercised by any gate or any device**, and
   they are worth naming as a class rather than one at a time: the
-  `ConstantBuffer` rung (this adapter reports `RawBuffer`, so
-  `InstancesPerBatch` and `BatchStrideBytes` have never run) and the opaque
-  material's alpha handling. A defect in either looks like a plausible picture
-  rather than a failure — the window-size clamp in `BatchStrideBytes` was one,
-  found by reading rather than by running. **The cutout material's `clip()`
-  threshold was the third and is now measured**: `just unity-render` draws that
-  class at 0.5 and at 2 — the second above any coverage a fragment can have —
-  and got 13 of 13 sampled node centres inked at the first and none at the
-  second, with 601144 of 786432 pixels differing. A `_DsCutoff` that did not
-  reach the fragment stage would have drawn the same picture twice, whatever the
-  stage read instead, so **it resolves**, on Metal, and issue #1307 is answered.
-  GLES 3.2 and Vulkan are untested.
+  `ConstantBuffer` rung (**two** adapters now report `RawBuffer` — Metal on an
+  Apple M3, and Vulkan on an Adreno 620 measured 2026-08-28 — so
+  `InstancesPerBatch` and `BatchStrideBytes` have still never run, and a second
+  agreeing adapter lowers the chance of ever exercising them rather than raising
+  it) and the opaque material's alpha handling. A defect in either looks like a
+  plausible picture rather than a failure — the window-size clamp in
+  `BatchStrideBytes` was one, found by reading rather than by running. **The
+  cutout material's `clip()` threshold was the third and is now measured**:
+  `just unity-render` draws that class at 0.5 and at 2 — the second above any
+  coverage a fragment can have — and got 13 of 13 sampled node centres inked at
+  the first and none at the second, with 601144 of 786432 pixels differing. A
+  `_DsCutoff` that did not reach the fragment stage would have drawn the same
+  picture twice, whatever the stage read instead, so **it resolves**, on Metal,
+  and issue #1307 is answered. GLES 3.2 and Vulkan are untested.
 - **The painter draws, and what checks it is `unity/render-gate`.** Measured on
   `6000.3.22f1`, macOS/Metal, Apple M3, 2026-08-23, in a player built from this
   package: `goldens/dsb/v03-paint.dsb` packs to 16 instances on rung
@@ -1182,6 +1184,32 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   reachable rather than blocked: a player can load a shipped library, and what
   is untested is whether Mono and IL2CPP translate a missing symbol the way
   CoreCLR does.
+
+  **An IL2CPP player reached the C ABI on a device on 2026-08-28**, through
+  `just unity-android` (story #1367). That recipe sets the scripting backend
+  explicitly and reports it, so "which runtime is not recorded" is answered
+  **for this recipe**: IL2CPP, because R-E7 requires it and because Unity ships
+  no arm64 Mono runtime. On a Pixel 5 the shipped `libdashscene_ffi.so` loaded
+  and the runtime constructed, so a **present** library resolves under IL2CPP.
+
+  **That is a gated claim rather than an observation**, and it was not one when
+  first written. The recipe's original verdict was the presence of the read line
+  alone — which the probe emits _before_ constructing the runtime — so a stale
+  or ABI-mismatched Android library gave a green run: built, installed, reported
+  the rung, threw on `ds_runtime_new`, exited 0. Neither check that looks like
+  it would catch that does: `unity/package-gate`'s reads ELF magic and
+  `e_machine`, and the build script's reads the `.meta`. A stale binary passes
+  both. `just unity-android` now fails on the runtime line, verified by a
+  mutation that forces the construction to throw. The **painter** line stays
+  non-fatal, because rung 3 and a stripped shader are answers this probe reports
+  rather than failures of it.
+
+  **That run does not change the claim above**, and the distinction is the whole
+  of issue #1322: nothing has yet removed a symbol from a library an IL2CPP
+  player loads. What was shown is that a present symbol resolves, which is not
+  what the forwarders' catches are written for. `just unity-render` still builds
+  a macOS standalone player, so its backend remains unrecorded and issue #1360
+  stands for it.
 - **No release, and therefore no tag.** Story #1334 landed the library on
   2026-08-24: the package ships macOS arm64 and Android arm64 under
   `Runtime/Plugins/`, each with a committed `.meta`, and **R-E21 is met**. R-E3
