@@ -165,5 +165,6 @@ BatchRendererGroup binds a property by name, so a name present on one side and
 absent on the other is neither a compile error nor a run-time error — the shader
 reads the property's default and draws a plausible wrong picture. That is why
 `unity/package-gate` asserts both sets in both directions, and why the package
-keeps one file per binding kind: with per-instance, per-material and global
-names in one file, the gate would have to guess which is which.
+keeps one file per binding kind: with per-instance and per-material names in one
+file, the gate would have to guess which is which. There were three kinds until
+issue #1297 moved the paint heap off the process-wide namespace; there are two.

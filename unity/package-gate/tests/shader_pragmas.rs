@@ -173,9 +173,9 @@ fn the_per_instance_properties_are_the_same_set_on_both_sides() {
                 names.contains(name) || other.contains(name),
                 "{path}: the `Properties` block declares `{name}`, which the \
                  package's C# names neither as a per-instance property \
-                 (Runtime/PaintProperties.cs) nor as a global or per-material \
-                 one (Runtime/PaintBindings.cs). Either the packer stopped \
-                 writing it or the shader kept a property that moved."
+                 (Runtime/PaintProperties.cs) nor as a per-material one \
+                 (Runtime/PaintBindings.cs). Either the packer stopped writing \
+                 it or the shader kept a property that moved."
             );
         }
     }
@@ -297,16 +297,22 @@ fn every_per_instance_name_is_declared_as_a_dots_instanced_prop() {
     }
 }
 
-/// Every global the painter binds is declared by the shading it binds it for.
+/// Every name the painter binds is declared by the shading it binds it for.
 ///
-/// **Neither direction was checked before.** The globals never appear in a
-/// `Properties` block — a `StructuredBuffer` is bound through
-/// `Shader.SetGlobalBuffer` and cannot be a material property — so the
-/// per-instance test consulted them only as an allow-list and never in the
-/// direction that matters. Renaming `PaintGlobals.Paints` left every solid and
-/// gradient fill shading from an unbound buffer with every gate green.
+/// **Neither direction was checked before.** The per-instance test consults
+/// these names only as an allow-list — it asks that a `Properties` entry be a
+/// name the C# knows, never that a name the C# binds be declared anywhere — so
+/// renaming `PaintMaterialProperties.Paints` left every solid and gradient
+/// fill shading from an unbound buffer with every gate green.
+///
+/// **A `Properties` entry is not what this asks for**, and the two are
+/// separate questions: `every_per_material_member_is_declared_by_every_shader`
+/// below asks that one, over the `UnityPerMaterial` members alone. Three of
+/// the names here do carry a `Properties` entry — `_DsGlobals` in all four
+/// shaders, `_DsCutoff` in all four, `_DsAtlas` in `Text.shader` — and the
+/// four `StructuredBuffer`s carry none, because a buffer cannot have one.
 #[test]
-fn every_global_the_painter_binds_is_declared_by_the_shading() {
+fn every_name_the_painter_binds_is_declared_by_the_shading() {
     let cs = package_gate::package_cs_files();
     let bound = package_gate::other_bound_names(&cs);
     assert!(!bound.is_empty(), "Runtime/PaintBindings.cs names nothing");
@@ -318,13 +324,26 @@ fn every_global_the_painter_binds_is_declared_by_the_shading() {
         .map(|(_, source)| source.as_str())
         .collect::<Vec<_>>()
         .join("\n");
+    // **The block's own comments are cut out first.** `is_per_material` below
+    // asks whether the block contains ` name;`, and the block's prose names
+    // every member it discusses — so a comment reading `the painter writes
+    // _DsGlobals; every class reads it` satisfied the arm for a member whose
+    // declaration had been deleted. That is the same fail-open this file
+    // already records for the third disjunct it removed: "a mention in a
+    // `.shader` does not count".
     let cbuffer: String = includes
         .iter()
         .filter_map(|(_, source)| package_gate::per_material_cbuffer(source))
+        .flat_map(|block| {
+            block
+                .lines()
+                .map(|line| line.split("//").next().unwrap_or("").to_string())
+                .collect::<Vec<_>>()
+        })
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
-        !cbuffer.is_empty(),
+        !cbuffer.trim().is_empty(),
         "no .hlsl declares a `CBUFFER_START(UnityPerMaterial)` block. A \
          `Properties` entry outside that block makes the shader \
          SRP-Batcher-incompatible, which R-E5 requires and a compile does not \
@@ -340,15 +359,14 @@ fn every_global_the_painter_binds_is_declared_by_the_shading() {
         // from the CBUFFER, the exact state the fix repaired, passed.
         let is_buffer = shading.contains(&format!("StructuredBuffer<float4> {name};"));
         let is_per_material = cbuffer.contains(&format!(" {name};"));
-        let is_global_scalar = shading.contains(&format!("\nfloat4 {name};"));
-        // **A texture is none of the three above and cannot be made into one.**
-        // It is not a `StructuredBuffer`, it cannot be a `UnityPerMaterial`
-        // member — a sampler has no place in a constant buffer, and putting one
-        // there makes the shader SRP-Batcher-incompatible — and it is not a
-        // global scalar. Before story #1123 the package bound no texture, so
-        // the three arms were the whole set; the atlas a glyph run samples is
-        // the first, and it is bound per material because a document may name
-        // more than one sheet.
+        // **A texture is neither of the two above and cannot be made into
+        // one.** It is not a `StructuredBuffer`, and it cannot be a
+        // `UnityPerMaterial` member — a sampler has no place in a constant
+        // buffer, and putting one there makes the shader
+        // SRP-Batcher-incompatible. Before story #1123 the package bound no
+        // texture, so the arms that remained were the whole set; the atlas a
+        // glyph run samples is the first texture, and it is bound per material
+        // because a document may name more than one sheet.
         //
         // **Both halves, and that is the strengthening rather than a
         // formality.** `TEXTURE2D(name)` alone would be satisfied by a
@@ -366,13 +384,19 @@ fn every_global_the_painter_binds_is_declared_by_the_shading() {
         // is what the first cut of this check did.
         let is_texture = shading.contains(&format!("TEXTURE2D({name});"))
             && shading.contains(&format!("SAMPLER(sampler{name});"));
+        // **A scalar declared at global scope was a fourth arm until issue
+        // #1297.** A uniform outside every CBUFFER lands in `$Globals`, which
+        // is one namespace for the process — the shading half of the collision
+        // that issue names — so the form is no longer accepted here, and
+        // `_DsGlobals` moving into `UnityPerMaterial` is what this arm's
+        // removal holds in place.
         assert!(
-            is_buffer || is_per_material || is_global_scalar || is_texture,
+            is_buffer || is_per_material || is_texture,
             "`{name}` is bound by the painter (Runtime/PaintBindings.cs) and is \
              declared by no shader source as a StructuredBuffer, a \
-             UnityPerMaterial member, a global scalar, or a TEXTURE2D with its \
-             SAMPLER. The binding then reaches nothing and the shading reads an \
-             unbound buffer, an unbound sampler or a default."
+             UnityPerMaterial member, or a TEXTURE2D with its SAMPLER. The \
+             binding then reaches nothing and the shading reads an unbound \
+             buffer, an unbound sampler or a default."
         );
     }
 }
@@ -597,4 +621,172 @@ fn every_absolute_shader_include_resolves_to_a_file_the_package_ships() {
             package_gate::PACKAGE_NAME
         );
     }
+}
+
+/// Every `UnityPerMaterial` member is declared by every shader that includes
+/// the block it lives in.
+///
+/// **This is the rule issue #1297's fix discovered, and it is measured rather
+/// than reasoned.** The converse — a `Properties` entry must appear in
+/// `UnityPerMaterial` or the SRP Batcher refuses the shader — was already
+/// stated in `DashsceneInstance.hlsl` and is what the test above rests on.
+/// This direction was found by breaking it: `_DsGlobals` moved into the
+/// CBUFFER for issue #1297 and was left out of the four `Properties` blocks,
+/// and every draw command in a built player was then refused with
+/// `UnityPerMaterial var is not declared in shader property section`, ink at 0
+/// of 13 sampled node centres. `just unity-render`, 6000.3.23f1, macOS/Metal,
+/// Apple M3, 2026-08-29.
+///
+/// **No offline gate saw that state.** Three review seats each deleted one
+/// `_DsGlobals` line and ran the whole of `package-gate` green over the exact
+/// tree that draws nothing — which is why this test exists and why it is worth
+/// its cost: the only other thing that catches the class needs a Unity editor,
+/// a player build and a device, and runs in no CI job.
+///
+/// **Every member of every including shader, not `_DsGlobals` alone.** Naming
+/// the one member that was measured would fix the instance and leave the
+/// class: `_DsCutoff` sat in this same block for all four shaders and in one
+/// `Properties` block, and drew only because nothing in the other three reads
+/// it — an explanation neither run measured, and one that a graphics API whose
+/// reflection keeps an unreferenced member would falsify. All four shaders now
+/// declare both.
+///
+/// **Scoped to the shaders that include the shading**, because the block is
+/// the shading's. A shader shipped in `Samples~/` that includes none of it has
+/// no `UnityPerMaterial` members of this package's and is not asked for any.
+#[test]
+fn every_per_material_member_is_declared_by_every_shader() {
+    let includes = package_gate::hlsl_sources();
+    // Comments cut out first, for the reason the sibling test above states:
+    // the block's prose names every member it discusses, and this parse must
+    // not read a mention as a declaration or a `#` in prose as a directive.
+    let cbuffer: String = includes
+        .iter()
+        .filter_map(|(_, source)| package_gate::per_material_cbuffer(source))
+        .flat_map(|block| {
+            block
+                .lines()
+                .map(|line| line.split("//").next().unwrap_or("").to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !cbuffer.trim().is_empty(),
+        "no .hlsl declares a `CBUFFER_START(UnityPerMaterial)` block, so this \
+         gate would demand nothing of any shader"
+    );
+
+    // A member is `<type> <name>;`. **The parse fails closed**, which is the
+    // whole of it: a first version filtered on `line.ends_with(';')` after
+    // trimming, so `float _DsCutoff;  // only the cutout reads it` was not a
+    // declaration, dropped out of the demanded set, and let two review seats
+    // run this suite green over the tree that draws 0 of 13 centres. A parse
+    // that can be wrong has to be wrong in the direction that fails.
+    //
+    // So the comment is cut off FIRST, and then every remaining line naming a
+    // `_Ds` token must yield exactly one member — a line this cannot read is a
+    // failure here rather than a member nothing demands.
+    // **A preprocessor directive inside the block is refused, not skipped.**
+    // The shading scopes `_DsGlyphs` and `_DsAtlas` by class already, so
+    // guarding a CBUFFER member the same way is a reasonable future change —
+    // and this parser would then demand a member of shaders that never compile
+    // it. Failing here is what makes that change land with its own gate rather
+    // than against one that quietly asks the wrong thing.
+    assert!(
+        !cbuffer.contains('#'),
+        "the `UnityPerMaterial` block carries a preprocessor directive, and \
+         this gate reads it as one member set for every shader. Scoping a \
+         member by class needs this parser to scope with it."
+    );
+
+    let mut members: Vec<String> = Vec::new();
+    for raw in cbuffer.lines() {
+        let line = raw.trim();
+        if line.is_empty() || !line.contains("_Ds") {
+            continue;
+        }
+        assert_eq!(
+            line.matches(';').count(),
+            1,
+            "the `UnityPerMaterial` block line `{line}` declares no member or \
+             more than one, and this parse reads one per line. Two members on \
+             one line would leave the first demanded of nobody."
+        );
+        let name = line
+            .strip_suffix(';')
+            .and_then(|declaration| declaration.split_whitespace().next_back())
+            .filter(|name| name.starts_with("_Ds"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "the `UnityPerMaterial` block line `{line}` names a `_Ds` \
+                     token and this parse read no member from it. Every shader \
+                     must declare every member, so a member this cannot see is \
+                     one no shader is held to."
+                )
+            });
+        members.push(name.to_string());
+    }
+
+    // **Held against a set derived elsewhere**, so a parse that reads nothing
+    // fails rather than demanding nothing. The five per-instance names are in
+    // this block by construction — they are its non-instanced fallback, which
+    // is what `the_per_instance_properties_are_the_same_set_on_both_sides`
+    // reads it for.
+    let instanced = package_gate::instanced_property_names(&package_gate::package_cs_files());
+    assert!(
+        !instanced.is_empty(),
+        "Runtime/PaintProperties.cs names nothing"
+    );
+    for name in &instanced {
+        assert!(
+            members.contains(name),
+            "the `UnityPerMaterial` block parsed to {members:?}, which does not \
+             include the per-instance name `{name}` that block declares as its \
+             non-instanced fallback. The parse has stopped reading the block."
+        );
+    }
+
+    let shaders = package_gate::shader_sources();
+    assert!(!shaders.is_empty(), "the package ships no .shader");
+    let mut checked = 0usize;
+    for (path, source) in &shaders {
+        if !source.contains("DashsceneInstance.hlsl") {
+            // **Every shipped shader includes it, and that is asserted rather
+            // than assumed.** `Runtime/Resources/` is where a shader the
+            // painter loads has to sit —
+            // `every_shader_sits_where_resources_load_will_find_it` holds that
+            // — so one there that includes none of the shading is a shader
+            // this gate would pass over silently. A shader elsewhere in the
+            // package, `Samples~/` included, is not the painter's and is not
+            // asked.
+            assert!(
+                !path.contains("Runtime/Resources/"),
+                "{path} is a shader the painter loads and includes none of the \
+                 shading, so this gate cannot say whether its `Properties` \
+                 block covers the `UnityPerMaterial` members it draws with"
+            );
+            continue;
+        }
+        checked += 1;
+        let block = package_gate::properties_block(source)
+            .unwrap_or_else(|| panic!("{path} declares no `Properties` block"));
+        let declared = package_gate::ds_property_names(&block);
+        for member in &members {
+            assert!(
+                declared.contains(member),
+                "{path} includes the shading's `UnityPerMaterial` block, which \
+                 declares `{member}`, and its `Properties` block does not. A \
+                 member the property section omits makes the pass \
+                 SRP-Batcher-incompatible and a BatchRendererGroup refuses \
+                 every draw command that uses it — a blank frame, which no \
+                 compile and no other gate here reports. Declared: {declared:?}"
+            );
+        }
+    }
+    assert!(
+        checked > 0,
+        "no shipped .shader includes DashsceneInstance.hlsl, so this gate \
+         checked nothing"
+    );
 }

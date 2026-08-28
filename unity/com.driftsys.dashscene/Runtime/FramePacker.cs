@@ -20,9 +20,20 @@
 // shrink, so a steady frame allocates nothing — but this packer walks EVERY rect
 // and rebuilds the whole heap on every commit, and `DsFrame.Dirty`'s ROWS are
 // read by nothing — `FrameLease` reads its stride for R-E17, and no consumer
-// reads the indices it carries. **The transfer R-T4 actually bounds is unbounded**; issue #1306
-// carries it, and issue #708 is the same gap in the lean painter, where the
-// design that would serve both belongs.
+// reads the indices it carries. **The transfer R-T4 actually bounds is
+// unbounded**; issue #1306 carries it, and issue #708 is the same gap in the
+// lean painter, where the design that would serve both belongs.
+//
+// **What the full repack costs, on the document `just unity-render` draws.**
+// `goldens/dsb/v03-paint.dsb` carries fourteen rect entries — pinned by
+// `crates/dashc/tests/figma_lowering.rs` — and packs to sixteen instances.
+// Every commit walks all fourteen and rebuilds all four heap tables, and on
+// the `RawBuffer` rung — the only one any device has reported — the painter
+// then sends 5232 bytes of instance buffer for the 1392 that carry this frame's
+// instances. All of it goes up on a commit whose dirty set is empty as much as
+// on any other. `docs/design/unity-csharp-host.md`'s gaps list carries the
+// derivation, the two tests behind the fourteen, and what the other rung
+// costs.
 
 using System;
 using Driftsys.Dashscene.BoundaryB;

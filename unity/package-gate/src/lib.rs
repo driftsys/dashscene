@@ -544,15 +544,15 @@ pub fn ds_property_names(block: &str) -> Vec<String> {
 /// Read as the `"_Ds…"` string literals in `Runtime/PaintProperties.cs` alone,
 /// and that narrowing is the whole design: the package keeps one file per
 /// binding kind precisely so this function needs no list of exceptions. A
-/// global buffer name or a per-material property name lives in
-/// `Runtime/PaintBindings.cs` and is invisible here, which is what stops the
-/// gate demanding it of every shader.
+/// per-material name lives in `Runtime/PaintBindings.cs` and is invisible here,
+/// which is what stops the gate demanding it of every shader as an instanced
+/// property.
 pub fn instanced_property_names(files: &[(String, String)]) -> Vec<String> {
     ds_literals_in(files, "Runtime/PaintProperties.cs")
 }
 
-/// The names that are bound some other way: the global buffers and the
-/// per-material properties.
+/// The names a material carries rather than an instance: the heap buffers,
+/// the scalars, the cutoff and the atlas.
 ///
 /// What a shader is ALLOWED to declare beyond the per-instance set. A shader
 /// declaring a name in neither set is what the gate reports.

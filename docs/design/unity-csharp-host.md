@@ -139,6 +139,78 @@ generated library, **and the stroke row's field order** against `paint.wgsl`'s
 `struct Stroke` — that last one because a width cannot see a permutation, which
 is exactly how the reversed stroke row survived the first version of this gate.
 
+**The paint heap is bound per material, so two painters in one process no longer
+share one** (issue #1297). `_DsPaints`, `_DsClipBoxes`, `_DsStrokes`,
+`_DsGlyphs` and the `_DsGlobals` scalars were bound with
+`Shader.SetGlobalBuffer` and `Shader.SetGlobalVector` until 2026-08-29, both of
+which are process-wide: the last painter to draw supplied the gradients, strokes
+and clip boxes every painter's fragments shaded from, and the painter reported
+that with a constructor warning rather than drawing a wrong picture quietly.
+`BindHeap` now sets them on the materials this painter registered itself — the
+three heap tables and the scalars on the class material and on every glyph
+atlas's material, and `_DsGlyphs` on the atlas materials alone, because the
+shading declares it under `DASHSCENE_CLASS_TEXT` and no other class can reach a
+glyph run. So **a second painter in one process is a supported configuration**,
+and the live-painter counter that warned about one is gone. It runs on every
+frame rather than once, for two reasons: a heap buffer is reallocated when its
+table outgrows it, and `SetAtlases` mints text materials long after the
+constructor, so no earlier moment holds the whole set.
+
+**`_DsGlobals` had to move into `CBUFFER_START(UnityPerMaterial)` and into all
+four `Properties` blocks, and the second half of that is measured rather than
+reasoned.** A uniform declared outside every CBUFFER lands in `$Globals`, which
+is one namespace for the process — so the scalars could not be per material
+while they sat there. Moving them into the material's constant buffer alone
+produced a blank frame — ink at 0 of 13 sampled node centres — and a player log
+in which every draw command was refused for the reason
+`UnityPerMaterial var is not declared in shader property section`.
+`Runtime/Shaders/DashsceneInstance.hlsl` carries the run. So the rule the
+shading states in one direction — a `Properties` entry must appear in
+`UnityPerMaterial` — holds in the other for any member a pass reads. `_DsCutoff`
+sat in the buffer for all four shaders — three material classes plus
+`Dashscene/Text`, which is deliberately not a class — and in one `Properties`
+block, and the three that omitted it drew all the same. The explanation those
+two runs support is that a uniform no pass statement reads does not survive that
+pass's compile, and neither run measured it, so the rule is now held over every
+member rather than over the one that was measured: `unity/package-gate`'s
+`every_per_material_member_is_declared_by_every_shader` requires each
+`UnityPerMaterial` member in every including shader's `Properties` block, and
+all four shaders declare `_DsCutoff` and `_DsGlobals` alike.
+
+**A drawn frame is what says the binding reaches the fragment stage, which is
+why this could not be fixed when it was filed.** Issue #1297 named its own
+blocker — a harness that draws one document and compares it to something — and
+`just unity-render` is that harness. On the fixed tree it returns the numbers
+the global binding returned: ink at 13 of 13 sampled node centres, five of them
+judged against the instance's own packed colour, smallest distance from the
+clear colour 0.514, smallest colour advantage 0.599, and 601144 of 786432 pixels
+differing between the two cutout thresholds. An unbound `StructuredBuffer` reads
+zeros, so those five centres are what says `Material.SetBuffer` reached the
+stage. **The same run cannot say it for `_DsGlobals`**, whose `Properties`
+default is `(1, 0, 0, 0)` while the solid base really is 0 — so that value was
+poisoned instead: written one row high through the same `Material.SetVector`
+call, the frame fell to 11 of 13 centres, 0.420, and a colour advantage of
+-0.109. Unity 6000.3.23f1, macOS/Metal, Apple M3, 2026-08-29, in a player built
+from this package. **One graphics API**, as every other measurement here is.
+
+**No frame has drawn two painters, and the supported-configuration claim rests
+on the binding rather than on a picture.** What `just unity-render` measures is
+that a painter's own materials carry its own heap; that two painters therefore
+do not collide follows from each painter minting its own `Material` in its own
+constructor, which is read rather than drawn. The gate keeps exactly one painter
+alive by disposing before constructing, so nothing in this repository draws two
+documents at once. Settling it needs a harness that builds two painters over two
+documents and judges each frame against its own packed colours — the same shape
+issue #828's suite has, and the same shape the corner-silhouette gap below
+needs.
+
+**The text materials take the same binding in the same loop, and no frame has
+drawn one.** `just unity-render` draws a document with no glyph runs, so
+`_DsGlyphs` and the three tables on a text material are held by reading rather
+than by a picture. That is a gap the change opened as well as one it inherited:
+while the heap was global a text material needed no binding of its own, and now
+it needs the loop in `BindHeap` to reach it.
+
 **The transforms are shared, not per instance.** A BatchRendererGroup requires
 `unity_ObjectToWorld` and `unity_WorldToObject` as instanced properties, but a
 metadata value without the high bit addresses one value every instance reads. A
@@ -727,17 +799,23 @@ resolver lets `openFd`'s exception through rather than falling back to a copy.
 
 `unity/editor-compat` and `unity/package-gate` are story #1122's,
 `unity/hlsl-conformance` is issue #1312's and `unity/render-gate` is issue
-#1298's. `unity/package-gate` is Rust and rides in the sanity test tier
-deliberately: the .NET gates are outside `just check` because bootstrap installs
-no SDK, and an editor is outside CI entirely, so it is the only check over the
-package that runs on every pull request without a prerequisite.
-`unity/editor-compat` is the only thing in this repository that compiles a Unity
-`.shader` **without building a player**, and the only thing whose **purpose** is
-to compile `Runtime/Engine/` — `unity/hlsl-conformance` imports the same package
-into an editor and so compiles that assembly incidentally, which is why a
-compile error there stops it too, and `unity/render-gate` compiles both as a
-side effect of `BuildPipeline.BuildPlayer` and costs tens of minutes, so neither
-is a substitute; it needs an editor install, which
+#1298's. Since issue #1297 `unity/package-gate` also holds the paint heap's
+binding — that no `SetGlobal…` setter survives in the compiled half, that each
+name reaches a setter through a static property id, that the bindings sit inside
+`Draw`'s own call to `BindHeap` and after the upload that can replace the
+buffers, and that every `UnityPerMaterial` member is declared in every shipped
+shader's `Properties` block. `unity/package-gate` is Rust and rides in the
+sanity test tier deliberately: the .NET gates are outside `just check` because
+bootstrap installs no SDK, and an editor is outside CI entirely, so it is the
+only check over the package that runs on every pull request without a
+prerequisite. `unity/editor-compat` is the only thing in this repository that
+compiles a Unity `.shader` **without building a player**, and the only thing
+whose **purpose** is to compile `Runtime/Engine/` — `unity/hlsl-conformance`
+imports the same package into an editor and so compiles that assembly
+incidentally, which is why a compile error there stops it too, and
+`unity/render-gate` compiles both as a side effect of
+`BuildPipeline.BuildPlayer` and costs tens of minutes, so neither is a
+substitute; it needs an editor install, which
 [../decisions/the-native-library-ships-inside-the-unity-package.md](../decisions/the-native-library-ships-inside-the-unity-package.md)
 D4 records no CI runner here can host. `unity/render-gate` needs one too, and
 also builds and runs a player.
@@ -1056,13 +1134,39 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   and emits every instance for every camera. For a full-screen overlay that is
   the right answer and costs nothing; for a document placed in a 3D scene it is
   work per camera proportional to the whole document.
-- **R-T4's dirty-range upload is not implemented.** The painter repacks every
-  rect and re-uploads the whole instance buffer — including capacity past the
-  live instances — on every frame, and `DsFrame.Dirty`'s rows are read by
-  nothing (`FrameLease` reads its stride for R-E17; nothing reads the indices).
-  The arrays are reused, so a steady frame allocates nothing; that is the half
-  of R-T4 about allocation, not the half about transfer. Issue #1306, and issue
-  #708 is the same gap in the lean painter.
+- **R-T4's dirty-range upload is not implemented, and this is what the full
+  repack costs.** The painter repacks every rect and re-uploads the whole
+  instance buffer — including capacity past the live instances — on every frame,
+  and `DsFrame.Dirty`'s rows are read by nothing (`FrameLease` reads its stride
+  for R-E17; nothing reads the indices). For the document `just unity-render`
+  draws, `goldens/dsb/v03-paint.dsb`, every commit walks all fourteen of its
+  rect entries, rebuilds all four heap tables and re-uploads their live rows,
+  and sends one instance batch. **On the `RawBuffer` rung** — the only rung any
+  device has ever reported here — that batch is the 64-slot floor
+  `InstancesPerBatch` chooses: the shared head plus sixty-four eighty-byte
+  slots, 112 + 5120 = **5232 bytes**, of which 112 + 16 × 80 = **1392** carry
+  the sixteen instances the frame's draw commands read. All of it goes up on a
+  commit whose dirty set is empty, and none of it is derived from that set. The
+  `ConstantBuffer` rung sizes its batch from the device's own window instead, so
+  the same document costs more there: a 16 KB window with 256-byte alignment
+  fits `(16384 - 112) / 80` = 203 slots, and `BatchStrideBytes` rounds
+  `112 + 203 x 80` = 16352 **up** to the alignment — so the stride the buffer is
+  sized from, and the upload sends, is **16384 bytes**. That arithmetic has run
+  on no device, which is why the figure to quote is the `RawBuffer` one.
+
+  **The fourteen is two tests, not one.**
+  `crates/dashc/tests/figma_lowering.rs`'s
+  `the_fixture_compiles_loads_and_renders` asserts fourteen rects over the scene
+  compiled from `corpus/figma-fixtures/v03-paint.json`, and
+  `the_fixture_emits_the_golden_dsb` in the same file asserts that compiling
+  that fixture reproduces `goldens/dsb/v03-paint.dsb` byte for byte. Neither
+  alone says the file the painter loads holds fourteen rects. The arrays are
+  reused, so a steady frame allocates nothing; that is the half of R-T4 about
+  allocation, not the half about transfer. Issue #1306, and issue #708 is the
+  same gap in the lean painter, where the design serving both belongs — packing
+  only the changed rects needs the previous commit's tables held for comparison,
+  because a rect's instance count can change between commits and a dirty rect is
+  therefore not a fixed byte range.
 - **Two code paths have never been exercised by any gate or any device**, and
   they are worth naming as a class rather than one at a time: the
   `ConstantBuffer` rung (**two** adapters now report `RawBuffer` — Metal on an

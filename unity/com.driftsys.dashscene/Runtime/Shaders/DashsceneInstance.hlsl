@@ -116,8 +116,8 @@ StructuredBuffer<float4> _DsGlyphs;
 
 // The MSDF sheet this material's runs sample.
 //
-// **Per material, not global**, which is why the name lives in
-// `PaintMaterialProperties` beside `_DsCutoff` rather than in `PaintGlobals`. A
+// **A texture cannot be bound any other way**, which is one of the reasons
+// `PaintMaterialProperties` holds only per-material names. A
 // document may name more than one sheet — one per face of the cascade — and a
 // texture is a per-material binding, so the painter mints one text material per
 // atlas and the draw commands for a run name the material its sheet is on.
@@ -129,14 +129,6 @@ StructuredBuffer<float4> _DsGlyphs;
 TEXTURE2D(_DsAtlas);
 SAMPLER(sampler_DsAtlas);
 #endif
-
-// (aa, solid base, gradient base, unused).
-//
-// `aa` is the width in document units over which an edge ramps — one device
-// pixel, resolved by the painter from the document-to-screen scale, because a
-// fragment shader that took it from `fwidth` would disagree with the layer-2
-// conformance harness, which has no derivatives at all.
-float4 _DsGlobals;
 
 struct DsAttributes
 {
@@ -170,12 +162,29 @@ struct DsVaryings
 // A `Properties` block entry must appear in `UnityPerMaterial` or the SRP
 // Batcher refuses the shader, so every one of them is declared here.
 //
+// **And the converse holds for any member a pass actually reads, which is
+// measured rather than reasoned.** `_DsGlobals` was moved into this buffer for
+// issue #1297 and left out of the four `Properties` blocks; every player draw
+// then failed with `A BatchDrawCommand is using a pass from the shader
+// "Dashscene/UnlitOverlay" that is not SRP Batcher compatible. Reason:
+// "UnityPerMaterial var is not declared in shader property section"`, and the
+// frame was blank at all thirteen sampled node centres — `just unity-render`,
+// 6000.3.23f1, macOS/Metal, Apple M3, 2026-08-29. Declaring it in the four
+// blocks is what fixed it. `_DsCutoff` sat in this buffer and in one
+// `Properties` block, and the three shaders that did not declare it drew all
+// the same — the explanation the two runs support is that a uniform no pass
+// statement reads does not survive that pass's compile, and neither run
+// measured that directly. Rather than rest on it, all four shaders now declare
+// every member of this block, and `unity/package-gate`'s
+// `every_per_material_member_is_declared_by_every_shader` holds them there.
+//
 // **The five per-instance members are the non-instanced fallback and nothing
 // draws with them**: under `DOTS_INSTANCING_ON` the `#define`s below replace
 // each name with a metadata load, and a `BatchRendererGroup` always draws with
 // that variant. `_DsCutoff` is NOT in that group — it is a real per-material
 // value the cutout class reads on the instanced variant too, because the
-// painter writes no metadata for it.
+// painter writes no metadata for it, and `_DsGlobals` is a second such value,
+// which every class reads.
 //
 // **`_DsPaint` is `uint4` here and a `Vector` in the `Properties` block**,
 // which is float4: the same sixteen bytes with a different meaning. That
@@ -207,11 +216,32 @@ CBUFFER_START(UnityPerMaterial)
     float4 _DsShade;
     float4 _DsPivot;
     uint4  _DsPaint;
+    // (aa, solid base, gradient base, unused).
+    //
+    // `aa` is the width in document units over which an edge ramps — one
+    // device pixel, resolved by the painter from the document-to-screen scale,
+    // because a fragment shader that took it from `fwidth` would disagree with
+    // the layer-2 conformance harness, which has no derivatives at all.
+    //
+    // **In this buffer rather than at global scope, which is issue #1297's
+    // half of the fix on the shading side.** A uniform declared outside a
+    // CBUFFER lands in `$Globals`, which is one namespace for the process — so
+    // two painters shaded from one set of bases, and only a global setter could
+    // write it. Here the painter writes it with `Material.SetVector`, and that
+    // the value written reaches the fragment stage is measured rather than
+    // reasoned: with the solid base written one row high, `just unity-render`
+    // inked 11 of 13 sampled node centres instead of 13, its smallest distance
+    // from the clear colour fell from 0.514 to 0.420 and the per-instance
+    // colour advantage from 0.599 to -0.109 — 6000.3.23f1, macOS/Metal, Apple
+    // M3, 2026-08-29. A value that did not reach the stage would have drawn the
+    // same picture both times, whatever the stage read instead.
+    float4 _DsGlobals;
     // Per material rather than per instance: nothing on boundary B varies it
     // per node, and a per-instance property costs sixteen bytes on every
-    // instance whether or not it differs between them. Declared for all three
-    // classes because the CBUFFER layout must match the material's property
-    // block; only the cutout shader reads it.
+    // instance whether or not it differs between them. Declared here for all
+    // four shaders, and in all four `Properties` blocks, though only the cutout
+    // shader reads it — see the note above this block for why the second half
+    // is not optional.
     float  _DsCutoff;
 CBUFFER_END
 

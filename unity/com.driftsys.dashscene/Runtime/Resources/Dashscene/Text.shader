@@ -49,6 +49,19 @@ Shader "Dashscene/Text"
         _DsPivot("Rotation pivot", Vector) = (0, 0, 0, 0)
         _DsPaint("Kind, run row, clip offset, clip count", Vector) = (0, 0, 0, 0)
 
+        // Per material, not per instance, and declared here because a
+        // `UnityPerMaterial` member the property section does not declare
+        // makes the pass SRP-Batcher-incompatible — which a
+        // BatchRendererGroup draw refuses outright.
+        // `Runtime/Shaders/DashsceneInstance.hlsl` carries the rule, the run
+        // that measured it, and why no default here can be an obvious absence.
+        // The painter writes the value with `Material.SetVector` every frame.
+        _DsGlobals("Edge width, solid base, gradient base", Vector) = (1, 0, 0, 0)
+
+        // Declared by a class that never reads it, for the reason above:
+        // every `UnityPerMaterial` member is declared by every shader.
+        _DsCutoff("Coverage below which a fragment is discarded", Range(0, 1)) = 0.5
+
         // The sheet this material's runs sample. Set with
         // `Material.SetTexture`, one material per atlas.
         //

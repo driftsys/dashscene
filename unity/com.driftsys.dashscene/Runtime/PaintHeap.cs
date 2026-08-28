@@ -2,7 +2,7 @@
 //
 // The property NAMES are next door in `PaintProperties.cs` and
 // `PaintBindings.cs`, one file per binding kind — per-instance in the first,
-// per-material and global in the second. That split is not tidiness:
+// per-material in the second. That split is not tidiness:
 // `unity/package-gate` reads each file for its own set and holds the shaders to
 // them, and a single file would make it guess which name is which.
 //

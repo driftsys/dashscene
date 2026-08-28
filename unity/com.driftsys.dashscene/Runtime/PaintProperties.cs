@@ -5,9 +5,9 @@
 // `Shader.PropertyToID`, and a name that exists on one side and not the other
 // is neither a compile error nor a run-time error: the shader reads the
 // property's default and draws a plausible wrong picture. The gate holds every
-// shader's `Properties` block to THIS file's set — so a per-material property
-// or a global buffer name living here would be demanded of every shader, and a
-// per-instance name living elsewhere would be demanded of none.
+// shader's `Properties` block to THIS file's set — so a per-material name
+// living here would be demanded of every shader as an INSTANCED property, and
+// a per-instance name living elsewhere would be demanded of none.
 
 namespace Driftsys.Dashscene
 {
