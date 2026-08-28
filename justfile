@@ -1354,14 +1354,14 @@ sdf-hlsl:
 # produces the `.meta` that gets committed. It is a separate entry point
 # because a check that writes the values it then reads cannot fail.
 # Compile the UPM package, its engine half included, in a Unity editor.
-unity-editor method="Run" unity_version="6000.3.22f1":
+unity-editor method="Run" unity_version="6000.3.23f1":
     #!/usr/bin/env bash
     set -euo pipefail
     # **Refused rather than passed through**, on the grounds the `android`
     # recipe states for its profile: anything but these two names is a typo, and
     # the likely typo is a version string, because that is what this recipe's
     # only positional parameter used to be. Unvalidated it reaches Unity as
-    # `-executeMethod DashsceneEditorCompat.6000.3.22f1`, failing after the
+    # `-executeMethod DashsceneEditorCompat.6000.3.23f1`, failing after the
     # editor has started; unquoted it splits on whitespace, so `"Run -nographics"`
     # would add the argument this recipe's own comment says must never be present.
     case "{{ method }}" in
@@ -1369,7 +1369,7 @@ unity-editor method="Run" unity_version="6000.3.22f1":
       *)
         echo "unity-editor: method must be Run or WritePluginMeta, not '{{ method }}'" >&2
         echo "unity-editor:   the version is the SECOND parameter:" >&2
-        echo "unity-editor:     just unity-editor Run 6000.3.22f1" >&2
+        echo "unity-editor:     just unity-editor Run 6000.3.23f1" >&2
         exit 1
         ;;
     esac
@@ -1383,7 +1383,7 @@ unity-editor method="Run" unity_version="6000.3.22f1":
     if [ ! -x "${editor}" ]; then
       echo "unity-editor: no Unity executable at ${editor}" >&2
       echo "unity-editor:   install {{unity_version}} with the Hub, pass a version:" >&2
-      echo "unity-editor:     just unity-editor Run 6000.3.22f1" >&2
+      echo "unity-editor:     just unity-editor Run 6000.3.23f1" >&2
       echo "unity-editor:   or point at one directly:" >&2
       echo "unity-editor:     DASHSCENE_UNITY=/path/to/Unity just unity-editor" >&2
       echo "unity-editor: docs/technotes/unity-toolchain.md records what is installed" >&2
@@ -1751,7 +1751,7 @@ unity-ffi:
 # a file.
 #
 # Draw a .dsb in a built player and assert the painter inked every node.
-unity-render unity_version="6000.3.22f1" timeout="180":
+unity-render unity_version="6000.3.23f1" timeout="180":
     #!/usr/bin/env bash
     set -euo pipefail
     # **The editor resolution below is `unity-editor`'s, repeated.** Not
@@ -1764,7 +1764,7 @@ unity-render unity_version="6000.3.22f1" timeout="180":
     if [ ! -x "${editor}" ]; then
       echo "unity-render: no Unity executable at ${editor}" >&2
       echo "unity-render:   install {{unity_version}} with the Hub, pass a version:" >&2
-      echo "unity-render:     just unity-render 6000.3.22f1" >&2
+      echo "unity-render:     just unity-render 6000.3.23f1" >&2
       echo "unity-render:   or point at one directly:" >&2
       echo "unity-render:     DASHSCENE_UNITY=/path/to/Unity just unity-render" >&2
       exit 1
@@ -2022,7 +2022,7 @@ unity-render unity_version="6000.3.22f1" timeout="180":
 # here writes to it.
 #
 # Evaluate every probe of the committed table through the generated Sdf.hlsl.
-unity-conformance table="conformance/layer2-probes.json" unity_version="6000.3.22f1":
+unity-conformance table="conformance/layer2-probes.json" unity_version="6000.3.23f1":
     #!/usr/bin/env bash
     set -euo pipefail
     # **The editor resolution below is `unity-editor`'s, repeated**, for the
@@ -2035,7 +2035,7 @@ unity-conformance table="conformance/layer2-probes.json" unity_version="6000.3.2
     if [ ! -x "${editor}" ]; then
       echo "unity-conformance: no Unity executable at ${editor}" >&2
       echo "unity-conformance:   install {{unity_version}} with the Hub, pass a version:" >&2
-      echo "unity-conformance:     just unity-conformance conformance/layer2-probes.json 6000.3.22f1" >&2
+      echo "unity-conformance:     just unity-conformance conformance/layer2-probes.json 6000.3.23f1" >&2
       echo "unity-conformance:   or point at one directly:" >&2
       echo "unity-conformance:     DASHSCENE_UNITY=/path/to/Unity just unity-conformance" >&2
       echo "unity-conformance: docs/technotes/unity-toolchain.md records what is installed" >&2
@@ -2250,7 +2250,7 @@ unity-conformance table="conformance/layer2-probes.json" unity_version="6000.3.2
 # anyway. Each is a full editor run.
 #
 # Corrupt two expectations and require `unity-conformance` to catch exactly them.
-unity-conformance-negative unity_version="6000.3.22f1":
+unity-conformance-negative unity_version="6000.3.23f1":
     #!/usr/bin/env bash
     set -euo pipefail
     root="$(git rev-parse --show-toplevel)"
@@ -2754,7 +2754,7 @@ demo-exports profile="debug":
 #
 
 # Build the Unity showcase player from this package and run it.
-unity-demo unity_version="6000.3.22f1" action="run":
+unity-demo unity_version="6000.3.23f1" action="run":
     #!/usr/bin/env bash
     set -euo pipefail
     # The editor resolution `unity-editor` and `unity-render` both use. Issue
@@ -2763,7 +2763,7 @@ unity-demo unity_version="6000.3.22f1" action="run":
     if [ ! -x "${editor}" ]; then
       echo "unity-demo: no Unity executable at ${editor}" >&2
       echo "unity-demo:   install {{unity_version}} with the Hub, pass a version:" >&2
-      echo "unity-demo:     just unity-demo 6000.3.22f1" >&2
+      echo "unity-demo:     just unity-demo 6000.3.23f1" >&2
       echo "unity-demo:   or point at one directly:" >&2
       echo "unity-demo:     DASHSCENE_UNITY=/path/to/Unity just unity-demo" >&2
       exit 1
