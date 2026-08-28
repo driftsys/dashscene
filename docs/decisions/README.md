@@ -313,9 +313,15 @@ records below. Per-story decisions land here directly:
   owner's ruling on debt #134): clip coverage is anti-aliased and multiplies
   into the shape's own, which is what both shipped painters already do; it binds
   the Unity BRG painter to fold the clip into its instance SDF rather than reach
-  for a scissor rect. Same rule, not proven same numbers — that is issue #1281
-  (it read #828 until that closed at v0.21 without carrying a rendered
-  cross-painter comparison).
+  for a scissor rect. Same rule, and **since 2026-08-29 the numbers are
+  compared**: four fixtures draw a pixel where two clip boxes overlap — two
+  crossing, two with one box listed twice — and the two painters agree to the
+  code point wherever one box constrains the pixel and differ by the combination
+  rule where two do — `min` against a product, with neither correct in general,
+  and the same box listed twice enough to separate them. The record carries the
+  table and what each option costs; the ruling is still issue #1281's (it read
+  #828 until that closed at v0.21 without carrying a rendered cross-painter
+  comparison).
 - [masks-and-group-opacity.md](masks-and-group-opacity.md) — masks resolve at
   commit into the clip-region table (a mask stencils its following siblings,
   drawing nothing itself); group opacity splits free (per-rect
@@ -722,6 +728,17 @@ their parent rather than apart from it:
   `Present::document_replaced` to reach. The glyph atlases do not cross in the
   frame and do cross beside it, which story #1123 settled — see the record
   below.
+- [ds-wrong-thread-stands-for-a-dead-thread-too.md](ds-wrong-thread-stands-for-a-dead-thread-too.md)
+  — **one status covers a live foreign thread and a minting thread that has
+  exited**, and the C header states that it does not report which, so a host
+  cannot infer recoverability from it (owner's ruling on issue #1267 question 2,
+  2026-08-23). Telling the two apart needs a process-wide registry of live
+  threads — the shared state the thread-affine table above exists to remove — on
+  the path the frame loop uses. Widening stays available: the trigger to revisit
+  is the first host that holds a handle across a lifecycle event it does not
+  itself drive, and the fix then is a query call on the error path rather than a
+  cost on the frame path. Question 1 of the same issue is the record above, and
+  was ruled four days earlier.
 - [the-glyph-atlas-crosses-the-c-abi-as-a-call.md](the-glyph-atlas-crosses-the-c-abi-as-a-call.md)
   — the MSDF sheet a glyph run samples reaches a host through
   **`ds_runtime_atlas`, keyed by a `GlyphRun`'s atlas index**, rather than as

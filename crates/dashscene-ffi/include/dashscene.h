@@ -123,8 +123,23 @@ typedef enum DsStatus {
    * so a host's workers read rows without calling in. Nothing in this ABI
    * re-enters it yet. */
   DS_BAD_HANDLE = 16,
-  /* The handle was minted on a different thread, which may still hold it or
-   * may have exited. The remedy is to call from the thread that created it. */
+  /* This call is not on the thread that minted the handle.
+   *
+   * It does NOT say whether that thread is still alive. The minting thread may
+   * be running and simply not this one, or it may have exited, leaving a handle
+   * that can resolve on no thread ever again; DsRuntime below says why the two
+   * are deliberately not distinguished.
+   *
+   * So a host cannot infer recoverability from this status. Calling from the
+   * owning thread is the remedy only where the caller knows that thread is
+   * alive, and the caller knows that where this library does not. On Android
+   * a render thread ends per surface lifecycle, so a host that keeps a handle
+   * past one meets this case as a matter of course — and it is that host that
+   * ended the thread.
+   *
+   * Ruled on issue #1267. The reasoning, and the one thing that would reopen
+   * it, are in
+   * docs/decisions/ds-wrong-thread-stands-for-a-dead-thread-too.md. */
   DS_WRONG_THREAD = 17,
   /* No handle could be minted: this thread already holds the maximum number of
    * live runtimes, or the process has drawn every thread number a handle can

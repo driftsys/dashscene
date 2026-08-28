@@ -89,12 +89,23 @@ documentation-only diff most jobs skip. Read the individual jobs.
                       outside `check`; CI's `unity-abi` job runs exactly it. It
                       catches anything wrong with the C# declaration: a
                       member added, removed, renamed, moved or widened. Two
-                      things it does not catch, both measured: a member whose
-                      C# type has the right size and the wrong meaning (`uint`
-                      declared as `float`), and a member added to the **Rust**
-                      type that fits inside existing padding, since
-                      `abi_surface!`'s member lists are hand-written (issue
-                      #1252). See `unity/abi-check/Program.cs`
+                      things it does not catch. One is measured: a member
+                      whose C# type has the right size and the wrong meaning
+                      (`uint` declared as `float`). The other is a whole TYPE
+                      added to `dashpaint` and never listed in `abi_surface!` —
+                      `dashpaint_abi_type_count` is `SURFACE.len()`, so the
+                      count agrees with itself and the gate compares the types
+                      that ARE listed. A member added to the
+                      **Rust** type that fits inside existing padding was a
+                      third until issue #1252 closed, and is now refused one
+                      step earlier rather than by this gate: `abi_surface!`
+                      rebuilds every type from its own declared member list,
+                      so an unlisted member fails the BUILD with E0063 naming
+                      it and never reaches a check that could be green.
+                      See `unity/abi-check/Program.cs`, whose own header
+                      comment still describes the padding case as open —
+                      issue #1373 carries that and four other claims this
+                      lane could not reach
     just unity-ffi    the package's C# P/Invoke declarations, executed against
                       the `dashscene-ffi` cdylib this run builds. A DIFFERENT
                       surface from `unity-abi`, not a second opinion on it:

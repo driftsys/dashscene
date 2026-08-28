@@ -71,7 +71,11 @@ hardware scissor rect satisfies neither half: it gives an aliased edge, and for
 a clip box with corner radii it cannot express the shape at all.
 `docs/decisions/clip-edge-semantics.md` is the rule, and it leaves one thing
 open that a new backend will meet — the two shipped painters combine overlapping
-boxes by different functions, and no fixture compares them.
+boxes by different functions. Since 2026-08-29 fixtures measure both: at a texel
+two boxes each half-cover, `dashscene-gpu` takes the minimum and reports alpha
+128 where `dashscene-skia` multiplies and reports 64. Neither is correct in
+general, and issue #1281 carries the ruling — so a new backend follows
+`dashscene-gpu`'s `min` for now and expects that to be revisited.
 
 **`RectEntry::opacity` is not optional.** It is the resolved free-path group
 alpha, and a painter must multiply it into the paint alpha. Miss it and every

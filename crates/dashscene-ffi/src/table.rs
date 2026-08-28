@@ -379,9 +379,11 @@ fn resolve(table: &Table, value: u64) -> Result<u16, LookupError> {
 
     // Thread numbers start at 1, so a zero field is a value this library
     // never minted — a forged handle, or a leftover integer. It is `Bad`
-    // rather than `WrongThread`, because the header gives `WrongThread` the
-    // remedy "call from the thread that created it" and that handle has no
-    // creating thread.
+    // rather than `WrongThread`, because `WrongThread` names a call that is
+    // not on the thread that minted the handle, and this handle was minted by
+    // no thread at all. The header says the remedy for `WrongThread` is to
+    // call from the owning thread only where the caller knows that thread is
+    // alive (issue #1267); here there is no owning thread to name.
     if thread == 0 {
         return Err(LookupError::Bad);
     }
@@ -683,9 +685,9 @@ mod forged {
         assert_eq!(
             with_runtime(1, |_| ()),
             Err(LookupError::Bad),
-            "a value nothing minted is Bad — the header says WrongThread's \
-             remedy is to call from the creating thread, which cannot succeed \
-             for a handle that has no creating thread",
+            "a value nothing minted is Bad — WrongThread names a call that is \
+             not on the minting thread, and this handle has no minting thread \
+             for a caller to return to",
         );
     }
 }

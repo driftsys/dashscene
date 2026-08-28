@@ -13,8 +13,11 @@
 //! instrument for how it looks, it needs hardware, and it is story #586's.
 //!
 //! Read every assertion below as "did the pipeline do a thing at all", not as
-//! "is the picture right". Nothing here compares against the reference
-//! painter, deliberately.
+//! "is the picture right". Nothing here renders through the reference painter
+//! to compare against, deliberately. The one place this file names that
+//! painter's numbers is the clip-combination block near the end, where the
+//! comparison is issue #1281's subject rather than a fidelity check — and even
+//! there each fixture asserts only its own painter.
 
 use dashpaint::{
     ClipBox, ClipIndex, ClipTable, Color, CornerRadii, EntryParts, GlyphRunTable, ImageTable,
@@ -2564,5 +2567,194 @@ fn clip_coverage_multiplies_into_the_shape_rather_than_replacing_it() {
          should be near 64; got {alpha}. Near 128 is the shape's own coverage \
          surviving alone — either the clip replaced it instead of multiplying \
          into it, or the clip snapped to whole pixels and contributed 1.0"
+    );
+}
+
+// ---- overlapping clip boxes (issue #1281) ----------------------------
+//
+// A `ClipRegion` is a list of ancestor boxes that commit deliberately does not
+// pre-intersect — the intersection of two rounded rects is not a rounded rect
+// (`crates/dashpaint/src/lib.rs`,
+// `docs/decisions/resolved-clip-regions-at-commit.md`). So a nested clip
+// reaches a painter as two or more boxes and each painter combines them
+// itself, and the two shipped painters do it by different functions.
+//
+// `docs/decisions/clip-edge-semantics.md` left that open on purpose, because
+// choosing needs a measurement and the tree had no input to measure: every
+// clip fixture before these has at most one fractionally-covering box at any
+// pixel, which is the condition under which every candidate rule agrees.
+// `v03-clips` panel C looks like the case and is not.
+//
+// These two fixtures are that input. They pin what this painter does;
+// `clip_boxes_crossing_one_pixel_combine_by_product` and
+// `a_clip_box_repeated_in_a_region_darkens_it` in
+// `crates/dashscene-skia/tests/painter.rs` pin what the reference painter
+// does, and each names the other's measured value. The names differ by their
+// conclusion on purpose, so neither file can be searched for the other's.
+// **Neither asserts that its own rule is right** — that is issue #1281's
+// ruling, and it is not made. What they do is stop the two drifting apart, or
+// together, without anyone noticing.
+
+/// Two clip edges crossing one pixel combine by **`min`** here, so the
+/// crossing pixel is left no darker than one edge alone would leave it.
+///
+/// `clip_coverage` in `crates/dashscene-gpu/src/shaders/paint.wgsl` takes
+/// `cover = min(cover, coverage(d, globals.aa))` per box. Both boxes half-cover
+/// texel (40, 24) — one along x, one along y — so `min` gives 0.5 and alpha
+/// 128. The true area of the intersection at that pixel is a quarter.
+///
+/// **`dashscene-skia` renders the same case at alpha 64**, measured by
+/// `clip_boxes_crossing_one_pixel_combine_by_product`. That is the whole of
+/// issue #1281's disagreement, and this is one of its two halves.
+///
+/// **The three probes beside the crossing are not decoration.** Alpha 128 is
+/// also what a single fractional box gives, so the crossing assertion alone
+/// would stay green if the second box never reached the shader at all.
+/// `(20, 24)` is where only the y-constraining box is fractional, and it is
+/// what makes dropping that box fail.
+#[test]
+fn clip_boxes_crossing_one_pixel_combine_by_min() {
+    let mut paints = PaintTable::new();
+    let fill = paints.push_solid(Color {
+        r: 0.0,
+        g: 1.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    let mut clips = ClipTable::new();
+    let crossing = clips.push(&[
+        // Right edge at x = 40.5: half-covers texel column 40.
+        ClipBox {
+            x: 0.0,
+            y: 0.0,
+            w: 40.5,
+            h: 48.0,
+            corners: CornerRadii::default(),
+        },
+        // Bottom edge at y = 24.5: half-covers texel row 24.
+        ClipBox {
+            x: 0.0,
+            y: 0.0,
+            w: 64.0,
+            h: 24.5,
+            corners: CornerRadii::default(),
+        },
+    ]);
+    // The shape covers every probe below fully, so all partial coverage is the
+    // clip region's.
+    let pixels = draw(
+        &[rect(8.0, 12.0, 48.0, 24.0, fill, crossing)],
+        &paints,
+        &clips,
+    );
+
+    let crossing_alpha = texel(&pixels, 40, 24)[3];
+    assert!(
+        (124..=132).contains(&crossing_alpha),
+        "both boxes half-cover texel (40, 24), and `min` leaves it half covered, \
+         so alpha should be near 128; got {crossing_alpha}. Near 64 is the \
+         product — the rule `dashscene-skia` reaches through Skia's clip stack, \
+         and adopting it here is issue #1281's ruling rather than a refactor"
+    );
+
+    for (x, y, what) in [
+        (40, 12, "only the x-constraining box is fractional here"),
+        (20, 24, "only the y-constraining box is fractional here"),
+    ] {
+        let alpha = texel(&pixels, x, y)[3];
+        assert!(
+            (124..=132).contains(&alpha),
+            "at ({x}, {y}) {what}, so alpha should be near 128; got {alpha}. \
+             255 means that box never reached the shader, which would also \
+             leave the crossing assertion above green"
+        );
+    }
+
+    let interior = texel(&pixels, 20, 12)[3];
+    assert_eq!(
+        interior, 255,
+        "texel (20, 12) is inside both boxes, so the region must not dim it"
+    );
+}
+
+/// A clip box repeated in a region **changes nothing** here, because `min` is
+/// idempotent.
+///
+/// This is the case where `min` is the rule that matches the geometry and the
+/// product is not: clipping by a box and then by the same box again confines
+/// the ink to exactly the same half-pixel, so the true coverage is a half.
+///
+/// **`dashscene-skia` renders the doubled region at alpha 64 against 128 for
+/// the single one**, measured by `a_clip_box_repeated_in_a_region_darkens_it`.
+/// It is not a contrived shape: a `ClipRegion` carries *ancestor* boxes and is
+/// not pre-intersected, so a group clipped to the same bounds as its parent
+/// puts two equal boxes in the list.
+///
+/// Read together with the fixture above, this is why neither rule is simply
+/// correct — `min` is right here and the product is right there.
+///
+/// **It pins a third thing beside the idempotence**, because idempotence alone
+/// cannot: a region whose first box covers the probe fully and whose second
+/// half-covers it must report the second's half. Two identical boxes give the
+/// same answer however many are read, so without that probe a combiner that
+/// stopped after the first box would satisfy every other assertion here.
+#[test]
+fn a_clip_box_repeated_in_a_region_changes_nothing() {
+    let mut paints = PaintTable::new();
+    let fill = paints.push_solid(Color {
+        r: 0.0,
+        g: 1.0,
+        b: 0.0,
+        a: 1.0,
+    });
+    let mut clips = ClipTable::new();
+    let box_ = ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 40.5,
+        h: 48.0,
+        corners: CornerRadii::default(),
+    };
+    // A box whose right edge is at x = 41.5 covers texel 40 completely, so it
+    // constrains nothing at the probe. Listing it FIRST and `box_` second is
+    // what makes "the later box was consumed" observable: under `min` the
+    // answer is the second box's 0.5, and a combiner that stopped after the
+    // first would report full coverage.
+    //
+    // Without it this fixture is vacuous for the behaviour it names. Two
+    // identical boxes under `min` give the same answer as one however many are
+    // read, so bounding `clip_coverage`'s loop to a single box leaves the
+    // equality below green — measured, on this fixture, before this probe
+    // existed.
+    let wider = ClipBox { w: 41.5, ..box_ };
+    let doubled = clips.push(&[box_, box_]);
+    let single = clips.push(&[box_]);
+    let trailing = clips.push(&[wider, box_]);
+    let geometry = |clip| rect(8.0, 12.0, 48.0, 24.0, fill, clip);
+    let twice = draw(&[geometry(doubled)], &paints, &clips);
+    let once = draw(&[geometry(single)], &paints, &clips);
+    let after_a_wider_one = draw(&[geometry(trailing)], &paints, &clips);
+
+    let trailing_alpha = texel(&after_a_wider_one, 40, 24)[3];
+    assert!(
+        (124..=132).contains(&trailing_alpha),
+        "the second box half-covers texel (40, 24) and the first covers it \
+         fully, so `min` gives the second's half and alpha should be 128; got \
+         {trailing_alpha}. 255 means only the first box was read, which is the \
+         mutation the equality below cannot see"
+    );
+
+    let (a, b) = (texel(&twice, 40, 24)[3], texel(&once, 40, 24)[3]);
+    assert_eq!(
+        a, b,
+        "clipping by a box and then by the same box again confines the ink to \
+         the same half-pixel, and `min` says so exactly; got {a} doubled against \
+         {b} single. A product gives {b} once and about half that twice"
+    );
+    assert!(
+        (124..=132).contains(&a),
+        "a half-covering edge leaves alpha near 128 however many times it is \
+         listed; got {a}. This guards the equality above, which two zeroes or \
+         two 255s would also satisfy"
     );
 }

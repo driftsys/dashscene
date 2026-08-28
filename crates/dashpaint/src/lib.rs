@@ -1176,7 +1176,10 @@ pub struct ClipBox {
 /// satisfy this. `docs/decisions/clip-edge-semantics.md` is the rule and
 /// carries what it leaves open — how two overlapping boxes combine is not
 /// settled there, and the two shipped painters use different functions for
-/// it. No fixture has yet shown them producing different pixels.
+/// it. Since 2026-08-29 fixtures do show them producing different pixels: at
+/// a texel two clip boxes each half-cover, `dashscene-gpu` takes the minimum
+/// and reports alpha 128 where `dashscene-skia` multiplies and reports 64.
+/// Which rule is right is issue #1281's ruling and is not made.
 ///
 /// # A range, not a list (story #578)
 ///
