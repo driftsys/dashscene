@@ -5,16 +5,30 @@
 // which this file is modelled. `just unity-android` copies it and
 // `DashsceneAndroidProbe.cs` into a throwaway project under `target/`.
 //
-// **Why this file is where R-E7, R-E8 and R-E9 acquire a check.**
-// `docs/specification/07-embedding-and-distribution.md` states that those three
-// bind "the project that produces the shipping artifact", and that they have no
-// check because "this repository contains no committed Unity project". This is
-// the first project they bind, so it is the first place they can be read.
+// **This file does NOT implement R-E7, R-E8 or R-E9's check, and must not be
+// read as doing so.** It SETS the Android scripting backend, target
+// architectures and minimum SDK to the values those three require, so that the
+// player this gate measures is representative of a shipping one. Two reasons it
+// is not their check, both from records this repository already holds:
 //
-// It reads back what it set, as `RenderGateBuild` does and for the same reason:
-// an in-memory read catches a write that did not apply to the object. What the
-// file kept is settled downstream — a player whose architecture setting did not
-// persist fails to install on the device, and the recipe reports that.
+//   - A check that writes the values it then reads cannot fail. The justfile
+//     says exactly that where it explains why `unity-abi` is a separate entry
+//     point. Every read-back below catches a write the object rejected, and
+//     nothing more.
+//   - `docs/specification/07-embedding-and-distribution.md` scopes those three
+//     to the project producing the SHIPPING artifact, and says a project built
+//     to drive a device is a different project with its own settings. The
+//     project this configures is regenerated under `target/` on every run.
+//
+// Issue #1353 stays open. What would discharge it is a check that reads a
+// project it did not configure, or one that reads the built APK's manifest —
+// two independently produced numbers rather than one value compared to itself.
+//
+// An earlier version of this comment claimed the opposite, and added that "a
+// player whose architecture setting did not persist fails to install on the
+// device, and the recipe reports that". That is false: a fat ARMv7+ARM64 APK
+// installs on any device retaining 32-bit support, including the Pixel 5 this
+// gate was brought up on. Nothing downstream settles it.
 
 using System;
 using System.Collections.Generic;
@@ -337,7 +351,23 @@ public static class AndroidProbeBuild
             options = BuildOptions.Development,
         };
 
-        var report = BuildPipeline.BuildPlayer(options);
+        // **Wrapped, as `RenderGateBuild` wraps its own.** A BuildFailedException
+        // out of an IPreprocessBuildWithReport callback, or out of Gradle/IL2CPP
+        // setup, otherwise escapes `Build` — `EditorApplication.Exit` never
+        // runs, no `[android-probe-build]` line is ever written, and the recipe
+        // prints an empty excerpt beside a non-zero exit.
+        BuildReport report;
+        try
+        {
+            report = BuildPipeline.BuildPlayer(options);
+        }
+        catch (Exception e)
+        {
+            failures.Add(
+                $"the Android player build threw {e.GetType().Name}: {e.Message}");
+            return;
+        }
+
         if (report.summary.result != BuildResult.Succeeded)
         {
             failures.Add(

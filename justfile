@@ -3180,14 +3180,23 @@ unity-demo unity_version="6000.3.23f1" action="run":
 # Build a Unity Android player from the package and read D4's rung on a device.
 #
 # **The first recipe in this repository that builds a Unity player for anything
-# but macOS**, and the first project R-E7, R-E8 and R-E9 bind — the
-# specification records that those three had no check because "this repository
-# contains no committed Unity project". `AndroidProbeBuild.cs` is where they
-# acquire one.
+# but macOS.**
+#
+# **It does NOT check R-E7, R-E8 or R-E9, and the distinction matters.** It sets
+# the Android scripting backend, target architectures and minimum SDK to the
+# values those three require, and reports what it set — which makes the player
+# it builds representative of a shipping one. It is not their check, for two
+# reasons the repository states itself: a check that writes the values it then
+# reads cannot fail (the rule `unity-abi` is a separate entry point for), and
+# `docs/specification/07-embedding-and-distribution.md` scopes those three to
+# the project producing the SHIPPING artifact, which a project regenerated
+# under `target/` on every run is not. Issue #1353 stays open.
 #
 # **What it reports is a read, not a verdict about drawing.**
 # `docs/decisions/unity-painter-uses-brg.md` D4 selects a fallback rung from
-# `BatchRendererGroup.BufferTarget`, and that read has been taken on no device.
+# `BatchRendererGroup.BufferTarget`. Story #1125 read it on Metal on an Apple
+# M3; it had been read on no ANDROID device, which is what D4 asks for and what
+# this recipe makes obtainable.
 # The probe emits it before constructing the painter, so a painter that throws
 # — a stripped shader, issue #1313 — still yields the answer.
 #
@@ -3212,10 +3221,25 @@ unity-android unity_version="6000.3.23f1" timeout="300":
     # **Android Build Support, checked here rather than discovered mid-build.**
     # Without it `SwitchActiveBuildTarget` returns false and every check in the
     # build script would report on a macOS build instead.
-    android_player="${editor_dir}/../../../PlaybackEngines/AndroidPlayer"
-    if [ ! -d "${android_player}" ]; then
-      echo "unity-android: this editor has no Android Build Support at" >&2
-      echo "unity-android:   ${android_player}" >&2
+    # **Searched, not derived**, for the reason the BuiltInPackages block below
+    # gives: a fixed offset from `Unity.app/Contents/MacOS` is a macOS-bundle
+    # assumption, and DASHSCENE_UNITY may point at a layout without it. A false
+    # "no Android Build Support" about an editor that has it is worse than a
+    # late failure, because `AndroidProbeBuild` already refuses the genuinely
+    # missing case when SwitchActiveBuildTarget returns false.
+    android_player=""
+    for candidate in \
+      "${editor_dir}/../../../PlaybackEngines/AndroidPlayer" \
+      "${editor_dir}/../PlaybackEngines/AndroidPlayer" \
+      "${editor_dir}/Data/PlaybackEngines/AndroidPlayer" \
+      "${editor_dir}/../Data/PlaybackEngines/AndroidPlayer"; do
+      if [ -d "${candidate}" ]; then
+        android_player="$(cd "${candidate}" && pwd)"
+        break
+      fi
+    done
+    if [ -z "${android_player}" ]; then
+      echo "unity-android: no Android Build Support found near ${editor}" >&2
       echo "unity-android: install the 'android' module with --childModules." >&2
       exit 1
     fi
@@ -3233,6 +3257,16 @@ unity-android unity_version="6000.3.23f1" timeout="300":
       echo "unity-android: no BuiltInPackages directory near ${editor}" >&2
       exit 1
     fi
+    # Refused here rather than mid-loop. `[ 0 -lt 30s ]` is an "integer
+    # expression expected" error, and `set -e` does NOT fire in a `while`
+    # condition — so a typo ran the loop zero times and reported the DEVICE as
+    # silent. `unity-editor` validates its one positional for the same reason.
+    case "{{ timeout }}" in
+      ''|*[!0-9]*)
+        echo "unity-android: timeout must be whole seconds, got '{{ timeout }}'" >&2
+        exit 1
+        ;;
+    esac
     root="$(git rev-parse --show-toplevel)"
     project="${root}/target/unity-android-probe"
     package="${root}/unity/com.driftsys.dashscene"
@@ -3291,23 +3325,52 @@ unity-android unity_version="6000.3.23f1" timeout="300":
       echo "unity-android: the build wrote no ${apk}" >&2
       exit 1
     fi
+    # **The library is asserted INSIDE the APK, not only in the importer.**
+    # `CheckPackageNativeLibrary` asks Unity's importer before the build, and
+    # `RenderGateBuild` records by measurement that this is necessary and not
+    # sufficient: the importer reported a plugin compatible, the build produced
+    # 0 errors, and the player still raised DllNotFoundException because Unity
+    # copied nothing. That is why the macOS side has AssertLibraryReachedThePlayer;
+    # this is the Android half of it, and R-E8's equality is asserted on the
+    # artifact here rather than on a value the build script assigned itself.
+    libs="$(unzip -l "${apk}" 'lib/*' | awk '{print $4}' | grep '^lib/' || true)"
+    if ! grep -q '^lib/arm64-v8a/libdashscene_ffi\.so$' <<<"${libs}"; then
+      echo "unity-android: the APK carries no lib/arm64-v8a/libdashscene_ffi.so." >&2
+      echo "unity-android: Unity copies nothing rather than failing the build when a" >&2
+      echo "unity-android: plugin matches no slice of the player, so the first P/Invoke" >&2
+      echo "unity-android: would raise DllNotFoundException. R-E21 is what breaks." >&2
+      printf '%s\n' "${libs}" >&2
+      exit 1
+    fi
+    other_abis="$(grep -v '^lib/arm64-v8a/' <<<"${libs}" | grep '^lib/' || true)"
+    if [ -n "${other_abis}" ]; then
+      echo "unity-android: the APK carries native code for an ABI besides arm64-v8a," >&2
+      echo "unity-android: which is R-E8's equality failing on the shipped artifact:" >&2
+      printf '%s\n' "${other_abis}" >&2
+      exit 1
+    fi
+    echo "unity-android: the APK carries arm64-v8a only, and it holds the shipped .so"
     echo "unity-android: installing $(basename "${apk}")"
     "${adb}" install -r "${apk}" >/dev/null
     # The id the build wrote, not a literal repeated here — the two drift, and
     # the failure that produces is monkey reporting "No activities found to
     # run" into a stream this recipe would then blame on the device.
     app_id="$(cat "${project}/Build/application-id.txt")"
-    "${adb}" logcat -c
-    # **stdout discarded, stderr kept.** monkey is chatty on success and its
-    # only useful output is the failure line. It also aborts non-zero when the
-    # app crashes during its run, which is one of the outcomes this probe
-    # exists to distinguish — so the status is caught and reported rather than
-    # killing the recipe under `set -e` before logcat is ever read.
-    # **Kept, and shown only on failure.** monkey narrates its arguments on
-    # every successful launch, which buries the run's actual output; its one
-    # useful line — "No activities found to run" — appears only when it fails.
-    # Discarding both streams, as a first version did, loses that line and
-    # leaves a launch failure looking like a silent device.
+    # **A previous instance is stopped before this one launches.** Without it a
+    # still-running player keeps logging under the marker this recipe greps for.
+    "${adb}" shell am force-stop "${app_id}" || true
+    # `|| true`, like every other fallible adb call in this file. On Android 11
+    # and later `logcat -c` routinely fails with "failed to clear the 'main'
+    # log" and returns non-zero; under `set -e` that aborted the run with no
+    # message of its own, after the APK build and the install (issue #1006 §5).
+    "${adb}" logcat -c || true
+    # **monkey's stderr is kept and shown only on failure.** It writes its
+    # arguments on every successful launch, and its one useful line — "No
+    # activities found to run" — appears only when it fails, so discarding both
+    # streams leaves a launch failure looking like a silent device. It also
+    # exits non-zero when the app crashes during its run, which is an outcome
+    # this probe exists to report: the status is caught rather than left to
+    # kill the recipe under `set -e` before logcat is read.
     launch_log="${project}/monkey.log"
     set +e
     "${adb}" shell monkey -p "${app_id}" -c android.intent.category.LAUNCHER 1 \
@@ -3328,8 +3391,20 @@ unity-android unity_version="6000.3.23f1" timeout="300":
       # **`adb` failure separated from an empty result.** Folding both into
       # `|| true` reports an unplugged cable as "the player reported no read",
       # which sends whoever reads it to the device rather than to the cable.
+      # **Scoped to this run's pid**, the pattern `android-splitscreen` uses.
+      # An unscoped read admits a previous run's markers, which is the
+      # stale-pair false PASS of issue #1006 §1 — and it is reachable precisely
+      # because `logcat -c` above is `|| true`. The fallback is the whole
+      # buffer, and it SAYS so rather than passing quietly on it.
+      pid="$("${adb}" shell pidof "${app_id}" 2>/dev/null | tr -d '\r' \
+        | tr ' ' '\n' | grep -E '^[0-9]+$' | head -1 || true)"
       set +e
-      dump="$("${adb}" logcat -d 2>/dev/null)"
+      if [ -n "${pid}" ]; then
+        dump="$("${adb}" logcat -d --pid="${pid}" 2>/dev/null)"
+      else
+        dump="$("${adb}" logcat -d 2>/dev/null)"
+        unscoped=1
+      fi
       dumped=$?
       set -e
       if [ "${dumped}" -ne 0 ]; then
@@ -3347,7 +3422,7 @@ unity-android unity_version="6000.3.23f1" timeout="300":
       matches="$(printf '%s' "${dump}" | grep -F "[android-probe]" || true)"
       captured="$(printf '%s\n%s\n' "${captured}" "${matches}" \
         | awk 'NF && !seen[$0]++')"
-      if printf '%s' "${captured}" | grep -qF "[android-probe] DONE"; then
+      if grep -qF "[android-probe] DONE" <<<"${captured}"; then
         break
       fi
       sleep 2
@@ -3356,22 +3431,54 @@ unity-android unity_version="6000.3.23f1" timeout="300":
     echo "unity-android: ---- what the device reported ----"
     printf '%s\n' "${captured}"
     echo "unity-android: -----------------------------------"
-    if ! printf '%s' "${captured}" | grep -qF "[android-probe] READ"; then
-      echo "unity-android: the player reported NO read in ${waited}s." >&2
-      echo "unity-android: a run that observes nothing is not a run that passed." >&2
+    if [ "${unscoped:-0}" -eq 1 ]; then
+      echo "unity-android: pidof returned nothing, so the lines above are the WHOLE" >&2
+      echo "unity-android: buffer and may include an earlier run (issue #1006 §1)." >&2
+    fi
+    # **Three POSITIVE markers, not the absence of a negative one.** The first
+    # version required `READ` and forbade the error string, which is fail-open
+    # on any death that raises no managed exception: a native abort inside
+    # ds_runtime_new emits no error line, `READ` is already in the buffer, and
+    # the run exited 0. `unity-render` requires a positive `PASS` for the same
+    # reason. Absence of DONE is now a verdict rather than only a loop break.
+    # **Herestrings, not pipes, for every `grep -q` here.** `grep -q` exits on
+    # the first match and SIGPIPEs its left side; under `pipefail` the pipeline
+    # then reports 141 and the test inverts. Measured to flip between 20,799
+    # and 83,199 bytes of input, which a crash-restart loop reaches inside the
+    # poll window because each restart appends four fresh timestamped lines.
+    for marker in \
+      "[android-probe] READ" \
+      "[android-probe] runtime constructed" \
+      "[android-probe] DONE"; do
+      if ! grep -qF "${marker}" <<<"${captured}"; then
+        echo "unity-android: the player never reported '${marker}' in ${waited}s." >&2
+        echo "unity-android: a run that observes nothing is not a run that passed." >&2
+        exit 1
+      fi
+    done
+    # R-E14: the read is a verdict only in a process that HOLDS a graphics
+    # device. D4's stated hazard is a device-less read returning the value its
+    # table maps to rung 3, and being written down as a rung. Asserted rather
+    # than printed.
+    if grep -qF "api=Null" <<<"${captured}"; then
+      echo "unity-android: the player reported api=Null — it held no graphics device," >&2
+      echo "unity-android: so the BufferTarget value above is not a verdict (R-E14, D4)." >&2
       exit 1
     fi
-    # **The runtime half is a verdict too, and it was not one until 2026-08-28.**
-    # The READ line is emitted BEFORE the runtime is constructed, so a stale or
-    # ABI-mismatched Android library gave a green run: the APK built, installed,
-    # reported the read, threw on ds_runtime_new, and this recipe exited 0 while
-    # `docs/design/unity-csharp-host.md` claimed the library had loaded. Neither
-    # the package gate nor the build script catches it — one reads ELF headers
-    # and the other reads a `.meta`, and a stale library passes both.
+    # Kept beside the positive markers because it NAMES the failure. The loop
+    # above already fails a run whose runtime did not construct; this turns
+    # "a marker was missing" into "the library did not load", which is the
+    # difference between a report an operator can act on and one they cannot.
+    #
+    # What it catches is a MISSING library or an ABI-version mismatch —
+    # `EnsureAbiCompatible` plus `ds_runtime_new`. It does NOT catch a stale
+    # library of the right architecture whose ABI constant did not move: that
+    # is R-E17's per-array stride comparison, which runs in AcquireFrame, and
+    # this probe acquires no frame. `unity/README.md` states the distinction.
     #
     # The PAINTER line is deliberately not fatal: rung 3 and a stripped shader
     # are answers this probe exists to report, not failures of it.
-    if printf '%s' "${captured}" | grep -qF "the runtime did not construct"; then
+    if grep -qF "the runtime did not construct" <<<"${captured}"; then
       echo "unity-android: the shipped library did not load on ${device}." >&2
       echo "unity-android: R-E21 is the requirement that breaks; see the line above." >&2
       exit 1

@@ -117,8 +117,14 @@ requires `package.json` to declare `"unity": "6000.3"`, the minor version, which
 both patches satisfy.
 
 **Every `unity-*` recipe's default moved with it**, eleven sites in the
-`justfile`. The twelfth mention is a comment recording why `-batchmode` is used
-without `-nographics`, which is a measurement and does not move. Nothing else
+`justfile` at the time of that commit. One mention did not move and must not:
+the comment recording why `-batchmode` is used without `-nographics`, which is a
+dated measurement. **No ordinal is given for it here** — `unity-android` landed
+in the same branch and added further sites, so "the twelfth" stopped identifying
+it within one commit of being written. Derive the survivor instead:
+
+    grep -n '6000\.3\.22f1' justfile Nothing else
+
 measured in this note moves either, for the reason already stated: it is all
 labelled with the version it was taken on.
 

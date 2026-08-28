@@ -39,14 +39,30 @@ public sealed class DashsceneAndroidProbe : MonoBehaviour
         // with no device at all. `SystemInfo.graphicsDeviceType` is reported
         // beside the value so a reader can tell the two apart.
         var api = SystemInfo.graphicsDeviceType;
-        var target = BatchRendererGroup.BufferTarget;
 
+        // **Guarded, though these are the reads this file exists to take.** An
+        // unguarded throw here aborts `Start` before the report, and the recipe
+        // then says "the player reported no read" — indistinguishable from a
+        // launch failure. The `ConstantBuffer` branch is exactly the one no
+        // adapter has yet selected, so it is the least-exercised code in this
+        // file and the most likely to surprise.
+        var target = BatchBufferTarget.Unknown;
         var window = 0;
         var alignment = 0;
-        if (target == BatchBufferTarget.ConstantBuffer)
+        try
         {
-            window = BatchRendererGroup.GetConstantBufferMaxWindowSize();
-            alignment = BatchRendererGroup.GetConstantBufferOffsetAlignment();
+            target = BatchRendererGroup.BufferTarget;
+            if (target == BatchBufferTarget.ConstantBuffer)
+            {
+                window = BatchRendererGroup.GetConstantBufferMaxWindowSize();
+                alignment = BatchRendererGroup.GetConstantBufferOffsetAlignment();
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogError(
+                $"[android-probe] the BufferTarget read itself threw: {e.GetType().Name}: "
+                + $"{e.Message}. The line below reports {target}, which is NOT a verdict.");
         }
 
         // The read, before anything that can throw.

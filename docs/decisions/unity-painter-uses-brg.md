@@ -175,13 +175,23 @@ takes it on a player with a real device, on the target, and says which.
 in a windowed player — recorded in
 [`../technotes/unity-toolchain.md`](../technotes/unity-toolchain.md). That
 selects rung 1 **on that adapter only** and discharges nothing here: this
-clause's condition is a read on the target, and Android remains unread. The
-paragraph below is what still stands. When it is read, `ConstantBuffer` is not a
-synonym for supported-and-fine: it routes per-instance data through a
-uniform-buffer window bounded by `GetConstantBufferMaxWindowSize()` and aligned
-by `GetConstantBufferOffsetAlignment()` rather than through a storage buffer,
-which is a constraint on the instance layout D1 assumes. That is the same class
-of limit as the four fragment-stage storage buffers the lean painter binds
+clause's condition is a read on the target, and **the target board remains
+unread**. The paragraph below is what still stands.
+
+**Android has now been read, and not on the target** (2026-08-28, story #1367):
+a player built from the package by `just unity-android` reported
+`BatchRendererGroup.BufferTarget` = `RawBuffer` under **Vulkan** on a Pixel 5
+(`redfin`, `11181FDD4002MY`, Android 14, Adreno 620), with the shipped
+`libdashscene_ffi.so` loaded under IL2CPP. That is rung 1 on a second adapter
+and a second graphics API, so the `ConstantBuffer` window and alignment stay
+unread on any device. It discharges nothing here for the same reason the M3 read
+does not: a Pixel 5 is a phone. Issue #1345 is the read on the target board.
+When it is read, `ConstantBuffer` is not a synonym for supported-and-fine: it
+routes per-instance data through a uniform-buffer window bounded by
+`GetConstantBufferMaxWindowSize()` and aligned by
+`GetConstantBufferOffsetAlignment()` rather than through a storage buffer, which
+is a constraint on the instance layout D1 assumes. That is the same class of
+limit as the four fragment-stage storage buffers the lean painter binds
 (`host-integration-in-three-layers.md` D3a), and it is to be recorded whichever
 way it lands.
 

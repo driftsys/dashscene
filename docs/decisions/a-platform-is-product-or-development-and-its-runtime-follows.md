@@ -106,11 +106,15 @@ shipping runtime runs IL2CPP.**
 
 The showcase and the demo exist to be looked at and iterated on, and an IL2CPP
 transpile buys them nothing. They **shall** run Mono, set explicitly rather than
-left to a default, so the choice cannot drift. **Nothing does this yet** — no
-build script here sets a scripting backend at all, which is what the Context
-above records, and issue #1360 is what makes the rule true. Until it lands every
-player built here takes Unity's default for its target, and no gate reports
-which runtime produced its result.
+left to a default, so the choice cannot drift. **One build script does this
+now** — `unity/android-probe/AndroidProbeBuild.cs`, added 2026-08-28, sets
+IL2CPP explicitly and reports it, because R-E7 requires it for Android and
+because Unity ships no arm64 Mono runtime. That is a **product**-side target, so
+it does not discharge the rule above, which binds the development-side recipes:
+`unity-editor`, `unity-render`, `unity-conformance` and `unity-demo` still take
+Unity's default and still report nothing. Issue #1360 is what makes the rule
+true for them. Until it lands every player built here takes Unity's default for
+its target, and no gate reports which runtime produced its result.
 
 `unity/render-gate` is a demonstration for this purpose too and takes the same
 rule: its question — did ink land where the committed tables place a node — is
@@ -224,6 +228,14 @@ and that is R-E3 and R-E18.
 **R-E7, R-E8 and R-E9 remain unenforced.** Issue #1353 records that nothing
 reads `PlayerSettings` for any of them. This decision gives them a scope; it
 does not give them a check.
+
+**`just unity-android` does not change that, and says so itself.** It sets all
+three for the probe project it builds, and asserts R-E8 on the built APK — one
+ABI directory, `arm64-v8a`. But it configures the project it then reads, which
+this repository already rules out as a check, and the project it configures is
+regenerated under `target/` on every run rather than being the shipping artifact
+this record scopes those three to. The APK assertion is the one half that is a
+check of an artifact rather than of an assignment.
 
 **One question is closed by this record rather than by work**: issue #1348 asked
 whether the macOS row should ship a universal binary. P4 answers no, on the
