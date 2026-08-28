@@ -175,6 +175,23 @@ documentation-only diff most jobs skip. Read the individual jobs.
                       macOS, where Apple's linker is not available at all.
                       Needs the NDK for the Android half, so it is outside
                       `check` for the reason `just android` is
+    just unity-android needs BOTH an editor with Android Build Support AND an
+                      attached device — a combination no other recipe has, and
+                      bootstrap installs neither. Builds an Android player from
+                      the package as installed, asserts the APK carries
+                      `lib/arm64-v8a/libdashscene_ffi.so` and no other ABI, then
+                      installs it and requires three positive markers from
+                      logcat: the `BufferTarget` read, the runtime construction,
+                      and DONE. Refuses a run that reported `api=Null`, because
+                      D4 rules that a read taken without a graphics device is
+                      not a verdict. What it CANNOT see: a stale library of the
+                      right architecture whose ABI constant did not move —
+                      that is R-E17's stride comparison, which runs in
+                      AcquireFrame and this probe acquires no frame. It does
+                      NOT check R-E7, R-E8 or R-E9: it configures the project it
+                      reads, and that project is not the shipping artifact those
+                      three bind (issue #1353).
+
     just unity-editor  R-E10's SECOND check, the only thing in this
                       repository that compiles a Unity `.shader` WITHOUT
                       building a player, and the only one whose PURPOSE is to

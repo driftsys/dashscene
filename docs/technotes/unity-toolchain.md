@@ -102,6 +102,32 @@ as such. What the reversal changes for whoever builds next is that the Android
 modules recorded above are the ones a Unity Android player uses, rather than a
 set that a second editor would have had to install first.
 
+**The editor moved to `6000.3.23f1` on 2026-08-28, and `6000.3.22f1` is no
+longer installed.** Same LTS line, same modules — Android Build Support with the
+bundled NDK, SDK and OpenJDK — installed through the Hub with
+`--module android --childModules` as before. Its changeset is `09d2ecc7fb28`,
+read from the editor's own `Unity.app/Contents/Info.plist` rather than from a
+release listing.
+
+**Two statements above are now false as statements about this machine**, and are
+left as written because each is dated and each was true when taken: the Hub
+holds `6000.3.23f1` alone rather than `6000.3.22f1`, and it is that version the
+Unity CLI's `location` field marks as present. **R-E1 is unaffected** — it
+requires `package.json` to declare `"unity": "6000.3"`, the minor version, which
+both patches satisfy.
+
+**Every `unity-*` recipe's default moved with it**, eleven sites in the
+`justfile` at the time of that commit. One mention did not move and must not:
+the comment recording why `-batchmode` is used without `-nographics`, which is a
+dated measurement. **No ordinal is given for it here** — `unity-android` landed
+in the same branch and added further sites, so "the twelfth" stopped identifying
+it within one commit of being written. Derive the survivor instead:
+
+    grep -n '6000\.3\.22f1' justfile Nothing else
+
+measured in this note moves either, for the reason already stated: it is all
+labelled with the version it was taken on.
+
 **The licence is Unity Personal**, an entitlement issued 2026-08-17 to
 `~/Library/Unity/licenses/UnityEntitlementLicense.xml`. It was already in place
 when this story started, and no activation step was needed for any of the

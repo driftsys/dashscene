@@ -855,13 +855,18 @@ sentence.
       host has a toolchain and automation since story #1121** — three .NET
       gates and, since story #1122, a fourth in Rust run on any pull request
       that touches code, and none of the four needs an editor — but **no
-      target**: nothing here has run a Unity player on a device. Three further
+      target board**: `just unity-android` (story #1367) has run a Unity player
+      on a Pixel 5, reading `BufferTarget` = `RawBuffer` under Vulkan on
+      2026-08-28, but no player has run on the automotive board. Four further
       checks need an editor and therefore run on no CI runner:
       `just unity-editor` (story #1122) compiles every shader pass with
       `DOTS_INSTANCING_ON`, `just unity-conformance` (issue #1312) evaluates the
       committed layer-2 probe table through the generated `Sdf.hlsl` on a real
       graphics device, and `just unity-render` (issue #1298) builds a
-      player on the developer's own machine and draws through it. The `.meta` values that decide whether a native
+      player on the developer's own machine and draws through it, and
+      `just unity-android` (story #1367) needs an editor **with Android Build
+      Support** and an attached device, and reports the rung the device
+      selects. The `.meta` values that decide whether a native
       library reaches an Android build are written and exercised since story
       #1334 (R-E21, met): a Rust gate compares the committed `.meta` text
       against D3's table on every pull request, and `just unity-editor` reads

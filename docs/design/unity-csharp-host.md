@@ -723,6 +723,7 @@ resolver lets `openFd`'s exception through rather than falling back to a copy.
 | `unity/editor-compat`    | does the WHOLE package compile, shaders included?                                                                                                                                                                                          | `just unity-editor`      | **no** |
 | `unity/hlsl-conformance` | does the generated HLSL evaluate to the committed probe table?                                                                                                                                                                             | `just unity-conformance` | **no** |
 | `unity/render-gate`      | does the package DRAW, in a player, as a consumer installs it?                                                                                                                                                                             | `just unity-render`      | **no** |
+| `unity/android-probe`    | on a device: which rung does `BufferTarget` select, does the APK carry only arm64-v8a with the shipped `.so` inside it, and does that library load?                                                                                        | `just unity-android`     | **no** |
 
 `unity/editor-compat` and `unity/package-gate` are story #1122's,
 `unity/hlsl-conformance` is issue #1312's and `unity/render-gate` is issue
@@ -1064,18 +1065,23 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   #708 is the same gap in the lean painter.
 - **Two code paths have never been exercised by any gate or any device**, and
   they are worth naming as a class rather than one at a time: the
-  `ConstantBuffer` rung (this adapter reports `RawBuffer`, so
-  `InstancesPerBatch` and `BatchStrideBytes` have never run) and the opaque
-  material's alpha handling. A defect in either looks like a plausible picture
-  rather than a failure — the window-size clamp in `BatchStrideBytes` was one,
-  found by reading rather than by running. **The cutout material's `clip()`
-  threshold was the third and is now measured**: `just unity-render` draws that
-  class at 0.5 and at 2 — the second above any coverage a fragment can have —
-  and got 13 of 13 sampled node centres inked at the first and none at the
-  second, with 601144 of 786432 pixels differing. A `_DsCutoff` that did not
-  reach the fragment stage would have drawn the same picture twice, whatever the
-  stage read instead, so **it resolves**, on Metal, and issue #1307 is answered.
-  GLES 3.2 and Vulkan are untested.
+  `ConstantBuffer` rung (**two** adapters now report `RawBuffer` — Metal on an
+  Apple M3, and Vulkan on an Adreno 620 measured 2026-08-28 — so the
+  `ConstantBuffer` **branch** of `InstancesPerBatch` and `BatchStrideBytes` has
+  still never run. Both methods run on every capacity change and take an early
+  return when the rung is not `ConstantBuffer`; it is the windowed arithmetic
+  behind that return which is unexercised. A second agreeing adapter lowers the
+  chance of reaching it rather than raising it) and the opaque material's alpha
+  handling. A defect in either looks like a plausible picture rather than a
+  failure — the window-size clamp in `BatchStrideBytes` was one, found by
+  reading rather than by running. **The cutout material's `clip()` threshold was
+  the third and is now measured**: `just unity-render` draws that class at 0.5
+  and at 2 — the second above any coverage a fragment can have — and got 13 of
+  13 sampled node centres inked at the first and none at the second, with 601144
+  of 786432 pixels differing. A `_DsCutoff` that did not reach the fragment
+  stage would have drawn the same picture twice, whatever the stage read
+  instead, so **it resolves**, on Metal, and issue #1307 is answered. GLES 3.2
+  and Vulkan are untested.
 - **The painter draws, and what checks it is `unity/render-gate`.** Measured on
   `6000.3.22f1`, macOS/Metal, Apple M3, 2026-08-23, in a player built from this
   package: `goldens/dsb/v03-paint.dsb` packs to 16 instances on rung
@@ -1182,6 +1188,46 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   reachable rather than blocked: a player can load a shipped library, and what
   is untested is whether Mono and IL2CPP translate a missing symbol the way
   CoreCLR does.
+
+  **An IL2CPP player reached the C ABI on a device on 2026-08-28**, through
+  `just unity-android` (story #1367). That recipe sets the scripting backend
+  explicitly and reports it, so "which runtime is not recorded" is answered
+  **for this recipe**: IL2CPP, because R-E7 requires it and because Unity ships
+  no arm64 Mono runtime. On a Pixel 5 the shipped `libdashscene_ffi.so` loaded
+  and the runtime constructed, so a **present** library resolves under IL2CPP.
+
+  **That is a gated claim rather than an observation**, and it took two review
+  rounds to become one. The recipe's first verdict was the read line alone —
+  which the probe emits _before_ constructing the runtime — so a library that
+  failed to load gave a green run. Requiring the **absence** of the error line
+  was the second version, and it was still fail-open: a native abort inside
+  `ds_runtime_new` raises no managed exception, so no error line is written at
+  all. The verdict is now three **positive** markers — the read, the runtime
+  line and `DONE` — plus a refusal when the process reported `api=Null`, which
+  is R-E14's premise rather than a decoration.
+
+  **What it catches is a missing library or an ABI-version mismatch**, not
+  staleness in general. `DashsceneRuntime`'s constructor runs `ds_abi_version`
+  and `ds_runtime_new` only; R-E17's per-array `DsSlice::stride` comparison —
+  which `unity/README.md` names as what catches a stale library of the right
+  architecture — runs in `AcquireFrame`, and this probe acquires no frame. A
+  library rebuilt from another commit with an unchanged `DS_ABI_VERSION` still
+  constructs. The **painter** line stays non-fatal, because rung 3 and a
+  stripped shader are answers this probe reports rather than failures of it.
+
+  **The APK's own contents are asserted too**:
+  `lib/arm64-v8a/libdashscene_ffi.so` present, and no other ABI directory. That
+  is R-E8 read off the artifact rather than off a value the build script
+  assigned itself, and it is the Android half of what
+  `AssertLibraryReachedThePlayer` does for macOS — where the importer reported a
+  plugin compatible, the build produced no errors, and Unity copied nothing.
+
+  **That run does not change the claim above**, and the distinction is the whole
+  of issue #1322: nothing has yet removed a symbol from a library an IL2CPP
+  player loads. What was shown is that a present symbol resolves, which is not
+  what the forwarders' catches are written for. `just unity-render` still builds
+  a macOS standalone player, so its backend remains unrecorded and issue #1360
+  stands for it.
 - **No release, and therefore no tag.** Story #1334 landed the library on
   2026-08-24: the package ships macOS arm64 and Android arm64 under
   `Runtime/Plugins/`, each with a committed `.meta`, and **R-E21 is met**. R-E3
