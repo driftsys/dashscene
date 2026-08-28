@@ -14,6 +14,15 @@ Shader "Dashscene/LitCutout"
         _DsShade("Opacity, outset, rotation", Vector) = (1, 0, 0, 0)
         _DsPivot("Rotation pivot", Vector) = (0, 0, 0, 0)
         _DsPaint("Kind, row, clip offset, clip count", Vector) = (0, 0, 0, 0)
+
+        // Per material, not per instance, and declared here because a
+        // `UnityPerMaterial` member the property section does not declare
+        // makes the pass SRP-Batcher-incompatible — which a
+        // BatchRendererGroup draw refuses outright.
+        // `Runtime/Shaders/DashsceneInstance.hlsl` carries the rule, the run
+        // that measured it, and why no default here can be an obvious absence.
+        // The painter writes the value with `Material.SetVector` every frame.
+        _DsGlobals("Edge width, solid base, gradient base", Vector) = (1, 0, 0, 0)
         // Per material, not per instance: it is the class's own threshold
         // rather than anything boundary B carries.
         _DsCutoff("Coverage below which a fragment is discarded", Range(0, 1)) = 0.5

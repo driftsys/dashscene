@@ -76,6 +76,41 @@ namespace Driftsys.Dashscene
         /// layouts are the same because the pictures are meant to be.
         private const int BytesPerInstance = 5 * 16;
 
+        /// The property ids the per-frame binding uses, resolved once.
+        ///
+        /// **`Material.SetBuffer(string, …)` hashes the name on every call**,
+        /// and [`BindHeap`] makes four of those calls per material per frame
+        /// plus one more for each glyph atlas — so a cascade of four faces
+        /// paid twenty-four name lookups a frame where the process-wide
+        /// binding paid five. R-T4 bounds what a frame may spend, and this is
+        /// the same `Shader.PropertyToID` the metadata builders below already
+        /// use.
+        ///
+        /// **Static, and what makes that safe is the order rather than the
+        /// storage.** This class declares no static constructor, so it is
+        /// `beforefieldinit` and the runtime may run the initializer at any
+        /// point up to the first static access — which is the constructor's,
+        /// on the host's thread. `OnPerformCulling` touches a static of this
+        /// class too — the generic `Malloc` — and could therefore trigger it
+        /// from a job thread; it cannot run first, because a `BatchRendererGroup`
+        /// exists only once a painter has been constructed.
+        /// `Shader.PropertyToID` needs no graphics device, which is why a
+        /// rung-3 painter can be constructed with these already resolved.
+        private static readonly int PaintsId =
+            Shader.PropertyToID(PaintMaterialProperties.Paints);
+        private static readonly int ClipBoxesId =
+            Shader.PropertyToID(PaintMaterialProperties.ClipBoxes);
+        private static readonly int StrokesId =
+            Shader.PropertyToID(PaintMaterialProperties.Strokes);
+        private static readonly int ScalarsId =
+            Shader.PropertyToID(PaintMaterialProperties.Scalars);
+        private static readonly int GlyphsId =
+            Shader.PropertyToID(PaintMaterialProperties.Glyphs);
+        private static readonly int CutoffId =
+            Shader.PropertyToID(PaintMaterialProperties.Cutoff);
+        private static readonly int AtlasId =
+            Shader.PropertyToID(PaintMaterialProperties.Atlas);
+
         /// Bytes of shared, non-per-instance data at the head of every window:
         /// a zero `float4` and the two transforms.
         ///
@@ -161,14 +196,6 @@ namespace Driftsys.Dashscene
         private PackDiagnostics _lastDiagnostics;
         private bool _disposed;
 
-        /// How many painters bind the global paint heap. See the constructor.
-        private static int _liveCount;
-
-        /// Whether this painter incremented [`_liveCount`], so `Dispose`
-        /// decrements exactly what the constructor added and a rung-3 painter
-        /// leaves it untouched in both directions.
-        private bool _counted;
-
         /// The pipeline instance R-E5 was last decided against, so the warning
         /// is reported once per instance rather than once per frame.
         ///
@@ -245,7 +272,7 @@ namespace Driftsys.Dashscene
                 // Applied here as well as at construction, so a host that sets
                 // this after the painter exists does not have to know that the
                 // material was already made.
-                _material?.SetFloat(PaintMaterialProperties.Cutoff, value);
+                _material?.SetFloat(CutoffId, value);
             }
         }
 
@@ -346,15 +373,10 @@ namespace Driftsys.Dashscene
                         + "built for that rung: Draw returns without drawing and without "
                         + "throwing, so every frame is blank. Read BrgPainter.Rung to branch "
                         + "on this.");
-                    // **Not counted, and `Dispose` will not decrement it.** A
-                    // rung-3 painter constructs no group and `Draw` returns
-                    // before `BindGlobals`, so it binds nothing globally and
-                    // cannot be the second party to issue #1297's collision.
-                    // A first version returned above the increment while
-                    // `Dispose` decremented unconditionally, driving the
-                    // counter to -1; a second counted it here and warned about
-                    // a collision it cannot take part in. `_counted` is what
-                    // balances the two without either fault.
+                    // **It binds nothing either.** A rung-3 painter builds no
+                    // group and no material, and `Draw` returns above
+                    // `BindHeap`, so no buffer this object holds reaches a
+                    // shader.
                     return;
                 default:
                     // `Unknown` and anything else. Unity documents `Unknown` as
@@ -427,7 +449,7 @@ namespace Driftsys.Dashscene
                 _material = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
                 if (materialClass == MaterialClass.LitCutout)
                 {
-                    _material.SetFloat(PaintMaterialProperties.Cutoff, _cutoff);
+                    _material.SetFloat(CutoffId, _cutoff);
                 }
                 _mesh = UnitQuad();
                 _brg = new BatchRendererGroup(OnPerformCulling, IntPtr.Zero);
@@ -439,30 +461,6 @@ namespace Driftsys.Dashscene
             {
                 ReleaseUnityObjects();
                 throw;
-            }
-
-            // **The paint heap is bound globally, so two painters share it.**
-            // `Shader.SetGlobalBuffer` is what a BatchRendererGroup shader's
-            // `StructuredBuffer` is reachable through, and the last painter to
-            // draw wins — two documents in one process would each be shaded
-            // from the other's gradients, strokes and clip boxes. Reported
-            // rather than silently wrong, and issue #1297 carries the fix,
-            // which needs a device to verify because the alternative binding
-            // path cannot be told apart from "nothing drew" without one.
-            _counted = true;
-            CountLive();
-        }
-
-        /// Count this painter, and warn if it is not the only one.
-        private static void CountLive()
-        {
-            if (System.Threading.Interlocked.Increment(ref _liveCount) > 1)
-            {
-                Debug.LogWarning(
-                    "[dashscene] a second BrgPainter exists in this process. The paint heap is "
-                    + "bound with Shader.SetGlobalBuffer, so the last painter to draw supplies "
-                    + "the gradients, strokes and clip boxes every painter shades from. Draw one "
-                    + "document per process until issue #1297 is fixed.");
             }
         }
 
@@ -563,7 +561,7 @@ namespace Driftsys.Dashscene
                 {
                     textures[i] = AtlasTexture.Decode(atlases[i], i);
                     materials[i] = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
-                    materials[i].SetTexture(PaintMaterialProperties.Atlas, textures[i]);
+                    materials[i].SetTexture(AtlasId, textures[i]);
                     ids[i] = _brg.RegisterMaterial(materials[i]);
                 }
             }
@@ -808,7 +806,7 @@ namespace Driftsys.Dashscene
 
             UploadHeap();
             UploadInstances();
-            BindGlobals();
+            BindHeap();
 
             // After `UploadInstances`, which is what settles `_batchCount` and
             // `_instancesPerBatch` — the two the run boundaries are counted
@@ -1021,13 +1019,21 @@ namespace Driftsys.Dashscene
 
         /// Grow the buffer if this frame needs more room, then upload.
         ///
-        /// **Nothing is allocated on a frame that fits**, which is R-T4: "CPU
-        /// frame cost = dirty-range instance-buffer upload from the rect table
-        /// + submission. Nothing else." Capacity grows by doubling and never
-        /// shrinks, and the batches are added once per growth rather than once
-        /// per frame — a first version sized the buffer to the exact instance
-        /// count, which reallocated the `GraphicsBuffer` and re-added every
-        /// batch on any frame where a single node appeared or left.
+        /// **Nothing is allocated on a frame that fits, and that is the
+        /// allocation half of R-T4 rather than the whole of it.** The rule asks
+        /// for a CPU frame cost of "dirty-range instance-buffer upload from the
+        /// rect table + submission. Nothing else"; what goes up below is the
+        /// whole staging array — every batch, including the capacity past the
+        /// live instances — whatever `DsFrame.Dirty` carries, and nothing in
+        /// this package reads that set. Issue #1306 carries it, and
+        /// `docs/design/unity-csharp-host.md`'s gaps list states what the full
+        /// repack costs on the document `just unity-render` draws.
+        ///
+        /// Capacity grows by doubling and never shrinks, and the batches are
+        /// added once per growth rather than once per frame — a first version
+        /// sized the buffer to the exact instance count, which reallocated the
+        /// `GraphicsBuffer` and re-added every batch on any frame where a
+        /// single node appeared or left.
         private void UploadInstances()
         {
             if (InstanceCount == 0)
@@ -1393,21 +1399,47 @@ namespace Driftsys.Dashscene
             buffer.SetData(staging, 0, 0, rows * 4);
         }
 
-        private void BindGlobals()
+        /// Bind the paint heap on every material this painter draws with.
+        ///
+        /// **Per material and not process-wide, and that is issue #1297's
+        /// fix.** `Shader.SetGlobalBuffer` and `Shader.SetGlobalVector` bind
+        /// into one namespace the whole process shares, so two painters shaded
+        /// from one heap and the last one to draw supplied the gradients,
+        /// strokes and clip boxes every painter's fragments read. A painter
+        /// binds its own materials here, and a second painter in the same
+        /// process reaches none of them.
+        ///
+        /// **Every material, on every frame.** A heap buffer is reallocated
+        /// when its table outgrows it, so a binding taken once at construction
+        /// would name a freed buffer after the first growth — and
+        /// [`SetAtlases`] mints text materials long after the constructor has
+        /// run, so there is no earlier moment at which the set of materials is
+        /// complete.
+        private void BindHeap()
         {
-            Shader.SetGlobalBuffer(PaintGlobals.Paints, _paintBuffer);
-            Shader.SetGlobalBuffer(PaintGlobals.ClipBoxes, _clipBuffer);
-            Shader.SetGlobalBuffer(PaintGlobals.Strokes, _strokeBuffer);
-            // The glyph-run rows, bound globally like the other three and
-            // carrying the same collision issue #1297 names: the last painter
-            // to draw supplies the runs every painter shades from. **The sheet
-            // itself is not here** — it is per material, one per atlas, because
-            // a texture is a per-material binding and a document may name more
-            // than one.
-            Shader.SetGlobalBuffer(PaintGlobals.Glyphs, _glyphBuffer);
-            Shader.SetGlobalVector(
-                PaintGlobals.Scalars,
-                new Vector4(EdgeWidth, _packer.SolidBase, _packer.GradientBase, 0.0f));
+            var scalars = new Vector4(
+                EdgeWidth, _packer.SolidBase, _packer.GradientBase, 0.0f);
+            BindHeapTo(_material, scalars);
+            for (var i = 0; i < _textMaterials.Length; i++)
+            {
+                BindHeapTo(_textMaterials[i], scalars);
+                // **The glyph rows go on the text materials alone**, because
+                // the shading declares `_DsGlyphs` under `DASHSCENE_CLASS_TEXT`
+                // and no other class can reach a glyph run. **The sheet itself
+                // is not here** — `SetAtlases` binds it, one texture per
+                // material, because a document may name more than one.
+                _textMaterials[i].SetBuffer(GlyphsId, _glyphBuffer);
+            }
+        }
+
+        /// Bind the three tables every class reads, and the scalars, on one
+        /// material.
+        private void BindHeapTo(Material material, Vector4 scalars)
+        {
+            material.SetBuffer(PaintsId, _paintBuffer);
+            material.SetBuffer(ClipBoxesId, _clipBuffer);
+            material.SetBuffer(StrokesId, _strokeBuffer);
+            material.SetVector(ScalarsId, scalars);
         }
 
         private void RemoveBatches()
@@ -1481,10 +1513,6 @@ namespace Driftsys.Dashscene
             // a pipeline this painter does not own; releasing it here keeps a
             // disposed painter from being that instance's last root.
             _batcherReportedFor = null;
-            if (_counted)
-            {
-                System.Threading.Interlocked.Decrement(ref _liveCount);
-            }
 
             RemoveBatches();
             // **Before the group goes**, so every material this painter
@@ -1493,17 +1521,14 @@ namespace Driftsys.Dashscene
             ReleaseAtlases();
             ReleaseUnityObjects();
 
-            // **Unbound before they are freed.** `BindGlobals` binds these
-            // process-wide, so a disposed painter would otherwise leave
-            // `_DsPaints`, `_DsClipBoxes` and `_DsStrokes` naming released
-            // native buffers — which anything drawing a `Dashscene/*` material
-            // afterwards would sample. That is issue #1297's hazard with no
-            // live owner at all.
-            Shader.SetGlobalBuffer(PaintGlobals.Paints, (GraphicsBuffer)null);
-            Shader.SetGlobalBuffer(PaintGlobals.ClipBoxes, (GraphicsBuffer)null);
-            Shader.SetGlobalBuffer(PaintGlobals.Strokes, (GraphicsBuffer)null);
-            Shader.SetGlobalBuffer(PaintGlobals.Glyphs, (GraphicsBuffer)null);
-
+            // **Nothing is unbound here, and that is what binding per material
+            // buys.** While these were bound process-wide, a disposed painter
+            // left `_DsPaints`, `_DsClipBoxes` and `_DsStrokes` naming released
+            // native buffers, which anything drawing a `Dashscene/*` material
+            // afterwards would sample — issue #1297's hazard with no live owner
+            // at all. The only materials that name these buffers are this
+            // painter's own, and `ReleaseAtlases` and `ReleaseUnityObjects`
+            // above have destroyed every one of them before the buffers go.
             _instanceBuffer?.Dispose();
             _instanceBuffer = null;
             _paintBuffer?.Dispose();
@@ -1514,7 +1539,6 @@ namespace Driftsys.Dashscene
             _strokeBuffer = null;
             _glyphBuffer?.Dispose();
             _glyphBuffer = null;
-
         }
 
         /// Release the group, the material and the mesh, in that order.

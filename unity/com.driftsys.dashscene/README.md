@@ -46,9 +46,9 @@ What is here:
   sample, and this carries a numeric claim worth gating.
 - `Runtime/PaintHeap.cs`, `PaintProperties.cs`, `PaintBindings.cs`,
   `FramePacker.cs`, `PackDiagnostics.cs` — the half of the painter that decides
-  what the picture is: the heap layout, the per-instance and global binding
-  names, the packing of the committed tables into instances, and what was
-  skipped. Engine-independent, so it compiles under netstandard2.1 like
+  what the picture is: the heap layout, the per-instance and per-material
+  binding names, the packing of the committed tables into instances, and what
+  was skipped. Engine-independent, so it compiles under netstandard2.1 like
   everything else at this level.
 - `Runtime/Plugins/` — the native libraries the host loads, one per platform
   that ships: `macOS/libdashscene_ffi.dylib` and `Android/libdashscene_ffi.so`,

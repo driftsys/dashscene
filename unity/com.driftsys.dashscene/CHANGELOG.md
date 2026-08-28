@@ -98,8 +98,32 @@ the Cargo workspace rather than moving on its own.
 - `.meta` files for every path Unity imports, without which a Git-URL package
   delivers nothing (R-E2), and a `unity` field declaring `6000.3` (R-E1).
 
+### Changed
+
+- **`PaintGlobals` is gone; its five names are now members of
+  `PaintMaterialProperties`.** Nothing the painter binds is process-wide any
+  more, so the class that named the global buffers has no subject. A host
+  referencing `PaintGlobals.Paints` renames it to
+  `PaintMaterialProperties.Paints`; the string values are unchanged.
+
 ### Fixed
 
+- **Two painters in one process no longer shade from one paint heap.**
+  `BrgPainter` bound `_DsPaints`, `_DsClipBoxes`, `_DsStrokes`, `_DsGlyphs` and
+  the `_DsGlobals` scalars with `Shader.SetGlobalBuffer` and
+  `Shader.SetGlobalVector`, both process-wide, so the last painter to draw
+  supplied the gradients, strokes and clip boxes every painter's fragments read.
+  It binds them on the materials it registered itself instead, and the
+  constructor warning that told a host to "draw one document per process" is
+  gone with the constraint it reported — **a second painter in one process is
+  now a supported configuration** (issue #1297). All four shipped shaders gained
+  a `_DsGlobals` entry in their `Properties` blocks, and the three that lacked
+  one gained `_DsCutoff`: a `UnityPerMaterial` member a pass reads and the
+  property section does not declare makes the pass SRP-Batcher-incompatible, and
+  a `BatchRendererGroup` refuses every draw command that uses it. `_DsGlobals`
+  is read by every class and was measured doing exactly that; `_DsCutoff` is
+  read by one and drew all the same without its entry, and is declared
+  everywhere rather than resting on an explanation no run measured.
 - **The manifest no longer says the painter draws no text.** `package.json`'s
   `description` — what a UPM registry listing shows — still said the painter
   draws "no shadows, blurs, images or text" after story #1123 had landed the
