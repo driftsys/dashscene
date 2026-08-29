@@ -211,11 +211,19 @@ impl Comparison {
     }
 }
 
-/// Compares two tightly packed RGBA8888 buffers of the same width.
+/// Compares two tightly packed RGBA8888 buffers of the same width, counting a
+/// pixel as differing only when some channel differs by more than `threshold`.
+///
+/// **`threshold` is 0 for a golden**, where one side is a reviewed image
+/// produced by the same painter and any difference is a change. It is not 0
+/// for two painters: measured on a Pixel 5 on 2026-08-29, the lean painter and
+/// the Unity BRG painter drawing the same document at the same extent differ by
+/// one to three levels per channel on **99.98%** of the frame — a systematic
+/// rounding difference that is invisible and that swamps any count taken at 0.
 ///
 /// The caller establishes that the two are the same size — `compare_against`
 /// against the golden's dimensions, and any other caller after decoding.
-pub fn compare_rgba(left: &[u8], right: &[u8], width: i32) -> Comparison {
+pub fn compare_rgba(left: &[u8], right: &[u8], width: i32, threshold: u8) -> Comparison {
     let total = left.len() / 4;
     let mut differing = 0usize;
     let mut first = None;
@@ -223,7 +231,17 @@ pub fn compare_rgba(left: &[u8], right: &[u8], width: i32) -> Comparison {
     let mut max_channel_delta = 0u8;
 
     for (i, (a, b)) in left.chunks_exact(4).zip(right.chunks_exact(4)).enumerate() {
-        if a == b {
+        let delta = a
+            .iter()
+            .zip(b.iter())
+            .map(|(channel_a, channel_b)| channel_a.abs_diff(*channel_b))
+            .max()
+            .unwrap_or(0);
+        // **The maximum is taken over every pixel, not only counted ones.** A
+        // threshold that also hid the largest delta would report a frame as
+        // matching and give no number saying how nearly.
+        max_channel_delta = max_channel_delta.max(delta);
+        if delta <= threshold {
             continue;
         }
         differing += 1;
@@ -237,9 +255,6 @@ pub fn compare_rgba(left: &[u8], right: &[u8], width: i32) -> Comparison {
                 (min_x.min(x), min_y.min(y), max_x.max(x), max_y.max(y))
             }
         });
-        for (channel_a, channel_b) in a.iter().zip(b.iter()) {
-            max_channel_delta = max_channel_delta.max(channel_a.abs_diff(*channel_b));
-        }
     }
 
     Comparison {
@@ -293,7 +308,10 @@ fn compare_against(root: &Path, name: &str, png_bytes: &[u8], budget: Budget) {
     // device captures. A golden comparison needs only the count and the first
     // coordinate; it ignores the bounds and the channel delta, which exist for
     // the caller that has no reviewed image on either side.
-    let comparison = compare_rgba(&golden_pixels, &actual_pixels, width);
+    // Threshold 0: one side is a reviewed image from this same painter, so any
+    // difference at all is a change. The tolerance a golden carries is a count
+    // of differing pixels, not a per-channel band.
+    let comparison = compare_rgba(&golden_pixels, &actual_pixels, width, 0);
     let total = comparison.total;
     let differing = comparison.differing;
     let first = comparison.first;
@@ -387,6 +405,14 @@ fn try_decode_rgba(png_bytes: &[u8], label: &str) -> Result<((i32, i32), Vec<u8>
     Ok(((width, height), pixels))
 }
 
+/// Decodes a PNG to unpremultiplied RGBA8888 for [`pixel`], or `None`.
+///
+/// The comparison path's own decode, exposed so that a caller looking at *why*
+/// two frames differ reads the same bytes the count was taken over.
+pub fn decode_for_sampling(png_bytes: &[u8]) -> Option<((i32, i32), Vec<u8>)> {
+    try_decode_rgba(png_bytes, "the image").ok()
+}
+
 /// Compares two encoded PNGs.
 ///
 /// `Err` when either buffer does not decode, or when the two are different
@@ -396,7 +422,7 @@ fn try_decode_rgba(png_bytes: &[u8], label: &str) -> Result<((i32, i32), Vec<u8>
 /// The counterpart of `assert_matches_golden_within` for a caller with no
 /// reviewed image on either side, such as the Android host-parity harness
 /// comparing one capture from each host.
-pub fn compare_pngs(left: &[u8], right: &[u8]) -> Result<Comparison, String> {
+pub fn compare_pngs(left: &[u8], right: &[u8], threshold: u8) -> Result<Comparison, String> {
     let (left_size, left_pixels) = try_decode_rgba(left, "the left image")?;
     let (right_size, right_pixels) = try_decode_rgba(right, "the right image")?;
     if left_size != right_size {
@@ -406,7 +432,12 @@ pub fn compare_pngs(left: &[u8], right: &[u8]) -> Result<Comparison, String> {
             left_size.0, left_size.1, right_size.0, right_size.1
         ));
     }
-    Ok(compare_rgba(&left_pixels, &right_pixels, left_size.0))
+    Ok(compare_rgba(
+        &left_pixels,
+        &right_pixels,
+        left_size.0,
+        threshold,
+    ))
 }
 
 #[cfg(test)]
@@ -610,7 +641,7 @@ mod tests {
     #[test]
     fn two_identical_pngs_compare_equal() {
         let png = tiny_png(RED, RED);
-        let c = compare_pngs(&png, &png).expect("both decode and match in size");
+        let c = compare_pngs(&png, &png, 0).expect("both decode and match in size");
         assert_eq!(c.differing, 0);
         assert_eq!(c.total, 4);
     }
@@ -619,7 +650,7 @@ mod tests {
     fn two_differing_pngs_report_the_pixel_that_differs() {
         let left = tiny_png(RED, RED);
         let right = tiny_png(RED, BLUE);
-        let c = compare_pngs(&left, &right).expect("both decode and match in size");
+        let c = compare_pngs(&left, &right, 0).expect("both decode and match in size");
         assert_eq!(c.differing, 1);
         assert_eq!(c.first, Some((1, 1)));
         assert_eq!(c.bounds, Some((1, 1, 1, 1)));
@@ -629,12 +660,12 @@ mod tests {
     #[test]
     fn an_undecodable_image_is_an_error_rather_than_a_panic() {
         let png = tiny_png(RED, RED);
-        let error = compare_pngs(b"not a png", &png).expect_err("undecodable left");
+        let error = compare_pngs(b"not a png", &png, 0).expect_err("undecodable left");
         assert!(
             error.contains("not a decodable PNG"),
             "the error names what failed: {error:?}"
         );
-        let error = compare_pngs(&png, b"not a png").expect_err("undecodable right");
+        let error = compare_pngs(&png, b"not a png", 0).expect_err("undecodable right");
         assert!(
             error.contains("not a decodable PNG"),
             "the right image is checked too: {error:?}"
@@ -657,7 +688,7 @@ mod tests {
             .as_bytes()
             .to_vec();
 
-        let error = compare_pngs(&small, &large).expect_err("different extents");
+        let error = compare_pngs(&small, &large, 0).expect_err("different extents");
         assert!(
             error.contains("2x2") && error.contains("4x4"),
             "the refusal names both extents: {error:?}"
@@ -672,7 +703,7 @@ mod tests {
     #[test]
     fn identical_buffers_compare_equal() {
         let a = blank(4);
-        let c = compare_rgba(&a, &a, 4);
+        let c = compare_rgba(&a, &a, 4, 0);
         assert_eq!(c.differing, 0);
         assert_eq!(c.total, 16);
         assert_eq!(c.fraction(), 0.0);
@@ -687,7 +718,7 @@ mod tests {
         let mut b = a.clone();
         // pixel (2, 1), green channel
         b[(1 * 4 + 2) * 4 + 1] = 9;
-        let c = compare_rgba(&a, &b, 4);
+        let c = compare_rgba(&a, &b, 4, 0);
         assert_eq!(c.differing, 1);
         assert_eq!(c.first, Some((2, 1)));
         assert_eq!(c.bounds, Some((2, 1, 2, 1)));
@@ -710,7 +741,7 @@ mod tests {
                 b[(y * width + x) * 4] = 255;
             }
         }
-        let c = compare_rgba(&a, &b, width as i32);
+        let c = compare_rgba(&a, &b, width as i32, 0);
         assert_eq!(c.differing, 100);
         assert!(
             c.fraction() < 0.02,
