@@ -1366,8 +1366,9 @@ namespace Driftsys.Dashscene.Samples
             var lines = new List<string>
             {
                 $"{label}   [{_index + 1}/{Math.Max(TotalCount, 1)}]   "
-                + "left/right to switch, space for a scene's variant switch, "
-                + "up to rotate",
+                + "page up/down or swipe to switch, left/right or drag for the "
+                + "signal, space or tap for a scene's variant switch, up or two "
+                + "fingers to rotate, R or long press for this readout",
                 $"rung {_painter?.Rung.ToString() ?? "none"}   "
                 + $"{_painter?.InstanceCount ?? 0} instances",
             };
