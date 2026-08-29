@@ -32,9 +32,9 @@ so filling it in reads like completing a set rather than serving a consumer.
 
 The scripting runtime has the same problem one level down. R-E7 requires IL2CPP
 for Android and says nothing about desktop, which is correct; but **nothing
-enforces it** (issue #1353), and nothing anywhere in this repository sets a
-scripting backend, so every player built here today runs whatever Unity's
-default is for its target.
+enforces it** (issue #1353). Since story #1367 `unity/android-probe` sets the
+backend for the probe project it builds and reports it; every other player built
+here runs whatever Unity's default is for its target.
 
 ## Decision
 
@@ -217,17 +217,23 @@ for some platforms; it is worth re-deriving rather than inheriting. CI already
 runs on `ubuntu-latest`, so a machine that can **build** that row exists today —
 which is not what P2 asks. P2 asks for a machine that **runs** it, and no Linux
 Unity editor is in the loop: no CI runner here can host an editor at all, which
-is why three `just unity-*` recipes are outside CI. The row ships when a Linux
-editor is in the loop, not when a Linux compiler is, and GitHub offers macOS
-runners for a public repository. Each committed refresh writes a full copy into
-permanent history — these binaries do not deltify — so the cost grows with rows
-multiplied by refreshes, not with rows alone. Two rows at 9,660,216 bytes is
-comfortable; four rows refreshed often is where a tagged release starts to win,
-and that is R-E3 and R-E18.
+is why every `just unity-*` recipe that needs an editor is outside CI. The count
+is deliberately not written here: it has grown three times, and
+`.claude/skills/project-gates/SKILL.md` is where each one is enumerated. The row
+ships when a Linux editor is in the loop, not when a Linux compiler is, and
+GitHub offers macOS runners for a public repository. Each committed refresh
+writes a full copy into permanent history — these binaries do not deltify — so
+the cost grows with rows multiplied by refreshes, not with rows alone. Two rows
+at 9,660,216 bytes is comfortable; four rows refreshed often is where a tagged
+release starts to win, and that is R-E3 and R-E18.
 
-**R-E7, R-E8 and R-E9 remain unenforced.** Issue #1353 records that nothing
-reads `PlayerSettings` for any of them. This decision gives them a scope; it
-does not give them a check.
+**R-E7, R-E8 and R-E9 remain unenforced.** Not because nothing reads
+`PlayerSettings` — `unity/android-probe/AndroidProbeBuild.cs` sets all three and
+reads each back — but because a check that writes the value it then reads cannot
+fail for the requirement, and because these three bind the shipping project.
+That is issue #1353, and `07-embedding-and-distribution.md` carries the same
+distinction against each of the three. This decision gives them a scope; it does
+not give them a check.
 
 **`just unity-android` does not change that, and says so itself.** It sets all
 three for the probe project it builds, and asserts R-E8 on the built APK — one

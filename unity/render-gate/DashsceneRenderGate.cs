@@ -505,10 +505,16 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         }
 
         // **One painter is replaced only when the class changes**, and the
-        // cutoff alone never needs a new one. The painter binds its paint heap
-        // with `Shader.SetGlobalBuffer`, so two live painters would shade from
-        // each other's tables (issue #1297) — disposing before constructing is
-        // what keeps exactly one alive.
+        // cutoff alone never needs a new one. A painter owns its
+        // BatchRendererGroup, its mesh and its materials, and this gate asks
+        // about one material class at a time — so disposing before constructing
+        // is what keeps exactly one alive and one class under measurement.
+        //
+        // **The reason used to be a different one**, and PR #1372 retired it:
+        // the paint heap was bound with `Shader.SetGlobalBuffer`, so two live
+        // painters shaded from each other's tables (issue #1297, now closed).
+        // The heap binds per material now, so that collision is gone; the
+        // dispose-before-construct order is kept for the reason above.
         if (step.MaterialClass != _currentClass)
         {
             _painter.Dispose();

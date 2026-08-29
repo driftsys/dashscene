@@ -786,16 +786,16 @@ resolver lets `openFd`'s exception through rather than falling back to a copy.
 
 ## What the gates see, and what none of them does
 
-| gate                     | question                                                                                                                                                                                                                                   | recipe                   | in CI  |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ | ------ |
-| `unity/abi-check`        | do boundary B's C# types match the Rust ones?                                                                                                                                                                                              | `just unity-abi`         | yes    |
-| `unity/package-compat`   | would Unity compile the engine-free half at netstandard2.1?                                                                                                                                                                                | `just unity-abi`         | yes    |
-| `unity/ffi-check`        | do the P/Invoke declarations match the library?                                                                                                                                                                                            | `just unity-ffi`         | yes    |
-| `unity/package-gate`     | is the HLSL the WGSL's? do the shaders carry the pragmas? is the R-E10 split intact? does the painter still take R-E5's read behind its guard and report rung 3? does each shipped library's `.meta` and header match D3's row, per R-E21? | `just test`              | yes    |
-| `unity/editor-compat`    | does the WHOLE package compile, shaders included?                                                                                                                                                                                          | `just unity-editor`      | **no** |
-| `unity/hlsl-conformance` | does the generated HLSL evaluate to the committed probe table?                                                                                                                                                                             | `just unity-conformance` | **no** |
-| `unity/render-gate`      | does the package DRAW, in a player, as a consumer installs it?                                                                                                                                                                             | `just unity-render`      | **no** |
-| `unity/android-probe`    | on a device: which rung does `BufferTarget` select, does the APK carry only arm64-v8a with the shipped `.so` inside it, and does that library load?                                                                                        | `just unity-android`     | **no** |
+| gate                     | question                                                                                                                                                                                                                                                                                                                                                                                                                                      | recipe                   | in CI  |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ------ |
+| `unity/abi-check`        | do boundary B's C# types match the Rust ones?                                                                                                                                                                                                                                                                                                                                                                                                 | `just unity-abi`         | yes    |
+| `unity/package-compat`   | would Unity compile the engine-free half at netstandard2.1?                                                                                                                                                                                                                                                                                                                                                                                   | `just unity-abi`         | yes    |
+| `unity/ffi-check`        | do the P/Invoke declarations match the library?                                                                                                                                                                                                                                                                                                                                                                                               | `just unity-ffi`         | yes    |
+| `unity/package-gate`     | is the HLSL the WGSL's? do the shaders carry the pragmas? is the R-E10 split intact? does the painter still take R-E5's read behind its guard and report rung 3? does each shipped library's `.meta` and header match D3's row, per R-E21? and does the prose over the editor-only gates still match the code in them — R-E7/E8/E9's recorded status, `unity-android-negative`'s mutation table, and what `just unity-editor` is said to ask? | `just test`              | yes    |
+| `unity/editor-compat`    | does the WHOLE package compile, shaders included? and what does this runtime do with a `[DllImport]` naming a symbol no library exports?                                                                                                                                                                                                                                                                                                      | `just unity-editor`      | **no** |
+| `unity/hlsl-conformance` | does the generated HLSL evaluate to the committed probe table?                                                                                                                                                                                                                                                                                                                                                                                | `just unity-conformance` | **no** |
+| `unity/render-gate`      | does the package DRAW, in a player, as a consumer installs it?                                                                                                                                                                                                                                                                                                                                                                                | `just unity-render`      | **no** |
+| `unity/android-probe`    | on a device: which rung does `BufferTarget` select, does the APK carry only arm64-v8a with the shipped `.so` inside it, and does that library load?                                                                                                                                                                                                                                                                                           | `just unity-android`     | **no** |
 
 `unity/editor-compat` and `unity/package-gate` are story #1122's,
 `unity/hlsl-conformance` is issue #1312's and `unity/render-gate` is issue
@@ -1274,24 +1274,23 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   `ds_runtime_draw`'s forwarder, a swallow in `ds_runtime_attach_surface`'s and
   an import called outside its own `try` in `ds_runtime_resize`'s each left the
   gate green, and each turns it red now.
-- **The translation is verified on CoreCLR and on no Unity runtime.**
-  `unity/ffi-check` runs under the .NET SDK, and `just unity-editor` imports the
-  shipped library as an asset without ever calling into it — so nothing here
-  observes what Mono or IL2CPP does when a symbol is absent.
-  **`just unity-render` is the one that now could**: since story #1334 its
-  player loads the shipped library, so a Unity runtime reaches the C ABI for the
-  first time. **Which runtime is not recorded** — that project sets no scripting
-  backend, and issue #1360 is what makes it set one and report it, and R-E7's
-  IL2CPP requirement is stated for Android while this gate builds a macOS
-  standalone player. So the gap is narrower than it was and is not closed, and
-  naming the backend needs a reading nobody has taken. If IL2CPP raises a
-  different type, or resolves at load rather than at the first call, every
-  forwarder's catch is dead code on the target that ships. It cannot be closed
-  while the package ships no native library for a platform a player runs on.
-  **Story #1334 met that condition** on 2026-08-24, so issue #1322 is now
-  reachable rather than blocked: a player can load a shipped library, and what
-  is untested is whether Mono and IL2CPP translate a missing symbol the way
-  CoreCLR does.
+- **The translation is verified on Mono and CoreCLR, and not on IL2CPP, which is
+  what ships.** `unity/ffi-check` runs under the .NET SDK. `just unity-editor`
+  calls into the shipped library since 2026-08-29 and observes Mono raising
+  `EntryPointNotFoundException` — the paragraphs below carry that reading — so
+  what is left is the AOT backend. **`just unity-render` is the one that now
+  could**: since story #1334 its player loads the shipped library, so a Unity
+  runtime reaches the C ABI for the first time. **Which runtime is not
+  recorded** — that project sets no scripting backend, and issue #1360 is what
+  makes it set one and report it, and R-E7's IL2CPP requirement is stated for
+  Android while this gate builds a macOS standalone player. So the gap is
+  narrower than it was and is not closed, and naming the backend needs a reading
+  nobody has taken. If IL2CPP raises a different type, or resolves at load
+  rather than at the first call, every forwarder's catch is dead code on the
+  target that ships. It cannot be closed while the package ships no native
+  library for a platform a player runs on. **Story #1334 met that condition** on
+  2026-08-24, so issue #1322 became reachable rather than blocked: a player can
+  load a shipped library. Mono has since answered its half; IL2CPP has not.
 
   **An IL2CPP player reached the C ABI on a device on 2026-08-28**, through
   `just unity-android` (story #1367). That recipe sets the scripting backend
@@ -1332,6 +1331,82 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   what the forwarders' catches are written for. `just unity-render` still builds
   a macOS standalone player, so its backend remains unrecorded and issue #1360
   stands for it.
+
+  **Mono answers its half, measured on 2026-08-29.** `just unity-editor` makes
+  two `[DllImport("dashscene_ffi")]` calls of its own against the library the
+  package ships: `ds_abi_version`, which returned `2`, and one naming
+  `ds_no_library_exports_this_symbol`, which raised
+  `EntryPointNotFoundException`. The editor is a Mono runtime, and the check
+  REFUSES a runtime these records do not name rather than assuming one — so
+  Unity's move to CoreCLR cannot leave this paragraph false and the gate green.
+  So the behaviour every forwarder in `Native.cs` catches is now observed on a
+  runtime Unity ships, and not on CoreCLR alone.
+
+  **The positive control is what makes that a statement about the symbol.** A
+  library that did not load raises `DllNotFoundException`, and a check that only
+  caught `EntryPointNotFoundException` would report the same pass whether the
+  library was there or not. Mutated by pointing the second import at
+  `ds_abi_version`: the gate reported that the call RETURNED and exited 1.
+
+  **It does not exercise the package's own forwarders**, because `Native` is
+  internal to the package assembly and the two imports are declared in the gate.
+  What was unmeasured was the runtime, not the `catch`; `unity/ffi-check`
+  executes the translation itself on every pull request.
+
+  **IL2CPP is what is left, and it is the backend that ships.** It AOT-compiles
+  each P/Invoke through a generated resolver, so it may resolve at build or at
+  load rather than at the first call — and an editor is Mono whatever its player
+  is. Two routes reach it. `just unity-android` builds an IL2CPP player and
+  needs an attached device. A macOS standalone player built with
+  `ScriptingImplementation.IL2CPP` needs none, and **Mac Build Support (IL2CPP)
+  is present**: `mac-il2cpp` is selected in the editor's `modules.json` and
+  `Unity.app/Contents/PlaybackEngines/MacStandaloneSupport/Variations/` carries
+  the `il2cpp` player variations. An earlier version of this paragraph said that
+  module was absent; it was read from `Editor/<version>/PlaybackEngines/`, which
+  holds the Android and Linux players and never holds macOS support. So the
+  cheapest route to closing issue #1322 is open, and it is a player build rather
+  than a prerequisite.
+- **The editor-side gate sources are compiled by nothing that runs on a pull
+  request** — issue #1350. **Eight C# files, 5,743 lines at `0e818315`**, under
+  `unity/android-probe/`, `unity/demo/`, `unity/editor-compat/`,
+  `unity/hlsl-conformance/` and `unity/render-gate/`. The issue names two of
+  them and its own correction names three.
+
+  **Two populations, and the difference is that issue's own scope.** #1350 says
+  in terms that it is "not issue #1331", which is about files that ship to a
+  customer; these eight ship to nobody and are gate code. Widening the criterion
+  to "every `.cs` under `unity/` no `.csproj` compiles" adds five more — the
+  package's `Runtime/Engine/` and its `Samples~/`, 3,327 lines — for a union of
+  thirteen files and 9,070 lines, and those five are #1331's. Both counts are
+  derived with `git show 0e818315:<path> | wc -l`; a first version of this
+  paragraph published a ten-file middle set that belonged to neither, with one
+  row's line count taken from the working tree rather than from `0e818315`. They
+  compile only inside the throwaway projects `just unity-editor`,
+  `just unity-render`, `just unity-conformance`, `just unity-demo` and
+  `just unity-android` build, so a file that stops compiling is found by a
+  developer minutes or tens of minutes into an editor run rather than on the
+  pull request that broke it.
+
+  **Three measurements narrow the choice the issue leaves open, and none of them
+  closes it.** Referencing an editor's own managed assemblies makes CI depend on
+  an installed editor, which
+  [`../decisions/the-native-library-ships-inside-the-unity-package.md`](../decisions/the-native-library-ships-inside-the-unity-package.md)
+  D4 rules out, and those assemblies are Unity's to license rather than this
+  repository's to vendor. A formatter is not a syntax gate:
+  `dotnet format
+  whitespace --verify-no-changes` runs over these files with no
+  reference assemblies at all and reports formatting drift, and it exits **0**
+  over a copy of `DashsceneAndroidProbe.cs` carrying `error CS1026: ) expected`
+  — so the cheap form of a Roslyn pass would need Roslyn as a library, which
+  would be the first `PackageReference` in any `.csproj` here. And a vendored
+  facade is not a small one: these files reach `UnityEngine`, `UnityEditor`,
+  `UnityEditor.Build`, `UnityEditor.Build.Reporting`,
+  `UnityEditor.SceneManagement`, `UnityEngine.Rendering`, URP's
+  `UnityEngine.Rendering.Universal` — which lives in a package assembly rather
+  than in the editor install — and the package's own `Runtime/Engine/` types.
+  With no references the compiler stops after about a hundred errors, so that
+  surface cannot even be enumerated in one pass.
+
 - **No release, and therefore no tag.** Story #1334 landed the library on
   2026-08-24: the package ships macOS arm64 and Android arm64 under
   `Runtime/Plugins/`, each with a committed `.meta`, and **R-E21 is met**. R-E3

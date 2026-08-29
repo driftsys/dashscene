@@ -1,0 +1,56 @@
+# The mutations that show `just unity-android` can fail.
+#
+# `just unity-android-negative` applies each one to a COPY of the probe sources
+# under `target/` and requires the recipe to go red naming the diagnostic in the
+# `expect` column. `unity-conformance-negative` is the shape this follows, and
+# issue #1370 is why it exists: these four had been run once and written into a
+# commit message, and `implementing-a-change` rules that mutation evidence
+# expires when a later round changes the code. It had already expired — the
+# recorded evidence for `runtime-throws` said the recipe named R-E21, and by
+# the time #1370 was filed the marker loop was exiting before that block.
+#
+# **Nothing here edits a committed file.** The mutation is applied to the copy,
+# and `unity-android` takes its probe sources as its third parameter.
+#
+# Tab-separated, six columns, one mutation per line:
+#
+#   name      what to pass to the recipe; `all` runs every row
+#   file      the probe source to mutate, relative to unity/android-probe/
+#   find      the exact text to replace. It must appear exactly ONCE, and the
+#             recipe refuses the row otherwise rather than running a mutation
+#             that changed nothing
+#   replace   what to put there. It may CONTAIN `find` — two of these wrap a
+#             statement rather than deleting it — so the recipe confirms the
+#             mutation by finding `replace`, not by failing to find `find`
+#   expect    a literal the failing run must print. `unity/package-gate`'s
+#             `android_probe_negative_control` holds each one to the file that
+#             prints it, so a reworded diagnostic cannot leave this table
+#             expecting text nothing emits
+#   marker    the positive marker the mutation removes, or `-`. Two rows here
+#             both end as "a marker never arrived", and without this column
+#             they would be indistinguishable
+#
+# **Two rows for R-E8, and they reach different checks.** `r-e8-membership`
+# defeats the probe's own read-back, which fails inside the editor before
+# `BuildPlayer` is reached. `r-e8-fat-apk` makes the read-back agree and lets
+# the build run, so the APK should carry both ABIs and the `unzip` refusal
+# should turn the recipe red — the assertion the specification's R-E8 calls the
+# strongest evidence any of these three requirements carries. Without the
+# second row that assertion is exercised by nothing.
+#
+# **That last row is a PREDICTION, not a recorded run.** The others were run
+# against a device; this one was added on 2026-08-29 and only its mutation was
+# applied. If an ARMv7+ARM64 IL2CPP build fails in Gradle instead, the row
+# reports "went red for some other reason", and its `expect` is what needs
+# revising rather than the gate.
+#
+# Every row needs an editor with Android Build Support AND an attached device:
+# `unity-android` refuses before it builds when there is none, so even the row
+# that fails inside the editor cannot run without one.
+
+name	file	find	replace	expect	marker
+r-e8-membership	AndroidProbeBuild.cs	PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;	PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARMv7 | AndroidArchitecture.ARM64;	rather than exactly	-
+r-e8-fat-apk	AndroidProbeBuild.cs	var architectures = PlayerSettings.Android.targetArchitectures;	PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARMv7 | AndroidArchitecture.ARM64; var architectures = AndroidArchitecture.ARM64;	native code for an ABI besides arm64-v8a	-
+read-line-missing	DashsceneAndroidProbe.cs	$"{ReadTag} api={api} BufferTarget={target} window={window} alignment={alignment} "	$"[android-probe] withheld api={api} BufferTarget={target} window={window} alignment={alignment} "	a run that observes nothing is not a run that passed	[android-probe] READ
+runtime-throws	DashsceneAndroidProbe.cs	_runtime = new DashsceneRuntime();	if (Application.isPlaying) { throw new Exception("negative control: ds_runtime_new is not reached"); } _runtime = new DashsceneRuntime();	the shipped library did not load	-
+dies-after-read	DashsceneAndroidProbe.cs	_painter = new BrgPainter();	if (Application.isPlaying) { return; } _painter = new BrgPainter();	a run that observes nothing is not a run that passed	[android-probe] runtime constructed
