@@ -69,12 +69,255 @@ pub fn select(name: Option<&str>) -> &'static showcase::Showcase {
     }
 }
 
+/// Which way [`advance`] walks the scene registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Walk {
+    Next,
+    Previous,
+}
+
+/// The next or previous index over `count` entries, wrapping at both ends.
+///
+/// **`count` is a parameter rather than `showcase::SCENES.len()` read inside**,
+/// so that the wrap is testable at counts the registry does not currently have.
+/// With exactly three scenes committed, an implementation hard-coding `% 3` and
+/// one wrapping over the registry are the same function, and no test could tell
+/// them apart — which matters because the registry is the entry order the Unity
+/// host walks too, and a length written down here would leave the two hosts
+/// disagreeing about which scene "next twice" reaches the day a fourth lands.
+///
+/// Returns `index` unchanged for a `count` of zero, which no caller can
+/// produce: the registry is a non-empty constant.
+pub fn advance(index: usize, count: usize, walk: Walk) -> usize {
+    if count == 0 {
+        return index;
+    }
+    match walk {
+        Walk::Next => (index + 1) % count,
+        Walk::Previous => (index + count - 1) % count,
+    }
+}
+
+/// One command from the shared showcase vocabulary.
+///
+/// The discriminants are the contract's and cross JNI as plain integers, so
+/// renumbering them here silently rebinds every gesture and every key the
+/// harness sends. `docs/decisions/the-showcase-hosts-share-one-surface.md`
+/// carries the bindings; this carries the codes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    Next,
+    Previous,
+    Action,
+    Orientation,
+    Readout,
+}
+
+impl Command {
+    /// The command `code` names, or `None` for a code no gesture produces.
+    pub fn from_code(code: i32) -> Option<Self> {
+        match code {
+            0 => Some(Self::Next),
+            1 => Some(Self::Previous),
+            2 => Some(Self::Action),
+            3 => Some(Self::Orientation),
+            4 => Some(Self::Readout),
+            _ => None,
+        }
+    }
+}
+
+/// A launch that photographs one scene in one state, rather than running the
+/// demonstration.
+///
+/// Every field is required. A capture with a defaulted signal or phase is a
+/// capture of the wrong state, and the host-to-host comparison it feeds would
+/// be meaningless rather than merely wrong — so a partial specification is not
+/// a capture at all, and the launch runs the demonstration instead.
+#[derive(Clone)]
+pub struct Capture {
+    pub scene: &'static showcase::Showcase,
+    pub phase: u64,
+    pub signal: f32,
+}
+
+impl std::fmt::Debug for Capture {
+    /// Names the scene rather than the whole registry entry: `Showcase` holds
+    /// function pointers and derives nothing, and the name is what a log line
+    /// about a capture needs anyway.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Capture")
+            .field("scene", &self.scene.name)
+            .field("phase", &self.phase)
+            .field("signal", &self.signal)
+            .finish()
+    }
+}
+
+impl Capture {
+    /// The capture these three launch extras name, or `None`.
+    ///
+    /// **An unknown scene name is refused rather than falling back to the
+    /// first**, which is the opposite of [`select`]'s rule and deliberately so:
+    /// drawing something anyway is right for a demonstration and wrong for a
+    /// measurement, where it would silently photograph the wrong scene.
+    pub fn parse(scene: Option<&str>, phase: Option<i64>, signal: Option<f32>) -> Option<Self> {
+        let scene = showcase::by_name(scene?)?;
+        let phase = u64::try_from(phase?).ok()?;
+        let signal = signal?;
+        if !signal.is_finite() {
+            return None;
+        }
+        Some(Self {
+            scene,
+            phase,
+            signal: signal.clamp(0.0, 1.0),
+        })
+    }
+}
+
+/// The on-screen readout's text: the scene, the extent, and every term this
+/// host measures.
+///
+/// **Shape shared with the Unity host, term names not.** The contract fixes the
+/// order — entry, extent, then one labelled term per measured span — and each
+/// host names its own spans, because `paint` and `submit` here and `draw` there
+/// measure genuinely different parts of a frame. Printing them under one word
+/// is the error `demo/src/shell.rs` warns about.
+pub fn readout(sample: &Sample, width: u32, height: u32) -> String {
+    format!(
+        "{}  {width}x{height}\ntick {:.2} ms   paint {:.2} ms   submit {:.2} ms\np50 {:.2}   p95 {:.2}   max {:.2}   {} frames",
+        sample.scene,
+        sample.tick_mean,
+        sample.paint_mean,
+        sample.mean,
+        sample.p50,
+        sample.p95,
+        sample.max,
+        sample.frames,
+    )
+}
+
 #[cfg(target_os = "android")]
 mod host;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn next_walks_the_registry_and_wraps() {
+        let mut index = 0usize;
+        index = advance(index, showcase::SCENES.len(), Walk::Next);
+        assert_eq!(showcase::SCENES[index].name, "typography");
+        index = advance(index, showcase::SCENES.len(), Walk::Next);
+        assert_eq!(showcase::SCENES[index].name, "layout");
+        index = advance(index, showcase::SCENES.len(), Walk::Next);
+        assert_eq!(showcase::SCENES[index].name, "surfaces", "next wraps");
+    }
+
+    #[test]
+    fn previous_walks_the_other_way_and_wraps() {
+        assert_eq!(
+            showcase::SCENES[advance(0, showcase::SCENES.len(), Walk::Previous)].name,
+            "layout"
+        );
+    }
+
+    /// The registry is the entry order both Android hosts walk. A host that
+    /// hard-coded the length would silently stop walking a fourth scene, and
+    /// the two hosts would then disagree about what "next twice" reaches.
+    #[test]
+    fn the_walk_reaches_every_scene_and_returns_to_the_start() {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut index = 0usize;
+        for _ in 0..showcase::SCENES.len() {
+            seen.insert(showcase::SCENES[index].name);
+            index = advance(index, showcase::SCENES.len(), Walk::Next);
+        }
+        assert_eq!(
+            seen.len(),
+            showcase::SCENES.len(),
+            "the walk visited {} of {} scenes",
+            seen.len(),
+            showcase::SCENES.len()
+        );
+        assert_eq!(index, 0, "a full walk returns to where it started");
+    }
+
+    /// The wrap is over the count it is given, not over the three scenes that
+    /// happen to be committed. This is the case that tells an implementation
+    /// wrapping at `% 3` apart from one wrapping at the registry's length.
+    #[test]
+    fn the_wrap_follows_the_count_it_is_given() {
+        assert_eq!(advance(3, 4, Walk::Next), 0, "wraps at four");
+        assert_eq!(advance(0, 4, Walk::Previous), 3, "wraps back at four");
+        assert_eq!(advance(2, 4, Walk::Next), 3, "does not wrap early");
+        assert_eq!(advance(0, 1, Walk::Next), 0, "a single entry stays put");
+        assert_eq!(advance(0, 1, Walk::Previous), 0);
+    }
+
+    /// The discriminants are the contract's, and Java sends them as plain
+    /// integers. A renumbering here silently rebinds every gesture.
+    #[test]
+    fn every_command_code_round_trips_and_nothing_else_decodes() {
+        for (code, expected) in [
+            (0, Command::Next),
+            (1, Command::Previous),
+            (2, Command::Action),
+            (3, Command::Orientation),
+            (4, Command::Readout),
+        ] {
+            assert_eq!(Command::from_code(code), Some(expected), "code {code}");
+        }
+        assert_eq!(Command::from_code(5), None);
+        assert_eq!(Command::from_code(-1), None);
+    }
+
+    /// A capture with a defaulted signal is a capture of the wrong state, and
+    /// the comparison it feeds would be meaningless rather than merely wrong.
+    /// All three are required together or the launch is not a capture at all.
+    #[test]
+    fn a_capture_needs_all_three_of_its_parameters() {
+        assert!(Capture::parse(Some("layout"), Some(2), Some(0.5)).is_some());
+        assert!(Capture::parse(None, None, None).is_none());
+        assert!(Capture::parse(Some("layout"), Some(2), None).is_none());
+        assert!(Capture::parse(Some("layout"), None, Some(0.5)).is_none());
+        assert!(Capture::parse(None, Some(2), Some(0.5)).is_none());
+    }
+
+    /// An unknown scene name in a capture is refused rather than falling back
+    /// to the first, which is the opposite of `select`'s rule and deliberately
+    /// so: a launch that draws something is right for a demonstration and
+    /// wrong for a measurement.
+    #[test]
+    fn a_capture_of_an_unknown_scene_is_refused_rather_than_defaulted() {
+        assert!(Capture::parse(Some("not-a-scene"), Some(0), Some(0.0)).is_none());
+    }
+
+    #[test]
+    fn the_readout_names_the_scene_the_extent_and_every_measured_term() {
+        let sample = Sample {
+            scene: "layout".to_string(),
+            frames: 240,
+            tick_mean: 0.183,
+            paint_mean: 0.012,
+            paint_p50: 0.011,
+            mean: 9.94,
+            p50: 9.90,
+            p95: 10.84,
+            max: 11.17,
+            fps_if_unpaced: 98.5,
+        };
+        let text = readout(&sample, 1080, 2340);
+        assert!(text.contains("layout"), "{text}");
+        assert!(text.contains("1080x2340"), "{text}");
+        assert!(text.contains("tick"), "{text}");
+        assert!(text.contains("paint"), "{text}");
+        assert!(text.contains("submit"), "{text}");
+        assert!(text.contains("0.18"), "the tick value is shown: {text}");
+        assert!(text.contains("9.94"), "the submit mean is shown: {text}");
+    }
 
     #[test]
     fn a_named_scene_is_selected() {
