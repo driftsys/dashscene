@@ -38,15 +38,22 @@ and `layout`. What was true is that nothing sweeps the layer _count_, which is
 what the cost of one layer has to be read from, and that is what story #1229
 built (`crates/dashscene-gpu/examples/layer_cost.rs`).
 
-**v0.20 never held one either, and not because it had none.** That slice ran as
-parallel lanes rather than under a single driver prompt, and those prompts were
-written and kept outside this repository while it ran. Eighteen files are in
-`docs/archive/` under `2026-08-15-v020-wave2-*` and `2026-08-16-v020-wave3-*` —
-seventeen lane prompts and one serialised gate — archived at the slice close for
-the record rather than gardened into anything, the disposition this file's own
-rule gives a spent driver prompt. So the count above is ten because ten is what
-is held, not because v0.20 left nothing behind. `docs/archive/README.md` says
-what that set does and does not cover, including which lanes it misses.
+**v0.20 was described here as never having held one, and that was wrong.**
+`docs/archive/2026-08-13-v020-HARDENING-DRIVER-PROMPT.md` is a v0.20 driver
+prompt covering the slice's nine unheld items, written the day epic #951 was
+filed. It sat in this directory uncommitted and was recovered from session
+transcripts on 2026-08-29, after the checkout was deleted; `docs/archive/`
+records the recovery. The claim survived because this ledger reasons about what
+is _tracked_, and an untracked file is invisible to it — the same blind spot
+that let the file be lost in the first place. What was true is that the slice's
+build waves ran as parallel lanes whose prompts were written and kept outside
+this repository. Eighteen files are in `docs/archive/` under
+`2026-08-15-v020-wave2-*` and `2026-08-16-v020-wave3-*` — seventeen lane prompts
+and one serialised gate — archived at the slice close for the record rather than
+gardened into anything, the disposition this file's own rule gives a spent
+driver prompt. So the count above is ten because ten is what is held, not
+because v0.20 left nothing behind. `docs/archive/README.md` says what that set
+does and does not cover, including which lanes it misses.
 
 Not all ten are untouched: several are **partly gardened**, their implemented
 halves already written into records and their `status` lines saying which half
