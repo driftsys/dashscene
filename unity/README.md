@@ -115,7 +115,7 @@ repository builds and records.
                               so it runs on no CI runner
     demo-producer/            the native producer that player draws the
                               showcase scenes through: `dashscene-ffi` linked
-                              as an rlib plus six `ds_demo_*` entry points, so
+                              as an rlib plus seven `ds_demo_*` entry points, so
                               it carries ONE runtime table and a handle minted
                               by `ds_runtime_new` resolves in `ds_demo_build`.
                               A separate crate and not a feature of the shipped
