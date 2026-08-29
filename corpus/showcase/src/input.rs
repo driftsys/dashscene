@@ -3,9 +3,12 @@
 //! Names no scene, no node, no signal name and no colour, and depends on no
 //! windowing library: a host maps its own events onto these three functions and
 //! passes the signal name and optional action it was handed on
-//! [`crate::Showcase`]. That is what lets `demo` (winit), `demo-android`
-//! (`MotionEvent`) and the Unity sample (`Input`, through
-//! `unity/demo-producer`) share one vocabulary rather than author three.
+//! [`crate::Showcase`]. That is what lets hosts with unrelated event types
+//! share one vocabulary rather than author one each.
+//!
+//! **`demo` is the only caller today.** `demo-android` and the Unity sample
+//! reach it as the showcase-parity work lands; until they do, this module is
+//! shared by intent rather than in fact.
 //!
 //! This is the second home of these bodies. They were `demo/src/input.rs`'s,
 //! where story #573 wrote them to name no scene deliberately; what kept them
