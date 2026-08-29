@@ -67,13 +67,12 @@ use crate::shell::SceneAction;
 /// The write is the whole of what this does: `LiveScene::tick` is what moves
 /// anything, on the loop's own thread, at the loop's own time (P3).
 pub fn cursor_moved(live: &mut LiveScene, signal: &str, x_physical: f64, width: u32) -> bool {
-    if width == 0 {
+    match showcase::input::signal_from_x(x_physical, width) {
+        Some(normalised) => showcase::input::set_signal(live, signal, normalised),
         // A minimised window: there is no width to normalise against, and no
         // frame to show the result in either.
-        return false;
+        None => false,
     }
-    let normalised = (x_physical as f32 / width as f32).clamp(0.0, 1.0);
-    set_signal(live, signal, normalised)
 }
 
 /// Handles one key already filtered to a fresh press — `shell::Host` checks
@@ -91,34 +90,12 @@ pub fn key(
     match code {
         // The two ends of the signal's range, so the same channel the pointer
         // scrubs can be driven to a known value without aiming.
-        KeyCode::ArrowLeft => set_signal(live, signal, 0.0),
-        KeyCode::ArrowRight => set_signal(live, signal, 1.0),
-        KeyCode::Space => match action {
-            Some(action) => {
-                action(live, arena);
-                true
-            }
-            // The scene declares no variant set. The key does nothing, rather
-            // than the host inventing something for it to do.
-            None => false,
-        },
+        KeyCode::ArrowLeft => showcase::input::set_signal(live, signal, 0.0),
+        KeyCode::ArrowRight => showcase::input::set_signal(live, signal, 1.0),
+        // The scene declaring no variant set is not an error: the key does
+        // nothing, rather than the host inventing something for it to do.
+        KeyCode::Space => showcase::input::run_action(live, arena, action),
         _ => false,
-    }
-}
-
-/// Writes `value` to the scene's named signal, or reports that the scene does
-/// not declare it.
-///
-/// `false` rather than a panic because the name is the scene's to choose and
-/// `LiveScene::signal_named` returning `None` is exactly the case a document
-/// loaded from a `.dsb` (story #575) can present.
-fn set_signal(live: &mut LiveScene, signal: &str, value: f32) -> bool {
-    match live.signal_named(signal) {
-        Some(handle) => {
-            live.set(handle, value);
-            true
-        }
-        None => false,
     }
 }
 
