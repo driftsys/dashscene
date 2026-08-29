@@ -738,18 +738,226 @@ is the lever that survives, because it overrides the logical display rather than
 asking the window manager for a rotation; `adb shell wm size reset` restores the
 device afterwards.
 
-**`frames.md` does not record the extent**, which is how the above went
-unnoticed until the raw captures were grepped. The table names the device, the
-build profile and whether the source is an emulator, and a reader comparing rows
-cannot see that they describe different geometries. That is a gap in story
-#1229's apparatus rather than in this measurement, and it is issue **#1236**:
-the `attached a WxH surface` line sits in the same capture the samples come
-from, so the extent can be attributed per row by the join the parser already
-does for CPU.
+**`frames.md` did not record the extent**, which is how the above went unnoticed
+until the raw captures were grepped: the table named the device, the build
+profile and whether the source is an emulator, and a reader comparing rows could
+not see that they described different geometries. That was a gap in story
+#1229's apparatus rather than in this measurement, and it was issue **#1236**.
+
+**It is closed.** `frame-table.py` reads the `attached a WxH surface` line out
+of the same capture the samples come from and attributes it per row by the join
+it already does for CPU, so every row carries an `extent` column. A row the
+surface changed under reads `1080x2050 → 1080x1984 (changed)` rather than one
+geometry, and the table says above itself either that every row was drawn at one
+extent or which extents it mixed. **Marked and not refused**, deliberately: the
+landscape re-measure under "Frame costs (#842)" ABOVE is a run whose whole
+purpose was a second geometry, and a table that refused it would discard
+evidence rather than label it. Both archived bundles re-derive: `run-2-complete`
+reports every row at `1280x445`, and `run-1-partial` reports `layout`'s first
+sample spanning `1080x2050 → 1080x1984` and its other two at `1080x1984` — which
+is the defect above, read off the table instead of grepped out of the captures.
 
 **The device clock read 2023-12-29** — 2.6 years behind — so the bundle
 directory is stamped `20231229T060616Z`. Every interval in it is device-clock to
-device-clock and is therefore correct; only the provenance line is misleading.
+device-clock and is therefore correct; only the provenance line was misleading.
+`environment.md` now records the host's clock beside the device's and says which
+of the two everything in the bundle is timed by, which is the other half of
+#1236.
+
+## The Unity painter, on the same device (2026-08-29)
+
+    status  taken 2026-08-29 on the same Pixel 5, from a Unity player built by
+            `just unity-demo-android` at commit 0cf9024b. **This is a device
+            measurement**, and it is issue #1347's half of epic #1107's Track B.
+            The branch is based on `origin/main` at `0e818315` and predates
+            PR #1372's change to the painter's buffer binding (`26c3955f`), so
+            every figure here sits on one side of it. **That change is now
+            merged into this branch, so the painter these numbers describe is
+            not the painter shipping beside them**: `BrgPainter` bound the paint
+            heap process-wide with `Shader.SetGlobalBuffer` when they were taken
+            and binds per material now. The figures are not withdrawn — the
+            binding call is not the per-frame cost the table reports, whose
+            paint term is 0.01 to 0.10 ms — but nothing here has re-measured
+            them against it. Issue #1384 carries the re-run.
+
+**The player.** `Samples~/Showcase`, the same sample `just unity-demo` runs on
+macOS, built for Android through IL2CPP with ARM64 exactly and minimum SDK 33.
+It draws the showcase scenes through `unity/demo-producer` — `dashscene-ffi`
+plus `ds_demo_*` — which is what makes the content the same content
+`demo-android` draws. The native library is that producer built at the
+`demo-release` profile, which is `release` with thin LTO;
+`[profile.demo-release]` in `Cargo.toml` records why plain release cannot build
+that crate at all, and this is the one measurement taken over it.
+
+**The graphics API is chosen, and the default is not it.** `DemoBuild` sets
+Vulkan explicitly, and the player reports
+`Vulkan, Adreno (TM) 620, Vulkan 1.1.0 [512.490.0]` with the painter on the
+`RawBuffer` rung — which is the read `docs/decisions/unity-painter-uses-brg.md`
+D4 already carries for this device.
+
+**A build that leaves the selection to Unity does not get that.** Measured the
+same day on the same device: with the default API list the player ran **OpenGL
+ES** on the Adreno 620 and the painter selected the **`ConstantBuffer`** rung.
+Both are real answers about this device, and a per-frame figure that does not
+name which one it was taken under is not comparable with anything.
+
+### What the two figures are, and which one may be compared
+
+Three sweeps, lettered, every raw capture kept beside the table under
+`measure/android/`'s output. `measure/android/unity-frame-cost.sh` writes that
+table; nothing in it is transcribed by hand.
+
+**The summary below IS transcribed, and was wrong.** Six of its fifteen cells
+disagreed with the captures when the review re-derived them, `typography`'s
+`max` published as `0.47-0.50` against an observed `0.76` — a worse case 52%
+above the bound the record gave. `measure/android/record-check.py` now
+re-derives every cell here from the archived sweeps and `harness-tests` runs it,
+because a number nobody re-derives is the thing this branch put PR #1299 on hold
+for.
+
+Unity, Vulkan, `RawBuffer`, 1080x2340, three sweeps over the three scenes:
+
+    scene       tick   draw mean   p50         p95         max
+    surfaces    0.12   0.19        0.19        0.25-0.26   0.31-0.32
+    typography  0.15   0.32-0.33   0.33-0.34   0.39-0.41   0.45-0.76
+    layout      0.05   0.19        0.18-0.19   0.24-0.25   0.31-0.37
+
+**Each row is one sample per sweep, and every one of them is a first sample.** A
+report covers 240 drawn frames and the loop is paced well under the display
+rate, so the fourteen seconds each entry was left drawing yielded one sample,
+not the three the dwell was chosen for. The lean painter's table below discounts
+its own first sample as pipeline warm-up; nothing here can, so `max` in
+particular carries warm-up. That is what the `typography` spread of 0.45 to 0.76
+is.
+
+The lean painter over the same three scenes, on the same device the same day,
+release, 1080x1984, three samples per scene:
+
+    scene       tick        paint  submit mean   p50          p95
+    surfaces    0.23-0.24   0.03   21.64-21.90   20.73-21.27  28.35-29.51
+    typography  0.36-0.39   0.10   7.67-10.36    9.83-10.29   10.90-10.98
+    layout      0.18-0.19   0.01   7.48-10.24    9.94-10.23   10.84-11.17
+
+**`tick` is the only term that may be subtracted from the other.** Both bracket
+the same `ds_runtime_tick` onto the same solver over the same scenes, and
+`unity/package-gate`'s `frame_cost_instrument` holds the two sample sizes to
+each other. The Unity host's is lower on every scene — 0.51, 0.40 and 0.27 of
+the Rust host's for `surfaces`, `typography` and `layout` — and **this record
+does not explain that**: the build profiles differ in the direction that would
+make the Unity figure slower, not faster, and the extents differ by 18% of the
+pixels. What would settle it is one run of each host at one extent with the same
+producer profile, and nothing here has taken it.
+
+**`draw` and `submit` are different quantities and are not subtracted here.**
+`DashsceneFrameCost.cs` states the Unity definition term by term: `draw` is the
+lease, `BrgPainter.Draw` and the release — every part of the frame this project
+executes — and it **excludes** the GPU's execution of the batches, URP's passes,
+culling and the swapchain present, because Unity runs all of them after `Update`
+returns. `submit` is "the upload, the encode, the submit and the swapchain".
+Setting 0.19 beside 21.9 as though one were the other would be the same defect
+one word over that `demo-android` renamed its own figure to avoid.
+
+**The lean painter's `paint` is the closest analogue and is still not the
+same.** Both are CPU-side and both exclude the GPU, but `paint` is the instance
+packing alone where `draw` also carries the lease and the buffer upload. Read as
+an order of magnitude, the Unity painter's CPU-side per-frame cost on this
+device is a few tenths of a millisecond against the lean painter's few
+hundredths.
+
+**The Unity figure appears not to move with the extent, and the lean painter's
+does.** `surfaces` reported `draw mean` 0.20 at 2340x1080 and 0.22-0.23 at
+1080x2340, while issue #1236 records the lean painter's `typography` moving from
+3.8-4.3 ms to 14.6-15.1 ms between orientations. That is what a figure excluding
+the GPU predicts, and it is the reason the two columns are not added together.
+
+**It is weaker evidence than it reads as, and the weakness is stated rather than
+left for a reader to find.** The two Unity figures come from
+`unity-frame-cost-default-api/` in the archive — the OpenGL ES run on the
+`ConstantBuffer` rung, which this section has just said is not comparable with
+the Vulkan table above it. They are also three separate cold launches rather
+than one process rotated, so the relaunch is confounded with the extent. The
+Vulkan sweeps hold one extent throughout and so say nothing about this at all.
+What would settle it is one Vulkan process rotated part-way, which the
+instrument would report as two samples because it discards across that boundary.
+
+**No budget is set here.** #1107 says so in terms and #549 is open against the
+missing display geometry; these are figures and the record that holds them.
+
+## Unity's Android lifecycle over the lease (2026-08-29)
+
+    status  taken 2026-08-29 on the Pixel 5 by
+            `measure/android/unity-lifecycle.sh`. Issue #1346.
+
+**A Unity host does not meet D4's three cases the way D4 describes them.**
+`docs/decisions/host-integration-in-three-layers.md` D4 names rotation,
+backgrounding and split-screen as the cases where getting the surface handshake
+wrong is a use-after-free rather than a visual defect. That is written for a
+platform host, which hands dashscene a surface. A Unity host calls **none** of
+`ds_runtime_attach_surface`, `ds_runtime_detach_surface`, `ds_runtime_resize` or
+`ds_runtime_draw` — the package's own `Runtime/Native.cs` says so in terms —
+because it occupies layer 0 in its host-draws form: the runtime hands the
+committed tables over under a lease and Unity draws them. So what these cases
+exercise is the lease and the painter's GPU resources across an event Unity
+owns.
+
+**The outcomes are asymmetric, which is why the verdict has five of them.**
+`docs/decisions/the-frame-crosses-under-a-lease.md`: nothing can commit while a
+lease is outstanding, so an event that stops a frame loop between an acquire and
+its release is a **hang** and not a crash. A run that could only report a crash
+would report the hang as a pass. `ds_lifecycle_outcome` in
+`measure/android/lib.sh` is that decision and `attach-outcome-test.sh` exercises
+the outcomes a healthy device cannot produce.
+
+    case                        outcome
+    rotation to landscape       survived — 2340x1080 after
+    rotation back to portrait   survived — 1080x2340 after
+    backgrounded and resumed    survived
+    split-screen cold launch    NOT EXERCISED — windowing mode fullscreen,
+                                the drawable never changed
+
+**A frame-cost line after the event is the evidence.** The showcase reports one
+per 240 drawn frames, so a line after an event says 240 frames were drawn after
+it. In the showcase the lease is acquired and released inside one `Update`, so
+the hang the lease record describes is not reachable in this sample — that is a
+property of this host and not a guarantee about the seam.
+
+**Two levers did not rotate this player, and one of them looked as though it
+had.** `settings put system user_rotation 1` — the lever `frame-capture.sh` uses
+for the Kotlin harness — moved nothing, and neither did
+`wm user-rotation lock
+1`: `mUserRotationMode` read `USER_ROTATION_FREE` and
+`mRotation=0` after both. A Unity build allowing all four orientations carries a
+sensor-following `screenOrientation` in its own manifest, so the display
+rotation follows the accelerometer and a handset on a desk stays portrait. **The
+first run of this apparatus reported all three rotation cases as `survived`
+against a player that never rotated**, which is why the verdict now takes the
+drawable the player itself reports and answers `NOT EXERCISED` when it did not
+change. That run is
+`docs/archive/2026-08-29-v021-unity-device-measurements/unity-lifecycle-default-api/`,
+kept so this paragraph can be checked rather than believed: both its rotation
+rows report the portrait extent the player started at. The showcase binds the up
+arrow to `Screen.orientation`, which is `setRequestedOrientation` on the
+activity and so an ordinary configuration change — the surface is destroyed and
+recreated and the drawable changes. What that does not reproduce is the sensor
+path into the change.
+
+**Split-screen was not exercised on this device.** `am start --windowingMode 6`
+after a force-stop left the activity at `mWindowingMode=fullscreen` with the
+drawable unchanged; a hand-run of `am start -W ... --windowingMode 6` did reach
+`mWindowingMode=multi-window` and still held `mBounds` at the full display,
+because nothing else was sharing the screen. So the mode changed and the surface
+was never resized, and the resize is the half of the case that matters. Issue
+**#1381** carries what a route from adb alone on a handset would need.
+`just android-splitscreen` uses the same command against the Kotlin harness and
+its `verdict.sh` records that the cold launch "resizes the harness window
+itself" — which is an emulator reading. That difference between the emulator and
+this handset is not settled here.
+
+**The thread `OnPerformCulling` runs on is still not read on Android.** Story
+#1125 measured it as Unity's main thread under macOS and Metal, and
+`docs/design/unity-csharp-host.md` carries why this work did not take the
+Android reading: the only place the callback's own thread can be observed is
+inside `Runtime/Engine/BrgPainter.cs`.
 
 ## The measurement apparatus, and the procedure at the device
 
@@ -765,10 +973,13 @@ follow:
     target/android-measure/<device timestamp>/
       README.md            what this is, which issue each file belongs to, and
                            whether it is an emulator result
-      environment.md       the device, its properties, and the commit
+      environment.md       the device, its properties, the commit, and BOTH
+                           clocks — the device's, which every timestamp in the
+                           bundle uses, and the host's, as provenance only
       adapter-report.txt   the D3a probe — #885's measurement in full
       layer-cost.txt       the render-target sweep — Q-6, #1128
-      frames.md            one row per 240 drawn frames, with CPU beside it
+      frames.md            one row per 240 drawn frames, with the extent it
+                           was drawn at and CPU beside it
       frames-<scene>.log   the raw logcat each row is derived from
       unreadable-<scene>.log  a capture that stopped watching. That scene is
                            absent from frames.md rather than reported

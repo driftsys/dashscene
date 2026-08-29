@@ -357,8 +357,16 @@ web-sys = { version = "0.3.103", features = [
 # from clean fails, which is what a second developer would have got.
 #
 # `lto = "thin"` rather than `false`: it builds, and it keeps the demonstration
-# close to the optimisation the shipped library gets. This is a demonstration
-# artifact and no measurement in this repository is taken over it.
+# close to the optimisation the shipped library gets.
+#
+# **One measurement IS taken over it**, and the line above used to say none was.
+# Issue #1347 sets the Unity painter's per-frame cost beside the lean painter's
+# on one device, and `unity/demo-producer` is the only route a Unity player has
+# to the showcase scenes the lean painter draws — so the comparison exists only
+# over this profile. `docs/design/android-toolchain.md` records the figures and
+# names the difference this profile makes: the shipped library is `release` with
+# fat LTO and this is `release` with thin LTO, which bears on `tick` — the
+# native term — and not on the packing and submit that `draw` covers.
 inherits = "release"
 lto = "thin"
 

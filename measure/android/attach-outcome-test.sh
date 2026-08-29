@@ -311,6 +311,174 @@ fi
 ds_logcat_stop
 trap_check "and the caller's trap survives both" "${before}" "$(trap -p EXIT)"
 
+# ---------------------------------------------------------------------------
+# ds_lifecycle_outcome — what one lifecycle event did (issue #1346)
+# ---------------------------------------------------------------------------
+#
+# **Four of the five outcomes cannot be produced on a healthy device**, which
+# is the same argument every other decision in this file is here for. A player
+# that survives rotation is the only one a working build gives; a crash, a wedge,
+# a reclaimed process and an event that never reached the app are the readings the
+# run exists to be able to report, and a run that could not tell them apart would
+# call the wedge a pass.
+
+life() {
+    local name expected got
+    name="$1"
+    expected="$2"
+    shift 2
+    total=$((total + 1))
+    got=$(ds_lifecycle_outcome "$1" "$2" "$3" "$4" "${5:-n/a}")
+    if [ "${got}" = "${expected}" ]; then
+        printf '  ok   %-58s %s\n' "${name}" "${got}"
+    else
+        printf '  FAIL %-58s wanted %s, got %s\n' "${name}" "${expected}" "${got}"
+        failed=$((failed + 1))
+    fi
+}
+
+# The ordinary outcome, and the only one a working build produces.
+life "alive and drawing again" "survived" \
+    "yes" "no" "yes" 30
+
+# **The wedge, and the reason the lease record makes it a separate outcome.**
+# The process is up and no frame has been reported since the event: a callback
+# that stopped the loop between an acquire and its release refuses every commit
+# after it, and nothing crashes.
+life "alive and no frame since the event — the wedge" "NO FRAME OBSERVED in 30 s" \
+    "yes" "no" "no" 30
+
+# The bound is the run's, not a constant: a shorter watch is a weaker statement
+# and has to say so.
+life "the wedge names the window it watched" "NO FRAME OBSERVED in 5 s" \
+    "yes" "no" "no" 5
+
+# **The event that did not happen**, which is the outcome this function was
+# missing on 2026-08-29 and the reason it has a fifth argument. Three rotation
+# cases reported `survived` against a player that never rotated.
+life "alive, drawing, and the extent never changed" "NOT EXERCISED — the extent never changed" \
+    "yes" "no" "yes" 30 "no"
+
+# A case with an observable that DID move is an ordinary pass.
+life "alive, drawing, and the extent moved" "survived" \
+    "yes" "no" "yes" 30 "yes"
+
+# A case with no such observable is not held to one.
+life "a case with no extent to watch is not failed for it" "survived" \
+    "yes" "no" "yes" 30 "n/a"
+
+# **The wedge outranks it**: an event that reached a player which then stopped
+# drawing is a wedge, not an unexercised case.
+life "a wedge is a wedge even with no extent change" "NO FRAME OBSERVED in 30 s" \
+    "yes" "no" "no" 30 "no"
+
+# The use-after-free half of D4, as it reaches a reader.
+life "gone with a fatal logged" "CRASHED" \
+    "no" "yes" "no" 30
+
+# **Android reclaiming a backgrounded process is not a defect**, and reading it
+# as one would fail the backgrounding case on a healthy device.
+life "gone with no fatal — reclaimed, not crashed" "process gone, no fatal logged" \
+    "no" "no" "no" 30
+
+# A dead process that had drawn before it died is still dead. The drew flag is
+# read only when the process is alive, so this must not report `survived`.
+life "a dead process is dead however it drew" "CRASHED" \
+    "no" "yes" "yes" 30
+
+# ---------------------------------------------------------------------------
+# ds_environment — what a bundle says it was taken on (issue #1236)
+# ---------------------------------------------------------------------------
+#
+# **Reachable only through `run.sh`, which needs a device**, so the block that
+# records a bundle's provenance had never been exercised by anything. It is the
+# one part of a bundle that outlives the run: six weeks later it is all that
+# says which machine a number came from.
+
+env_dir=$(mktemp -d)
+# **Added to the existing handler, not installed over it.** A bare
+# `trap ... EXIT` here replaces the one this file set earlier, so the follower's
+# directory and its capture leak on every run — which is the composition this
+# file's own cases at the top assert `ds_logcat_follow` gets right.
+trap 'rm -rf "${env_dir}"; rm -rf "${follow_dir:-}" "${capture_log:-}"' EXIT
+cat > "${env_dir}/adb" <<'STUB'
+#!/usr/bin/env bash
+# `shell getprop <name>` and nothing else; an unknown prop answers empty, which
+# is what a real device does.
+if [ "${1:-}" = "shell" ] && [ "${2:-}" = "getprop" ]; then
+    case "${3:-}" in
+        ro.product.model)          echo "Pixel 5" ;;
+        ro.product.device)         echo "redfin" ;;
+        ro.product.cpu.abi)        echo "arm64-v8a" ;;
+        ro.build.version.release)  echo "14" ;;
+        ro.build.version.sdk)      echo "34" ;;
+        ro.build.characteristics)  echo "default" ;;
+        ro.hardware)               echo "redfin" ;;
+        ro.kernel.qemu)            echo "" ;;
+        ro.boot.qemu)              echo "" ;;
+        *)                         echo "" ;;
+    esac
+    exit 0
+fi
+exit 0
+STUB
+chmod +x "${env_dir}/adb"
+
+environment=$(ds_environment "${env_dir}/adb" "a Pixel 5 (redfin), attached" \
+    "20231229T060616Z")
+
+env_case() {
+    local name expected
+    name="$1"
+    expected="$2"
+    total=$((total + 1))
+    if grep -qF -- "${expected}" <<<"${environment}"; then
+        printf '  ok   %-58s %s\n' "${name}" "found"
+    else
+        printf '  FAIL %-58s missing: %s\n' "${name}" "${expected}"
+        failed=$((failed + 1))
+    fi
+}
+
+env_case "the described line is carried verbatim" "a Pixel 5 (redfin), attached"
+env_case "the device clock is the stamp, and says so" \
+    "20231229T060616Z (the device's own clock)"
+
+# **The defect this half of #1236 records.** The bundle stamps itself from the
+# device deliberately, so its directory name and the logcat epochs agree — but
+# on a device whose clock is unset that reads as a run taken in December 2023.
+# The intervals are all device-to-device and correct; only the provenance is
+# misleading, and one more line removes the ambiguity.
+env_case "the host clock is recorded beside it" "    host      "
+env_case "and the block says which of the two everything is timed by" \
+    "is the device's"
+
+# Every getprop the bundle needs, read through the stub, **as a label AND the
+# value the stub gave it**. Asserting the label alone passed a mutation that
+# replaced the loop variable with `ro.product.model`: nine distinct labels then
+# all reported `Pixel 5`, and the one value check was satisfied by the mutation
+# rather than by the block. The stub answers each prop distinctly and nothing
+# read it.
+while read -r prop want; do
+    env_case "getprop ${prop} is recorded" "${prop}"
+    env_case "  and carries the value the device gave it" \
+        "$(printf '    %-32s %s' "${prop}" "${want}")"
+done <<'PROPS'
+ro.product.model Pixel 5
+ro.product.device redfin
+ro.product.cpu.abi arm64-v8a
+ro.build.version.release 14
+ro.build.version.sdk 34
+ro.build.characteristics default
+ro.hardware redfin
+PROPS
+
+# The two that answer empty on a real device answer empty here, and are still
+# recorded — an absent `ro.kernel.qemu` is what says a target is NOT virtualised.
+for prop in ro.kernel.qemu ro.boot.qemu; do
+    env_case "getprop ${prop} is recorded even when it answers empty" "${prop}"
+done
+
 echo
 if [ "${failed}" -gt 0 ]; then
     echo "attach-outcome-test: ${failed} of ${total} case(s) failed"

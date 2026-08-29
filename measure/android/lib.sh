@@ -128,6 +128,108 @@ ds_describe() {
         "$(ds_source "${adb}")"
 }
 
+# ds_environment <adb> <described> <device-stamp>
+#
+# The body of a bundle's `environment.md`, on stdout.
+#
+# **Here rather than inline in `run.sh` because that script needs a device**, and
+# so did every line of this block. It is the one part of a bundle that outlives
+# the run: six weeks later it is all that says which machine a number came from,
+# and `attach-outcome-test.sh` is what holds it to that without a cable.
+#
+# **Both clocks, which is issue #1236's second half.** The bundle stamps itself
+# from the DEVICE deliberately, so its directory name and the logcat epochs
+# agree with each other. On a device whose clock is unset that reads badly: a
+# run taken on 2026-08-17 is stamped `20231229T060616Z`, because the Pixel 5
+# believed it was December 2023. Every interval in the bundle is device-clock to
+# device-clock and correct; only the provenance is misleading, and recording the
+# host's clock beside it costs one line and removes the ambiguity.
+ds_environment() {
+    local adb described stamp prop
+    adb="$1"
+    described="$2"
+    stamp="$3"
+    echo "# What this bundle was taken on"
+    echo
+    echo "    ${described}"
+    echo
+    echo "    taken     ${stamp} (the device's own clock)"
+    echo "    host      $(date -u +%Y%m%dT%H%M%SZ) (this machine's clock)"
+    echo "    commit    $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    echo "    branch    $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+    echo
+    echo "Every timestamp in this bundle — the directory name, the logcat epochs"
+    echo "and every interval derived from them — is the device's. The host clock"
+    echo "above is provenance only: nothing here is timed by it, and the two"
+    echo "disagree whenever the device's clock is unset."
+    echo
+    echo "## getprop"
+    echo
+    for prop in ro.product.model ro.product.device ro.product.cpu.abi \
+        ro.build.version.release ro.build.version.sdk ro.build.characteristics \
+        ro.hardware ro.kernel.qemu ro.boot.qemu; do
+        printf '    %-32s %s\n' "${prop}" \
+            "$("${adb}" shell getprop "${prop}" 2>/dev/null | tr -d '\r')"
+    done
+}
+
+# ds_lifecycle_outcome <alive> <fatal> <drew-after> <seconds> [moved]
+#
+# What one Android lifecycle event did to a running player, as one line.
+#
+# **The five outcomes are not symmetric, and that is the whole point.**
+# `docs/decisions/the-frame-crosses-under-a-lease.md` makes them asymmetric:
+# nothing can commit while a lease is outstanding, so an event that stops a
+# frame loop between acquire and release is a HANG rather than a crash, and one
+# that tears resources down under a held lease is the use-after-free.
+# `docs/decisions/host-integration-in-three-layers.md` D4 names rotation,
+# backgrounding and split-screen as the three cases where getting it wrong is
+# the second kind. A verdict that could only say "it crashed" would report the
+# first kind as a pass.
+#
+# **A process that is gone with no fatal is its own outcome, not a crash.**
+# Android reclaims a backgrounded process whenever it likes, and reading that as
+# a defect would make the backgrounding case fail on a healthy device. It is
+# reported as what it is so a reader decides.
+#
+# `seconds` is how long the run watched for a frame after the event; it is in
+# the wedge's wording, because that outcome is a bound and not a duration.
+#
+# **`moved` is what stops this reporting a pass for an event that did not
+# happen**, and it was added because it did. Measured on a Pixel 5 on
+# 2026-08-29: `settings put system user_rotation 1` rotated nothing, because a
+# Unity player configured for auto-rotation carries `screenOrientation` in its
+# own manifest and follows the sensor rather than that setting — so the player
+# kept drawing at 1080x2340, and all three rotation cases reported `survived`.
+# A case whose event did not reach the app is not a case that passed, and the
+# extent the player itself reports is what says whether it did. Callers with no
+# such observable pass `n/a`.
+ds_lifecycle_outcome() {
+    local alive fatal drew seconds moved
+    alive="$1"
+    fatal="$2"
+    drew="$3"
+    seconds="$4"
+    moved="${5:-n/a}"
+    if [ "${alive}" = "no" ]; then
+        if [ "${fatal}" = "yes" ]; then
+            echo "CRASHED"
+        else
+            echo "process gone, no fatal logged"
+        fi
+        return 0
+    fi
+    if [ "${drew}" != "yes" ]; then
+        echo "NO FRAME OBSERVED in ${seconds} s"
+        return 0
+    fi
+    if [ "${moved}" = "no" ]; then
+        echo "NOT EXERCISED — the extent never changed"
+        return 0
+    fi
+    echo "survived"
+}
+
 # `logcat -c`, tolerating the failure it routinely reports.
 #
 # On Android 11 and later this returns non-zero with "failed to clear the 'main'

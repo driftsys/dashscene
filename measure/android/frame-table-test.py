@@ -43,6 +43,21 @@ def sample(epoch, pid, scene="surfaces", frames=240, tick="0.26", mean="18.80",
     )
 
 
+def attach(epoch, pid, width=2204, height=805):
+    """The `attached a WxH surface` line, verbatim from a capture.
+
+    Taken from `run-2-complete/frames-surfaces.log`, where it reads `attached a
+    1280x445 surface`. That bundle is the API 35 emulator run, not the device
+    one — the header above says every line here comes from that capture and this
+    helper is no exception. Its pid column is the app's own, unlike the CPU
+    sampler's line.
+    """
+    return (
+        f"         {epoch}  {pid}  {pid + 24} I dashscene: "
+        f"attached a {width}x{height} surface"
+    )
+
+
 def cpu(epoch, pid, utime, stime, comm=".dashscene.demo"):
     """A CPU sampler line: the tag, then a verbatim `/proc/<pid>/stat`.
 
@@ -72,7 +87,7 @@ def cpu_cell(out, scene="surfaces", index=1):
         cells = [cell.strip() for cell in line.split("|")]
         # A data row is `| scene | # | pid | ... |`, so the split has a leading
         # and a trailing empty cell.
-        if len(cells) > 3 and cells[1] == scene and cells[2] == str(index):
+        if len(cells) > 4 and cells[1] == scene and cells[3] == str(index):
             return cells[-2]
     return None
 
@@ -86,7 +101,7 @@ def span_cell(out, scene="surfaces", index=1):
     """
     for line in out.splitlines():
         cells = [cell.strip() for cell in line.split("|")]
-        if len(cells) > 3 and cells[1] == scene and cells[2] == str(index):
+        if len(cells) > 4 and cells[1] == scene and cells[3] == str(index):
             return cells[-3]
     return None
 
@@ -95,8 +110,8 @@ def paint_cell(out, scene="surfaces", index=1):
     """The `paint mean` cell of one row."""
     for line in out.splitlines():
         cells = [cell.strip() for cell in line.split("|")]
-        if len(cells) > 3 and cells[1] == scene and cells[2] == str(index):
-            return cells[6]
+        if len(cells) > 4 and cells[1] == scene and cells[3] == str(index):
+            return cells[7]
     return None
 
 
@@ -112,9 +127,38 @@ def glyph_cell(out, scene="surfaces", index=1):
     """
     for line in out.splitlines():
         cells = [cell.strip() for cell in line.split("|")]
-        if len(cells) > 3 and cells[1] == scene and cells[2] == str(index):
+        if len(cells) > 4 and cells[1] == scene and cells[3] == str(index):
             # -1 is the empty tail, then cpu, wall, fps, glyphs.
             return cells[-5]
+    return None
+
+
+def numbered(out, scene, index):
+    """True when a data row carries this scene at this sample number.
+
+    A helper rather than `"| surfaces | 2 |" in out`, because the columns
+    between the two moved once already — issue #1236 put `extent` between them —
+    and a substring check spelled out of adjacent columns breaks on a layout
+    change while saying nothing about the numbering it was written to pin.
+    """
+    for line in out.splitlines():
+        cells = [cell.strip() for cell in line.split("|")]
+        if len(cells) > 4 and cells[1] == scene and cells[3] == str(index):
+            return True
+    return False
+
+
+def extent_cell(out, scene="surfaces", index=1):
+    """The `extent` cell of one row.
+
+    Its own helper for the reason `cpu_cell`, `span_cell` and `glyph_cell` each
+    have one: an extent string appears in this table's own prose, so a
+    whole-output substring check passes on a row that reports something else.
+    """
+    for line in out.splitlines():
+        cells = [cell.strip() for cell in line.split("|")]
+        if len(cells) > 4 and cells[1] == scene and cells[3] == str(index):
+            return cells[2]
     return None
 
 
@@ -439,8 +483,8 @@ def main():
             sample("1786963790.000", 4014, scene="typography"),
         ]
         status, out = table(lines, "scenes")
-        case("a second scene starts at sample 1", True, "| typography | 1 |" in out)
-        case("the first scene reached 2", True, "| surfaces | 2 |" in out)
+        case("a second scene starts at sample 1", True, numbered(out, "typography", 1))
+        case("the first scene reached 2", True, numbered(out, "surfaces", 2))
 
         # CRLF, which is what a capture redirected on a host with CRLF endings
         # carries.
@@ -487,7 +531,11 @@ def main():
         )
         rows_in_order = [line for line in out.splitlines() if "| surfaces |" in line]
         case("the earliest sample is numbered 1", True, "11.00" in rows_in_order[0])
-        case("and the later one is numbered 2", True, "| surfaces | 2 |" in rows_in_order[1])
+        case(
+            "and the later one is numbered 2",
+            True,
+            numbered(rows_in_order[1], "surfaces", 2),
+        )
         case(
             "no row reports a negative wall time",
             False,
@@ -510,6 +558,187 @@ def main():
             "distinct",
         )
         case("two distinct samples across two files both appear", 2, out.count("| surfaces |"))
+
+        # --- the extent every row was drawn at (issue #1236) -----------------
+        #
+        # A per-frame figure with no extent beside it is not comparable to any
+        # other figure, and it is not a labelling nicety: re-measured in
+        # landscape the same scenes gave `typography` 14.6-15.1 ms against
+        # 3.8-4.3 ms in portrait, on FEWER pixels. The first device bundle mixed
+        # three extents and nothing in the table said so.
+        status, out = table(
+            [attach("1786963750.000", 4014, 2204, 805),
+             sample("1786963760.000", 4014)],
+            "extent-one",
+        )
+        case("the table carries an extent column", True, "| extent |" in out)
+        case(
+            "the extent in force reaches the row",
+            "2204x805",
+            extent_cell(out),
+        )
+
+        # A capture with no attach line at all — every bundle taken before the
+        # painter logged one, and any capture that starts after the attach.
+        status, out = table([sample("1786963760.000", 4014)], "extent-none")
+        case(
+            "a sample with no attach line reports an em dash, not a guess",
+            "—",
+            extent_cell(out),
+        )
+
+        # The defect itself: `layout` was reported as three samples of one
+        # series while the surface changed under it.
+        status, out = table(
+            [attach("1786963750.000", 4014, 1080, 1984),
+             sample("1786963760.000", 4014, scene="layout"),
+             attach("1786963765.000", 4014, 1080, 2050),
+             sample("1786963770.000", 4014, scene="layout")],
+            "extent-changed",
+        )
+        case(
+            "the sample before the change reports the extent it was drawn at",
+            "1080x1984",
+            extent_cell(out, scene="layout", index=1),
+        )
+        case(
+            "a sample the extent changed part-way through says so",
+            "1080x1984 → 1080x2050 (changed)",
+            extent_cell(out, scene="layout", index=2),
+        )
+        case(
+            "a run whose extent changed is called out above the table",
+            True,
+            "1 row(s) span more than one" in out,
+        )
+        status, out = table(
+            [attach("1786963750.000", 4014, 2204, 805),
+             sample("1786963760.000", 4014),
+             sample("1786963770.000", 4014)],
+            "extent-constant",
+        )
+        case(
+            "a run at one extent says so instead",
+            True,
+            "Every row below was drawn at 2204x805" in out,
+        )
+        case(
+            "and is not called out as changed",
+            False,
+            "not all drawn at one extent" in out,
+        )
+
+        # `attaching` brackets the acquisition and `attached` closes it, so an
+        # attach that FAILED writes only the first. Reading it would report an
+        # extent for a surface the painter never obtained.
+        status, out = table(
+            [f"         1786963750.000  4014  4038 I dashscene: "
+             f"attaching a 2204x805 surface",
+             sample("1786963760.000", 4014)],
+            "extent-attempted",
+        )
+        case(
+            "an attach that only began reports no extent",
+            "—",
+            extent_cell(out),
+        )
+
+        # A re-attach at the SAME extent is not a change. Rotation back and
+        # forth, or a surface recreated on resume, produces exactly this.
+        status, out = table(
+            [attach("1786963750.000", 4014, 2204, 805),
+             attach("1786963765.000", 4014, 2204, 805),
+             sample("1786963770.000", 4014)],
+            "extent-reattach",
+        )
+        case(
+            "a re-attach at the same extent is not a change",
+            "2204x805",
+            extent_cell(out),
+        )
+
+        # Two processes, two surfaces. The join is per pid, like the CPU one:
+        # a relaunch at a new extent must not relabel the run before it.
+        status, out = run_many(
+            [[attach("1786963750.000", 4014, 2204, 805),
+              sample("1786963760.000", 4014)],
+             [attach("1786963780.000", 5555, 1080, 2340),
+              sample("1786963790.000", 5555, scene="typography")]],
+            ["--source", "emulator"],
+            tmp,
+            "extent-pids",
+        )
+        case(
+            "the first process keeps its own extent",
+            "2204x805",
+            extent_cell(out),
+        )
+        case(
+            "the second process reports its own",
+            "1080x2340",
+            extent_cell(out, scene="typography"),
+        )
+        case(
+            "two extents with no row spanning both is its own statement",
+            True,
+            "No single row spans two" in out,
+        )
+        case(
+            "and is not reported as a row that changed part-way",
+            False,
+            "span more than one" in out,
+        )
+
+        # **Two attaches BEFORE the interval opens are not a change in it.**
+        # The surface is recreated on resume and again on rotation, both while
+        # the previous sample was closing; the sample that opens afterwards was
+        # drawn wholly at the later extent. Reporting it as spanning two would
+        # mark a series that is one.
+        status, out = table(
+            [attach("1786963740.000", 4014, 1080, 1984),
+             attach("1786963745.000", 4014, 1080, 2050),
+             sample("1786963750.000", 4014, scene="layout"),
+             sample("1786963760.000", 4014, scene="layout")],
+            "extent-settled",
+        )
+        case(
+            "a sample whose interval opens after both attaches names one extent",
+            "1080x2050",
+            extent_cell(out, scene="layout", index=2),
+        )
+
+        # **A row with no extent is not covered by a claim about every row.**
+        # One process attached and logged it; a second logged none. The first
+        # version printed "Every row below was drawn at 2204x805" above a row
+        # whose own cell read an em dash.
+        status, out = run_many(
+            [[attach("1786963750.000", 4014, 2204, 805),
+              sample("1786963760.000", 4014)],
+             [sample("1786963790.000", 5555, scene="typography")]],
+            ["--source", "emulator"],
+            tmp,
+            "extent-partial",
+        )
+        case(
+            "the row that attached carries its extent",
+            "2204x805",
+            extent_cell(out),
+        )
+        case(
+            "the row that did not carries an em dash",
+            "—",
+            extent_cell(out, scene="typography"),
+        )
+        case(
+            "no claim is made about every row when one has no extent",
+            False,
+            "Every row below was drawn at" in out,
+        )
+        case(
+            "and the rows without one are counted",
+            True,
+            "1 name no extent at all" in out,
+        )
 
         # --- the clock ------------------------------------------------------
         #

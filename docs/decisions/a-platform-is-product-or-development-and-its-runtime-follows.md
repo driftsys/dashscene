@@ -106,15 +106,21 @@ shipping runtime runs IL2CPP.**
 
 The showcase and the demo exist to be looked at and iterated on, and an IL2CPP
 transpile buys them nothing. They **shall** run Mono, set explicitly rather than
-left to a default, so the choice cannot drift. **One build script does this
-now** — `unity/android-probe/AndroidProbeBuild.cs`, added 2026-08-28, sets
-IL2CPP explicitly and reports it, because R-E7 requires it for Android and
-because Unity ships no arm64 Mono runtime. That is a **product**-side target, so
-it does not discharge the rule above, which binds the development-side recipes:
-`unity-editor`, `unity-render`, `unity-conformance` and `unity-demo` still take
-Unity's default and still report nothing. Issue #1360 is what makes the rule
-true for them. Until it lands every player built here takes Unity's default for
-its target, and no gate reports which runtime produced its result.
+left to a default, so the choice cannot drift. **Two build scripts do this now**
+— `unity/android-probe/AndroidProbeBuild.cs`, added 2026-08-28, and
+`unity/demo/DemoBuild.cs` on its Android path, added 2026-08-29 for
+`just unity-demo-android`. Both set IL2CPP explicitly and report it, because
+R-E7 requires it for Android and because Unity ships no arm64 Mono runtime.
+
+**An Android showcase player is a product-side target even though the showcase
+is a demonstration**, which is the reading this rule needed and did not state:
+the runtime follows the TARGET and not the purpose, and there is no arm64 Mono
+to choose. So neither script discharges the rule above, which binds the
+development-side recipes: `unity-editor`, `unity-render`, `unity-conformance`
+and `unity-demo` still take Unity's default and still report nothing. Issue
+#1360 is what makes the rule true for them. Until it lands every player built
+here takes Unity's default for its target, and no gate reports which runtime
+produced its result.
 
 `unity/render-gate` is a demonstration for this purpose too and takes the same
 rule: its question — did ink land where the committed tables place a node — is

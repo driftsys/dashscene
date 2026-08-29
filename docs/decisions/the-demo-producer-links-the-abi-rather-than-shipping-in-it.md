@@ -247,8 +247,13 @@ from a claim into a check.
   the only build that asked the right question was `just unity-demo`'s player,
   which is editor-only and outside CI.
 - **A fourth workspace profile.** `demo-release` exists only because the release
-  profile cannot build this member at all; nothing else uses it and no
-  measurement is taken over it.
+  profile cannot build this member at all. **One measurement is taken over it**,
+  and this line said none was until 2026-08-29: `just unity-demo-android`
+  defaults to it, and issue #1347's Unity per-frame figures in
+  `docs/design/android-toolchain.md` are the figures it produced. That record
+  names what the profile costs them — thin LTO here against the shipped
+  library's fat LTO, which bears on the native `tick` and not on the packing
+  `draw` covers.
 - **`demo-producer` is excluded from the wasm32 documentation pass**, because it
   links `dashscene-ffi`, which does not compile for that triple.
 

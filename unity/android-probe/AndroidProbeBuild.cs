@@ -48,7 +48,10 @@ public static class AndroidProbeBuild
     private const string ProductName = "AndroidProbe";
     private const string PackageName = "com.driftsys.dashscene";
 
-    /// Where the APK is written, relative to the throwaway project.
+    /// Where the APK is written, relative to the throwaway project, and written
+    /// OUT to `Build/apk-path.txt` so the
+    /// recipe reads it rather than carrying a second copy of this literal — the
+    /// rule `ApplicationId` below already follows.
     private const string ApkPath = "Build/AndroidProbe.apk";
 
     /// The application id, written to `Build/application-id.txt` so the recipe
@@ -355,6 +358,7 @@ public static class AndroidProbeBuild
         // recipe then blames on the device.
         Directory.CreateDirectory("Build");
         File.WriteAllText("Build/application-id.txt", ApplicationId);
+        File.WriteAllText("Build/apk-path.txt", ApkPath);
 
         // **Development build, and that is deliberate.** The probe reports
         // through `Debug.Log`, which reaches logcat from a release player too,
