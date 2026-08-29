@@ -1,11 +1,23 @@
 package dev.driftsys.dashscene.demo;
 
 import android.app.Activity;
+import android.content.pm.ActivityInfo;
+import android.graphics.Color;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
+import android.view.GestureDetector;
+import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.ViewGroup;
+import android.view.WindowManager;
+import android.view.WindowInsets;
+import android.widget.FrameLayout;
+import android.widget.TextView;
 
 /**
  * The showcase on Android: the same demonstration {@code demo} and
@@ -17,8 +29,21 @@ import android.view.ViewGroup;
  * <pre>adb shell am start -n ... --es scene typography</pre>
  *
  * <p>An absent or unknown name draws the first scene rather than failing the
- * launch. Touch input is not wired: that would be layer 1, app state writing
- * signals, and the showcase writes its own from Rust.
+ * launch.
+ *
+ * <p><b>Input is wired, and the signal is still written from Rust.</b> This
+ * class forwards a gesture or a key as one command; it authors nothing. The
+ * write goes through {@code showcase::input}, which every host that draws these
+ * scenes calls, so the desktop, this host and the Unity sample share one
+ * vocabulary rather than three.
+ * {@code docs/decisions/the-showcase-hosts-share-one-surface.md} carries the
+ * bindings, and {@code DemoNative} carries the command codes.
+ *
+ * <p>A capture launch photographs one state instead of running the
+ * demonstration:
+ *
+ * <pre>adb shell am start -n ... --es capture_scene layout \
+ *     --ei capture_phase 2 --ef capture_signal 0.5</pre>
  */
 public final class DemoActivity extends Activity implements SurfaceHolder.Callback {
     private static final String TAG = "dashscene";
@@ -29,6 +54,29 @@ public final class DemoActivity extends Activity implements SurfaceHolder.Callba
 
     private long handle = 0;
     private String scene = null;
+
+    /** The three capture extras, or their absent sentinels. */
+    private String captureScene = null;
+
+    private int capturePhase = -1;
+    private float captureSignal = Float.NaN;
+
+    /**
+     * The frame-cost readout, drawn over the surface rather than into it.
+     *
+     * <p>A {@code TextView} above the {@code SurfaceView}, not nodes appended to
+     * the scene: a readout inside the document would be measured by the very
+     * instrument it reports. It still composites into {@code adb screencap},
+     * which is why a capture launch hides it and why the vocabulary has a
+     * command to toggle it.
+     */
+    private TextView readout = null;
+
+    private boolean readoutVisible = true;
+
+    private GestureDetector gestures = null;
+
+    private final Handler readoutPump = new Handler(Looper.getMainLooper());
 
     /**
      * Set when {@code surfaceChanged} declined to start the loop because the
@@ -60,14 +108,237 @@ public final class DemoActivity extends Activity implements SurfaceHolder.Callba
         super.onCreate(state);
         if (getIntent() != null) {
             scene = getIntent().getStringExtra("scene");
+            captureScene = getIntent().getStringExtra("capture_scene");
+            capturePhase = getIntent().getIntExtra("capture_phase", -1);
+            captureSignal = getIntent().getFloatExtra("capture_signal", Float.NaN);
         }
         Log.i(TAG, "demo: scene extra = " + scene);
+        if (captureScene != null) {
+            Log.i(TAG, "demo: capture extras = " + captureScene + " phase " + capturePhase
+                    + " signal " + captureSignal);
+            // A capture is photographed, and the readout would composite into
+            // the photograph. The native half refuses a partial capture; this
+            // side only has to stop drawing over it.
+            readoutVisible = false;
+        }
+
+        // **Edge to edge, and the bars hidden.** The Unity player runs
+        // fullscreen and measured 1080x2340 on this device where this host
+        // measured 1080x1984 — the difference is the system bars. Two hosts at
+        // two extents cannot have their frame costs compared or their frames
+        // diffed, so the extent is not left to the default.
+        getWindow().setDecorFitsSystemWindows(false);
+        // **And into the cutout.** Hiding the bars alone left this host at
+        // 2204x948 on a Pixel 5 whose display is 2340x1080; the remainder is
+        // the cutout inset, which the default mode keeps the window out of.
+        // The Unity player draws the whole display, and two hosts at two
+        // extents can be neither compared nor diffed.
+        WindowManager.LayoutParams attributes = getWindow().getAttributes();
+        attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+        getWindow().setAttributes(attributes);
 
         SurfaceView view = new SurfaceView(this);
         view.getHolder().addCallback(this);
         view.setLayoutParams(new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        setContentView(view);
+
+        readout = new TextView(this);
+        readout.setTextColor(Color.WHITE);
+        readout.setBackgroundColor(0x99000000);
+        readout.setTextSize(12.0f);
+        readout.setPadding(24, 24, 24, 24);
+        readout.setVisibility(readoutVisible ? TextView.VISIBLE : TextView.GONE);
+        FrameLayout.LayoutParams readoutParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        readoutParams.gravity = Gravity.TOP | Gravity.START;
+
+        FrameLayout root = new FrameLayout(this);
+        root.addView(view);
+        root.addView(readout, readoutParams);
+        setContentView(root);
+
+        // **After setContentView, not before.** getInsetsController() reaches
+        // through the decor view, and the decor view does not exist until the
+        // content view is set — calling it in the other order is a null
+        // dereference that force-finishes the activity before the surface is
+        // ever created. Found by running it, not by reading it.
+        hideSystemBars();
+
+        // **Consumed at the root, so no child is inset.** Hiding the bars and
+        // going edge to edge still left this host at 1080x2186 on a display
+        // whose mMaxBounds is 1080x2340: the decor still dispatched the bar and
+        // cutout insets down, and the SurfaceView sized itself inside them.
+        // Consuming here is what makes the drawable the whole display.
+        root.setOnApplyWindowInsetsListener((ignored, insets) -> WindowInsets.CONSUMED);
+
+        gestures = new GestureDetector(this, new Bindings());
+        // The whole vocabulary reaches the native half through DemoNative, so
+        // a key and a gesture take the same path and the harness drives the
+        // same code a hand does.
+        root.setOnTouchListener((ignored, event) -> onTouchEvent(event));
+        root.setFocusableInTouchMode(true);
+        root.requestFocus();
+
+        pumpReadout();
+    }
+
+    /**
+     * Polls the render thread's published readout.
+     *
+     * <p>Polled rather than pushed: the sample completes on the render thread
+     * every 240 frames, and a JNI call up to the UI thread would need a
+     * {@code JavaVM} attach for a string this side can simply ask for.
+     */
+    private void pumpReadout() {
+        readoutPump.postDelayed(() -> {
+            if (readoutVisible && readout != null) {
+                String text = DemoNative.nativeReadout();
+                if (text != null && !text.isEmpty()) {
+                    readout.setText(text);
+                }
+            }
+            pumpReadout();
+        }, 500);
+    }
+
+    @Override
+    protected void onDestroy() {
+        readoutPump.removeCallbacksAndMessages(null);
+        super.onDestroy();
+    }
+
+    /**
+     * Hides the system bars, and keeps them hidden.
+     *
+     * <p>Re-applied on every focus gain: the transient-bar behaviour brings
+     * them back after a swipe or after another window takes focus, and a
+     * drawable that changes size part-way through a measurement or a capture is
+     * the one thing both of those must not do.
+     */
+    private void hideSystemBars() {
+        if (getWindow().getInsetsController() == null) {
+            return;
+        }
+        getWindow().getInsetsController().hide(WindowInsets.Type.systemBars());
+        getWindow().getInsetsController().setSystemBarsBehavior(
+                android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            hideSystemBars();
+        }
+    }
+
+    /** Sends one command from the shared vocabulary. */
+    private void command(int code) {
+        switch (code) {
+            case 3:
+                // This side's, not the render thread's: setRequestedOrientation
+                // is a UI-thread call on this activity.
+                setRequestedOrientation(
+                        getResources().getConfiguration().orientation
+                                        == android.content.res.Configuration.ORIENTATION_PORTRAIT
+                                ? ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                                : ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+                Log.i(TAG, "demo: orientation requested");
+                break;
+            case 4:
+                readoutVisible = !readoutVisible;
+                readout.setVisibility(readoutVisible ? TextView.VISIBLE : TextView.GONE);
+                Log.i(TAG, "demo: readout " + (readoutVisible ? "shown" : "hidden"));
+                break;
+            default:
+                DemoNative.nativeCommand(code);
+                break;
+        }
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        // Two fingers down is the orientation command, and is checked before
+        // the detector so a two-finger gesture is never also read as a tap.
+        if (event.getPointerCount() == 2 && event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN) {
+            command(3);
+            return true;
+        }
+        if (event.getActionMasked() == MotionEvent.ACTION_MOVE && event.getPointerCount() == 1) {
+            DemoNative.nativeDrag(event.getX());
+        }
+        return gestures.onTouchEvent(event) || super.onTouchEvent(event);
+    }
+
+    @Override
+    public boolean onKeyDown(int code, KeyEvent event) {
+        // The bindings the measurement harness sends. The two arrow keys drive
+        // the signal rather than navigating, which is demo/src/input.rs's
+        // binding and the one the contract adopts; navigation is on the page
+        // keys.
+        switch (code) {
+            case KeyEvent.KEYCODE_DPAD_LEFT:
+                DemoNative.nativeDrag(0.0f);
+                return true;
+            case KeyEvent.KEYCODE_DPAD_RIGHT:
+                DemoNative.nativeDrag(Float.MAX_VALUE);
+                return true;
+            case KeyEvent.KEYCODE_PAGE_DOWN:
+                command(0);
+                return true;
+            case KeyEvent.KEYCODE_PAGE_UP:
+                command(1);
+                return true;
+            case KeyEvent.KEYCODE_SPACE:
+                command(2);
+                return true;
+            case KeyEvent.KEYCODE_DPAD_UP:
+                command(3);
+                return true;
+            case KeyEvent.KEYCODE_R:
+                command(4);
+                return true;
+            default:
+                return super.onKeyDown(code, event);
+        }
+    }
+
+    /** Gestures, mapped onto the same commands the keys send. */
+    private final class Bindings extends GestureDetector.SimpleOnGestureListener {
+        /** Below this, a fling is a tap that moved rather than a swipe. */
+        private static final float SWIPE_MIN_PX = 120.0f;
+
+        @Override
+        public boolean onDown(MotionEvent event) {
+            return true;
+        }
+
+        @Override
+        public boolean onSingleTapUp(MotionEvent event) {
+            command(2);
+            return true;
+        }
+
+        @Override
+        public void onLongPress(MotionEvent event) {
+            command(4);
+        }
+
+        @Override
+        public boolean onFling(MotionEvent down, MotionEvent up, float vx, float vy) {
+            if (down == null || up == null) {
+                return false;
+            }
+            float dy = up.getY() - down.getY();
+            if (Math.abs(dy) < SWIPE_MIN_PX || Math.abs(dy) < Math.abs(up.getX() - down.getX())) {
+                // A horizontal movement is the signal's, and the drag path has
+                // already written it.
+                return false;
+            }
+            command(dy < 0 ? 0 : 1);
+            return true;
+        }
     }
 
     @Override
@@ -121,7 +392,9 @@ public final class DemoActivity extends Activity implements SurfaceHolder.Callba
             }
             awaitingDrawable = false;
             startAttempted = true;
-            handle = DemoNative.nativeStart(holder.getSurface(), scene, width, height);
+            handle = DemoNative.nativeStart(
+                    holder.getSurface(), scene, width, height,
+                    captureScene, capturePhase, captureSignal);
             Log.i(TAG, "demo: handle " + handle);
         } else {
             DemoNative.nativeResize(handle, width, height);

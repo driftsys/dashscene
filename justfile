@@ -3976,16 +3976,25 @@ unity-demo-android unity_version="6000.3.23f1" action="cycle" profile="demo-rele
       echo "unity-demo-android: launched ${app_id} on ${device} and left it running."
       echo "unity-demo-android: read it with:"
       echo "unity-demo-android:   adb logcat -d | grep '\\[showcase\\]'"
-      echo "unity-demo-android: next entry:  adb shell input keyevent 22"
+      echo "unity-demo-android: next entry:  adb shell input keyevent 93"
       echo "unity-demo-android: stop it:     adb shell am force-stop ${app_id}"
       exit 0
     fi
 
     # `cycle`: walk every entry and collect what the player said about each.
     #
-    # **`input keyevent 22` rather than a command-line argument.** An Android
+    # **`input keyevent 93` rather than a command-line argument.** An Android
     # player takes no `--args`, so the sample's `-cycle` is unreachable here;
-    # DPAD_RIGHT is what the sample already binds `Show(next)` to.
+    # PAGE_DOWN is what the sample binds `Show(next)` to.
+    #
+    # **93 and not 22.** This sent DPAD_RIGHT until 2026-08-29, when the two
+    # hosts' vocabularies were reconciled: `demo/src/input.rs` binds the left
+    # and right keys to the two ends of the scene's own signal range, and this
+    # sample bound them to the previous and next entry, so one key meant two
+    # things. The desktop binding won and navigation moved to the page keys —
+    # `docs/decisions/the-showcase-hosts-share-one-surface.md`. Sending 22 here
+    # now drives the signal and never leaves the first entry, which would report
+    # one scene measured `total` times.
     #
     # **Long enough for a sample, per entry — and the arithmetic is measured,
     # not assumed.** A frame-cost report covers 240 drawn frames. At 60 Hz that
@@ -4036,7 +4045,7 @@ unity-demo-android unity_version="6000.3.23f1" action="cycle" profile="demo-rele
     # document load.
     for _ in $(seq 1 "${total}"); do
       sleep 12
-      "${adb}" shell input keyevent 22
+      "${adb}" shell input keyevent 93
     done
     sleep 4
 

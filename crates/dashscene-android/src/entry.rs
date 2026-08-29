@@ -116,8 +116,11 @@ const DEMO_NATIVE_JAVA: &str =
 const DEMO_HOST_RS: &str = include_str!("../../../demo-android/src/host.rs");
 
 /// Every native method `DemoNative` declares, by name.
-const DEMO_ENTRY_POINTS: [&str; 4] = [
+const DEMO_ENTRY_POINTS: [&str; 7] = [
+    "nativeCommand",
+    "nativeDrag",
     "nativeIsRunning",
+    "nativeReadout",
     "nativeResize",
     "nativeStart",
     "nativeStop",
