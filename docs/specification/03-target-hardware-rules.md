@@ -55,9 +55,17 @@ can read the committed tables without a copy. Both arguments need more than one
 core to be reasons rather than merely true statements.
 
 **The deployment is two tiers of real Qualcomm silicon, ruled by the owner on
-2026-08-29.** Devices of the class attached that day, which the owner states are
-power-equivalent to an SA7255P, and SA8255P. That matches the fleet the codec
-table already names — SA8255 the HiFi default, SA7255 the Lite default.
+2026-08-29.** The two tiers are:
+
+1. **An SA7255P-class tier.** The owner states that the device attached on
+   2026-08-29 — a Pixel 5 (`redfin`, Snapdragon 765G, Adreno 620, 8 cores) — is
+   power-equivalent to an SA7255P, and that devices of that class are a
+   deployment target. The equivalence is the owner's ruling, not a measurement:
+   a Pixel 5 is a phone, and no SA7255P has been attached.
+2. **SA8255P.**
+
+That matches the fleet `docs/decisions/native-astc-codec-table.md` already names
+— SA8255 the HiFi default, SA7255 the LoFi default.
 
 **It is not a single-core VM, and it is not virtualized.** Those were the two
 possibilities #1270 was filed against, and the ruling excludes both. So the
@@ -68,12 +76,14 @@ reads the adapter on every bundle.
 
 **No core count has been read on either board.** What exists is a stand-in: a
 Pixel 5 (`redfin`, Adreno 620) reported **8 cores present and 8 online** on
-2026-08-29. That is a phone, and the equivalence to the SA7255P tier is the
-owner's ruling rather than a measurement, so it bounds nothing on its own. A
-board reading needs no new apparatus: `ds_environment` in
-`measure/android/lib.sh` records `cores present` and `cores online` in every
-bundle's `environment.md`, so one `measure/android/run.sh` on an attached board
-records it.
+2026-08-29, from `/sys/devices/system/cpu/present` = `0-7` and `.../online` =
+`0-7`. The capture is
+`docs/archive/2026-08-29-v021-device-phase2/environment-with-cpu.md`. That is a
+phone, and the equivalence to the SA7255P tier is the owner's ruling rather than
+a measurement, so it bounds nothing on its own. A board reading needs no new
+apparatus: `ds_environment` in `measure/android/lib.sh` records `cores present`
+and `cores online` in every bundle's `environment.md`, so one
+`measure/android/run.sh` on an attached board records it.
 
 Both numbers are kept because they answer different questions. `present` is what
 the board has; `online` is what it was willing to run when the bundle was taken.

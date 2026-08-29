@@ -507,6 +507,50 @@ cpu_case "a parked core splits the list and both parts count" "0-3,6-7" "6"
 cpu_case "a mixed single and range" "0,2-4" "4"
 # A device that did not answer is not a device with no cpus.
 cpu_case "an empty list reports nothing rather than zero" "" ""
+
+# **A device that answered something that is not a range must not read as one
+# core.** `adb shell` merges device stderr into stdout wherever shell protocol
+# v2 is not in play, and the exit status is lost to the command substitution
+# that captures it — so `cat: ...: No such file or directory` arrives as the
+# value. Counting any dash-free token as one cpu turned every such answer into
+# `cores present 1`, which in the bundle is indistinguishable from a genuine
+# single-core reading. That is the exact answer #1270 exists to establish, so
+# the failure is not merely wrong, it is wrong in the one direction that
+# matters. Empty is the honest answer: the device did not say.
+cpu_case "an error merged into stdout is not one core" \
+    "cat: /sys/devices/system/cpu/present: No such file or directory" ""
+cpu_case "a partial range is refused rather than guessed" "0-" ""
+cpu_case "a negative or reversed range is refused" "7-0" ""
+cpu_case "a leading zero is decimal, not octal" "0-08" "9"
+# A trailing comma leaves an empty part, which must add nothing.
+cpu_case "an empty part contributes no cpu" "0-3," "4"
+
+# **And what a refused list looks like in the bundle.** `ds_cpu_count` returning
+# empty has to reach the file as the same `—` `attach.md` uses for a quantity it
+# could not obtain; a bare blank reads as a truncated file. This needs its own
+# stub, because the one above always answers well-formed ranges.
+cat > "${env_dir}/adb-noscpu" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "shell" ] && [ "${2:-}" = "getprop" ]; then echo ""; exit 0; fi
+# The shape adb gives when the file is missing and stderr is merged into stdout.
+if [ "${1:-}" = "shell" ] && [ "${2:-}" = "cat" ]; then
+    echo "cat: ${3:-}: No such file or directory"
+    exit 0
+fi
+exit 0
+STUB
+chmod +x "${env_dir}/adb-noscpu"
+env_nocpu=$(ds_environment "${env_dir}/adb-noscpu" "a device that did not answer" \
+    "20231229T060616Z")
+
+total=$((total + 1))
+if grep -qF -- "$(printf '    %-32s %s' 'cores present' '—')" <<<"${env_nocpu}"; then
+    printf '  ok   %-58s %s\n' "an unanswered core count reads as a dash" "found"
+else
+    printf '  FAIL %-58s %s\n' "an unanswered core count reads as a dash" \
+        "got: $(grep -F 'cores present' <<<"${env_nocpu}" | cat -A | head -1)"
+    failed=$((failed + 1))
+fi
 env_case "and the block says which of the two everything is timed by" \
     "is the device's"
 

@@ -1925,9 +1925,10 @@ which is a ruling rather than a milestone fact, and this entry separates them.
 
 **Moved off v0.20**: #979 (the CodeQL dismissal on the C ABI's own test) to
 v0.23, and #960 and #969 to v0.21 **as hardware-gated, which both of them were**
-— #969 was measured on 2026-08-17 and #960 is still waiting for its run. **The
-owner ruled #960's scope on 2026-08-23**: it is the debug attach, and it closes
-on one acquisition measurement on target hardware, both profiles, from
+— #969 was measured on 2026-08-17, and #960 was measured on 2026-08-17 and again
+on 2026-08-29, the second time over both launch conditions. **The owner ruled
+#960's scope on 2026-08-23**: it is the debug attach, and it closes on one
+acquisition measurement on target hardware, both profiles, from
 `measure/android/attach-timing.sh`. This paragraph said the opposite until then
 — that the issue's own 2026-08-14 correction had re-scoped it to a painter that
 cannot obtain a device saying so, which no device run settles. That half is

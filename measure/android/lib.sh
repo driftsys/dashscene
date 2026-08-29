@@ -128,22 +128,6 @@ ds_describe() {
         "$(ds_source "${adb}")"
 }
 
-# ds_environment <adb> <described> <device-stamp>
-#
-# The body of a bundle's `environment.md`, on stdout.
-#
-# **Here rather than inline in `run.sh` because that script needs a device**, and
-# so did every line of this block. It is the one part of a bundle that outlives
-# the run: six weeks later it is all that says which machine a number came from,
-# and `attach-outcome-test.sh` is what holds it to that without a cable.
-#
-# **Both clocks, which is issue #1236's second half.** The bundle stamps itself
-# from the DEVICE deliberately, so its directory name and the logcat epochs
-# agree with each other. On a device whose clock is unset that reads badly: a
-# run taken on 2026-08-17 is stamped `20231229T060616Z`, because the Pixel 5
-# believed it was December 2023. Every interval in the bundle is device-clock to
-# device-clock and correct; only the provenance is misleading, and recording the
-# host's clock beside it costs one line and removes the ambiguity.
 # ds_cpu_count <range-list>
 #
 # How many cpus a Linux cpu range list names, on stdout. Empty for an empty or
@@ -163,15 +147,54 @@ ds_cpu_count() {
     for part in "${parts[@]}"; do
         case "${part}" in
             "")  ;;
+            # **Every part is validated, and an unrecognised one refuses the
+            # whole list rather than contributing to it.** `adb shell` merges
+            # the device's stderr into stdout wherever shell protocol v2 is not
+            # in play, and the command substitution that captures this discards
+            # adb's exit status — so `cat: ...: No such file or directory`
+            # arrives here as the value. Counting any dash-free token as one cpu
+            # turned that into `cores present 1`, indistinguishable in the
+            # bundle from a genuine single-core reading, which is the exact
+            # question issue #1270 exists to answer. Empty is the honest answer:
+            # the device did not say. A reversed range was worse still and
+            # returned a negative count.
+            *[!0-9-]* | -* | *- | *-*-*)
+                 echo ""; return 0 ;;
+            # **`10#` on every expansion.** A leading zero makes bash read the
+            # token as octal, so `0-08` aborted the whole bundle under
+            # `set -euo pipefail` with "value too great for base" rather than
+            # reporting a count. The kernel does not pad these, but the value
+            # arrives from a device and nothing here gets to assume that.
             *-*) lo="${part%%-*}"
                  hi="${part##*-}"
-                 n=$(( n + hi - lo + 1 )) ;;
+                 if [ "$(( 10#${hi} ))" -lt "$(( 10#${lo} ))" ]; then
+                     echo ""; return 0
+                 fi
+                 n=$(( n + 10#${hi} - 10#${lo} + 1 )) ;;
+            # A bare index is a valid one-cpu list: `/sys/devices/system/cpu/present`
+            # reads `0` on a uniprocessor.
             *)   n=$(( n + 1 )) ;;
         esac
     done
     echo "${n}"
 }
 
+# ds_environment <adb> <described> <device-stamp>
+#
+# The body of a bundle's `environment.md`, on stdout.
+#
+# **Here rather than inline in `run.sh` because that script needs a device**, and
+# so did every line of this block. It is the one part of a bundle that outlives
+# the run: six weeks later it is all that says which machine a number came from,
+# and `attach-outcome-test.sh` is what holds it to that without a cable.
+#
+# **Both clocks, which is issue #1236's second half.** The bundle stamps itself
+# from the DEVICE deliberately, so its directory name and the logcat epochs
+# agree with each other. On a device whose clock is unset that reads badly: a
+# run taken on 2026-08-17 is stamped `20231229T060616Z`, because the Pixel 5
+# believed it was December 2023. Every interval in the bundle is device-clock to
+# device-clock and correct; only the provenance is misleading, and recording the
+# host's clock beside it costs one line and removes the ambiguity.
 ds_environment() {
     local adb described stamp prop
     adb="$1"
@@ -218,8 +241,15 @@ ds_environment() {
     local present online
     present=$("${adb}" shell cat /sys/devices/system/cpu/present 2>/dev/null | tr -d '\r')
     online=$("${adb}" shell cat /sys/devices/system/cpu/online 2>/dev/null | tr -d '\r')
-    printf '    %-32s %s\n' "cores present" "$(ds_cpu_count "${present}")"
-    printf '    %-32s %s\n' "cores online" "$(ds_cpu_count "${online}")"
+    # **A dash, not a blank.** `attach.md` already prints `—` for a quantity it
+    # could not obtain, and a blank here reads as a truncated file rather than
+    # as "the device did not answer" — which is what `ds_cpu_count` returns
+    # empty for.
+    local n_present n_online
+    n_present=$(ds_cpu_count "${present}")
+    n_online=$(ds_cpu_count "${online}")
+    printf '    %-32s %s\n' "cores present" "${n_present:-—}"
+    printf '    %-32s %s\n' "cores online" "${n_online:-—}"
 }
 
 # ds_lifecycle_outcome <alive> <fatal> <drew-after> <seconds> [moved]

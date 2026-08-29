@@ -130,7 +130,7 @@ apk="target/android-demo/showcase.apk"
 if [ ! -f "${apk}" ]; then
     ds_warn "no ${apk}. Build it first:"
     ds_warn "  DASHSCENE_ANDROID_PROFILE=release just android-apk"
-    ds_warn "Release, not debug: debug reached a first frame in 0.93 s on a"
+    ds_warn "Release, not debug: debug reached a first frame in 0.91-0.97 s on a"
     ds_warn "device and in over 218 s on an emulator, where it was abandoned."
     ds_warn "Release is what a frame-cost measurement should describe."
     exit 1
