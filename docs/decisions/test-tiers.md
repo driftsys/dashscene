@@ -550,10 +550,14 @@ runs the whole workspace, and the suite reads records —
 `the-native-library-ships-inside-the-unity-package.md`, and
 `goldens/tooling/tests/worked_example.rs` requires
 `docs/technotes/implementing-a-backend.md` to name the worked example by path.
-Editing either took the suite red in a diff this detector calls documentation.
-Declaring the doc paths tests read was the alternative and was rejected on
-completeness — a list is only as good as whoever remembers the next oracle — so
-one job runs unconditionally instead.
+Two more joined them on 2026-08-29, holding the specification's R-E7/E8/E9
+status and the design record's account of `just unity-editor` to the code each
+describes. Editing any of them takes the suite red in a diff this detector calls
+documentation, and `demo/tests/ci_gating.rs` is where the set is enumerated —
+which is why that test fails when a new one lands rather than letting it pass
+unnoticed. Declaring the doc paths tests read was the alternative and was
+rejected on completeness — a list is only as good as whoever remembers the next
+oracle — so one job runs unconditionally instead.
 
 **Ungating that one job is sufficient because it runs `--workspace`.** Three of
 the eleven still gated also run tests — `atlas-repro`, `render-oracle` and

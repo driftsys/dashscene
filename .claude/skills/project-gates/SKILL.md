@@ -187,8 +187,8 @@ documentation-only diff most jobs skip. Read the individual jobs.
                       Needs the NDK for the Android half, so it is outside
                       `check` for the reason `just android` is
     just unity-android needs BOTH an editor with Android Build Support AND an
-                      attached device — a combination no other recipe has, and
-                      bootstrap installs neither. Builds an Android player from
+                      attached device — a combination only its own negative
+                      control shares, and bootstrap installs neither. Builds an Android player from
                       the package as installed, asserts the APK carries
                       `lib/arm64-v8a/libdashscene_ffi.so` and no other ABI, then
                       installs it and requires three positive markers from
@@ -202,6 +202,28 @@ documentation-only diff most jobs skip. Read the individual jobs.
                       NOT check R-E7, R-E8 or R-E9: it configures the project it
                       reads, and that project is not the shipping artifact those
                       three bind (issue #1353).
+    just unity-android-negative  that recipe's teeth, re-provable on demand —
+                      `unity-conformance-negative`'s shape, for the gate that
+                      had none. The mutations live in
+                      `unity/android-probe/negative-control.tsv` and are applied
+                      to a COPY of the probe sources under `target/`, which
+                      `unity-android` picks up through
+                      its third parameter; each row names the
+                      diagnostic the failing run must print, so a row cannot
+                      pass on a recipe that went red for an unrelated reason.
+                      **Two actions**: `run` needs the editor and the device
+                      `unity-android` needs, and every row but
+                      `r-e8-membership` — which fails inside the editor before
+                      a player is built — costs a full APK
+                      build; `mutate` stops after writing the mutated copies and
+                      needs neither, which is the half that catches the table
+                      stopping matching. `package-gate`'s
+                      `android_probe_negative_control` catches the same on
+                      every pull request — a `find` that stopped matching, one
+                      that matches twice, a reworded `expect`, and the seam
+                      being renamed. What none of that can say is that a
+                      mutation still turns the recipe red; only a device
+                      answers that (issue #1370)
 
     just unity-editor  R-E10's SECOND check, the only thing in this
                       repository that compiles a Unity `.shader` WITHOUT
@@ -234,7 +256,22 @@ documentation-only diff most jobs skip. Read the individual jobs.
                       `Samples~/` — the last because it copies every
                       sample into its project and is the only CHECK that
                       compiles them (issue #1298); `unity-demo` compiles the
-                      Showcase sample while building its player. It also WRITES the `.meta`
+                      Showcase sample while building its player.
+                      **Since 2026-08-29 it also asks what Unity's Mono runtime
+                      does with a `[DllImport]` naming a symbol the loaded
+                      library does not export** — it raises
+                      `EntryPointNotFoundException`, which is the behaviour
+                      issue #1308's whole translation rests on and which was
+                      verified on CoreCLR only until then (issue #1322). Two
+                      imports, one exported and one not: without the exported
+                      one a library that failed to load would report the same
+                      pass. It REFUSES a runtime these records do not name, so
+                      Unity's move to CoreCLR cannot make them false quietly,
+                      and it SKIPS in the summary line on a host where D3 ships
+                      no library an editor can load — which is every host but
+                      the one its editor-compatible row names. What it cannot
+                      say is what IL2CPP does, and IL2CPP is what ships.
+                      It also WRITES the `.meta`
                       files R-E2 requires, because a `file:` dependency is a
                       mutable package: check `git status` after a run that added
                       a file.
@@ -544,8 +581,11 @@ as three tiers, so "tests pass" is no longer a claim about all of it:
   `exit-gate-tests`, `exit-gate`, `unity-abi` and `unity-ffi` all skip, and
   `deno` skips with them. **`test` does not skip, and has not since issue
   #1361**: the suite reads records — it parses D3's table out of a decision
-  record and requires a technote to name a worked example by path — so a
+  record, requires a technote to name a worked example by path, and since
+  2026-08-29 holds the specification's R-E7/E8/E9 status and the design record's
+  account of `just unity-editor` to the code each describes — so a
   documentation-only diff can take it red, and the skip was fail-open for that
-  job alone. Read the individual jobs to see which tiers executed
+  job alone. `demo/tests/ci_gating.rs` enumerates that set and fails when it
+  grows, so the count is read there rather than written here. Read the individual jobs to see which tiers executed
   (`docs/decisions/test-tiers.md`).
 

@@ -253,6 +253,24 @@ public static class AndroidProbeBuild
     /// committed `.meta` since story #1334, and this asks Unity whether that
     /// `.meta` makes it reachable for Android. A failure is a defect in the
     /// package rather than a gap in this project.
+    ///
+    /// **The `.meta` carries it and the folder name does not**, which issue
+    /// #1370 asked the other way round: it held that `Plugins/Android/` would
+    /// make Unity infer compatibility on its own, leaving this green over a
+    /// deleted `.meta`. `the-native-library-ships-inside-the-unity-package.md`
+    /// D2 rules that out — Unity's path-inference table is rooted at `Assets/`
+    /// in every row, so it reaches no package, and it carries no Android row at
+    /// all. Measured on 2026-08-29 rather than read off the record: with the
+    /// committed `.meta` deleted, `just unity-editor` reported that same
+    /// library "is not compatible with Android", from the
+    /// `GetCompatibleWithPlatform` this method also calls.
+    ///
+    /// **What it does not pin is that `.meta`'s CONTENT.** Any `.meta` marking
+    /// the file compatible with Android passes here, whatever CPU it names.
+    /// R-E21's two halves are what hold the values: `unity/package-gate`'s
+    /// `plugin_meta` compares the committed text against D3's rows on every
+    /// pull request, and `just unity-editor` reads them back through
+    /// `PluginImporter`.
     private static void CheckPackageNativeLibrary(List<string> failures)
     {
         var packagePlugins = $"Packages/{PackageName}/Runtime/Plugins/";

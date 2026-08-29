@@ -233,15 +233,28 @@ measured here.
 `ScriptingImplementation.IL2CPP`. _Check:_ read `PlayerSettings`. Unity ships no
 arm64 Mono runtime:
 `PlaybackEngines/AndroidPlayer/Variations/mono/Release/Libs/` contains
-`armeabi-v7a` only. **Unchecked**: nothing reads `PlayerSettings` for this
-requirement (issue #1353); the reads that exist serve R-E10.
+`armeabi-v7a` only. **Unchecked**, and the read that exists is not its check:
+`unity/android-probe/AndroidProbeBuild.cs` sets this backend on the throwaway
+Android probe project and reads it back, which catches a value the object
+rejected and nothing more — a check that writes what it then reads cannot fail
+for the requirement. That project is regenerated under `target/` on every run,
+so it is not the shipping project this section scopes these three to. Issue
+#1353 stays open and records what would discharge it: a read of a project this
+repository did not configure, or of the artifact a build produced.
 
 **R-E8** — the host project shall set `AndroidTargetArchitectures` to exactly
 `AndroidArchitecture.ARM64`. _Check:_ read `PlayerSettings` and compare for
 equality rather than membership — a value that also carries `ARMv7` fails.
-**Unchecked**, as R-E7 (issue #1353). The equality is the point of the rule, so
-a project needing a second ABI — an emulator farm — is a separate project rather
-than a reason to widen this.
+**Unchecked as stated, and asserted on one artifact.**
+`unity/android-probe/AndroidProbeBuild.cs` sets and reads back, as for R-E7, and
+`just unity-android` then asserts the equality on the APK that build produced:
+the archive shall carry `lib/arm64-v8a/libdashscene_ffi.so` and no second `lib/`
+directory. That is two independently produced answers rather than one value
+compared to itself, and it is the strongest evidence any of these three carries
+— but the APK is the probe's rather than a shipping project's, so issue #1353
+stays open. The equality is the point of the rule, so a project needing a second
+ABI — an emulator farm — is a separate project rather than a reason to widen
+this.
 
 **R-E9** — the host project shall set `AndroidMinSdkVersion` to the value of
 `ANDROID_API` in the `justfile`, or higher. _Check:_ read `PlayerSettings` and
@@ -251,8 +264,12 @@ target through `aarch64-linux-android<ANDROID_API>-clang` — including the
 `libdashscene_ffi.so` a Unity host loads, which is the only Android binary this
 package ships. Issue #1235 argues the number can drop to 29; writing the
 requirement against the variable rather than the literal means closing #1235
-lowers the floor without amending this file. **Unchecked**, as R-E7 (issue
-#1353).
+lowers the floor without amending this file. **Unchecked**, as R-E7:
+`unity/android-probe/AndroidProbeBuild.cs` sets this value and reads it back,
+against a floor `just unity-android` passes in as `DASHSCENE_ANDROID_API` rather
+than a literal the build script holds — so the comparison is against the
+variable, and closing issue #1235 moves both. Issue #1353 stays open for the
+same reason it does for R-E7.
 
 **R-E10** — every C# type under `unity/com.driftsys.dashscene/Runtime/` shall
 compile against `netstandard.dll` version 2.1.0, so the package builds under

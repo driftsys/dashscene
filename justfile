@@ -3205,7 +3205,7 @@ unity-demo unity_version="6000.3.23f1" action="run":
 # this repository's memory records most often.
 #
 # Needs an editor with Android Build Support, and an attached device.
-unity-android unity_version="6000.3.23f1" timeout="300":
+unity-android unity_version="6000.3.23f1" timeout="300" probe_src="":
     #!/usr/bin/env bash
     set -euo pipefail
     editor="${DASHSCENE_UNITY:-/Applications/Unity/Hub/Editor/{{unity_version}}/Unity.app/Contents/MacOS/Unity}"
@@ -3285,6 +3285,49 @@ unity-android unity_version="6000.3.23f1" timeout="300":
       echo "unity-android: run \`just unity-plugins\` and commit what it writes." >&2
       exit 1
     fi
+    # **Existence answers a different question than the one asked here.** A
+    # truncated file, or an arbitrary one at that path, passes `[ -f ]`; the
+    # failure then arrives as a Gradle error or as a `DllNotFoundException` on
+    # the device, both of which this recipe attributes elsewhere. Four bytes of
+    # ELF magic and `e_machine` name it here instead. Not a second gate:
+    # `unity/package-gate`'s `plugin_meta` holds the same two fields on every
+    # pull request, and this is the local pre-flight in front of a build that
+    # takes minutes.
+    #
+    # **What it still cannot say is whether the library is the current one.**
+    # An ELF of the right architecture built from an older tree passes this and
+    # passes `plugin_meta`; `DsSlice::stride` is what catches that at run time,
+    # which is why R-E17 makes that comparison mandatory in the host.
+    header=$(od -An -tx1 -N20 "${shipped}" | tr -d ' \n')
+    if [ "${header:0:8}" != "7f454c46" ]; then
+      echo "unity-android: ${shipped} does not start with ELF magic." >&2
+      echo "unity-android: it is truncated, or it is not the library at all." >&2
+      echo "unity-android: run \`just unity-plugins\` and commit what it writes." >&2
+      exit 1
+    fi
+    # **Length before the second field, because a truncation reaches it.** An
+    # eight-byte file passes the magic check and leaves `${header:36:4}` empty,
+    # so without this the run blames the architecture for a file that has no
+    # `e_machine` at all — measured on a copy truncated to 8 bytes. Twenty is
+    # what THIS check reads to reach `e_machine` at offset 0x12, not the size of
+    # an ELF64 header, which is 64.
+    if [ "${#header}" -lt 40 ]; then
+      echo "unity-android: ${shipped} is ${#header} hex digit(s) long, under the 40" >&2
+      echo "unity-android: bytes this check reads to reach e_machine. It is truncated." >&2
+      echo "unity-android: run \`just unity-plugins\` and commit what it writes." >&2
+      exit 1
+    fi
+    # `e_machine` sits at offset 0x12, two bytes little-endian; EM_AARCH64 is
+    # 0xB7. D3's Android row is arm64 and the APK assertion further down
+    # requires `lib/arm64-v8a` alone, so anything else here fails that check
+    # tens of minutes later having built a player first.
+    if [ "${header:36:4}" != "b700" ]; then
+      echo "unity-android: ${shipped} is an ELF whose e_machine is not EM_AARCH64." >&2
+      echo "unity-android: D3's Android row is arm64, and the APK check below would" >&2
+      echo "unity-android: fail on it after a player build. Rebuild with" >&2
+      echo "unity-android: \`just unity-plugins\`." >&2
+      exit 1
+    fi
     adb=$(just _android-adb)
     if ! just _android-has-device; then
       just _android-warn-no-device unity-android
@@ -3302,8 +3345,36 @@ unity-android unity_version="6000.3.23f1" timeout="300":
       }
     }
     JSON
-    cp "${root}/unity/android-probe/AndroidProbeBuild.cs" "${project}/Assets/Editor/"
-    cp "${root}/unity/android-probe/DashsceneAndroidProbe.cs" "${project}/Assets/"
+    # **A PARAMETER, not an environment variable**, so that
+    # `unity-android-negative` can point this at a mutated copy under `target/`
+    # without editing a committed file, and so that nothing exported in a
+    # developer's shell can redirect an ordinary run at uncommitted sources
+    # months later. `unity-conformance` takes its table the same way and for the
+    # same reason. Defaulted to the committed directory, and ANNOUNCED when it
+    # is not: a negative run that read as a positive one is the worst outcome
+    # this seam could produce.
+    # **`quote()`, because a parameter is interpolated into this script's TEXT
+    # before bash parses it.** The environment variable this replaced could not
+    # do that; a parameter can, so a path carrying a quote, a `$` or a backtick
+    # would expand or escape rather than being taken literally. The internal
+    # caller is a row name held to `[a-z0-9-]`, but the parameter is public and
+    # documented for hand use.
+    probe_src={{ quote(probe_src) }}
+    if [ -z "${probe_src}" ]; then
+      probe_src="${root}/unity/android-probe"
+    else
+      echo "unity-android: probe sources from ${probe_src}, NOT the committed ones."
+    fi
+    for probe_file in AndroidProbeBuild.cs DashsceneAndroidProbe.cs; do
+      if [ ! -f "${probe_src}/${probe_file}" ]; then
+        echo "unity-android: ${probe_src} holds no ${probe_file}, so the project" >&2
+        echo "unity-android: would be built without it. Is the probe_src argument" >&2
+        echo "unity-android: pointing at the wrong directory?" >&2
+        exit 1
+      fi
+    done
+    cp "${probe_src}/AndroidProbeBuild.cs" "${project}/Assets/Editor/"
+    cp "${probe_src}/DashsceneAndroidProbe.cs" "${project}/Assets/"
     log="${project}/editor.log"
     echo "unity-android: building the APK in {{unity_version}} (log: ${log})"
     set +e
@@ -3446,6 +3517,29 @@ unity-android unity_version="6000.3.23f1" timeout="300":
     # then reports 141 and the test inverts. Measured to flip between 20,799
     # and 83,199 bytes of input, which a crash-restart loop reaches inside the
     # poll window because each restart appends four fresh timestamped lines.
+    # **Before the marker loop, because it is unreachable after it.** This
+    # names the failure the loop below can only report as a missing marker, and
+    # the two are mutually exclusive within one run: the probe logs
+    # `runtime constructed` on success and `the runtime did not construct` on
+    # failure, never both, so a thrown runtime always failed the loop first and
+    # this block only ever fired on a whole-buffer read that had caught two
+    # runs. The recorded evidence for that mutation said it named R-E21; it had
+    # stopped doing so when the loop replaced the older absence check, which is
+    # what issue #1370 means by mutation evidence expiring.
+    #
+    # What it catches is a MISSING library or an ABI-version mismatch —
+    # `EnsureAbiCompatible` plus `ds_runtime_new`. It does NOT catch a stale
+    # library of the right architecture whose ABI constant did not move: that
+    # is R-E17's per-array stride comparison, which runs in AcquireFrame, and
+    # this probe acquires no frame. `unity/README.md` states the distinction.
+    #
+    # The PAINTER line is deliberately not fatal: rung 3 and a stripped shader
+    # are answers this probe exists to report, not failures of it.
+    if grep -qF "the runtime did not construct" <<<"${captured}"; then
+      echo "unity-android: the shipped library did not load on ${device}." >&2
+      echo "unity-android: R-E21 is the requirement that breaks; see the line above." >&2
+      exit 1
+    fi
     for marker in \
       "[android-probe] READ" \
       "[android-probe] runtime constructed" \
@@ -3465,26 +3559,164 @@ unity-android unity_version="6000.3.23f1" timeout="300":
       echo "unity-android: so the BufferTarget value above is not a verdict (R-E14, D4)." >&2
       exit 1
     fi
-    # Kept beside the positive markers because it NAMES the failure. The loop
-    # above already fails a run whose runtime did not construct; this turns
-    # "a marker was missing" into "the library did not load", which is the
-    # difference between a report an operator can act on and one they cannot.
-    #
-    # What it catches is a MISSING library or an ABI-version mismatch —
-    # `EnsureAbiCompatible` plus `ds_runtime_new`. It does NOT catch a stale
-    # library of the right architecture whose ABI constant did not move: that
-    # is R-E17's per-array stride comparison, which runs in AcquireFrame, and
-    # this probe acquires no frame. `unity/README.md` states the distinction.
-    #
-    # The PAINTER line is deliberately not fatal: rung 3 and a stripped shader
-    # are answers this probe exists to report, not failures of it.
-    if grep -qF "the runtime did not construct" <<<"${captured}"; then
-      echo "unity-android: the shipped library did not load on ${device}." >&2
-      echo "unity-android: R-E21 is the requirement that breaks; see the line above." >&2
-      exit 1
-    fi
     echo "unity-android: the read above was taken on ${device}."
     echo "unity-android: record it in docs/decisions/unity-painter-uses-brg.md D4 (issue #1345)."
+
+# `unity-android`'s teeth, re-provable on demand.
+#
+# **Why it is committed rather than written down.** The four mutations that
+# showed `unity-android` can fail were run once and recorded in a commit
+# message. `implementing-a-change` rules that mutation evidence expires when a
+# later round changes the code, and it had already expired: the recorded
+# evidence for `runtime-throws` said the recipe named R-E21, and by the time
+# issue #1370 was filed the marker loop was exiting before that block ever ran.
+# A table the recipe applies cannot go stale that way without a gate saying so.
+#
+# `unity-conformance-negative` is the shape this follows. The mutations live in
+# `unity/android-probe/negative-control.tsv`, which documents its own columns.
+#
+# **It edits no committed file.** Each mutation is applied to a copy of the
+# probe sources under `target/unity-android-negative/<name>/`, and
+# `unity-android` takes them as its third parameter.
+#
+# **It proves nothing about a gate that is already broken.** Like every
+# negative control, it assumes the positive run passes — a `just unity-android`
+# that is red for an unrelated reason makes every row here red as well, which
+# is why each row requires its own named diagnostic and not merely a non-zero
+# exit.
+#
+# Needs an editor with Android Build Support and an attached device, for the
+# same reason `unity-android` does — including `r-e8-membership`, which fails
+# inside the editor before `BuildPlayer` is reached and so costs no APK build
+# at all, because that recipe refuses before it builds when no device is
+# attached. Every other row costs a full build, so `all` is not cheap.
+#
+# `just` takes the LAST comment line as the summary it prints (issue #1175),
+# which is why this one is here rather than at the top of the block.
+#
+# Prove `unity-android` can fail, by mutating the probe it builds.
+unity-android-negative name="all" action="run" unity_version="6000.3.23f1" timeout="300":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    case "{{ action }}" in
+      run|mutate) ;;
+      *) echo "negative: unknown action '{{ action }}' — pass run or mutate" >&2; exit 1 ;;
+    esac
+    root="$(git rev-parse --show-toplevel)"
+    table="${root}/unity/android-probe/negative-control.tsv"
+    if [ ! -f "${table}" ]; then
+      echo "negative: no mutation table at ${table}" >&2
+      exit 1
+    fi
+    ran=0
+    # **Read on fd 3, not on stdin.** `just unity-android` below inherits this
+    # loop's stdin, and a child that reads any of it consumes the rows this
+    # loop has not reached — which silently runs fewer mutations than the table
+    # holds and reports success over the ones it skipped.
+    while IFS=$'\t' read -r name file find replace expect marker <&3; do
+      case "${name}" in ''|'#'*|name) continue ;; esac
+      if [ "{{ name }}" != "all" ] && [ "{{ name }}" != "${name}" ]; then
+        continue
+      fi
+      work="${root}/target/unity-android-negative/${name}"
+      rm -rf "${work}"
+      mkdir -p "${work}"
+      cp "${root}/unity/android-probe/"*.cs "${work}/"
+      mutated="${work}/${file}"
+      if [ ! -f "${mutated}" ]; then
+        echo "negative: ${name}: the table names ${file}, which is not in" >&2
+        echo "negative: unity/android-probe/." >&2
+        exit 1
+      fi
+      # **Exactly once, checked before the edit.** A `find` that matches
+      # nothing produces an unmutated copy, and the run that follows is a
+      # POSITIVE one reported as a negative control that passed — the failure
+      # mode this repository has recorded most often for an edit script.
+      # `grep -oF | grep -c .` rather than `grep -c`, which counts LINES.
+      hits=$({ grep -oF -- "${find}" "${mutated}" || true; } | grep -c . || true)
+      if [ "${hits}" != "1" ]; then
+        echo "negative: ${name}: its \`find\` appears ${hits} time(s) in ${file}," >&2
+        echo "negative: not once:" >&2
+        echo "negative:   ${find}" >&2
+        echo "negative: the source changed and this row did not. Fix the row" >&2
+        echo "negative: rather than the count — a mutation that changes nothing" >&2
+        echo "negative: proves nothing." >&2
+        exit 1
+      fi
+      content=$(cat "${mutated}")
+      printf '%s\n' "${content//${find}/${replace}}" > "${mutated}"
+      # **Confirmed by finding the replacement, not by failing to find the
+      # original.** Two rows WRAP a statement rather than deleting it, so
+      # `find` is still present afterwards by design.
+      planted=$({ grep -oF -- "${replace}" "${mutated}" || true; } | grep -c . || true)
+      if [ "${planted}" != "1" ]; then
+        echo "negative: ${name}: the replacement is in ${mutated} ${planted} time(s)." >&2
+        echo "negative: bash pattern substitution did not do what the row asked." >&2
+        exit 1
+      fi
+      echo "negative: ${name}: ${file} mutated in ${work}"
+      # **`mutate` stops here, and it is the half that needs no device.**
+      # `unity-android` calls `adb` before it builds anything, so on a machine
+      # sharing its device with another run — or with none attached — the rest
+      # of this row cannot be taken. What this action still exercises is every
+      # way the table can stop matching: a `find` that matches nothing, one
+      # that matches twice, and a substitution that did not land.
+      if [ "{{ action }}" = "mutate" ]; then
+        ran=$((ran + 1))
+        continue
+      fi
+      # **Streamed through `tee`, not captured.** A row is an APK build plus a
+      # poll window — `dies-after-read` never logs DONE, so it spends the whole
+      # timeout — and `out=$(…)` shows an operator nothing for all of it.
+      # `PIPESTATUS[0]` is the recipe's own status, which a bare `$?` after a
+      # pipeline is not. `unity-conformance-negative` reads a log file for the
+      # same reason.
+      row_log="${work}/unity-android.log"
+      set +e
+      just unity-android "{{ unity_version }}" "{{ timeout }}" "${work}" 2>&1 \
+        | tee "${row_log}"
+      status=${PIPESTATUS[0]}
+      set -e
+      out=$(cat "${row_log}")
+      if [ "${status}" -eq 0 ]; then
+        echo "negative: ${name}: unity-android exited 0 over the mutation." >&2
+        echo "negative: the gate has no teeth for this one." >&2
+        exit 1
+      fi
+      # **Herestrings, not pipes**, for the reason `unity-android` states where
+      # it reads logcat: `grep -q` exits on the first match and SIGPIPEs its
+      # left side, and under `pipefail` the pipeline then reports 141 on a
+      # MATCH — inverting the test above about 64 KiB of input, which a failed
+      # editor log reaches easily.
+      if ! grep -qF -- "${expect}" <<<"${out}"; then
+        echo "negative: ${name}: unity-android failed (exit ${status}) without printing" >&2
+        echo "negative:   ${expect}" >&2
+        echo "negative: so it went red for some other reason. A control that cannot" >&2
+        echo "negative: say WHY the gate fired has not shown the gate works." >&2
+        exit 1
+      fi
+      if [ "${marker}" != "-" ]; then
+        if ! grep -qF -- "never reported '${marker}'" <<<"${out}"; then
+          echo "negative: ${name}: nothing named '${marker}' as the marker that" >&2
+          echo "negative: never arrived, and this mutation removes exactly that one." >&2
+          exit 1
+        fi
+      fi
+      echo "negative: ${name}: red, naming '${expect}'"
+      ran=$((ran + 1))
+    done 3< "${table}"
+    if [ "${ran}" -eq 0 ]; then
+      echo "negative: no row named '{{ name }}'. The table holds:" >&2
+      awk -F'\t' '!/^#/ && NF == 6 && $1 != "name" { print "negative:   " $1 }' \
+        "${table}" >&2
+      exit 1
+    fi
+    if [ "{{ action }}" = "mutate" ]; then
+      echo "negative: ${ran} mutation(s) applied under ${root}/target/unity-android-negative/"
+      echo "negative: nothing was run — pass \`run\` for that, on a machine with a device"
+      exit 0
+    fi
+    echo "negative: ${ran} mutation(s) turned unity-android red, each for its own reason"
 
 # Run the Android harness's own tests — the two gates that decide what a device
 # run means.

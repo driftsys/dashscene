@@ -857,8 +857,10 @@ sentence.
       that touches code, and none of the four needs an editor — but **no
       target board**: `just unity-android` (story #1367) has run a Unity player
       on a Pixel 5, reading `BufferTarget` = `RawBuffer` under Vulkan on
-      2026-08-28, but no player has run on the automotive board. Four further
-      checks need an editor and therefore run on no CI runner:
+      2026-08-28, but no player has run on the automotive board. Every other
+      Unity check needs an editor and therefore runs on no CI runner —
+      `.claude/skills/project-gates/SKILL.md` enumerates them, and the count is
+      read there rather than written here because it has grown three times:
       `just unity-editor` (story #1122) compiles every shader pass with
       `DOTS_INSTANCING_ON`, `just unity-conformance` (issue #1312) evaluates the
       committed layer-2 probe table through the generated `Sdf.hlsl` on a real

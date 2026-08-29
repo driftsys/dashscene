@@ -21,10 +21,18 @@
 // empty** — a shader list, a variant count, the shipped plugins. The two that
 // read a single value instead, the compiled assembly and the API compatibility
 // level, cannot be vacuous in that way and carry no such assertion.
+//
+// **Question 5 is in neither class**, and its anti-vacuity device is a positive
+// control: it asks what this runtime does with a `[DllImport]` naming a symbol
+// no library exports, and a library that failed to load would raise for that
+// reason instead. The exported call beside it is what makes the answer a
+// statement about the symbol. It SKIPS, loudly and in the summary line, where
+// D3 ships no library this editor could load.
 
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEngine;
@@ -324,6 +332,10 @@ public static class DashsceneEditorCompat
         // is added, then commits what Unity wrote.
         var pluginsChecked = CheckNativePlugins(failures);
 
+        // 5. What this runtime does with a `[DllImport]` whose symbol the
+        //    loaded library does not export — issue #1322.
+        var symbolRuntime = CheckMissingSymbolRaises(failures);
+
         foreach (var failure in failures)
         {
             Debug.LogError($"[unity-editor] {failure}");
@@ -337,8 +349,9 @@ public static class DashsceneEditorCompat
             failures.Count == 0
                 ? $"[unity-editor] OK: the package compiled under {level}, "
                   + $"{shaderPaths.Length} shader(s) imported clean, {variantsCompiled} "
-                  + "shader variant(s) compiled with DOTS_INSTANCING_ON, and "
-                  + $"{pluginsChecked} native plugin(s) carry D3's platform data."
+                  + "shader variant(s) compiled with DOTS_INSTANCING_ON, "
+                  + $"{pluginsChecked} native plugin(s) carry D3's platform data, and "
+                  + $"{symbolRuntime}."
                 : $"[unity-editor] FAILED with {failures.Count} problem(s).");
 
         EditorApplication.Exit(failures.Count == 0 ? 0 : 1);
@@ -389,6 +402,208 @@ public static class DashsceneEditorCompat
                 TargetSettings = new[] { ("CPU", "ARM64") },
             },
         };
+    }
+
+    /// The entry point no library exports, and the one every library does.
+    ///
+    /// Named rather than composed so that the failure text and the import
+    /// agree. `editor_gate_claims` holds this value to being absent
+    /// from `crates/dashscene-ffi/include/dashscene.h`, because a constant that
+    /// drifted onto a real entry point would leave the check below measuring
+    /// nothing while still passing — and nothing on a pull request compiles
+    /// this file to notice.
+    private const string MissingEntryPoint = "ds_no_library_exports_this_symbol";
+
+    /// Two imports of the SAME library: one that resolves and one that cannot.
+    ///
+    /// Declared here rather than reused from the package because `Native` is
+    /// internal to the package assembly. That is not a shortcut around a check:
+    /// what is unmeasured is the RUNTIME's behaviour, not the C# that catches
+    /// it, and `unity/ffi-check` already requires a guarded forwarder for every
+    /// import the package declares.
+    private static class Probe
+    {
+        [DllImport("dashscene_ffi", CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint ds_abi_version();
+
+        [DllImport(
+            "dashscene_ffi",
+            EntryPoint = MissingEntryPoint,
+            CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint ds_missing();
+    }
+
+    /// D3's OS key for the editor this is running in, or null off the three.
+    private static string EditorHostOs()
+    {
+        switch (Application.platform)
+        {
+            case RuntimePlatform.OSXEditor:
+                return "OSX";
+            case RuntimePlatform.WindowsEditor:
+                return "Windows";
+            case RuntimePlatform.LinuxEditor:
+                return "Linux";
+            default:
+                return null;
+        }
+    }
+
+    /// D3's CPU key for the process this is running in, or null off the two.
+    ///
+    /// The PROCESS architecture rather than the machine's: an editor running
+    /// under Rosetta on an arm64 Mac is an x86_64 process, and the arm64 dylib
+    /// the package ships cannot be loaded into it.
+    private static string EditorHostCpu()
+    {
+        switch (RuntimeInformation.ProcessArchitecture)
+        {
+            case Architecture.Arm64:
+                return "ARM64";
+            case Architecture.X64:
+                return "x86_64";
+            default:
+                return null;
+        }
+    }
+
+    /// The shipped library this editor could load, or null when none is.
+    ///
+    /// **Derived from `ShippedPlugins()` rather than from a platform test**, so
+    /// that the day D3's Linux or Windows row gains a binary, the check below
+    /// starts running there without an edit here.
+    private static string EditorCompatibleLibraryForThisHost()
+    {
+        var os = EditorHostOs();
+        var cpu = EditorHostCpu();
+        if (os == null || cpu == null)
+        {
+            return null;
+        }
+        foreach (var plugin in ShippedPlugins())
+        {
+            if (!plugin.CompatibleWithEditor)
+            {
+                continue;
+            }
+            var matchesOs = false;
+            var matchesCpu = false;
+            foreach (var setting in plugin.EditorSettings)
+            {
+                matchesOs |= setting.Key == "OS" && setting.Value == os;
+                matchesCpu |= setting.Key == "CPU" && setting.Value == cpu;
+            }
+            if (matchesOs && matchesCpu)
+            {
+                return plugin.AssetPath;
+            }
+        }
+        return null;
+    }
+
+    /// The single runtime behaviour `Native.cs`'s whole translation rests on,
+    /// asked of a runtime Unity ships. Returns what the summary line reports.
+    ///
+    /// Issue #1308's fix is a `catch (EntryPointNotFoundException)` on every
+    /// forwarder in `Runtime/Native.cs`, turning it into the
+    /// `DashsceneSymbolMissingException` R-E16 makes every host handle. Issue
+    /// #1322 filed the gap: `unity/ffi-check` watches that happen on CoreCLR,
+    /// and nothing here had watched it on a runtime Unity ships, because
+    /// nothing could load a native library into one. Story #1334 changed that —
+    /// the package carries its own libraries — and an editor is a Mono runtime
+    /// with that library loadable, so this costs two calls.
+    ///
+    /// **The positive control is not optional.** A library that did not load at
+    /// all raises `DllNotFoundException`, and a check that only caught
+    /// `EntryPointNotFoundException` would report the same pass whether the
+    /// library was there or not. Mutated by pointing the second import at
+    /// `ds_abi_version`: the gate reported that the call RETURNED and exited 1.
+    ///
+    /// **It SKIPS where the package ships no library this editor can load**,
+    /// which is every host but the one D3's editor-compatible row names. Both
+    /// imports would raise `DllNotFoundException` there, and failing on that
+    /// would take R-E10's only `Runtime/Engine/` check down with it on a host
+    /// this recipe deliberately supports through `DASHSCENE_UNITY`. The run
+    /// still exits 0 — the rest of the gate passed — so what the skip buys is
+    /// that the summary line NAMES it rather than reading as though the
+    /// question had been asked.
+    ///
+    /// **A runtime the records do not name is a failure, and that asymmetry is
+    /// deliberate.** A host with no loadable library is an environment, not a
+    /// defect; a runtime three documents say this reading was taken on, that
+    /// this is not, is those documents becoming false. Unity ships no CoreCLR
+    /// editor today, so the cost of the loud form is a red gate on a day that
+    /// needs a person anyway, and the message says which three files to
+    /// re-take the reading for.
+    ///
+    /// **It does not exercise the package's own forwarders**, because `Native`
+    /// is internal to the package assembly. What was unmeasured was the
+    /// runtime, not the `catch`.
+    private static string CheckMissingSymbolRaises(List<string> failures)
+    {
+        var loadable = EditorCompatibleLibraryForThisHost();
+        if (loadable == null)
+        {
+            return "the missing-symbol check was SKIPPED on "
+                + $"{Application.platform}/{RuntimeInformation.ProcessArchitecture}, where "
+                + "the package ships no library an editor can load (issue #1322)";
+        }
+
+        // **Required, not merely reported.** `docs/design/unity-csharp-host.md`,
+        // `unity/README.md` and the project-gates skill all record this
+        // measurement as taken on Mono. Unity's move to CoreCLR would make
+        // those three false silently while this check still passed, so the
+        // runtime it did not expect is a failure that names the records.
+        if (Type.GetType("Mono.Runtime") == null)
+        {
+            failures.Add(
+                "this editor's scripting runtime is not Mono, and three documents record "
+                + "issue #1322's measurement as taken on Mono: docs/design/unity-csharp-host.md, "
+                + "unity/README.md and .claude/skills/project-gates/SKILL.md. Re-take the "
+                + "reading and say which runtime it was taken on, rather than deleting this.");
+            return "the missing-symbol check met a runtime the records do not name";
+        }
+
+        uint version;
+        try
+        {
+            version = Probe.ds_abi_version();
+        }
+        catch (Exception e)
+        {
+            failures.Add(
+                $"the positive control failed: ds_abi_version through a "
+                + $"[DllImport(\"dashscene_ffi\")] raised {e.GetType().Name}: {e.Message}. "
+                + $"{loadable} is the row D3 says this editor can load, so a missing entry "
+                + "point would raise for that reason and say nothing about symbols.");
+            return "the missing-symbol check could not load the library";
+        }
+
+        try
+        {
+            Probe.ds_missing();
+            failures.Add(
+                $"calling '{MissingEntryPoint}' RETURNED on Mono. No library exports it, so "
+                + "this runtime binds an absent entry point to something rather than "
+                + "refusing — and every forwarder in Native.cs, which catches "
+                + "EntryPointNotFoundException, translates nothing. Issue #1322.");
+        }
+        catch (EntryPointNotFoundException)
+        {
+            Debug.Log(
+                $"[unity-editor] Mono: a [DllImport] naming '{MissingEntryPoint}' "
+                + $"raises EntryPointNotFoundException, with ds_abi_version()={version} "
+                + $"from {loadable} (issue #1322, R-E16)");
+        }
+        catch (Exception e)
+        {
+            failures.Add(
+                $"calling '{MissingEntryPoint}' raised {e.GetType().Name} on Mono, not "
+                + "EntryPointNotFoundException. Native.cs catches that type and only that "
+                + "type, so issue #1308's translation is dead code here and a host sees the "
+                + $"raw exception: {e.Message}. Issue #1322.");
+        }
+        return "a missing entry point raises EntryPointNotFoundException on Mono";
     }
 
     /// The extensions Unity treats as a native plugin on the platforms in

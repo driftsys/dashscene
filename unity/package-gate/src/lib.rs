@@ -57,6 +57,64 @@ pub const PACKAGE_NAME: &str = "com.driftsys.dashscene";
 /// the other crate rather than as a string buried in a test body.
 pub const WGSL_IS_THE_CRATE_S_OWN: &str = "crates/dashscene-gpu/src/shader.rs";
 
+/// One recipe's body from the justfile — the header line and every line
+/// indented under it.
+///
+/// **A needle found anywhere in the justfile pins nothing about a recipe.**
+/// Both of the tests over `unity-android` searched the whole file at first, and
+/// every needle they used also occurred in another recipe's comment or in the
+/// negative control's own body — so deleting the line each needle stood for
+/// left them green. Reviewed on 2026-08-29 and this is the answer.
+///
+/// # Panics
+///
+/// When no recipe of that name exists, which would otherwise make every
+/// assertion over the result vacuous.
+pub fn recipe_body(justfile: &str, name: &str) -> String {
+    let mut out = Vec::new();
+    let mut inside = false;
+    for line in justfile.lines() {
+        if inside {
+            // A recipe ends at the first line that is neither blank nor
+            // indented — the next recipe's header, or a comment block above it.
+            if !line.is_empty() && !line.starts_with(char::is_whitespace) {
+                break;
+            }
+            out.push(line);
+            continue;
+        }
+        let rest = match line.strip_prefix(name) {
+            Some(rest) => rest,
+            None => continue,
+        };
+        if rest.starts_with(' ') || rest.starts_with(':') {
+            inside = true;
+            out.push(line);
+        }
+    }
+    assert!(
+        inside,
+        "the justfile carries no recipe named `{name}`. Every assertion over \
+         its body would then be made over an empty string."
+    );
+    out.join("\n")
+}
+
+/// The same, with whole-line `#` comments dropped.
+///
+/// **What it does not do is strip a trailing comment**, because a `#` inside a
+/// recipe is more often shell than prose: `${#header}` appears in
+/// `unity-android`, and a `#` opening a comment is what this drops. Whole-line comments are the case that
+/// matters: a diagnostic reworded in an `echo` but left quoted in the comment
+/// above it is what makes a search for that text report on nothing.
+pub fn recipe_code(justfile: &str, name: &str) -> String {
+    recipe_body(justfile, name)
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The repository root, derived from this crate's manifest directory.
 ///
 /// `unity/package-gate` is two levels down, so the root is two parents up. A
@@ -748,4 +806,79 @@ pub fn hlsl_static_const_u32(source: &str, name: &str) -> Option<i64> {
     let rest = &source[at..];
     let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
     digits.parse().ok()
+}
+
+#[cfg(test)]
+mod recipe_tests {
+    use super::{recipe_body, recipe_code};
+
+    const JUSTFILE: &str = "\
+# a comment above the first recipe
+alpha arg=\"x\":
+    #!/usr/bin/env bash
+    echo alpha
+    # a whole-line comment
+
+    echo more
+
+# a comment between recipes
+alpha-negative:
+    echo negative
+
+beta:
+    echo beta
+";
+
+    /// A recipe's body stops at the next header, and at a comment above it.
+    #[test]
+    fn a_recipe_body_is_its_own_lines_and_no_others() {
+        let body = recipe_body(JUSTFILE, "alpha");
+        assert!(body.contains("echo alpha"), "{body}");
+        assert!(
+            body.contains("echo more"),
+            "the blank line does not end it: {body}"
+        );
+        assert!(
+            !body.contains("echo negative"),
+            "it ran into the next recipe: {body}"
+        );
+        assert!(!body.contains("echo beta"), "{body}");
+    }
+
+    /// **The prefix guard, which is the whole reason this is not a `starts_with`.**
+    /// `unity-android` and `unity-android-negative` are the live pair, and the
+    /// two tests over them assert opposite things about the same needles.
+    #[test]
+    fn a_name_that_is_a_prefix_of_another_recipe_takes_its_own_body() {
+        assert!(recipe_body(JUSTFILE, "alpha").contains("echo alpha"));
+        assert!(!recipe_body(JUSTFILE, "alpha").contains("echo negative"));
+        assert!(recipe_body(JUSTFILE, "alpha-negative").contains("echo negative"));
+        assert!(!recipe_body(JUSTFILE, "alpha-negative").contains("echo alpha\n"));
+    }
+
+    /// Whole-line comments go; a `#` that is shell stays.
+    #[test]
+    fn recipe_code_drops_comment_lines_and_keeps_shell() {
+        let code = recipe_code("x:\n    # prose\n    echo \"${#v}\" # trailing\n", "x");
+        assert!(!code.contains("prose"), "{code}");
+        assert!(
+            code.contains("${#v}"),
+            "a `#` inside an expansion is not a comment: {code}"
+        );
+        assert!(
+            code.contains("# trailing"),
+            "a trailing comment is out of scope: {code}"
+        );
+    }
+
+    /// A missing recipe panics rather than yielding an empty string.
+    ///
+    /// Every caller asserts `contains` over the result, so an empty body would
+    /// fail with a message about a missing needle instead of a missing recipe —
+    /// and a renamed recipe would read as a deleted check.
+    #[test]
+    #[should_panic(expected = "no recipe named `gamma`")]
+    fn a_missing_recipe_is_refused() {
+        recipe_body(JUSTFILE, "gamma");
+    }
 }

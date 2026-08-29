@@ -341,7 +341,7 @@ fn the_test_job_takes_no_condition_at_all() {
             found.is_empty(),
             "the `test` job declares `{key}` again: {found:?}. It must take no condition at \
              all — asserting the absence of one expression would pass over `if: false` or a \
-             condition on a differently named output. Two tests parse files under `docs/`, so \
+             condition on a differently named output. Several tests parse files under `docs/`, so \
              any documentation-only condition here makes a docs diff able to take the suite \
              red with CI green. Issue #1361."
         );
@@ -365,14 +365,16 @@ fn the_test_job_takes_no_condition_at_all() {
 }
 
 #[test]
-fn the_tests_that_read_a_record_are_the_two_this_reasoning_names() {
+fn the_tests_that_read_a_record_are_the_ones_this_reasoning_names() {
     // **The premise the fix rests on.** Ungating `test` closes the fail-open
     // only while every test that reads a file under `docs/` is one the `test`
-    // job runs. A third one landing in a target that only a GATED job runs —
+    // job runs. One landing in a target that only a GATED job runs —
     // `atlas-repro`, `render-oracle` and `exit-gate-tests` all run tests and
     // all still skip — would restore it silently.
     let known = [
         "unity/package-gate/tests/plugin_meta.rs",
+        "unity/package-gate/tests/host_project_status.rs",
+        "unity/package-gate/tests/editor_gate_claims.rs",
         "goldens/tooling/tests/worked_example.rs",
     ];
     let mut found = Vec::new();
@@ -390,14 +392,34 @@ fn the_tests_that_read_a_record_are_the_two_this_reasoning_names() {
          checked which job runs it."
     );
 
-    // And neither is filtered out of the profile the `test` job runs.
+    // And none of them is filtered out of the profile the `test` job runs.
+    //
+    // **Derived from the files above rather than listed.** A hand-written list
+    // named two while `known` held four, so the two record-reading tests this
+    // repository gained on 2026-08-29 were checked against no filter at all —
+    // and a `test(=…)` exclusion for either would have reopened issue #1361
+    // with the comment above asserting it could not.
     let nextest = std::fs::read_to_string(workspace_root().join(".config/nextest.toml"))
         .expect("reading .config/nextest.toml");
     let default = section(&nextest, "[profile.default]");
-    for name in [
-        "the_transcribed_rows_are_d3s_table",
-        "the_guide_names_this_file",
-    ] {
+    let mut names = Vec::new();
+    for path in known {
+        let source = std::fs::read_to_string(workspace_root().join(path))
+            .unwrap_or_else(|e| panic!("{path}: {e}"));
+        for attribute in source.split("#[test]").skip(1) {
+            let after_fn = attribute.split_once("fn ").expect("a #[test] names a fn").1;
+            let name = after_fn.split('(').next().expect("a fn takes arguments");
+            names.push(name.trim().to_string());
+        }
+    }
+    println!("record-reading tests held to the default profile: {names:?}");
+    assert!(
+        !names.is_empty(),
+        "no `#[test] fn` was found in any of {known:?}, so the filter check \
+         below is made over an empty set."
+    );
+    for name in names {
+        let name = name.as_str();
         assert!(
             !default.contains(name),
             "`{name}` is named in the default profile's filter, so the `test` job may not run \
