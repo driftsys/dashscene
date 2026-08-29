@@ -26,6 +26,7 @@ after PR #1377:
 |                        | `demo-android`                                                   | Unity `Samples~/Showcase`                                                |
 | ---------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | choosing a scene       | one scene per launch, from the `scene` intent extra              | left and right walk the scenes, then the committed `.dsb` documents      |
+| the scene's signal     | not reachable                                                    | not reachable                                                            |
 | variant switch         | not reachable; `layout::switch_variant` is never called          | the space bar                                                            |
 | input on a device      | none — `setContentView(new SurfaceView(this))`, no touch handler | keyboard only, so `adb shell input keyevent` drives it and a hand cannot |
 | frame cost readout     | logcat, from `demo-android/src/timing.rs`                        | an on-screen `OnGUI` label, always drawn                                 |
@@ -46,7 +47,8 @@ would explain it — the extent and the build profile — both differ.
 Three things, chosen by the owner on 2026-08-29:
 
 1. **The same thing to use.** The same scene set, the same navigation, the same
-   variant switch, on both hosts, drivable by hand on a device.
+   signal and the same variant switch, on both hosts, drivable by hand on a
+   device.
 2. **Comparable numbers.** One controlled run of both hosts under identical
    conditions, so the two frame-cost tables can honestly be set side by side.
 3. **The same pixels, checked.** Each host's frame captured on the device for
@@ -66,10 +68,48 @@ findings and no executable defect.
 
 It fixes four things.
 
-**Five commands.** `next`, `previous`, `action`, `orientation`, `readout`. Each
-is bound to a gesture and to a key event. The gesture makes the build usable by
-hand; the key event makes it drivable by `adb shell input` without a second
-driving path existing only for the harness.
+**The vocabulary**, taken from the desktop host rather than invented. Two kinds
+of input, each bound to a gesture and to a key event: the gesture makes the
+build usable by hand, and the key event makes it drivable by `adb shell input`
+without a second driving path existing only for the harness.
+
+_The signal._ Every scene declares one scalar signal — `surfaces::SWEEP`,
+`typography::LEVEL`, `layout::SPREAD` — authored over the `0.0..=1.0` range. A
+horizontal drag drives it from the pointer's normalised horizontal position, and
+the left and right keys set it to the bottom and the top of its range. This is
+`demo/src/input.rs`'s binding unchanged; that module was deliberately rewritten
+to name no scene, and it already drives any scene declaring a signal.
+
+_Four commands._ `next` and `previous` walk the entries, `action` runs the
+scene's variant switch, `orientation` swaps portrait and landscape, and
+`readout` shows or hides the frame-cost readout.
+
+|                          | gesture              | key event                           |
+| ------------------------ | -------------------- | ----------------------------------- |
+| signal to bottom, to top | horizontal drag      | `DPAD_LEFT` (21), `DPAD_RIGHT` (22) |
+| `next`, `previous`       | swipe up, swipe down | `PAGE_DOWN` (93), `PAGE_UP` (92)    |
+| `action`                 | tap                  | `SPACE` (62)                        |
+| `orientation`            | two-finger tap       | `DPAD_UP` (19)                      |
+| `readout`                | long press           | `R` (46)                            |
+
+**The left and right keys mean the signal, not navigation.** The desktop host
+and the Unity showcase already disagree here: `demo/src/input.rs` binds them to
+the signal's range, and `DashsceneShowcase.cs` binds them to the previous and
+the next entry. The owner settled it on 2026-08-29 in favour of the desktop
+binding, which is the older of the two and the one written to name no scene. So
+Unity's navigation moves to the page keys.
+
+**What that churns is three call sites, and no more.** The harness drives "next
+entry" with keyevent 22 at `measure/android/unity-frame-cost.sh:135`, at
+`justfile:4039`, and in the hint printed at `justfile:3979`. Orientation already
+uses keyevent 19, which collides with nothing, so
+`measure/android/unity-lifecycle.sh` is untouched.
+
+**One assumption this rests on, to be checked before anything is built on it:**
+that Unity's legacy `Input` maps `PAGE_UP` and `PAGE_DOWN` to `KeyCode.PageUp`
+and `KeyCode.PageDown` on Android, the way it demonstrably maps `DPAD_RIGHT` to
+`KeyCode.RightArrow` today. W2 verifies that on the device before the harness
+depends on it, and falls back to another non-colliding pair if it does not hold.
 
 **Entry order.** The first three entries are the scenes, in
 `corpus/showcase::SCENES` order, on both hosts. Unity's `.dsb` documents are an
@@ -85,28 +125,41 @@ suppressible on both hosts. Suppression is required because `adb screencap`
 composites the readout into the captured frame.
 
 **Capture mode**, entered by a launch parameter rather than by a gesture:
-`capture <scene> <phase>` builds that scene, pins that phase, suppresses the
-readout, draws a fixed number of frames and then holds. It is delivered as an
-intent extra on both hosts, because both are Android activities and
-`demo-android` already reads its scene selection that way. The scenes advance
-their scripted phase on a timer in normal use, which makes an unpinned capture
-non-deterministic. One launch parameter covers the whole need; a separate "hold
-the phase" command would be a second command for the same purpose.
+`capture <scene> <phase> <signal>` builds that scene, pins that phase, sets the
+signal to that value, suppresses the readout, draws a fixed number of frames and
+then holds.
+
+**The signal is pinned for the same reason the phase is.** A scene's appearance
+is a function of both, so two hosts captured at the same phase but at different
+signal values differ for a reason that has nothing to do with either painter,
+and the comparison then says nothing. It is delivered as an intent extra on both
+hosts, because both are Android activities and `demo-android` already reads its
+scene selection that way. The scenes advance their scripted phase on a timer in
+normal use, which makes an unpinned capture non-deterministic. One launch
+parameter covers the whole need; a separate "hold the phase" command would be a
+second command for the same purpose.
 
 ## The six pieces
 
 **W1 — `demo-android` gains the shared surface.** Edge to edge; a `FrameLayout`
 holding the `SurfaceView` under a suppressible `TextView` readout; a touch
-handler binding swipe left and right to `previous` and `next`, a tap to
-`action`, a two-finger tap to `orientation` and a long press to `readout`; the
-same five commands from key events; in-app scene switching that rebuilds the
-arena for the new scene at the current extent; and capture mode. Carries the
-contract record. Depends on nothing.
+handler binding a horizontal drag to the scene's signal, a swipe up and down to
+`next` and `previous`, a tap to `action`, a two-finger tap to `orientation` and
+a long press to `readout`; the same bindings from key events; in-app scene
+switching that rebuilds the arena for the new scene at the current extent; and
+capture mode. The signal write itself is `demo/src/input.rs`'s `cursor_moved`,
+which names no scene and takes the signal name from `Showcase`, so this host
+calls it rather than reimplementing it. Carries the contract record. Depends on
+nothing.
 
-**W2 — the Unity showcase matches it.** The same five commands bound to touch,
-keeping the existing key events; readout suppression as a flag read inside
-`OnGUI`; capture mode. The `.dsb` document list stays, appended after the
-scenes. Depends on nothing.
+**W2 — the Unity showcase matches it.** The same bindings on touch; the signal
+driven from a horizontal drag, which the Unity showcase cannot do at all today;
+navigation moved off the left and right keys onto the page keys, and the three
+harness call sites that send keyevent 22 updated with it; readout suppression as
+a flag read inside `OnGUI`, never by disabling the behaviour; and capture mode.
+The `.dsb` document list stays, appended after the scenes. Verifies the page-key
+mapping on the device before the harness is changed to depend on it. Depends on
+nothing.
 
 **W3 — one run condition.** Both hosts built at `demo-release`, run at the same
 extent and orientation, 240 frames per sample, at least three samples per scene
@@ -139,7 +192,7 @@ captures are archived under `docs/archive/`. Depends on all of the above.
 
 Per scene, per host:
 
-1. Launch the host in capture mode, naming the scene and the phase.
+1. Launch the host in capture mode, naming the scene, the phase and the signal.
 2. Read back the host's logged entry name and drawable extent, and refuse the
    capture unless both are what was asked for. A host that failed to reach the
    scene must not be reported as a host that drew something different.
@@ -177,8 +230,10 @@ not touch.
 
 - **W1 and W2** — command-table tests in the style of `demo-android`'s existing
   `every_scene_is_reachable_by_name`: every command reachable, every scene
-  reachable by `next` from the start entry. Each is mutated by flipping one
-  binding, which must turn it red.
+  reachable by `next` from the start entry, and the signal reaching the bottom
+  and the top of its range from both the drag and the key. Each is mutated by
+  flipping one binding, which must turn it red. `demo/src/input.rs`'s own tests
+  already pin the signal write and are not duplicated.
 - **W3** — the sample-count and warm-up-discard arithmetic, tested away from a
   device on both sides.
 - **W4** — the committed golden tests pin the extraction. Three synthetic cases
