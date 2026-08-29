@@ -48,3 +48,28 @@ across all three scenes in both, `typography` 0.09 ms at 445 glyphs against 0.09
 at 446, `layout` 0.01 ms at 0 glyphs in both. `submit` is fill-rate bound and is
 **not** comparable across the two extents; nothing here should be read as a
 second reading of it.
+
+## Issue #1304's device half, which is what it was still open for
+
+Its code half landed in `3eff33b`: `frame-capture.sh` and `run.sh` stream into a
+host file through `ds_logcat_follow` instead of dumping the whole logcat ring,
+and `ds_capture_state` guards their verdicts. What it still owed was a device
+re-run of each, against a figure it had already produced.
+
+**`frame-capture.sh`** — `paint` spans 0.01 to 0.10 ms across all three scenes,
+the same span the record carries; `typography` 0.09 ms at 445 glyphs against
+0.09 at 446, `layout` 0.01 ms at 0 glyphs in both. See the extent warning above:
+only the extent-independent quantities are compared, because this run is
+portrait and the recorded one is landscape.
+
+**`run.sh`** — its own capture is the GPU pass. Against
+`docs/archive/2026-08-17-v021-android-device-measurements/run-2-complete/gpu-capture.log`,
+this run identifies the same layer (the `DemoActivity` SurfaceView), reports the
+same `--latency: 127 frame row(s)` and the same `gfxinfo: Total frames rendered:
+2`. `totalFrames` over the 15 s window differs — 291 here against 532 — and it
+should: that is a compositor count over wall-clock on a device in a different
+state, not a property of the capture path.
+
+Both runs' bundles are named by a device clock that is years out: this one
+`20240109T212654Z`, the 2026-08-17 one `20231229T090010Z`. That is the same
+condition in both, recorded rather than corrected.
