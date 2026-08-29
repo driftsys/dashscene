@@ -7,11 +7,15 @@
 # finish — so "did not complete" had to be a recorded outcome with a bound on it,
 # or the procedure is a developer waiting and then guessing.
 #
-# **A device has since completed both** (2026-08-17): release 0.27-0.31 s and
-# debug 0.93-14.57 s across two runs, the spread itself being the finding —
-# `docs/design/android-toolchain.md` records that the larger figure was a first
-# launch after install. The bound stays, because an unbounded wait is what it
-# exists to prevent and nothing says the emulator case cannot recur.
+# **A device has since completed both.** To a first frame over five measured
+# attempts per profile on a Pixel 5: release 0.28-0.35 s, debug 0.91-14.57 s.
+# Four of the five debug attempts fall in 0.91-0.97 s and one took 14.57 s, with
+# no recorded cause. **It is not a first-launch-after-install effect**, which
+# this comment asserted until 2026-08-29: both launch conditions have since been
+# measured against each other and the premium is about 60 ms, against the 13.64 s
+# it was offered to explain. The bound stays, because an
+# unbounded wait is what it exists to prevent and nothing says the emulator case
+# cannot recur.
 #
 # `just android` builds debug, so debug is the path a developer meets first.
 #
@@ -79,7 +83,7 @@ ACT="${PKG}/dev.driftsys.dashscene.demo.DemoActivity"
 # **90 s by default, against an emulator run abandoned at 218 s.** The bound is
 # deliberately shorter than the failure it is bounding: the outcome recorded is
 # "not within this many seconds", which is a fact, where waiting for an attach
-# that may not terminate is not. A device has since completed in 0.93-14.57 s, so
+# that may not terminate is not. A device has since completed in 0.91-14.57 s, so
 # 90 s is generous for hardware and still bounds the emulator case. Raise it with
 # `DS_ATTACH_TIMEOUT` when the question is how long rather than whether.
 TIMEOUT="${DS_ATTACH_TIMEOUT:-90}"
@@ -118,12 +122,12 @@ source_label=$(ds_source "${adb}")
         echo
     fi
     echo "Release against debug, because \`just android\` builds debug and that"
-    echo "is the path a developer meets first. Measured on a Pixel 5 on"
-    echo "2026-08-17: release 0.27-0.31 s to a first frame, debug 0.93-14.57 s"
-    echo "across two runs — the spread is a first-launch-after-install effect"
-    echo "rather than steady-state, and \`docs/design/android-toolchain.md\` says"
-    echo "so. An emulator run was once abandoned at 218 s, which is what the"
-    echo "timeout below exists for."
+    echo "is the path a developer meets first. What earlier runs measured on"
+    echo "this hardware is in \`docs/design/android-toolchain.md\`, which is the"
+    echo "one place that summary is maintained — repeating it here would make"
+    echo "every generated report carry a figure the next run invalidates. An"
+    echo "emulator run was once abandoned at 218 s, which is what the timeout"
+    echo "below exists for."
     echo
     echo "\`acquire\` is \`attaching\` to \`attached\` — the adapter, the device and the"
     echo "pipelines. \`to first frame\` adds the first tick and draw. \`TotalTime\` is"
@@ -143,8 +147,16 @@ source_label=$(ds_source "${adb}")
     echo "reading a missing \`attached\` as a wedge would report both as the same"
     echo "thing (issue #1080)."
     echo
-    echo "| profile | outcome | acquire s | to first frame s | TotalTime ms |"
-    echo "| --- | --- | --- | --- | --- |"
+    echo "\`launch\` is \`first-after-install\` or \`later\`. **Every figure this"
+    echo "script produced before 2026-08-29 was the first kind**, because it"
+    echo "uninstalled and installed before every profile unconditionally — so a"
+    echo "spread between two of its rows could never be a first-launch effect,"
+    echo "which is what the design record read one as until then (issue #960)."
+    echo "A \`later\` row is the same build launched again with no reinstall"
+    echo "between."
+    echo
+    echo "| profile | launch | outcome | acquire s | to first frame s | TotalTime ms |"
+    echo "| --- | --- | --- | --- | --- | --- |"
 } > "${report}"
 
 # The epoch of the first logcat line matching a pattern, or nothing.
@@ -168,21 +180,67 @@ elapsed() {
     awk -v a="$1" -v b="$2" 'BEGIN { printf "%.2f\n", b - a }'
 }
 
+# **Every row is a (profile, launch condition) pair, and the pairs are built up
+# front so the body below stays one loop.** Issue #960 is why there are two
+# launch conditions at all: this script uninstalled and installed before every
+# profile unconditionally, so every figure it had ever produced was a first
+# launch after install — and the design record explained a fifteen-fold spread
+# between two such rows as a first-launch effect, which is a condition that did
+# not vary across the rows being explained. A later launch could not be measured
+# because the apparatus could not take one.
+# **Keyed by position, not by profile name.** The usage above advertises
+# `[profile...]`, and repeated attempts per profile is this record's own
+# methodology — `attach-timing.sh OUT release release` is a legitimate request
+# for two independent passes. Keying the install sentinel on the profile name
+# alone made the second pass reuse the first one's install and write to the same
+# log path, so two rows cited one capture and the second overwrote the first.
+runs=()
+occurrence=0
 for profile in "${profiles[@]}"; do
-    ds_note "building and packaging the ${profile} showcase host"
-    # Through the recipe rather than by calling `build.sh` here: issue #1058 §6
-    # removed exactly this inlining from `android-splitscreen`, where the second
-    # copy was exercised only by whoever had an emulator attached.
-    #
-    # **Unset, so the parameter decides.** An inherited
-    # `DASHSCENE_ANDROID_PROFILE` wins over the parameter by design — see
-    # `_apk-demo` — which would silently package one profile for every iteration
-    # of this loop.
-    ( unset DASHSCENE_ANDROID_PROFILE; just _apk-demo "${profile}" ) >/dev/null
+    occurrence=$(( occurrence + 1 ))
+    runs+=("${occurrence}:${profile}:first-after-install" "${occurrence}:${profile}:later")
+done
 
-    log="${out}/attach-${profile}.log"
-    "${adb}" uninstall "${PKG}" >/dev/null 2>&1 || true
-    "${adb}" install "target/android-demo/showcase.apk" >/dev/null
+# Which profile is currently installed, so the package is built and pushed once
+# per profile rather than once per row.
+built=""
+
+for run in "${runs[@]}"; do
+    pass="${run%%:*}"
+    launch="${run##*:}"
+    profile="${run#*:}"
+    profile="${profile%:*}"
+    # Named in every message below, so a warning can be attributed to the row it
+    # came from rather than to a profile that now has two of them.
+    row="${profile}, ${launch}"
+    if [ "${pass}" = "${built}" ]; then
+        ds_note "${row}: a later launch of the build already installed"
+    else
+        ds_note "building and packaging the ${profile} showcase host"
+        # Through the recipe rather than by calling `build.sh` here: issue #1058
+        # §6 removed exactly this inlining from `android-splitscreen`, where the
+        # second copy was exercised only by whoever had an emulator attached.
+        #
+        # **Unset, so the parameter decides.** An inherited
+        # `DASHSCENE_ANDROID_PROFILE` wins over the parameter by design — see
+        # `_apk-demo` — which would silently package one profile for every
+        # iteration of this loop.
+        ( unset DASHSCENE_ANDROID_PROFILE; just _apk-demo "${profile}" ) >/dev/null
+        # **The uninstall is what makes the next launch a first one**, and it is
+        # the reason the two conditions cannot be told apart by relabelling: a
+        # `later` row taken after a reinstall is a first launch under another
+        # name.
+        "${adb}" uninstall "${PKG}" >/dev/null 2>&1 || true
+        "${adb}" install "target/android-demo/showcase.apk" >/dev/null
+        built="${pass}"
+    fi
+
+    log="${out}/attach-${profile}-${launch}.log"
+    # A second pass over the same profile gets its own capture rather than
+    # overwriting the first one's.
+    if [ "${pass}" -gt "${#profiles[@]}" ] 2>/dev/null || [ -e "${log}" ]; then
+        log="${out}/attach-${profile}-${pass}-${launch}.log"
+    fi
     "${adb}" shell am force-stop "${PKG}" || true
     ds_logcat_clear "${adb}"
 
@@ -203,7 +261,7 @@ for profile in "${profiles[@]}"; do
     ds_logcat_follow "${adb}" "${log}"
 
     bound=$(( ( (TIMEOUT + 4) / 5 ) * 5 ))
-    ds_note "${profile}: cold launch, waiting up to ${bound} s for a first frame"
+    ds_note "${row}: cold launch, waiting up to ${bound} s for a first frame"
     start_out=$(ds_am_start "${adb}" -W -n "${ACT}")
     total=$(printf '%s\n' "${start_out}" | grep -F "TotalTime:" | awk '{print $2}' || true)
 
@@ -289,13 +347,13 @@ for profile in "${profiles[@]}"; do
     case "$(ds_capture_state "${log}" "${present}" "${capture_alive}")" in
     empty)
         readable="no"
-        ds_warn "${profile}: the capture holds nothing but logcat's own preamble."
+        ds_warn "${row}: the capture holds nothing but logcat's own preamble."
         ds_warn "Nothing about the attach can be read from it — this is a failed"
         ds_warn "measurement, not a result."
         ;;
     device-gone)
         readable="no"
-        ds_warn "${profile}: adb no longer lists the device. It may be gone or it"
+        ds_warn "${row}: adb no longer lists the device. It may be gone or it"
         ds_warn "may be sitting at \`offline\` with its process alive — \`pgrep -f"
         ds_warn "qemu-system\` says which. Either way the capture stopped when it"
         ds_warn "stopped answering, so nothing here is an outcome about the"
@@ -303,7 +361,7 @@ for profile in "${profiles[@]}"; do
         ;;
     capture-died)
         readable="no"
-        ds_warn "${profile}: the logcat follower exited before the wait ended, with"
+        ds_warn "${row}: the logcat follower exited before the wait ended, with"
         ds_warn "the device still attached. The capture is truncated at an unknown"
         ds_warn "point, so nothing here is an outcome about the acquisition."
         ;;
@@ -312,7 +370,7 @@ for profile in "${profiles[@]}"; do
         # Refused rather than assumed readable: a state added to
         # `ds_capture_state` and not handled here would otherwise be reported as
         # a verdict about the painter.
-        ds_warn "${profile}: unrecognised capture state. Refusing to report an"
+        ds_warn "${row}: unrecognised capture state. Refusing to report an"
         ds_warn "outcome derived from a capture this script cannot classify."
         exit 1
         ;;
@@ -331,9 +389,9 @@ for profile in "${profiles[@]}"; do
         frame_s=$(elapsed "${attaching}" "${drew}")
     fi
 
-    ds_note "${profile}: ${outcome}"
-    printf '| %s | %s | %s | %s | %s |\n' \
-        "${profile}" "${outcome}" "${acquire_s}" "${frame_s}" \
+    ds_note "${row}: ${outcome}"
+    printf '| %s | %s | %s | %s | %s | %s |\n' \
+        "${profile}" "${launch}" "${outcome}" "${acquire_s}" "${frame_s}" \
         "${total:-—}" >> "${report}"
 done
 

@@ -420,6 +420,16 @@ if [ "${1:-}" = "shell" ] && [ "${2:-}" = "getprop" ]; then
     esac
     exit 0
 fi
+# `shell cat <path>` for the two cpu sysfs files, which is where the core count
+# comes from. A device answers these as ranges, not counts.
+if [ "${1:-}" = "shell" ] && [ "${2:-}" = "cat" ]; then
+    case "${3:-}" in
+        /sys/devices/system/cpu/present) echo "0-7" ;;
+        /sys/devices/system/cpu/online)  echo "0-3,6-7" ;;
+        *)                               echo "" ;;
+    esac
+    exit 0
+fi
 exit 0
 STUB
 chmod +x "${env_dir}/adb"
@@ -450,6 +460,97 @@ env_case "the device clock is the stamp, and says so" \
 # The intervals are all device-to-device and correct; only the provenance is
 # misleading, and one more line removes the ambiguity.
 env_case "the host clock is recorded beside it" "    host      "
+
+# **The core count, which is issue #1270's first half.** No `getprop` carries it
+# and the block above is every provenance line a bundle had, so "how many cores
+# does the target actually have" could not be answered from a bundle at all.
+#
+# **Present and online are different numbers and both are recorded.** `nproc`
+# and `/proc/cpuinfo` report only the ONLINE cpus, and Android offlines cores
+# for power at any moment — so a bundle carrying `nproc` alone understates the
+# hardware on exactly the machine the question is about. `present` is what the
+# board has; `online` is what it was willing to run at the instant the bundle
+# was taken. The stub answers 0-7 present and 0-3,6-7 online precisely because
+# they differ: an implementation that reads one and labels it the other passes
+# a test where both are 8.
+env_case "the hardware core count is recorded" \
+    "$(printf '    %-32s %s' 'cores present' '8')"
+env_case "the online core count is recorded beside it" \
+    "$(printf '    %-32s %s' 'cores online' '6')"
+
+# ---------------------------------------------------------------------------
+# ds_cpu_count — the range-list parser the two lines above are derived from
+# ---------------------------------------------------------------------------
+#
+# Exercised directly as well as through `ds_environment`, because a count is a
+# derived value: the two cases above would both pass on a parser that returned
+# the right number for one shape of input and nonsense for another. These pin
+# the shapes a kernel actually emits.
+cpu_case() {
+    local name list expected got
+    name="$1"
+    list="$2"
+    expected="$3"
+    total=$((total + 1))
+    got=$(ds_cpu_count "${list}")
+    if [ "${got}" = "${expected}" ]; then
+        printf '  ok   %-58s %s\n' "${name}" "${expected}"
+    else
+        printf '  FAIL %-58s wanted %s, got %s\n' "${name}" "${expected}" "${got}"
+        failed=$((failed + 1))
+    fi
+}
+
+cpu_case "a whole-range list counts both ends" "0-7" "8"
+cpu_case "a single cpu is one, not zero" "0" "1"
+cpu_case "a parked core splits the list and both parts count" "0-3,6-7" "6"
+cpu_case "a mixed single and range" "0,2-4" "4"
+# A device that did not answer is not a device with no cpus.
+cpu_case "an empty list reports nothing rather than zero" "" ""
+
+# **A device that answered something that is not a range must not read as one
+# core.** `adb shell` merges device stderr into stdout wherever shell protocol
+# v2 is not in play, and the exit status is lost to the command substitution
+# that captures it — so `cat: ...: No such file or directory` arrives as the
+# value. Counting any dash-free token as one cpu turned every such answer into
+# `cores present 1`, which in the bundle is indistinguishable from a genuine
+# single-core reading. That is the exact answer #1270 exists to establish, so
+# the failure is not merely wrong, it is wrong in the one direction that
+# matters. Empty is the honest answer: the device did not say.
+cpu_case "an error merged into stdout is not one core" \
+    "cat: /sys/devices/system/cpu/present: No such file or directory" ""
+cpu_case "a partial range is refused rather than guessed" "0-" ""
+cpu_case "a negative or reversed range is refused" "7-0" ""
+cpu_case "a leading zero is decimal, not octal" "0-08" "9"
+# A trailing comma leaves an empty part, which must add nothing.
+cpu_case "an empty part contributes no cpu" "0-3," "4"
+
+# **And what a refused list looks like in the bundle.** `ds_cpu_count` returning
+# empty has to reach the file as the same `—` `attach.md` uses for a quantity it
+# could not obtain; a bare blank reads as a truncated file. This needs its own
+# stub, because the one above always answers well-formed ranges.
+cat > "${env_dir}/adb-noscpu" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "shell" ] && [ "${2:-}" = "getprop" ]; then echo ""; exit 0; fi
+# The shape adb gives when the file is missing and stderr is merged into stdout.
+if [ "${1:-}" = "shell" ] && [ "${2:-}" = "cat" ]; then
+    echo "cat: ${3:-}: No such file or directory"
+    exit 0
+fi
+exit 0
+STUB
+chmod +x "${env_dir}/adb-noscpu"
+env_nocpu=$(ds_environment "${env_dir}/adb-noscpu" "a device that did not answer" \
+    "20231229T060616Z")
+
+total=$((total + 1))
+if grep -qF -- "$(printf '    %-32s %s' 'cores present' '—')" <<<"${env_nocpu}"; then
+    printf '  ok   %-58s %s\n' "an unanswered core count reads as a dash" "found"
+else
+    printf '  FAIL %-58s %s\n' "an unanswered core count reads as a dash" \
+        "got: $(grep -F 'cores present' <<<"${env_nocpu}" | cat -A | head -1)"
+    failed=$((failed + 1))
+fi
 env_case "and the block says which of the two everything is timed by" \
     "is the device's"
 

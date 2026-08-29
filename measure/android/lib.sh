@@ -128,6 +128,57 @@ ds_describe() {
         "$(ds_source "${adb}")"
 }
 
+# ds_cpu_count <range-list>
+#
+# How many cpus a Linux cpu range list names, on stdout. Empty for an empty or
+# absent list, which is what a device that did not answer gives.
+#
+# **The kernel answers these as ranges, never as a count**:
+# `/sys/devices/system/cpu/present` is `0-7` on a Pixel 5, and `online` becomes
+# something like `0-3,6-7` the moment the governor parks a core. Both forms
+# have to be counted, so neither `wc -l` nor a bare integer read works.
+ds_cpu_count() {
+    local list part lo hi n
+    list="$1"
+    [ -n "${list}" ] || { echo ""; return 0; }
+    n=0
+    local -a parts
+    IFS=',' read -ra parts <<<"${list}"
+    for part in "${parts[@]}"; do
+        case "${part}" in
+            "")  ;;
+            # **Every part is validated, and an unrecognised one refuses the
+            # whole list rather than contributing to it.** `adb shell` merges
+            # the device's stderr into stdout wherever shell protocol v2 is not
+            # in play, and the command substitution that captures this discards
+            # adb's exit status — so `cat: ...: No such file or directory`
+            # arrives here as the value. Counting any dash-free token as one cpu
+            # turned that into `cores present 1`, indistinguishable in the
+            # bundle from a genuine single-core reading, which is the exact
+            # question issue #1270 exists to answer. Empty is the honest answer:
+            # the device did not say. A reversed range was worse still and
+            # returned a negative count.
+            *[!0-9-]* | -* | *- | *-*-*)
+                 echo ""; return 0 ;;
+            # **`10#` on every expansion.** A leading zero makes bash read the
+            # token as octal, so `0-08` aborted the whole bundle under
+            # `set -euo pipefail` with "value too great for base" rather than
+            # reporting a count. The kernel does not pad these, but the value
+            # arrives from a device and nothing here gets to assume that.
+            *-*) lo="${part%%-*}"
+                 hi="${part##*-}"
+                 if [ "$(( 10#${hi} ))" -lt "$(( 10#${lo} ))" ]; then
+                     echo ""; return 0
+                 fi
+                 n=$(( n + 10#${hi} - 10#${lo} + 1 )) ;;
+            # A bare index is a valid one-cpu list: `/sys/devices/system/cpu/present`
+            # reads `0` on a uniprocessor.
+            *)   n=$(( n + 1 )) ;;
+        esac
+    done
+    echo "${n}"
+}
+
 # ds_environment <adb> <described> <device-stamp>
 #
 # The body of a bundle's `environment.md`, on stdout.
@@ -171,6 +222,34 @@ ds_environment() {
         printf '    %-32s %s\n' "${prop}" \
             "$("${adb}" shell getprop "${prop}" 2>/dev/null | tr -d '\r')"
     done
+    echo
+    echo "## cpu"
+    echo
+    # **Issue #1270's first half, which no `getprop` carries.** The block above
+    # was every provenance line a bundle had, so "how many cores does the target
+    # actually have" could not be answered from a bundle at all — and several
+    # accepted decisions assume the answer. `ro.kernel.qemu` and `ro.boot.qemu`
+    # above already say whether a target is virtualized, so with these two lines
+    # one bundle answers both halves of that issue on whatever machine runs it.
+    #
+    # **Both numbers, because they are different questions.** `nproc` and
+    # `/proc/cpuinfo` count only ONLINE cpus and Android parks cores for power
+    # whenever it likes, so either alone understates the hardware on exactly the
+    # machine this is asked about. `present` is what the board has and is the
+    # answer to #1270; `online` is what it was willing to run at the instant the
+    # bundle was taken, and a gap between them is itself worth seeing.
+    local present online
+    present=$("${adb}" shell cat /sys/devices/system/cpu/present 2>/dev/null | tr -d '\r')
+    online=$("${adb}" shell cat /sys/devices/system/cpu/online 2>/dev/null | tr -d '\r')
+    # **A dash, not a blank.** `attach.md` already prints `—` for a quantity it
+    # could not obtain, and a blank here reads as a truncated file rather than
+    # as "the device did not answer" — which is what `ds_cpu_count` returns
+    # empty for.
+    local n_present n_online
+    n_present=$(ds_cpu_count "${present}")
+    n_online=$(ds_cpu_count "${online}")
+    printf '    %-32s %s\n' "cores present" "${n_present:-—}"
+    printf '    %-32s %s\n' "cores online" "${n_online:-—}"
 }
 
 # ds_lifecycle_outcome <alive> <fatal> <drew-after> <seconds> [moved]

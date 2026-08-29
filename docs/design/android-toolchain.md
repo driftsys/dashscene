@@ -639,26 +639,84 @@ does not settle" gives below. (Phrased without the keyword deliberately: #960 is
 open, and a sentence saying an issue was _not_ closed fires exactly as well as
 one saying it was, in any pull-request body that quotes it.)
 
-    run   profile   acquire   to first frame   am start -W TotalTime
-    1     release   0.27 s    0.31 s           188 ms
-    1     debug     1.85 s    14.57 s          227 ms
-    2     release   0.31 s    0.34 s           222 ms
-    2     debug     0.69 s     0.93 s          183 ms
+    run   date        profile   acquire   to first frame   am start -W TotalTime
+    1     2026-08-17  release   0.27 s    0.31 s           188 ms
+    1     2026-08-17  debug     1.85 s    14.57 s          227 ms
+    2     2026-08-17  release   0.31 s    0.34 s           222 ms
+    2     2026-08-17  debug     0.69 s     0.93 s          183 ms
+    3     2026-08-29  release   0.33 s    0.35 s           202 ms
+    3     2026-08-29  debug     0.71 s     0.95 s          148 ms
 
 `acquire` is `attaching a WxH surface` to `attached a WxH surface` — the
 adapter, the device and the pipeline set. **A debug build completes**, which is
-the part both runs agree on.
+the part all three runs agree on.
 
 **They disagree about how much it costs, by a factor of fifteen, so the figure
-is not stable.** Run 1 was the first launch after installing that build and run
-2 a later one, which makes one-time cost the likeliest reading — ART optimising
-a freshly installed package — rather than steady-state debug slowness. That
-would put the steady-state penalty at about **2.7x** rather than 47x. This
-record does not settle it: separating the two needs runs deliberately labelled
-first-launch-after-install and later, which neither of these was.
+is not stable.** Run 1's debug launch took 14.57 s to a first frame; runs 2 and
+3 took 0.93 s and 0.95 s.
+
+**The explanation this record gave until 2026-08-29 was wrong, and run 3 is what
+refuted it.** It read: "Run 1 was the first launch after installing that build
+and run 2 a later one, which makes one-time cost the likeliest reading — ART
+optimising a freshly installed package." **Every row in this table is a first
+launch after install.** `attach-timing.sh` runs `adb uninstall` then
+`adb install` inside its per-profile loop, unconditionally, and has since
+`8460a21` on 2026-08-17 — before any of these figures was taken. So the
+condition the explanation turned on does not vary across the table, and cannot
+account for a difference within it. Run 3 makes that a measurement rather than
+an argument: a third first-launch-after-install, on the same device and the same
+apparatus, cost 0.95 s.
+
+**The two conditions have since been measured against each other**, which is
+what the withdrawn reading needed and could not have. `attach-timing.sh` takes
+both since 2026-08-29: it installs once per profile and launches twice, so a
+`later` row is the same build with no reinstall between. Taken on the same Pixel
+5, 2026-08-29:
+
+    profile   launch                acquire   to first frame   am start -W TotalTime
+    release   first-after-install   0.31 s    0.34 s           205 ms
+    release   later                 0.26 s    0.28 s           179 ms
+    debug     first-after-install   0.73 s    0.97 s           203 ms
+    debug     later                 0.68 s    0.91 s           182 ms
+
+**A first launch after install costs about 60 ms, in both profiles.** 0.97 s
+against 0.91 s for debug, 0.34 s against 0.28 s for release. That is the whole
+size of the effect the withdrawn reading offered as the cause of a **13.64 s**
+difference, and it is smaller than that difference by a factor of about 230. The
+one-time-cost reading is not merely unsupported by the table it was written over
+— it is refuted by a direct measurement of the quantity it named.
+
+**So run 1's 14.57 s is an outlier with no recorded cause.** It is not
+steady-state debug slowness, which is 0.91 s. Nor is it the _typical_ cost of a
+first launch after install, which is now measured at about 60 ms — so a first
+launch does not routinely cost seconds. **An intermittent install-time cost is
+neither shown nor excluded**, and the labelled run cannot exclude one: it is a
+single reading per cell, and the four first-after-install debug figures on this
+device are 14.57, 0.93, 0.95 and 0.97 s — a 13.6 s spread inside the very
+condition whose premium is being reported. Background dexopt completing at
+variable times after `adb install` is one mechanism consistent with every row in
+both tables. What the labelled run does settle is the argument the withdrawn
+reading rested on: it attributed a difference between two rows to a condition
+that was identical in both.
+
+**Where the 13.6 s sat is a hint the record can keep.** In run 1 it fell between
+`attached` at 1.85 s and the first frame at 14.57 s, not in acquire, whereas the
+labelled rows put acquire-to-frame at about 0.23 s. That points at the first
+tick and draw rather than at installation. Nothing else about that run was
+recorded, so what made it fifteen times slower cannot be recovered from this
+record. A reader meeting a slow debug attach on this hardware should treat 14.57
+s as a thing that has happened once in five measured debug attempts on this
+device — 14.57, 0.93, 0.95, 0.97 and 0.91 s — rather than as a figure to plan
+against.
+
+**The debug penalty is 3.3x, like for like.** 0.91 s against 0.28 s, both later
+launches, same device, same day, same apparatus. Read against the first-launch
+rows it is 2.9x. The withdrawn reading reached "about 2.7x" by a route that did
+not hold; the number it guessed is close, and that is a coincidence rather than
+a partial vindication.
 
 **`just android` builds debug**, so this is the path a developer meets first,
-and a first launch after install can cost many seconds — 14.6 s in run 1.
+and a debug launch has once cost 14.6 s on this device.
 
 ### The text path (#969), and D4's two remaining cases
 
@@ -712,15 +770,20 @@ it — and not a whole core throughout, which is why the figure there is split a
 - **#874's third case is exercised but not closed here**: one clean split
   transition is evidence, not the repeated run that recipe performs, and
   `android-splitscreen` itself cannot pass while #1232 stands.
-- **#960 is not settled by this run**, and this bullet asserted a superseded
-  reading of that issue until 2026-08-23 — that it is "a painter that cannot
-  obtain a device must say so", a silent-failure defect rather than a
-  measurement, and that "the epic's one-line summary of #960 as 'whether a debug
-  attach ever completes' does not match the issue". **The epic's summary is the
-  governing reading**, ruled by the owner on 2026-08-23 and recorded on issue
-  #1291; the silent-failure half is split off and done, in PR #1077. Under the
-  governing reading the table above is evidence and not a close — two runs that
-  disagree by a factor of fifteen, neither labelled first-launch-after-install.
+- **#960 was not settled by this run**, and is answered by the labelled run of
+  2026-08-29 recorded above rather than by anything in this section. This bullet
+  asserted a superseded reading of that issue until 2026-08-23 — that it is "a
+  painter that cannot obtain a device must say so", a silent-failure defect
+  rather than a measurement, and that "the epic's one-line summary of #960 as
+  'whether a debug attach ever completes' does not match the issue". **The
+  epic's summary is the governing reading**, ruled by the owner on 2026-08-23
+  and recorded on issue #1291; the silent-failure half is split off and done, in
+  PR #1077. Under the governing reading, the question it asks is now answered:
+  **a debug attach completes**, in 0.91-0.97 s in four of the five debug
+  attempts measured on a Pixel 5, and the two launch conditions have been
+  measured against each other rather than argued about. What is not answered is
+  why one of the five debug attempts took 14.57 s; that is an unexplained
+  outlier, and the typical first-launch premium is far too small to be it.
 - **No frame budget is established.** The 16.67 ms above is a reference point
   for reading the table, not a requirement.
 - **One device.** Nothing here says what a different Adreno, a Mali or a PowerVR
@@ -973,7 +1036,8 @@ follow:
     target/android-measure/<device timestamp>/
       README.md            what this is, which issue each file belongs to, and
                            whether it is an emulator result
-      environment.md       the device, its properties, the commit, and BOTH
+      environment.md       the device, its properties, its core count
+                           (present and online), the commit, and BOTH
                            clocks — the device's, which every timestamp in the
                            bundle uses, and the host's, as provenance only
       adapter-report.txt   the D3a probe — #885's measurement in full
@@ -1165,8 +1229,14 @@ path has one exit of its own, for a move it cannot make.
 What no stub reaches is **the ring itself**: a stub `adb` has no bounded buffer,
 so these tests hold the verdict wiring, the follower's lifetime and its
 ordering, not the property that a stream keeps markers a dump would lose. That
-is a device question, and it is what issue #1304 still owes: each converted
-script needs one device run reproducing a figure it had already produced.
+is a device question, and it is what issue #1304 owed. **Both runs were taken on
+2026-08-29 and are archived at `docs/archive/2026-08-29-v021-device-phase2/`.**
+`frame-capture.sh` reproduced `paint` at 0.01-0.10 ms across three scenes with
+the same glyph counts. What `run.sh`'s half establishes is narrower and the
+archive README says so: the streamed path runs end to end and identifies the
+same layer, not that a marker survived a ring a dump would have lost — the
+figures that matched are a fixed-size latency ring and a SurfaceView frame
+count, neither of which could have come out differently.
 
 **Some behaviour in the converted scripts is reached by no test, and the honest
 form of that is a rule rather than a count.** Anything whose effect is invisible
@@ -1330,7 +1400,13 @@ day; it suppresses an overlay and nothing read here.
 `measure/android/attach-timing.sh`, both profiles in one run, both a first
 launch after install. **`DS_ATTACH_TIMEOUT=600`** — the default is 90 s, which
 would have bounded the debug row there and recorded a different number, so the
-value is part of the command:
+value is part of the command.
+
+**This is what the command wrote in 2026-08-23's layout, and the script has
+since changed.** It now takes both launch conditions, so the same invocation
+produces four rows with a `launch` column and waits up to four times the timeout
+rather than twice. The two rows below are what was recorded then; re-running the
+command today gives a differently shaped table:
 
     ADB=$(just _android-adb) DS_ATTACH_TIMEOUT=600 \
       ./measure/android/attach-timing.sh <outdir> release debug
@@ -1454,17 +1530,22 @@ not because it was the cleanest, since 0.72 s was quiet too.
   completes" is still not what is measured: **it did not complete within 645.1 s
   of wall clock and 546.6 s of CPU.**
 - It does **not** separate a first launch after install from a later one, and
-  its gap is wider than the Pixel 5 table's. That table has four rows — two
-  profiles over two runs — so it holds both conditions and lacks only the
-  deliberate labelling. **Both rows here are first launches after install**,
-  because `attach-timing.sh` uninstalls and installs before every profile, so
-  this pair holds only one of the two. The later launch was attempted twice on
-  2026-08-23 and abandoned both times. **The host condition is recorded because
-  it is what makes the decision legible**: an Apple M3 with 8 cores and 16 GB,
-  carrying six worktrees of this repository at once, a load average reaching
-  172, and `sysctl vm.swapusage` reporting 35 884 MB of 36 864 used — 97.3%.
-  Another session's `just build` was killed by SIGTERM in that state, which is
-  macOS reclaiming memory rather than anything about the code.
+  its gap is wider than the Pixel 5 table's. **Both rows here are first launches
+  after install**, because `attach-timing.sh` uninstalls and installs before
+  every profile, so this pair holds only one of the two. **So does the Pixel 5
+  table, for the same reason** — this bullet said the opposite until 2026-08-29,
+  that the Pixel 5 table "has four rows — two profiles over two runs — so it
+  holds both conditions and lacks only the deliberate labelling", while
+  asserting the mechanism that makes them all one condition two clauses later.
+  **Later launches now exist in this record** — the labelled table above has one
+  per profile, taken 2026-08-29 once `attach-timing.sh` could produce them;
+  before that date no run in this record was one. The later launch was attempted
+  twice on 2026-08-23 and abandoned both times. **The host condition is recorded
+  because it is what makes the decision legible**: an Apple M3 with 8 cores and
+  16 GB, carrying six worktrees of this repository at once, a load average
+  reaching 172, and `sysctl vm.swapusage` reporting 35 884 MB of 36 864 used —
+  97.3%. Another session's `just build` was killed by SIGTERM in that state,
+  which is macOS reclaiming memory rather than anything about the code.
 
   **The emulator stopped answering three ways during it, and only one of the
   three can be identified while it is happening.** Whether the host condition

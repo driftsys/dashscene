@@ -1,0 +1,34 @@
+   Compiling dashscene-gpu v0.0.0 (/Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/v021-device-phase2/crates/dashscene-gpu)
+    Finished `release` profile [optimized] target(s) in 26.50s
+target/aarch64-linux-android/release/examples/gpu_time: 1 file pushed, 0 skipped. 83.5 MB/s (4736984 bytes in 0.054s)
+gpu_time: Adreno (TM) 620 | backend Vulkan | driver Qualcomm Technologies Inc. Adreno Vulkan Driver
+gpu_time: 1280x720, 60 frames per row after 10 discarded
+
+  rects  layers    gpu min ms   gpu p50 ms   gpu max ms
+      0       0         2.814        4.086        4.089
+      8       0         4.908        7.126        7.142
+     32       0         8.875       11.093       16.138
+     32       1         9.955       10.142       18.120
+     32       4        13.391       16.927       24.112
+     32       8        18.241       22.700       22.817
+
+GPU time only, offscreen. There is no swapchain here, so this excludes the
+acquire and the present that dominate a windowed frame's wall-clock — which is
+the point: those were already measured and this is the term they did not
+contain.
+
+The device request carries two features the shipped painter does not ask for —
+TIMESTAMP_QUERY and TIMESTAMP_QUERY_INSIDE_ENCODERS — which is why `gpu-timing`
+is off by default. An adapter offering the first without the second reports
+every row absent rather than a number.
+
+A dash is an absent reading, never a zero: the feature off, no timestamp
+queries on the adapter, a pair that did not read back or did not increase, or
+an instrument retired after a failed map.
+
+The adapter is chosen with no compatible surface (issue #890), so a device that
+sorts adapters by surface support may pick a different one here than a windowed
+host would.
+
+An emulator result describes the host machine's GPU behind a translation layer.
+

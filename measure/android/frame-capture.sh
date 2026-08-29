@@ -92,7 +92,7 @@ shift || true
 # rather than assumed.
 #
 # It matters as much as the emulator label: the two profiles measurably differ —
-# 0.27-0.31 s against 0.93-14.57 s to a first frame on a device — and `attach.md`
+# 0.28-0.35 s against 0.91-14.57 s to a first frame on a device — and `attach.md`
 # has carried a profile column from the start. A frame-cost table that cannot say
 # which library it measured is the unattributable number this apparatus exists to
 # prevent.
@@ -130,7 +130,7 @@ apk="target/android-demo/showcase.apk"
 if [ ! -f "${apk}" ]; then
     ds_warn "no ${apk}. Build it first:"
     ds_warn "  DASHSCENE_ANDROID_PROFILE=release just android-apk"
-    ds_warn "Release, not debug: debug reached a first frame in 0.93 s on a"
+    ds_warn "Release, not debug: debug reached a first frame in 0.91-0.97 s on a"
     ds_warn "device and in over 218 s on an emulator, where it was abandoned."
     ds_warn "Release is what a frame-cost measurement should describe."
     exit 1

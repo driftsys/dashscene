@@ -1,0 +1,111 @@
+# Perfetto configuration for a dashscene frame trace (story #1229).
+#
+# Committed rather than assembled at the device: a trace configuration written
+# under time pressure in a finite hardware window is where a run goes wrong, and
+# a file is reviewable before the device arrives.
+#
+#     adb push measure/android/perfetto-frames.pbtx /data/misc/perfetto-configs/
+#     adb shell perfetto --txt -c /data/misc/perfetto-configs/perfetto-frames.pbtx \
+#         -o /data/misc/perfetto-traces/dashscene.perfetto-trace
+#
+# `--txt` is required: this is the text form of the config proto, and without it
+# perfetto expects the binary encoding and refuses.
+#
+# ## What is in it
+#
+# Four sources, each chosen because it answers a question the frame-cost table
+# cannot:
+#
+#   * `linux.ftrace` with the sched and frame-timeline categories — where the
+#     render thread's time actually goes, and whether a long frame is the painter
+#     working or the thread not running.
+#   * `android.surfaceflinger.frametimeline` — the compositor's own view of each
+#     frame: when it was posted, when it was presented, and which frames were
+#     late. This is the vendor-neutral answer to "did the frame make its
+#     deadline", and it is the trace half of what `gpu-capture.sh` reads out of
+#     `dumpsys SurfaceFlinger --latency`.
+#   * `linux.process_stats` — per-process CPU, so a trace stands on its own
+#     rather than needing the bundle's CPU column beside it.
+#   * `track_event` — anything the process emits itself. Nothing in this
+#     repository does today, which is recorded here so the absence is not read as
+#     a configuration mistake.
+#
+# ## What is deliberately NOT in it
+#
+# **Vendor GPU counters.** `gpu.counters` needs counter ids that differ between
+# Adreno, Mali and PowerVR, and a guessed id produces a trace with a silently
+# empty track, which is worse than a trace that does not claim to hold GPU
+# counters.
+#
+# This comment used to say to add them in a second pass once
+# `adb shell perfetto --query` had reported what the device offers. **That was
+# done on 2026-08-18, and the answer is that this route is closed**: a Pixel 5
+# registers no `gpu.counters` data source at all, its `kgsl` and `dma_fence`
+# ftrace tracepoints do not enable, and `/sys/class/kgsl` is refused to
+# `shell`. GPU time on that device comes from timestamp queries inside the
+# painter instead — `just android-gpu-time`, and the "What the GPU costs"
+# section of `docs/design/android-toolchain.md`. Keep the paragraph above for
+# an adapter that does register the producer.
+#
+# **A long duration.** 20 s at these buffer sizes, because the showcase's pulse
+# advances every 2.5 s and 20 s covers eight phases — enough to see the shape
+# without producing a trace too large to open.
+
+buffers {
+  size_kb: 63488
+  fill_policy: DISCARD
+}
+
+buffers {
+  size_kb: 2048
+  fill_policy: RING_BUFFER
+}
+
+data_sources {
+  config {
+    name: "linux.ftrace"
+    target_buffer: 0
+    ftrace_config {
+      ftrace_events: "sched/sched_switch"
+      ftrace_events: "sched/sched_process_exit"
+      ftrace_events: "sched/sched_process_free"
+      ftrace_events: "task/task_newtask"
+      ftrace_events: "task/task_rename"
+      atrace_categories: "gfx"
+      atrace_categories: "view"
+      atrace_categories: "sched"
+      atrace_categories: "freq"
+      # The showcase host. `atrace_apps` is what makes a process's own slices
+      # appear; without it the trace holds the system's view and not the app's.
+      atrace_apps: "dev.driftsys.dashscene.demo"
+      atrace_apps: "dev.driftsys.dashscene.harness"
+    }
+  }
+}
+
+data_sources {
+  config {
+    name: "android.surfaceflinger.frametimeline"
+    target_buffer: 0
+  }
+}
+
+data_sources {
+  config {
+    name: "linux.process_stats"
+    target_buffer: 1
+    process_stats_config {
+      scan_all_processes_on_start: true
+      proc_stats_poll_ms: 500
+    }
+  }
+}
+
+data_sources {
+  config {
+    name: "track_event"
+    target_buffer: 0
+  }
+}
+
+duration_ms: 20000
