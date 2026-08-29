@@ -640,6 +640,14 @@ their parent rather than apart from it:
   its painter with `--painter` and swaps it with a key; the frame path holds its
   buffers across frames and applies a dirty range only when the commit
   generation says this frame follows the one on the device (story #585).
+- [the-showcase-hosts-share-one-surface.md](the-showcase-hosts-share-one-surface.md)
+  — **accepted** (2026-08-29): every host drawing the `corpus/showcase` scenes
+  presents one entry order, one input vocabulary, one extent policy and one
+  readout rule. Settles the left and right keys as the scene's signal rather
+  than navigation, which `demo/src/input.rs` and `DashsceneShowcase.cs` had
+  bound two different ways, and moves the Unity sample's navigation to the page
+  keys. Carries the capture mode both Android hosts take, and the measured
+  extents that let their frame costs be compared at all.
 - [unity-painter-uses-brg.md](unity-painter-uses-brg.md) — **accepted**
   (2026-08-18, owner's ruling on issue #171): BatchRendererGroup over
   GameObject-per-node for the Unity painter, targeting Unity 6.3 LTS since

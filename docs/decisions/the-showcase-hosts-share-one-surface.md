@@ -1,0 +1,135 @@
+# The showcase hosts share one surface
+
+Status: accepted (2026-08-29)
+
+Every host that draws the `corpus/showcase` scenes presents the same surface:
+the same entry order, the same input vocabulary, the same extent policy and the
+same readout rule. A host may extend it — the Unity sample appends committed
+`.dsb` documents after the scenes — but it may not disagree with it.
+
+## Why
+
+The scene content was already single-sourced. `corpus/showcase::SCENES` is the
+registry, `demo-android` links it directly and the Unity sample reaches it
+through `unity/demo-producer`'s `ds_demo_*` entry points. Everything around the
+scenes was implemented once per host by accident, and the hosts had drifted
+apart in four ways that made them incomparable:
+
+- **One key meant two things.** `demo/src/input.rs` binds the left and right
+  keys to the two ends of the showing scene's own signal range;
+  `DashsceneShowcase.cs` bound them to the previous and next entry.
+- **Neither Android host was drivable by hand.** The Unity sample read only
+  keys, and a phone has no keyboard; `demo-android` took no input at all.
+- **The extents differed**, so neither the frame costs nor the frames could be
+  compared. Measured on a Pixel 5: `demo-android` 1080x1984 against the Unity
+  player's 1080x2340.
+- **The readouts differed in kind** — logcat against an on-screen label — and
+  neither could be suppressed, so `adb screencap` composited one of them into
+  any frame captured for comparison.
+
+## The vocabulary
+
+Two kinds of input. Each is bound to a gesture and to a key event: the gesture
+makes a build usable by hand, and the key event makes it drivable by
+`adb shell input` without a second driving path existing only for the harness.
+
+**The signal.** Every scene declares one scalar signal — `surfaces::SWEEP`,
+`typography::LEVEL`, `layout::SPREAD` — authored over `0.0..=1.0`. A horizontal
+drag drives it from the pointer's normalised horizontal position; the left and
+right keys set it to the bottom and the top of its range.
+
+**Four commands.** `next` and `previous` walk the entries, `action` runs the
+scene's own variant switch, `orientation` swaps portrait and landscape, and
+`readout` shows or hides the frame-cost readout.
+
+|                          | gesture              | key event                           |
+| ------------------------ | -------------------- | ----------------------------------- |
+| signal to bottom, to top | horizontal drag      | `DPAD_LEFT` (21), `DPAD_RIGHT` (22) |
+| `next`, `previous`       | swipe up, swipe down | `PAGE_DOWN` (93), `PAGE_UP` (92)    |
+| `action`                 | tap                  | `SPACE` (62)                        |
+| `orientation`            | two-finger tap       | `DPAD_UP` (19)                      |
+| `readout`                | long press           | `R` (46)                            |
+
+**The left and right keys mean the signal, never navigation.** This is
+`demo/src/input.rs`'s binding, which is the older of the two and the one written
+to name no scene, and it is the one that wins. The Unity sample's navigation
+moved to the page keys on 2026-08-29.
+
+**`PAGE_DOWN` reaching `KeyCode.PageDown` under Unity on Android is measured,
+not assumed.** Taken on a Pixel 5 (`redfin`, Android 14) on 2026-08-29: a
+`just unity-demo-android` cycle driven entirely by keyevent 93 walked all six
+entries in order and reported each one distinctly. Had the keycode not arrived,
+the run would have reported the first entry six times.
+
+## Entry order
+
+The first entries are the scenes, in `corpus/showcase::SCENES` order, on every
+host. A host that carries more — the Unity sample's committed `.dsb` documents —
+appends them after the scenes. So `next` applied twice from the start reaches
+the same scene on every host, which is what lets one harness command drive both.
+
+The count is read from the registry and never written down. `demo-android`'s
+`advance` takes the entry count as a parameter for exactly this reason: with
+three scenes committed, an implementation wrapping at a hard-coded three and one
+wrapping over the registry are the same function, and no test can separate them
+until a fourth scene lands and the hosts silently disagree.
+
+## Extent
+
+Both Android hosts draw at the full display extent. `demo-android` reaches it
+with three changes, each of which was needed and none of which any gate here can
+see — measured on the Pixel 5 on 2026-08-29:
+
+|                                             | extent                                      |
+| ------------------------------------------- | ------------------------------------------- |
+| before                                      | 1080x1984                                   |
+| edge to edge, system bars hidden            | 2204x948 landscape                          |
+| plus `LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS` | 2340x948 landscape                          |
+| plus a fullscreen theme                     | **2340x1080 landscape, 1080x2340 portrait** |
+
+`mMaxBounds` for that device is 1080x2340, and the Unity player reports
+2340x1080 in the same orientation. The two now agree.
+
+## The readout
+
+Same fields, in the same order, in the same units, and suppressible on both
+hosts. **Suppressed by a flag, never by disabling whatever draws it** —
+`DashsceneShowcase.cs` records that disabling the behaviour took the frame loop
+down together with the readout.
+
+The shape is shared and the term names are not. Each host names its own measured
+spans, because `paint` and `submit` on the lean host and `draw` on the Unity
+host measure genuinely different parts of a frame: Unity runs its passes, its
+culling and its present after `Update` returns. Printing them under one word is
+the error `demo/src/shell.rs` warns about.
+
+## Capture mode
+
+`capture <scene> <phase> <signal>`, delivered as three intent extras
+(`--es capture_scene`, `--ei capture_phase`, `--ef capture_signal`). The host
+builds that scene, pins that phase, sets that signal, suppresses the readout,
+draws a fixed number of frames and holds.
+
+**All three or none.** A capture with a defaulted phase or signal photographs a
+different state than the other host is holding, and a comparison fed by it would
+be meaningless rather than merely wrong. A partial set is not a capture, and the
+host runs the demonstration instead.
+
+**An unknown scene name is refused rather than defaulted**, which is the
+opposite of the demonstration launch's rule and deliberately so: drawing
+something anyway is right for a demonstration and wrong for a measurement, where
+it photographs the wrong scene silently.
+
+The phase and the signal are both pinned because a scene's appearance is a
+function of both. Two hosts captured at one phase and two signal values differ
+for a reason that has nothing to do with either painter.
+
+## What this obliges
+
+- A new command is added here first, then to every host that draws these scenes.
+- Anything driving a host over `adb` sends the key events in the table above.
+  Four call sites sent `DPAD_RIGHT` to walk entries and now send `PAGE_DOWN`:
+  `measure/android/unity-frame-cost.sh`, and three in the `unity-demo-android`
+  recipe including the hint it prints and the comment explaining the choice.
+- `measure/android/unity-lifecycle.sh` sends `DPAD_UP` for orientation, which
+  collides with nothing and is unchanged.

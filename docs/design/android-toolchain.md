@@ -827,6 +827,15 @@ device-clock and is therefore correct; only the provenance line was misleading.
 of the two everything in the bundle is timed by, which is the other half of
 #1236.
 
+## The two hosts share one surface
+
+Both Android hosts draw the same scenes, take the same input vocabulary and run
+at the same extent, which is what makes the two tables below comparable at all.
+The rules, the key events an `adb`-driven run sends, and the three changes that
+took `demo-android` from 1080x1984 to the full display extent are
+[`decisions/the-showcase-hosts-share-one-surface.md`](../decisions/the-showcase-hosts-share-one-surface.md).
+They are not restated here.
+
 ## The Unity painter, on the same device (2026-08-29)
 
     status  taken 2026-08-29 on the same Pixel 5, from a Unity player built by
