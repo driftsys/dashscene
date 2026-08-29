@@ -192,11 +192,28 @@ pub struct AbiField {
 /// nothing on this side ever reinterprets them. [`dashpaint_abi_field`] is
 /// what proves field order, by naming each member and its offset.
 ///
+/// Nor does it prove the member list is *complete*. That is the macro body's
+/// own job since issue #1252: each type is rebuilt from exactly the members
+/// declared here, which a struct expression cannot do while one is missing, so
+/// a member added to the `dashpaint` type and not to this list fails the build
+/// rather than being reported by nothing. It has to be caught at compile time,
+/// because a member that fits inside padding rustc already left moves no size,
+/// no alignment and no offset — see the comment on the check itself.
+///
 /// Its second job is the one story #600 was for — a type named in an
 /// `extern "C"` signature is a type the lint checks, so making one of these
 /// non-representable stops the workspace compiling.
 macro_rules! abi_surface {
-    ($( $type:ty { $($field:ident : $ftype:ty),* $(,)? }
+    // **`$type` is an `ident` rather than a `ty`** so that it can be written
+    // as a struct expression below, which is what makes the member list
+    // exhaustive. A `ty` metavariable cannot: rustc rejects `$type { .. }`
+    // with "expected expression, found `ty` metavariable". What the narrowing
+    // actually costs is that a type must be nameable as a bare identifier
+    // here, so a path-qualified one needs a `use` above rather than a
+    // qualified path in the invocation. Every boundary-B type is already
+    // imported that way, and the fix for a future name collision is an
+    // `as` rename in that import — not dropping the check.
+    ($( $type:ident { $($field:ident : $ftype:ty),* $(,)? }
         => $layout_fn:ident, $round_trip_fn:ident; )*) => {
         $(
             // **The declared member type must be the member's type.** Without
@@ -207,6 +224,41 @@ macro_rules! abi_surface {
             // costs nothing at run time; declaring `align: u32` where
             // `dashpaint` has `u8` fails to build.
             $( const _: fn(&$type) -> &$ftype = |v| &v.$field; )*
+
+            // **And the list must name every member the type has** (issue
+            // #1252). A struct expression has to give every field a value or
+            // the crate does not build, so rebuilding the value from exactly
+            // the declared members is a compile-time proof that the list is
+            // complete: a member added to the type in `dashpaint` and to
+            // nothing else fails with `E0063: missing field `quality` in
+            // initializer of `Blur``, naming both.
+            //
+            // **Nothing at run time can stand in for this.** A member that
+            // fits inside padding rustc already left moves no size, no
+            // alignment and no offset, so the layout pin below, the round
+            // trip, and `unity/abi-check`'s member-by-member comparison are
+            // all green while the member never crosses boundary B — measured
+            // by adding `quality: u8` between `Blur`'s `kind` and `radius`,
+            // which left this crate reporting two members and 8 bytes, exactly
+            // as before. The emitted table cannot see it either: three bytes
+            // of padding after a one-byte member is what the C layout
+            // algorithm requires, so a gap that size is indistinguishable from
+            // a member sitting in it.
+            //
+            // **A struct pattern rather than an expression was tried first and
+            // is worse**, for a reason that matters more than the wording: in
+            // a macro expansion rustc reports the omitted field as "pattern
+            // requires `..` due to inaccessible fields", naming neither the
+            // type nor the member, and then suggests adding `..` — which
+            // would reopen this issue while looking like taking the
+            // compiler's advice.
+            //
+            // The rebuild is also the property boundary B actually needs. A
+            // C# consumer reconstructs each struct from the members this
+            // crate reports, so "the declared list is enough to rebuild the
+            // value" is that consumer's precondition, stated here in the one
+            // language that can check it.
+            const _: fn(&$type) -> $type = |v| $type { $($field: v.$field),* };
 
             #[unsafe(no_mangle)]
             pub extern "C" fn $layout_fn() -> AbiLayout {
@@ -436,6 +488,120 @@ mod tests {
                 "{name}'s C layout changed: a consumer's own declaration of it is now wrong"
             );
         }
+    }
+
+    /// Issue #1252's completeness check is still inside `abi_surface!`.
+    ///
+    /// **A source-text test, and it is the only kind available here.** The
+    /// check is a compile-time construct that fires only when someone adds a
+    /// member. Before this test, deleting its one line left every test in this
+    /// crate green, `just build` green, `just c-abi` green and
+    /// `just unity-abi` reporting 28 types agreeing — silently reopening
+    /// #1252. Measured, by deleting it, and by commenting it out with issue
+    /// #1252's own reproducer in place. This workspace has no compile-fail
+    /// harness to hold it instead: no `trybuild`, no `compile_fail`, and
+    /// `dashpaint-abi` declares no dev-dependencies, so the alternative to
+    /// this test is nothing at all.
+    ///
+    /// It pins `$type:ident` as well, because that is not a style choice:
+    /// rustc rejects a `ty` metavariable in expression position, so reverting
+    /// it forces the rebuild expression out with it.
+    ///
+    /// **Bounded to the macro's declaration**, which is what stops it matching
+    /// its own assertion strings — this test sits below the invocation, so a
+    /// deleted line cannot be satisfied by the copy in this file. Confirmed by
+    /// deleting the line and watching this go red.
+    ///
+    /// What it cannot establish is that the construct still *works*. That is
+    /// what the mutation recorded on the check itself measured, and a source
+    /// search can never replace it.
+    #[test]
+    fn the_member_list_completeness_check_is_still_in_the_macro() {
+        let source = include_str!("lib.rs");
+        let start = source
+            .find("macro_rules! abi_surface {")
+            .expect("this crate declares the abi_surface! macro");
+        let end = source[start..]
+            .find("\nabi_surface! {")
+            .expect("the macro is invoked at column 0 below its declaration");
+        let declaration = &source[start..start + end];
+
+        // **Commented-out lines are dropped before matching.** A commented
+        // line still *contains* the construct, so a bare `contains` over the
+        // raw text is satisfied by exactly the edit most likely to disable the
+        // check. Measured: prefixing the line below with `// ` and then adding
+        // `quality: u8` to `dashpaint::Blur` — issue #1252's own reproducer —
+        // left this test and the whole crate at 4 passed. Keeping only lines
+        // whose first non-space characters are not `//` is what makes the
+        // match about live code rather than about text.
+        //
+        // **Block comments are stripped first**, because dropping `//` lines
+        // alone is not enough: wrapping the pinned line in `/* */` leaves it
+        // present verbatim, which is the same fail-open by the next-most-
+        // obvious way of commenting code out.
+        let mut live = String::new();
+        let mut rest = declaration;
+        while let Some(open) = rest.find("/*") {
+            live.push_str(&rest[..open]);
+            match rest[open..].find("*/") {
+                Some(close) => rest = &rest[open + close + 2..],
+                None => {
+                    rest = "";
+                    break;
+                }
+            }
+        }
+        live.push_str(rest);
+        // Whitespace is collapsed last, so a re-wrap of the pinned line —
+        // which `rustfmt` will not do to a `macro_rules!` body, but a person
+        // might — does not fail a test whose message would then claim the
+        // check had been removed.
+        let declaration = live
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let declaration = declaration.split_whitespace().collect::<Vec<_>>().join(" ");
+        let declaration = declaration.as_str();
+
+        // **And no `cfg` inside the macro's declaration.** An attribute that
+        // compiles a check out is invisible to every filter above, because the
+        // item it deletes is still there as text to be matched. The body
+        // carries no `#[cfg` today, so requiring none is exact rather than a
+        // heuristic — and if one is ever genuinely needed, this assertion is
+        // where the argument for it belongs.
+        assert!(
+            !declaration.contains("#[cfg"),
+            "`abi_surface!`'s declaration carries a `cfg` attribute. One above either \
+             compile-time check deletes it while leaving its text here for the assertions \
+             below to match, which reopens issue #1252 with this test green"
+        );
+
+        assert!(
+            declaration.contains("$type:ident"),
+            "`abi_surface!` no longer takes its type as an `ident`. That is not \
+             cosmetic: rustc rejects a `ty` metavariable in expression position, \
+             so the rebuild below cannot be written against one, and issue #1252 \
+             reopens with every gate green"
+        );
+        assert!(
+            declaration
+                .contains("const _: fn(&$type) -> $type = |v| $type { $($field: v.$field),* };"),
+            "`abi_surface!` no longer rebuilds each type from its declared \
+             members, so a member added to a boundary-B type in `dashpaint` and \
+             to nothing else is once again reported by nothing (issue #1252). A \
+             member that fits inside padding rustc already left moves no size, \
+             no alignment and no offset, so no test in this crate and no gate \
+             over the C# side can see it"
+        );
+        assert!(
+            declaration.contains("const _: fn(&$type) -> &$ftype = |v| &v.$field;"),
+            "`abi_surface!` no longer type-checks each declared member against the \
+             member it names. Without it the size `dashpaint_abi_field` reports is \
+             whatever the invocation claims rather than what the struct holds — \
+             declaring `radius: u8` where `dashpaint` has `f32` then compiles, and \
+             the layout pin cannot see it because it measures whole structs"
+        );
     }
 
     /// Neither glyph type carries padding any more: in both, the leading glyph

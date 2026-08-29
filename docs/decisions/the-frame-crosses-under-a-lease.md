@@ -67,8 +67,8 @@ call. The measurement and its limits — one platform, and not the Android targe
 — are in [`../technotes/unity-toolchain.md`](../technotes/unity-toolchain.md).
 It closes the one thing issue #1267's comment of 2026-08-19 left open under its
 question 1; that issue's **question 2**, whether `DS_WRONG_THREAD` should
-distinguish a dead thread from a foreign one, is untouched and is still an
-owner's ruling.
+distinguish a dead thread from a foreign one, was ruled on 2026-08-23 and is
+[`ds-wrong-thread-stands-for-a-dead-thread-too.md`](ds-wrong-thread-stands-for-a-dead-thread-too.md).
 
 While a lease is outstanding, every call that would commit is refused with
 `DS_FRAME_LEASED`. A commit is the only thing that replaces the tables the views
@@ -266,8 +266,11 @@ section predicted, nothing in this record changed with the answer; D2 above says
 what did.
 
 **Whether `DS_WRONG_THREAD` should distinguish a minting thread that has exited
-from a live foreign one** — question 2 of issue #1267, still open and unrelated
-to the data plane.
+from a live foreign one was ruled on 2026-08-23** and is no longer in this
+section either — it does not, and
+[`ds-wrong-thread-stands-for-a-dead-thread-too.md`](ds-wrong-thread-stands-for-a-dead-thread-too.md)
+carries it. It was unrelated to the data plane, as this section said, and
+nothing in this record changed with the answer.
 
 **Nothing else.** The third item this section carried while the story was being
 built — that nothing related `DsFrame`'s arrays to the gated types, so a row

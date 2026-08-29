@@ -3020,7 +3020,8 @@ fn a_frosted_node_with_an_out_of_domain_origin_draws_nothing() {
 }
 
 /// Renders through a clip table, which [`render`] cannot — it passes an empty
-/// one. Only the two clip-edge fixtures below need this.
+/// one. Every clip-edge and clip-combination fixture below needs it; nothing
+/// else in this file does.
 fn render_clipped(
     rects: &[RectEntry],
     paints: &PaintTable,
@@ -3130,5 +3131,150 @@ fn clip_coverage_multiplies_into_the_shape_rather_than_replacing_it() {
          should be near 64; got {alpha}. Near 128 is the shape's own coverage \
          surviving alone — either the clip replaced it instead of multiplying \
          into it, or the clip snapped to whole pixels and contributed 1.0"
+    );
+}
+
+// ---- overlapping clip boxes (issue #1281) ----------------------------
+//
+// The reference painter's half of the pair in
+// `crates/dashscene-gpu/tests/layer3_render_smoke.rs`. That file's comment
+// carries why these exist; the short form is that a `ClipRegion` is a list of
+// ancestor boxes commit does not pre-intersect, each painter combines them
+// itself, and the two shipped painters do it differently.
+//
+// This painter issues one `canvas.clip_rrect(rrect, ClipOp::Intersect, true)`
+// per box — `crates/dashscene-skia/src/lib.rs`, the `for clip_box in
+// region.boxes()` loop — and leaves the combination to Skia's clip stack,
+// which multiplies the per-box coverages.
+//
+// **Neither fixture asserts that its own painter is right.** That is issue
+// #1281's ruling and it is not made.
+
+/// Two clip edges crossing one pixel combine by the **product** here, so the
+/// crossing pixel is darker than either edge alone would leave it.
+///
+/// Both boxes half-cover texel (40, 24) — one along x, one along y — and
+/// Skia's clip stack multiplies, giving a quarter and alpha 64. That is the
+/// true area of the intersection at that pixel.
+///
+/// **`dashscene-gpu` renders the same case at alpha 128**, measured by
+/// `clip_boxes_crossing_one_pixel_combine_by_min`. That is the whole of issue
+/// #1281's disagreement.
+///
+/// **The probes beside the crossing are what make it non-vacuous**, and they
+/// are the ones the two painters agree on: a pixel with one fractional box is
+/// 128 in both, and a pixel inside both boxes is opaque in both. Without them
+/// a clip that had stopped working could darken the crossing for the wrong
+/// reason.
+#[test]
+fn clip_boxes_crossing_one_pixel_combine_by_product() {
+    let mut paints = PaintTable::new();
+    let mut clips = ClipTable::new();
+    let crossing = clips.push(&[
+        // Right edge at x = 40.5: half-covers texel column 40.
+        ClipBox {
+            x: 0.0,
+            y: 0.0,
+            w: 40.5,
+            h: 64.0,
+            corners: CornerRadii::default(),
+        },
+        // Bottom edge at y = 24.5: half-covers texel row 24.
+        ClipBox {
+            x: 0.0,
+            y: 0.0,
+            w: 64.0,
+            h: 24.5,
+            corners: CornerRadii::default(),
+        },
+    ]);
+    let rects = vec![clip_fixture_rect(&mut paints, 48.0, crossing)];
+    let rgba = render_clipped(&rects, &paints, &clips, 64);
+
+    let crossing_alpha = px(&rgba, 64, 40, 24)[3];
+    assert_eq!(
+        crossing_alpha, 64,
+        "both boxes half-cover texel (40, 24), and Skia's clip stack multiplies \
+         them, so alpha is a quarter. 128 is `min` — the rule `dashscene-gpu` \
+         takes — and adopting it here is issue #1281's ruling rather than a \
+         refactor. Exact rather than a window: this painter is a deterministic \
+         CPU rasteriser, so there is no adapter variance for a band to absorb — \
+         which makes this exactness a property of the pinned `skia-safe` version. \
+         A Skia bump that moves an anti-aliasing ramp by one code point is a \
+         re-measurement rather than a combination-rule regression, and the \
+         single-edge fixtures above will move with it"
+    );
+
+    for (x, y, what) in [
+        (40, 12, "only the x-constraining box is fractional here"),
+        (20, 24, "only the y-constraining box is fractional here"),
+    ] {
+        let alpha = px(&rgba, 64, x, y)[3];
+        assert_eq!(
+            alpha, 128,
+            "at ({x}, {y}) {what}, so alpha is a half. This is the case the two \
+             painters agree on to the code point, which is what lets the \
+             crossing above be attributed to the combination rule alone — so it \
+             is pinned exactly rather than within a window"
+        );
+    }
+
+    let interior = px(&rgba, 64, 20, 12)[3];
+    assert_eq!(
+        interior, 255,
+        "texel (20, 12) is inside both boxes, so the region must not dim it"
+    );
+}
+
+/// A clip box repeated in a region **darkens its edge** here, because a
+/// product is not idempotent.
+///
+/// Clipping by a box and then by the same box again confines the ink to
+/// exactly the same half-pixel, so the true coverage is a half — and this
+/// painter reports a quarter. `dashscene-gpu` reports the half, measured by
+/// `a_clip_box_repeated_in_a_region_changes_nothing`.
+///
+/// **This is the case where the reference painter is the one that departs from
+/// the geometry**, which is why issue #1281's ruling cannot be settled by
+/// deferring to it. It is not a contrived shape either: a `ClipRegion` carries
+/// *ancestor* boxes and is not pre-intersected, so a group clipped to the same
+/// bounds as its parent puts two equal boxes in the list.
+#[test]
+fn a_clip_box_repeated_in_a_region_darkens_it() {
+    let mut paints = PaintTable::new();
+    let mut clips = ClipTable::new();
+    let box_ = ClipBox {
+        x: 0.0,
+        y: 0.0,
+        w: 40.5,
+        h: 64.0,
+        corners: CornerRadii::default(),
+    };
+    let doubled = clips.push(&[box_, box_]);
+    let single = clips.push(&[box_]);
+    let twice = render_clipped(
+        &[clip_fixture_rect(&mut paints, 48.0, doubled)],
+        &paints,
+        &clips,
+        64,
+    );
+    let once = render_clipped(
+        &[clip_fixture_rect(&mut paints, 48.0, single)],
+        &paints,
+        &clips,
+        64,
+    );
+
+    let (a, b) = (px(&twice, 64, 40, 24)[3], px(&once, 64, 40, 24)[3]);
+    assert_eq!(
+        b, 128,
+        "one half-covering edge leaves alpha at a half. This anchors the \
+         comparison below, which two equal wrong values would also satisfy"
+    );
+    assert_eq!(
+        a, 64,
+        "the same box listed twice multiplies to a quarter here. Equal to {b} \
+         would be `min`'s idempotence, which is `dashscene-gpu`'s behaviour and \
+         would mean this painter changed"
     );
 }

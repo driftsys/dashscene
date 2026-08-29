@@ -198,9 +198,16 @@ written.
 - **What a handle reports from a thread that has since exited** — the other half
   of question 2. `DS_WRONG_THREAD`, the same as one from a live foreign thread.
   The two are **not** distinguished: telling them apart needs a process-wide
-  registry of live threads, the shared state this design removes. The Android
-  render thread is joined per surface lifecycle, so this case is ordinary there,
-  and issue #1267 carries it for a ruling
+  registry of live threads, the shared state this design removes. A render
+  thread ends per surface lifecycle on Android, so a host that keeps a handle
+  past one meets this case as a matter of course — **though this repository's
+  own Android host does not**, freeing on the render thread before the join;
+  [`ds-wrong-thread-stands-for-a-dead-thread-too.md`](ds-wrong-thread-stands-for-a-dead-thread-too.md)
+  reason 3 carries the refutation. Question 2 above states the case as it was
+  asked, which is why it still reads the older way. Issue #1267 carried it for a
+  ruling and **it was ruled on 2026-08-23**: one status for both, with the
+  header saying that it does not report whether the owning thread is alive
+  ([`ds-wrong-thread-stands-for-a-dead-thread-too.md`](ds-wrong-thread-stands-for-a-dead-thread-too.md))
   (`a_handle_from_another_thread_is_wrong_thread_and_drives_nothing_local`).
 - **Question 4's second half, `ds_runtime_free`'s signature** — it returns
   `DsStatus` now. It can report, and a double free is `DS_BAD_HANDLE` rather

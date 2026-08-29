@@ -360,7 +360,16 @@ pub enum DsStatus {
     /// thread numbers are never reissued, so the value resolves on no thread
     /// ever again. Telling the two apart would need a process-wide registry of
     /// live threads — the shared state the thread-affine table exists to avoid
-    /// — so it is deliberately not distinguished (issue #1267).
+    /// — so it is deliberately not distinguished.
+    ///
+    /// **So this status does not report whether the owning thread is alive,
+    /// and a host cannot infer recoverability from it.** Calling from the
+    /// owning thread is the remedy only where the caller knows that thread is
+    /// alive. Ruled on issue #1267;
+    /// `docs/decisions/ds-wrong-thread-stands-for-a-dead-thread-too.md`.
+    /// Stated here as well as in the C header because
+    /// `docs/design/c-abi.md` makes that the rule: once per audience, the
+    /// header for a C host and this doc for a `cargo doc` reader.
     WrongThread = 17,
     /// No handle could be minted: this thread already holds the maximum number
     /// of live runtimes, or the process has drawn every thread number a handle
@@ -6100,6 +6109,158 @@ mod tests {
              and `just c-abi` reads only a refused atlas, whose every member is zero",
             atlas_members.len(),
         );
+    }
+
+    /// The header says what `DS_WRONG_THREAD` does **not** tell a host.
+    ///
+    /// Issue #1267's ruling of 2026-08-23 is that one status stands for a live
+    /// foreign thread and for a minting thread that has exited, and that the
+    /// header must say so — a host cannot infer recoverability from it. The
+    /// whole obligation the ruling creates is that sentence
+    /// (`docs/decisions/ds-wrong-thread-stands-for-a-dead-thread-too.md`), and
+    /// nothing compiles a comment.
+    ///
+    /// **Bounded to the block that documents the status**, between the constant
+    /// before it and the constant itself, so a clause that migrated to some
+    /// other part of the header does not satisfy this. The header said "The
+    /// remedy is to call from the thread that created it" before the ruling
+    /// landed, which is the inference it forbids — where the minting thread has
+    /// exited there is no such thread.
+    #[test]
+    fn the_header_says_ds_wrong_thread_does_not_report_whether_the_thread_lives() {
+        let header =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/include/dashscene.h"))
+                .expect("the committed header is present");
+
+        let start = header
+            .find("DS_BAD_HANDLE = 16,")
+            .expect("the header declares DS_BAD_HANDLE, which bounds the block below it");
+        let end = header
+            .find("DS_WRONG_THREAD = 17,")
+            .expect("the header declares DS_WRONG_THREAD");
+        assert!(
+            end > start,
+            "DS_WRONG_THREAD is declared before DS_BAD_HANDLE, so the slice below is not \
+             its comment block and this test would read the wrong text",
+        );
+        // **Flattened before matching.** These are C block comments, so every
+        // required phrase below is broken across lines by ` * ` continuation
+        // markers at whatever column the wrap fell on. Matching the raw slice
+        // would make the test fail on a re-wrap — an ordinary edit that
+        // changes no meaning — while still passing if a clause were deleted
+        // and re-added elsewhere in the block. Stripping the markers and
+        // collapsing runs of whitespace leaves a single line whose content is
+        // what the test is actually about.
+        let documented = header[start..end]
+            .replace('*', " ")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let documented = documented.as_str();
+
+        for clause in [
+            "does NOT say whether that thread is still alive",
+            "cannot infer recoverability",
+            // The qualifier, not only the denial. Dropping "only where the
+            // caller knows that thread is alive" leaves an unconditional
+            // remedy beside a denial, which is the state the ruling replaced.
+            "only where the caller knows that thread is alive",
+        ] {
+            assert!(
+                documented.contains(clause),
+                "the block documenting DS_WRONG_THREAD must carry `{clause}`. Issue #1267's \
+                 ruling is that one status covers a live foreign thread and an exited one, \
+                 and that the header states it; a host that reads this status as retryable \
+                 retries a handle that can never resolve",
+            );
+        }
+
+        // **And no unconditional remedy, stated as an invariant rather than a
+        // blocklist.** Presence of the clauses above does not exclude one:
+        // re-adding the sentence the ruling removed leaves every assertion
+        // above green, which was measured on this test before this check
+        // existed. A list of forbidden spellings was tried next and is not
+        // enough either — "The remedy is to call from the owning thread."
+        // matches no entry on it and puts the header back to denying and
+        // offering recoverability at once, which was also measured.
+        //
+        // **The Rust twin, held to the same clauses.** `docs/design/c-abi.md`
+        // makes this a pair — "once per audience, the header for a C host and
+        // this doc for a `cargo doc` reader" — and only the C half was pinned,
+        // so the two could drift in the direction with no gate. Bounded
+        // between the variant before it and its own discriminant, for the
+        // reason the header slice is bounded.
+        let rust_doc = include_str!("lib.rs");
+        let start = rust_doc
+            .find("    BadHandle = 16,")
+            .expect("DsStatus declares BadHandle, which bounds the doc below it");
+        let end = rust_doc
+            .find("    WrongThread = 17,")
+            .expect("DsStatus declares WrongThread");
+        assert!(
+            end > start,
+            "the two variants are declared in the other order"
+        );
+        // `///` stripped per line before collapsing, for the reason the C
+        // block's ` * ` markers are: a required phrase wraps across lines at
+        // whatever column rustfmt left it, and the marker lands inside it.
+        let twin = rust_doc[start..end]
+            .lines()
+            .map(|line| line.trim_start().trim_start_matches("///"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let twin = twin.split_whitespace().collect::<Vec<_>>().join(" ");
+        for clause in [
+            "does not report whether the owning thread is alive",
+            "cannot infer recoverability",
+            "only where the caller knows that thread is alive",
+        ] {
+            assert!(
+                twin.contains(clause),
+                "`DsStatus::WrongThread`'s own doc must carry `{clause}`. \
+                 `docs/design/c-abi.md` states the ruling once per audience, and a \
+                 `cargo doc` reader never sees include/dashscene.h",
+            );
+        }
+
+        // **And neither audience may offer a remedy without its condition.**
+        // Presence of the clauses above does not exclude one: re-adding the
+        // sentence the ruling removed leaves every assertion above green,
+        // measured on this test before this check existed. A list of forbidden
+        // spellings was tried next and is not enough either — "The remedy is
+        // to call from the owning thread." matches no entry on such a list and
+        // puts the block back to denying and offering recoverability at once,
+        // also measured.
+        //
+        // **This is a heuristic over remedy-language and cannot be more.** A
+        // sentence using none of the words below — "Call from the owning
+        // thread to recover." — passes it, and no text search decides the
+        // general case. What carries the positive obligation is the clause
+        // list; this catches the regression that actually happened, twice,
+        // while this test was being written.
+        //
+        // A sentence that DENIES a remedy is not one that offers it, so "there
+        // is no remedy once the minting thread has exited" is allowed rather
+        // than failed with a message saying the opposite.
+        let offers_a_remedy = |s: &str| {
+            (s.contains("remedy") || s.contains("to recover") || s.contains("the fix is to"))
+                && !s.contains("no remedy")
+        };
+        for (audience, text) in [
+            ("the C header", documented),
+            ("the Rust doc", twin.as_str()),
+        ] {
+            for sentence in text.split(". ") {
+                assert!(
+                    !offers_a_remedy(sentence)
+                        || sentence.contains("only where the caller knows that thread is alive"),
+                    "{audience}'s DS_WRONG_THREAD block offers a remedy with no condition on \
+                     it: `{sentence}`. Where the minting thread has exited there is no such \
+                     thread to call from, so an unqualified remedy is exactly the \
+                     recoverability inference issue #1267's ruling forbids",
+                );
+            }
+        }
     }
 
     /// Every row type on the boundary-B gate either crosses in a [`DsFrame`]

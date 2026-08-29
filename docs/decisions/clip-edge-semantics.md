@@ -126,19 +126,87 @@ and this record does not choose between them:
 - `dashscene-skia` issues one `clip_rrect` per box and leaves the combination to
   Skia's clip stack.
 
-`min` and a stack of coverage masks agree wherever at most one box has
-fractional coverage at a pixel, and can differ where two clip edges cross one.
+`min` and a stack of coverage masks agree wherever at most one box **is listed**
+and has fractional coverage at a pixel, and can differ where two clip edges
+cross one. The qualifier is load-bearing and was wrong here until the
+measurement below: listing the _same_ box twice puts one distinct edge at the
+pixel and the two still disagree, because the product is not idempotent.
 
-**Nothing in the tree draws that case.** `v03-clips` panel C is clipped by both
-a sharp box and a rounded one, which looks like the case and is not: both of its
-boxes are integer-aligned and axis-aligned, and the rounded box's corner arcs —
-the only fractional coverage anywhere in the panel — fall where the outer box
-covers fully. So every pixel in it has at most one fractionally-covering box,
-which is the condition under which the two functions agree by construction. The
-measurement therefore lacks an **input** as well as an oracle: a fixture with
-two fractionally-positioned boxes whose edges cross has to be built first.
+**Nothing in the tree drew that case until 2026-08-29.** `v03-clips` panel C is
+clipped by both a sharp box and a rounded one, which looks like the case and is
+not: both of its boxes are integer-aligned and axis-aligned, and the rounded
+box's corner arcs — the only fractional coverage anywhere in the panel — fall
+where the outer box covers fully. So every pixel in it has at most one
+fractionally-covering box and no box is listed twice — together the condition
+under which the two functions agree by construction. The measurement therefore
+lacked an **input** as well as an oracle, and the fixture had to be built before
+anything could be measured.
 
-Deciding it needs that fixture and a cross-painter comparison rather than a
+### The measurement, taken 2026-08-29
+
+It has been. Four fixtures draw a pixel where two clip boxes overlap — two where
+the edges cross, two where one box is listed twice and there is no crossing at
+all, which is the pair the argument below turns on —
+`clip_boxes_crossing_one_pixel_combine_by_min` and
+`a_clip_box_repeated_in_a_region_changes_nothing` in
+`crates/dashscene-gpu/tests/layer3_render_smoke.rs`,
+`clip_boxes_crossing_one_pixel_combine_by_product` and
+`a_clip_box_repeated_in_a_region_darkens_it` in
+`crates/dashscene-skia/tests/painter.rs`. One clip box has its right edge at x =
+40.5 and the other its bottom edge at y = 24.5, so each half-covers texel
+(40, 24) along a different axis, over a shape that covers it fully.
+
+| pixel                            | true coverage | `dashscene-gpu` | `dashscene-skia` |
+| -------------------------------- | ------------- | --------------- | ---------------- |
+| two edges crossing it            | 0.25          | **128**         | **64**           |
+| the same box listed twice        | 0.5           | **128**         | **64**           |
+| one fractional box, one covering | 0.5           | 128             | 128              |
+| inside every box                 | 1.0           | 255             | 255              |
+
+**The divergence is the combination rule and nothing else.** Replacing `min`
+with a product in `paint.wgsl` moves the lean painter's crossing pixel to
+exactly 64 — the reference painter's value, to the code point — so the
+difference is not the rasteriser, not the edge ramp, and not floating-point
+drift. The lean painter's pair was confirmed red under that mutation, and the
+reference painter's pair under clipping by only the first box of the region.
+
+**Neither rule is correct in general, and the second row is why.** The product
+is the true area where two edges are independent, which is the first row. But a
+`ClipRegion` carries _ancestor_ boxes and is deliberately not pre-intersected,
+so a group clipped to the same bounds as its parent puts two **equal** boxes in
+the list — and clipping twice by one box confines the ink to the same
+half-pixel, so the true coverage is a half. `min` is idempotent and gives it;
+the product is not and halves the edge for each redundant ancestor. So the
+reference painter is the one that departs from the geometry in that row, and
+deferring to it is not available as a tie-break.
+
+**What each option costs, for whoever rules:**
+
+- **`min` everywhere** — the lean painter and the Unity painter already do it,
+  so neither changes. It is exact for redundant and coincident ancestors, and it
+  under-darkens where two independent edges cross by up to a factor of two at
+  those pixels. **The whole cost is the reference painter's**: departing from
+  Skia's clip stack — pre-intersecting the region, or clipping through a
+  coverage shader — and re-goldening every clip image, because every file in
+  `goldens/images/` is rendered by `SkiaPainter`.
+- **The product everywhere** — matches the reference painter and the true area
+  for independent edges. **It re-goldens nothing.** The cost is one multiply
+  instead of a `min` in `clip_coverage`, and the lean painter has no golden
+  images at all — its own goldens are instance-buffer dumps that `paint.wgsl`
+  cannot change. What it does cost is behaviour: a redundant clipping ancestor
+  becomes visible as a darker edge, a document-shape-dependent artifact rather
+  than a bounded error, and the Unity painter changes with it.
+- **Pre-intersect at commit instead** — removes the question by removing
+  overlapping boxes. `resolved-clip-regions-at-commit.md` rules it out: the
+  intersection of two rounded rects is not a rounded rect.
+
+**The ruling is not made here.** This record says what the two painters do and
+what it costs to make either one the rule; choosing is issue #1281's, and it is
+an owner's call because it re-goldens one painter or the other. What has changed
+is that it is now a choice between two measured behaviours rather than between
+two descriptions.
+
+Deciding it needed that fixture and a cross-painter comparison rather than a
 preference, and **issue #1281 carries both.** The comparison was expected from
 #828; it is not what that issue delivered. #828's portable probe table pins the
 per-box ramp for any painter that runs it, and a `min`-versus-clip-stack
@@ -178,12 +246,25 @@ an interim rule unnoticed, which is why that issue says in its own words that
 ## What this does not claim
 
 **The two painters use the same form of edge, not provably the same numbers.**
-Skia's analytic coverage and an SDF `coverage(d, aa)` are different functions,
-and no fixture compares them at a clip boundary today — that is issue #1281.
-This paragraph named #828 until that issue closed at v0.21 without carrying it:
-the portable conformance suite pins `coverage(d, aa)` itself against a committed
-table, which any painter implementing that ramp can run, and says nothing about
-a painter that computes its coverage some other way. Skia is that painter.
+Skia's analytic coverage and an SDF `coverage(d, aa)` are different functions.
+Since 2026-08-29 four fixtures do compare them at a clip boundary — see the
+measurement above — and they agree to the code point at every probe where one
+box constrains the pixel. Where two do, they differ by the combination rule,
+which issue #1281 still carries.
+
+The reference painter's two **combination** fixtures assert those values
+exactly, because it is a deterministic CPU rasteriser; its two single-edge
+fixtures below predate this measurement and keep their wider bands. That
+exactness is per `skia-safe` version: a Skia bump that moves an anti-aliasing
+ramp by one code point is a re-measurement rather than a regression, and this is
+where a reader should expect to be told so. The lean painter's assert a narrow
+window throughout, since its value is adapter-dependent in principle. The
+reading quoted here is Apple M3 with Metal; the lean painter's fixtures also run
+on CI's lavapipe, which is what the window is for. This paragraph named #828
+until that issue closed at v0.21 without carrying it: the portable conformance
+suite pins `coverage(d, aa)` itself against a committed table, which any painter
+implementing that ramp can run, and says nothing about a painter that computes
+its coverage some other way. Skia is that painter.
 
 So a cross-painter claim at clipped edges stays tolerance-based, and the reason
 is GPU and floating-point arithmetic rather than clip semantics. The `v03-clips`
@@ -192,12 +273,14 @@ regenerated.
 
 ## How this is enforced
 
-**Two fixtures per painter, and each was confirmed by mutation.** Before them
-the rule was prose only: turning the reference painter's clip-region
-`clip_rrect` to `false` moved 0.684 % of the `v03-clips` canvas against its 2 %
-tolerance, so the golden passed and the harness reported the difference as
-accepted anti-aliasing jitter; hardening `clip_coverage` in `paint.wgsl` left
-the whole regression tier green.
+**Four fixtures per painter now, and each was confirmed by mutation.** The two
+below are this record's own rule, the edge of a single box; the two the
+measurement section names are the combination of overlapping boxes, and they are
+what a third painter most needs to be held to. Before any of them the rule was
+prose only: turning the reference painter's clip-region `clip_rrect` to `false`
+moved 0.684 % of the `v03-clips` canvas against its 2 % tolerance, so the golden
+passed and the harness reported the difference as accepted anti-aliasing jitter;
+hardening `clip_coverage` in `paint.wgsl` left the whole regression tier green.
 
 - `a_clip_edge_between_pixel_centres_is_antialiased` — a clip edge at x = 40.5
   over a shape that covers past it, asserting texel 40's alpha is near 128. A
@@ -217,8 +300,12 @@ their probes sit deep inside or deep outside, so a hard clip produces identical
 bytes at every one of their assertions — verified by running them under the
 mutation, where all four pass and both fixtures above fail.
 
-**Nothing pins the Unity painter**, which does not exist. When it does, these
-two fixtures are the shape its own should take.
+**Nothing pins the Unity painter**, which does exist —
+`unity/com.driftsys.dashscene/Runtime/Shaders/DashsceneInstance.hlsl`'s
+`DsClipCoverage` takes `min` per box, which is what makes the option list above
+say the Unity painter already does. No fixture in this repository holds it to
+either rule; all four above are the shape its own should take, and the two
+combination fixtures are the ones its interim `min` most needs.
 
 ## Two things this record's wording has to be read against
 

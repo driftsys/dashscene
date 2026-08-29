@@ -624,6 +624,11 @@ falsifiable form of R5 that guardrail G-20 names
 tied to — the mapping, the prefetch choreography and the benchmark — moved out
 of v1 at the v0.13 close, because a ratio needs no target hardware; only
 placeholder activation stays in v1 ([`../roadmap.md`](../roadmap.md)).
+Placeholder activation inherits two limits the placeholder surface shipped with:
+a placeholder cannot be cleared once staged, and the property carries
+measured-size intent and paint intent under a single change class that feeds the
+layout cascade only. Issue #1259 records both rather than guessing at them,
+because activation is what tests either answer.
 
 `goldens/tooling/tests/startup_scaling.rs`, macos aarch64:
 
