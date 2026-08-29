@@ -144,6 +144,34 @@ ds_describe() {
 # believed it was December 2023. Every interval in the bundle is device-clock to
 # device-clock and correct; only the provenance is misleading, and recording the
 # host's clock beside it costs one line and removes the ambiguity.
+# ds_cpu_count <range-list>
+#
+# How many cpus a Linux cpu range list names, on stdout. Empty for an empty or
+# absent list, which is what a device that did not answer gives.
+#
+# **The kernel answers these as ranges, never as a count**:
+# `/sys/devices/system/cpu/present` is `0-7` on a Pixel 5, and `online` becomes
+# something like `0-3,6-7` the moment the governor parks a core. Both forms
+# have to be counted, so neither `wc -l` nor a bare integer read works.
+ds_cpu_count() {
+    local list part lo hi n
+    list="$1"
+    [ -n "${list}" ] || { echo ""; return 0; }
+    n=0
+    local -a parts
+    IFS=',' read -ra parts <<<"${list}"
+    for part in "${parts[@]}"; do
+        case "${part}" in
+            "")  ;;
+            *-*) lo="${part%%-*}"
+                 hi="${part##*-}"
+                 n=$(( n + hi - lo + 1 )) ;;
+            *)   n=$(( n + 1 )) ;;
+        esac
+    done
+    echo "${n}"
+}
+
 ds_environment() {
     local adb described stamp prop
     adb="$1"
@@ -171,6 +199,27 @@ ds_environment() {
         printf '    %-32s %s\n' "${prop}" \
             "$("${adb}" shell getprop "${prop}" 2>/dev/null | tr -d '\r')"
     done
+    echo
+    echo "## cpu"
+    echo
+    # **Issue #1270's first half, which no `getprop` carries.** The block above
+    # was every provenance line a bundle had, so "how many cores does the target
+    # actually have" could not be answered from a bundle at all — and several
+    # accepted decisions assume the answer. `ro.kernel.qemu` and `ro.boot.qemu`
+    # above already say whether a target is virtualized, so with these two lines
+    # one bundle answers both halves of that issue on whatever machine runs it.
+    #
+    # **Both numbers, because they are different questions.** `nproc` and
+    # `/proc/cpuinfo` count only ONLINE cpus and Android parks cores for power
+    # whenever it likes, so either alone understates the hardware on exactly the
+    # machine this is asked about. `present` is what the board has and is the
+    # answer to #1270; `online` is what it was willing to run at the instant the
+    # bundle was taken, and a gap between them is itself worth seeing.
+    local present online
+    present=$("${adb}" shell cat /sys/devices/system/cpu/present 2>/dev/null | tr -d '\r')
+    online=$("${adb}" shell cat /sys/devices/system/cpu/online 2>/dev/null | tr -d '\r')
+    printf '    %-32s %s\n' "cores present" "$(ds_cpu_count "${present}")"
+    printf '    %-32s %s\n' "cores online" "$(ds_cpu_count "${online}")"
 }
 
 # ds_lifecycle_outcome <alive> <fatal> <drew-after> <seconds> [moved]

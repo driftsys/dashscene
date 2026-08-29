@@ -420,6 +420,16 @@ if [ "${1:-}" = "shell" ] && [ "${2:-}" = "getprop" ]; then
     esac
     exit 0
 fi
+# `shell cat <path>` for the two cpu sysfs files, which is where the core count
+# comes from. A device answers these as ranges, not counts.
+if [ "${1:-}" = "shell" ] && [ "${2:-}" = "cat" ]; then
+    case "${3:-}" in
+        /sys/devices/system/cpu/present) echo "0-7" ;;
+        /sys/devices/system/cpu/online)  echo "0-3,6-7" ;;
+        *)                               echo "" ;;
+    esac
+    exit 0
+fi
 exit 0
 STUB
 chmod +x "${env_dir}/adb"
@@ -450,6 +460,53 @@ env_case "the device clock is the stamp, and says so" \
 # The intervals are all device-to-device and correct; only the provenance is
 # misleading, and one more line removes the ambiguity.
 env_case "the host clock is recorded beside it" "    host      "
+
+# **The core count, which is issue #1270's first half.** No `getprop` carries it
+# and the block above is every provenance line a bundle had, so "how many cores
+# does the target actually have" could not be answered from a bundle at all.
+#
+# **Present and online are different numbers and both are recorded.** `nproc`
+# and `/proc/cpuinfo` report only the ONLINE cpus, and Android offlines cores
+# for power at any moment — so a bundle carrying `nproc` alone understates the
+# hardware on exactly the machine the question is about. `present` is what the
+# board has; `online` is what it was willing to run at the instant the bundle
+# was taken. The stub answers 0-7 present and 0-3,6-7 online precisely because
+# they differ: an implementation that reads one and labels it the other passes
+# a test where both are 8.
+env_case "the hardware core count is recorded" \
+    "$(printf '    %-32s %s' 'cores present' '8')"
+env_case "the online core count is recorded beside it" \
+    "$(printf '    %-32s %s' 'cores online' '6')"
+
+# ---------------------------------------------------------------------------
+# ds_cpu_count — the range-list parser the two lines above are derived from
+# ---------------------------------------------------------------------------
+#
+# Exercised directly as well as through `ds_environment`, because a count is a
+# derived value: the two cases above would both pass on a parser that returned
+# the right number for one shape of input and nonsense for another. These pin
+# the shapes a kernel actually emits.
+cpu_case() {
+    local name list expected got
+    name="$1"
+    list="$2"
+    expected="$3"
+    total=$((total + 1))
+    got=$(ds_cpu_count "${list}")
+    if [ "${got}" = "${expected}" ]; then
+        printf '  ok   %-58s %s\n' "${name}" "${expected}"
+    else
+        printf '  FAIL %-58s wanted %s, got %s\n' "${name}" "${expected}" "${got}"
+        failed=$((failed + 1))
+    fi
+}
+
+cpu_case "a whole-range list counts both ends" "0-7" "8"
+cpu_case "a single cpu is one, not zero" "0" "1"
+cpu_case "a parked core splits the list and both parts count" "0-3,6-7" "6"
+cpu_case "a mixed single and range" "0,2-4" "4"
+# A device that did not answer is not a device with no cpus.
+cpu_case "an empty list reports nothing rather than zero" "" ""
 env_case "and the block says which of the two everything is timed by" \
     "is the device's"
 
