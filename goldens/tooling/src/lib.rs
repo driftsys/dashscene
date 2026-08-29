@@ -447,7 +447,7 @@ mod tests {
     use skia_safe::{Color4f, surfaces};
     use tempfile::TempDir;
 
-    use super::{Budget, Comparison, compare_against, compare_pngs, compare_rgba};
+    use super::{Budget, compare_against, compare_pngs, compare_rgba};
 
     /// A 2×2 PNG: three pixels of `base`, the bottom-right pixel of
     /// `corner`. Encoded directly through skia rather than through
@@ -716,8 +716,8 @@ mod tests {
     fn one_differing_pixel_is_located_and_bounded() {
         let a = blank(4);
         let mut b = a.clone();
-        // pixel (2, 1), green channel
-        b[(1 * 4 + 2) * 4 + 1] = 9;
+        // pixel (2, 1), green channel: row 1 of a 4-wide image, column 2.
+        b[(4 + 2) * 4 + 1] = 9;
         let c = compare_rgba(&a, &b, 4, 0);
         assert_eq!(c.differing, 1);
         assert_eq!(c.first, Some((2, 1)));
