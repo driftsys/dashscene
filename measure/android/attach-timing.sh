@@ -7,11 +7,15 @@
 # finish — so "did not complete" had to be a recorded outcome with a bound on it,
 # or the procedure is a developer waiting and then guessing.
 #
-# **A device has since completed both** (2026-08-17): release 0.27-0.31 s and
-# debug 0.93-14.57 s across two runs, the spread itself being the finding —
-# `docs/design/android-toolchain.md` records that the larger figure was a first
-# launch after install. The bound stays, because an unbounded wait is what it
-# exists to prevent and nothing says the emulator case cannot recur.
+# **A device has since completed both**: release 0.27-0.33 s and debug
+# 0.93-14.57 s across three runs, the spread itself being the finding. Two of
+# the three debug runs agree at about 0.95 s and one is fifteen times larger,
+# with no recorded cause. **It is not a first-launch-after-install effect**,
+# which this comment asserted until 2026-08-29: the loop below uninstalls and
+# installs before every profile, so every figure in that range is a first launch
+# after install and the condition does not vary. The bound stays, because an
+# unbounded wait is what it exists to prevent and nothing says the emulator case
+# cannot recur.
 #
 # `just android` builds debug, so debug is the path a developer meets first.
 #
@@ -118,12 +122,14 @@ source_label=$(ds_source "${adb}")
         echo
     fi
     echo "Release against debug, because \`just android\` builds debug and that"
-    echo "is the path a developer meets first. Measured on a Pixel 5 on"
-    echo "2026-08-17: release 0.27-0.31 s to a first frame, debug 0.93-14.57 s"
-    echo "across two runs — the spread is a first-launch-after-install effect"
-    echo "rather than steady-state, and \`docs/design/android-toolchain.md\` says"
-    echo "so. An emulator run was once abandoned at 218 s, which is what the"
-    echo "timeout below exists for."
+    echo "is the path a developer meets first. Measured on a Pixel 5 over three"
+    echo "runs: release 0.27-0.33 s to a first frame, debug 0.93-14.57 s. Two of"
+    echo "the three debug runs agree at about 0.95 s and one is fifteen times"
+    echo "larger, cause unknown. Every run is a first launch after install —"
+    echo "this loop uninstalls and installs before each profile — so that is"
+    echo "not what the spread is, and \`docs/design/android-toolchain.md\` says"
+    echo "what it is not. An emulator run was once abandoned at 218 s, which is"
+    echo "what the timeout below exists for."
     echo
     echo "\`acquire\` is \`attaching\` to \`attached\` — the adapter, the device and the"
     echo "pipelines. \`to first frame\` adds the first tick and draw. \`TotalTime\` is"
@@ -143,8 +149,16 @@ source_label=$(ds_source "${adb}")
     echo "reading a missing \`attached\` as a wedge would report both as the same"
     echo "thing (issue #1080)."
     echo
-    echo "| profile | outcome | acquire s | to first frame s | TotalTime ms |"
-    echo "| --- | --- | --- | --- | --- |"
+    echo "\`launch\` is \`first-after-install\` or \`later\`. **Every figure this"
+    echo "script produced before 2026-08-29 was the first kind**, because it"
+    echo "uninstalled and installed before every profile unconditionally — so a"
+    echo "spread between two of its rows could never be a first-launch effect,"
+    echo "which is what the design record read one as until then (issue #960)."
+    echo "A \`later\` row is the same build launched again with no reinstall"
+    echo "between."
+    echo
+    echo "| profile | launch | outcome | acquire s | to first frame s | TotalTime ms |"
+    echo "| --- | --- | --- | --- | --- | --- |"
 } > "${report}"
 
 # The epoch of the first logcat line matching a pattern, or nothing.
@@ -168,7 +182,29 @@ elapsed() {
     awk -v a="$1" -v b="$2" 'BEGIN { printf "%.2f\n", b - a }'
 }
 
+# **Every row is a (profile, launch condition) pair, and the pairs are built up
+# front so the body below stays one loop.** Issue #960 is why there are two
+# launch conditions at all: this script uninstalled and installed before every
+# profile unconditionally, so every figure it had ever produced was a first
+# launch after install — and the design record explained a fifteen-fold spread
+# between two such rows as a first-launch effect, which is a condition that did
+# not vary across the rows being explained. A later launch could not be measured
+# because the apparatus could not take one.
+runs=()
 for profile in "${profiles[@]}"; do
+    runs+=("${profile}:first-after-install" "${profile}:later")
+done
+
+# Which profile is currently installed, so the package is built and pushed once
+# per profile rather than once per row.
+built=""
+
+for run in "${runs[@]}"; do
+    profile="${run%%:*}"
+    launch="${run##*:}"
+    if [ "${profile}" = "${built}" ]; then
+        ds_note "${profile}: a later launch of the build already installed"
+    else
     ds_note "building and packaging the ${profile} showcase host"
     # Through the recipe rather than by calling `build.sh` here: issue #1058 §6
     # removed exactly this inlining from `android-splitscreen`, where the second
@@ -179,10 +215,15 @@ for profile in "${profiles[@]}"; do
     # `_apk-demo` — which would silently package one profile for every iteration
     # of this loop.
     ( unset DASHSCENE_ANDROID_PROFILE; just _apk-demo "${profile}" ) >/dev/null
-
-    log="${out}/attach-${profile}.log"
+    # **The uninstall is what makes the next launch a first one**, and it is the
+    # reason the two conditions cannot be told apart by relabelling: a `later`
+    # row taken after a reinstall is a first launch under another name.
     "${adb}" uninstall "${PKG}" >/dev/null 2>&1 || true
     "${adb}" install "target/android-demo/showcase.apk" >/dev/null
+    built="${profile}"
+    fi
+
+    log="${out}/attach-${profile}-${launch}.log"
     "${adb}" shell am force-stop "${PKG}" || true
     ds_logcat_clear "${adb}"
 
@@ -331,9 +372,9 @@ for profile in "${profiles[@]}"; do
         frame_s=$(elapsed "${attaching}" "${drew}")
     fi
 
-    ds_note "${profile}: ${outcome}"
-    printf '| %s | %s | %s | %s | %s |\n' \
-        "${profile}" "${outcome}" "${acquire_s}" "${frame_s}" \
+    ds_note "${profile}, ${launch}: ${outcome}"
+    printf '| %s | %s | %s | %s | %s | %s |\n' \
+        "${profile}" "${launch}" "${outcome}" "${acquire_s}" "${frame_s}" \
         "${total:-—}" >> "${report}"
 done
 

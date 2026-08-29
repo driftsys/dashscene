@@ -100,7 +100,12 @@ case "$1" in
             printf 'Status: ok\nTotalTime: 1234\n'; exit 0 ;;
         *) exit 0 ;;
       esac ;;
-  install | uninstall) exit 0 ;;
+  install | uninstall)
+      # Recorded, because "how many times was this installed" is the whole
+      # question for the later-launch row: a later launch that reinstalls is a
+      # first launch wearing the other label.
+      [ -n "${DS_STUB_INSTALLS:-}" ] && printf '%s\n' "$1" >> "${DS_STUB_INSTALLS}"
+      exit 0 ;;
 esac
 exit 0
 STUB
@@ -121,7 +126,10 @@ run() {
         "${here}/attach-timing.sh" "${out}" release >/dev/null 2>&1
     RUN_ELAPSED=$((SECONDS - started))
     report="${out}/attach.md"
-    row=$(grep -E '^\| release \|' "${report}" 2>/dev/null || true)
+    # **The first-after-install row specifically.** Every run now writes two
+    # rows, one per launch condition, and a bare `^| release |` matches both —
+    # which makes `row` two lines and every check below read a concatenation.
+    row=$(grep -E '^\| release \| first-after-install \|' "${report}" 2>/dev/null || true)
     if [ -z "${row}" ]; then
         printf '  FAIL %-46s no row written\n' "${name}"
         failed=$((failed + 1))
@@ -133,7 +141,8 @@ run() {
         failed=$((failed + 1))
         return
     fi
-    if [ "$(printf '%s' "${row}" | awk -F'|' '{gsub(/ /,"",$4); print $4}')" \
+    # Field 5, not 4: the `launch` column sits between profile and outcome.
+    if [ "$(printf '%s' "${row}" | awk -F'|' '{gsub(/ /,"",$5); print $5}')" \
         != "${expect_acquire}" ]; then
         printf '  FAIL %-46s wanted acquire %s, row: %s\n' \
             "${name}" "${expect_acquire}" "${row}"
@@ -194,6 +203,63 @@ if pgrep -f "${work}/bin/adb logcat" >/dev/null 2>&1; then
     failed=$((failed + 1))
 else
     printf '  ok   %-46s none left running\n' "no orphan after an aborted launch"
+fi
+
+# ---------------------------------------------------------------------------
+# The two launch conditions (issue #960)
+# ---------------------------------------------------------------------------
+#
+# **The defect these exist for.** This script uninstalled and installed before
+# every profile, unconditionally, so every figure it had ever produced was a
+# first launch after install — and `docs/design/android-toolchain.md` explained
+# a fifteen-fold spread between two of them as a first-launch effect, a
+# condition that did not vary across the rows it was explaining. Separating the
+# two needs a row taken WITHOUT the reinstall, which the apparatus could not
+# take at all.
+DS_STUB_CASE=drew DS_STUB_INSTALLS="${work}/installs" ADB="${work}/bin/adb" \
+    DS_ATTACH_TIMEOUT=5 \
+    "${here}/attach-timing.sh" "${work}/out-launch" release >/dev/null 2>&1
+launch_report="${work}/out-launch/attach.md"
+
+launch_case() {
+    local name expected
+    name="$1"
+    expected="$2"
+    total=$((total + 1))
+    if grep -qF -- "${expected}" "${launch_report}" 2>/dev/null; then
+        printf '  ok   %-46s %s\n' "${name}" "found"
+    else
+        printf '  FAIL %-46s missing: %s\n' "${name}" "${expected}"
+        failed=$((failed + 1))
+    fi
+}
+
+launch_case "the first launch after install is a row" "| release | first-after-install |"
+launch_case "a later launch is a row of its own" "| release | later |"
+
+# **The one assertion that cannot be satisfied by relabelling.** Two rows are
+# easy to print; two rows over ONE install is what makes the second row a later
+# launch. A `later` row taken after a reinstall is a first launch under another
+# name, which is exactly the confusion this issue is about.
+total=$((total + 1))
+installs=$(grep -c '^install$' "${work}/installs" 2>/dev/null || echo 0)
+if [ "${installs}" = "1" ]; then
+    printf '  ok   %-46s one install for two rows\n' "the later launch does not reinstall"
+else
+    printf '  FAIL %-46s wanted 1 install, saw %s\n' \
+        "the later launch does not reinstall" "${installs}"
+    failed=$((failed + 1))
+fi
+
+# Each row needs its own capture, or the second reads the first's markers back.
+total=$((total + 1))
+if [ -f "${work}/out-launch/attach-release-first-after-install.log" ] \
+    && [ -f "${work}/out-launch/attach-release-later.log" ]; then
+    printf '  ok   %-46s two captures\n' "each launch condition captures separately"
+else
+    printf '  FAIL %-46s one or both logs absent\n' \
+        "each launch condition captures separately"
+    failed=$((failed + 1))
 fi
 
 echo
