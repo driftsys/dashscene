@@ -92,7 +92,7 @@ shift || true
 # rather than assumed.
 #
 # It matters as much as the emulator label: the two profiles measurably differ —
-# 0.27-0.31 s against 0.93-14.57 s to a first frame on a device — and `attach.md`
+# 0.28-0.35 s against 0.91-14.57 s to a first frame on a device — and `attach.md`
 # has carried a profile column from the start. A frame-cost table that cannot say
 # which library it measured is the unattributable number this apparatus exists to
 # prevent.

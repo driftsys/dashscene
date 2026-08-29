@@ -7,13 +7,13 @@
 # finish — so "did not complete" had to be a recorded outcome with a bound on it,
 # or the procedure is a developer waiting and then guessing.
 #
-# **A device has since completed both**: release 0.27-0.33 s and debug
-# 0.93-14.57 s across three runs, the spread itself being the finding. Two of
-# the three debug runs agree at about 0.95 s and one is fifteen times larger,
-# with no recorded cause. **It is not a first-launch-after-install effect**,
-# which this comment asserted until 2026-08-29: the loop below uninstalls and
-# installs before every profile, so every figure in that range is a first launch
-# after install and the condition does not vary. The bound stays, because an
+# **A device has since completed both.** To a first frame over five measured
+# attempts per profile on a Pixel 5: release 0.28-0.35 s, debug 0.91-14.57 s.
+# Four of the five debug attempts fall in 0.91-0.97 s and one took 14.57 s, with
+# no recorded cause. **It is not a first-launch-after-install effect**, which
+# this comment asserted until 2026-08-29: both launch conditions have since been
+# measured against each other and the premium is about 60 ms, against the 13.64 s
+# it was offered to explain. The bound stays, because an
 # unbounded wait is what it exists to prevent and nothing says the emulator case
 # cannot recur.
 #
@@ -83,7 +83,7 @@ ACT="${PKG}/dev.driftsys.dashscene.demo.DemoActivity"
 # **90 s by default, against an emulator run abandoned at 218 s.** The bound is
 # deliberately shorter than the failure it is bounding: the outcome recorded is
 # "not within this many seconds", which is a fact, where waiting for an attach
-# that may not terminate is not. A device has since completed in 0.93-14.57 s, so
+# that may not terminate is not. A device has since completed in 0.91-14.57 s, so
 # 90 s is generous for hardware and still bounds the emulator case. Raise it with
 # `DS_ATTACH_TIMEOUT` when the question is how long rather than whether.
 TIMEOUT="${DS_ATTACH_TIMEOUT:-90}"
@@ -122,14 +122,14 @@ source_label=$(ds_source "${adb}")
         echo
     fi
     echo "Release against debug, because \`just android\` builds debug and that"
-    echo "is the path a developer meets first. Measured on a Pixel 5 over three"
-    echo "runs: release 0.27-0.33 s to a first frame, debug 0.93-14.57 s. Two of"
-    echo "the three debug runs agree at about 0.95 s and one is fifteen times"
-    echo "larger, cause unknown. Every run is a first launch after install —"
-    echo "this loop uninstalls and installs before each profile — so that is"
-    echo "not what the spread is, and \`docs/design/android-toolchain.md\` says"
-    echo "what it is not. An emulator run was once abandoned at 218 s, which is"
-    echo "what the timeout below exists for."
+    echo "is the path a developer meets first. To a first frame over five"
+    echo "measured attempts per profile on a Pixel 5: release 0.28-0.35 s,"
+    echo "debug 0.91-14.57 s. Four of the five debug attempts fall in"
+    echo "0.91-0.97 s and one took 14.57 s, cause unknown. It is not a"
+    echo "first-launch effect: both conditions have been measured against each"
+    echo "other and the premium is about 60 ms, against the 13.64 s it was"
+    echo "offered to explain. An emulator run was once abandoned at 218 s,"
+    echo "which is what the timeout below exists for."
     echo
     echo "\`acquire\` is \`attaching\` to \`attached\` — the adapter, the device and the"
     echo "pipelines. \`to first frame\` adds the first tick and draw. \`TotalTime\` is"
