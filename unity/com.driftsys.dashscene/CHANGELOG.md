@@ -8,6 +8,57 @@ the Cargo workspace rather than moving on its own.
 
 ### Added
 
+- **The showcase reports what a frame cost, and states what the figure is.**
+  `Samples~/Showcase/DashsceneFrameCost.cs` reports one line per 240 drawn
+  frames: the runtime tick, and the drawing this package executes — the frame
+  lease, `BrgPainter.Draw` and the release. It **excludes** the GPU's execution
+  of the batches, the render pipeline's passes, culling and the swapchain
+  present, because Unity runs all of them after `Update` returns, so the figure
+  is a floor on the painter's per-frame cost and not the whole of it. The header
+  states the definition term by term against `demo/src/shell.rs`, which is the
+  instrument the other three hosts report through. Each line names the extent it
+  was drawn at, and a sample is discarded when the entry or the extent changes
+  part-way. Armed by default; `-no-frame-cost` on the command line turns it off.
+- **The showcase rotates on the up arrow**, so a player can be put through an
+  orientation change on a device that will not rotate for a script — a build
+  allowing all four orientations follows the sensor, and a handset lying flat
+  reports portrait whatever the window manager is told.
+
+### Fixed
+
+- **The manifest no longer says the painter draws no text.** `package.json`'s
+  `description` — what a UPM registry listing shows — still said the painter
+  draws "no shadows, blurs, images or text" after story #1123 had landed the
+  text seam. It now points at this package's README and at `PackDiagnostic`
+  instead of carrying a list of its own (issue #1325).
+- **The R-E5 warning no longer fires on a correctly configured host.**
+  `BrgPainter` read `GraphicsSettings.useScriptableRenderPipelineBatching` in
+  its constructor, and URP assigns that global inside its own pipeline
+  instance's constructor — which Unity runs at the first render, after the
+  `Awake` of the first frame where a host builds a painter. The global was
+  therefore `false` in every process that had not yet rendered, whatever the
+  project was set to. The read now happens in `Draw`, guarded on
+  `RenderPipelineManager.currentPipeline`, and is decided once per pipeline
+  instance rather than once per painter — so a host that switches to an asset
+  with the batcher off is told (issue #1317).
+- **Rung 3 is reported rather than selected silently.** Where
+  `BatchRendererGroup.BufferTarget` answers
+  `UnsupportedByUnderlyingGraphicsApi`, the painter took
+  `BrgRung.InstancedWithoutBrg`, built no group and drew nothing, logging
+  nothing — while R-E6's default produces a blank frame that Unity itself names
+  on every frame. The two were indistinguishable from the console, and reading
+  `Rung` was the only way to tell them apart. The constructor now warns on that
+  arm (issue #1326).
+
+- **The showcase reads its manifest inside an APK.**
+  `Application.streamingAssetsPath` on Android is a `jar:` URL into the APK, so
+  `File.Exists` answered false for a `showcase.json` that was present: the
+  sample reported it missing, `Awake` ended, and the showcase scenes — which
+  need no manifest at all — never loaded either. The read now goes through
+  `Runtime/Engine/StreamingAssetDocument.Resolve`, which asks the APK's own
+  asset manager where the entry is, and a short read is refused rather than
+  returned as a partial document.
+
 - **The showcase scenes draw in the demonstration, with their motion.**
   `Samples~/Showcase` now walks the three `corpus/showcase` scenes — the ones
   `demo`, `demo-web` and `demo-android` draw — ahead of the committed documents,

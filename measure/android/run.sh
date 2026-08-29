@@ -70,28 +70,11 @@ ds_note "bundle: ${out}"
 # The environment, written first so a bundle that fails half way still says what
 # it was taken on.
 # ---------------------------------------------------------------------------
-{
-    echo "# What this bundle was taken on"
-    echo
-    echo "    ${described}"
-    echo
-    # The stamp comes from the **device**, for the reason `attach-timing.sh`
-    # gives about clocks: every timestamp in this bundle is the device's, and a
-    # host-dated directory holding device-timed logs invites the two to be
-    # compared.
-    echo "    taken     ${stamp} (the device's own clock)"
-    echo "    commit    $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-    echo "    branch    $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
-    echo
-    echo "## getprop"
-    echo
-    for prop in ro.product.model ro.product.device ro.product.cpu.abi \
-        ro.build.version.release ro.build.version.sdk ro.build.characteristics \
-        ro.hardware ro.kernel.qemu ro.boot.qemu; do
-        printf '    %-32s %s\n' "${prop}" \
-            "$("${adb}" shell getprop "${prop}" 2>/dev/null | tr -d '\r')"
-    done
-} > "${out}/environment.md"
+# The stamp comes from the **device**, for the reason `attach-timing.sh` gives
+# about clocks: every timestamp in this bundle is the device's, and a host-dated
+# directory holding device-timed logs invites the two to be compared. The block
+# itself lives in `lib.sh` so it is reachable without a device (issue #1236).
+ds_environment "${adb}" "${described}" "${stamp}" > "${out}/environment.md"
 
 # ---------------------------------------------------------------------------
 # 1. The adapter probe — #885's measurement in full.

@@ -163,6 +163,28 @@ documentation-only diff most jobs skip. Read the individual jobs.
                       checks a second time, exit 0, so the recipe sets
                       `DASHSCENE_FFI_EXPECT_DEMO=1` and the program refuses
                       when the two disagree
+    just unity-demo-android  the Android half of `unity-demo`: the same
+                      `Samples~/Showcase` sample, built through IL2CPP for
+                      arm64 and put on a device. It draws what `demo-android`
+                      draws, which is what makes issue #1347's comparison one —
+                      the showcase scenes reach a Unity player only through
+                      `unity/demo-producer`, so the recipe cross-compiles that
+                      crate for `aarch64-linux-android` and stages it under the
+                      shipped library's file name. **Defaults to the
+                      `demo-release` profile**, and that is a measurement
+                      decision: a `dev` build leaves `ds_runtime_tick`
+                      unoptimised and `tick` is the one term set beside a Rust
+                      host's. **It embeds the package and removes its Android
+                      library**, because two plugins named
+                      `libdashscene_ffi.so` both marked Android/ARM64 are two
+                      files claiming one path inside the APK — so it says
+                      nothing about the shipped plugin layout, and
+                      `just unity-android` stays the recipe that answers R-E21
+                      against the package as installed. Three actions: `build`,
+                      `install` (launch and leave it running, which is what the
+                      lifecycle procedure needs) and `cycle` (walk every entry
+                      and require each drew). Needs an editor with Android Build
+                      Support, the NDK **and** an attached device
     just unity-plugins rebuild the two native libraries the UPM package ships
                       — macOS arm64 and Android arm64 — and place them inside
                       it. The package CARRIES its binaries
@@ -187,8 +209,9 @@ documentation-only diff most jobs skip. Read the individual jobs.
                       Needs the NDK for the Android half, so it is outside
                       `check` for the reason `just android` is
     just unity-android needs BOTH an editor with Android Build Support AND an
-                      attached device — a combination only its own negative
-                      control shares, and bootstrap installs neither. Builds an Android player from
+                      attached device — a combination shared only by its own
+                      negative control and `unity-demo-android`, and bootstrap
+                      installs neither. Builds an Android player from
                       the package as installed, asserts the APK carries
                       `lib/arm64-v8a/libdashscene_ffi.so` and no other ABI, then
                       installs it and requires three positive markers from

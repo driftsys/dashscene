@@ -60,8 +60,10 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using Driftsys.Dashscene;
 using UnityEngine;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 namespace Driftsys.Dashscene.Samples
 {
@@ -168,6 +170,12 @@ namespace Driftsys.Dashscene.Samples
         private Vector3 _documentCameraPosition;
         private DashsceneRuntime _runtime;
         private BrgPainter _painter;
+
+        /// The frame-cost instrument, whose definition is stated against
+        /// `demo/src/shell.rs`'s in `DashsceneFrameCost.cs`. Issue #1329's
+        /// third limb, and the figure issue #1347 sets beside the lean
+        /// painter's.
+        private readonly DashsceneFrameCost _frameCost = new DashsceneFrameCost();
         private CommitPacer _pacer;
         private int _index;
         private string _status = string.Empty;
@@ -365,6 +373,16 @@ namespace Driftsys.Dashscene.Samples
             Debug.Log($"[showcase] drawable: {Screen.width}x{Screen.height} px, "
                       + $"document framing {_documentSize}");
 
+            // **The graphics API, beside the rung it decides.** A frame cost
+            // taken on one API is not a figure about another: the painter's
+            // rung comes from `BatchRendererGroup.BufferTarget`, which Unity
+            // answers per API, and a Pixel 5 gives `RawBuffer` under Vulkan and
+            // `ConstantBuffer` under GLES — measured 2026-08-29. A record that
+            // does not name the API is a number about no device (issue #1347).
+            Debug.Log($"[showcase] graphics: {SystemInfo.graphicsDeviceType}, "
+                      + $"{SystemInfo.graphicsDeviceName}, "
+                      + $"{SystemInfo.graphicsDeviceVersion}");
+
             Show(0);
         }
 
@@ -402,16 +420,41 @@ namespace Driftsys.Dashscene.Samples
 
             try
             {
+                // **The two brackets the frame cost is defined by.** `tick` is
+                // the same quantity `demo/src/shell.rs` reports — the same
+                // `ds_runtime_tick` onto the same solver — and `draw` is
+                // everything of the frame this project executes: the lease,
+                // the packing and upload, marking it drawn, and the release.
+                // What Unity does after `Update` returns is outside both, and
+                // `DashsceneFrameCost.cs` states exactly which parts those are.
+                var tickStart = Stopwatch.GetTimestamp();
                 _runtime.Tick(dt);
+                var tickTicks = Stopwatch.GetTimestamp() - tickStart;
 
-                using var frame = _runtime.AcquireFrame();
-                _painter.Draw(frame);
+                var first = !_reported;
+                var drawStart = Stopwatch.GetTimestamp();
+                using (var frame = _runtime.AcquireFrame())
+                {
+                    _painter.Draw(frame);
 
-                if (!_reported)
+                    // `Draw` packs and uploads; whether the frame reached a
+                    // screen is Unity's answer, later. A lease disposed
+                    // unmarked leaves every commit unshown.
+                    frame.MarkDrawn();
+                }
+
+                var drawTicks = Stopwatch.GetTimestamp() - drawStart;
+
+                if (first)
                 {
                     // Once per document rather than once per frame: what a run
                     // needs is that each one reached the painter, and a line a
                     // frame would bury it.
+                    //
+                    // **Outside the bracket above**, because a line written
+                    // once per document from inside it would land in one frame
+                    // of one sample and move that sample's `max` — the column
+                    // the first sample of an entry already carries warm-up in.
                     _reported = true;
                     _drawnEntries.Add(_index);
                     Debug.Log($"[showcase] drew {Label(_index)}: "
@@ -422,10 +465,16 @@ namespace Driftsys.Dashscene.Samples
                     AnnounceIfEveryEntryHasDrawn();
                 }
 
-                // `Draw` packs and uploads; whether the frame reached a screen
-                // is Unity's answer, later. A lease disposed unmarked leaves
-                // every commit unshown.
-                frame.MarkDrawn();
+                // **`Screen.width`/`Screen.height`, read every frame.** They
+                // are the drawable, and they change under a rotation — which
+                // is the boundary the instrument discards a part-sample on,
+                // and which issue #1346 exercises on purpose.
+                var cost = _frameCost.Push(
+                    Label(_index), Screen.width, Screen.height, tickTicks, drawTicks);
+                if (cost != null)
+                {
+                    Debug.Log($"[showcase] frame cost — {cost.Line()}");
+                }
             }
             catch (DashsceneAbiMismatchException e)
             {
@@ -533,8 +582,8 @@ namespace Driftsys.Dashscene.Samples
 
         private void ReadInput()
         {
-            // Left, right and space. A binding named nowhere is a smaller
-            // version of the same defect, so the readout names all three.
+            // Left, right, space and up. A binding named nowhere is a smaller
+            // version of the same defect, so the readout names all four.
             if (Input.GetKeyDown(KeyCode.RightArrow))
             {
                 Show((_index + 1) % TotalCount);
@@ -547,6 +596,39 @@ namespace Driftsys.Dashscene.Samples
             {
                 RunTheScenesOwnSwitch();
             }
+            else if (Input.GetKeyDown(KeyCode.UpArrow))
+            {
+                ToggleOrientation();
+            }
+        }
+
+        /// Rotates the player between portrait and landscape.
+        ///
+        /// **This exists because a device will not rotate for a script**, and
+        /// issue #1346's rotation case needs one that does. Measured on a Pixel
+        /// 5 on 2026-08-29: neither `settings put system user_rotation` nor
+        /// `wm user-rotation lock` moved this player. A Unity build that allows
+        /// all four orientations carries a sensor-following `screenOrientation`
+        /// in its own manifest, so the display rotation follows the
+        /// accelerometer — and a handset lying on a desk reports portrait
+        /// whatever the window manager is told. `mUserRotationMode` read
+        /// `USER_ROTATION_FREE` and `mRotation=0` after both.
+        ///
+        /// **It is the same path a real rotation takes.** Assigning
+        /// `Screen.orientation` calls `setRequestedOrientation` on the activity,
+        /// which is an ordinary Android configuration change: the surface is
+        /// destroyed and recreated and the drawable changes, which is exactly
+        /// what `host-integration-in-three-layers.md` D4's first case is about.
+        /// What it does not reproduce is the sensor path into that change.
+        ///
+        /// The binding is on the up arrow, so `adb shell input keyevent 19`
+        /// drives it — the same way left and right already walk the entries.
+        private void ToggleOrientation()
+        {
+            Screen.orientation = Screen.orientation == ScreenOrientation.LandscapeLeft
+                ? ScreenOrientation.Portrait
+                : ScreenOrientation.LandscapeLeft;
+            Debug.Log($"[showcase] orientation: {Screen.orientation} requested");
         }
 
         /// Loads entry `index`, replacing whatever was loaded before.
@@ -753,23 +835,91 @@ namespace Driftsys.Dashscene.Samples
             return File.ReadAllBytes(Path.Combine(Application.streamingAssetsPath, relative));
         }
 
+        /// The text of a `StreamingAssets` file, on whichever platform this is.
+        ///
+        /// **`File` cannot read one on Android**, and the failure is silent in
+        /// the worst way: `Application.streamingAssetsPath` is
+        /// `jar:file:///data/app/<pkg>/base.apk!/assets`, so `File.Exists`
+        /// answers false for a file that is present and the reader concludes it
+        /// was never staged. Measured on a Pixel 5 on 2026-08-29: the player
+        /// reported the manifest missing, `Awake` ended, and the SCENES — which
+        /// need no manifest at all — never loaded either.
+        ///
+        /// **It goes through `StreamingAssetDocument.Resolve`** rather than
+        /// carrying a second answer to the same question. That resolver asks
+        /// the APK's own `AssetManager` where the entry is and hands back a
+        /// container path with a byte range, which is what the mapped document
+        /// loader already uses — so this reads the asset where it is packed,
+        /// and there is one place that knows how an APK stores one.
+        ///
+        /// A manifest is a few hundred bytes, so reading it is not the cost
+        /// `Resolve` exists to avoid for a document; the point here is that it
+        /// is the same LOOKUP.
+        private static string ReadStreamingAssetText(string relative)
+        {
+            var range = StreamingAssetDocument.Resolve(relative);
+            if (range.IsWholeFile)
+            {
+                return File.ReadAllText(range.ContainerPath);
+            }
+
+            using var stream = new FileStream(
+                range.ContainerPath, FileMode.Open, FileAccess.Read);
+            stream.Seek((long)range.Offset, SeekOrigin.Begin);
+            var bytes = new byte[range.Length];
+            var read = 0;
+            // **Looped, because one `Read` is not obliged to fill the buffer.**
+            while (read < bytes.Length)
+            {
+                var got = stream.Read(bytes, read, bytes.Length - read);
+                if (got <= 0)
+                {
+                    break;
+                }
+
+                read += got;
+            }
+
+            // **A short read is refused, not returned.** Breaking out of the
+            // loop and handing back the partial bytes is exactly the outcome
+            // the loop exists to prevent: `JsonUtility` would then report a
+            // malformed manifest where the manifest is fine and the READ was
+            // partial — and a truncation landing after a syntactically complete
+            // prefix parses, silently, with a short document list.
+            if (read != bytes.Length)
+            {
+                throw new IOException(
+                    $"{relative}: read {read} of {bytes.Length} byte(s) from "
+                    + $"{range.ContainerPath} at offset {range.Offset}. The entry is "
+                    + "shorter than the asset manager reported, so the content is "
+                    + "partial rather than malformed.");
+            }
+
+            return Encoding.UTF8.GetString(bytes, 0, read);
+        }
+
         private void LoadManifest()
         {
-            var path = Path.Combine(Application.streamingAssetsPath, manifestPath);
-            if (!File.Exists(path))
+            string text;
+            try
+            {
+                text = ReadStreamingAssetText(manifestPath);
+            }
+            catch (Exception e)
             {
                 // Said here rather than collapsed into "lists none" below: a
                 // manifest that is absent and one that is empty are different
                 // mistakes, and the reader fixes them differently.
-                Fail($"{path} does not exist. The recipe writes it beside the documents; "
-                     + "a player built by hand needs it written by hand.");
+                Fail($"{manifestPath} could not be read: {e.GetType().Name}: {e.Message}. "
+                     + "The recipe writes it beside the documents; a player built by hand "
+                     + "needs it written by hand.");
                 return;
             }
 
             ShowcaseManifest manifest;
             try
             {
-                manifest = JsonUtility.FromJson<ShowcaseManifest>(File.ReadAllText(path));
+                manifest = JsonUtility.FromJson<ShowcaseManifest>(text);
             }
             catch (Exception e)
             {
@@ -953,7 +1103,8 @@ namespace Driftsys.Dashscene.Samples
             var lines = new List<string>
             {
                 $"{label}   [{_index + 1}/{Math.Max(TotalCount, 1)}]   "
-                + "left/right to switch, space for a scene's variant switch",
+                + "left/right to switch, space for a scene's variant switch, "
+                + "up to rotate",
                 $"rung {_painter?.Rung.ToString() ?? "none"}   "
                 + $"{_painter?.InstanceCount ?? 0} instances",
             };

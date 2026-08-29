@@ -1468,3 +1468,26 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   where no reading has been taken. Issue #1267 question 2, whether
   `DS_WRONG_THREAD` should distinguish a dead thread from a foreign one, is
   untouched and remains an owner's ruling.
+
+  **Issue #1346 did not take the Android reading either, and the reason is
+  mechanical.** The only place the callback's own thread can be observed is
+  inside `OnPerformCulling`, which is in `Runtime/Engine/BrgPainter.cs` — a file
+  another lane held for the whole of that work. A probe `BatchRendererGroup`
+  registering no batch is not a substitute: Unity is not obliged to call the
+  callback of a group with nothing to cull, so an absent reading would be
+  indistinguishable from a reading of "not the main thread". One line beside the
+  `Malloc` calls there is what it costs, and it is put to the owner on #1346.
+- **A `StreamingAssets` file is not a file on Android, and the sample met that
+  on a device.** Measured on a Pixel 5 on 2026-08-29 (issue #1346's run):
+  `Application.streamingAssetsPath` is
+  `jar:file:///data/app/<pkg>/base.apk!/assets`, so `File.Exists` answered false
+  for a manifest that was present, the sample reported it missing, `Awake` ended
+  — and the showcase SCENES, which need no manifest at all, never loaded either.
+  The manifest read now goes through `StreamingAssetDocument.Resolve`, which
+  asks the APK's own `AssetManager` where the entry is.
+
+  **The cascade reads are still `File` and are still broken there**, which is
+  why `just unity-demo-android` stages the three mapped documents and not the
+  text one: `LoadDocumentWithText` takes owned bytes and the font, sheet and
+  metrics beside it are read with `File.ReadAllBytes`. That is issue #1332, and
+  the resolver above is the shape its fix would take.

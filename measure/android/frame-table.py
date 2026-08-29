@@ -112,6 +112,18 @@ SAMPLE_COMBINED = re.compile(
     r"\((?P<fps>[\d.]+) fps if unpaced\)\s*$"
 )
 
+# The extent the painter drew at, logged by `machine.rs` on every successful
+# attach. Its pid column is the app's own, unlike the CPU sampler's line, so it
+# joins onto a sample directly.
+#
+# **`attached`, never `attaching`.** The pair brackets the acquisition and the
+# second one is written only when the surface was obtained; taking the first
+# would report an extent for an attach that failed.
+ATTACH = re.compile(
+    r"^\s*(?P<epoch>\d+\.\d+)\s+(?P<pid>\d+)\s+\d+\s+I\s+dashscene:\s+"
+    r"attached a (?P<width>\d+)x(?P<height>\d+) surface\s*$"
+)
+
 # The device-side CPU sampler's line: the tag, then a verbatim
 # `/proc/<pid>/stat`. The pid inside the stat line is captured rather than the
 # logcat pid, because the logcat pid belongs to the *sampler* and the stat line
@@ -159,12 +171,16 @@ def stat_jiffies(stat):
 
 
 def read(paths):
-    """Return (samples, cpu) from the given logcat captures.
+    """Return (samples, cpu, attaches) from the given logcat captures.
 
     `samples` is a list of dicts in file order; `cpu` maps pid to a
-    time-ordered list of (epoch, jiffies).
+    time-ordered list of (epoch, jiffies); `attaches` maps pid to a
+    time-ordered list of (epoch, (width, height)).
 
-    **Both kinds are de-duplicated by (pid, epoch)**, and `frame-capture.sh`
+    **Three line kinds are read and everything else is ignored**, and all three
+    are de-duplicated by (pid, epoch) for the reason the samples are.
+
+    **Every kind is de-duplicated by (pid, epoch)**, and `frame-capture.sh`
     passes every `frames-<scene>.log` at once, so a line present in two captures
     would otherwise be counted twice. Without this, three drawn samples were
     reported as six, and the duplicated first row got a **negative** `wall s`:
@@ -190,8 +206,8 @@ def read(paths):
     drops re-reads of the same record and keeps two genuinely distinct samples
     even when their other fields are identical.
     """
-    samples, cpu = [], {}
-    seen_samples, seen_cpu = set(), set()
+    samples, cpu, attaches = [], {}, {}
+    seen_samples, seen_cpu, seen_attach = set(), set(), set()
     for path in paths:
         try:
             # `errors="replace"`: a logcat ring can cut a UTF-8 sequence in
@@ -221,6 +237,19 @@ def read(paths):
                 seen_samples.add(key)
                 samples.append(row)
                 continue
+            found = ATTACH.match(line)
+            if found:
+                pid = int(found.group("pid"))
+                epoch = float(found.group("epoch"))
+                # De-duplicated on (pid, epoch) for the reason the samples are:
+                # `-T 1` re-prints the newest record already in the buffer, so
+                # one attach can enter two captures.
+                if (pid, epoch) in seen_attach:
+                    continue
+                seen_attach.add((pid, epoch))
+                extent = (int(found.group("width")), int(found.group("height")))
+                attaches.setdefault(pid, []).append((epoch, extent))
+                continue
             found = CPU.match(line)
             if found:
                 parsed = stat_jiffies(found.group("stat"))
@@ -234,6 +263,8 @@ def read(paths):
                 cpu.setdefault(pid, []).append((epoch, jiffies))
     for readings in cpu.values():
         readings.sort()
+    for events in attaches.values():
+        events.sort()
     # **Sorted by time, not left in file order**, because file order is not
     # chronological: `frame-capture.sh` passes `frames-*.log`, which the shell
     # expands **alphabetically** — layout, surfaces, typography — while the
@@ -244,7 +275,7 @@ def read(paths):
     # also makes a negative `wall s` structurally impossible rather than merely
     # unobserved.
     samples.sort(key=lambda row: (row["epoch"], row["pid"]))
-    return samples, cpu
+    return samples, cpu, attaches
 
 
 class Unreadable(Exception):
@@ -275,7 +306,41 @@ def cpu_over(readings, start, end, clk_tck):
     return (last[1] - first[1]) / clk_tck / span * 100.0
 
 
-def rows(samples, cpu, clk_tck):
+def extent_over(events, start, end):
+    """Every distinct extent in force over `(start, end]`, in order.
+
+    The extent a sample was drawn at is the one attached most recently before
+    its interval opened, plus any attached inside it. Returning the list rather
+    than the last one is what lets the caller say "this sample spans two
+    extents" instead of averaging across them — which is the defect issue #1236
+    records, where `layout`'s three samples described two geometries.
+
+    `start` of `None` means the interval has no lower bound — the first sample
+    of a process with no CPU reading behind it — so every attach up to `end`
+    counts. That is conservative in the right direction: it reports a change
+    that may have happened before any frame in the sample rather than hiding
+    one that happened during it.
+    """
+    in_force = []
+    for epoch, extent in events:
+        if epoch > end:
+            break
+        if start is None or epoch > start:
+            in_force.append(extent)
+        else:
+            # Still the one in force when the interval opened; it replaces any
+            # earlier one rather than adding to the list.
+            in_force = [extent]
+    # A re-attach at the same extent is not a change: rotation there and back,
+    # and a surface recreated on resume, both produce one.
+    distinct = []
+    for extent in in_force:
+        if not distinct or distinct[-1] != extent:
+            distinct.append(extent)
+    return distinct
+
+
+def rows(samples, cpu, attaches, clk_tck):
     """One row per sample, numbered per (pid, scene), with CPU attributed.
 
     The interval a sample covers is from the **previous sample of the same pid**
@@ -307,6 +372,11 @@ def rows(samples, cpu, clk_tck):
                 "index": index[key],
                 "span": span,
                 "opened": opened,
+                # **Per pid, like the CPU join.** A relaunch at a new extent
+                # must not relabel the run before it.
+                "extents": extent_over(
+                    attaches.get(pid, []), start, sample["epoch"]
+                ),
                 "cpu": (
                     None
                     if start is None
@@ -337,6 +407,23 @@ SOURCES = {
 }
 
 
+def extent_cell(extents):
+    """One row's extent, or what it spanned when the surface changed under it.
+
+    An em dash where nothing attached: a capture that began after the attach,
+    and every bundle taken before the painter logged one. A guess would be
+    worse than a gap here, because the gap is what makes a reader go and look.
+    """
+    if not extents:
+        return "—"
+    if len(extents) == 1:
+        return f"{extents[0][0]}x{extents[0][1]}"
+    return (
+        " → ".join(f"{width}x{height}" for width, height in extents)
+        + " (changed)"
+    )
+
+
 def emit(table, source, describe, clk_tck, out):
     print(f"# Frame costs — {describe}" if describe else "# Frame costs", file=out)
     print(file=out)
@@ -357,6 +444,73 @@ def emit(table, source, describe, clk_tck, out):
         file=out,
     )
     print(file=out)
+    # **The extent, stated before the table rather than only inside it.**
+    # Orientation changes the workload and not only the pixel count: re-measured
+    # in landscape the same three scenes gave `typography` 14.6-15.1 ms against
+    # 3.8-4.3 ms in portrait, on FEWER pixels, because a wider box lays out more
+    # text. So a figure taken from a table that does not name its extent is not
+    # comparable to any other figure, which is issue #1236.
+    seen = []
+    for row in table:
+        for extent in row["extents"]:
+            if extent not in seen:
+                seen.append(extent)
+    changed = [row for row in table if len(row["extents"]) > 1]
+    # **Rows with NO extent are counted**, because the statements below are
+    # about every row. A capture holding one attach line and a second process
+    # that logged none produced "Every row below was drawn at 2204x805" over a
+    # row whose own cell read an em dash — the claim covering a row it had no
+    # reading for, which is issue #1236's defect reintroduced by its own fix.
+    unknown = [row for row in table if not row["extents"]]
+    if changed:
+        print(
+            "**The rows below were not all drawn at one extent.** "
+            + "Every extent this run reported: "
+            + ", ".join(f"`{width}x{height}`" for width, height in seen)
+            + f". {len(changed)} row(s) span more than one and are marked "
+            "`(changed)`; those are not one series and must not be compared "
+            "with each other or with anything else. `settings put system "
+            "user_rotation` applies only while an app that permits rotation is "
+            "in front, so a capture that force-stops between scenes drifts back "
+            "to the launcher's orientation (issue #1236).",
+            file=out,
+        )
+    elif len(seen) == 1 and not unknown:
+        print(
+            f"Every row below was drawn at {seen[0][0]}x{seen[0][1]}.",
+            file=out,
+        )
+    elif len(seen) == 1:
+        print(
+            f"{len(table) - len(unknown)} row(s) below were drawn at "
+            f"{seen[0][0]}x{seen[0][1]}, and {len(unknown)} name no extent at "
+            "all: no `attached a WxH surface` line precedes them. A figure "
+            "with no extent beside it is not comparable to any other "
+            "(issue #1236).",
+            file=out,
+        )
+    elif seen:
+        print(
+            "**The rows below were not all drawn at one extent.** "
+            + "Every extent this run reported: "
+            + ", ".join(f"`{width}x{height}`" for width, height in seen)
+            + ". No single row spans two, so each row is its own series — but "
+            "rows at different extents are not comparable with each other."
+            + (
+                f" {len(unknown)} row(s) name no extent at all."
+                if unknown
+                else ""
+            ),
+            file=out,
+        )
+    else:
+        print(
+            "No `attached a WxH surface` line is in these captures, so no row "
+            "below names the extent it was drawn at. A per-frame figure with "
+            "no extent beside it is not comparable to any other (issue #1236).",
+            file=out,
+        )
+    print(file=out)
     print(
         "One row per reported sample of 240 **drawn** frames "
         "(`demo-android/src/timing.rs`). Rows are not averaged: the first "
@@ -375,13 +529,14 @@ def emit(table, source, describe, clk_tck, out):
     )
     print(file=out)
     print(
-        "| scene | # | pid | frames | tick ms | paint mean | paint p50 "
+        "| scene | extent | # | pid | frames | tick ms | paint mean | paint p50 "
         "| submit mean | p50 | p95 | max | glyphs | fps if unpaced | wall s "
         "| cpu % of one core |",
         file=out,
     )
     print(
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- "
+        "| --- | --- | --- | --- | --- |",
         file=out,
     )
     for row in table:
@@ -392,7 +547,8 @@ def emit(table, source, describe, clk_tck, out):
             span += " (open)"
         cpu = "—" if row["cpu"] is None else f"{row['cpu']:.0f}"
         print(
-            f"| {row['scene']} | {row['index']} | {row['pid']} | {row['frames']} "
+            f"| {row['scene']} | {extent_cell(row['extents'])} | {row['index']} "
+            f"| {row['pid']} | {row['frames']} "
             f"| {row['tick']} | {row['paint'] or '—'} | {row['paint50'] or '—'} "
             f"| {row['mean']} "
             f"| {row['p50']} | {row['p95']} | {row['max']} "
@@ -432,7 +588,7 @@ def main(argv):
         return 2
 
     try:
-        samples, cpu = read(args.logcat)
+        samples, cpu, attaches = read(args.logcat)
     except Unreadable as error:
         print(f"frame-table: {error}", file=sys.stderr)
         return 2
@@ -453,7 +609,13 @@ def main(argv):
         )
         return 1
 
-    emit(rows(samples, cpu, args.clk_tck), args.source, args.describe, args.clk_tck, sys.stdout)
+    emit(
+        rows(samples, cpu, attaches, args.clk_tck),
+        args.source,
+        args.describe,
+        args.clk_tck,
+        sys.stdout,
+    )
     return 0
 
 

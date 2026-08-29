@@ -26,6 +26,7 @@ using System.Collections.Generic;
 using System.IO;
 using Driftsys.Dashscene.Samples;
 using UnityEditor;
+using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -40,6 +41,22 @@ public static class DemoBuild
     private const string ProductName = "DashsceneShowcase";
 
     private const string PackageName = "com.driftsys.dashscene";
+
+    /// The Android application id, written to `Build/application-id.txt` so the
+    /// recipe launches what was built rather than a literal of its own — the
+    /// rule `AndroidProbeBuild` already follows, and the failure it avoids is
+    /// `am` reporting "No activities found to run" into a stream the recipe
+    /// would then blame on the device.
+    private const string ApplicationId = "com.driftsys.dashscene.showcase";
+
+    /// Which player to build, read from the environment.
+    ///
+    /// **An environment variable rather than `-buildTarget`**, for
+    /// `AndroidProbeBuild`'s reason: the switch has to happen before anything
+    /// reads a per-platform setting, and doing it here rather than trusting the
+    /// command line's ordering is what makes that observable.
+    private static bool BuildingForAndroid =>
+        Environment.GetEnvironmentVariable("DASHSCENE_DEMO_TARGET") == "android";
 
     private const int WindowWidth = 1280;
 
@@ -56,8 +73,28 @@ public static class DemoBuild
     public static void Build()
     {
         var failures = new List<string>();
+
+        if (BuildingForAndroid
+            && EditorUserBuildSettings.activeBuildTarget != BuildTarget.Android
+            && !EditorUserBuildSettings.SwitchActiveBuildTarget(
+                NamedBuildTarget.Android, BuildTarget.Android))
+        {
+            failures.Add(
+                "the active build target could not be switched to Android. Android Build "
+                + "Support is not installed in this editor, and everything below would then "
+                + "configure and build a macOS player instead.");
+            Debug.LogError($"[demo-build] {failures[0]}");
+            EditorApplication.Exit(1);
+            return;
+        }
+
         CreatePipeline(failures);
         RefuseAlwaysIncludedShaders(failures);
+        if (BuildingForAndroid)
+        {
+            SetAndroidPlayerSettings(failures);
+        }
+
         SetBrgStripping(failures);
         ImportNativeLibrary(failures);
 
@@ -222,6 +259,19 @@ public static class DemoBuild
             importer.SetCompatibleWithAnyPlatform(false);
             importer.SetCompatibleWithEditor(true);
             importer.SetCompatibleWithPlatform(EditorUserBuildSettings.activeBuildTarget, true);
+
+            // **Android needs the CPU as well as the compatibility.** A plugin
+            // marked compatible with Android and matching no ABI slice of the
+            // player is copied into nothing — Unity does not fail the build for
+            // it — and the first P/Invoke then raises DllNotFoundException.
+            // That is the class issue #1313 records and `just unity-android`
+            // asserts against the artifact; the value here matches the one the
+            // package's own committed `.meta` carries.
+            if (BuildingForAndroid)
+            {
+                importer.SetPlatformData(BuildTarget.Android, "CPU", "ARM64");
+            }
+
             importer.SaveAndReimport();
 
             // **Read back off a FRESH importer, which is `SetBrgStripping`'s
@@ -250,6 +300,66 @@ public static class DemoBuild
                 $"no native library under {Plugins}. The player would raise "
                 + "DllNotFoundException on its first call into dashscene-ffi.");
         }
+    }
+
+    /// R-E7, R-E8 and R-E9's values, set on the Android player.
+    ///
+    /// **Set and reported, not checked.** `unity/android-probe` is where those
+    /// three are read back, and a demonstration is not their gate — but a
+    /// player built without them is not representative of a shipping one, and
+    /// R-E8 in particular decides whether the staged `.so` reaches the APK at
+    /// all. `docs/specification/07-embedding-and-distribution.md` scopes the
+    /// three to the project producing the SHIPPING artifact, which a project
+    /// regenerated under `target/` on every run is not.
+    private static void SetAndroidPlayerSettings(List<string> failures)
+    {
+        PlayerSettings.SetApplicationIdentifier(NamedBuildTarget.Android, ApplicationId);
+        PlayerSettings.SetScriptingBackend(
+            NamedBuildTarget.Android, ScriptingImplementation.IL2CPP);
+        PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
+
+        // **Read from the environment rather than written here**, for
+        // `AndroidProbeBuild`'s reason: the justfile's `ANDROID_API` is the one
+        // copy of the floor, and every Android target — the shipped
+        // `libdashscene_ffi.so` included — is built through
+        // `aarch64-linux-android<ANDROID_API>-clang`.
+        var floorText = Environment.GetEnvironmentVariable("DASHSCENE_ANDROID_API");
+        if (!int.TryParse(floorText, out var floor))
+        {
+            failures.Add(
+                "DASHSCENE_ANDROID_API is unset or not an integer, so the player's minimum "
+                + $"SDK has no value to take (read '{floorText}').");
+            return;
+        }
+
+        PlayerSettings.Android.minSdkVersion = (AndroidSdkVersions)floor;
+
+        // **Vulkan, chosen rather than left to Unity's automatic selection.**
+        // Measured on a Pixel 5 on 2026-08-29: a player built with the default
+        // list ran OpenGL ES on an Adreno 620 and the painter selected the
+        // `ConstantBuffer` rung — where
+        // `docs/decisions/unity-painter-uses-brg.md` D4 records `RawBuffer`
+        // read under Vulkan on the same device. Both are real answers, and a
+        // measurement that does not say which one it took is not comparable
+        // with anything: issue #1347 sets this player's cost beside the lean
+        // painter's, and that painter requests Vulkan
+        // (`docs/design/android-toolchain.md`, D3a).
+        PlayerSettings.SetGraphicsAPIs(
+            BuildTarget.Android, new[] { GraphicsDeviceType.Vulkan });
+
+        // **Rotation is left ON, and this recipe is the reason.** Issue #1346
+        // exercises the Unity host's Android lifecycle over the surface
+        // handshake, and a player locked to one orientation cannot be rotated.
+        PlayerSettings.allowedAutorotateToPortrait = true;
+        PlayerSettings.allowedAutorotateToLandscapeLeft = true;
+        PlayerSettings.allowedAutorotateToLandscapeRight = true;
+        PlayerSettings.allowedAutorotateToPortraitUpsideDown = true;
+        PlayerSettings.defaultInterfaceOrientation = UIOrientation.AutoRotation;
+
+        Debug.Log(
+            $"[demo-build] android: IL2CPP, ARM64 exactly, minSdk {floor}, autorotation on, "
+            + $"graphics {string.Join(",", PlayerSettings.GetGraphicsAPIs(BuildTarget.Android))}, "
+            + $"id {ApplicationId}");
     }
 
     /// A camera and the showcase component.
@@ -345,6 +455,11 @@ public static class DemoBuild
             return;
         }
         File.WriteAllText(Path.Combine("Build", "player-path.txt"), executable);
+        if (BuildingForAndroid)
+        {
+            File.WriteAllText(Path.Combine("Build", "application-id.txt"), ApplicationId);
+        }
+
         Debug.Log($"[demo-build] player {executable}");
     }
 
@@ -357,6 +472,8 @@ public static class DemoBuild
             case BuildTarget.StandaloneWindows:
             case BuildTarget.StandaloneWindows64:
                 return ".exe";
+            case BuildTarget.Android:
+                return ".apk";
             default:
                 return string.Empty;
         }

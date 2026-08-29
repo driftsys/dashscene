@@ -3177,8 +3177,6 @@ unity-demo unity_version="6000.3.23f1" action="run":
       "${player}" -logFile "${player_log}"
     fi
 
-# Build a Unity Android player from the package and read D4's rung on a device.
-#
 # **The first recipe in this repository that builds a Unity player for anything
 # but macOS.**
 #
@@ -3205,6 +3203,13 @@ unity-demo unity_version="6000.3.23f1" action="run":
 # this repository's memory records most often.
 #
 # Needs an editor with Android Build Support, and an attached device.
+#
+# **`unity/android-probe/unity-android-test.sh` drives this recipe against a stub
+# editor and a stub adb**, which is the only way its refusals execute: every one
+# of them needs an editor with Android Build Support and a cable otherwise.
+# `harness-tests` runs it, so `just build` and CI do.
+#
+# Build a Unity Android player from this package and read D4's rung on a device.
 unity-android unity_version="6000.3.23f1" timeout="300" probe_src="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -3276,6 +3281,23 @@ unity-android unity_version="6000.3.23f1" timeout="300" probe_src="":
       exit 1
     fi
     urp="$(jq -r .version "${urp_json}")"
+
+    # **The package's URP pin has to be one this editor can satisfy**, the check
+    # `unity-render` makes and this recipe did not. A UPM dependency is a
+    # MINIMUM, so only a pin the editor is BELOW is a problem — and without this
+    # the IL2CPP build runs before UPM fails to resolve, which is the most
+    # expensive way in this repository to reach a one-line answer.
+    pinned="$(jq -r '.dependencies["com.unity.render-pipelines.universal"] // empty' \
+      "${package}/package.json")"
+    if [ -n "${pinned}" ]; then
+      lowest="$(printf '%s\n%s\n' "${pinned}" "${urp}" | sort -V | head -1)"
+      if [ "${lowest}" != "${pinned}" ]; then
+        echo "unity-android: package.json pins URP ${pinned} and this editor ships ${urp}," >&2
+        echo "unity-android: which is older — a consumer of this package could not resolve it." >&2
+        exit 1
+      fi
+    fi
+
     # The Android library, not the macOS one. A macOS `.dylib` present and an
     # Android `.so` absent is exactly what an APK that raises
     # DllNotFoundException on its first P/Invoke looks like from here.
@@ -3345,6 +3367,22 @@ unity-android unity_version="6000.3.23f1" timeout="300" probe_src="":
       }
     }
     JSON
+    # **Written rather than left empty**, as `unity-editor`, `unity-render`,
+    # `unity-conformance` and `unity-demo` all write one. Unity 6 defaults to
+    # the same value, so an empty directory is a deviation rather than a defect
+    # — but a project whose api compatibility level is whatever the editor
+    # happens to default to is not the project those four measured.
+    cat > "${project}/ProjectSettings/ProjectSettings.asset" <<'YAML'
+    %YAML 1.1
+    %TAG !u! tag:unity3d.com,2011:
+    --- !u!129 &1
+    PlayerSettings:
+      m_ObjectHideFlags: 0
+      productName: AndroidProbe
+      companyName: driftsys
+      apiCompatibilityLevel: 6
+      apiCompatibilityLevelPerPlatform: {}
+    YAML
     # **A PARAMETER, not an environment variable**, so that
     # `unity-android-negative` can point this at a mutated copy under `target/`
     # without editing a committed file, and so that nothing exported in a
@@ -3391,7 +3429,17 @@ unity-android unity_version="6000.3.23f1" timeout="300" probe_src="":
       echo "unity-android: the APK build FAILED (exit ${status}). Full log: ${log}" >&2
       exit "${status}"
     fi
-    apk="${project}/Build/AndroidProbe.apk"
+    # **The path the build wrote, not a literal repeated here.** The same rule
+    # `application-id.txt` already carries one line further down, and the same
+    # failure if it drifts: this recipe would report "the build wrote no ..."
+    # about a file the build did write under another name.
+    apk_path_file="${project}/Build/apk-path.txt"
+    if [ ! -f "${apk_path_file}" ]; then
+      echo "unity-android: the build wrote no ${apk_path_file}" >&2
+      echo "unity-android: AndroidProbeBuild.BuildPlayer writes it beside the APK." >&2
+      exit 1
+    fi
+    apk="${project}/$(cat "${apk_path_file}")"
     if [ ! -f "${apk}" ]; then
       echo "unity-android: the build wrote no ${apk}" >&2
       exit 1
@@ -3421,8 +3469,32 @@ unity-android unity_version="6000.3.23f1" timeout="300" probe_src="":
       exit 1
     fi
     echo "unity-android: the APK carries arm64-v8a only, and it holds the shipped .so"
+    # **The device is read again, here rather than only before the build.** The
+    # first check is about six minutes of IL2CPP earlier, and a cable pulled in
+    # between makes the install fail with adb's own message about a device this
+    # recipe already said it had. Fail-closed either way; this one names the
+    # cause.
+    if ! just _android-has-device; then
+      echo "unity-android: the device was there before the build and is not now." >&2
+      just _android-warn-no-device unity-android
+      exit 1
+    fi
     echo "unity-android: installing $(basename "${apk}")"
-    "${adb}" install -r "${apk}" >/dev/null
+    # **stdout is read, not discarded.** Modern platform-tools put
+    # `adb: failed to install` on stderr and exit non-zero, so discarding both
+    # is fail-closed on this machine — but adb builds that print
+    # `Failure [INSTALL_FAILED_*]` to stdout and exit 0 exist, and against one
+    # of those this recipe would launch the PREVIOUS run's APK and report its
+    # markers as this run's. Both streams are kept and both verdicts are taken.
+    set +e
+    install_out="$("${adb}" install -r "${apk}" 2>&1)"
+    installed=$?
+    set -e
+    if [ "${installed}" -ne 0 ] || grep -qE 'Failure|failed to install' <<<"${install_out}"; then
+      echo "unity-android: adb install exited ${installed} and said:" >&2
+      printf '%s\n' "${install_out}" >&2
+      exit 1
+    fi
     # The id the build wrote, not a literal repeated here — the two drift, and
     # the failure that produces is monkey reporting "No activities found to
     # run" into a stream this recipe would then blame on the device.
@@ -3456,8 +3528,16 @@ unity-android unity_version="6000.3.23f1" timeout="300" probe_src="":
     # Poll rather than stream: a `logcat` left running is a process this recipe
     # then has to reap on every exit path, and the probe reports within a frame
     # or two of launching.
+    # **Wall time, not a count of sleeps.** `waited` used to be incremented by
+    # the sleep alone, so the `adb logcat -d` round trip was not counted:
+    # `timeout` bounded the sleeping rather than the waiting, and
+    # `NO read in ${waited}s` understated the real wait by however long adb took
+    # — which on a device that has stopped answering is most of it.
+    started=${SECONDS}
     waited=0
     captured=""
+    # adb's own stderr, kept rather than discarded. See the failure arm below.
+    adb_err="${project}/adb-logcat.err"
     while [ "${waited}" -lt {{ timeout }} ]; do
       # **`adb` failure separated from an empty result.** Folding both into
       # `|| true` reports an unplugged cable as "the player reported no read",
@@ -3471,15 +3551,30 @@ unity-android unity_version="6000.3.23f1" timeout="300" probe_src="":
         | tr ' ' '\n' | grep -E '^[0-9]+$' | head -1 || true)"
       set +e
       if [ -n "${pid}" ]; then
-        dump="$("${adb}" logcat -d --pid="${pid}" 2>/dev/null)"
+        dump="$("${adb}" logcat -d --pid="${pid}" 2>"${adb_err}")"
+        dumped=$?
       else
-        dump="$("${adb}" logcat -d 2>/dev/null)"
+        # **`unscoped` is set BEFORE the read, and `dumped` is captured in each
+        # arm.** A single `dumped=$?` after the `fi` reads the LAST command of
+        # the branch that ran, which down here was `unscoped=1` — an assignment
+        # that always succeeds. So a failing unscoped read reported success, the
+        # poll ran to its full timeout against an unplugged cable, and adb's
+        # diagnosis was never printed. Found by the stub test's unscoped case.
         unscoped=1
+        dump="$("${adb}" logcat -d 2>"${adb_err}")"
+        dumped=$?
       fi
-      dumped=$?
       set -e
+      waited=$((SECONDS - started))
       if [ "${dumped}" -ne 0 ]; then
         echo "unity-android: adb logcat failed (exit ${dumped}) after ${waited}s." >&2
+        # **adb's own diagnosis, which is the whole point of the failure.**
+        # `device offline`, `unauthorized` and `no devices/emulators found` want
+        # three different actions, and an exit code distinguishes none of them —
+        # while the comment above says the point is to send the reader to the
+        # cable rather than to the device. The monkey path keeps its stderr for
+        # this reason and this is the second call site of that rule.
+        cat "${adb_err}" >&2
         exit 1
       fi
       # **Accumulated, not overwritten.** logcat's ring buffer can wrap during a
@@ -3497,7 +3592,7 @@ unity-android unity_version="6000.3.23f1" timeout="300" probe_src="":
         break
       fi
       sleep 2
-      waited=$((waited + 2))
+      waited=$((SECONDS - started))
     done
     echo "unity-android: ---- what the device reported ----"
     printf '%s\n' "${captured}"
@@ -3562,6 +3657,412 @@ unity-android unity_version="6000.3.23f1" timeout="300" probe_src="":
     echo "unity-android: the read above was taken on ${device}."
     echo "unity-android: record it in docs/decisions/unity-painter-uses-brg.md D4 (issue #1345)."
 
+# Build the Unity showcase player for ANDROID and put it on a device.
+#
+# **The other half of `unity-demo`, and the reason both exist.** That recipe
+# builds a windowed macOS player a person drives; this one builds the same
+# sample for the device the numbers are meant to describe. Issue #1347 asks for
+# the Unity painter's per-frame cost beside the lean painter's on one device,
+# and `demo-android` is what draws the same scenes through the lean one.
+#
+# **It builds the same content as `demo-android`, which is what makes the
+# comparison one.** The showcase scenes reach a Unity player through
+# `unity/demo-producer` — `dashscene-ffi` plus `ds_demo_*` — so this recipe
+# cross-compiles that crate for `aarch64-linux-android` and stages it under the
+# shipped library's file name, the rule `unity-demo` already states: the player
+# must load ONE library, or `DashsceneRuntime` and `ds_demo_build` would resolve
+# into two instantiations of a `thread_local!` runtime table.
+#
+# **The package is EMBEDDED and its Android library removed, which
+# `unity-demo` does not have to do.** Two plugins named `libdashscene_ffi.so`
+# both marked Android/ARM64 are two files claiming one path inside the APK. The
+# package is copied under `Packages/` rather than referenced as a `file:`
+# dependency so that removal touches a copy under `target/` and never the
+# working tree. **So this says nothing about the shipped plugin layout** —
+# `just unity-android` is the recipe that builds against the package as
+# installed, and it stays the one that answers R-E21.
+#
+# **What it is not.** It asserts nothing about what was drawn: `unity-render` is
+# the gate that does that, on macOS. This reports what the player said, and a
+# run whose player reported nothing exits non-zero — the fail-open shape this
+# repository's memory records most often.
+#
+# Three actions:
+#
+#   build     stop after the APK
+#   install   install, launch, and leave the player running. What issue #1346's
+#             lifecycle cases need: something to rotate, background and split.
+#   cycle     install, launch, walk every entry with `input keyevent`, and
+#             report every frame-cost line seen. Fails unless every entry drew.
+#
+# Needs an editor with Android Build Support, the NDK, and an attached device.
+#
+# Build an Android showcase player from this package and read its frame cost.
+unity-demo-android unity_version="6000.3.23f1" action="cycle" profile="demo-release" timeout="900":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # **`demo-release` by default, and the reason is a measurement.** A `dev`
+    # build of the producer leaves `ds_runtime_tick` unoptimised, and `tick` is
+    # the one term issue #1347 sets directly beside a Rust host's — which was
+    # taken over a release build. `demo-release` is `release` with thin LTO,
+    # and `[profile.demo-release]` in `Cargo.toml` records why plain release
+    # cannot build this crate at all.
+    case "{{profile}}" in
+      debug)        cargo_profile="" ;;
+      demo-release) cargo_profile="--profile demo-release" ;;
+      *)
+        echo "unity-demo-android: profile must be debug or demo-release," >&2
+        echo "unity-demo-android: not '{{profile}}' — there is no plain release" >&2
+        echo "unity-demo-android: build of demo-producer, see Cargo.toml" >&2
+        exit 1
+        ;;
+    esac
+    case "{{action}}" in
+      build|install|cycle) ;;
+      *)
+        echo "unity-demo-android: action must be build, install or cycle," >&2
+        echo "unity-demo-android: not '{{action}}'" >&2
+        exit 1
+        ;;
+    esac
+    case "{{ timeout }}" in
+      ''|*[!0-9]*)
+        echo "unity-demo-android: timeout must be whole seconds, got '{{ timeout }}'" >&2
+        exit 1
+        ;;
+    esac
+
+    editor="${DASHSCENE_UNITY:-/Applications/Unity/Hub/Editor/{{unity_version}}/Unity.app/Contents/MacOS/Unity}"
+    if [ ! -x "${editor}" ]; then
+      echo "unity-demo-android: no Unity executable at ${editor}" >&2
+      echo "unity-demo-android:   DASHSCENE_UNITY=/path/to/Unity just unity-demo-android" >&2
+      exit 1
+    fi
+    editor_dir="$(dirname "${editor}")"
+    # Searched rather than derived, for `unity-android`'s reason: a fixed offset
+    # from `Unity.app/Contents/MacOS` is a macOS-bundle assumption.
+    android_player=""
+    for candidate in \
+      "${editor_dir}/../../../PlaybackEngines/AndroidPlayer" \
+      "${editor_dir}/../PlaybackEngines/AndroidPlayer" \
+      "${editor_dir}/Data/PlaybackEngines/AndroidPlayer" \
+      "${editor_dir}/../Data/PlaybackEngines/AndroidPlayer"; do
+      if [ -d "${candidate}" ]; then
+        android_player="$(cd "${candidate}" && pwd)"
+        break
+      fi
+    done
+    if [ -z "${android_player}" ]; then
+      echo "unity-demo-android: no Android Build Support found near ${editor}" >&2
+      exit 1
+    fi
+    builtin=""
+    for candidate in \
+      "${editor_dir}/../Resources/PackageManager/BuiltInPackages" \
+      "${editor_dir}/Data/PackageManager/BuiltInPackages" \
+      "${editor_dir}/../Data/PackageManager/BuiltInPackages"; do
+      if [ -d "${candidate}" ]; then
+        builtin="$(cd "${candidate}" && pwd)"
+        break
+      fi
+    done
+    if [ -z "${builtin}" ]; then
+      echo "unity-demo-android: no BuiltInPackages directory near ${editor}" >&2
+      exit 1
+    fi
+
+    root="$(git rev-parse --show-toplevel)"
+    project="${root}/target/unity-demo-android"
+    package="${root}/unity/com.driftsys.dashscene"
+
+    urp_json="${builtin}/com.unity.render-pipelines.universal/package.json"
+    if [ ! -f "${urp_json}" ]; then
+      echo "unity-demo-android: this editor ships no built-in URP at ${urp_json}" >&2
+      exit 1
+    fi
+    urp="$(jq -r .version "${urp_json}")"
+    # Before the IL2CPP build, for the reason `unity-render` gives about its own.
+    pinned="$(jq -r '.dependencies["com.unity.render-pipelines.universal"] // empty' \
+      "${package}/package.json")"
+    if [ -n "${pinned}" ]; then
+      lowest="$(printf '%s\n%s\n' "${pinned}" "${urp}" | sort -V | head -1)"
+      if [ "${lowest}" != "${pinned}" ]; then
+        echo "unity-demo-android: package.json pins URP ${pinned} and this editor ships ${urp}," >&2
+        echo "unity-demo-android: which is older — a consumer could not resolve it." >&2
+        exit 1
+      fi
+    fi
+
+    adb=$(just _android-adb)
+    if [ "{{action}}" != "build" ] && ! just _android-has-device; then
+      just _android-warn-no-device unity-demo-android
+      exit 1
+    fi
+
+    # The producer's exported set against the shipped library's, before
+    # anything is built for a device. It is a claim about the crate rather than
+    # about one triple, and it is the cheapest place to learn that the appendix
+    # stopped being an appendix.
+    just demo-exports {{profile}}
+
+    # The Android build of the same crate. Assigned then evalled, never
+    # `eval "$(just _android-env)"` — see that recipe.
+    android_env=$(just _android-env {{ ANDROID_API }})
+    eval "${android_env}"
+    lib=$(cargo build -p demo-producer ${cargo_profile} --target aarch64-linux-android \
+      --message-format=json | jq -r '
+        select(.reason == "compiler-artifact")
+        | select(.target.name == "demo_producer")
+        | .filenames[]
+        | select(endswith(".so"))
+      ' | tail -n 1)
+    if [ -z "${lib}" ]; then
+      echo "unity-demo-android: cargo emitted no .so for demo-producer." >&2
+      exit 1
+    fi
+
+    font="${root}/corpus/fonts/inter/Inter-Regular.otf"
+    atlas="${root}/corpus/atlas/inter-ascii"
+    for input in "${font}" "${atlas}/atlas.png" "${atlas}/atlas.metrics"; do
+      if [ ! -f "${input}" ]; then
+        echo "unity-demo-android: ${input} is missing" >&2
+        exit 1
+      fi
+    done
+
+    rm -rf "${project}"
+    mkdir -p "${project}/Packages" "${project}/ProjectSettings" \
+      "${project}/Assets/Editor" "${project}/Assets/Plugins" \
+      "${project}/Assets/StreamingAssets/documents" \
+      "${project}/Assets/StreamingAssets/cascade"
+
+    # **Embedded, not `file:`.** The line below removes the package's own
+    # Android library, and a `file:` dependency would remove it from the
+    # working tree.
+    cp -R "${package}" "${project}/Packages/com.driftsys.dashscene"
+    rm -f "${project}/Packages/com.driftsys.dashscene/Runtime/Plugins/Android/libdashscene_ffi.so" \
+      "${project}/Packages/com.driftsys.dashscene/Runtime/Plugins/Android/libdashscene_ffi.so.meta"
+
+    cat > "${project}/Packages/manifest.json" <<JSON
+    {
+      "dependencies": {
+        "com.unity.render-pipelines.universal": "${urp}"
+      }
+    }
+    JSON
+
+    cp "${root}/unity/demo/DemoBuild.cs" "${project}/Assets/Editor/"
+    cp "${package}"/Samples~/Showcase/*.cs "${project}/Assets/"
+    cp "${lib}" "${project}/Assets/Plugins/libdashscene_ffi.so"
+    echo "unity-demo-android: staged $(basename "${lib}") as libdashscene_ffi.so"
+    echo "unity-demo-android: producer profile {{profile}}, commit $(git rev-parse --short HEAD)"
+
+    cp "${font}" "${project}/Assets/StreamingAssets/cascade/Inter-Regular.otf"
+    cp "${atlas}/atlas.png" "${project}/Assets/StreamingAssets/cascade/atlas.png"
+    cp "${atlas}/atlas.metrics" "${project}/Assets/StreamingAssets/cascade/atlas.metrics"
+
+    # **The text document is left out on Android**, and that is issue #1332
+    # rather than a choice here: `LoadDocumentWithText` takes owned bytes, the
+    # sample reads a cascade with `File`, and a `StreamingAssets` path inside an
+    # APK is an offset into the APK rather than a file. The three documents that
+    # map are staged; the scenes are what this recipe is for.
+    documents=(
+      "v03-paint.dsb|paint: fills, strokes, corners, and one image fill the painter refuses|0|false"
+      "v07-variant-topology.dsb|layout: a variant set, at rest — nothing here can switch it|0|false"
+      "v018-variant-shelf.dsb|layout: the variant shelf|0|false"
+    )
+    manifest="${project}/Assets/StreamingAssets/showcase.json"
+    printf '{ "documents": [' > "${manifest}"
+    separator=""
+    for entry in "${documents[@]}"; do
+      IFS='|' read -r file label root_ordinal text <<< "${entry}"
+      if [ ! -f "${root}/goldens/dsb/${file}" ]; then
+        echo "unity-demo-android: goldens/dsb/${file} is missing" >&2
+        exit 1
+      fi
+      cp "${root}/goldens/dsb/${file}" "${project}/Assets/StreamingAssets/documents/"
+      printf '%s{"path":"documents/%s","label":"%s","shownRoot":%s,"text":%s}' \
+        "${separator}" "${file}" "${label}" "${root_ordinal}" "${text}" >> "${manifest}"
+      separator=","
+    done
+    printf '] }\n' >> "${manifest}"
+
+    cat > "${project}/ProjectSettings/ProjectSettings.asset" <<'YAML'
+    %YAML 1.1
+    %TAG !u! tag:unity3d.com,2011:
+    --- !u!129 &1
+    PlayerSettings:
+      m_ObjectHideFlags: 0
+      productName: DashsceneShowcase
+      companyName: driftsys
+      apiCompatibilityLevel: 6
+      apiCompatibilityLevelPerPlatform: {}
+    YAML
+
+    log="${project}/editor.log"
+    echo "unity-demo-android: building the APK in {{unity_version}} (log: ${log})"
+    set +e
+    DASHSCENE_DEMO_TARGET=android \
+    DASHSCENE_ANDROID_API={{ ANDROID_API }} \
+      "${editor}" -batchmode -quit -projectPath "${project}" \
+      -executeMethod DemoBuild.Build -logFile "${log}"
+    status=$?
+    set -e
+    grep -E "^\[demo-build\]|error CS|Shader error|Compilation failed" "${log}" || true
+    if [ "${status}" -ne 0 ]; then
+      echo "unity-demo-android: the APK build FAILED (exit ${status}). Full log: ${log}" >&2
+      exit "${status}"
+    fi
+
+    player_path="${project}/Build/player-path.txt"
+    if [ ! -f "${player_path}" ]; then
+      echo "unity-demo-android: the build reported success and wrote no ${player_path}" >&2
+      echo "unity-demo-android: DemoBuild.BuildPlayer writes it beside the APK." >&2
+      exit 1
+    fi
+    apk="$(cat "${player_path}")"
+    if [ ! -f "${apk}" ]; then
+      echo "unity-demo-android: the build wrote no ${apk}" >&2
+      exit 1
+    fi
+    libs="$(unzip -l "${apk}" 'lib/*' | awk '{print $4}' | grep '^lib/' || true)"
+    if ! grep -q '^lib/arm64-v8a/libdashscene_ffi\.so$' <<<"${libs}"; then
+      echo "unity-demo-android: the APK carries no lib/arm64-v8a/libdashscene_ffi.so," >&2
+      echo "unity-demo-android: so the first P/Invoke would raise DllNotFoundException." >&2
+      printf '%s\n' "${libs}" >&2
+      exit 1
+    fi
+    echo "unity-demo-android: the APK holds the staged library"
+
+    if [ "{{action}}" = "build" ]; then
+      echo "unity-demo-android: built and not run, as asked"
+      echo "unity-demo-android: ${apk}"
+      exit 0
+    fi
+
+    # The device is read again here, after a build measured in tens of minutes.
+    if ! just _android-has-device; then
+      echo "unity-demo-android: the device was there before the build and is not now." >&2
+      just _android-warn-no-device unity-demo-android
+      exit 1
+    fi
+    id_path="${project}/Build/application-id.txt"
+    if [ ! -f "${id_path}" ]; then
+      echo "unity-demo-android: the build wrote no ${id_path}, so there is no" >&2
+      echo "unity-demo-android: application id to launch. DemoBuild writes it when" >&2
+      echo "unity-demo-android: DASHSCENE_DEMO_TARGET=android reached the editor." >&2
+      exit 1
+    fi
+    device="$("${adb}" shell getprop ro.product.model | tr -d '\r')"
+    app_id="$(cat "${id_path}")"
+
+    echo "unity-demo-android: installing $(basename "${apk}") on ${device}"
+    set +e
+    install_out="$("${adb}" install -r "${apk}" 2>&1)"
+    installed=$?
+    set -e
+    if [ "${installed}" -ne 0 ] || grep -qE 'Failure|failed to install' <<<"${install_out}"; then
+      echo "unity-demo-android: adb install exited ${installed} and said:" >&2
+      printf '%s\n' "${install_out}" >&2
+      exit 1
+    fi
+
+    "${adb}" shell am force-stop "${app_id}" || true
+    "${adb}" logcat -c || true
+    "${adb}" shell monkey -p "${app_id}" -c android.intent.category.LAUNCHER 1 \
+      >/dev/null 2>&1 || true
+
+    if [ "{{action}}" = "install" ]; then
+      echo "unity-demo-android: launched ${app_id} on ${device} and left it running."
+      echo "unity-demo-android: read it with:"
+      echo "unity-demo-android:   adb logcat -d | grep '\\[showcase\\]'"
+      echo "unity-demo-android: next entry:  adb shell input keyevent 22"
+      echo "unity-demo-android: stop it:     adb shell am force-stop ${app_id}"
+      exit 0
+    fi
+
+    # `cycle`: walk every entry and collect what the player said about each.
+    #
+    # **`input keyevent 22` rather than a command-line argument.** An Android
+    # player takes no `--args`, so the sample's `-cycle` is unreachable here;
+    # DPAD_RIGHT is what the sample already binds `Show(next)` to.
+    #
+    # **Long enough for a sample, per entry — and the arithmetic is measured,
+    # not assumed.** A frame-cost report covers 240 drawn frames. At 60 Hz that
+    # would be four seconds; on the Pixel 5 the showcase reported one sample per
+    # entry in fourteen seconds, so the loop is paced well under the display
+    # rate and a 60 Hz figure would hurry the run into reporting an absence as a
+    # result. Twelve seconds is one sample, not three.
+    started=${SECONDS}
+    entries=0
+    err="${project}/adb.err"
+    while [ "$((SECONDS - started))" -lt {{ timeout }} ]; do
+      set +e
+      dump="$("${adb}" logcat -d 2>"${err}")"
+      dumped=$?
+      set -e
+      if [ "${dumped}" -ne 0 ]; then
+        echo "unity-demo-android: adb logcat failed (exit ${dumped}) after $((SECONDS - started))s:" >&2
+        cat "${err}" >&2
+        exit 1
+      fi
+      entries="$(grep -cF "[showcase] entries:" <<<"${dump}" || true)"
+      if [ "${entries}" -gt 0 ]; then
+        break
+      fi
+      sleep 2
+    done
+    if [ "${entries}" -eq 0 ]; then
+      echo "unity-demo-android: the player never wrote its census line in $((SECONDS - started))s." >&2
+      echo "unity-demo-android: ---- what the device reported ----" >&2
+      "${adb}" logcat -d | grep -E "showcase|dashscene|AndroidRuntime|Unity" | tail -60 >&2
+      exit 1
+    fi
+    total="$("${adb}" logcat -d | sed -n 's/.*\[showcase\] entries: \([0-9]*\).*/\1/p' | tail -1)"
+    # **Checked, because the loop below is `seq 1 "${total}"`.** An empty value
+    # there is a `seq` error mid-run rather than a diagnosis, and the census
+    # line is the sample's own format — a change to it reaches this recipe as a
+    # blank rather than as a mismatch.
+    case "${total}" in
+      ''|*[!0-9]*)
+        echo "unity-demo-android: the census line did not yield a count: '${total}'" >&2
+        "${adb}" logcat -d | grep -F "[showcase] entries" >&2 || true
+        exit 1
+        ;;
+    esac
+    echo "unity-demo-android: the player carries ${total} entries"
+
+    # Twelve seconds per entry: three samples of 240 frames at 60 Hz, plus the
+    # document load.
+    for _ in $(seq 1 "${total}"); do
+      sleep 12
+      "${adb}" shell input keyevent 22
+    done
+    sleep 4
+
+    echo "unity-demo-android: ---- what the device reported ----"
+    "${adb}" logcat -d | grep -F "[showcase]" | sed 's/^.*I [A-Za-z]*: //' || true
+    echo "unity-demo-android: -----------------------------------"
+    "${adb}" shell am force-stop "${app_id}" || true
+
+    # **Herestrings, never `logcat | grep -q`.** `grep -q` exits at its first
+    # match and SIGPIPEs its left side; under `pipefail` the pipeline then
+    # reports 141 and the test INVERTS, so a run that measured everything
+    # reports that it measured nothing. This file states the rule at
+    # `unity-android`'s marker loop and measured the flip between 20,799 and
+    # 83,199 bytes — and a successful cycle run leaves far more than that in the
+    # buffer.
+    reported="$("${adb}" logcat -d 2>/dev/null)"
+    if ! grep -qF "[showcase] frame cost" <<<"${reported}"; then
+      echo "unity-demo-android: the player reported no frame cost on ${device}." >&2
+      echo "unity-demo-android: a run that measured nothing is not a measurement." >&2
+      exit 1
+    fi
+    if ! grep -qF "[showcase] all ${total} entries drew" <<<"${reported}"; then
+      echo "unity-demo-android: not every entry drew on ${device}." >&2
+      exit 1
+    fi
+    echo "unity-demo-android: every entry drew on ${device}, with frame costs above."
 # `unity-android`'s teeth, re-provable on demand.
 #
 # **Why it is committed rather than written down.** The four mutations that
@@ -3730,16 +4231,20 @@ unity-android-negative name="all" action="run" unity_version="6000.3.23f1" timeo
 # (issues #1006, #1029).
 #
 # Neither test needs a device, an SDK or an NDK. **The recipe as a whole costs
-# about 47 s, measured on 2026-08-24** — the two named above are about two
-# seconds of it and the four added since are the rest, nearly all of it the
+# about 98 s, measured on 2026-08-29** — the two named above are about two
+# seconds of it and the seven added since are the rest, nearly all of it the
 # deliberate waiting the stub-driven tests do inside their script's own poll
-# loops. `.github/workflows/ci.yml` carries the same figure; both copies moved
-# together, because correcting one and not the other is how the first one drifted.
+# loops. It was 47 s over six scripts on 2026-08-24.
+# `.github/workflows/ci.yml` carries the same figure and **is out of date**: it
+# still reads 47 s, because that file belonged to another lane for the whole of
+# this work. Issue #1378 is the one-line correction, and this note is here
+# rather than nowhere because the rule those two copies are under is that they
+# move together.
 # So this is in `check`, which means `just build` runs it, and CI's
 # `android-build` job runs this recipe rather than the two paths inline — the
 # rule that job's own comment gives about `just android`.
 #
-# Run the Android harness's own gates — the verdict and the drew-anything check.
+# Run the device-free gates over the recipes and scripts that need a device.
 harness-tests:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -3774,6 +4279,26 @@ harness-tests:
     # exit comes from the closing guard, so the cases over a single scene assert
     # the guard's text as well as the arm's.
     ./measure/android/frame-capture-test.sh
+    # `unity-android` is the same argument one recipe further out, and the
+    # reason this recipe's own summary no longer says "the Android harness":
+    # that recipe needs an editor with Android Build Support AND a cable, so
+    # every refusal in it — the URP pin, adb's diagnosis, an install that
+    # printed a failure and exited 0, the timeout, the device re-read — had run
+    # nowhere. It is driven here against a stub editor and a stub adb, and needs
+    # no Unity, no device, no SDK and no NDK.
+    ./unity/android-probe/unity-android-test.sh
+    # And the lifecycle driver, whose verdicts `attach-outcome-test.sh` covers
+    # and whose wiring nothing did: the loop that decides whether a frame
+    # arrived after an event, the early exit on a dead process, the activity
+    # resolution and the refusal when the player never drew all needed a device
+    # AND a Unity player installed on it (issue #1346).
+    ./measure/android/unity-lifecycle-test.sh
+    # And the two device tables in `docs/design/android-toolchain.md` against
+    # the captures they are stated over. It is here rather than nowhere for the
+    # reason the rest of this recipe exists: the numbers describe a device, and
+    # nothing else in the tree would notice them drifting from the archive.
+    # Six of fifteen cells did, on the pull request that added them.
+    ./measure/android/record-check.py
 
 # Succeed when adb reports at least one attached device.
 #

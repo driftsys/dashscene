@@ -90,19 +90,24 @@ repository builds and records.
                               attached device to read
                               `BatchRendererGroup.BufferTarget` there — D4's
                               rung, which story #1125 had read on Metal only.
-                              The only thing here that builds a player for
-                              anything but macOS, and the only one that needs a
-                              device as well as an editor. It does NOT check
+                              One of the two things here that build a player
+                              for anything but macOS, and one of the two that
+                              need a device as well as an editor —
+                              `unity-demo-android` is the other, and its own
+                              negative control needs both as well. It does NOT check
                               R-E7, R-E8 or R-E9: it writes the values it reads
                               back, and those three bind the shipping project
                               rather than one regenerated under target/ (issue
                               #1353). What it does read off an artifact is the
                               APK's ABI directories
-    demo/                     an editor script `just unity-demo` copies into a
+    demo/                     an editor script `just unity-demo` and
+                              `just unity-demo-android` both copy into a
                               throwaway project: it configures the project the
-                              way R-E4, R-E5 and R-E6 require, builds a
-                              windowed PLAYER over the package's Showcase
-                              sample and runs it. A demonstration rather than a
+                              way R-E4, R-E5 and R-E6 require, then builds a
+                              windowed macOS PLAYER over the package's Showcase
+                              sample and runs it — or, when
+                              `DASHSCENE_DEMO_TARGET=android` is set, an arm64
+                              APK through IL2CPP for a device. A demonstration rather than a
                               check: its `cycle` action asserts that every
                               entry reached the painter, and a person
                               decides whether the picture is right (issue
@@ -137,7 +142,7 @@ checks here are what give it value. `just unity-abi` runs `abi-check` and
 `render-gate`, `just unity-android` runs `android-probe` — with
 `just unity-android-negative` as its negative control, on
 `unity-conformance-negative`'s shape — and `just unity-demo` runs `demo` over
-`demo-producer`.
+`demo-producer`, as does `just unity-demo-android`, for Android.
 
 They ask different questions and none subsumes another. `abi-check` compares
 boundary B's value types against a `dashpaint-abi` build, member by member;
