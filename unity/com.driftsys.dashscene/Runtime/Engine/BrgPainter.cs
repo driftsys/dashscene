@@ -1402,13 +1402,35 @@ namespace Driftsys.Dashscene
             {
                 for (var b = 0; b < batches; b++)
                 {
-                    // Window-relative offsets. The shared transforms carry NO
-                    // per-instance bit, so every instance reads the same one —
-                    // that is the whole reason a UI document costs eighty bytes
-                    // an instance rather than a hundred and seventy-six.
-                    metadata[0] = Shared("unity_ObjectToWorld", 16);
-                    metadata[1] = Shared("unity_WorldToObject", 16 + 48);
-                    var props = HeadBytes;
+                    // **Which rung carries the batch's byte offset — issue
+                    // #1389.** On `ConstantBuffer` the window carries it and
+                    // the metadata stays window-relative. On `RawBuffer` there
+                    // is no window: Unity requires BOTH window parameters to be
+                    // zero and rejects the batch otherwise — with a log line
+                    // rather than an exception — so the offset is folded into
+                    // the metadata instead. Passing it as a window offset on
+                    // this rung refused every batch after the first and left
+                    // `_batches[b]` at its default.
+                    //
+                    // **Unreachable through the shipped path today**, because
+                    // `InstancesPerBatch` doubles until one batch covers the
+                    // whole document on this rung, so `b` is always zero and
+                    // the offset is always zero. It was exercised by capping
+                    // that capacity to 64 so eight batches were allocated —
+                    // macOS/Metal, 2026-08-31: before this change Unity refused
+                    // seven of the eight and the frame came back empty; after
+                    // it, none were refused and the frame matched the
+                    // single-batch one. That cap is not a shipped path, so no
+                    // test claims this.
+                    //
+                    // The shared transforms carry NO per-instance bit, so every
+                    // instance reads the same one — that is the whole reason a
+                    // UI document costs eighty bytes an instance rather than a
+                    // hundred and seventy-six.
+                    var window = Rung == BrgRung.ConstantBuffer ? 0 : b * _batchStrideBytes;
+                    metadata[0] = Shared("unity_ObjectToWorld", window + 16);
+                    metadata[1] = Shared("unity_WorldToObject", window + 16 + 48);
+                    var props = window + HeadBytes;
                     var stride = _instancesPerBatch * 16;
                     metadata[2] = PerInstance(PaintProperties.Quad, props);
                     metadata[3] = PerInstance(PaintProperties.Corners, props + stride);
@@ -1419,7 +1441,7 @@ namespace Driftsys.Dashscene
                     _batches[b] = _brg.AddBatch(
                         metadata,
                         _instanceBuffer.bufferHandle,
-                        (uint)(b * _batchStrideBytes),
+                        Rung == BrgRung.ConstantBuffer ? (uint)(b * _batchStrideBytes) : 0u,
                         Rung == BrgRung.ConstantBuffer ? (uint)_batchStrideBytes : 0u);
                 }
             }

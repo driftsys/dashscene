@@ -242,6 +242,10 @@ express the bug will exonerate the code every time.**
   batch otherwise, with the offsets belonging in the metadata instead; on the
   `ConstantBuffer` rung they carry the window. Getting this wrong refuses every
   batch after the first, and the refusal is a log line rather than an exception.
+  **This painter had it wrong until issue #1389** and nothing reported it,
+  because the RawBuffer rung doubles its per-batch capacity until one batch
+  covers the whole document — so the offset it passed was always zero, and the
+  broken path was never taken.
 - **256 visible instances per draw command.** The SRP core shader library
   declares `unity_DOTSVisibleInstances[256]`, so this is a property of the
   shader rather than of the device. A run longer than that must be split.
