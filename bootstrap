@@ -21,7 +21,7 @@ JQ_VERSION="${JQ_VERSION:-1.8.2}"
 # file in the tree is wrapped, so a version that changes a wrap decision would
 # put the whole tree out of format under a developer who ran no command. The
 # `prim` CI job pins the same version, and the two must move together.
-PRIM_VERSION="${PRIM_VERSION:-v0.3.0}"
+PRIM_VERSION="${PRIM_VERSION:-v0.7.0}"
 
 log() { printf '[bootstrap] %s\n' "$*" >&2; }
 die() {
@@ -246,7 +246,7 @@ install_jq() {
 install_prim() {
   local have
   if have="$(command -v prim 2>/dev/null)" && [ -n "${have}" ]; then
-    # `prim --version` prints `prim 0.3.0`; PRIM_VERSION carries the tag's `v`.
+    # `prim --version` prints `prim 0.7.0`; PRIM_VERSION carries the tag's `v`.
     if [ "prim ${PRIM_VERSION#v}" = "$(prim --version 2>/dev/null)" ]; then
       log "prim ${PRIM_VERSION} already installed: ${have}"
       return

@@ -435,8 +435,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: install prim
         run: |
-          v=0.3.0
-          sha=d7054cf41ff14affc3d51520daa0a744911d224a8c0db9c34d8e07a133970d28
+          v=0.7.0
+          sha=dbdfd8bccecce341990926834cdd42a5390ac4f6e315dfdf88a6cf2c248acb05
           curl -sSL --fail -o prim.tgz \
             "https://github.com/driftsys/prim/releases/download/v${v}/prim-x86_64-unknown-linux-musl.tar.gz"
           # --strict, as the flatc install uses for the reason issue #922
