@@ -273,16 +273,19 @@ This zeroes _dash's_ delta; it cannot remove Unity's own engine floor.
 DECISION direction →
 [`unity-painter-uses-brg.md`](../decisions/unity-painter-uses-brg.md):
 **BatchRendererGroup (BRG) over GameObject-per-node** for the bulk SDF-quad UI.
-GameObject-per-node maintains a full scene-graph mirror (Transform hierarchy,
-per-renderer culling, a managed object per node) — the "scene-graph duplication"
-§8.3 avoids. BRG draws N instances of a quad+material from a `GraphicsBuffer`
-filled from a NativeArray (ideally a Burst job): no GameObjects, no Transforms,
-per-instance SDF params in the buffer. It makes the Unity painter's data model
-_the same shape_ as the lean native painter ("instance buffer → SDF shader →
-GPU"), so the dirty-set/double-buffer logic maps onto R-T4 directly, and it is
-the natural endpoint of the Burst+Collections choice (the NativeArray the Burst
-jobs fill _is_ the BRG instance buffer; Transforms can't be written from Burst
-except via `TransformAccessArray`).
+This section records why BRG was chosen; how it behaves once chosen, and the
+ordering trap it sets for a painter's-algorithm renderer, is in
+[batch-renderer-group.md](batch-renderer-group.md). GameObject-per-node
+maintains a full scene-graph mirror (Transform hierarchy, per-renderer culling,
+a managed object per node) — the "scene-graph duplication" §8.3 avoids. BRG
+draws N instances of a quad+material from a `GraphicsBuffer` filled from a
+NativeArray (ideally a Burst job): no GameObjects, no Transforms, per-instance
+SDF params in the buffer. It makes the Unity painter's data model _the same
+shape_ as the lean native painter ("instance buffer → SDF shader → GPU"), so the
+dirty-set/double-buffer logic maps onto R-T4 directly, and it is the natural
+endpoint of the Burst+Collections choice (the NativeArray the Burst jobs fill
+_is_ the BRG instance buffer; Transforms can't be written from Burst except via
+`TransformAccessArray`).
 
 **Lit BRG is possible — lighting is a shader-pass concern, not a rendering-path
 fork.** Entities Graphics renders fully lit, shadow-casting instances via BRG

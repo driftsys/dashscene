@@ -204,12 +204,15 @@ documents and judges each frame against its own packed colours — the same shap
 issue #828's suite has, and the same shape the corner-silhouette gap below
 needs.
 
-**The text materials take the same binding in the same loop, and no frame has
+**The text materials take the same binding in the same loop, and no gate has
 drawn one.** `just unity-render` draws a document with no glyph runs, so
 `_DsGlyphs` and the three tables on a text material are held by reading rather
-than by a picture. That is a gap the change opened as well as one it inherited:
-while the heap was global a text material needed no binding of its own, and now
-it needs the loop in `BindHeap` to reach it.
+than by a picture. A frame HAS now drawn one — issue #1389 drew glyphs from
+three atlases in a macOS/Metal player build on 2026-08-31 — but that was a
+measurement taken by hand, not a gate, and R-E22 is the requirement that would
+make it one. That is a gap the change opened as well as one it inherited: while
+the heap was global a text material needed no binding of its own, and now it
+needs the loop in `BindHeap` to reach it.
 
 **The transforms are shared, not per instance.** A BatchRendererGroup requires
 `unity_ObjectToWorld` and `unity_WorldToObject` as instanced properties, but a
@@ -528,8 +531,9 @@ reading of "text is always blended whichever class the nodes take", and it is
 the one place a class's refusal applies to half a node.
 
 And `Dashscene/Text` sits in the **transparent** queue, as the overlay class
-does. Against the overlay class that changes nothing — both are in one queue and
-one pass, so submission order decides the picture as it always did. Against
+does. Against the overlay class that changes nothing about the QUEUE — both sit
+in one queue and one pass — though within that pass submission order does not
+decide the picture either, which is issue #1389 and the paragraph below. Against
 `LitOpaque` (geometry) or `LitCutout` (alpha test) it does: a render pipeline
 sorts by queue before it sorts by anything a draw command carries, so every
 glyph is submitted after every node fill whatever order the document put them
@@ -539,10 +543,15 @@ which preserves order only inside one pass, and it is a property of drawing
 blended text beside opaque geometry rather than of this painter.
 
 **The culling callback emits one command per contiguous run of instances that
-share a material**, which preserves the emission order that decides the picture
-— and it is the first thing here that makes the command count depend on
-**which** nodes a document holds rather than on how many, which a 256-instance
-split already did.
+share a material** — and it is the first thing here that makes the command count
+depend on **which** nodes a document holds rather than on how many, which a
+256-instance split already did. **The split preserves the emission order in the
+command list and that is not the order the picture is drawn in**: BRG groups the
+commands by material afterwards, which is what issue #1389 found. The painter
+states a per-command sorting key to take them out of that grouping; whether the
+keys then reproduce the emission order is unsettled, and
+`docs/decisions/brg-draw-command-order-is-not-guaranteed.md` is where that is
+recorded.
 
 ### The six rules, and where each one is held
 
@@ -1102,27 +1111,34 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
 
 ## Known gaps, named
 
-- **Draw order is submission order, and nothing has confirmed that** — and since
-  issue #1313's branch, `unity/render-gate` rests on it. A document is drawn
-  back to front, so order is the property that decides the picture. The painter
-  emits its draw commands in rect order inside one `BatchDrawRange` with
-  `allDepthSorted` false, which is what should preserve it — but every quad in
-  an overlay sits at the same depth, and whether URP's transparent pass re-sorts
-  a BRG range at equal depth is a question only a drawn frame answers. If it
-  does, overlapping nodes will be in an arbitrary order and the failure will
-  look like a z-fighting artefact rather than like a painter bug.
+- **Draw order is NOT submission order — a drawn frame has now answered it, and
+  the answer is no** — and since issue #1313's branch, `unity/render-gate` rests
+  on the assumption that it is. A document is drawn back to front, so order is
+  the property that decides the picture. The painter emits its draw commands in
+  rect order inside one `BatchDrawRange` with `allDepthSorted` false, which is
+  what should preserve it. It does not: `BatchRendererGroup` groups commands by
+  material first, and under that grouping the painter drew every surface and no
+  glyph on every platform (issue #1389). The failure did not look like
+  z-fighting; it looked like text that was never drawn.
 
-  **A drawn frame has not answered it, and the gate does not test it.** What the
-  gate does is exclude a node's centre from its stronger per-instance assertion
-  when a HIGHER-indexed instance's quad reaches that centre, which is sound only
-  under this assumption. Widening the exclusion to any other instance would
-  remove the dependence and is not available: a filled parent frame reaches
-  every child, so that predicate leaves the stronger form nothing to judge. The
-  failure it would permit is bounded — a centre hidden under a LOWER-indexed
-  node could pass the stronger assertion on ink that is not its own — and it can
-  never produce a false failure. Settling it needs a frame drawn from a document
-  built for the question, with two known overlapping fills and no parent under
-  them.
+  The painter now sets `HasSortingPosition` and writes a sorting key per
+  command, which is what makes glyphs reach the screen. **It is not established
+  that those keys impose the painter's order**, and
+  `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` records why, with
+  the measurements in `docs/technotes/batch-renderer-group.md` §5b. So the
+  assumption below is still unmet, and is now known to be unmet rather than
+  merely unconfirmed.
+
+  **The gate does not test it.** What the gate does is exclude a node's centre
+  from its stronger per-instance assertion when a HIGHER-indexed instance's quad
+  reaches that centre, which is sound only under this assumption. Widening the
+  exclusion to any other instance would remove the dependence and is not
+  available: a filled parent frame reaches every child, so that predicate leaves
+  the stronger form nothing to judge. The failure it would permit is bounded — a
+  centre hidden under a LOWER-indexed node could pass the stronger assertion on
+  ink that is not its own — and it can never produce a false failure. Settling
+  it needs a frame drawn from a document built for the question, with two known
+  overlapping fills and no parent under them.
 - **The corner silhouette is checked by nothing.** `unity/render-gate` probes a
   point inside a node's box and outside its rounded corner, and skips any probe
   another instance's quad can reach — because a document is drawn back to front
@@ -1130,10 +1146,13 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   corner" is not "background". On `v03-paint.dsb` no probe survives that test,
   so the run says so and asserts nothing. A fixture with one isolated rounded
   node would change it; issue #828's suite is where that belongs.
-- **No frustum culling.** `OnPerformCulling` ignores its `BatchCullingContext`
-  and emits every instance for every camera. For a full-screen overlay that is
-  the right answer and costs nothing; for a document placed in a 3D scene it is
-  work per camera proportional to the whole document.
+- **No frustum culling.** `OnPerformCulling` reads one field of its
+  `BatchCullingContext` — `lodParameters.cameraPosition`, which issue #1389's
+  sorting keys are built from, so the command stream is camera-dependent — and
+  uses none of the culling planes. It emits every instance for every camera. For
+  a full-screen overlay that is the right answer and costs nothing; for a
+  document placed in a 3D scene it is work per camera proportional to the whole
+  document.
 - **R-T4's dirty-range upload is not implemented, and this is what the full
   repack costs.** The painter repacks every rect and re-uploads the whole
   instance buffer — including capacity past the live instances — on every frame,

@@ -747,12 +747,24 @@ public sealed class DashsceneRenderGate : MonoBehaviour
     /// Whether any instance drawn AFTER this one reaches a placed document
     /// point.
     ///
-    /// **This ASSUMES draw order is submission order, and nothing here has
-    /// confirmed that** — `docs/design/unity-csharp-host.md` names it as an
-    /// open gap and this is what now rests on it. The painter emits its draw
-    /// commands in rect order inside one `BatchDrawRange` with `allDepthSorted`
-    /// false, so a higher index should be drawn later and on top: an earlier
-    /// instance cannot change this one's pixel and a later one can.
+    /// **This ASSUMES draw order is submission order, and that assumption is
+    /// now known to be FALSE** — it was merely unconfirmed when this was
+    /// written. Issue #1389 measured it:
+    /// `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` records
+    /// that `BatchRendererGroup` groups the commands by material, and that the
+    /// sorting keys the painter now writes are not measured to impose the
+    /// painter's order either. The painter emits its draw commands in rect
+    /// order inside one `BatchDrawRange`, so a higher index is INTENDED to be
+    /// drawn later and on top; whether it is, is exactly what is unsettled.
+    ///
+    /// **So the wrong verdict this comment describes below is live, not
+    /// hypothetical**: where a lower-indexed node covers this centre and its
+    /// colour is nearer this node's own than the clear colour is, the run
+    /// PASSES on ink that is not this node's. The predicate was left as it is
+    /// rather than widened, because widening it removes the stronger form
+    /// entirely for the reason the next paragraph gives — but it is now a known
+    /// unsound assumption rather than an unconfirmed one, and R-E22 plus the
+    /// fixture that record calls for are what would retire it.
     ///
     /// **The assumption cannot be dropped by widening the search**, which is
     /// why the sibling [`NothingElseCovers`] is not used here. A document's

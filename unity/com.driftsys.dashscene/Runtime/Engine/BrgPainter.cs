@@ -862,8 +862,81 @@ namespace Driftsys.Dashscene
             drawCommands->drawRanges = Malloc<BatchDrawRange>(1);
             drawCommands->visibleInstanceCount = InstanceCount;
             drawCommands->visibleInstances = Malloc<int>(InstanceCount);
-            drawCommands->instanceSortingPositions = null;
-            drawCommands->instanceSortingPositionFloatCount = 0;
+            // **The paint order, stated rather than assumed — issue #1389.**
+            // `BatchRendererGroup` groups draw commands by material before it
+            // draws them, which is ordinary renderer behaviour and is not
+            // logged. This painter emits its instances in painter's-algorithm
+            // order, and the two classes a text document draws with —
+            // `UnlitOverlay` and `Text` — declare `ZWrite Off` and
+            // `ZTest Always`, so on that path sequence is the only thing that
+            // decides what covers what. (`LitOpaque` and `LitCutout` declare
+            // `ZWrite On` and `ZTest LEqual`; the keys below are set for every
+            // class but were measured only on the overlay one.) Emission order
+            // alone does not survive the grouping: the document's backdrop is
+            // the first row the packer writes and sits on the class material,
+            // so it joined that material's group and was drawn over the glyphs.
+            //
+            // The keys below are what Unity's own producer uses for the same
+            // problem: SRP core 17.3.0 flags every transparent material's
+            // command with `HasSortingPosition`
+            // (`Runtime/GPUDriven/InstanceCullingBatcherBurst.cs`) and writes
+            // one `float3` per flagged command at float offset
+            // `3 * commandIndex` (`Runtime/GPUDriven/InstanceCuller.cs`).
+            //
+            // **Setting the flag is what makes glyphs reach the screen; the key
+            // values are NOT measured to order the picture.** Do not read a
+            // legible frame as evidence that this painter has an order — the
+            // emission order is still load-bearing.
+            // `docs/decisions/brg-draw-command-order-is-not-guaranteed.md`
+            // holds the constraint and
+            // `docs/technotes/batch-renderer-group.md` §5b the measurements,
+            // including the two explanations that were tested and ruled out.
+            // The evidence lives there rather than here, so that settling it
+            // edits one place.
+            drawCommands->instanceSortingPositions = Malloc<float>(3 * commandCount);
+            drawCommands->instanceSortingPositionFloatCount = 3 * commandCount;
+
+            // **One base point for every command, and only the index varies.**
+            // Using each run's own anchor would turn this back into depth
+            // sorting of coplanar geometry — camera-angle dependent, with
+            // near-ties. These are an order encoding, not geometry.
+            var sortBase = DocumentToWorld.MultiplyPoint3x4(Vector3.zero);
+            var toCamera = cullingContext.lodParameters.cameraPosition - sortBase;
+            var distance = toCamera.magnitude;
+            // A camera at the sheet leaves no direction to encode along. The
+            // document's own -z is where the unit quad faces, so it is the
+            // axis a viewer must be on for the sheet to be visible at all.
+            //
+            // **Both fallbacks are guarded, because `Vector3.normalized`
+            // returns the ZERO vector rather than throwing.** A host that
+            // flattens the sheet with a zero z-scale — a natural choice for
+            // strictly 2D content — makes `MultiplyVector` return zero, and an
+            // unguarded normalize would put every key on one point and restore
+            // the grouping this exists to escape, with no diagnostic.
+            var sortDir = Vector3.forward;
+            if (distance > 1e-4f)
+            {
+                sortDir = toCamera / distance;
+            }
+            else
+            {
+                var facing = DocumentToWorld.MultiplyVector(new Vector3(0.0f, 0.0f, -1.0f));
+                if (facing.sqrMagnitude > 1e-12f)
+                {
+                    sortDir = facing.normalized;
+                }
+            }
+
+            // **The step is scaled against the larger of the viewing distance
+            // and the base point's own magnitude, and that second term is the
+            // one a reader will not expect.** Float32 carries about 1.2e-7 of
+            // RELATIVE precision, and what is stored is a world coordinate
+            // around `sortBase` — so a document placed ten thousand units from
+            // the world origin has an ULP of about 1.2e-3 there, and a step
+            // sized only from a one-unit viewing distance would round every key
+            // onto the same float. The floor keeps a camera at the sheet from
+            // collapsing them the same way.
+            var sortStep = Math.Max(Math.Max(distance, sortBase.magnitude), 1.0f) * 1e-5f;
 
             drawCommands->drawRanges[0] = new BatchDrawRange
             {
@@ -887,7 +960,18 @@ namespace Driftsys.Dashscene
             {
                 var first = b * _instancesPerBatch;
                 var limit = first + InstancesInBatch(b);
-                for (var at = first; at < limit;)
+                // **Bounded by the allocated command count as well as by the
+                // batch.** `commandCount` is `Draw`'s cached answer and the
+                // loop's own bound comes from `InstanceCount`; the two agree on
+                // every frame that completes `Draw`, but a frame that throws
+                // between the two — `UploadHeap`, `UploadInstances` or
+                // `BindHeap` — leaves a NEW instance count beside the PREVIOUS
+                // command count, and this callback still runs. Without this
+                // bound that frame writes past both `drawCommands` and
+                // `instanceSortingPositions`, which is heap corruption in
+                // unsafe code rather than a wrong picture. What is emitted is
+                // reconciled after the loop.
+                for (var at = first; at < limit && command < commandCount;)
                 {
                     var end = RunEnd(at, limit);
                     var run = end - at;
@@ -910,15 +994,35 @@ namespace Driftsys.Dashscene
                         meshID = _meshId,
                         submeshIndex = 0,
                         splitVisibilityMask = 0xff,
-                        flags = BatchDrawCommandFlags.None,
-                        sortingPosition = 0,
+                        // Command 0 sits at the base and each later command a
+                        // step nearer the camera. **Which end of that the
+                        // renderer draws first is NOT established** — see the
+                        // measurements above the allocation.
+                        flags = BatchDrawCommandFlags.HasSortingPosition,
+                        sortingPosition = 3 * command,
                     };
+
+                    var sortAt = sortBase + sortDir * (command * sortStep);
+                    drawCommands->instanceSortingPositions[3 * command + 0] = sortAt.x;
+                    drawCommands->instanceSortingPositions[3 * command + 1] = sortAt.y;
+                    drawCommands->instanceSortingPositions[3 * command + 2] = sortAt.z;
 
                     visible += run;
                     command++;
                     at = end;
                 }
             }
+
+            // **Reported as emitted, not as counted.** These three are the
+            // lengths Unity reads, and on a frame where the cached count and
+            // the instance count disagree the loop above stops early — so the
+            // arrays are described by what was written rather than by what was
+            // allocated. On every ordinary frame the two are equal and this
+            // changes nothing.
+            drawCommands->drawCommandCount = command;
+            drawCommands->visibleInstanceCount = visible;
+            drawCommands->instanceSortingPositionFloatCount = 3 * command;
+            drawCommands->drawRanges[0].drawCommandsCount = (uint)command;
 
             return default;
         }
@@ -953,8 +1057,10 @@ namespace Driftsys.Dashscene
         /// **A draw command names one material, so a run that changes material
         /// ends here.** Instances are emitted in the lean painter's order and
         /// the runs are contiguous, so splitting on a change preserves that
-        /// order exactly — which is what decides the picture for a class that
-        /// writes no depth and tests none.
+        /// order exactly **in the command list**. That is not the same as
+        /// preserving it in the picture: `BatchRendererGroup` groups the
+        /// commands by material afterwards, which is issue #1389 and what
+        /// `OnPerformCulling`'s keys exist to escape.
         ///
         /// Bounded by R-E20's 256 as well, for the reason
         /// [`CommandsInBatch`] gives.
