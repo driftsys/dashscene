@@ -217,6 +217,16 @@ Magnitude and axis therefore both drop out, and only the RANK of the keys has
 any effect at all. That is the signature of a comparison sort being fed these
 keys and then not ordering the draw by them.
 
+**One construction detail, because it is easy to get wrong twice.** The keys are
+laid out behind the sheet and run back toward it, so command 0 is farthest and
+distance from the camera falls with the command index at any span. Walking them
+toward the camera instead — the obvious way round — makes the rank fold once the
+span passes the viewing distance, and the cap that prevents the fold conflicts
+with the precision floor the keys need at a document far from the world origin.
+Taking the smaller of those two bounds ties every key, which is this note's
+whole subject. `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` D4
+carries it.
+
 One further observation, from about forty player runs: one run of the
 shrinking-offset configuration came back with a frame carrying no bright pixels
 at all, where every other run of that same configuration gave 3157. It was not
@@ -238,7 +248,7 @@ laid its instances out in a grid where nothing overlaps. Reordering
 non-overlapping quads is invisible. **A reproduction whose geometry cannot
 express the bug will report the code as correct every time.**
 
-## 7. Three smaller traps in the same API
+## 7. Three smaller pitfalls in the same API
 
 - **The RawBuffer window must be zero.** `AddBatch` takes a window offset and
   size. On the `RawBuffer` rung Unity requires both to be zero and rejects the

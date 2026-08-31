@@ -378,8 +378,12 @@ than of the adapter.
 **R-E22** — every material the painter registers to draw a document shall
 produce at least one pixel of a player-build frame each of whose R, G and B
 channels lies within 0.016 of that material's own expected output for that
-pixel, in linear space, and at least one channel of which differs from the
-frame's clear colour by more than 0.016. The expected output is the colour the
+pixel, and at least one channel of which differs from the frame's clear colour
+by more than 0.016. **Both comparisons are in the encoding the frame is read
+back in** — `unity/render-gate` renders to `ARGB32` and reads it with
+`Texture2D.ReadPixels`, which under a linear-colour-space project returns
+sRGB-encoded bytes, so a check that converted to linear first would disagree
+with the gate it is written for. The expected output is the colour the
 document's own tables give that node, which is what `DashsceneRenderGate`
 already reads for its per-instance assertion. _Check:_ draw a document whose
 text names at least two glyph atlases in a player build, and assert one probed

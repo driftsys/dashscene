@@ -321,7 +321,7 @@ Check("every declared entry point resolves in the library", () =>
     };
 
 #if DASHSCENE_DEMO_PRODUCER
-    // The demonstration configuration's six, which `unity/demo-producer`
+    // The demonstration configuration's seven, which `unity/demo-producer`
     // exports beside the shipped set. Listed here rather than derived, on this
     // check's own grounds: the set is this gate's copy of the contract and
     // moves only when a person moves it.

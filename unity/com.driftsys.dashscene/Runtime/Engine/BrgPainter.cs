@@ -190,13 +190,6 @@ namespace Driftsys.Dashscene
         /// condition it reports persists until a `Draw` completes.
         private bool _reportedShortFrame;
 
-        /// Whether the key-span warning has been reported.
-        ///
-        /// Latched for [`_reportedShortFrame`]'s reason, and never cleared: it
-        /// reports a placement the host chose rather than a frame that went
-        /// wrong, so repeating it once per camera per frame would say nothing
-        /// new.
-        private bool _reportedKeySpan;
         private int _instancesPerBatch;
         private int _batchStrideBytes;
 
@@ -924,98 +917,88 @@ namespace Driftsys.Dashscene
             // sorting of coplanar geometry — camera-angle dependent, with
             // near-ties. These are an order encoding, not geometry.
             var sortBase = DocumentToWorld.MultiplyPoint3x4(Vector3.zero);
-            var toCamera = cullingContext.lodParameters.cameraPosition - sortBase;
-            var distance = toCamera.magnitude;
-            // A camera at the sheet leaves no direction to encode along. The
-            // document's own -z is where the unit quad faces, so it is the
-            // axis a viewer must be on for the sheet to be visible at all.
+            // **The view's position from `localToWorldMatrix`, not from
+            // `lodParameters`.** This callback runs for every culling view, and
+            // `LODParameters` is meaningful only for a camera one — a light,
+            // picking or selection-outline pass can hand over a default, whose
+            // `cameraPosition` is the world origin. The view matrix's fourth
+            // column carries the position on every view type, and for a camera
+            // view it is the same point.
+            var viewPosition = (Vector3)cullingContext.localToWorldMatrix.GetColumn(3);
+            var toView = viewPosition - sortBase;
+            var distance = toView.magnitude;
+
+            // A viewer at the sheet leaves no direction to encode along. The
+            // document's own -z is where the unit quad faces, so it is the axis
+            // a viewer must be on for the sheet to be visible at all.
             //
-            // **Both fallbacks are guarded, because `Vector3.normalized`
-            // returns the ZERO vector rather than throwing.** A host that
-            // flattens the sheet with a zero z-scale — a natural choice for
-            // strictly 2D content — makes `MultiplyVector` return zero, and an
-            // unguarded normalize would put every key on one point and restore
-            // the grouping this exists to escape, with no diagnostic.
-            // **`back` is a deterministic default, and on the path that takes
-            // it the direction cannot carry the order anyway.** Both computed
-            // branches point from the sheet toward the camera, so key `c` sits
-            // at `distance - c * step` — falling, command 0 farthest, which is
-            // the painter's intent. The fallback is taken only when the camera
-            // is AT the base point, and every key is then `c * step` from it
-            // whichever unit direction is chosen: `back` and `forward` give
-            // identical distances, and the rank runs the opposite way from the
-            // primary branch. An earlier comment here claimed `forward` would
-            // "paint the document in reverse"; under a distance sort the two
-            // spellings are indistinguishable, so the claim was wrong and the
-            // constant is kept only so the callback is deterministic.
+            // **Neither branch uses `Vector3.normalized`, and that is the
+            // point.** Unity's `Normalize` returns the ZERO vector rather than
+            // throwing when the magnitude is at or below its own `kEpsilon` of
+            // 1e-5 — so a guard admitting anything shorter than that does not
+            // guard: a host flattening the sheet with a z-scale of 5e-6, which
+            // is exactly the strictly-2D case this fallback was written for,
+            // passes a `sqrMagnitude > 1e-12f` test and still normalizes to
+            // zero. Every key then lands on one point and the material
+            // grouping this exists to escape returns, with no diagnostic.
+            // Dividing by a magnitude this code has already tested against a
+            // threshold of its own choosing has no hidden epsilon in it.
+            //
+            // **`back` is a deterministic default, and the rank does not turn
+            // on it.** The keys run backwards from the sheet, so a viewer at
+            // the base point is `(commandCount - 1 - c) * step` from key `c` —
+            // falling in `c`, command 0 farthest — whichever unit direction is
+            // chosen, and `back` and `forward` give identical distances there.
             var sortDir = Vector3.back;
             if (distance > 1e-4f)
             {
-                sortDir = toCamera / distance;
+                sortDir = toView / distance;
             }
             else
             {
                 var facing = DocumentToWorld.MultiplyVector(new Vector3(0.0f, 0.0f, -1.0f));
-                if (facing.sqrMagnitude > 1e-12f)
+                var facingLength = facing.magnitude;
+                if (facingLength > 1e-4f)
                 {
-                    sortDir = facing.normalized;
+                    sortDir = facing / facingLength;
                 }
             }
 
-            // **The step is bounded at BOTH ends, and the upper bound is the
-            // one that is easy to miss.**
+            // **The step is bounded below, and the fold that would have needed
+            // an upper bound is ruled out by construction instead.**
             //
-            // Below: float32 carries about 1.2e-7 of RELATIVE precision, and
-            // what is stored is a world coordinate around `sortBase` — so a
-            // document placed ten thousand units from the world origin has an
-            // ULP of about 1.2e-3 there, and a step sized only from a one-unit
-            // viewing distance would round every key onto the same float. The
-            // magnitude term and the floor are what keep the keys distinct.
+            // Float32 carries about 1.2e-7 of RELATIVE precision, and what is
+            // stored is a world coordinate around `sortBase` — so a document
+            // placed ten thousand units from the world origin has an ULP of
+            // about 1.2e-3 there, and a step sized only from a one-unit viewing
+            // distance would round every key onto the same float. The magnitude
+            // term and the floor are what keep the keys distinct.
             //
-            // Above: the keys walk along the ray toward the camera, and a
-            // camera sorts by DISTANCE, which is `|distance - c * step|`. That
-            // is monotonic in `c` only while `c * step` stays short of
-            // `distance` — past it the points pass the camera and the rank
-            // folds back, silently reversing the tail of a long document. So
-            // the whole span is held to a fraction of the viewing distance and
-            // divided among the commands actually being emitted, which makes
-            // the encoding independent of how many there are.
-            // **The two bounds can conflict, and when they do the floor wins
-            // and says so.** An earlier version took `Math.Min` of the two,
-            // which is the wrong way round: the cap is smaller exactly when a
-            // near camera looks at a document far from the world origin, and
-            // taking it there rounds consecutive keys onto the same float —
-            // every command ties, `BatchRendererGroup` regroups by material,
-            // and issue #1389 returns with no diagnostic. A fold reverses the
-            // tail of a long document; a tie loses the order completely, so the
-            // floor is the one to keep.
-            //
-            // Which makes the cap a DETECTOR rather than a term: while it holds
-            // there is no fold, because `commandCount * sortSpan` is then at
-            // most a quarter of the viewing distance and the keys never reach
-            // the camera.
+            // **There is no upper bound, because the keys never approach the
+            // camera.** They are laid out BEHIND the sheet, running back toward
+            // it: command `c` sits at `(commandCount - 1 - c)` steps on the far
+            // side, so its distance from the camera is
+            // `distance + (commandCount - 1 - c) * step` — strictly falling in
+            // `c`, at any span, with command 0 farthest. An earlier version
+            // walked them toward the camera instead, where distance is
+            // `|distance - c * step|` and the rank folds back once the span
+            // passes the viewing distance. Capping the span to keep that from
+            // happening put the cap in conflict with the floor above — the cap
+            // is smaller exactly when a near camera looks at a document far
+            // from the world origin — and taking the smaller of the two rounded
+            // every key onto one float, which is issue #1389 returning with no
+            // diagnostic. Laying the keys out behind the sheet removes the
+            // conflict rather than choosing a side of it: the rank is the same
+            // one, and no span can reach the camera.
             var sortStep = Math.Max(Math.Max(distance, sortBase.magnitude), 1.0f) * 1e-5f;
-            if (distance > 1e-4f
-                && commandCount * sortStep > distance * 0.25f
-                && !_reportedKeySpan)
-            {
-                _reportedKeySpan = true;
-                Debug.LogWarning(
-                    $"[dashscene] the painter's {commandCount} sorting keys span "
-                    + $"{commandCount * sortStep} at a viewing distance of {distance}, so the "
-                    + "keys reach past the camera and their order folds back. The document sits "
-                    + $"{sortBase.magnitude} from the world origin, which is what sets the "
-                    + "smallest step float32 can keep distinct there. Issue #1389 records that "
-                    + "this painter's draw order is not established in any case.");
-            }
 
             drawCommands->drawRanges[0] = new BatchDrawRange
             {
                 drawCommandsBegin = 0,
-                // Stated after the emission loop, with the other four lengths,
-                // from what was actually written. A count here would be a dead
-                // store the reconciliation always overwrites.
-                drawCommandsCount = 0,
+                // `drawCommandsCount` is stated after the emission loop, with
+                // the other four lengths, from what was actually written. Set
+                // here it would be a dead store the reconciliation always
+                // overwrites — and the initialiser zeroes it in any case.
                 filterSettings = new BatchFilterSettings
                 {
                     renderingLayerMask = 0xffffffff,
@@ -1084,15 +1067,15 @@ namespace Driftsys.Dashscene
                         meshID = _meshId,
                         submeshIndex = 0,
                         splitVisibilityMask = 0xff,
-                        // Command 0 sits at the base and each later command a
-                        // step nearer the camera. **Which end of that the
-                        // renderer draws first is NOT established** — see the
-                        // measurements above the allocation.
+                        // Command 0 is farthest and each later command a step
+                        // nearer, all of them behind the sheet. **Which end of
+                        // that the renderer draws first is NOT established** —
+                        // see the measurements above the allocation.
                         flags = BatchDrawCommandFlags.HasSortingPosition,
                         sortingPosition = 3 * command,
                     };
 
-                    var sortAt = sortBase + sortDir * (command * sortStep);
+                    var sortAt = sortBase - sortDir * ((commandCount - 1 - command) * sortStep);
                     drawCommands->instanceSortingPositions[3 * command + 0] = sortAt.x;
                     drawCommands->instanceSortingPositions[3 * command + 1] = sortAt.y;
                     drawCommands->instanceSortingPositions[3 * command + 2] = sortAt.z;

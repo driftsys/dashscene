@@ -37,22 +37,11 @@
 //! they are, never that Unity honours them. R-E22 is the requirement that would
 //! replace it with pixels.
 
-use package_gate::cs_scan::{blank_comments_and_strings, member_body, squeeze};
-use package_gate::package_cs_files;
+use package_gate::cs_scan::{assignment_count, member_body, squeeze};
+use package_gate::painter_source as painter;
 
-const PAINTER: &str = "Runtime/Engine/BrgPainter.cs";
+use package_gate::PAINTER_PATH as PAINTER;
 const CULLING: &str = "private unsafe JobHandle OnPerformCulling(";
-
-/// The painter's source, comments and string bodies blanked.
-fn painter() -> String {
-    let files = package_cs_files();
-    let source = &files
-        .iter()
-        .find(|(path, _)| path.ends_with(PAINTER))
-        .unwrap_or_else(|| panic!("the package no longer ships {PAINTER}"))
-        .1;
-    blank_comments_and_strings(source)
-}
 
 /// The culling callback's body, which is the only place a draw command is
 /// built.
@@ -73,6 +62,24 @@ fn emission_loop(body: &str) -> &str {
     // outside `cs_scan`'s own tests.
     let (start, end) = member_body(body, "for (var at = first;");
     &body[start..=end]
+}
+
+/// The body of one latched warning, from the latch assignment to the `);` that
+/// closes its `Debug.LogWarning`.
+///
+/// **Bound rather than searched over the whole member.** A second warning in
+/// the same member once supplied `{commandCount}` while the short-frame message
+/// had lost it, which is the two-occurrence defect this file fixed once already
+/// for `distance > 1e-4f`. Slicing keeps that shut if a second warning returns.
+fn warning_after(body: &str, latch: &str) -> String {
+    let at = body
+        .find(latch)
+        .unwrap_or_else(|| panic!("{PAINTER}'s OnPerformCulling no longer sets `{latch}`"));
+    let rest = &body[at..];
+    let end = rest
+        .find(");")
+        .unwrap_or_else(|| panic!("`{latch}` is followed by no closing call"));
+    squeeze(&rest[..end])
 }
 
 /// Every draw command is INITIALISED with `HasSortingPosition`.
@@ -99,7 +106,7 @@ fn every_draw_command_is_initialised_with_a_sorting_position_flag() {
          which drew every surface and no glyph in every player build."
     );
 
-    let assignments = loop_body.matches("flags =").count();
+    let assignments = assignment_count(loop_body, "flags");
     assert_eq!(
         assignments, 1,
         "{PAINTER}'s emission loop assigns `flags` {assignments} time(s), not \
@@ -231,19 +238,27 @@ fn every_key_is_built_from_the_one_shared_base_point_and_varies_by_index() {
     let loop_body = emission_loop(body);
 
     assert!(
-        loop_body.contains("var sortAt = sortBase + sortDir * (command * sortStep);"),
+        loop_body.contains(
+            "var sortAt = sortBase - sortDir * ((commandCount - 1 - command) * sortStep);"
+        ),
         "{PAINTER}'s emission loop no longer builds each key as \
-         `sortBase + sortDir * (command * sortStep)`. Every command shares the \
+         `sortBase - sortDir * ((commandCount - 1 - command) * sortStep)`. \
+         The keys sit BEHIND the sheet and run back toward it, so command 0 is \
+         farthest and no span can reach the camera — walking them toward it \
+         instead folds the rank once the span passes the viewing distance. \
+         Every command shares the \
          one base point and only the index varies — a per-run anchor makes \
          these keys geometry again, and coplanar geometry does not sort — while \
          dropping the `command` factor gives every command the same key, which \
          is no order at all."
     );
 
-    // **Counted, not merely present.** Each of these is assigned exactly once,
-    // so a second assignment anywhere in the callback cannot quietly undo it.
-    for (name, wanted) in [("sortAt =", 1), ("sortDir =", 3), ("sortStep =", 1)] {
-        let seen = body.matches(name).count();
+    // **Counted, not merely present.** Each is assigned the number of times
+    // the callback needs and no more — `sortDir` three, once as the default and
+    // once in each guarded branch; the rest once — so a second assignment
+    // anywhere in the member cannot quietly undo it.
+    for (name, wanted) in [("sortAt", 1), ("sortDir", 3), ("sortStep", 1)] {
+        let seen = assignment_count(body, name);
         assert_eq!(
             seen, wanted,
             "{PAINTER}'s OnPerformCulling assigns `{name}` {seen} time(s), not \
@@ -257,12 +272,17 @@ fn every_key_is_built_from_the_one_shared_base_point_and_varies_by_index() {
 /// The sort direction is chosen by two guards, and its last resort points the
 /// same way both guarded branches do.
 ///
-/// **Each guard is named at its own site.** `distance > 1e-4f` occurs TWICE in
-/// this callback — once here and once in the step's own cap — so an assertion
-/// that searched the whole body for it pinned neither, and widening either one
-/// alone stayed green. `Vector3.normalized` returns the ZERO vector rather than
-/// throwing, so the second guard is what keeps a host that flattens the sheet
-/// with a zero z-scale from tying every key.
+/// **Each guard is named at its own site, through the squeezed text.** An
+/// assertion that searched the whole member for `distance > 1e-4f` pinned
+/// nothing while a second occurrence existed elsewhere in it, and widening
+/// either one alone stayed green; naming the whole `if` keeps that shut however
+/// many occurrences there are. `Vector3.normalized` returns the ZERO vector
+/// rather than throwing at or below its own `kEpsilon` of 1e-5 — so neither
+/// branch may call it. A guard admitting anything shorter than that epsilon
+/// does not guard: a sheet flattened to a z-scale of 5e-6 passed the
+/// `sqrMagnitude > 1e-12f` test this file used to pin, and normalized to zero
+/// anyway. Both branches divide by a magnitude tested against a threshold of
+/// this code's own choosing instead.
 #[test]
 fn the_sort_direction_is_guarded_at_both_sites_and_defaults_backwards() {
     let source = painter();
@@ -270,8 +290,8 @@ fn the_sort_direction_is_guarded_at_both_sites_and_defaults_backwards() {
 
     for fragment in [
         "var sortDir = Vector3.back;",
-        "if (distance > 1e-4f) { sortDir = toCamera / distance; }",
-        "if (facing.sqrMagnitude > 1e-12f) { sortDir = facing.normalized; }",
+        "if (distance > 1e-4f) { sortDir = toView / distance; }",
+        "if (facingLength > 1e-4f) { sortDir = facing / facingLength; }",
     ] {
         assert!(
             body.contains(fragment),
@@ -284,6 +304,14 @@ fn the_sort_direction_is_guarded_at_both_sites_and_defaults_backwards() {
     }
 
     assert!(
+        !body.contains(".normalized"),
+        "{PAINTER}'s OnPerformCulling calls `Vector3.normalized`. It returns \
+         the ZERO vector at or below Unity's `kEpsilon` of 1e-5, which is above \
+         any guard written here — so every key lands on one point and the \
+         material grouping returns with no diagnostic. Divide by a magnitude \
+         this code has tested itself."
+    );
+    assert!(
         !body.contains("Vector3.forward"),
         "{PAINTER}'s OnPerformCulling names `Vector3.forward`. Both computed \
          branches point from the sheet TOWARD the camera, which is `back` under \
@@ -292,36 +320,41 @@ fn the_sort_direction_is_guarded_at_both_sites_and_defaults_backwards() {
     );
 }
 
-/// The step is bounded at both ends, and the cap is the half this file was
-/// added for.
+/// The step is bounded below by precision, and the keys are laid out behind
+/// the sheet so no span can reach the camera.
 ///
-/// **The cap had no assertion at all when it landed**, and deleting it outright
-/// stayed green. Without it the keys walk past the camera and the rank folds,
-/// silently reversing the tail of a long document; without the magnitude term
-/// in the floor, a document far from the world origin ties every key on
-/// float32 precision alone.
+/// **Both halves matter and they used to fight.** Without the magnitude term a
+/// document far from the world origin ties every key on float32 alone. Walking
+/// the keys toward the camera — which is what an earlier version did — made a
+/// long span fold the rank back, and the cap added to prevent that was smaller
+/// than the floor exactly where the floor was needed, so taking the smaller of
+/// the two restored the tie. Laying them out behind the sheet removes the
+/// conflict: the rank is unchanged and no span can reach the camera, so there
+/// is nothing left to cap.
 #[test]
-fn the_step_is_bounded_below_by_precision_and_above_by_the_viewing_distance() {
+fn the_step_is_floored_by_precision_and_the_keys_sit_behind_the_sheet() {
     let source = painter();
     let body = squeeze(culling_body(&source));
 
-    for fragment in [
-        "var sortStep = Math.Max(Math.Max(distance, sortBase.magnitude), 1.0f) * 1e-5f;",
-        "if (distance > 1e-4f && commandCount * sortStep > distance * 0.25f \
-         && !_reportedKeySpan)",
-    ] {
-        let wanted = squeeze(fragment);
-        assert!(
-            body.contains(&wanted),
-            "{PAINTER}'s OnPerformCulling no longer contains `{wanted}`. The \
-             floor keeps consecutive keys on distinct floats — relative to the \
-             BASE POINT's magnitude, not just the viewing distance — and the cap \
-             is a DETECTOR beside it, not a term in it: taking `Math.Min` of the \
-             two rounds every key onto one float whenever a near camera looks at \
-             a document far from the world origin, which is issue #1389 \
-             returning with no diagnostic."
-        );
-    }
+    assert!(
+        body.contains(
+            "var sortStep = Math.Max(Math.Max(distance, sortBase.magnitude), 1.0f) * 1e-5f;"
+        ),
+        "{PAINTER}'s OnPerformCulling no longer floors the step against the \
+         larger of the viewing distance and the BASE POINT's own magnitude. \
+         Float32 precision is relative to the coordinate stored, so a document \
+         far from the world origin ties every key without that second term."
+    );
+
+    assert!(
+        !body.contains("Math.Min("),
+        "{PAINTER}'s OnPerformCulling caps the step with `Math.Min`. That was \
+         the defect: the cap is smaller than the precision floor exactly when a \
+         near camera looks at a document far from the world origin, so taking \
+         the smaller rounds every key onto one float and \
+         `BatchRendererGroup` regroups by material. The fold a cap would have \
+         prevented is ruled out by laying the keys behind the sheet instead."
+    );
 }
 
 /// Every length Unity reads is reported from what was emitted.
@@ -397,17 +430,20 @@ fn a_short_frame_is_bounded_and_named() {
          is dropped, and false-positive whenever a smaller document follows a \
          larger one. P4: a drop is a named diagnostic, never silent."
     );
+    let message = warning_after(&body, "_reportedShortFrame = true;");
     for part in [
         "{visible}",
         "{InstanceCount}",
+        "{command}",
         "{commandCount}",
-        "_reportedShortFrame = true;",
     ] {
         assert!(
-            body.contains(part),
-            "{PAINTER}'s short-frame warning no longer carries `{part}`. The \
-             message names both counts so a reader can tell how short the frame \
-             was, and the latch keeps it from repeating per camera per frame."
+            message.contains(part),
+            "{PAINTER}'s short-frame warning no longer carries `{part}` INSIDE \
+             its own message. The message names what was emitted and what was \
+             expected, so a reader can tell how short the frame was — and it is \
+             sliced from its latch because a sibling warning in the same member \
+             would otherwise supply the token."
         );
     }
 

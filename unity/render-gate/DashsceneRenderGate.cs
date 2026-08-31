@@ -992,7 +992,6 @@ public sealed class DashsceneRenderGate : MonoBehaviour
             + "colour is nearer this node's own than the clear colour is, this run passes "
             + "on ink that is not the node's. R-E22's fixture is what would retire this.");
 
-
         // **A run where none got the stronger form is a run of the weaker gate,
         // whatever its verdict says.** The document has solid fills that
         // nothing later covers; if none reached this check, `SolidColour` has

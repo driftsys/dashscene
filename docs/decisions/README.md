@@ -661,10 +661,11 @@ their parent rather than apart from it:
   commands by material, which is why the Unity painter drew every surface and no
   glyph. Setting `HasSortingPosition` and writing a key per command is what
   makes glyphs draw, and it is **not** established that those keys order the
-  picture — reversing them draws more of the document, tied commands reorder
-  when a command outside the tie moves, and changing the batch size changes the
-  frame. Recorded as a constraint so no gate is written as though a legible
-  frame proved an order. Depth writes stay rejected.
+  picture — reversing them draws more of the document, and changing the batch
+  size changes the frame. A third measurement, over commands tied on equal keys,
+  is recorded as weaker because it does not isolate the tied group. Recorded as
+  a constraint so no gate is written as though a legible frame proved an order.
+  Depth writes stay rejected.
 - [unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md](unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md)
   — **accepted** (2026-08-21, story #1125): UPM over a Git URL, and every file
   Unity imports carries a committed `.meta`, because a Git-URL package is

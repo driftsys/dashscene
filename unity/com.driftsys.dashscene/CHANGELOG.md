@@ -6,6 +6,24 @@ the Cargo workspace rather than moving on its own.
 
 ## [Unreleased]
 
+### Added
+
+- **The showcase reports what a frame cost, and states what the figure is.**
+  `Samples~/Showcase/DashsceneFrameCost.cs` reports one line per 240 drawn
+  frames: the runtime tick, and the drawing this package executes — the frame
+  lease, `BrgPainter.Draw` and the release. It **excludes** the GPU's execution
+  of the batches, the render pipeline's passes, culling and the swapchain
+  present, because Unity runs all of them after `Update` returns, so the figure
+  is a floor on the painter's per-frame cost and not the whole of it. The header
+  states the definition term by term against `demo/src/shell.rs`, which is the
+  instrument the other three hosts report through. Each line names the extent it
+  was drawn at, and a sample is discarded when the entry or the extent changes
+  part-way. Armed by default; `-no-frame-cost` on the command line turns it off.
+- **The showcase rotates on the up arrow**, so a player can be put through an
+  orientation change on a device that will not rotate for a script — a build
+  allowing all four orientations follows the sensor, and a handset lying flat
+  reports portrait whatever the window manager is told.
+
 ### Fixed
 
 - **The painter draws its text.** `BrgPainter` drew every surface and no glyph,
@@ -30,28 +48,7 @@ the Cargo workspace rather than moving on its own.
 - **A frame the painter cuts short says so.** `OnPerformCulling` now reports,
   once, when it emitted fewer instances than the frame packed — which happens
   when `Draw` throws part-way — instead of handing over a partial picture in
-  silence. It also reports, once, when a document is placed far enough from the
-  world origin that its sorting keys would span past the camera.
-
-### Added
-
-- **The showcase reports what a frame cost, and states what the figure is.**
-  `Samples~/Showcase/DashsceneFrameCost.cs` reports one line per 240 drawn
-  frames: the runtime tick, and the drawing this package executes — the frame
-  lease, `BrgPainter.Draw` and the release. It **excludes** the GPU's execution
-  of the batches, the render pipeline's passes, culling and the swapchain
-  present, because Unity runs all of them after `Update` returns, so the figure
-  is a floor on the painter's per-frame cost and not the whole of it. The header
-  states the definition term by term against `demo/src/shell.rs`, which is the
-  instrument the other three hosts report through. Each line names the extent it
-  was drawn at, and a sample is discarded when the entry or the extent changes
-  part-way. Armed by default; `-no-frame-cost` on the command line turns it off.
-- **The showcase rotates on the up arrow**, so a player can be put through an
-  orientation change on a device that will not rotate for a script — a build
-  allowing all four orientations follows the sensor, and a handset lying flat
-  reports portrait whatever the window manager is told.
-
-### Fixed
+  silence.
 
 - **The manifest no longer says the painter draws no text.** `package.json`'s
   `description` — what a UPM registry listing shows — still said the painter

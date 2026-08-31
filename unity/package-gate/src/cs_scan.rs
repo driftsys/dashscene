@@ -226,7 +226,8 @@ pub fn switch_arm<'a>(scanned: &'a str, label: &str) -> &'a str {
     &rest[..next]
 }
 
-/// `scanned` with every run of whitespace collapsed to one space.
+/// `scanned` with every internal run of whitespace collapsed to one space, and
+/// the leading and trailing runs removed.
 ///
 /// **So an assertion can name a whole expression without naming its line
 /// breaks.** A multi-line initialiser is one expression to a reader and several
@@ -247,6 +248,36 @@ pub fn squeeze(scanned: &str) -> String {
         out.push(c);
     }
     out
+}
+
+/// How many times `name` is ASSIGNED in `scanned`.
+///
+/// **Counting a spaced literal is not counting an assignment.** A test that
+/// searched for `"sortStep ="` was defeated by writing `sortStep=0.0f;` one
+/// line below the declaration — legal, compiling, and uncaught, because no
+/// formatter covers `Runtime/Engine/`. This matches the identifier on its own
+/// word boundaries, allows any run of whitespace before the `=`, and refuses
+/// `==` so a comparison is not read as a write.
+pub fn assignment_count(scanned: &str, name: &str) -> usize {
+    let mut count = 0;
+    let mut from = 0;
+    while let Some(at) = scanned[from..].find(name) {
+        let start = from + at;
+        let end = start + name.len();
+        from = end;
+
+        let before_ok = scanned[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+        let rest = scanned[end..].trim_start();
+        let after_ok = !scanned[end..].starts_with(|c: char| c.is_alphanumeric() || c == '_');
+
+        if before_ok && after_ok && rest.starts_with('=') && !rest.starts_with("==") {
+            count += 1;
+        }
+    }
+    count
 }
 
 #[cfg(test)]
@@ -311,5 +342,21 @@ mod tests {
     fn squeeze_makes_a_multi_line_expression_one_line() {
         let src = "var x = A(\n    b,\n    c);\n";
         assert_eq!(squeeze(src), "var x = A( b, c);");
+    }
+
+    #[test]
+    fn squeeze_keeps_no_leading_space() {
+        assert_eq!(squeeze("\n   a b\n"), "a b");
+    }
+
+    #[test]
+    fn an_assignment_is_counted_however_it_is_spaced() {
+        let src = "var x = 1; x=2; x  =  3; if (x == 4) {} xs = 5; yx = 6;";
+        assert_eq!(assignment_count(src, "x"), 3, "spaced, unspaced and padded");
+        assert_eq!(
+            assignment_count(src, "xs"),
+            1,
+            "a longer name is its own identifier"
+        );
     }
 }

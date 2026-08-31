@@ -69,6 +69,26 @@ pub const WGSL_IS_THE_CRATE_S_OWN: &str = "crates/dashscene-gpu/src/shader.rs";
 /// # Panics
 ///
 /// When no recipe of that name exists, which would otherwise make every
+/// The painter's source, comments and string bodies blanked.
+///
+/// **One accessor for the three suites that scan this file.** It is scanned
+/// rather than compiled because no CI job compiles it — `painter_diagnostics`,
+/// `sorting_keys` and `batch_windows` all make that trade — and three copies of
+/// the path constant meant a rename of the file had to be found in three
+/// panics.
+pub fn painter_source() -> String {
+    let files = package_cs_files();
+    let source = &files
+        .iter()
+        .find(|(path, _)| path.ends_with(PAINTER_PATH))
+        .unwrap_or_else(|| panic!("the package no longer ships {PAINTER_PATH}"))
+        .1;
+    cs_scan::blank_comments_and_strings(source)
+}
+
+/// The painter, relative to the package root.
+pub const PAINTER_PATH: &str = "Runtime/Engine/BrgPainter.cs";
+
 /// assertion over the result vacuous.
 pub fn recipe_body(justfile: &str, name: &str) -> String {
     let mut out = Vec::new();

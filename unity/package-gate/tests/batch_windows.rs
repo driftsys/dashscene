@@ -16,8 +16,7 @@
 //! test, not against a text scan. `painter_diagnostics.rs` and
 //! `sorting_keys.rs` are the same trade for the same file, and a review
 //! demonstrated the gap this file closes by reverting the repair in two lines
-//! and watching every suite in this crate stay green — thirteen of them at the
-//! time, before this file and its sibling were added.
+//! and watching every suite in this crate stay green.
 //!
 //! **What is asserted is the rung split**, in both arguments and in the
 //! metadata. The dangerous mutation is not re-introducing the old bug — that
@@ -25,22 +24,11 @@
 //! WITHOUT folding the offset into the metadata, which points every batch at
 //! batch zero's property arrays and says nothing at all.
 
-use package_gate::cs_scan::{blank_comments_and_strings, member_body};
-use package_gate::package_cs_files;
+use package_gate::cs_scan::member_body;
+use package_gate::painter_source as painter;
 
-const PAINTER: &str = "Runtime/Engine/BrgPainter.cs";
+use package_gate::PAINTER_PATH as PAINTER;
 const ADD_BATCHES: &str = "private void AddBatches(int batches)";
-
-/// The painter's source, comments and string bodies blanked.
-fn painter() -> String {
-    let files = package_cs_files();
-    let source = &files
-        .iter()
-        .find(|(path, _)| path.ends_with(PAINTER))
-        .unwrap_or_else(|| panic!("the package no longer ships {PAINTER}"))
-        .1;
-    blank_comments_and_strings(source)
-}
 
 /// `AddBatches`'s body, braces matched.
 fn add_batches(source: &str) -> &str {

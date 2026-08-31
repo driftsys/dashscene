@@ -47,8 +47,9 @@ the repository does not claim that those keys order the picture.**
 Setting the flag and writing the keys is what takes the commands out of material
 grouping, and it is what makes glyphs reach the screen at all. That is measured
 and repeatable. What is **not** established is that the resulting order is the
-painter's order, and three measurements say it is not — the table and the
-reasoning are in `docs/technotes/batch-renderer-group.md` §5b:
+painter's order, and three measurements say it is not — two of them cleanly, the
+third only weakly. The table and the reasoning are in
+`docs/technotes/batch-renderer-group.md` §5b:
 
 - reversing the keys draws more of the document rather than a reversed picture;
 - two key sets that tie the same ten commands produce different pictures, one
@@ -87,6 +88,31 @@ identically 1 with no anti-aliased coverage anywhere", and this content model
 has no such subset, because every edge is an SDF ramp. This is not reopened by
 the above.
 
+**D4 — the keys are laid out behind the sheet, so no span can reach the
+camera.** Command `c` sits `(commandCount - 1 - c)` steps on the far side of the
+document from the viewer, which puts it at
+`distance + (commandCount - 1 - c) *
+step` from the camera: falling in `c`, at
+any span, with command 0 farthest.
+
+This is a repair of an earlier form that walked the keys TOWARD the camera,
+where distance is `|distance - c * step|` and the rank folds back once the span
+passes the viewing distance. Capping the span to prevent that put the cap in
+direct conflict with the precision floor the keys also need — float32 resolution
+is relative to the coordinate stored, so a document far from the world origin
+needs a LARGER step, while a near camera admits only a smaller one — and taking
+the smaller of the two rounded every key onto one float. That is the tie this
+record's whole subject returns from: every command carrying an identical key is
+the same thing as no command carrying one.
+
+**The rank is unchanged by the repair**, which is what lets §5b's measurements
+stand: `unity/package-gate/tests/sorting_key_arithmetic.rs` models both layouts
+in `f32` and asserts they order the commands identically wherever the older one
+did not fold, that the floor keeps every key distinct across the placements a
+host can reach, and that distance from the camera falls with the command index
+at any span. It is a model of two lines rather than a run of the painter, for
+the reason every gate over this file is: nothing in CI compiles it.
+
 ## What this costs, and what is still owed
 
 The painter draws its text today and the ordering it draws it in is not
@@ -117,5 +143,6 @@ What is owed, and what this record does not decide:
   treatment.
 - **Write and test depth.** Rejected under D3.
 - **Claim the keys work, on the strength of a green pixel count.** Rejected: the
-  count that would have carried the claim is 3034 against a failing 0, and three
-  later measurements show the order behind that number is not the painter's.
+  count that would have carried the claim is 3034 against a failing 0, and two
+  later measurements show the order behind that number is not the painter's — a
+  third points the same way without isolating its variable.

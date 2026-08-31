@@ -853,7 +853,7 @@ pass that wrote it.
 `-p:DemoProducer=true` and points at `unity/demo-producer`, and it is the only
 thing that compiles or binds `Runtime/DemoProducer.cs`'s P/Invokes — they sit
 behind a `#if` the shipped pass never defines, so without it they would be read
-by no gate at all, which is issue #1308's class. That pass drives the six
+by no gate at all, which is issue #1308's class. That pass drives the seven
 `ds_demo_*` through the missing-symbol context alongside the shipped set and
 adds checks over the producer itself.
 
@@ -976,8 +976,8 @@ library and defines `DASHSCENE_DEMO_PRODUCER` for the player build.
 carries why it is a separate crate rather than a feature of the shipped one, and
 `just demo-exports` is what holds it to being the shipped seventeen plus a set
 carrying only the `ds_demo_` prefix. **That recipe pins the prefix, not the
-cardinality**: `unity/ffi-check`'s demonstration pass is what names the six and
-drives each one.
+cardinality**: `unity/ffi-check`'s demonstration pass is what names the seven
+and drives each one.
 
 **The camera is framed per entry class, and it was not at first.** A scene is
 built for the drawable in physical pixels, as the three Rust hosts build it, so
@@ -1190,25 +1190,26 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   they are worth naming as a class rather than one at a time. Three of them are
   `AddBatches`'s rung split, added by issue #1389: the `window` local and both
   `AddBatch` window arguments have a `ConstantBuffer` arm no measured adapter
-  reaches, and a `RawBuffer` arm that the same issue records as unreachable
-  through the shipped API, because `InstancesPerBatch` doubles until `b` is
-  always zero. The other two are the `ConstantBuffer` rung (**two** adapters now
-  report `RawBuffer` — Metal on an Apple M3, and Vulkan on an Adreno 620
-  measured 2026-08-28 — so the `ConstantBuffer` **branch** of
-  `InstancesPerBatch` and `BatchStrideBytes` has still never run. Both methods
-  run on every capacity change and take an early return when the rung is not
-  `ConstantBuffer`; it is the windowed arithmetic behind that return which is
-  unexercised. A second agreeing adapter lowers the chance of reaching it rather
-  than raising it) and the opaque material's alpha handling. A defect in either
-  looks like a plausible picture rather than a failure — the window-size clamp
-  in `BatchStrideBytes` was one, found by reading rather than by running. **The
-  cutout material's `clip()` threshold was the third and is now measured**:
-  `just unity-render` draws that class at 0.5 and at 2 — the second above any
-  coverage a fragment can have — and got 13 of 13 sampled node centres inked at
-  the first and none at the second, with 601144 of 786432 pixels differing. A
-  `_DsCutoff` that did not reach the fragment stage would have drawn the same
-  picture twice, whatever the stage read instead, so **it resolves**, on Metal,
-  and issue #1307 is answered. GLES 3.2 and Vulkan are untested.
+  reaches, Their `RawBuffer` arms DO run on every measured adapter; what no
+  adapter reaches there is a non-zero `b`, because `InstancesPerBatch` doubles
+  until one batch covers the document. The other two are the `ConstantBuffer`
+  rung (**two** adapters now report `RawBuffer` — Metal on an Apple M3, and
+  Vulkan on an Adreno 620 measured 2026-08-28 — so the `ConstantBuffer`
+  **branch** of `InstancesPerBatch` and `BatchStrideBytes` has still never run.
+  Both methods run on every capacity change and take an early return when the
+  rung is not `ConstantBuffer`; it is the windowed arithmetic behind that return
+  which is unexercised. A second agreeing adapter lowers the chance of reaching
+  it rather than raising it) and the opaque material's alpha handling. A defect
+  in either looks like a plausible picture rather than a failure — the
+  window-size clamp in `BatchStrideBytes` was one, found by reading rather than
+  by running. **The cutout material's `clip()` threshold was another and is now
+  measured**: `just unity-render` draws that class at 0.5 and at 2 — the second
+  above any coverage a fragment can have — and got 13 of 13 sampled node centres
+  inked at the first and none at the second, with 601144 of 786432 pixels
+  differing. A `_DsCutoff` that did not reach the fragment stage would have
+  drawn the same picture twice, whatever the stage read instead, so **it
+  resolves**, on Metal, and issue #1307 is answered. GLES 3.2 and Vulkan are
+  untested.
 - **The painter draws, and what checks it is `unity/render-gate`.** Measured on
   `6000.3.22f1`, macOS/Metal, Apple M3, 2026-08-23, in a player built from this
   package: `goldens/dsb/v03-paint.dsb` packs to 16 instances on rung
