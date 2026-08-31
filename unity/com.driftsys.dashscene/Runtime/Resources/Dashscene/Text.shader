@@ -24,8 +24,14 @@
 //
 // The blend state is the overlay class's: coverage IS the alpha, which is what
 // anti-aliases a glyph's edge. `ZTest Always` as well, so a document is a flat
-// sheet drawn in submission order whichever class its nodes took — text drawn
-// after a lit-opaque node is not occluded by it.
+// sheet no depth test orders, whichever class its nodes took — text drawn after
+// a lit-opaque node is not occluded by it.
+//
+// **That is not the same as "drawn in submission order", which it is not.**
+// `BatchRendererGroup` groups draw commands by material, and issue #1389
+// measured that the sorting keys the painter now writes are not established to
+// restore the painter's order —
+// `docs/decisions/brg-draw-command-order-is-not-guaranteed.md`.
 Shader "Dashscene/Text"
 {
     Properties

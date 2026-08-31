@@ -204,12 +204,15 @@ documents and judges each frame against its own packed colours — the same shap
 issue #828's suite has, and the same shape the corner-silhouette gap below
 needs.
 
-**The text materials take the same binding in the same loop, and no frame has
+**The text materials take the same binding in the same loop, and no gate has
 drawn one.** `just unity-render` draws a document with no glyph runs, so
 `_DsGlyphs` and the three tables on a text material are held by reading rather
-than by a picture. That is a gap the change opened as well as one it inherited:
-while the heap was global a text material needed no binding of its own, and now
-it needs the loop in `BindHeap` to reach it.
+than by a picture. A frame HAS now drawn one — issue #1389 drew glyphs from
+three atlases in a macOS/Metal player build on 2026-08-31 — but that was a
+measurement taken by hand, not a gate, and R-E22 is the requirement that would
+make it one. That is a gap the change opened as well as one it inherited: while
+the heap was global a text material needed no binding of its own, and now it
+needs the loop in `BindHeap` to reach it.
 
 **The transforms are shared, not per instance.** A BatchRendererGroup requires
 `unity_ObjectToWorld` and `unity_WorldToObject` as instanced properties, but a
@@ -528,8 +531,9 @@ reading of "text is always blended whichever class the nodes take", and it is
 the one place a class's refusal applies to half a node.
 
 And `Dashscene/Text` sits in the **transparent** queue, as the overlay class
-does. Against the overlay class that changes nothing — both are in one queue and
-one pass, so submission order decides the picture as it always did. Against
+does. Against the overlay class that changes nothing about the QUEUE — both sit
+in one queue and one pass — though within that pass submission order does not
+decide the picture either, which is issue #1389 and the paragraph below. Against
 `LitOpaque` (geometry) or `LitCutout` (alpha test) it does: a render pipeline
 sorts by queue before it sorts by anything a draw command carries, so every
 glyph is submitted after every node fill whatever order the document put them
@@ -539,10 +543,15 @@ which preserves order only inside one pass, and it is a property of drawing
 blended text beside opaque geometry rather than of this painter.
 
 **The culling callback emits one command per contiguous run of instances that
-share a material**, which preserves the emission order that decides the picture
-— and it is the first thing here that makes the command count depend on
-**which** nodes a document holds rather than on how many, which a 256-instance
-split already did.
+share a material** — and it is the first thing here that makes the command count
+depend on **which** nodes a document holds rather than on how many, which a
+256-instance split already did. **The split preserves the emission order in the
+command list and that is not the order the picture is drawn in**: BRG groups the
+commands by material afterwards, which is what issue #1389 found. The painter
+states a per-command sorting key to take them out of that grouping; whether the
+keys then reproduce the emission order is unsettled, and
+`docs/decisions/brg-draw-command-order-is-not-guaranteed.md` is where that is
+recorded.
 
 ### The six rules, and where each one is held
 
@@ -844,7 +853,7 @@ pass that wrote it.
 `-p:DemoProducer=true` and points at `unity/demo-producer`, and it is the only
 thing that compiles or binds `Runtime/DemoProducer.cs`'s P/Invokes — they sit
 behind a `#if` the shipped pass never defines, so without it they would be read
-by no gate at all, which is issue #1308's class. That pass drives the six
+by no gate at all, which is issue #1308's class. That pass drives the seven
 `ds_demo_*` through the missing-symbol context alongside the shipped set and
 adds checks over the producer itself.
 
@@ -967,8 +976,8 @@ library and defines `DASHSCENE_DEMO_PRODUCER` for the player build.
 carries why it is a separate crate rather than a feature of the shipped one, and
 `just demo-exports` is what holds it to being the shipped seventeen plus a set
 carrying only the `ds_demo_` prefix. **That recipe pins the prefix, not the
-cardinality**: `unity/ffi-check`'s demonstration pass is what names the six and
-drives each one.
+cardinality**: `unity/ffi-check`'s demonstration pass is what names the seven
+and drives each one.
 
 **The camera is framed per entry class, and it was not at first.** A scene is
 built for the drawable in physical pixels, as the three Rust hosts build it, so
@@ -1102,27 +1111,34 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
 
 ## Known gaps, named
 
-- **Draw order is submission order, and nothing has confirmed that** — and since
-  issue #1313's branch, `unity/render-gate` rests on it. A document is drawn
-  back to front, so order is the property that decides the picture. The painter
-  emits its draw commands in rect order inside one `BatchDrawRange` with
-  `allDepthSorted` false, which is what should preserve it — but every quad in
-  an overlay sits at the same depth, and whether URP's transparent pass re-sorts
-  a BRG range at equal depth is a question only a drawn frame answers. If it
-  does, overlapping nodes will be in an arbitrary order and the failure will
-  look like a z-fighting artefact rather than like a painter bug.
+- **Draw order is NOT submission order — a drawn frame has now answered it, and
+  the answer is no** — and since issue #1313's branch, `unity/render-gate` rests
+  on the assumption that it is. A document is drawn back to front, so order is
+  the property that decides the picture. The painter emits its draw commands in
+  rect order inside one `BatchDrawRange` with `allDepthSorted` false, which is
+  what should preserve it. It does not: `BatchRendererGroup` groups commands by
+  material first, and under that grouping the painter drew every surface and no
+  glyph on every platform (issue #1389). The failure did not look like
+  z-fighting; it looked like text that was never drawn.
 
-  **A drawn frame has not answered it, and the gate does not test it.** What the
-  gate does is exclude a node's centre from its stronger per-instance assertion
-  when a HIGHER-indexed instance's quad reaches that centre, which is sound only
-  under this assumption. Widening the exclusion to any other instance would
-  remove the dependence and is not available: a filled parent frame reaches
-  every child, so that predicate leaves the stronger form nothing to judge. The
-  failure it would permit is bounded — a centre hidden under a LOWER-indexed
-  node could pass the stronger assertion on ink that is not its own — and it can
-  never produce a false failure. Settling it needs a frame drawn from a document
-  built for the question, with two known overlapping fills and no parent under
-  them.
+  The painter now sets `HasSortingPosition` and writes a sorting key per
+  command, which is what makes glyphs reach the screen. **It is not established
+  that those keys impose the painter's order**, and
+  `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` records why, with
+  the measurements in `docs/technotes/batch-renderer-group.md` §5b. So the
+  assumption below is still unmet, and is now known to be unmet rather than
+  merely unconfirmed.
+
+  **The gate does not test it.** What the gate does is exclude a node's centre
+  from its stronger per-instance assertion when a HIGHER-indexed instance's quad
+  reaches that centre, which is sound only under this assumption. Widening the
+  exclusion to any other instance would remove the dependence and is not
+  available: a filled parent frame reaches every child, so that predicate leaves
+  the stronger form nothing to judge. The failure it would permit is bounded — a
+  centre hidden under a LOWER-indexed node could pass the stronger assertion on
+  ink that is not its own — and it can never produce a false failure. Settling
+  it needs a frame drawn from a document built for the question, with two known
+  overlapping fills and no parent under them.
 - **The corner silhouette is checked by nothing.** `unity/render-gate` probes a
   point inside a node's box and outside its rounded corner, and skips any probe
   another instance's quad can reach — because a document is drawn back to front
@@ -1130,10 +1146,13 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   corner" is not "background". On `v03-paint.dsb` no probe survives that test,
   so the run says so and asserts nothing. A fixture with one isolated rounded
   node would change it; issue #828's suite is where that belongs.
-- **No frustum culling.** `OnPerformCulling` ignores its `BatchCullingContext`
-  and emits every instance for every camera. For a full-screen overlay that is
-  the right answer and costs nothing; for a document placed in a 3D scene it is
-  work per camera proportional to the whole document.
+- **No frustum culling.** `OnPerformCulling` reads one field of its
+  `BatchCullingContext` — `lodParameters.cameraPosition`, which issue #1389's
+  sorting keys are built from, so the command stream is camera-dependent — and
+  uses none of the culling planes. It emits every instance for every camera. For
+  a full-screen overlay that is the right answer and costs nothing; for a
+  document placed in a 3D scene it is work per camera proportional to the whole
+  document.
 - **R-T4's dirty-range upload is not implemented, and this is what the full
   repack costs.** The painter repacks every rect and re-uploads the whole
   instance buffer — including capacity past the live instances — on every frame,
@@ -1167,25 +1186,30 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   only the changed rects needs the previous commit's tables held for comparison,
   because a rect's instance count can change between commits and a dirty rect is
   therefore not a fixed byte range.
-- **Two code paths have never been exercised by any gate or any device**, and
-  they are worth naming as a class rather than one at a time: the
-  `ConstantBuffer` rung (**two** adapters now report `RawBuffer` — Metal on an
-  Apple M3, and Vulkan on an Adreno 620 measured 2026-08-28 — so the
-  `ConstantBuffer` **branch** of `InstancesPerBatch` and `BatchStrideBytes` has
-  still never run. Both methods run on every capacity change and take an early
-  return when the rung is not `ConstantBuffer`; it is the windowed arithmetic
-  behind that return which is unexercised. A second agreeing adapter lowers the
-  chance of reaching it rather than raising it) and the opaque material's alpha
-  handling. A defect in either looks like a plausible picture rather than a
-  failure — the window-size clamp in `BatchStrideBytes` was one, found by
-  reading rather than by running. **The cutout material's `clip()` threshold was
-  the third and is now measured**: `just unity-render` draws that class at 0.5
-  and at 2 — the second above any coverage a fragment can have — and got 13 of
-  13 sampled node centres inked at the first and none at the second, with 601144
-  of 786432 pixels differing. A `_DsCutoff` that did not reach the fragment
-  stage would have drawn the same picture twice, whatever the stage read
-  instead, so **it resolves**, on Metal, and issue #1307 is answered. GLES 3.2
-  and Vulkan are untested.
+- **Five code paths have never been exercised by any gate or any device**, and
+  they are worth naming as a class rather than one at a time. Three of them are
+  `AddBatches`'s rung split, added by issue #1389: the `window` local and both
+  `AddBatch` window arguments have a `ConstantBuffer` arm no measured adapter
+  reaches, Their `RawBuffer` arms DO run on every measured adapter; what no
+  adapter reaches there is a non-zero `b`, because `InstancesPerBatch` doubles
+  until one batch covers the document. The other two are the `ConstantBuffer`
+  rung (**two** adapters now report `RawBuffer` — Metal on an Apple M3, and
+  Vulkan on an Adreno 620 measured 2026-08-28 — so the `ConstantBuffer`
+  **branch** of `InstancesPerBatch` and `BatchStrideBytes` has still never run.
+  Both methods run on every capacity change and take an early return when the
+  rung is not `ConstantBuffer`; it is the windowed arithmetic behind that return
+  which is unexercised. A second agreeing adapter lowers the chance of reaching
+  it rather than raising it) and the opaque material's alpha handling. A defect
+  in either looks like a plausible picture rather than a failure — the
+  window-size clamp in `BatchStrideBytes` was one, found by reading rather than
+  by running. **The cutout material's `clip()` threshold was another and is now
+  measured**: `just unity-render` draws that class at 0.5 and at 2 — the second
+  above any coverage a fragment can have — and got 13 of 13 sampled node centres
+  inked at the first and none at the second, with 601144 of 786432 pixels
+  differing. A `_DsCutoff` that did not reach the fragment stage would have
+  drawn the same picture twice, whatever the stage read instead, so **it
+  resolves**, on Metal, and issue #1307 is answered. GLES 3.2 and Vulkan are
+  untested.
 - **The painter draws, and what checks it is `unity/render-gate`.** Measured on
   `6000.3.22f1`, macOS/Metal, Apple M3, 2026-08-23, in a player built from this
   package: `goldens/dsb/v03-paint.dsb` packs to 16 instances on rung
@@ -1237,14 +1261,17 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   Issue #1314 carries all three. Two narrower gaps sit beside it: nothing holds
   the harness's own pinned probe counts against the table (issue #1323), and
   layer 2's properties are not ported alongside its table (issue #1324).
-- **No glyph has been drawn, and the half that is checked is the half with no
-  Unity type in it.** Story #1123 landed the seam: the atlas crosses, the packer
-  turns runs into instances, and `unity/ffi-check` executes the geometry, the
-  run heap and the atlas lookup on any pull request whose diff is not
-  documentation-only. The material, the texture and the draw commands are
-  `Runtime/Engine/`, which only a Unity editor compiles and only a device runs —
-  so the sampling itself, the linear texture and the per-atlas draw-command
-  split rest on reading rather than on running.
+- **A glyph has now been drawn, once, by hand — and the half that any GATE
+  checks is still the half with no Unity type in it.** Issue #1389 drew glyphs
+  from three atlases in a macOS/Metal player build on 2026-08-31, which is a
+  measurement rather than a gate; R-E22 is the requirement that would make it
+  one. Story #1123 landed the seam: the atlas crosses, the packer turns runs
+  into instances, and `unity/ffi-check` executes the geometry, the run heap and
+  the atlas lookup on any pull request whose diff is not documentation-only. The
+  material, the texture and the draw commands are `Runtime/Engine/`, which only
+  a Unity editor compiles and only a device runs — so the sampling itself, the
+  linear texture and the per-atlas draw-command split rest on reading rather
+  than on running.
 - **The `px_range` formula has two copies and nothing compares them.**
   `dashscene-gpu`'s `gpu_glyph_run` computes
   `distance_range_px * size /

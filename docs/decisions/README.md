@@ -656,6 +656,16 @@ their parent rather than apart from it:
   of which are carried; D3 is the ladder and D4 is the read that selects between
   its rungs. The minimum Unity version is `07-embedding-and-distribution.md`
   R-E1, settled by story #1125's spike.
+- [brg-draw-command-order-is-not-guaranteed.md](brg-draw-command-order-is-not-guaranteed.md)
+  — **accepted** (2026-08-31, issue #1389): `BatchRendererGroup` groups draw
+  commands by material, which is why the Unity painter drew every surface and no
+  glyph. Setting `HasSortingPosition` and writing a key per command is what
+  makes glyphs draw, and it is **not** established that those keys order the
+  picture — reversing them draws more of the document, and changing the batch
+  size changes the frame. A third measurement, over commands tied on equal keys,
+  is recorded as weaker because it does not isolate the tied group. Recorded as
+  a constraint so no gate is written as though a legible frame proved an order.
+  Depth writes stay rejected.
 - [unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md](unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md)
   — **accepted** (2026-08-21, story #1125): UPM over a Git URL, and every file
   Unity imports carries a committed `.meta`, because a Git-URL package is

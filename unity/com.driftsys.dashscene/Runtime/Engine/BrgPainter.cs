@@ -183,6 +183,13 @@ namespace Driftsys.Dashscene
         /// the emission loop produces: Unity allocates the command array from
         /// it and that loop writes into it.
         private int _commandCount;
+
+        /// Whether the short-frame warning has been reported.
+        ///
+        /// Latched: `OnPerformCulling` runs per camera per frame, and the
+        /// condition it reports persists until a `Draw` completes.
+        private bool _reportedShortFrame;
+
         private int _instancesPerBatch;
         private int _batchStrideBytes;
 
@@ -816,6 +823,10 @@ namespace Driftsys.Dashscene
             {
                 _commandCount += CommandsInBatch(b);
             }
+
+            // The two counts agree again, so a later short frame is a new
+            // event rather than the same one.
+            _reportedShortFrame = false;
         }
 
         private unsafe JobHandle OnPerformCulling(
@@ -856,19 +867,138 @@ namespace Driftsys.Dashscene
             // documents for a callback that returns a handle, and this one
             // returns `default` — the work is done here, on the thread issue
             // #1267 measured as Unity's main one.
-            drawCommands->drawCommandCount = commandCount;
+            // **Allocated here, and every LENGTH stated after the emission
+            // loop.** The four counts Unity reads describe what was written
+            // rather than what was reserved, so a frame that stops early cannot
+            // describe commands or floats it never produced. Setting them here
+            // as well would be a dead store, and a reader would have to work
+            // out which of the two assignments reaches Unity.
             drawCommands->drawCommands = Malloc<BatchDrawCommand>(commandCount);
-            drawCommands->drawRangeCount = 1;
             drawCommands->drawRanges = Malloc<BatchDrawRange>(1);
-            drawCommands->visibleInstanceCount = InstanceCount;
             drawCommands->visibleInstances = Malloc<int>(InstanceCount);
-            drawCommands->instanceSortingPositions = null;
-            drawCommands->instanceSortingPositionFloatCount = 0;
+            // **The paint order, stated rather than assumed — issue #1389.**
+            // `BatchRendererGroup` groups draw commands by material before it
+            // draws them, which is ordinary renderer behaviour and is not
+            // logged. This painter emits its instances in painter's-algorithm
+            // order, and the two SHADERS a text document draws through —
+            // `UnlitOverlay`, the class material, and `Text`, one material per
+            // glyph atlas — declare `ZWrite Off` and `ZTest Always`, so on that
+            // path sequence is the only thing that decides what covers what.
+            // (`Text` is not a `MaterialClass`; the enum's other two values,
+            // `LitOpaque` and `LitCutout`, declare `ZWrite On` and
+            // `ZTest LEqual`. The keys below are set whichever class the
+            // painter was built with, and were measured on `UnlitOverlay`
+            // alone.) Emission order
+            // alone does not survive the grouping: the document's backdrop is
+            // the first row the packer writes and sits on the class material,
+            // so it joined that material's group and was drawn over the glyphs.
+            //
+            // The keys below are what Unity's own producer uses for the same
+            // problem: SRP core 17.3.0 flags every transparent material's
+            // command with `HasSortingPosition`
+            // (`Runtime/GPUDriven/InstanceCullingBatcherBurst.cs`) and writes
+            // one `float3` per flagged command at float offset
+            // `3 * commandIndex` (`Runtime/GPUDriven/InstanceCuller.cs`).
+            //
+            // **Setting the flag is what makes glyphs reach the screen; the key
+            // values are NOT measured to order the picture.** Do not read a
+            // legible frame as evidence that this painter has an order — the
+            // emission order is still load-bearing.
+            // `docs/decisions/brg-draw-command-order-is-not-guaranteed.md`
+            // holds the constraint and
+            // `docs/technotes/batch-renderer-group.md` §5b the measurements,
+            // including the two explanations that were tested and ruled out.
+            // The evidence lives there rather than here, so that settling it
+            // edits one place.
+            drawCommands->instanceSortingPositions = Malloc<float>(3 * commandCount);
+
+            // **One base point for every command, and only the index varies.**
+            // Using each run's own anchor would turn this back into depth
+            // sorting of coplanar geometry — camera-angle dependent, with
+            // near-ties. These are an order encoding, not geometry.
+            var sortBase = DocumentToWorld.MultiplyPoint3x4(Vector3.zero);
+            // **The view's position from `localToWorldMatrix`, not from
+            // `lodParameters`.** This callback runs for every culling view, and
+            // `LODParameters` is meaningful only for a camera one — a light,
+            // picking or selection-outline pass can hand over a default, whose
+            // `cameraPosition` is the world origin. The view matrix's fourth
+            // column carries the position on every view type, and for a camera
+            // view it is the same point.
+            var viewPosition = (Vector3)cullingContext.localToWorldMatrix.GetColumn(3);
+            var toView = viewPosition - sortBase;
+            var distance = toView.magnitude;
+
+            // A viewer at the sheet leaves no direction to encode along. The
+            // document's own -z is where the unit quad faces, so it is the axis
+            // a viewer must be on for the sheet to be visible at all.
+            //
+            // **Neither branch uses `Vector3.normalized`, and that is the
+            // point.** Unity's `Normalize` returns the ZERO vector rather than
+            // throwing when the magnitude is at or below its own `kEpsilon` of
+            // 1e-5 — so a guard admitting anything shorter than that does not
+            // guard: a host flattening the sheet with a z-scale of 5e-6, which
+            // is exactly the strictly-2D case this fallback was written for,
+            // passes a `sqrMagnitude > 1e-12f` test and still normalizes to
+            // zero. Every key then lands on one point and the material
+            // grouping this exists to escape returns, with no diagnostic.
+            // Dividing by a magnitude this code has already tested against a
+            // threshold of its own choosing has no hidden epsilon in it.
+            //
+            // **`back` is a deterministic default, and the rank does not turn
+            // on it.** The keys run backwards from the sheet, so a viewer at
+            // the base point is `(commandCount - 1 - c) * step` from key `c` —
+            // falling in `c`, command 0 farthest — whichever unit direction is
+            // chosen, and `back` and `forward` give identical distances there.
+            var sortDir = Vector3.back;
+            if (distance > 1e-4f)
+            {
+                sortDir = toView / distance;
+            }
+            else
+            {
+                var facing = DocumentToWorld.MultiplyVector(new Vector3(0.0f, 0.0f, -1.0f));
+                var facingLength = facing.magnitude;
+                if (facingLength > 1e-4f)
+                {
+                    sortDir = facing / facingLength;
+                }
+            }
+
+            // **The step is bounded below, and the fold that would have needed
+            // an upper bound is ruled out by construction instead.**
+            //
+            // Float32 carries about 1.2e-7 of RELATIVE precision, and what is
+            // stored is a world coordinate around `sortBase` — so a document
+            // placed ten thousand units from the world origin has an ULP of
+            // about 1.2e-3 there, and a step sized only from a one-unit viewing
+            // distance would round every key onto the same float. The magnitude
+            // term and the floor are what keep the keys distinct.
+            //
+            // **There is no upper bound, because the keys never approach the
+            // camera.** They are laid out BEHIND the sheet, running back toward
+            // it: command `c` sits at `(commandCount - 1 - c)` steps on the far
+            // side, so its distance from the camera is
+            // `distance + (commandCount - 1 - c) * step` — strictly falling in
+            // `c`, at any span, with command 0 farthest. An earlier version
+            // walked them toward the camera instead, where distance is
+            // `|distance - c * step|` and the rank folds back once the span
+            // passes the viewing distance. Capping the span to keep that from
+            // happening put the cap in conflict with the floor above — the cap
+            // is smaller exactly when a near camera looks at a document far
+            // from the world origin — and taking the smaller of the two rounded
+            // every key onto one float, which is issue #1389 returning with no
+            // diagnostic. Laying the keys out behind the sheet removes the
+            // conflict rather than choosing a side of it: the rank is the same
+            // one, and no span can reach the camera.
+            var sortStep = Math.Max(Math.Max(distance, sortBase.magnitude), 1.0f) * 1e-5f;
 
             drawCommands->drawRanges[0] = new BatchDrawRange
             {
                 drawCommandsBegin = 0,
-                drawCommandsCount = (uint)commandCount,
+                // `drawCommandsCount` is stated after the emission loop, with
+                // the other four lengths, from what was actually written. Set
+                // here it would be a dead store the reconciliation always
+                // overwrites — and the initialiser zeroes it in any case.
                 filterSettings = new BatchFilterSettings
                 {
                     renderingLayerMask = 0xffffffff,
@@ -877,6 +1007,15 @@ namespace Driftsys.Dashscene
                     shadowCastingMode = ShadowCastingMode.Off,
                     receiveShadows = false,
                     staticShadowCaster = false,
+                    // **False, though every command in this range now carries
+                    // `HasSortingPosition`** — which is the property Unity
+                    // documents this field as asserting, so the range
+                    // under-declares itself on purpose. Setting it true was
+                    // measured and changes no pixel
+                    // (`docs/technotes/batch-renderer-group.md` §5c), and false
+                    // is what Unity's own producer passes. It is left false so
+                    // that nothing here claims an ordering guarantee the
+                    // measurements do not support.
                     allDepthSorted = false,
                 },
             };
@@ -887,15 +1026,33 @@ namespace Driftsys.Dashscene
             {
                 var first = b * _instancesPerBatch;
                 var limit = first + InstancesInBatch(b);
-                for (var at = first; at < limit;)
+                // **Bounded by the allocated command count as well as by the
+                // batch.** `commandCount` is `Draw`'s cached answer and the
+                // loop's own bound comes from `InstanceCount`; the two agree on
+                // every frame that completes `Draw`, but a frame that throws
+                // between the two — `UploadHeap`, `UploadInstances` or
+                // `BindHeap` — leaves a NEW instance count beside the PREVIOUS
+                // command count, and this callback still runs. Without this
+                // bound that frame writes past both `drawCommands` and
+                // `instanceSortingPositions`, which is heap corruption in
+                // unsafe code rather than a wrong picture. What is emitted is
+                // reconciled after the loop.
+                for (var at = first; at < limit && command < commandCount;)
                 {
                     var end = RunEnd(at, limit);
                     var run = end - at;
 
                     // Every instance's index is relative to its BATCH, not to
-                    // the buffer: the metadata offsets are window-relative, so
-                    // instance 0 of every batch is the first row of that
-                    // window's own property arrays.
+                    // the buffer, because instance 0 of every batch is the
+                    // first row of that batch's own property arrays.
+                    //
+                    // **On the ConstantBuffer rung that is because the metadata
+                    // offsets are window-relative; on RawBuffer it is because
+                    // `AddBatches` folds the batch's byte offset INTO those
+                    // offsets** (issue #1389), which is the same destination
+                    // reached two ways. An earlier version of this comment gave
+                    // only the first reason, which stopped being true on the
+                    // rung every measured adapter selects.
                     for (var i = 0; i < run; i++)
                     {
                         drawCommands->visibleInstances[visible + i] = at - first + i;
@@ -910,14 +1067,63 @@ namespace Driftsys.Dashscene
                         meshID = _meshId,
                         submeshIndex = 0,
                         splitVisibilityMask = 0xff,
-                        flags = BatchDrawCommandFlags.None,
-                        sortingPosition = 0,
+                        // Command 0 is farthest and each later command a step
+                        // nearer, all of them behind the sheet. **Which end of
+                        // that the renderer draws first is NOT established** —
+                        // see the measurements above the allocation.
+                        flags = BatchDrawCommandFlags.HasSortingPosition,
+                        sortingPosition = 3 * command,
                     };
+
+                    var sortAt = sortBase - sortDir * ((commandCount - 1 - command) * sortStep);
+                    drawCommands->instanceSortingPositions[3 * command + 0] = sortAt.x;
+                    drawCommands->instanceSortingPositions[3 * command + 1] = sortAt.y;
+                    drawCommands->instanceSortingPositions[3 * command + 2] = sortAt.z;
 
                     visible += run;
                     command++;
                     at = end;
                 }
+            }
+
+            // **Reported as emitted, not as counted.** These are the lengths
+            // Unity reads, and on a frame where the cached count and the
+            // instance count disagree the loop above stops early — so the
+            // arrays are described by what was written rather than by what was
+            // allocated. On every ordinary frame the two are equal and this
+            // changes nothing.
+            //
+            // `drawRangeCount` is among them: a range describing zero commands
+            // is the shape the rest of this reconciliation exists to avoid
+            // handing over.
+            drawCommands->drawCommandCount = command;
+            drawCommands->visibleInstanceCount = visible;
+            drawCommands->instanceSortingPositionFloatCount = 3 * command;
+            drawCommands->drawRanges[0].drawCommandsCount = (uint)command;
+            drawCommands->drawRangeCount = command > 0 ? 1 : 0;
+
+            // **A short frame is a named diagnostic, never a silent drop** —
+            // P4's rule, and this is the one path that can produce one. It
+            // means `Draw` threw between settling `InstanceCount` and settling
+            // `_commandCount`, so the picture is this frame's instances cut to
+            // the previous frame's command count. Latched, because this
+            // callback runs per camera per frame and the condition persists
+            // until a `Draw` completes.
+            // **The test is the instances left behind, not the command
+            // shortfall.** `command < commandCount` is wrong in both
+            // directions: it is false when the cached count is ZERO and this
+            // frame's instances are all dropped — the total loss, reported by
+            // nothing — and true whenever a smaller document follows a larger
+            // one, where the loop ran to its own end and cut nothing.
+            if (visible < InstanceCount && !_reportedShortFrame)
+            {
+                _reportedShortFrame = true;
+                Debug.LogWarning(
+                    $"[dashscene] the painter emitted {visible} of {InstanceCount} instance(s) in "
+                    + $"{command} draw command(s), against {commandCount} counted, so this frame "
+                    + "is cut short. Draw did not complete between settling the instance count "
+                    + "and settling the command count; the picture is incomplete until a Draw "
+                    + "completes.");
             }
 
             return default;
@@ -953,8 +1159,10 @@ namespace Driftsys.Dashscene
         /// **A draw command names one material, so a run that changes material
         /// ends here.** Instances are emitted in the lean painter's order and
         /// the runs are contiguous, so splitting on a change preserves that
-        /// order exactly — which is what decides the picture for a class that
-        /// writes no depth and tests none.
+        /// order exactly **in the command list**. That is not the same as
+        /// preserving it in the picture: `BatchRendererGroup` groups the
+        /// commands by material afterwards, which is issue #1389 and what
+        /// `OnPerformCulling`'s keys exist to escape.
         ///
         /// Bounded by R-E20's 256 as well, for the reason
         /// [`CommandsInBatch`] gives.
@@ -1296,13 +1504,35 @@ namespace Driftsys.Dashscene
             {
                 for (var b = 0; b < batches; b++)
                 {
-                    // Window-relative offsets. The shared transforms carry NO
-                    // per-instance bit, so every instance reads the same one —
-                    // that is the whole reason a UI document costs eighty bytes
-                    // an instance rather than a hundred and seventy-six.
-                    metadata[0] = Shared("unity_ObjectToWorld", 16);
-                    metadata[1] = Shared("unity_WorldToObject", 16 + 48);
-                    var props = HeadBytes;
+                    // **Which rung carries the batch's byte offset — issue
+                    // #1389.** On `ConstantBuffer` the window carries it and
+                    // the metadata stays window-relative. On `RawBuffer` there
+                    // is no window: Unity requires BOTH window parameters to be
+                    // zero and rejects the batch otherwise — with a log line
+                    // rather than an exception — so the offset is folded into
+                    // the metadata instead. Passing it as a window offset on
+                    // this rung refused every batch after the first and left
+                    // `_batches[b]` at its default.
+                    //
+                    // **Unreachable through the shipped path today**, because
+                    // `InstancesPerBatch` doubles until one batch covers the
+                    // whole document on this rung, so `b` is always zero and
+                    // the offset is always zero. It was exercised by capping
+                    // that capacity to 64 so eight batches were allocated —
+                    // macOS/Metal, 2026-08-31: before this change Unity refused
+                    // seven of the eight and the frame came back empty; after
+                    // it, none were refused and the frame matched the
+                    // single-batch one. That cap is not a shipped path, so no
+                    // test claims this.
+                    //
+                    // The shared transforms carry NO per-instance bit, so every
+                    // instance reads the same one — that is the whole reason a
+                    // UI document costs eighty bytes an instance rather than a
+                    // hundred and seventy-six.
+                    var window = Rung == BrgRung.ConstantBuffer ? 0 : b * _batchStrideBytes;
+                    metadata[0] = Shared("unity_ObjectToWorld", window + 16);
+                    metadata[1] = Shared("unity_WorldToObject", window + 16 + 48);
+                    var props = window + HeadBytes;
                     var stride = _instancesPerBatch * 16;
                     metadata[2] = PerInstance(PaintProperties.Quad, props);
                     metadata[3] = PerInstance(PaintProperties.Corners, props + stride);
@@ -1313,7 +1543,7 @@ namespace Driftsys.Dashscene
                     _batches[b] = _brg.AddBatch(
                         metadata,
                         _instanceBuffer.bufferHandle,
-                        (uint)(b * _batchStrideBytes),
+                        Rung == BrgRung.ConstantBuffer ? (uint)(b * _batchStrideBytes) : 0u,
                         Rung == BrgRung.ConstantBuffer ? (uint)_batchStrideBytes : 0u);
                 }
             }

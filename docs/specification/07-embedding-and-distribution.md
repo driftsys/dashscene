@@ -7,7 +7,7 @@
             the spike's working memory, archived by the pull request that
             landed this file
 
-`R-E1`-`R-E21` are what an engine host and its package must satisfy for a
+`R-E1`-`R-E22` are what an engine host and its package must satisfy for a
 dashscene document to draw inside a customer's project. They are stated so that
 a reader can pass or fail a proposed package **without asking the author**,
 which is what issue #1125 was opened to produce.
@@ -374,6 +374,36 @@ declares `DOTSVisibleData
 unity_DOTSVisibleInstances[256]` against
 `kBRGVisibilityUBOShaderArraySize`, so it is a property of the shader rather
 than of the adapter.
+
+**R-E22** — every material the painter registers to draw a document shall
+produce at least one pixel of a player-build frame each of whose R, G and B
+channels lies within 0.016 of that material's own expected output for that
+pixel, and at least one channel of which differs from the frame's clear colour
+by more than 0.016. **Both comparisons are in the encoding the frame is read
+back in** — `unity/render-gate` renders to `ARGB32` and reads it with
+`Texture2D.ReadPixels`, which under a linear-colour-space project returns
+sRGB-encoded bytes, so a check that converted to linear first would disagree
+with the gate it is written for. The expected output is the colour the
+document's own tables give that node, which is what `DashsceneRenderGate`
+already reads for its per-instance assertion. _Check:_ draw a document whose
+text names at least two glyph atlases in a player build, and assert one probed
+pixel per registered material, each named in the check's output;
+`unity/render-gate` is where that check belongs. **Not met today.**
+`just
+unity-render` counts ink at sampled node centres and attributes none of it
+to a material: `unity/render-gate/DashsceneRenderGate.cs` and
+`RenderGateBuild.cs` contain neither the string `atlas` nor the string `glyph`,
+so a painter that draws every surface and no glyph passes the gate — which is
+precisely what issue #1389 found it doing on every platform. Meeting this needs
+a fixture that `goldens/dsb/` does not hold: the `v07-text-*` files are byte
+records pinned by `crates/dashc/tests/text_lowering.rs`, not renderable
+documents with atlases.
+
+**R-E22 is not an ordering requirement**, and deliberately so.
+`docs/decisions/brg-draw-command-order-is-not-guaranteed.md` records that the
+order this painter draws in is not established; a requirement that asserted an
+order would be unverifiable until that is settled. This one asserts only that
+each registered material reaches the frame.
 
 ## The ABI a host sits on
 

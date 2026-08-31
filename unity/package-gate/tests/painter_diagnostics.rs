@@ -26,24 +26,11 @@
 //! rather than as history, because the bound is the only thing keeping them
 //! shut.
 
-use package_gate::cs_scan::{
-    blank_comments_and_strings, first_if_condition, member_body, switch_arm,
-};
-use package_gate::package_cs_files;
+use package_gate::cs_scan::{first_if_condition, member_body, switch_arm};
+use package_gate::painter_source as painter;
 
-const PAINTER: &str = "Runtime/Engine/BrgPainter.cs";
+use package_gate::PAINTER_PATH as PAINTER;
 const READ: &str = "GraphicsSettings.useScriptableRenderPipelineBatching";
-
-/// The painter's source, comments and string bodies blanked.
-fn painter() -> String {
-    let files = package_cs_files();
-    let source = &files
-        .iter()
-        .find(|(path, _)| path.ends_with(PAINTER))
-        .unwrap_or_else(|| panic!("the package no longer ships {PAINTER}"))
-        .1;
-    blank_comments_and_strings(source)
-}
 
 /// R-E5 is read once, inside `ReportBatcherOnce`, behind a null-pipeline guard,
 /// and reported there.
