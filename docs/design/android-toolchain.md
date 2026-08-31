@@ -274,6 +274,12 @@ It is one mid-range 2020 handset and not the target fleet. Every number here is
 a number about **this** device: the shape of the answers is what generalises,
 not the values.
 
+**One section below is a different device**, and it is marked as one: "The same
+sweep on target hardware (2026-08-18)" is an SA8255P with an Adreno 663, which
+is in the launch fleet's family. It is placed inside this section rather than
+beside it because it re-runs one of these measurements and is only readable
+against it. Everything else here is the Pixel 5.
+
 ### D3a — the Vulkan measurement (#885)
 
 `just android-probe`, which is the painter's own `request_device` replicated:
@@ -574,9 +580,125 @@ that shade through the SDF fragment path with solid paint and no texture
 sampling, so that rate prices neither the glyph atlas path nor a gradient. The
 three layer rows are not among them: each adds one composite pass per layer that
 binds the layer texture and samples it, through a different pipeline — which is
-why the per-layer figure is quoted separately and never at the SDF rate. It is
-one adapter. And because it is offscreen, it cannot be added to the windowed
-figures above to produce a frame total — the two share no common frame.
+why the per-layer figure is quoted separately and never at the SDF rate. **It
+was one adapter until 2026-08-18**, and the section below is the second — the
+model reproduces there and only the constant moves. And because it is offscreen,
+it cannot be added to the windowed figures above to produce a frame total — the
+two share no common frame.
+
+### The same sweep on target hardware (2026-08-18)
+
+    status  taken 2026-08-18 with `just android-gpu-time`, the recipe the
+            section above describes, on **target hardware rather than a
+            handset**. It is the second adapter this project has measured
+            and the first that is in the launch fleet's family.
+
+**The device.** Qualcomm **SA8255P**, **Adreno 663**, Android 15, reached as an
+automotive IVI feature virtual machine (`rcdc-ivi-180-gas`, LG). The SA8255P is
+the HiFi default target of `docs/decisions/native-astc-codec-table.md`, so
+unlike the Pixel 5 this is a device the codec table already names.
+
+Offscreen at 1280x720, release, the same probe and the same scene as the table
+above — one full-screen background quad, then 300x300 content rects on top of
+it:
+
+    rects  layers    gpu min ms   gpu p50 ms   gpu max ms
+        0       0        0.421        0.422        0.422
+        8       0        0.745        0.746        0.748
+       32       0        1.699        1.700        1.702
+       32       1        1.892        1.894        1.897
+       32       4        2.472        2.475        2.481
+       32       8        3.274        3.280        3.299
+
+**The fill-rate model reproduces, and only the constant changes.** Against the
+same shaded areas the section above derives — 0.9216 Mpx for the background
+quad, and 0.09 Mpx per content rect:
+
+    row                     shaded area    gpu min      ms per Mpx
+    one full-screen quad     0.9216 Mpx    0.421 ms          0.457
+    plus 8 rects             1.6416 Mpx    0.745 ms          0.454
+    plus 32 rects            3.8016 Mpx    1.699 ms          0.447
+
+**0.447 to 0.457 ms per megapixel over the same four-fold range of shaded
+area**, against the Adreno 620's 1.87 to 1.96 — a **4.18 to 4.29 times** faster
+rate, uniform across the sweep. The per-layer figure has the same structure:
+0.193, 0.193 and 0.197 ms for one, four and eight layers, flat with the layer
+count exactly as the 620's 0.88 ms was.
+
+That is the finding, and it is about the shape rather than about either number.
+The 620 sweep could establish that a frame pays for fragments shaded rather than
+instances packed; it could not establish that the relationship holds anywhere
+else. It does. **A per-adapter constant is therefore enough to predict this
+probe's cost on a new device**, which is what makes the rate worth carrying
+between targets at all.
+
+**This device is quiet, and the Pixel 5 is not.** Its minimum, median and
+maximum agree to within 0.001 ms on the first row (0.421, 0.422, 0.422) and
+within 0.025 ms on the last. The section above says "only the minimum
+reproduces" and uses the minimum for every reading in consequence; that is a
+property of the Pixel 5 rather than of the instrument, and this device shows the
+distribution the instrument produces when the machine is otherwise idle. The
+readings below still use the minimum, so that the two devices are compared on
+one statistic.
+
+**Perfetto is closed here too.** `adb shell perfetto --query` registers no
+`gpu.counters` producer on this device either — only `android.gpu.memory`, from
+`gpuservice`. So the argument for the `gpu-timing` feature holds on target
+hardware and not only on a retail handset, which is the stronger form of it.
+`linux.perf` **is** available, which is the route for CPU attribution when that
+is measured.
+
+**What this does not settle, and the first item is the important one.**
+
+- **CPU is unmeasured on this device.** Every CPU figure this project holds is
+  from the Pixel 5 — 5.8 ms of render thread per drawn frame, about 35 % of a
+  core projected to 60 Hz. Nothing here replaces it, and the CPU half of the
+  frame is where R-T4's bound lives. The measurement kit's first version
+  collected no CPU samples on this device and its frame-capture path failed on a
+  wrong activity name.
+- **No raw artifact is committed**, which is issue #1254 — the same gap the
+  620's three sweeps have, and here without even the three-sweep agreement that
+  record leans on. This table is a single sweep, hand-transcribed. It is
+  recorded on that footing, and the next device contact should capture
+  `gpu-time.txt` into the evidence bundle, which `measure/android/run.sh`
+  already writes with no code change.
+- **The rate prices the solid-fill SDF path only**, exactly as the 620's does:
+  no glyph atlas sampling and no gradient. Both caveats in the section above
+  transfer unchanged.
+- **It is two adapters, not a fleet.** Renesas R-Car with PowerVR/IMG cores is
+  the third architecture the codec table names and no measurement touches it.
+
+### What the two adapters say about the budget
+
+Recorded because it is the question the numbers were taken to answer, and
+because reading it off one device gave the wrong answer.
+
+Against a 60 Hz frame at 1280x720, using the minima above:
+
+    scene                    Adreno 663          Adreno 620
+    32 rects, no layers      1.699 ms  10.2 %    7.105 ms  42.6 %
+    32 rects, 8 layers       3.274 ms  19.6 %   14.172 ms  85.0 %
+
+**The same scene is a tenth of a frame on the target and close to half a frame
+on the handset.** A GPU budget of 30 % of a 60 Hz frame buys about 11.2
+megapixels of SDF fill on the Adreno 663 and about 2.7 on the Adreno 620.
+
+The reading to take from this is not that the budget is comfortable. It is that
+**a frame-cost conclusion drawn from the Pixel 5 alone is a conclusion about a
+2020 mid-range handset**, and this project drew one: the 620 numbers were read
+as evidence that the fill-rate design was under pressure. On the device the
+codec table actually names, the same scene has four times the headroom. The
+Pixel 5 remains useful as the pessimistic case and as the device that is always
+attached; it is not the target, and this record's own "the shape of the answers
+is what generalises, not the values" is the rule that was available and not
+applied.
+
+**No threshold moves on the strength of this.** No frame budget is pinned, no
+display geometry is specified (#549), and
+`dashscene_validator::RENDER_TARGET_BUDGET_PLACEHOLDER` stays at 8 and stays a
+warning for the reason Q-6 gives below — a count derived from an invented budget
+is not better than no count. What changes is which device a cost claim is
+allowed to cite.
 
 ### Q-6 — the render-target budget (#1128)
 
