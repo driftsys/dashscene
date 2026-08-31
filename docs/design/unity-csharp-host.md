@@ -1186,25 +1186,29 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   only the changed rects needs the previous commit's tables held for comparison,
   because a rect's instance count can change between commits and a dirty rect is
   therefore not a fixed byte range.
-- **Two code paths have never been exercised by any gate or any device**, and
-  they are worth naming as a class rather than one at a time: the
-  `ConstantBuffer` rung (**two** adapters now report `RawBuffer` — Metal on an
-  Apple M3, and Vulkan on an Adreno 620 measured 2026-08-28 — so the
-  `ConstantBuffer` **branch** of `InstancesPerBatch` and `BatchStrideBytes` has
-  still never run. Both methods run on every capacity change and take an early
-  return when the rung is not `ConstantBuffer`; it is the windowed arithmetic
-  behind that return which is unexercised. A second agreeing adapter lowers the
-  chance of reaching it rather than raising it) and the opaque material's alpha
-  handling. A defect in either looks like a plausible picture rather than a
-  failure — the window-size clamp in `BatchStrideBytes` was one, found by
-  reading rather than by running. **The cutout material's `clip()` threshold was
-  the third and is now measured**: `just unity-render` draws that class at 0.5
-  and at 2 — the second above any coverage a fragment can have — and got 13 of
-  13 sampled node centres inked at the first and none at the second, with 601144
-  of 786432 pixels differing. A `_DsCutoff` that did not reach the fragment
-  stage would have drawn the same picture twice, whatever the stage read
-  instead, so **it resolves**, on Metal, and issue #1307 is answered. GLES 3.2
-  and Vulkan are untested.
+- **Five code paths have never been exercised by any gate or any device**, and
+  they are worth naming as a class rather than one at a time. Three of them are
+  `AddBatches`'s rung split, added by issue #1389: the `window` local and both
+  `AddBatch` window arguments have a `ConstantBuffer` arm no measured adapter
+  reaches, and a `RawBuffer` arm that the same issue records as unreachable
+  through the shipped API, because `InstancesPerBatch` doubles until `b` is
+  always zero. The other two are the `ConstantBuffer` rung (**two** adapters now
+  report `RawBuffer` — Metal on an Apple M3, and Vulkan on an Adreno 620
+  measured 2026-08-28 — so the `ConstantBuffer` **branch** of
+  `InstancesPerBatch` and `BatchStrideBytes` has still never run. Both methods
+  run on every capacity change and take an early return when the rung is not
+  `ConstantBuffer`; it is the windowed arithmetic behind that return which is
+  unexercised. A second agreeing adapter lowers the chance of reaching it rather
+  than raising it) and the opaque material's alpha handling. A defect in either
+  looks like a plausible picture rather than a failure — the window-size clamp
+  in `BatchStrideBytes` was one, found by reading rather than by running. **The
+  cutout material's `clip()` threshold was the third and is now measured**:
+  `just unity-render` draws that class at 0.5 and at 2 — the second above any
+  coverage a fragment can have — and got 13 of 13 sampled node centres inked at
+  the first and none at the second, with 601144 of 786432 pixels differing. A
+  `_DsCutoff` that did not reach the fragment stage would have drawn the same
+  picture twice, whatever the stage read instead, so **it resolves**, on Metal,
+  and issue #1307 is answered. GLES 3.2 and Vulkan are untested.
 - **The painter draws, and what checks it is `unity/render-gate`.** Measured on
   `6000.3.22f1`, macOS/Metal, Apple M3, 2026-08-23, in a player built from this
   package: `goldens/dsb/v03-paint.dsb` packs to 16 instances on rung
@@ -1256,14 +1260,17 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   Issue #1314 carries all three. Two narrower gaps sit beside it: nothing holds
   the harness's own pinned probe counts against the table (issue #1323), and
   layer 2's properties are not ported alongside its table (issue #1324).
-- **No glyph has been drawn, and the half that is checked is the half with no
-  Unity type in it.** Story #1123 landed the seam: the atlas crosses, the packer
-  turns runs into instances, and `unity/ffi-check` executes the geometry, the
-  run heap and the atlas lookup on any pull request whose diff is not
-  documentation-only. The material, the texture and the draw commands are
-  `Runtime/Engine/`, which only a Unity editor compiles and only a device runs —
-  so the sampling itself, the linear texture and the per-atlas draw-command
-  split rest on reading rather than on running.
+- **A glyph has now been drawn, once, by hand — and the half that any GATE
+  checks is still the half with no Unity type in it.** Issue #1389 drew glyphs
+  from three atlases in a macOS/Metal player build on 2026-08-31, which is a
+  measurement rather than a gate; R-E22 is the requirement that would make it
+  one. Story #1123 landed the seam: the atlas crosses, the packer turns runs
+  into instances, and `unity/ffi-check` executes the geometry, the run heap and
+  the atlas lookup on any pull request whose diff is not documentation-only. The
+  material, the texture and the draw commands are `Runtime/Engine/`, which only
+  a Unity editor compiles and only a device runs — so the sampling itself, the
+  linear texture and the per-atlas draw-command split rest on reading rather
+  than on running.
 - **The `px_range` formula has two copies and nothing compares them.**
   `dashscene-gpu`'s `gpu_glyph_run` computes
   `distance_range_px * size /

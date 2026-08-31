@@ -226,6 +226,29 @@ pub fn switch_arm<'a>(scanned: &'a str, label: &str) -> &'a str {
     &rest[..next]
 }
 
+/// `scanned` with every run of whitespace collapsed to one space.
+///
+/// **So an assertion can name a whole expression without naming its line
+/// breaks.** A multi-line initialiser is one expression to a reader and several
+/// to `contains`, and pinning it line by line pins the formatter as much as the
+/// code. Collapsing first lets a test quote the expression as it reads.
+pub fn squeeze(scanned: &str) -> String {
+    let mut out = String::with_capacity(scanned.len());
+    let mut in_space = false;
+    for c in scanned.chars() {
+        if c.is_whitespace() {
+            in_space = true;
+            continue;
+        }
+        if in_space && !out.is_empty() {
+            out.push(' ');
+        }
+        in_space = false;
+        out.push(c);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,5 +305,11 @@ mod tests {
         let arm = switch_arm(&scanned, "case X:");
         assert!(arm.contains("doX();"));
         assert!(!arm.contains("Warn();"), "the next arm is outside");
+    }
+
+    #[test]
+    fn squeeze_makes_a_multi_line_expression_one_line() {
+        let src = "var x = A(\n    b,\n    c);\n";
+        assert_eq!(squeeze(src), "var x = A( b, c);");
     }
 }

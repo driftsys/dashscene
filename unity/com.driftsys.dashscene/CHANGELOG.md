@@ -6,6 +6,33 @@ the Cargo workspace rather than moving on its own.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The painter draws its text.** `BrgPainter` drew every surface and no glyph,
+  in every player build on every platform, through ten green configurations —
+  `BatchRendererGroup` groups draw commands by material before drawing them, so
+  the painter's emission order did not survive and the document's backdrop was
+  drawn over the glyphs. The painter now sets
+  `BatchDrawCommandFlags.HasSortingPosition` on every command and writes one
+  sorting key per command, which is what makes the glyphs reach the screen.
+  **The order it draws them in is NOT established**: measurement rules out the
+  keys imposing it, and
+  `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` records that as a
+  constraint rather than claiming a fix. Do not read a legible frame from this
+  painter as evidence that it has an order. Issue #1389.
+- **Every batch after the first is registered on the RawBuffer rung.**
+  `AddBatches` passed a non-zero window offset there, where Unity requires both
+  window parameters to be zero and refuses the batch otherwise — through a log
+  line rather than an exception, so the loss was silent. The batch's byte offset
+  is folded into the metadata offsets instead. Unreachable through this
+  package's own API today, because the rung's per-batch capacity doubles until
+  one batch covers the whole document. Issue #1389.
+- **A frame the painter cuts short says so.** `OnPerformCulling` now reports,
+  once, when it emitted fewer instances than the frame packed — which happens
+  when `Draw` throws part-way — instead of handing over a partial picture in
+  silence. It also reports, once, when a document is placed far enough from the
+  world origin that its sorting keys would span past the camera.
+
 ### Added
 
 - **The showcase reports what a frame cost, and states what the figure is.**

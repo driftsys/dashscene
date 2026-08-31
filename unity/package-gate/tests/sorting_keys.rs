@@ -37,7 +37,7 @@
 //! they are, never that Unity honours them. R-E22 is the requirement that would
 //! replace it with pixels.
 
-use package_gate::cs_scan::{blank_comments_and_strings, member_body};
+use package_gate::cs_scan::{blank_comments_and_strings, member_body, squeeze};
 use package_gate::package_cs_files;
 
 const PAINTER: &str = "Runtime/Engine/BrgPainter.cs";
@@ -109,6 +109,20 @@ fn every_draw_command_is_initialised_with_a_sorting_position_flag() {
          this assertion."
     );
 
+    // **The range stays `allDepthSorted = false`, deliberately.** Every
+    // command in it now carries the flag, which is the property Unity
+    // documents that field as asserting — so the range under-declares itself
+    // on purpose. Setting it true was measured and changes no pixel; it is
+    // held false so that nothing here states an ordering guarantee the
+    // measurements do not support.
+    assert!(
+        body.contains("allDepthSorted = false,"),
+        "{PAINTER}'s draw range no longer declares `allDepthSorted = false`. \
+         Flipping it claims an ordering guarantee that \
+         docs/decisions/brg-draw-command-order-is-not-guaranteed.md records as \
+         unestablished, and §5c measured that it changes no pixel."
+    );
+
     for defeated in [
         "flags = default",
         "flags = 0",
@@ -126,11 +140,10 @@ fn every_draw_command_is_initialised_with_a_sorting_position_flag() {
 /// The sorting positions are allocated, sized and addressed off ONE count, and
 /// the emitted length is reconciled after the loop.
 ///
-/// **Both assignments to the float count are asserted.** The allocation-time
-/// one describes what was reserved; the one after the loop describes what was
-/// written, and a mutation deleting it hands Unity a length larger than the
-/// keys actually produced on any frame where `Draw` threw between the two
-/// counts.
+/// **The float count is assigned once, after the loop, from what was written.**
+/// `*drawCommands = default` has already zeroed the field, so deleting that
+/// assignment hands Unity a length of zero and the frame draws nothing —
+/// which is why its absence is asserted as well as its presence.
 #[test]
 fn the_sorting_positions_are_sized_and_addressed_off_the_command_count() {
     let source = painter();
@@ -203,14 +216,14 @@ fn all_three_floats_of_each_key_are_written_to_their_own_slot() {
 }
 
 /// Every command's key comes from ONE base point, and the command index is
-/// what varies.
+/// what varies, and nothing reassigns the parts afterwards.
 ///
-/// **The assertion runs through the index, not up to it.** Three mutations
-/// defeated a version that stopped at the `*`, and all three collapse every key
-/// onto one point — which restores the material grouping this exists to escape,
-/// with no diagnostic: dropping the `command` factor, zeroing `sortStep`, and
-/// removing the guard on the degenerate-direction fallback so that
-/// `Vector3.normalized` returns the zero vector.
+/// **The assertion runs through the index, and the assignments are counted.**
+/// Mutations defeated every earlier form: stopping at the `*` let the `command`
+/// factor be dropped; naming a token let a later `sortStep = 0.0f;` or
+/// `sortDir = Vector3.zero;` undo it. All of them collapse every key onto one
+/// point, which restores the material grouping this exists to escape with no
+/// diagnostic.
 #[test]
 fn every_key_is_built_from_the_one_shared_base_point_and_varies_by_index() {
     let source = painter();
@@ -227,34 +240,181 @@ fn every_key_is_built_from_the_one_shared_base_point_and_varies_by_index() {
          is no order at all."
     );
 
-    let built = loop_body.matches("var sortAt =").count();
-    assert_eq!(
-        built, 1,
-        "{PAINTER}'s emission loop builds a sort position {built} time(s), not \
-         once."
+    // **Counted, not merely present.** Each of these is assigned exactly once,
+    // so a second assignment anywhere in the callback cannot quietly undo it.
+    for (name, wanted) in [("sortAt =", 1), ("sortDir =", 3), ("sortStep =", 1)] {
+        let seen = body.matches(name).count();
+        assert_eq!(
+            seen, wanted,
+            "{PAINTER}'s OnPerformCulling assigns `{name}` {seen} time(s), not \
+             {wanted}. A later assignment ties every key, which is the grouping \
+             this file exists to catch — and it is what defeated the version of \
+             this assertion that only looked for the tokens."
+        );
+    }
+}
+
+/// The sort direction is chosen by two guards, and its last resort points the
+/// same way both guarded branches do.
+///
+/// **Each guard is named at its own site.** `distance > 1e-4f` occurs TWICE in
+/// this callback — once here and once in the step's own cap — so an assertion
+/// that searched the whole body for it pinned neither, and widening either one
+/// alone stayed green. `Vector3.normalized` returns the ZERO vector rather than
+/// throwing, so the second guard is what keeps a host that flattens the sheet
+/// with a zero z-scale from tying every key.
+#[test]
+fn the_sort_direction_is_guarded_at_both_sites_and_defaults_backwards() {
+    let source = painter();
+    let body = squeeze(culling_body(&source));
+
+    for fragment in [
+        "var sortDir = Vector3.back;",
+        "if (distance > 1e-4f) { sortDir = toCamera / distance; }",
+        "if (facing.sqrMagnitude > 1e-12f) { sortDir = facing.normalized; }",
+    ] {
+        assert!(
+            body.contains(fragment),
+            "{PAINTER}'s OnPerformCulling no longer contains `{fragment}`. \
+             Dividing by a near-zero magnitude, normalising a zero vector, or \
+             defaulting to `Vector3.forward` — the opposite of what both \
+             computed branches produce — each put every key on one point or \
+             rank them backwards, with no exception and no log line."
+        );
+    }
+
+    assert!(
+        !body.contains("Vector3.forward"),
+        "{PAINTER}'s OnPerformCulling names `Vector3.forward`. Both computed \
+         branches point from the sheet TOWARD the camera, which is `back` under \
+         an identity DocumentToWorld; a `forward` default paints the document \
+         in reverse on the one path that takes neither branch."
+    );
+}
+
+/// The step is bounded at both ends, and the cap is the half this file was
+/// added for.
+///
+/// **The cap had no assertion at all when it landed**, and deleting it outright
+/// stayed green. Without it the keys walk past the camera and the rank folds,
+/// silently reversing the tail of a long document; without the magnitude term
+/// in the floor, a document far from the world origin ties every key on
+/// float32 precision alone.
+#[test]
+fn the_step_is_bounded_below_by_precision_and_above_by_the_viewing_distance() {
+    let source = painter();
+    let body = squeeze(culling_body(&source));
+
+    for fragment in [
+        "var sortStep = Math.Max(Math.Max(distance, sortBase.magnitude), 1.0f) * 1e-5f;",
+        "if (distance > 1e-4f && commandCount * sortStep > distance * 0.25f \
+         && !_reportedKeySpan)",
+    ] {
+        let wanted = squeeze(fragment);
+        assert!(
+            body.contains(&wanted),
+            "{PAINTER}'s OnPerformCulling no longer contains `{wanted}`. The \
+             floor keeps consecutive keys on distinct floats — relative to the \
+             BASE POINT's magnitude, not just the viewing distance — and the cap \
+             is a DETECTOR beside it, not a term in it: taking `Math.Min` of the \
+             two rounds every key onto one float whenever a near camera looks at \
+             a document far from the world origin, which is issue #1389 \
+             returning with no diagnostic."
+        );
+    }
+}
+
+/// Every length Unity reads is reported from what was emitted.
+///
+/// **All five, because pinning one of them left the worst unpinned.** With
+/// `drawCommandCount` reported as the COUNTED value while the arrays hold the
+/// emitted one, Unity reads commands whose `sortingPosition` indexes past the
+/// floats that were written — uninitialised `Malloc` memory read as
+/// coordinates.
+#[test]
+fn every_reported_length_is_the_emitted_one() {
+    let source = painter();
+    let body = squeeze(culling_body(&source));
+
+    for fragment in [
+        "drawCommands->drawCommandCount = command;",
+        "drawCommands->visibleInstanceCount = visible;",
+        "drawCommands->instanceSortingPositionFloatCount = 3 * command;",
+        "drawCommands->drawRanges[0].drawCommandsCount = (uint)command;",
+        "drawCommands->drawRangeCount = command > 0 ? 1 : 0;",
+    ] {
+        assert!(
+            body.contains(fragment),
+            "{PAINTER}'s OnPerformCulling no longer contains `{fragment}`. \
+             Every length Unity reads describes what the emission loop WROTE, \
+             not what was allocated, or a frame that stopped early hands over \
+             commands and floats it never produced."
+        );
+    }
+
+    for counted in [
+        "drawCommandCount = commandCount",
+        "visibleInstanceCount = InstanceCount",
+        "instanceSortingPositionFloatCount = 3 * commandCount",
+        "drawCommandsCount = (uint)commandCount",
+    ] {
+        assert!(
+            !body.contains(counted),
+            "{PAINTER}'s OnPerformCulling reports `{counted}` — a COUNTED \
+             length rather than an emitted one. On a short frame that describes \
+             arrays it never filled."
+        );
+    }
+}
+
+/// The emission loop cannot outrun the arrays, and a frame that stops early
+/// says so.
+///
+/// **Both halves, because the bound alone is a silent drop.** The bound is what
+/// keeps a torn `Draw` from writing past two `TempJob` allocations — heap
+/// corruption in unsafe code — and the diagnostic is P4's rule that no drop is
+/// silent. The latch is asserted on both sides: without the set it warns per
+/// camera per frame, and without the reset in `Draw` it warns at most once for
+/// the life of the process.
+#[test]
+fn a_short_frame_is_bounded_and_named() {
+    let source = painter();
+    let body = squeeze(culling_body(&source));
+
+    assert!(
+        body.contains("for (var at = first; at < limit && command < commandCount;)"),
+        "{PAINTER}'s emission loop is no longer bounded by the allocated \
+         command count. `commandCount` is a cached answer and the loop's other \
+         bound comes from `InstanceCount`; a frame that throws between the two \
+         writes past both `drawCommands` and `instanceSortingPositions`."
     );
 
     assert!(
-        body.contains("* 1e-5f"),
-        "{PAINTER}'s OnPerformCulling no longer scales `sortStep` by 1e-5. A \
-         zero or absent scale ties every key, which is the grouping this exists \
-         to escape."
+        body.contains("if (visible < InstanceCount && !_reportedShortFrame)"),
+        "{PAINTER} no longer reports a short frame on the instances left \
+         behind. `command < commandCount` is the wrong test in both \
+         directions: silent when the cached count is zero and every instance \
+         is dropped, and false-positive whenever a smaller document follows a \
+         larger one. P4: a drop is a named diagnostic, never silent."
     );
+    for part in [
+        "{visible}",
+        "{InstanceCount}",
+        "{commandCount}",
+        "_reportedShortFrame = true;",
+    ] {
+        assert!(
+            body.contains(part),
+            "{PAINTER}'s short-frame warning no longer carries `{part}`. The \
+             message names both counts so a reader can tell how short the frame \
+             was, and the latch keeps it from repeating per camera per frame."
+        );
+    }
 
-    // The degenerate-direction guard. `Vector3.normalized` returns the ZERO
-    // vector rather than throwing, so an unguarded fallback is the same
-    // collapse by another route — and a host flattening the sheet with a zero
-    // z-scale reaches it.
+    let (start, end) = member_body(&source, "public void Draw(");
     assert!(
-        body.contains("distance > 1e-4f"),
-        "{PAINTER}'s OnPerformCulling no longer guards the sort direction \
-         against a camera at the sheet."
-    );
-    assert!(
-        body.contains("sqrMagnitude > 1e-12f"),
-        "{PAINTER}'s OnPerformCulling no longer guards the fallback direction \
-         before normalising it. `Vector3.normalized` returns the zero vector \
-         rather than throwing, so an unguarded normalize puts every key on one \
-         point with no diagnostic."
+        squeeze(&source[start..=end]).contains("_reportedShortFrame = false;"),
+        "{PAINTER}'s Draw no longer clears the short-frame latch, so a second \
+         occurrence would be silent for the life of the process."
     );
 }

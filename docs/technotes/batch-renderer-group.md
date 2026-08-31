@@ -166,11 +166,14 @@ something legible. That much is settled.
   two characters of the clipped line are occluded; under the shrinking ones all
   of them draw. Whichever of the two is the painter's intended order, it is not
   the one the growing offsets produce.
-- **Two key sets that tie the same ten commands disagree about them.** Placing
-  the backdrop alone at one extreme and tying the rest gives 3157; placing it at
-  the other extreme and tying the rest gives 2836, with both panels emptied. A
-  distance sort over equal keys cannot order the equal ones differently
-  depending on where a command that is not among them sits.
+- **Two key sets that tie the same ten commands give different pictures.**
+  Placing the backdrop alone at one extreme and tying the rest gives 3157;
+  placing it at the other extreme and tying the rest gives 2836, with both
+  panels emptied. **This row is weaker than the other two and is kept as such**:
+  the two key sets also move the backdrop's own rank, so the difference is
+  explainable without the tied group having reordered at all. Holding the
+  backdrop's rank fixed and permuting only the tied group would isolate it, and
+  has not been run.
 - **Batch size changes the picture, and it should not.** Capping the batch
   capacity so the same document is split into eight batches rather than one
   moves `white` from 3034 to 2565. A run cannot cross a batch — `RunEnd` is

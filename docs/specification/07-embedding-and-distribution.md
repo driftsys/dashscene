@@ -376,20 +376,24 @@ unity_DOTSVisibleInstances[256]` against
 than of the adapter.
 
 **R-E22** — every material the painter registers to draw a document shall
-produce at least one pixel of a player-build frame whose colour lies within
-0.016 of that material's own expected output and further than 0.016 from the
-frame's clear colour. _Check:_ draw a document whose text names at least two
-glyph atlases in a player build, and assert one probed pixel per registered
-material, each named in the check's output; `unity/render-gate` is where that
-check belongs. **Not met today.** `just
-unity-render` counts ink at sampled node
-centres and attributes none of it to a material:
-`unity/render-gate/DashsceneRenderGate.cs` and `RenderGateBuild.cs` contain
-neither the string `atlas` nor the string `glyph`, so a painter that draws every
-surface and no glyph passes the gate — which is precisely what issue #1389 found
-it doing on every platform. Meeting this needs a fixture that `goldens/dsb/`
-does not hold: the `v07-text-*` files are byte records pinned by
-`crates/dashc/tests/text_lowering.rs`, not renderable documents with atlases.
+produce at least one pixel of a player-build frame each of whose R, G and B
+channels lies within 0.016 of that material's own expected output for that
+pixel, in linear space, and at least one channel of which differs from the
+frame's clear colour by more than 0.016. The expected output is the colour the
+document's own tables give that node, which is what `DashsceneRenderGate`
+already reads for its per-instance assertion. _Check:_ draw a document whose
+text names at least two glyph atlases in a player build, and assert one probed
+pixel per registered material, each named in the check's output;
+`unity/render-gate` is where that check belongs. **Not met today.**
+`just
+unity-render` counts ink at sampled node centres and attributes none of it
+to a material: `unity/render-gate/DashsceneRenderGate.cs` and
+`RenderGateBuild.cs` contain neither the string `atlas` nor the string `glyph`,
+so a painter that draws every surface and no glyph passes the gate — which is
+precisely what issue #1389 found it doing on every platform. Meeting this needs
+a fixture that `goldens/dsb/` does not hold: the `v07-text-*` files are byte
+records pinned by `crates/dashc/tests/text_lowering.rs`, not renderable
+documents with atlases.
 
 **R-E22 is not an ordering requirement**, and deliberately so.
 `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` records that the

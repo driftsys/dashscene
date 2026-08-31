@@ -16,13 +16,17 @@
 
 ## Context
 
-A dashscene document is a flat list drawn back to front. The two classes a text
-document draws with — `UnlitOverlay` and `Text` — declare `ZWrite Off` and
-`ZTest Always`, so on that path there is no depth buffer and no depth test:
-sequence is the only thing that decides what covers what. `MaterialClass`'s
-other two values, `LitOpaque` and `LitCutout`, declare `ZWrite On` and
-`ZTest LEqual`, so this record is about the overlay path — which is the class
-the bulk of a UI takes, and the one every measurement here was made on.
+A dashscene document is a flat list drawn back to front. The two SHADERS a text
+document draws through — `UnlitOverlay`, the class material, and `Text`, one
+material per glyph atlas — declare `ZWrite Off` and `ZTest Always`, so on that
+path there is no depth buffer and no depth test: sequence is the only thing that
+decides what covers what.
+
+**`Text` is not a `MaterialClass`.** That enum has three values —
+`UnlitOverlay`, `LitOpaque` and `LitCutout` (`PaintHeap.cs`) — and the latter
+two declare `ZWrite On` and `ZTest LEqual`. This record is about the overlay
+path, which is the class the bulk of a UI takes and the one every measurement
+here was made on.
 
 `BatchRendererGroup` does not promise to draw commands in the order they were
 emitted, and it groups by material. That is ordinary renderer behaviour and it
@@ -47,8 +51,9 @@ painter's order, and three measurements say it is not — the table and the
 reasoning are in `docs/technotes/batch-renderer-group.md` §5b:
 
 - reversing the keys draws more of the document rather than a reversed picture;
-- two key sets that tie the same ten commands disagree about the order of those
-  tied commands;
+- two key sets that tie the same ten commands produce different pictures, one
+  with both panels emptied — weaker than the other two, because those two sets
+  also move the backdrop's own rank, so they do not isolate the tied group;
 - splitting the same document into eight batches instead of one changes the
   picture, though splitting a contiguous run into two commands drawn in sequence
   paints identical pixels under any mechanism that orders them.
@@ -61,13 +66,14 @@ the frame by a pixel, and neither does enlarging the step by five orders of
 magnitude. Only the RANK of the keys has any effect. §5b carries both.
 
 **D2 — a legible frame is not evidence of a correct order, and no gate may be
-written as though it were.** The three passing configurations differ from each
-other by a few per cent of one near-white count — 3034, 3157 and 2836 — while
-being visibly different pictures, one of which hides two thirds of the
-document's text. A global "is there near-white on screen" count separates the
-defect from a fix, which is what R-E22 asks of it, and does not separate a
-correct order from a wrong one. Any test that pins ORDER needs a fixture where
-every permutation gives a different composite.
+written as though it were.** The four passing rows carry three distinct
+near-white counts — 3034, 3157 and 2836, a spread of 10 % — while being visibly
+different pictures: under the keys this painter ships, two of the three Arabic
+runs and all but the first two characters of the clipped line are occluded, and
+under one of the others both panels are emptied. A global "is there near-white
+on screen" count separates the defect from a fix, which is what R-E22 asks of
+it, and does not separate a correct order from a wrong one. Any test that pins
+ORDER needs a fixture where every permutation gives a different composite.
 
 **D3 — depth writes remain rejected as a way to order the OVERLAY path.** This
 does not say no shipped class writes depth: `LitOpaque` and `LitCutout` both do,

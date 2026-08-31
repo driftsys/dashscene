@@ -16,7 +16,8 @@
 //! test, not against a text scan. `painter_diagnostics.rs` and
 //! `sorting_keys.rs` are the same trade for the same file, and a review
 //! demonstrated the gap this file closes by reverting the repair in two lines
-//! and watching all thirteen suites stay green.
+//! and watching every suite in this crate stay green — thirteen of them at the
+//! time, before this file and its sibling were added.
 //!
 //! **What is asserted is the rung split**, in both arguments and in the
 //! metadata. The dangerous mutation is not re-introducing the old bug — that
@@ -121,4 +122,17 @@ fn the_batch_offset_is_folded_into_the_metadata_offsets() {
              is logged."
         );
     }
+
+    // **Counted, because the pinned initialiser can be undone on the next
+    // line.** `window = 0;` after it satisfies every `contains` above and
+    // points every batch at batch zero's property arrays — the mutation this
+    // file's own header calls worse than the bug it closes, since Unity logs
+    // nothing at all for it.
+    let assignments = body.matches("window =").count();
+    assert_eq!(
+        assignments, 1,
+        "{PAINTER}'s AddBatches assigns `window` {assignments} time(s), not \
+         once. A second assignment undoes the rung split without changing the \
+         initialiser this file pins."
+    );
 }

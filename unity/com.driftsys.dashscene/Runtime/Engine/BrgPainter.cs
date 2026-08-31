@@ -189,6 +189,14 @@ namespace Driftsys.Dashscene
         /// Latched: `OnPerformCulling` runs per camera per frame, and the
         /// condition it reports persists until a `Draw` completes.
         private bool _reportedShortFrame;
+
+        /// Whether the key-span warning has been reported.
+        ///
+        /// Latched for [`_reportedShortFrame`]'s reason, and never cleared: it
+        /// reports a placement the host chose rather than a frame that went
+        /// wrong, so repeating it once per camera per frame would say nothing
+        /// new.
+        private bool _reportedKeySpan;
         private int _instancesPerBatch;
         private int _batchStrideBytes;
 
@@ -879,12 +887,15 @@ namespace Driftsys.Dashscene
             // `BatchRendererGroup` groups draw commands by material before it
             // draws them, which is ordinary renderer behaviour and is not
             // logged. This painter emits its instances in painter's-algorithm
-            // order, and the two classes a text document draws with —
-            // `UnlitOverlay` and `Text` — declare `ZWrite Off` and
-            // `ZTest Always`, so on that path sequence is the only thing that
-            // decides what covers what. (`LitOpaque` and `LitCutout` declare
-            // `ZWrite On` and `ZTest LEqual`; the keys below are set for every
-            // class but were measured only on the overlay one.) Emission order
+            // order, and the two SHADERS a text document draws through —
+            // `UnlitOverlay`, the class material, and `Text`, one material per
+            // glyph atlas — declare `ZWrite Off` and `ZTest Always`, so on that
+            // path sequence is the only thing that decides what covers what.
+            // (`Text` is not a `MaterialClass`; the enum's other two values,
+            // `LitOpaque` and `LitCutout`, declare `ZWrite On` and
+            // `ZTest LEqual`. The keys below are set whichever class the
+            // painter was built with, and were measured on `UnlitOverlay`
+            // alone.) Emission order
             // alone does not survive the grouping: the document's backdrop is
             // the first row the packer writes and sits on the class material,
             // so it joined that material's group and was drawn over the glyphs.
@@ -925,13 +936,18 @@ namespace Driftsys.Dashscene
             // strictly 2D content — makes `MultiplyVector` return zero, and an
             // unguarded normalize would put every key on one point and restore
             // the grouping this exists to escape, with no diagnostic.
-            // **The last resort is `back`, not `forward`.** Both computed
-            // branches point from the sheet TOWARD the camera, which under an
-            // identity `DocumentToWorld` is world -z; a `forward` default would
-            // rank the commands the opposite way round on the one path that
-            // takes neither branch — a host that both flattens the sheet and
-            // puts the camera on it — and paint the document in reverse with no
-            // exception and no log line.
+            // **`back` is a deterministic default, and on the path that takes
+            // it the direction cannot carry the order anyway.** Both computed
+            // branches point from the sheet toward the camera, so key `c` sits
+            // at `distance - c * step` — falling, command 0 farthest, which is
+            // the painter's intent. The fallback is taken only when the camera
+            // is AT the base point, and every key is then `c * step` from it
+            // whichever unit direction is chosen: `back` and `forward` give
+            // identical distances, and the rank runs the opposite way from the
+            // primary branch. An earlier comment here claimed `forward` would
+            // "paint the document in reverse"; under a distance sort the two
+            // spellings are indistinguishable, so the claim was wrong and the
+            // constant is kept only so the callback is deterministic.
             var sortDir = Vector3.back;
             if (distance > 1e-4f)
             {
@@ -964,19 +980,42 @@ namespace Driftsys.Dashscene
             // the whole span is held to a fraction of the viewing distance and
             // divided among the commands actually being emitted, which makes
             // the encoding independent of how many there are.
-            // The cap is taken only when there is a viewing distance to hold
-            // the span against: at a camera on the sheet it would be zero, and
-            // tying every key is the very collapse the floor above exists to
-            // prevent. Nothing is visible from there in any case.
-            var sortSpan = Math.Max(Math.Max(distance, sortBase.magnitude), 1.0f) * 1e-5f;
-            var sortStep = distance > 1e-4f
-                ? Math.Min(sortSpan, distance * 0.25f / Math.Max(commandCount, 1))
-                : sortSpan;
+            // **The two bounds can conflict, and when they do the floor wins
+            // and says so.** An earlier version took `Math.Min` of the two,
+            // which is the wrong way round: the cap is smaller exactly when a
+            // near camera looks at a document far from the world origin, and
+            // taking it there rounds consecutive keys onto the same float —
+            // every command ties, `BatchRendererGroup` regroups by material,
+            // and issue #1389 returns with no diagnostic. A fold reverses the
+            // tail of a long document; a tie loses the order completely, so the
+            // floor is the one to keep.
+            //
+            // Which makes the cap a DETECTOR rather than a term: while it holds
+            // there is no fold, because `commandCount * sortSpan` is then at
+            // most a quarter of the viewing distance and the keys never reach
+            // the camera.
+            var sortStep = Math.Max(Math.Max(distance, sortBase.magnitude), 1.0f) * 1e-5f;
+            if (distance > 1e-4f
+                && commandCount * sortStep > distance * 0.25f
+                && !_reportedKeySpan)
+            {
+                _reportedKeySpan = true;
+                Debug.LogWarning(
+                    $"[dashscene] the painter's {commandCount} sorting keys span "
+                    + $"{commandCount * sortStep} at a viewing distance of {distance}, so the "
+                    + "keys reach past the camera and their order folds back. The document sits "
+                    + $"{sortBase.magnitude} from the world origin, which is what sets the "
+                    + "smallest step float32 can keep distinct there. Issue #1389 records that "
+                    + "this painter's draw order is not established in any case.");
+            }
 
             drawCommands->drawRanges[0] = new BatchDrawRange
             {
                 drawCommandsBegin = 0,
-                drawCommandsCount = (uint)commandCount,
+                // Stated after the emission loop, with the other four lengths,
+                // from what was actually written. A count here would be a dead
+                // store the reconciliation always overwrites.
+                drawCommandsCount = 0,
                 filterSettings = new BatchFilterSettings
                 {
                     renderingLayerMask = 0xffffffff,
@@ -1087,14 +1126,21 @@ namespace Driftsys.Dashscene
             // the previous frame's command count. Latched, because this
             // callback runs per camera per frame and the condition persists
             // until a `Draw` completes.
-            if (command < commandCount && !_reportedShortFrame)
+            // **The test is the instances left behind, not the command
+            // shortfall.** `command < commandCount` is wrong in both
+            // directions: it is false when the cached count is ZERO and this
+            // frame's instances are all dropped — the total loss, reported by
+            // nothing — and true whenever a smaller document follows a larger
+            // one, where the loop ran to its own end and cut nothing.
+            if (visible < InstanceCount && !_reportedShortFrame)
             {
                 _reportedShortFrame = true;
                 Debug.LogWarning(
-                    $"[dashscene] the painter emitted {command} draw command(s) where {commandCount} "
-                    + "were counted, so this frame is cut short. Draw did not complete between "
-                    + "settling the instance count and settling the command count; the picture is "
-                    + "incomplete until a Draw completes.");
+                    $"[dashscene] the painter emitted {visible} of {InstanceCount} instance(s) in "
+                    + $"{command} draw command(s), against {commandCount} counted, so this frame "
+                    + "is cut short. Draw did not complete between settling the instance count "
+                    + "and settling the command count; the picture is incomplete until a Draw "
+                    + "completes.");
             }
 
             return default;
