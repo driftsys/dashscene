@@ -657,7 +657,7 @@ their parent rather than apart from it:
   its rungs. The minimum Unity version is `07-embedding-and-distribution.md`
   R-E1, settled by story #1125's spike.
 - [brg-draw-command-order-is-not-guaranteed.md](brg-draw-command-order-is-not-guaranteed.md)
-  — **open** (2026-08-31, issue #1389): `BatchRendererGroup` groups draw
+  — **accepted** (2026-08-31, issue #1389): `BatchRendererGroup` groups draw
   commands by material, which is why the Unity painter drew every surface and no
   glyph. Setting `HasSortingPosition` and writing a key per command is what
   makes glyphs draw, and it is **not** established that those keys order the

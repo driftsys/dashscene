@@ -25,7 +25,7 @@ Notes:
   arena-path, Penpot as a candidate second producer, and the Slint
   build-vs-adopt call.
 - [batch-renderer-group.md](batch-renderer-group.md) — what `BatchRendererGroup`
-  is, how the Unity painter uses it, and the ordering trap it sets for a
+  is, how the Unity painter uses it, and the ordering pitfall it presents to a
   painter's-algorithm renderer: BRG does not preserve the order draw commands
   are emitted in, which is why the Unity painter drew no text in any player
   build (issue #1389). Also the three smaller traps in the same API.

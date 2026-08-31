@@ -1,10 +1,10 @@
-# Technote — BatchRendererGroup, and the ordering trap
+# Technote — BatchRendererGroup, and the ordering pitfall
 
 Informative. What `BatchRendererGroup` is, how the Unity painter uses it, and
-the one property of it that quietly breaks a painter's-algorithm renderer. The
-trap is not hypothetical: it is why the Unity painter drew no text in any player
-build on any platform (issue #1389), and it had gone unnoticed through ten green
-configurations.
+the one property of it that breaks a painter's-algorithm renderer with no
+diagnostic. The pitfall is not hypothetical: it is why the Unity painter drew no
+text in any player build on any platform (issue #1389), and it had gone
+unnoticed through ten green configurations.
 
 Companion reading: `rendering-and-painters.md` §10 records **why** BRG was
 chosen over a GameObject per node. This note is about how it behaves once
@@ -75,7 +75,7 @@ flagged command into `instanceSortingPositions`, at the float offset
 needs an order states it; there is no path on which submission order alone is
 the contract.
 
-## 4. The trap
+## 4. The pitfall
 
 **A painter's-algorithm renderer has no order except the order it submits in, so
 it must state that order explicitly — or it has no order at all.**
@@ -89,8 +89,8 @@ nothing but sequence decides what covers what.
 **That is a property of the overlay path, not of every class.** `MaterialClass`
 has three values (`PaintHeap.cs`), and `LitOpaque` and `LitCutout` declare
 `ZWrite On` and `ZTest LEqual`. A painter constructed with either of those does
-have a depth test — so the trap below is stated for the class the bulk of a UI
-takes, and the keys the painter now writes are set for all three while having
+have a depth test — so the pitfall below is stated for the class the bulk of a
+UI takes, and the keys the painter now writes are set for all three while having
 been measured on one.
 
 The Unity painter emitted its commands in exactly the right sequence and then
@@ -233,7 +233,7 @@ node packed after a glyph shown to paint over it.
 The standalone BRG harness written to reproduce the fault could not, because it
 laid its instances out in a grid where nothing overlaps. Reordering
 non-overlapping quads is invisible. **A reproduction whose geometry cannot
-express the bug will exonerate the code every time.**
+express the bug will report the code as correct every time.**
 
 ## 7. Three smaller traps in the same API
 
@@ -253,7 +253,7 @@ express the bug will exonerate the code every time.**
   0 addresses byte 0, and that is what any property Unity asks for and the
   painter does not supply resolves to.
 
-## 8. How to check a painter for this trap
+## 8. How to check a painter for this pitfall
 
 Ask one question: _if the renderer reordered my draw commands by material, would
 the picture change?_ If the answer is yes, the order has to be stated rather

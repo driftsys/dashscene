@@ -16,11 +16,19 @@
 //! one `float3` per command in `instanceSortingPositions`.
 //!
 //! **Reverting that repair is six lines, and before this file every gate stayed
-//! green when it was reverted** — measured, not assumed: the pre-fix state
-//! restored in a throwaway worktree passed all thirteen `package-gate` suites.
-//! That is what this file exists to stop.
+//! green when it was reverted** — measured, not assumed.
 //!
-//! **What it does NOT assert, deliberately.** Not that the keys order the
+//! **Every assertion here is bound, and each bound was put there by a mutation
+//! that defeated the unbounded version.** The first draft of this file asserted
+//! that tokens appeared somewhere in the culling callback, and a review defeated
+//! four of its five cases with edits that restored the defect: a conditional
+//! `flags` initialiser, the flag token left in a dead local, the `command`
+//! factor dropped from the key expression, and the three float writes lifted
+//! out of the emission loop. `painter_diagnostics.rs` records the same lesson
+//! from issue #1317 — that is where the bounds come from, and they are the only
+//! thing keeping these shut.
+//!
+//! **What this does NOT assert, deliberately.** Not that the keys order the
 //! picture — `docs/decisions/brg-draw-command-order-is-not-guaranteed.md`
 //! records that they are not measured to, and a test asserting an order nobody
 //! can predict would pin a guess. These assert that the painter still STATES an
@@ -48,53 +56,81 @@ fn painter() -> String {
 
 /// The culling callback's body, which is the only place a draw command is
 /// built.
-///
-/// **Bounded by the member's own braces**, for the reason
-/// [`painter_diagnostics`] records: an assertion over the whole file passes on
-/// a token left in a dead method, and every bound in that file exists because
-/// an unbounded version was defeated by an ordinary edit.
 fn culling_body(source: &str) -> &str {
     let (start, end) = member_body(source, CULLING);
     &source[start..=end]
 }
 
-/// Every draw command carries `HasSortingPosition`, and none carries `None`.
+/// The body of the loop that emits one draw command per run.
 ///
-/// **The `None` half is the mutation that matters.** The flag can be un-set
-/// without deleting anything else — the allocation and the writes stay,
-/// costing their cycles and ordering nothing — and that is exactly the pre-fix
-/// state issue #1389 measured as drawing no glyph at all.
+/// **Bounded to the loop rather than to the member**, because a mutation that
+/// lifted the three key writes out of the loop — leaving one command's key
+/// written and the rest reading whatever `Malloc` returned — passed every
+/// assertion that searched the whole member.
+fn emission_loop(body: &str) -> &str {
+    // `member_body` is find-the-signature-then-match-braces, which is exactly
+    // what a `for` header needs; a second copy of that walk here would sit
+    // outside `cs_scan`'s own tests.
+    let (start, end) = member_body(body, "for (var at = first;");
+    &body[start..=end]
+}
+
+/// Every draw command is INITIALISED with `HasSortingPosition`.
+///
+/// **The token is bound to the initialiser, and the count is asserted.** Two
+/// mutations defeated the unbounded form and both restored the pre-fix state
+/// exactly: a conditional — `flags = InstanceCount < 0 ? …HasSortingPosition :
+/// default` — and the initialiser deleted with the token kept in a dead local
+/// above it. Both leave `flags` at zero on every command. Excluding the
+/// spelling `BatchDrawCommandFlags.None` does not exclude the VALUE: `default`
+/// and `0` are the same flags.
 #[test]
-fn every_draw_command_states_that_it_carries_a_sorting_position() {
+fn every_draw_command_is_initialised_with_a_sorting_position_flag() {
     let source = painter();
     let body = culling_body(&source);
+    let loop_body = emission_loop(body);
 
     assert!(
-        body.contains("BatchDrawCommandFlags.HasSortingPosition"),
-        "{PAINTER}'s OnPerformCulling no longer sets \
-         BatchDrawCommandFlags.HasSortingPosition on the draw commands it \
-         emits. Without it BatchRendererGroup groups them by material and the \
-         document's backdrop is drawn over its glyphs — issue #1389, which \
-         drew every surface and no glyph in every player build."
+        loop_body.contains("flags = BatchDrawCommandFlags.HasSortingPosition,"),
+        "{PAINTER}'s emission loop no longer initialises a draw command's \
+         `flags` to exactly `BatchDrawCommandFlags.HasSortingPosition`. \
+         Without the flag BatchRendererGroup groups the commands by material \
+         and the document's backdrop is drawn over its glyphs — issue #1389, \
+         which drew every surface and no glyph in every player build."
     );
-    assert!(
-        !body.contains("BatchDrawCommandFlags.None"),
-        "{PAINTER}'s OnPerformCulling emits a draw command flagged \
-         BatchDrawCommandFlags.None. That is the pre-fix state of issue #1389: \
-         a command that states no order joins its material's group."
+
+    let assignments = loop_body.matches("flags =").count();
+    assert_eq!(
+        assignments, 1,
+        "{PAINTER}'s emission loop assigns `flags` {assignments} time(s), not \
+         once. A second assignment, a conditional, or a `default` on that line \
+         leaves the command at zero flags, which is the pre-fix state — and a \
+         token left elsewhere in the body is what defeated the first version of \
+         this assertion."
     );
+
+    for defeated in [
+        "flags = default",
+        "flags = 0",
+        "flags = BatchDrawCommandFlags.None",
+    ] {
+        assert!(
+            !loop_body.contains(defeated),
+            "{PAINTER}'s emission loop contains `{defeated}`. A command that \
+             states no order joins its material's group; `default` and `0` are \
+             the same flags as `None`."
+        );
+    }
 }
 
 /// The sorting positions are allocated, sized and addressed off ONE count, and
-/// that count is the command count rather than the instance count.
+/// the emitted length is reconciled after the loop.
 ///
-/// **Three numbers have to agree or the writes leave the allocation.**
-/// `sortingPosition` is a float offset into `instanceSortingPositions`, so the
-/// stride `3 * command`, the length `3 * commandCount` and the allocation must
-/// all say three. A version sizing any of them from `InstanceCount` — the
-/// count every neighbouring line in this callback uses — allocates 381 floats
-/// where 33 are addressed, or writes past a `TempJob` block, and neither is
-/// visible in a picture.
+/// **Both assignments to the float count are asserted.** The allocation-time
+/// one describes what was reserved; the one after the loop describes what was
+/// written, and a mutation deleting it hands Unity a length larger than the
+/// keys actually produced on any frame where `Draw` threw between the two
+/// counts.
 #[test]
 fn the_sorting_positions_are_sized_and_addressed_off_the_command_count() {
     let source = painter();
@@ -102,19 +138,29 @@ fn the_sorting_positions_are_sized_and_addressed_off_the_command_count() {
 
     for fragment in [
         "instanceSortingPositions = Malloc<float>(3 * commandCount)",
-        "instanceSortingPositionFloatCount = 3 * commandCount",
-        "sortingPosition = 3 * command,",
+        "instanceSortingPositionFloatCount = 3 * command;",
     ] {
         assert!(
             body.contains(fragment),
             "{PAINTER}'s OnPerformCulling no longer contains `{fragment}`. The \
-             allocation, the declared float count and the per-command offset \
-             are one arithmetic: `sortingPosition` is a FLOAT offset into \
-             `instanceSortingPositions`, so all three carry the same 3 and the \
-             same command count. Sizing any of them from InstanceCount instead \
-             writes past the allocation."
+             allocation and the length reported after the loop are one \
+             arithmetic — `sortingPosition` is a FLOAT offset, so both carry \
+             the same 3 — and the length is stated from what was EMITTED, \
+             because a frame that stops early must not describe floats it never \
+             wrote."
         );
     }
+
+    // The reserved length is deliberately not also assigned at allocation
+    // time: that would be a dead store, since the reconciliation below the
+    // loop is unconditional.
+    assert!(
+        !body.contains("instanceSortingPositionFloatCount = 3 * commandCount"),
+        "{PAINTER} assigns instanceSortingPositionFloatCount from commandCount \
+         as well as from command. The second assignment always wins, so the \
+         first is a dead store that tells a reader a length reaches Unity when \
+         it does not."
+    );
 
     assert!(
         !body.contains("Malloc<float>(3 * InstanceCount)"),
@@ -122,64 +168,93 @@ fn the_sorting_positions_are_sized_and_addressed_off_the_command_count() {
          indexed by COMMAND — `sortingPosition = 3 * command` — and there are \
          fewer commands than instances, so this allocates for the wrong axis."
     );
+
+    let loop_body = emission_loop(body);
+    assert!(
+        loop_body.contains("sortingPosition = 3 * command,"),
+        "{PAINTER}'s emission loop no longer sets `sortingPosition` to \
+         `3 * command`. That is the float offset of this command's key, and it \
+         has to match the three-float stride the writes below it use."
+    );
 }
 
-/// A key is written for each of the three floats, inside the emission loop.
+/// Each of the three floats of a command's key is written, to its own slot,
+/// inside the emission loop.
 ///
-/// **Presence alone is not the assertion.** Two of the three writes would leave
-/// the third float carrying whatever `Malloc` returned, which is uninitialised
-/// memory read as a coordinate — a key that changes between runs.
+/// **Slot identity, not presence.** A mutation swapping the `y` and `z` writes
+/// between slots passed a version that only checked that each axis and each
+/// offset appeared somewhere.
 #[test]
-fn all_three_floats_of_each_key_are_written() {
+fn all_three_floats_of_each_key_are_written_to_their_own_slot() {
     let source = painter();
-    let body = culling_body(&source);
+    let loop_body = emission_loop(culling_body(&source));
 
-    for axis in ['x', 'y', 'z'] {
-        let write = format!("sortAt.{axis}");
+    for (offset, axis) in [(0, 'x'), (1, 'y'), (2, 'z')] {
+        let write = format!("[3 * command + {offset}] = sortAt.{axis};");
         assert!(
-            body.contains(&write),
-            "{PAINTER}'s OnPerformCulling never writes `{write}`. All three \
-             floats of a command's key must be written: Malloc does not zero, \
-             so an unwritten one is uninitialised memory read as a coordinate."
-        );
-    }
-
-    for offset in ["3 * command + 0", "3 * command + 1", "3 * command + 2"] {
-        assert!(
-            body.contains(offset),
-            "{PAINTER}'s OnPerformCulling no longer writes a key at \
-             `{offset}`. The three floats of command N sit at 3N, 3N+1 and \
-             3N+2, which is the layout `sortingPosition` names."
+            loop_body.contains(&write),
+            "{PAINTER}'s emission loop no longer writes `{write}`. All three \
+             floats of a command's key must be written, each to its own slot: \
+             Malloc does not zero, so an unwritten one is uninitialised memory \
+             read as a coordinate, and a swapped one is a key that is not the \
+             point it names."
         );
     }
 }
 
-/// Every command's key comes from ONE base point, and only the index varies.
+/// Every command's key comes from ONE base point, and the command index is
+/// what varies.
 ///
-/// **This is the property that keeps the keys an order encoding rather than
-/// geometry.** Using each run's own anchor turns the keys back into a depth
-/// sort of coplanar quads — camera-angle dependent, with near-ties — which is
-/// the failure the design rejects by construction rather than by measurement.
-/// A mutation swapping `sortBase` for a per-run position breaks nothing else in
-/// the file.
+/// **The assertion runs through the index, not up to it.** Three mutations
+/// defeated a version that stopped at the `*`, and all three collapse every key
+/// onto one point — which restores the material grouping this exists to escape,
+/// with no diagnostic: dropping the `command` factor, zeroing `sortStep`, and
+/// removing the guard on the degenerate-direction fallback so that
+/// `Vector3.normalized` returns the zero vector.
 #[test]
-fn every_key_is_built_from_the_one_shared_base_point() {
+fn every_key_is_built_from_the_one_shared_base_point_and_varies_by_index() {
     let source = painter();
     let body = culling_body(&source);
+    let loop_body = emission_loop(body);
 
     assert!(
-        body.contains("var sortAt = sortBase + sortDir *"),
-        "{PAINTER}'s OnPerformCulling no longer builds each key as \
-         `sortBase + sortDir * ...`. Every command must share the one base \
-         point, with only the command index varying: a per-run anchor makes \
-         these keys geometry again, and coplanar geometry does not sort."
+        loop_body.contains("var sortAt = sortBase + sortDir * (command * sortStep);"),
+        "{PAINTER}'s emission loop no longer builds each key as \
+         `sortBase + sortDir * (command * sortStep)`. Every command shares the \
+         one base point and only the index varies — a per-run anchor makes \
+         these keys geometry again, and coplanar geometry does not sort — while \
+         dropping the `command` factor gives every command the same key, which \
+         is no order at all."
     );
 
-    let per_command = body.matches("var sortAt =").count();
+    let built = loop_body.matches("var sortAt =").count();
     assert_eq!(
-        per_command, 1,
-        "{PAINTER}'s OnPerformCulling builds a sort position in \
-         {per_command} places, not one. One construction, inside the emission \
-         loop, is what keeps the keys a single monotonic sequence."
+        built, 1,
+        "{PAINTER}'s emission loop builds a sort position {built} time(s), not \
+         once."
+    );
+
+    assert!(
+        body.contains("* 1e-5f"),
+        "{PAINTER}'s OnPerformCulling no longer scales `sortStep` by 1e-5. A \
+         zero or absent scale ties every key, which is the grouping this exists \
+         to escape."
+    );
+
+    // The degenerate-direction guard. `Vector3.normalized` returns the ZERO
+    // vector rather than throwing, so an unguarded fallback is the same
+    // collapse by another route — and a host flattening the sheet with a zero
+    // z-scale reaches it.
+    assert!(
+        body.contains("distance > 1e-4f"),
+        "{PAINTER}'s OnPerformCulling no longer guards the sort direction \
+         against a camera at the sheet."
+    );
+    assert!(
+        body.contains("sqrMagnitude > 1e-12f"),
+        "{PAINTER}'s OnPerformCulling no longer guards the fallback direction \
+         before normalising it. `Vector3.normalized` returns the zero vector \
+         rather than throwing, so an unguarded normalize puts every key on one \
+         point with no diagnostic."
     );
 }

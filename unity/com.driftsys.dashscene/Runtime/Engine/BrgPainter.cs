@@ -183,6 +183,12 @@ namespace Driftsys.Dashscene
         /// the emission loop produces: Unity allocates the command array from
         /// it and that loop writes into it.
         private int _commandCount;
+
+        /// Whether the short-frame warning has been reported.
+        ///
+        /// Latched: `OnPerformCulling` runs per camera per frame, and the
+        /// condition it reports persists until a `Draw` completes.
+        private bool _reportedShortFrame;
         private int _instancesPerBatch;
         private int _batchStrideBytes;
 
@@ -816,6 +822,10 @@ namespace Driftsys.Dashscene
             {
                 _commandCount += CommandsInBatch(b);
             }
+
+            // The two counts agree again, so a later short frame is a new
+            // event rather than the same one.
+            _reportedShortFrame = false;
         }
 
         private unsafe JobHandle OnPerformCulling(
@@ -856,11 +866,14 @@ namespace Driftsys.Dashscene
             // documents for a callback that returns a handle, and this one
             // returns `default` — the work is done here, on the thread issue
             // #1267 measured as Unity's main one.
-            drawCommands->drawCommandCount = commandCount;
+            // **Allocated here, and every LENGTH stated after the emission
+            // loop.** The four counts Unity reads describe what was written
+            // rather than what was reserved, so a frame that stops early cannot
+            // describe commands or floats it never produced. Setting them here
+            // as well would be a dead store, and a reader would have to work
+            // out which of the two assignments reaches Unity.
             drawCommands->drawCommands = Malloc<BatchDrawCommand>(commandCount);
-            drawCommands->drawRangeCount = 1;
             drawCommands->drawRanges = Malloc<BatchDrawRange>(1);
-            drawCommands->visibleInstanceCount = InstanceCount;
             drawCommands->visibleInstances = Malloc<int>(InstanceCount);
             // **The paint order, stated rather than assumed — issue #1389.**
             // `BatchRendererGroup` groups draw commands by material before it
@@ -894,7 +907,6 @@ namespace Driftsys.Dashscene
             // The evidence lives there rather than here, so that settling it
             // edits one place.
             drawCommands->instanceSortingPositions = Malloc<float>(3 * commandCount);
-            drawCommands->instanceSortingPositionFloatCount = 3 * commandCount;
 
             // **One base point for every command, and only the index varies.**
             // Using each run's own anchor would turn this back into depth
@@ -913,7 +925,14 @@ namespace Driftsys.Dashscene
             // strictly 2D content — makes `MultiplyVector` return zero, and an
             // unguarded normalize would put every key on one point and restore
             // the grouping this exists to escape, with no diagnostic.
-            var sortDir = Vector3.forward;
+            // **The last resort is `back`, not `forward`.** Both computed
+            // branches point from the sheet TOWARD the camera, which under an
+            // identity `DocumentToWorld` is world -z; a `forward` default would
+            // rank the commands the opposite way round on the one path that
+            // takes neither branch — a host that both flattens the sheet and
+            // puts the camera on it — and paint the document in reverse with no
+            // exception and no log line.
+            var sortDir = Vector3.back;
             if (distance > 1e-4f)
             {
                 sortDir = toCamera / distance;
@@ -927,16 +946,32 @@ namespace Driftsys.Dashscene
                 }
             }
 
-            // **The step is scaled against the larger of the viewing distance
-            // and the base point's own magnitude, and that second term is the
-            // one a reader will not expect.** Float32 carries about 1.2e-7 of
-            // RELATIVE precision, and what is stored is a world coordinate
-            // around `sortBase` — so a document placed ten thousand units from
-            // the world origin has an ULP of about 1.2e-3 there, and a step
-            // sized only from a one-unit viewing distance would round every key
-            // onto the same float. The floor keeps a camera at the sheet from
-            // collapsing them the same way.
-            var sortStep = Math.Max(Math.Max(distance, sortBase.magnitude), 1.0f) * 1e-5f;
+            // **The step is bounded at BOTH ends, and the upper bound is the
+            // one that is easy to miss.**
+            //
+            // Below: float32 carries about 1.2e-7 of RELATIVE precision, and
+            // what is stored is a world coordinate around `sortBase` — so a
+            // document placed ten thousand units from the world origin has an
+            // ULP of about 1.2e-3 there, and a step sized only from a one-unit
+            // viewing distance would round every key onto the same float. The
+            // magnitude term and the floor are what keep the keys distinct.
+            //
+            // Above: the keys walk along the ray toward the camera, and a
+            // camera sorts by DISTANCE, which is `|distance - c * step|`. That
+            // is monotonic in `c` only while `c * step` stays short of
+            // `distance` — past it the points pass the camera and the rank
+            // folds back, silently reversing the tail of a long document. So
+            // the whole span is held to a fraction of the viewing distance and
+            // divided among the commands actually being emitted, which makes
+            // the encoding independent of how many there are.
+            // The cap is taken only when there is a viewing distance to hold
+            // the span against: at a camera on the sheet it would be zero, and
+            // tying every key is the very collapse the floor above exists to
+            // prevent. Nothing is visible from there in any case.
+            var sortSpan = Math.Max(Math.Max(distance, sortBase.magnitude), 1.0f) * 1e-5f;
+            var sortStep = distance > 1e-4f
+                ? Math.Min(sortSpan, distance * 0.25f / Math.Max(commandCount, 1))
+                : sortSpan;
 
             drawCommands->drawRanges[0] = new BatchDrawRange
             {
@@ -950,6 +985,15 @@ namespace Driftsys.Dashscene
                     shadowCastingMode = ShadowCastingMode.Off,
                     receiveShadows = false,
                     staticShadowCaster = false,
+                    // **False, though every command in this range now carries
+                    // `HasSortingPosition`** — which is the property Unity
+                    // documents this field as asserting, so the range
+                    // under-declares itself on purpose. Setting it true was
+                    // measured and changes no pixel
+                    // (`docs/technotes/batch-renderer-group.md` §5c), and false
+                    // is what Unity's own producer passes. It is left false so
+                    // that nothing here claims an ordering guarantee the
+                    // measurements do not support.
                     allDepthSorted = false,
                 },
             };
@@ -977,9 +1021,16 @@ namespace Driftsys.Dashscene
                     var run = end - at;
 
                     // Every instance's index is relative to its BATCH, not to
-                    // the buffer: the metadata offsets are window-relative, so
-                    // instance 0 of every batch is the first row of that
-                    // window's own property arrays.
+                    // the buffer, because instance 0 of every batch is the
+                    // first row of that batch's own property arrays.
+                    //
+                    // **On the ConstantBuffer rung that is because the metadata
+                    // offsets are window-relative; on RawBuffer it is because
+                    // `AddBatches` folds the batch's byte offset INTO those
+                    // offsets** (issue #1389), which is the same destination
+                    // reached two ways. An earlier version of this comment gave
+                    // only the first reason, which stopped being true on the
+                    // rung every measured adapter selects.
                     for (var i = 0; i < run; i++)
                     {
                         drawCommands->visibleInstances[visible + i] = at - first + i;
@@ -1013,16 +1064,38 @@ namespace Driftsys.Dashscene
                 }
             }
 
-            // **Reported as emitted, not as counted.** These three are the
-            // lengths Unity reads, and on a frame where the cached count and
-            // the instance count disagree the loop above stops early — so the
+            // **Reported as emitted, not as counted.** These are the lengths
+            // Unity reads, and on a frame where the cached count and the
+            // instance count disagree the loop above stops early — so the
             // arrays are described by what was written rather than by what was
             // allocated. On every ordinary frame the two are equal and this
             // changes nothing.
+            //
+            // `drawRangeCount` is among them: a range describing zero commands
+            // is the shape the rest of this reconciliation exists to avoid
+            // handing over.
             drawCommands->drawCommandCount = command;
             drawCommands->visibleInstanceCount = visible;
             drawCommands->instanceSortingPositionFloatCount = 3 * command;
             drawCommands->drawRanges[0].drawCommandsCount = (uint)command;
+            drawCommands->drawRangeCount = command > 0 ? 1 : 0;
+
+            // **A short frame is a named diagnostic, never a silent drop** —
+            // P4's rule, and this is the one path that can produce one. It
+            // means `Draw` threw between settling `InstanceCount` and settling
+            // `_commandCount`, so the picture is this frame's instances cut to
+            // the previous frame's command count. Latched, because this
+            // callback runs per camera per frame and the condition persists
+            // until a `Draw` completes.
+            if (command < commandCount && !_reportedShortFrame)
+            {
+                _reportedShortFrame = true;
+                Debug.LogWarning(
+                    $"[dashscene] the painter emitted {command} draw command(s) where {commandCount} "
+                    + "were counted, so this frame is cut short. Draw did not complete between "
+                    + "settling the instance count and settling the command count; the picture is "
+                    + "incomplete until a Draw completes.");
+            }
 
             return default;
         }

@@ -1002,6 +1002,21 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         var overlayCorners = InkedCorners(overlay);
         Line($"overlay: {overlayCorners} of {CornerProbes()} outside-the-corner probes "
              + "carry ink");
+        // **Said out loud on every run, because a PASS here is weaker than it
+        // was and nothing else would tell a reader so.** The stronger
+        // per-instance assertion excludes a centre only when a HIGHER-indexed
+        // instance reaches it, which is sound only while draw order is
+        // submission order — and issue #1389 measured that it is not
+        // (`docs/decisions/brg-draw-command-order-is-not-guaranteed.md`). The
+        // predicate is unchanged because widening it leaves the stronger form
+        // nothing to judge; what changed is that this is now a known unsound
+        // assumption rather than an unconfirmed one, so the run states it.
+        Line(
+            "overlay: the per-instance assertion assumes a lower-indexed node cannot cover "
+            + "a centre, which issue #1389 measured to be false — where one does, and its "
+            + "colour is nearer this node's own than the clear colour is, this run passes "
+            + "on ink that is not the node's. R-E22's fixture is what would retire this.");
+
         if (CornerProbes() == 0)
         {
             // **Said out loud rather than passed over.** Two guards above can

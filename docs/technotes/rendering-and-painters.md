@@ -274,7 +274,7 @@ DECISION direction →
 [`unity-painter-uses-brg.md`](../decisions/unity-painter-uses-brg.md):
 **BatchRendererGroup (BRG) over GameObject-per-node** for the bulk SDF-quad UI.
 This section records why BRG was chosen; how it behaves once chosen, and the
-ordering trap it sets for a painter's-algorithm renderer, is in
+ordering pitfall it presents to a painter's-algorithm renderer, is in
 [batch-renderer-group.md](batch-renderer-group.md). GameObject-per-node
 maintains a full scene-graph mirror (Transform hierarchy, per-renderer culling,
 a managed object per node) — the "scene-graph duplication" §8.3 avoids. BRG

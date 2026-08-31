@@ -1,10 +1,11 @@
 # BatchRendererGroup draw-command order is not a guarantee this painter may rest on
 
-    status   **open (2026-08-31)** — a recorded constraint, not a settled
-             mechanism. The ordering half of issue #1389 is larger than the lane
-             that found it, and this record exists so the repository stops
+    status   **accepted (2026-08-31, issue #1389)**. What is accepted is the
+             CONSTRAINT — D1, D2 and D3 below bind downstream work now. What is
+             not settled is the ordering mechanism itself, which is larger than
+             the lane that found it; this record exists so the repository stops
              saying something untrue about how the picture is ordered while that
-             remains so.
+             remains so, and "What is still owed" names what would close it.
     date     2026-08-31
     source   issue #1389; docs/technotes/batch-renderer-group.md §4 and §5b
     scope    unity/com.driftsys.dashscene/Runtime/Engine/BrgPainter.cs, and any
