@@ -11,8 +11,8 @@
 //
 // **One material per atlas, not one per class.** A sheet is a texture and a
 // texture is a per-material binding, so a document naming two faces mints two
-// materials over this one shader and the painter emits a draw command per
-// contiguous run of instances that share one.
+// materials over this one shader and the painter emits one draw command per
+// instance.
 //
 // It sits in `Runtime/Resources/Dashscene/` with the three class shaders and is
 // loaded the same way, for the reason issue #1313 measured: a player build

@@ -268,9 +268,9 @@ the batch stride is rounded up to the alignment, and the instances per batch are
 what the window holds after the 112-byte shared head — the two transforms plus
 the mandatory zero `float4` at offset 0. R-E20's 256 **is** a literal, and
 correctly so: it is `unity_DOTSVisibleInstances[256]` in the SRP core shader
-library, a property of the shader rather than of the adapter. The painter splits
-a batch into several draw commands rather than asserting the bound, because
-asserting it would refuse documents it can draw.
+library, a property of the shader rather than of the adapter. The painter meets
+it by construction: it emits one instance per command (issue #1401), so no
+document can approach the bound at all.
 
 **The lease does not cross into the culling callback.** Issue #1267 measured
 `OnPerformCulling` on Unity's main thread under `6000.3.22f1`, URP, macOS and
@@ -538,20 +538,57 @@ decide the picture either, which is issue #1389 and the paragraph below. Against
 sorts by queue before it sorts by anything a draw command carries, so every
 glyph is submitted after every node fill whatever order the document put them
 in. A later node that overlaps a text node covers its glyphs in both reference
-painters and does not here. This is not fixed by the per-material command split,
-which preserves order only inside one pass, and it is a property of drawing
-blended text beside opaque geometry rather than of this painter.
+painters and does not here. This is not fixed by the single-instance command
+shape, which preserves order only inside one pass, and it is a property of
+drawing blended text beside opaque geometry rather than of this painter.
 
-**The culling callback emits one command per contiguous run of instances that
-share a material** — and it is the first thing here that makes the command count
-depend on **which** nodes a document holds rather than on how many, which a
-256-instance split already did. **The split preserves the emission order in the
-command list and that is not the order the picture is drawn in**: BRG groups the
-commands by material afterwards, which is what issue #1389 found. The painter
-states a per-command sorting key to take them out of that grouping; whether the
-keys then reproduce the emission order is unsettled, and
-`docs/decisions/brg-draw-command-order-is-not-guaranteed.md` is where that is
-recorded.
+**The culling callback emits one draw command per visible instance**, each
+carrying `BatchDrawCommandFlags.HasSortingPosition` and one sorting key, so the
+command count is the instance count and R-E20's 256 is met without splitting
+anything. Until issue #1401 it emitted one command per contiguous run of
+instances sharing a material, split at 256: Unity's sorted-transparent path was
+measured dropping a contiguous subset of commands for single frames under that
+shape, rendering the affected region as bare backdrop with nothing logged.
+[../decisions/brg-draw-command-order-is-not-guaranteed.md](../decisions/brg-draw-command-order-is-not-guaranteed.md)
+D5 is the constraint and
+[../technotes/batch-renderer-group.md](../technotes/batch-renderer-group.md) §5d
+carries the tables. **The emission order is still not the order the picture is
+drawn in**: BRG groups the commands by material without the keys, which is what
+issue #1389 found, and whether the keys reproduce the emission order was
+measured unsettled under the old shape and has not been re-measured under this
+one.
+
+**What that shape costs against R-T4, and what the figure does not cover.** On
+the showcase typography scene the command count rose from 11 to 381 per view,
+one per instance. `Samples~/Showcase/DashsceneFrameCost.cs` reported these two
+lines on the 20,000-frame soaks of 2026-09-03 — macOS/Metal, Apple M3, Unity
+6000.3.23f1, the last reporting window of each run, wrapped here and one line
+each in the log:
+
+    [showcase] frame cost — scene typography at 3024x1832 over 240 frames —
+    tick 0.07 ms, draw mean 0.19 p50 0.16 p95 0.41 max 1.02 ms
+    (3848.2 fps if unpaced)      dd20a18
+
+    [showcase] frame cost — scene typography at 3024x1832 over 240 frames —
+    tick 0.09 ms, draw mean 0.19 p50 0.15 p95 0.42 max 1.15 ms
+    (3558.2 fps if unpaced)      3a39728
+
+Both runs were the probe-instrumented soak builds — the camera rendering into an
+explicit 1024x768 `RenderTexture` rather than the window directly — so the
+figures bracket packing and upload either way.
+
+A command count 34.6 times higher left the **mean** where it was, at 0.19 ms.
+The median moved 0.01 ms down, the 95th percentile 0.01 ms up and the maximum
+0.13 ms up — run-to-run noise, and well inside the spread one run shows against
+itself: the before run's last two windows report a maximum of 2.49 ms and then
+1.02 ms.
+
+**What that pair does not measure is the loop that grew.** The figure covers the
+frame lease, `BrgPainter.Draw` and the release; Unity runs `OnPerformCulling`
+after `Update` returns, so the emission loop is outside it, and so is the GPU's
+execution of 381 draw commands rather than 11. What the pair bounds is the
+packing and the upload, which the command shape does not change at all. The
+emission loop's own cost, and the GPU's, are unmeasured (issue #1406).
 
 ### The six rules, and where each one is held
 
@@ -1270,8 +1307,8 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   the atlas lookup on any pull request whose diff is not documentation-only. The
   material, the texture and the draw commands are `Runtime/Engine/`, which only
   a Unity editor compiles and only a device runs — so the sampling itself, the
-  linear texture and the per-atlas draw-command split rest on reading rather
-  than on running.
+  linear texture and the per-instance choice of atlas material rest on reading
+  rather than on running.
 - **The `px_range` formula has two copies and nothing compares them.**
   `dashscene-gpu`'s `gpu_glyph_run` computes
   `distance_range_px * size /

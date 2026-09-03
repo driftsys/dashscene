@@ -1,13 +1,15 @@
 # BatchRendererGroup draw-command order is not a guarantee this painter may rest on
 
-    status   **accepted (2026-08-31, issue #1389)**. What is accepted is the
-             CONSTRAINT — D1, D2 and D3 below bind downstream work now. What is
-             not settled is the ordering mechanism itself, which is larger than
-             the lane that found it; this record exists so the repository stops
-             saying something untrue about how the picture is ordered while that
-             remains so, and "What is still owed" names what would close it.
+    status   **accepted (2026-08-31, issue #1389); amended 2026-09-03 (issue
+             #1401) with D5**. What is accepted is the CONSTRAINT — D1–D5
+             below bind downstream work now. What is not settled is the
+             ordering mechanism itself, which is larger than the lane that found
+             it; this record exists so the repository stops saying something
+             untrue about how the picture is ordered while that remains so, and
+             "What is still owed" names what would close it.
     date     2026-08-31
-    source   issue #1389; docs/technotes/batch-renderer-group.md §4 and §5b
+    source   issue #1389; docs/technotes/batch-renderer-group.md §4 and §5b.
+             D5 is issue #1401 and §5d
     scope    unity/com.driftsys.dashscene/Runtime/Engine/BrgPainter.cs, and any
              painter that draws a dashscene document with more than one material
     related  docs/decisions/unity-painter-uses-brg.md (D1 chooses BRG and buys
@@ -113,6 +115,45 @@ host can reach, and that distance from the camera falls with the command index
 at any span. It is a model of two lines rather than a run of the painter, for
 the reason every gate over this file is: nothing in CI compiles it.
 
+**D5 — a draw command that carries `HasSortingPosition` names exactly one
+visible instance.**
+
+Unity's sorted-transparent path was measured dropping a contiguous subset of
+draw commands for a single frame when a flagged command carried more than one
+visible instance. The dropped region renders as bare backdrop; nothing is
+logged, no exception is raised, and the painter's own culling emission is
+byte-identical on the dropped frame. Unity documents no restriction on the
+shape. `visibleCount = 1` per flagged command is the shape
+`docs/technotes/batch-renderer-group.md` §3 attributes to Unity's own GPU
+Resident Drawer, and it is the only shape measured free of the defect.
+
+The measured basis, all macOS/Metal, Apple M3, Unity 6000.3.23f1, URP 17.3.0,
+the showcase typography scene, 20,000 frames per run, 2026-09-03 — dropped-band
+frames per run:
+
+- the multi-instance shape carrying the flag: 292, 311 and 317 over three runs,
+  and 410 on this lane's own base commit `dd20a18`;
+- the same shape with every per-frame host call stopped from frame 60: 115;
+- the flag removed: 0 and 0;
+- the flag kept, one visible instance per command: 0, 0 and 0.
+
+`docs/technotes/batch-renderer-group.md` §5d carries the tables, each count's
+`grep`/`awk` derivation, and the instrument's own liveness proof.
+
+**What D5 does not say.** It does not say why Unity drops those commands: the
+sort is not readable from C# and no measurement here reached it. It does not say
+the keys now order the picture — D1's caution stands unchanged, because §5b's
+order measurements were taken under the multi-instance shape and have not been
+re-run under this one.
+
+**What it costs.** The command count becomes the instance count, and so does the
+count of sorting keys that must stay distinct floats.
+`docs/design/unity-csharp-host.md` carries the before/after frame-cost pair
+measured across that rise, and
+`unity/package-gate/tests/sorting_key_arithmetic.rs`'s
+`the_floor_keeps_instance_scale_command_counts_distinct` re-checks D4's
+precision floor at a command count of that order.
+
 ## What this costs, and what is still owed
 
 The painter draws its text today and the ordering it draws it in is not
@@ -122,6 +163,12 @@ was total, because a backdrop hides glyphs completely.
 
 What is owed, and what this record does not decide:
 
+- **§5b's order measurements, re-run under D5's shape.** Every row in that table
+  was taken with the multi-instance shape D5 now forbids, so none of them
+  describes the commands this painter emits. Whether one key per instance
+  reproduces the emission order is therefore reopened as a question rather than
+  answered: it is a follow-up story (issue #1402), and D1 and D2 stand until it
+  reports.
 - **The fixture.** A document with a full-bleed backdrop, text in at least two
   atlases, and a node packed after a glyph run. `goldens/dsb/` has none — the
   `v07-text-*` files are byte records pinned by `crates/dashc/tests/`, not

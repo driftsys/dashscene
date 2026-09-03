@@ -50,7 +50,7 @@ fn culling_body(source: &str) -> &str {
     &source[start..=end]
 }
 
-/// The body of the loop that emits one draw command per run.
+/// The body of the loop that emits one draw command per instance.
 ///
 /// **Bounded to the loop rather than to the member**, because a mutation that
 /// lifted the three key writes out of the loop — leaving one command's key
@@ -182,13 +182,13 @@ fn the_sorting_positions_are_sized_and_addressed_off_the_command_count() {
          it does not."
     );
 
-    assert!(
-        !body.contains("Malloc<float>(3 * InstanceCount)"),
-        "{PAINTER} sizes instanceSortingPositions from InstanceCount. It is \
-         indexed by COMMAND — `sortingPosition = 3 * command` — and there are \
-         fewer commands than instances, so this allocates for the wrong axis."
-    );
-
+    // **A negative pinning `Malloc<float>(3 * InstanceCount)` left
+    // 2026-09-03.** Since issue #1401 the command count equals the instance
+    // count, so that spelling draws an identical frame to the one shipped —
+    // it no longer distinguishes the fix from the defect it replaced. The
+    // fragment above already pins the allocation to `commandCount`, and the
+    // assertion below pins `sortingPosition`'s addressing to `command`;
+    // together those are the property that still bites.
     let loop_body = emission_loop(body);
     assert!(
         loop_body.contains("sortingPosition = 3 * command,"),

@@ -99,7 +99,7 @@ fn the_pre_repair_step_collapsed_keys_at_a_far_placement() {
 fn the_step_keeps_every_key_distinct_wherever_the_document_sits() {
     for base in [0.0f32, 1.0, 100.0, 10_000.0, 1.0e6] {
         for distance in [0.001f32, 0.5, 3.0, 400.0, 10_000.0] {
-            for commands in [1i32, 11, 256, 1024] {
+            for commands in [1i32, 11, 256, 1024, 10_000] {
                 let s = step(distance, base);
                 let kept = distinct(&keys(base, s, commands));
                 assert_eq!(
@@ -126,7 +126,7 @@ fn distance_from_the_camera_falls_with_the_command_index_at_any_span() {
     for base in [0.0f32, 100.0, 10_000.0] {
         for distance in [0.001f32, 0.5, 400.0] {
             // Spans far past the viewing distance, which is what folded before.
-            for commands in [1i32, 11, 256, 100_000] {
+            for commands in [1i32, 11, 256, 10_000, 100_000] {
                 let s = step(distance, base);
                 let laid = keys(base, s, commands);
                 let mut previous = f32::INFINITY;
@@ -188,4 +188,35 @@ fn order_by_distance(keys: &[f32], base: f32, distance: f32) -> Vec<usize> {
             .expect("the model produces no NaN")
     });
     order
+}
+
+/// One command per instance (issue #1401) raises the command count to the
+/// instance count — this is not, by itself, the harder case for the floor.
+///
+/// **What this test actually adds.** `step()` does not depend on the command
+/// count, and distinctness at a higher count is not a harder bar to clear
+/// than at a lower one: every additional key runs farther from `base`, where
+/// the float ULP falls rather than grows, so a document that keeps its keys
+/// distinct at 256 commands is not thereby placed in doubt at 10,000. What
+/// this test contributes instead is the strict `<` on distance from the
+/// camera — the sibling sweep above asserts `<=`, which a tie would also
+/// satisfy — and a record that the floor is exercised at the instance-scale
+/// span issue #1401 raised the command count to: 10,000 commands at the
+/// review's hostile placement — a document 10,000 units from the origin, a
+/// camera half a unit away — spans 1,000 units behind the sheet.
+#[test]
+fn the_floor_keeps_instance_scale_command_counts_distinct() {
+    let (distance, base, commands) = (0.5f32, 10_000.0f32, 10_000);
+    let s = step(distance, base);
+    let k = keys(base, s, commands);
+    assert_eq!(distinct(&k), commands as usize);
+    for c in 1..commands as usize {
+        assert!(
+            from_camera(k[c], base, distance) < from_camera(k[c - 1], base, distance),
+            "distance from the camera must fall with the command index; \
+             it does not between commands {} and {}",
+            c - 1,
+            c
+        );
+    }
 }
