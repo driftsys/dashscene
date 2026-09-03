@@ -26,6 +26,20 @@ the Cargo workspace rather than moving on its own.
 
 ### Fixed
 
+- **A sorted draw command now names exactly one visible instance.** Unity's
+  sorted-transparent `BatchRendererGroup` path was measured dropping a
+  contiguous subset of draw commands for single frames when a command carrying
+  `BatchDrawCommandFlags.HasSortingPosition` named more than one: the affected
+  region of that frame renders as bare backdrop, nothing is logged, no exception
+  is raised, and the painter's own culling emission is byte-identical on it.
+  `BrgPainter` now emits one draw command per instance, which is the shape
+  Unity's own GPU Resident Drawer feeds this path and the only one measured free
+  of the defect. On macOS/Metal, Apple M3, Unity 6000.3.23f1, the showcase
+  typography scene: 410 affected frames per 20,000 before, 0 per 20,000 after.
+  The showcase's reported frame cost did not move, though the command count rose
+  from 11 to 381 per view — that figure excludes Unity's culling callback, and
+  `docs/design/unity-csharp-host.md` states what it covers.
+  `docs/technotes/batch-renderer-group.md` §5d carries the tables. Issue #1401.
 - **The painter draws its text.** `BrgPainter` drew every surface and no glyph,
   in every player build on every platform, through ten green configurations —
   `BatchRendererGroup` groups draw commands by material before drawing them, so

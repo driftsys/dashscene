@@ -665,7 +665,11 @@ their parent rather than apart from it:
   size changes the frame. A third measurement, over commands tied on equal keys,
   is recorded as weaker because it does not isolate the tied group. Recorded as
   a constraint so no gate is written as though a legible frame proved an order.
-  Depth writes stay rejected.
+  Depth writes stay rejected. **Amended 2026-09-03 (issue #1401) with D5**: a
+  command carrying `HasSortingPosition` names exactly one visible instance,
+  because Unity's sorted-transparent path was measured dropping commands from
+  single frames when one named more. That reopens the order question rather than
+  settling it — every §5b measurement was taken under the shape D5 forbids.
 - [unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md](unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md)
   — **accepted** (2026-08-21, story #1125): UPM over a Git URL, and every file
   Unity imports carries a committed `.meta`, because a Git-URL package is

@@ -133,11 +133,12 @@ costs padding the header would have to name and saves nothing, which is the rule
   glyphs and the copy happens once per load.
 - **One text material per atlas.** A sheet is a texture and a texture is a
   per-material binding, so a document naming two faces mints two materials over
-  one shader and the painter emits a draw command per contiguous run of
-  instances that share one. The draw-command count already depended on the
-  document — a batch splits every 256 visible instances — and this is the first
-  thing that makes it depend on **which** nodes those are rather than on how
-  many.
+  one shader, and every draw command names the material of the instance it
+  draws. **How many materials a document needs therefore depends on which nodes
+  it holds rather than on how many**, which is the first thing here that does.
+  (The painter emitted one command per contiguous same-material run when this
+  was written, split every 256 visible instances; it now emits one command per
+  instance — `brg-draw-command-order-is-not-guaranteed.md` D5.)
 - **`DS_ABI_VERSION` stays at 2**, and a package carrying these declarations
   against a library from before them passes the R-E16 handshake and fails at the
   first call — which is the direction adding a symbol has always left open.
