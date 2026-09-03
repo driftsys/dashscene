@@ -573,10 +573,11 @@ each in the log:
     [showcase] frame cost — scene typography at 3024x1832 over 240 frames —
     tick 0.09 ms, draw mean 0.19 p50 0.15 p95 0.42 max 1.15 ms      23dd62d
 
-A command count 34.6 times higher left the mean and the median where they were
-and moved the maximum by 0.13 ms, which is well inside the spread one run shows
-against itself — the before run's last two windows report a maximum of 2.49 ms
-and then 1.02 ms.
+A command count 34.6 times higher left the **mean** where it was, at 0.19 ms.
+The median moved 0.01 ms down, the 95th percentile 0.01 ms up and the maximum
+0.13 ms up — run-to-run noise, and well inside the spread one run shows against
+itself: the before run's last two windows report a maximum of 2.49 ms and then
+1.02 ms.
 
 **What that pair does not measure is the loop that grew.** The figure covers the
 frame lease, `BrgPainter.Draw` and the release; Unity runs `OnPerformCulling`
