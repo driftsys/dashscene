@@ -540,9 +540,9 @@ decide the picture either, which is issue #1389 and the paragraph below. Against
 sorts by queue before it sorts by anything a draw command carries, so every
 glyph is submitted after every node fill whatever order the document put them
 in. A later node that overlaps a text node covers its glyphs in both reference
-painters and does not here. This is not fixed by the per-material command split,
-which preserves order only inside one pass, and it is a property of drawing
-blended text beside opaque geometry rather than of this painter.
+painters and does not here. This is not fixed by the single-instance command
+shape, which preserves order only inside one pass, and it is a property of
+drawing blended text beside opaque geometry rather than of this painter.
 
 **The culling callback emits one draw command per visible instance**, each
 carrying `BatchDrawCommandFlags.HasSortingPosition` and one sorting key, so the

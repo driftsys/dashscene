@@ -146,11 +146,11 @@ namespace Driftsys.Dashscene
         ///
         /// **A painter cannot draw a text instance with the material it draws
         /// fills with**: a sheet is a per-material texture, so a document
-        /// naming two sheets needs two text materials and a draw command per
-        /// contiguous run of instances that share one. This is what a painter
-        /// walks to find those runs, and it is why an instance carries the
-        /// atlas rather than a material index — nothing here knows what a
-        /// material is.
+        /// naming two sheets needs two text materials and one draw command
+        /// per instance. This is what a painter reads to pick each
+        /// single-instance command's material, and it is why an instance
+        /// carries the atlas rather than a material index — nothing here
+        /// knows what a material is.
         private int[] _instanceAtlas = new int[64];
 
         private PackDiagnostic _flags;

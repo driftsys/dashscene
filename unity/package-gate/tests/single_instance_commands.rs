@@ -34,6 +34,13 @@ fn every_flagged_draw_command_names_one_visible_instance() {
          visible instance is the configuration issue #1401 measured \
          dropping single frames."
     );
+    assert!(
+        emission.contains("visibleCount = (uint)run,"),
+        "{PAINTER}'s emission loop no longer sets `visibleCount` from `run`. \
+         A literal `visibleCount` would defeat the one-instance rule \
+         silently — the loop could still fix `run` at one instance while the \
+         emitted command claimed a different count (issue #1401)."
+    );
 }
 
 #[test]

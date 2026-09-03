@@ -50,7 +50,7 @@ fn culling_body(source: &str) -> &str {
     &source[start..=end]
 }
 
-/// The body of the loop that emits one draw command per run.
+/// The body of the loop that emits one draw command per instance.
 ///
 /// **Bounded to the loop rather than to the member**, because a mutation that
 /// lifted the three key writes out of the loop — leaving one command's key
@@ -185,8 +185,10 @@ fn the_sorting_positions_are_sized_and_addressed_off_the_command_count() {
     assert!(
         !body.contains("Malloc<float>(3 * InstanceCount)"),
         "{PAINTER} sizes instanceSortingPositions from InstanceCount. It is \
-         indexed by COMMAND — `sortingPosition = 3 * command` — and there are \
-         fewer commands than instances, so this allocates for the wrong axis."
+         indexed by COMMAND — `sortingPosition = 3 * command` — and the \
+         command count now EQUALS the instance count (issue #1401, D5), so \
+         this assertion stays only to pin that the allocation is written in \
+         terms of the command count, not to distinguish the two axes."
     );
 
     let loop_body = emission_loop(body);

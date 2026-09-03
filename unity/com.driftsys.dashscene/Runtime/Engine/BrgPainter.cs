@@ -157,7 +157,7 @@ namespace Driftsys.Dashscene
         /// **A material per sheet rather than per class.** A texture is a
         /// per-material binding, so a document naming two faces needs two
         /// materials over one shader, and the culling callback emits a draw
-        /// command per contiguous run of instances that share one.
+        /// command per instance, each one's atlas picking the material.
         private Texture2D[] _atlasTextures = Array.Empty<Texture2D>();
         private Material[] _textMaterials = Array.Empty<Material>();
         private BatchMaterialID[] _textMaterialIds = Array.Empty<BatchMaterialID>();
@@ -178,10 +178,10 @@ namespace Driftsys.Dashscene
 
         /// How many draw commands the last [`Draw`] laid out.
         ///
-        /// Computed once per frame, where the run boundaries are decided, and
-        /// read by every camera's culling callback. It has to be exactly what
-        /// the emission loop produces: Unity allocates the command array from
-        /// it and that loop writes into it.
+        /// Computed once per frame, equal to the instance count, and read by
+        /// every camera's culling callback. It has to be exactly what the
+        /// emission loop produces: Unity allocates the command array from it
+        /// and that loop writes into it.
         private int _commandCount;
 
         /// Whether the short-frame warning has been reported.
@@ -853,9 +853,8 @@ namespace Driftsys.Dashscene
                 return default;
             }
 
-            // How many draw commands: one per contiguous run of instances that
-            // share a material, split again where such a run holds more visible
-            // instances than one command may carry.
+            // How many draw commands: one per visible instance
+            // (issue #1401, D5), counted in `Draw`.
             //
             // **Counted in `Draw` rather than here.** The answer cannot change
             // between the two — nothing writes `InstanceAtlas` outside `Draw` —

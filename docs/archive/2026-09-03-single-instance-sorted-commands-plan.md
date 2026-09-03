@@ -36,7 +36,7 @@ directory).
 ## Global Constraints
 
 - Worktree:
-  `/Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands`,
+  `<worktrees>/dashscene-worktrees/single-instance-commands`,
   branch `debt/v021-single-instance-commands`. Absolute paths and `git -C`
   always; the shell cwd resets between commands.
 - No document-format change, no C ABI change, no shader change (spec, Scope).
@@ -48,7 +48,7 @@ directory).
   keyword would not fire there — and a stray one in a later `main` PR body would
   fire wrongly. The issue is closed by hand after verification.
 - The evidence shelf is
-  `/Users/sebastientasson/Workspace/driftsys/dashscene-v021-lanes/probe-1401/`
+  `<worktrees>/dashscene-v021-lanes/probe-1401/`
   (outside the repository). Soak numbers land there and in the PR body, never
   hand-copied into repo prose without their derivation.
 
@@ -70,9 +70,9 @@ directory).
 - [ ] **Step 1: Apply the showcase probe hunks (only) from the shelf patch**
 
 ```bash
-git -C /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands \
+git -C <worktrees>/dashscene-worktrees/single-instance-commands \
   apply --include='unity/com.driftsys.dashscene/Samples~/Showcase/DashsceneShowcase.cs' \
-  /Users/sebastientasson/Workspace/driftsys/dashscene-v021-lanes/probe-1401/arms-uncommitted-2026-09-03.patch
+  <worktrees>/dashscene-v021-lanes/probe-1401/arms-uncommitted-2026-09-03.patch
 ```
 
 Expected: clean apply; `git status` shows only that one modified file. The
@@ -82,9 +82,9 @@ build, which is intended.
 - [ ] **Step 2: Build the showcase player**
 
 ```bash
-rm -rf /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands/target/unity-demo
-just -f /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands/justfile \
-     -d /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands \
+rm -rf <worktrees>/dashscene-worktrees/single-instance-commands/target/unity-demo
+just -f <worktrees>/dashscene-worktrees/single-instance-commands/justfile \
+     -d <worktrees>/dashscene-worktrees/single-instance-commands \
      unity-demo 6000.3.23f1 build
 ```
 
@@ -96,8 +96,8 @@ files in the worktree while it runs.
 ```bash
 env DASHSCENE_PROBE1401_MEASURE=1 DASHSCENE_PROBE1401_ENTRY=1 \
     DASHSCENE_PROBE1401_QUIT=20000 DASHSCENE_PROBE1401_RT=1 \
-    /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands/target/unity-demo/Build/DashsceneShowcase.app/Contents/MacOS/DashsceneShowcase \
-    -logFile /Users/sebastientasson/Workspace/driftsys/dashscene-v021-lanes/probe-1401/2026-09-03-arms/fixlane-before.log
+    <worktrees>/dashscene-worktrees/single-instance-commands/target/unity-demo/Build/DashsceneShowcase.app/Contents/MacOS/DashsceneShowcase \
+    -logFile <worktrees>/dashscene-v021-lanes/probe-1401/2026-09-03-arms/fixlane-before.log
 ```
 
 A window opens and closes itself after ~5.5 minutes.
@@ -105,7 +105,7 @@ A window opens and closes itself after ~5.5 minutes.
 - [ ] **Step 4: Count band-frames and check the instrument's liveness**
 
 ```bash
-L=/Users/sebastientasson/Workspace/driftsys/dashscene-v021-lanes/probe-1401/2026-09-03-arms/fixlane-before.log
+L=<worktrees>/dashscene-v021-lanes/probe-1401/2026-09-03-arms/fixlane-before.log
 grep -m1 "probe1401] BASELINE" "$L"
 grep "DROP" "$L" | awk -F'frame=' '{split($2,a," "); print a[1]}' | sort -n | uniq -c | awk '$1>=4' | wc -l
 grep "frame cost" "$L" | tail -2
@@ -207,7 +207,7 @@ fn the_command_count_is_the_instance_count() {
 - [ ] **Step 2: Run it, confirm all three fail for the stated reasons**
 
 ```bash
-cargo nextest run --manifest-path /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands/Cargo.toml -p package-gate -E 'test(/single_instance/)'
+cargo nextest run --manifest-path <worktrees>/dashscene-worktrees/single-instance-commands/Cargo.toml -p package-gate -E 'test(/single_instance/)'
 ```
 
 Expected: 3 FAIL — the loop calls `RunEnd(at, limit)` (not `at + 1`), `RunEnd`
@@ -257,7 +257,7 @@ bounded, and a batch holds one command per instance.
 - [ ] **Step 4: Run the gate and the whole package-gate suite**
 
 ```bash
-cargo nextest run --manifest-path /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands/Cargo.toml -p package-gate
+cargo nextest run --manifest-path <worktrees>/dashscene-worktrees/single-instance-commands/Cargo.toml -p package-gate
 ```
 
 Expected: the three new tests PASS and every existing scan stays green. A
@@ -275,12 +275,12 @@ is reverted, not merely pass beside it.)
 - [ ] **Step 6: Sanity tier, then commit**
 
 ```bash
-just -f /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands/justfile \
-     -d /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands test
-git -C /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands \
+just -f <worktrees>/dashscene-worktrees/single-instance-commands/justfile \
+     -d <worktrees>/dashscene-worktrees/single-instance-commands test
+git -C <worktrees>/dashscene-worktrees/single-instance-commands \
   add unity/package-gate/tests/single_instance_commands.rs \
       unity/com.driftsys.dashscene/Runtime/Engine/BrgPainter.cs
-git -C /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands \
+git -C <worktrees>/dashscene-worktrees/single-instance-commands \
   commit -m "fix(unity): one visible instance per sorted draw command
 
 Unity's sorted-transparent path drops a contiguous subset of draw
@@ -328,9 +328,9 @@ so.
 - [ ] **Step 4: Drop the probe file**
 
 ```bash
-git -C /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands \
+git -C <worktrees>/dashscene-worktrees/single-instance-commands \
   checkout -- unity/com.driftsys.dashscene/Samples~/Showcase/DashsceneShowcase.cs
-git -C /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands status --short
+git -C <worktrees>/dashscene-worktrees/single-instance-commands status --short
 ```
 
 Expected: clean tree (the named file only — never `checkout -- .`).
@@ -377,7 +377,7 @@ fn the_floor_keeps_instance_scale_command_counts_distinct() {
 - [ ] **Step 2: Run it**
 
 ```bash
-cargo nextest run --manifest-path /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands/Cargo.toml -p package-gate -E 'test(/instance_scale/)'
+cargo nextest run --manifest-path <worktrees>/dashscene-worktrees/single-instance-commands/Cargo.toml -p package-gate -E 'test(/instance_scale/)'
 ```
 
 Expected: PASS (D4's behind-the-sheet layout has no fold at any span). If it
@@ -387,9 +387,9 @@ to the spec rather than loosening the assertion.
 - [ ] **Step 3: Commit**
 
 ```bash
-git -C /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands \
+git -C <worktrees>/dashscene-worktrees/single-instance-commands \
   add unity/package-gate/tests/sorting_key_arithmetic.rs
-git -C /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands \
+git -C <worktrees>/dashscene-worktrees/single-instance-commands \
   commit -m "test(unity): the key floor holds at instance-scale command counts
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
@@ -435,10 +435,10 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - [ ] **Step 6: Prose gates and commit**
 
 ```bash
-just -f /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands/justfile \
-     -d /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands lint
-git -C /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands add -A docs unity/com.driftsys.dashscene/CHANGELOG.md
-git -C /Users/sebastientasson/Workspace/driftsys/dashscene-worktrees/single-instance-commands \
+just -f <worktrees>/dashscene-worktrees/single-instance-commands/justfile \
+     -d <worktrees>/dashscene-worktrees/single-instance-commands lint
+git -C <worktrees>/dashscene-worktrees/single-instance-commands add -A docs unity/com.driftsys.dashscene/CHANGELOG.md
+git -C <worktrees>/dashscene-worktrees/single-instance-commands \
   commit -m "docs(unity): the single-instance command rule, and the measurements behind it
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
