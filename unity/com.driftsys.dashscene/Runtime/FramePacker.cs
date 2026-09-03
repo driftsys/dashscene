@@ -136,9 +136,9 @@ namespace Driftsys.Dashscene
         /// for a run this pack could not resolve.
         ///
         /// **Parallel to the run table, not to the instances.** The instance
-        /// array below is what a painter groups draw commands by; this is what
-        /// says which sheet a run's row was written for, and the two are
-        /// filled in different passes.
+        /// array below is what a painter reads to pick each single-instance
+        /// command's material; this is what says which sheet a run's row was
+        /// written for, and the two are filled in different passes.
         private int[] _runAtlas = new int[64];
 
         /// The atlas each INSTANCE samples, or -1 for an instance that is not

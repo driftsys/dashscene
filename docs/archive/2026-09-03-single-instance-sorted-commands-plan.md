@@ -1,8 +1,9 @@
 # Single-Instance Sorted Commands Implementation Plan
 
-    status  plan, executed 2026-09-03 (commits 686ef1f..137a18e). Working
-            memory: archived verbatim once the durable records it points at
-            (Task 5) had landed.
+    status  plan, executed 2026-09-03 (commits bfc5bc3..e9e4208). Working
+            memory: archived with local paths normalized per
+            docs/archive/README.md; body otherwise verbatim, once the durable
+            records it points at (Task 5) had landed.
     note    Task 2 Step 2's nextest filter, `test(/single_instance/)`,
             selects nothing: nextest's `test()` predicate matches only a
             test function's own name, and none of the three functions in

@@ -32,16 +32,16 @@ the Cargo workspace rather than moving on its own.
   `BatchDrawCommandFlags.HasSortingPosition` named more than one: the affected
   region of that frame renders as bare backdrop, nothing is logged, no exception
   is raised, and the painter's own culling emission is byte-identical on it.
-  `BrgPainter` now emits one draw command per instance, which is the shape
-  Unity's own GPU Resident Drawer feeds this path and the only one measured free
-  of the defect. On macOS/Metal, Apple M3, Unity 6000.3.23f1, the showcase
-  typography scene: 410 affected frames per 20,000 before, 0 per 20,000 after.
-  The showcase's reported frame cost held its mean at 0.19 ms, though the
-  command count rose from 11 to 381 per view — the small movements in the
-  median, 95th percentile and maximum are run-to-run noise, and the figure
-  excludes Unity's culling callback; `docs/design/unity-csharp-host.md` states
-  what it covers. `docs/technotes/batch-renderer-group.md` §5d carries the
-  tables. Issue #1401.
+  `BrgPainter` now emits one draw command per instance, the shape
+  `docs/technotes/batch-renderer-group.md` §3 attributes to Unity's own GPU
+  Resident Drawer and the only one measured free of the defect. On macOS/Metal,
+  Apple M3, Unity 6000.3.23f1, the showcase typography scene: 410 affected
+  frames per 20,000 before, 0 per 20,000 after. The showcase's reported frame
+  cost held its mean at 0.19 ms, though the command count rose from 11 to 381
+  per view — the small movements in the median, 95th percentile and maximum are
+  run-to-run noise, and the figure excludes Unity's culling callback;
+  `docs/design/unity-csharp-host.md` states what it covers.
+  `docs/technotes/batch-renderer-group.md` §5d carries the tables. Issue #1401.
 - **The painter draws its text.** `BrgPainter` drew every surface and no glyph,
   in every player build on every platform, through ten green configurations —
   `BatchRendererGroup` groups draw commands by material before drawing them, so

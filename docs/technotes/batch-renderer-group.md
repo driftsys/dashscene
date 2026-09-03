@@ -48,9 +48,9 @@ the callback emitted one command per contiguous run of instances sharing a
 material, splitting a run past 256 instances because the SRP core shader library
 declares exactly that many visible-instance slots. Unity's sorted-transparent
 path drops commands from single frames under that shape; one visible instance
-per command is the shape its own GPU Resident Drawer feeds the path, and the
-only one measured free of the defect. R-E20's 256 is satisfied without a split
-at all, because one is never more than 256.
+per command is the shape its own GPU Resident Drawer feeds the path (§3), and
+the only one measured free of the defect. R-E20's 256 is satisfied without a
+split at all, because one is never more than 256.
 
 Text is what makes more than one material necessary. A glyph is sampled from a
 font atlas, an atlas is a texture, and a texture is bound to a material — so a
@@ -87,6 +87,13 @@ flagged command into `instanceSortingPositions`, at the float offset
 `3 * commandIndex` (`Runtime/GPUDriven/InstanceCuller.cs`). A renderer that
 needs an order states it; there is no path on which submission order alone is
 the contract.
+
+**The per-command instance count is a different claim, sourced differently.**
+SRP core's own files establish the flag and the float3 writes above; they do not
+say how many visible instances a flagged command may name. That figure —
+`visibleCount = 1` — is reported by third-party analysis of the closed sorter,
+matched by this repository's own measurements (§5d). §2 and §5d cite this
+paragraph rather than restate the sourcing.
 
 ## 4. The pitfall
 
@@ -299,16 +306,18 @@ materials, 381 instances:
 | flag kept, one visible instance per command               |           0 |
 | the same, every per-frame host call stopped               |           0 |
 
-The third row and the two one-instance rows were taken from the **same build**,
-so the difference between 311 and 0 is the command shape and nothing else.
+The third row and the two one-instance rows were taken from the **same build** —
+an environment switch, `DASHSCENE_PROBE1401_SPLIT1`, in the shelf's probe patch
+flips the emission between the two shapes at runtime — so the difference between
+311 and 0 is the command shape and nothing else.
 
 **And the fix lane's own before and after**, measured on this branch rather than
 cited from the arms above, same instrument, same scene, 20,000 frames each:
 
 | commit                              | band-frames |
 | ----------------------------------- | ----------: |
-| `686ef1f`, the branch's base        |         410 |
-| `23dd62d`, one instance per command |           0 |
+| `dd20a18`, the branch's base        |         410 |
+| `3a39728`, one instance per command |           0 |
 
 410 on 20,000 is 2.05 %, above the 292-to-317 range the arms measured on a
 different base commit; the two bases differ in nothing else the runs varied, so
@@ -326,20 +335,36 @@ own GPU Resident Drawer calls on one persistent buffer.
 zero, over 40,000 frames — but that is issue #1389 restored, with every glyph
 hidden behind the backdrop again. Keeping the flag and naming one instance per
 command gives zero over 60,000 frames while drawing the document correctly, and
-that shape is what SRP core 17.3.0 emits for its own transparent content (§3).
+that shape matches what §3 attributes to Unity's own GPU Resident Drawer.
 
 **What this does not establish.** Nothing here reads Unity's sort, so the
 mechanism is unknown; the shape is a measured boundary, not an explanation. It
-is macOS/Metal only — no Android or Vulkan arm has been run, and the fix is
-platform-independent either way. And **§5b's rows were all taken under the
-multi-instance shape**, including the `RunEnd` material-run walk it names, which
-this change removed: those measurements describe commands this painter no longer
-emits, so the order question they left open is reopened rather than answered.
-§5c's single unreproduced dark frame is **consistent** with this defect and is
-not identified as it: that rig captures one frame per player run, so one dark
-result in about forty runs is one dark frame in about forty, which is the same
-order as the 1.5 % to 2.1 % measured here. Nothing re-ran it under a counting
-instrument.
+is macOS/Metal only — no Android or Vulkan arm has been run (issue #1403), and
+the fix is platform-independent either way. And **§5b's rows were all taken
+under the multi-instance shape**, including the `RunEnd` material-run walk it
+names, which this change removed: those measurements describe commands this
+painter no longer emits, so the order question they left open is reopened rather
+than answered. §5c's single unreproduced dark frame is **consistent** with this
+defect and is not identified as it: that rig captures one frame per player run,
+so one dark result in about forty runs is one dark frame in about forty, which
+is the same order as the 1.5 % to 2.1 % measured here on a live host — well
+above the 0.58 % (115/20,000) measured with the host frozen. Nothing re-ran it
+under a counting instrument.
+
+**The paint entry, re-measured on the fix build.** The filed configuration — the
+paint entry, 16 instances, one material, one flagged command, which is issue
+#1401's own reported case — was re-measured on the fix build: 0 detector events
+of any kind in 20,000 frames, on a live instrument (`fixlane-after-paint.log` on
+the shelf). This also corrects an earlier reading of that entry: the paint
+document is a v0.3 `.dsb` predating loop tracks, so its progress bar is static
+on this host and cannot animate. The pre-fix runs' oscillation on that same tile
+— background rows dropping to bare backdrop on roughly 15 % of frames — was the
+defect on the filed entry itself, at approximately the filed rate of 12.2 %, not
+the bar animating.
+
+| configuration                                 | DROP events |
+| --------------------------------------------- | ----------: |
+| paint entry (16 inst., 1 material), fix build |           0 |
 
 The tables, the per-run logs, the anomalous frame captures and the probe patch
 are on the evidence shelf at
@@ -388,8 +413,8 @@ express the bug will report the code as correct every time.**
   byte-identical culling emission on the dropped frame (§5d). One instance per
   command is what Unity's own GPU Resident Drawer emits and the only shape
   measured free of it. Nothing on this side of the boundary reports the defect,
-  so the only way to see it is to difference tens of thousands of rendered
-  frames.
+  so the only way to count it is to difference tens of thousands of rendered
+  frames — it is visible by eye as flicker.
 
 ## 8. How to check a painter for this pitfall
 

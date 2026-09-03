@@ -182,15 +182,13 @@ fn the_sorting_positions_are_sized_and_addressed_off_the_command_count() {
          it does not."
     );
 
-    assert!(
-        !body.contains("Malloc<float>(3 * InstanceCount)"),
-        "{PAINTER} sizes instanceSortingPositions from InstanceCount. It is \
-         indexed by COMMAND — `sortingPosition = 3 * command` — and the \
-         command count now EQUALS the instance count (issue #1401, D5), so \
-         this assertion stays only to pin that the allocation is written in \
-         terms of the command count, not to distinguish the two axes."
-    );
-
+    // **A negative pinning `Malloc<float>(3 * InstanceCount)` left
+    // 2026-09-03.** Since issue #1401 the command count equals the instance
+    // count, so that spelling draws an identical frame to the one shipped —
+    // it no longer distinguishes the fix from the defect it replaced. The
+    // fragment above already pins the allocation to `commandCount`, and the
+    // assertion below pins `sortingPosition`'s addressing to `command`;
+    // together those are the property that still bites.
     let loop_body = emission_loop(body);
     assert!(
         loop_body.contains("sortingPosition = 3 * command,"),

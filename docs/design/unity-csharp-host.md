@@ -269,10 +269,8 @@ what the window holds after the 112-byte shared head — the two transforms plus
 the mandatory zero `float4` at offset 0. R-E20's 256 **is** a literal, and
 correctly so: it is `unity_DOTSVisibleInstances[256]` in the SRP core shader
 library, a property of the shader rather than of the adapter. The painter meets
-it by emitting a batch as several draw commands rather than by asserting the
-bound, because asserting it would refuse documents it can draw — and it now
-emits one instance per command (issue #1401), so no document can approach the
-bound at all.
+it by construction: it emits one instance per command (issue #1401), so no
+document can approach the bound at all.
 
 **The lease does not cross into the culling callback.** Issue #1267 measured
 `OnPerformCulling` on Unity's main thread under `6000.3.22f1`, URP, macOS and
@@ -568,10 +566,16 @@ lines on the 20,000-frame soaks of 2026-09-03 — macOS/Metal, Apple M3, Unity
 each in the log:
 
     [showcase] frame cost — scene typography at 3024x1832 over 240 frames —
-    tick 0.07 ms, draw mean 0.19 p50 0.16 p95 0.41 max 1.02 ms      686ef1f
+    tick 0.07 ms, draw mean 0.19 p50 0.16 p95 0.41 max 1.02 ms
+    (3848.2 fps if unpaced)      dd20a18
 
     [showcase] frame cost — scene typography at 3024x1832 over 240 frames —
-    tick 0.09 ms, draw mean 0.19 p50 0.15 p95 0.42 max 1.15 ms      23dd62d
+    tick 0.09 ms, draw mean 0.19 p50 0.15 p95 0.42 max 1.15 ms
+    (3558.2 fps if unpaced)      3a39728
+
+Both runs were the probe-instrumented soak builds — the camera rendering into an
+explicit 1024x768 `RenderTexture` rather than the window directly — so the
+figures bracket packing and upload either way.
 
 A command count 34.6 times higher left the **mean** where it was, at 0.19 ms.
 The median moved 0.01 ms down, the 95th percentile 0.01 ms up and the maximum
@@ -584,7 +588,7 @@ frame lease, `BrgPainter.Draw` and the release; Unity runs `OnPerformCulling`
 after `Update` returns, so the emission loop is outside it, and so is the GPU's
 execution of 381 draw commands rather than 11. What the pair bounds is the
 packing and the upload, which the command shape does not change at all. The
-emission loop's own cost, and the GPU's, are unmeasured.
+emission loop's own cost, and the GPU's, are unmeasured (issue #1406).
 
 ### The six rules, and where each one is held
 

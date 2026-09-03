@@ -856,11 +856,12 @@ namespace Driftsys.Dashscene
             // How many draw commands: one per visible instance
             // (issue #1401, D5), counted in `Draw`.
             //
-            // **Counted in `Draw` rather than here.** The answer cannot change
-            // between the two — nothing writes `InstanceAtlas` outside `Draw` —
-            // and this callback runs once per camera per frame, so counting
-            // here walked every instance a second time for a value already
-            // known. The emission loop below is the walk that has to happen.
+            // **Counted in `Draw` rather than here.** One command per
+            // instance (issue #1401, D5) makes this count the instance
+            // count, which `Draw` already settles across its batches; this
+            // callback runs once per camera per frame, so recomputing it
+            // here would repeat that same walk for a value already known.
+            // The emission loop below is the walk that has to happen.
             var commandCount = _commandCount;
 
             // Unity frees all of these. `Allocator.TempJob` is what the API
@@ -1046,9 +1047,9 @@ namespace Driftsys.Dashscene
                     // a contiguous subset of draw commands for single
                     // frames when a HasSortingPosition command carried more
                     // than one instance; one instance per command is the
-                    // shape Unity's own GPU Resident Drawer feeds it, and
-                    // the only one measured safe. Tables:
-                    // docs/technotes/batch-renderer-group.md §5d.
+                    // shape docs/technotes/batch-renderer-group.md §3
+                    // attributes to Unity's own GPU Resident Drawer, and the
+                    // only one measured safe. Tables: §5d.
                     var end = at + 1;
                     var run = end - at;
 
@@ -1255,8 +1256,7 @@ namespace Driftsys.Dashscene
 
             // Also bounded by `MaxInstancesPerDrawCommand`. Not required by
             // R-E20 — a batch now holds one draw command per instance
-            // regardless — but it keeps a batch's capacity bounded, which is
-            // what a reader of a frame capture expects.
+            // regardless — but it keeps a batch's capacity bounded.
             return Math.Min(fit, MaxInstancesPerDrawCommand);
         }
 

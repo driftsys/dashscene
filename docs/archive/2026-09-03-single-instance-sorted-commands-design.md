@@ -10,14 +10,17 @@
             (outside the repository; the measurement tables and the anomaly
             frame captures)
     archived  2026-09-03, verbatim, once the durable records below had
-            landed (commits 179d6a0, 137a18e). One correction, noted here
+            landed (commits 81b3890, e9e4208). One correction, noted here
             rather than in the body: "The defect" below quotes 292-317
             dropped-band frames per 20,000, the arms' figure, written before
             this branch's own before-soak ran. That soak, on this branch's
-            base commit 686ef1f, measured 410/20,000 — see D5 in
+            base commit dd20a18, measured 410/20,000 — see D5 in
             docs/decisions/brg-draw-command-order-is-not-guaranteed.md and
             §5d of docs/technotes/batch-renderer-group.md, both of which
-            carry the number this file predates.
+            carry the number this file predates. A second correction: the
+            executed change also carried comment-only corrections in
+            FramePacker.cs and Text.shader — no shader CODE changed, so the
+            "no shader change" claim in Scope below holds in substance.
 
 ## The defect
 
