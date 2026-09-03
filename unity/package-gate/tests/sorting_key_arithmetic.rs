@@ -189,3 +189,25 @@ fn order_by_distance(keys: &[f32], base: f32, distance: f32) -> Vec<usize> {
     });
     order
 }
+
+/// One command per instance (issue #1401) raises the command count to the
+/// instance count, so the floor must keep keys distinct at that scale too.
+/// 10,000 commands at the review's hostile placement — a document 10,000
+/// units from the origin, a camera half a unit away — spans 1,000 units
+/// behind the sheet and every key must stay its own float, farthest first.
+#[test]
+fn the_floor_keeps_instance_scale_command_counts_distinct() {
+    let (distance, base, commands) = (0.5f32, 10_000.0f32, 10_000);
+    let s = step(distance, base);
+    let k = keys(base, s, commands);
+    assert_eq!(distinct(&k), commands as usize);
+    for c in 1..commands as usize {
+        assert!(
+            from_camera(k[c], base, distance) < from_camera(k[c - 1], base, distance),
+            "distance from the camera must fall with the command index; \
+             it does not between commands {} and {}",
+            c - 1,
+            c
+        );
+    }
+}
