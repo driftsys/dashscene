@@ -411,10 +411,10 @@ express the bug will report the code as correct every time.**
   rather than specified: the multi-instance shape was seen dropping a contiguous
   subset of commands for single frames, with no log line, no exception, and a
   byte-identical culling emission on the dropped frame (§5d). One instance per
-  command is what Unity's own GPU Resident Drawer emits and the only shape
-  measured free of it. Nothing on this side of the boundary reports the defect,
-  so the only way to count it is to difference tens of thousands of rendered
-  frames — it is visible by eye as flicker.
+  command is the shape §3 attributes to Unity's own GPU Resident Drawer, and the
+  only shape measured free of it. Nothing on this side of the boundary reports
+  the defect, so the only way to count it is to difference tens of thousands of
+  rendered frames — it is visible by eye as flicker.
 
 ## 8. How to check a painter for this pitfall
 
