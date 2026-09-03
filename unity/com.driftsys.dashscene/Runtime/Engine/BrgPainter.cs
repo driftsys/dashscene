@@ -816,12 +816,13 @@ namespace Driftsys.Dashscene
             BindHeap();
 
             // After `UploadInstances`, which is what settles `_batchCount` and
-            // `_instancesPerBatch` — the two the run boundaries are counted
-            // over.
+            // `_instancesPerBatch` — the two `InstancesInBatch` is counted
+            // over. One draw command per visible instance (issue #1401), so
+            // the command count is the instance count.
             _commandCount = 0;
             for (var b = 0; b < _batchCount; b++)
             {
-                _commandCount += CommandsInBatch(b);
+                _commandCount += InstancesInBatch(b);
             }
 
             // The two counts agree again, so a later short frame is a new
@@ -898,7 +899,9 @@ namespace Driftsys.Dashscene
             // command with `HasSortingPosition`
             // (`Runtime/GPUDriven/InstanceCullingBatcherBurst.cs`) and writes
             // one `float3` per flagged command at float offset
-            // `3 * commandIndex` (`Runtime/GPUDriven/InstanceCuller.cs`).
+            // `3 * commandIndex` (`Runtime/GPUDriven/InstanceCuller.cs`). A
+            // flagged command below carries exactly one visible instance,
+            // per issue #1401, with the measurements in the technote.
             //
             // **Setting the flag is what makes glyphs reach the screen; the key
             // values are NOT measured to order the picture.** Do not read a
@@ -1039,7 +1042,15 @@ namespace Driftsys.Dashscene
                 // reconciled after the loop.
                 for (var at = first; at < limit && command < commandCount;)
                 {
-                    var end = RunEnd(at, limit);
+                    // **One visible instance per command — issue #1401.**
+                    // Unity's sorted-transparent path was measured dropping
+                    // a contiguous subset of draw commands for single
+                    // frames when a HasSortingPosition command carried more
+                    // than one instance; one instance per command is the
+                    // shape Unity's own GPU Resident Drawer feeds it, and
+                    // the only one measured safe. Tables:
+                    // docs/technotes/batch-renderer-group.md §5d.
+                    var end = at + 1;
                     var run = end - at;
 
                     // Every instance's index is relative to its BATCH, not to
@@ -1153,31 +1164,6 @@ namespace Driftsys.Dashscene
                 : _materialId;
         }
 
-        /// The end, exclusive, of the run of instances from `at` that share one
-        /// material.
-        ///
-        /// **A draw command names one material, so a run that changes material
-        /// ends here.** Instances are emitted in the lean painter's order and
-        /// the runs are contiguous, so splitting on a change preserves that
-        /// order exactly **in the command list**. That is not the same as
-        /// preserving it in the picture: `BatchRendererGroup` groups the
-        /// commands by material afterwards, which is issue #1389 and what
-        /// `OnPerformCulling`'s keys exist to escape.
-        ///
-        /// Bounded by R-E20's 256 as well, for the reason
-        /// [`CommandsInBatch`] gives.
-        private int RunEnd(int at, int limit)
-        {
-            var atlas = _packer.InstanceAtlas[at];
-            var max = Math.Min(limit, at + MaxInstancesPerDrawCommand);
-            var end = at + 1;
-            while (end < max && _packer.InstanceAtlas[end] == atlas)
-            {
-                end++;
-            }
-            return end;
-        }
-
         /// How many instances batch `b` holds, of the ones being drawn.
         ///
         /// **Clamped at zero.** Capacity doubles, so the last batches are
@@ -1187,34 +1173,6 @@ namespace Driftsys.Dashscene
         {
             var start = b * _instancesPerBatch;
             return Math.Max(Math.Min(_instancesPerBatch, InstanceCount - start), 0);
-        }
-
-        /// How many draw commands batch `b` needs.
-        ///
-        /// **R-E20, and the reason it splits rather than asserting.** At most
-        /// 256 visible instances per `BatchDrawCommand`, because the SRP core
-        /// shader library declares an array of exactly that length. A painter
-        /// that asserted the bound would refuse documents it can draw;
-        /// splitting is what honours it. Since story #1123 a run also ends
-        /// where the material changes, which is why this counts rather than
-        /// divides.
-        private int CommandsInBatch(int b)
-        {
-            // **The same walk the emission loop makes, and that is the whole
-            // reason it is a loop rather than a division.** The count and the
-            // emission must agree exactly: Unity allocates the command array
-            // from this answer and the loop writes into it, so a count taken
-            // any other way writes past the end the moment a batch holds two
-            // materials. A division over 256 was correct while every instance
-            // drew with one material, and story #1123 ended that.
-            var start = b * _instancesPerBatch;
-            var limit = start + InstancesInBatch(b);
-            var commands = 0;
-            for (var at = start; at < limit; at = RunEnd(at, limit))
-            {
-                commands++;
-            }
-            return commands;
         }
 
         private static unsafe T* Malloc<T>(int count) where T : unmanaged
@@ -1296,11 +1254,10 @@ namespace Driftsys.Dashscene
                     + $"{HeadBytes} bytes of shared data.");
             }
 
-            // Also bounded by what one draw command may carry, so a batch never
-            // needs a second command. Not required by R-E20 — the split in
-            // `CommandsInBatch` honours it either way — but it keeps one batch
-            // to one command, which is what a reader of a frame capture
-            // expects.
+            // Also bounded by `MaxInstancesPerDrawCommand`. Not required by
+            // R-E20 — a batch now holds one draw command per instance
+            // regardless — but it keeps a batch's capacity bounded, which is
+            // what a reader of a frame capture expects.
             return Math.Min(fit, MaxInstancesPerDrawCommand);
         }
 
