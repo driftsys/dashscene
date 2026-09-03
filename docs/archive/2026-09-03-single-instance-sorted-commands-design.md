@@ -9,6 +9,15 @@
     evidence  driftsys/dashscene-v021-lanes/probe-1401/2026-09-03-arms/RESULTS.md
             (outside the repository; the measurement tables and the anomaly
             frame captures)
+    archived  2026-09-03, verbatim, once the durable records below had
+            landed (commits 179d6a0, 137a18e). One correction, noted here
+            rather than in the body: "The defect" below quotes 292-317
+            dropped-band frames per 20,000, the arms' figure, written before
+            this branch's own before-soak ran. That soak, on this branch's
+            base commit 686ef1f, measured 410/20,000 — see D5 in
+            docs/decisions/brg-draw-command-order-is-not-guaranteed.md and
+            §5d of docs/technotes/batch-renderer-group.md, both of which
+            carry the number this file predates.
 
 ## The defect
 

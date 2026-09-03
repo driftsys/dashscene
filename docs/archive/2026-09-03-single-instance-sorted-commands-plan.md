@@ -1,5 +1,16 @@
 # Single-Instance Sorted Commands Implementation Plan
 
+    status  plan, executed 2026-09-03 (commits 686ef1f..137a18e). Working
+            memory: archived verbatim once the durable records it points at
+            (Task 5) had landed.
+    note    Task 2 Step 2's nextest filter, `test(/single_instance/)`,
+            selects nothing: nextest's `test()` predicate matches only a
+            test function's own name, and none of the three functions in
+            single_instance_commands.rs contain the substring
+            "single_instance". The filter actually run was
+            `binary(single_instance_commands)`. Not corrected in place —
+            noted here for a reader re-running the step.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use
