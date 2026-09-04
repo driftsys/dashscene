@@ -321,9 +321,12 @@ build, three reported samples of 240 drawn frames per scene, at **2340x805**:
 The instrument reports per sample and the table is not averaged precisely so
 that warm-up is visible rather than folded in.
 
-**Read against a 16.67 ms budget** — which is a 60 Hz budget and **not** a
-requirement this project has set; nothing in the specification pins display
-geometry, and #549 is open against exactly that:
+**Read against a 16.67 ms budget** — a 60 Hz budget. Since 2026-09-04 there is
+one for this device at its native drawable
+(`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`), read from
+the compositor; this table, at 2340x805 and a per-frame report, is not what it
+is read against, and no budget exists for a display class — nothing in the
+specification pins display geometry, and #549 is open against exactly that:
 
 - `surfaces` spends about 25 ms at p50 and reaches 60 at p95.
 - `typography` spends 11.6 at p50 and 19.6 at p95.
@@ -602,9 +605,12 @@ the R-T1 argument, measured for the first time.
 
 **The constant does not change, and this is why.**
 `dashscene_validator::RENDER_TARGET_BUDGET_PLACEHOLDER` is a **count**, and what
-was measured is a **cost**. Turning one into the other needs a frame budget, and
-this project deliberately has none: no display geometry is pinned (#549), so any
-count written here would be derived from an invented budget. What the
+was measured is a **cost**. Turning one into the other needs a frame budget for
+a display class, and this project deliberately has none: no display geometry is
+pinned (#549), so any count written here would be derived from an invented
+budget. The one-device budget of 2026-09-04
+(`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`) is a budget
+for the Pixel 5 at one extent and derives no count for the class. What the
 measurement does settle is the shape of the answer:
 
 - **A fixed count cannot be right at any value.** 1.95 ms is a cost per switch
@@ -616,7 +622,8 @@ measurement does settle is the shape of the answer:
   was ever read as "eight is fine", that reading is now measured to be wrong.
 - **`paint.render-target-budget` stays a warning**, for the same reason: an
   error would enforce a threshold nobody has derived. It becomes an error when a
-  frame budget exists to derive one from.
+  display-class frame budget exists to derive one from; the one-device budget of
+  2026-09-04 is not that.
 
 ### The attach, and what it does and does not say
 
@@ -784,8 +791,10 @@ it — and not a whole core throughout, which is why the figure there is split a
   measured against each other rather than argued about. What is not answered is
   why one of the five debug attempts took 14.57 s; that is an unexplained
   outlier, and the typical first-launch premium is far too small to be it.
-- **No frame budget is established.** The 16.67 ms above is a reference point
-  for reading the table, not a requirement.
+- **No frame budget for a display class is established.** Since 2026-09-04 one
+  exists for this device at one extent
+  (`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`). The
+  16.67 ms above is a reference point for reading the table, not a requirement.
 - **One device.** Nothing here says what a different Adreno, a Mali or a PowerVR
   does, and the GLES row's zero headroom is the figure most likely to differ.
 
@@ -952,8 +961,11 @@ Vulkan sweeps hold one extent throughout and so say nothing about this at all.
 What would settle it is one Vulkan process rotated part-way, which the
 instrument would report as two samples because it discards across that boundary.
 
-**No budget is set here.** #1107 says so in terms and #549 is open against the
-missing display geometry; these are figures and the record that holds them.
+**No budget is set here.** One was set after these figures, for this device at
+one extent, on 2026-09-04
+(`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`); #1107 says
+none is set for the class and #549 is open against the missing display geometry;
+these are figures and the record that holds them.
 
 ### The Unity host's presented rate, and what bounds it (2026-09-03 and 04)
 
@@ -965,13 +977,14 @@ missing display geometry; these are figures and the record that holds them.
             player. This is issue #1347's Unity half, read whole-frame.
             Nothing here is committed as a change: the pacing edits — three scripts on the evidence shelf, applied in order, of which the explicit target and optimized frame pacing are the two that stand — and the HDR-off toggle live there as patches, and the pacing change is issue #1408 — until it lands, every presented-rate figure past the first paragraph describes a build this tree does not produce, and wants re-reading once it does; the shaded areas are derived from committed scene data and do not.
 
-**The table above was taken at 30 fps, and now says why.** "Paced well under the
-display rate" was an observation; the cause is that nothing in the shipped
-package or the demo player sets `Application.targetFrameRate`, and Unity's
-Android default for -1 is 30 whatever the panel does.
-(`unity/render-gate/DashsceneRenderGate.cs` does set it, to 60, but the
-`unity-render` recipe runs that player in batch mode and it renders on demand
-through `SubmitRenderRequest`, so nothing presents and the setting has no
+**The panel is 1080x2340 at 60 Hz** — `dumpsys display` lists a 90 Hz mode as
+well, unused throughout. **The table above was taken at 30 fps, and now says
+why.** "Paced well under the display rate" was an observation; the cause is that
+nothing in the shipped package or the demo player sets
+`Application.targetFrameRate`, and Unity's Android default for -1 is 30 whatever
+the panel does. (`unity/render-gate/DashsceneRenderGate.cs` does set it, to 60,
+but the `unity-render` recipe runs that player in batch mode and it renders on
+demand through `SubmitRenderRequest`, so nothing presents and the setting has no
 effect.) The compositor's `--timestats` counted 30.3 fps with no dropped frame,
 and the sample's own reports came every 8.0 s for 240 frames. **The
 `fps if unpaced` figure in those reports is the inverse of the measured `tick`
@@ -981,7 +994,7 @@ first place the Unity host's presented rate has been read at all.
 
 **Lifting the cap took two changes, and a reading that looked like a third was
 misleading.** Issue #1408 carries the changes and the same account; this is the
-measurement. Setting the target in `Start()` from
+measurement. Setting the target in `Awake()` from
 `Screen.currentResolution.refreshRateRatio` — which read 60 on that first build,
 with no frame-rate override yet in force — gave ~32 fps with a bimodal interval
 — 87 of 125 presented intervals at 33.4 ms, 16 between 16.6 and 16.9 — frames
@@ -1023,16 +1036,19 @@ shaded area itself was derived with no device, by packing each scene's committed
 tables through the lean painter's CPU-only packer and summing every instance
 quad clipped to the extent: `surfaces` 6.06 Mpx (2.40 panels), `typography` 3.17
 Mpx (1.25), `layout` 5.43 Mpx (2.15); the Unity host draws less of `surfaces`
-than its 6.06 Mpx, since it refuses the shadow, the backdrop blur, the image
-fill, the baked vector nodes and the render-target groups — 9 rects, by its own
-line. `layout` shades more than `typography` and presents faster, so per-pixel
-cost differs by what is drawn — solid fills are the cheap case, gradients and
-strokes on `surfaces` and glyph sampling through 375 separate commands on
-`typography` cost more per pixel or per command — and the lean painter's 1.9 ms
-per megapixel measured on solid rects above is a floor, not the rate. Part of
-the remainder is overdraw through the overlay class's per-pixel SDF shader:
-every node is a blended quad — rects through the overlay class, glyph runs
-through the separate `Dashscene/Text` shader — on paths with no depth test
+than its 6.06 Mpx — nearer 5.2 — since it refuses the shadow, the backdrop blur,
+the image fill, the baked vector nodes and the render-target groups — 9 rects,
+by its own line. `layout` shades more than `typography` and presents faster, so
+per-pixel cost differs by what is drawn — solid fills are the cheap case,
+gradients and strokes on `surfaces` and glyph sampling through 375 separate
+commands on `typography` cost more per pixel or per command — and the lean
+painter's 1.9 ms per megapixel measured on solid rects above is a floor, not the
+rate. Divided by the derived areas, the presented frames give about 5 to 6 ms
+per megapixel on `surfaces` over the Unity host's nearer 5.2 Mpx, about 5.4 on
+`typography` — or a per-command term, unseparated — and at most 3.1 on `layout`.
+Part of the remainder is overdraw through the overlay class's per-pixel SDF
+shader: every node is a blended quad — rects through the overlay class, glyph
+runs through the separate `Dashscene/Text` shader — on paths with no depth test
 (`docs/technotes/batch-renderer-group.md` §4), so the pixels under a panel, its
 glyph runs and the tile behind them are shaded once per layer. Where inside that
 shader the time goes, and how much of `typography`'s frame is the command count

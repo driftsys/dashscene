@@ -670,6 +670,16 @@ their parent rather than apart from it:
   because Unity's sorted-transparent path was measured dropping commands from
   single frames when one named more. That reopens the order question rather than
   settling it — every §5b measurement was taken under the shape D5 forbids.
+- [the-gpu-frame-on-the-target-device-is-budgeted.md](the-gpu-frame-on-the-target-device-is-budgeted.md)
+  — **accepted** (2026-09-04, owner ruling): the `surfaces` scene shall present
+  at the display mode's refresh rate at the native drawable on the target
+  device, read from the compositor — the rate for the budget, the frame cadence
+  for progress — and not from either painter's own headroom figure. On the Pixel
+  5 the `surfaces` scene's GPU frame, about 31 ms when this was ruled, shall not
+  exceed 16.7 ms. The route is R-T2 first — story #1412 for the Unity painter,
+  issue #1293 measure-then-decide for the lean one — then the per-kind cost
+  (#1413); the shaded-area derivation of #1296 gives the submitted area before
+  and after. Pins one device and one extent, not a display class — #549 stands.
 - [unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md](unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md)
   — **accepted** (2026-08-21, story #1125): UPM over a Git URL, and every file
   Unity imports carries a committed `.meta`, because a Git-URL package is
@@ -890,12 +900,13 @@ their parent rather than apart from it:
   guards frame **cost**, not correctness: substep count scales with `dt`. **100
   ms is a convention, not a derived bound** — the lower bound is real (it must
   sit above ordinary hitches) but nothing distinguishes it from Unity's 333 ms,
-  and deriving it needs a frame budget #476 says does not exist. The binding
-  clause is therefore not the value but **cross-painter agreement**: both
-  product painters clamp at the same value, configured rather than inherited
-  from either engine's default. Also lands the clock invariant — no crate at or
-  below `LiveScene` reads a clock — as a committed source scan rather than a
-  convention (story #572).
+  and deriving it needs a frame budget #476 said did not exist — one exists for
+  one device since 2026-09-04, and the other input, the stiffest spring, is
+  still unbounded. The binding clause is therefore not the value but
+  **cross-painter agreement**: both product painters clamp at the same value,
+  configured rather than inherited from either engine's default. Also lands the
+  clock invariant — no crate at or below `LiveScene` reads a clock — as a
+  committed source scan rather than a convention (story #572).
 
 - [test-tiers.md](test-tiers.md) — the workspace suite runs as three nextest
   tiers: `sanity` before every commit, `regression` as the gate, `calibration`

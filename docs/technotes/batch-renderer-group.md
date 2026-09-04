@@ -386,8 +386,9 @@ so one event is one logcat line. The player paced itself at 30 fps throughout
 this round, for the reason `docs/design/android-toolchain.md`'s "The Unity
 host's presented rate" gives, where the macOS arms ran at 60 Hz vsync.
 
-**The arms, on the story branch's base `dd20a18` and on `5b279f6` with PR #1407
-merged**, typography scene, 381 instances, four materials:
+**The arms, on `dd20a18` — the commit PR #1407's fix lane branched from — and on
+`5b279f6` with that PR merged**, typography scene, 381 instances, four
+materials:
 
 | log (`probe-1403/logs/`) | build     | the shape the painter emitted                             | frames | DROP lines | band-frames |
 | ------------------------ | --------- | --------------------------------------------------------- | -----: | ---------: | ----------: |
