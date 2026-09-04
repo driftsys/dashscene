@@ -1000,24 +1000,36 @@ at 14 % of a core and the render thread at 7 % in one `top` sample. The same
 build with the display forced to 540x1170 presented 62.5 fps by `--timestats`,
 whose average over its own window can exceed the panel's 60 Hz; restored, 32.5
 again. **The Unity host is GPU fill-bound at native resolution on the Adreno
-620, at about 31 ms of GPU per frame on `surfaces` — and the cost follows the
-scene's covered area, not its instance count.** Per scene, same source at
-`5b279f6`, explicit 60 asked, `--timestats` over 10 s each with the `drew` line
-kept: `surfaces` (56 instances, large overlapping panels and gradient tiles)
-32.0 to 32.6 fps; `typography` (381 instances, mostly small glyph quads) 42 to
-50 fps across three readings, its intervals a 17 ms and 33 ms mix; `layout` (29
-instances) 60 to 62.5 fps — the panel's rate, so its cost is bounded above by a
-frame and not measured. **HDR is not the cause**: the same source rebuilt with
-`supportsHDR` off in the URP asset `DemoBuild` creates gave 33.2, 51.4 and 62.5
-— about one frame per second for the intermediate and its blit — and the HDR-off
-typography dump shows 97 of 126 presented intervals at 17 ms, 26 at 33, 2 at 34
-and 1 at 16. What remains is overdraw through the overlay class's per-pixel SDF
-shader: every node is a blended quad — rects through the overlay class, glyph
-runs through the separate `Dashscene/Text` shader — on paths with no depth test
-(`docs/technotes/batch-renderer-group.md` §4), so the pixels under a panel, its
-glyph runs and the tile behind them are shaded once per layer. Where inside that
-shader the time goes is not separated here, and `/sys/class/kgsl` is refused to
-shell on this device, so no clock or busy figure accompanies it.
+620, at about 31 ms of GPU per frame on `surfaces` — and shaded area alone does
+not order the three scenes.** Per scene, same source at `5b279f6`, explicit 60
+asked, `--timestats` over 10 s each with the `drew` line kept: `surfaces` (56
+instances, large overlapping panels and gradient tiles) 32.0 to 32.6 fps;
+`typography` (381 instances, mostly small glyph quads) 42 to 50 fps across three
+readings, its intervals a 17 ms and 33 ms mix; `layout` (29 instances) 60 to
+62.5 fps — the panel's rate, so its cost is bounded above by a frame and not
+measured. **HDR is not the cause**: the same source rebuilt with `supportsHDR`
+off in the URP asset `DemoBuild` creates gave 33.2, 51.4 and 62.5 — about one
+frame per second for the intermediate and its blit — and the HDR-off typography
+dump shows 97 of 126 presented intervals at 17 ms, 26 at 33, 2 at 34 and 1
+at 16. The shaded area itself was derived with no device, by packing each
+scene's committed tables through the lean painter's CPU-only packer and summing
+every instance quad clipped to the extent: `surfaces` 6.06 Mpx (2.40 panels),
+`typography` 3.17 Mpx (1.25), `layout` 5.43 Mpx (2.15); the Unity host draws
+less of `surfaces` than that, since it refuses the shadow, the backdrop blur and
+the image fill. `layout` shades more than `typography` and presents faster, so
+per-pixel cost differs by what is drawn — solid fills are the cheap case,
+gradients and strokes on `surfaces` and glyph sampling through 375 separate
+commands on `typography` cost more per pixel or per command — and the lean
+painter's 1.9 ms per megapixel measured on solid rects above is a floor, not the
+rate. Part of the remainder is overdraw through the overlay class's per-pixel
+SDF shader: every node is a blended quad — rects through the overlay class,
+glyph runs through the separate `Dashscene/Text` shader — on paths with no depth
+test (`docs/technotes/batch-renderer-group.md` §4), so the pixels under a panel,
+its glyph runs and the tile behind them are shaded once per layer. Where inside
+that shader the time goes, and how much of `typography`'s frame is the command
+count rather than its pixels (issue #1406), is not separated here, and
+`/sys/class/kgsl` is refused to shell on this device, so no clock or busy figure
+accompanies it.
 
 **This is the first whole-frame figure the Unity host has on this device, and it
 is a bound rather than a bracket.** The `draw` column above excludes the GPU by
