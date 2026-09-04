@@ -129,11 +129,11 @@ takes the commands out of material grouping, and the emission order as still
 load-bearing.
 
 The consequence, isolated in a player build on macOS/Metal — the symptom, no
-text at all, reproduces on Android/Vulkan and has not been isolated there: the
-backdrop is the first row the packer writes and it sits on the class material,
-so it joins the class material's group — which is drawn after the glyph
-commands. **The backdrop is painted last, over the text.** The glyphs were drawn
-correctly and then covered.
+text at all, reproduces on Android/Vulkan, and §5e's flag-off arm isolates it
+there too: the backdrop is the first row the packer writes and it sits on the
+class material, so it joins the class material's group — which is drawn after
+the glyph commands. **The backdrop is painted last, over the text.** The glyphs
+were drawn correctly and then covered.
 
 ## 5. What the measurements showed
 
