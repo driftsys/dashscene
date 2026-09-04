@@ -979,8 +979,7 @@ no effect.) The compositor's `--timestats` counted 30.3 fps with no dropped
 frame, and the sample's own reports came every 8.0 s for 240 frames. **The
 `fps if unpaced` figure in those reports is the inverse of the measured `tick`
 plus `draw` sum, not a presented rate**, and this section is the first place the
-Unity host's presented rate has been read at all; the lean painter's has been
-read from the same instrument since 2026-08-17, below.
+Unity host's presented rate has been read at all.
 
 **Lifting the cap took three things, and the second reading was misleading.**
 Issue #1408 carries the change and the same account; this is the measurement.
@@ -995,12 +994,14 @@ SurfaceFlinger for 30 Hz (`setFrameRate=(uid, 30.00 Hz)` in
 app's reported refresh rate is the rate it was granted, so "the display's rate"
 read back 30 and set 30 again. An explicit 60 set at
 `RuntimeInitializeLoadType.SubsystemRegistration`, before the first frame, is
-what made the compositor show `60.00 Hz` asked. The player log of the Swappy
-step was not kept; the other two are on the shelf.
+what made the compositor show `60.00 Hz` asked. The player logs of the first two
+steps were not kept; their compositor dumps are, and the third step's log and
+dump both are.
 
 **With every cap lifted, the panel resolution is the limit.** At 1080x2340, on
-entry 0 (`surfaces`, which a plain launch opens), the player presented 32.5 fps
-by `--timestats` and 31.8 by the latency dump's own timestamps: a frame produced
+entry 0 — `surfaces`, which a plain launch opens; inferred from the launch,
+since no `drew` line was kept for these steps — the player presented 32.5 fps by
+`--timestats` and 31.8 by the latency dump's own timestamps: a frame produced
 every 31 ms (89 of 126 `frameReady` deltas at 31 ms, 34 at 32), with `UnityMain`
 at 14 % of a core and the render thread at 7 % in one `top` sample. The same
 build with the display forced to 540x1170 presented 62.5 fps by `--timestats`,
