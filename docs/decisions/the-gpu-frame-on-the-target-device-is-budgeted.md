@@ -13,8 +13,7 @@
              the target device's native resolution. "The target device" in
              this record is the device it names, the Pixel 5: the one
              target-class device this project has, and not the fleet
-    related  docs/specification/03-target-hardware-rules.md (R-T2, the rule
-             projected to do the larger part); issue #549 (no display geometry
+    related  docs/specification/03-target-hardware-rules.md (R-T2, the rule projected to do about half of the halving — 7 of the 14 ms); issue #549 (no display geometry
              is pinned by the specification, which this record does not
              change: it names one device and one extent, not a class);
              docs/decisions/frame-delta-is-clamped-and-the-host-owns-the-clock.md
