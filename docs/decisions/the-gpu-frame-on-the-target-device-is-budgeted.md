@@ -10,7 +10,9 @@
              rate, and what bounds it"; issues #1347, #1412, #1413
     scope    both painters — unity/com.driftsys.dashscene/Runtime/Engine/
              BrgPainter.cs and crates/dashscene-gpu — on the showcase scenes at
-             the target device's native resolution
+             the target device's native resolution. "The target device" in
+             this record is the device it names, the Pixel 5: the one
+             target-class device this project has, and not the fleet
     related  docs/specification/03-target-hardware-rules.md (R-T2, the rule
              projected to do the larger part); issue #549 (no display geometry
              is pinned by the specification, which this record does not
@@ -38,24 +40,38 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
 
 - **D1 — the budget is one display frame at native resolution.** The showcase
   scenes, drawn by either painter on the target device at the panel's native
-  extent, shall present at the panel's refresh rate. On the Pixel 5 that is
-  1080x2340 at 60 Hz: the `surfaces` scene's GPU frame, about 31 ms when this
-  was ruled, shall come inside 16.7 ms — the halving, rounded to the frame the
-  panel imposes.
+  extent and in the display mode measured, shall present at that mode's refresh
+  rate. On the Pixel 5 that is 1080x2340 in the 60 Hz mode (a 90 Hz mode exists
+  and is not the one measured): the `surfaces` scene's GPU frame, about 31 ms
+  when this was ruled, shall come inside 16.7 ms — the halving, rounded to the
+  frame the panel imposes. **Met when**, over the window D2 names, the
+  compositor's `averageFPS` on the player's surface is at or above 59 with
+  `droppedFrames` 0, and, where the latency dump has rows, no more than one
+  presented interval in a hundred exceeds 17 ms. The tool's window average can
+  read above the panel's rate; that is at the rate, not above it.
 - **D2 — the instrument is the compositor, not the painter.** The rate that
   meets or misses the budget is read from `dumpsys SurfaceFlinger --timestats`
-  on the player's surface, with the entry named by the player's own `drew` line
-  and the dump kept. Neither painter's per-frame report is the instrument: the
-  Unity host's `fps if unpaced` is the inverse of tick plus draw and excludes
-  the GPU; the lean painter's `Sample::fps_if_unpaced` is the inverse of tick
-  plus paint plus present, and its present term is mostly waiting on the
-  swapchain, so it counts waiting as work. Both are headroom figures, not a rate
-  the compositor showed. A player capped by its own pacing reads the cap, not
-  the GPU, so the reading is taken with the pacing changes of issue #1408 in
-  place.
+  on the player's `SurfaceView … (BLAST)` layer over a 10 s window — the window
+  the 31 ms baseline was read over — with the display mode pinned by the dump's
+  `displayRefreshRate` line, the entry named by the player's own
+  `[showcase]
+  drew` logcat line, and the dump kept.
+  `measure/android/gpu-capture.sh <out>
+  com.driftsys.dashscene.showcase` with
+  `DS_GPU_WINDOW=10` runs that sequence; its package parameter defaults to the
+  lean painter's demo and must be given. A plain launch of the showcase player
+  opens entry 0, `surfaces`; no intent extra selects it. Neither painter's
+  per-frame report is the instrument: the Unity host's `fps if unpaced` is the
+  inverse of tick plus draw and excludes the GPU; the lean painter's
+  `Sample::fps_if_unpaced` is the inverse of tick plus paint plus present, and
+  its present term is mostly waiting on the swapchain, so it counts waiting as
+  work. Both are headroom figures, not a rate the compositor showed. A player
+  capped by its own pacing reads the cap, not the GPU: issue #1408's two changes
+  must be in place, and a tree without them reads 30 fps and does not test D1.
 - **D3 — the route is R-T2 first, then the per-kind cost.** Opaque cores drawn
-  front-to-back with depth, and a blended fringe, come first; the per-pixel cost
-  of the kinds that stay shaded is measured by a variant sweep before any fast
+  front-to-back with depth, and a blended fringe, come first; the cost of the
+  kinds that stay shaded — per pixel, or per command where issue #1406 finds the
+  command count is the term — is measured by a variant sweep before any fast
   path is written, and comes second. The projection behind the order — about 10
   ms of the 31 on `surfaces` from rejecting the covered backdrop — and its
   arithmetic are story #1412's, and nothing yet falsifies it; the shaded-area
@@ -95,7 +111,8 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   number by drawing less of the document, which the goldens would show, and says
   nothing about the painter. It remains what it was used as on 2026-09-03: the
   diagnostic that showed the frame is fill-bound.
-- **Turning HDR off in the URP asset.** Measured at about one frame per second
-  for the intermediate and its blit, on the two scenes below the panel rate, so
-  it is not a route on its own; it may travel with the per-kind story if the
-  sweep says so.
+- **Turning HDR off in the URP asset.** Worth about one frame per second on
+  `surfaces` and `typography` for the intermediate and its blit, and
+  unmeasurable on `layout`, which is at the panel rate either way; not a route
+  on its own, and it may be combined with the per-kind story if the sweep says
+  so.

@@ -790,8 +790,10 @@ it — and not a whole core throughout, which is why the figure there is split a
   measured against each other rather than argued about. What is not answered is
   why one of the five debug attempts took 14.57 s; that is an unexplained
   outlier, and the typical first-launch premium is far too small to be it.
-- **No frame budget is established.** The 16.67 ms above is a reference point
-  for reading the table, not a requirement.
+- **No frame budget for a display class is established.** Since 2026-09-04 one
+  exists for this device at one extent
+  (`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`). The
+  16.67 ms above is a reference point for reading the table, not a requirement.
 - **One device.** Nothing here says what a different Adreno, a Mali or a PowerVR
   does, and the GLES row's zero headroom is the figure most likely to differ.
 
@@ -958,8 +960,11 @@ Vulkan sweeps hold one extent throughout and so say nothing about this at all.
 What would settle it is one Vulkan process rotated part-way, which the
 instrument would report as two samples because it discards across that boundary.
 
-**No budget is set here.** #1107 says so in terms and #549 is open against the
-missing display geometry; these are figures and the record that holds them.
+**No budget is set here.** One was set after these figures, for this device at
+one extent, on 2026-09-04
+(`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`); #1107 says
+none is set for the class and #549 is open against the missing display geometry;
+these are figures and the record that holds them.
 
 ### The Unity host's presented rate, and what bounds it (2026-09-03 and 04)
 
@@ -1037,13 +1042,16 @@ per-pixel cost differs by what is drawn — solid fills are the cheap case,
 gradients and strokes on `surfaces` and glyph sampling through 375 separate
 commands on `typography` cost more per pixel or per command — and the lean
 painter's 1.9 ms per megapixel measured on solid rects above is a floor, not the
-rate. Part of the remainder is overdraw through the overlay class's per-pixel
-SDF shader: every node is a blended quad — rects through the overlay class,
-glyph runs through the separate `Dashscene/Text` shader — on paths with no depth
-test (`docs/technotes/batch-renderer-group.md` §4), so the pixels under a panel,
-its glyph runs and the tile behind them are shaded once per layer. Where inside
-that shader the time goes, and how much of `typography`'s frame is the command
-count rather than its pixels (issue #1406), is not separated here, and
+rate. Divided by the derived areas, the presented frames give about 5 to 6 ms
+per megapixel on `surfaces` over the Unity host's nearer 5.2 Mpx, about 5.4 on
+`typography` — or a per-command term, unseparated — and at most 3.1 on `layout`.
+Part of the remainder is overdraw through the overlay class's per-pixel SDF
+shader: every node is a blended quad — rects through the overlay class, glyph
+runs through the separate `Dashscene/Text` shader — on paths with no depth test
+(`docs/technotes/batch-renderer-group.md` §4), so the pixels under a panel, its
+glyph runs and the tile behind them are shaded once per layer. Where inside that
+shader the time goes, and how much of `typography`'s frame is the command count
+rather than its pixels (issue #1406), is not separated here, and
 `/sys/class/kgsl` is refused to shell on this device, so no clock or busy figure
 accompanies it.
 
