@@ -996,9 +996,8 @@ SurfaceFlinger for 30 Hz (`setFrameRate=(uid, 30.00 Hz)` in
 app's reported refresh rate is the rate it was granted, so "the display's rate"
 read back 30 and set 30 again. An explicit 60 set at
 `RuntimeInitializeLoadType.SubsystemRegistration`, before the first frame, is
-what made the compositor show `60.00 Hz` asked. The player logs of the first two
-steps were not kept; their compositor dumps are, and the third step's log and
-dump both are.
+what made the compositor show `60.00 Hz` asked. The player logs of the three
+steps were not kept; their compositor dumps are.
 
 **With every cap lifted, the panel resolution is the limit.** At 1080x2340, on
 entry 0 — `surfaces`, which a plain launch opens; inferred from the launch,
@@ -1026,7 +1025,8 @@ no device, by packing each scene's committed tables through the lean painter's
 CPU-only packer and summing every instance quad clipped to the extent:
 `surfaces` 6.06 Mpx (2.40 panels), `typography` 3.17 Mpx (1.25), `layout` 5.43
 Mpx (2.15); the Unity host draws less of `surfaces` than its 6.06 Mpx, since it
-refuses the shadow, the backdrop blur and the image fill. `layout` shades more
+refuses the shadow, the backdrop blur, the image fill, the baked vector nodes
+and the render-target groups — 9 rects, by its own line. `layout` shades more
 than `typography` and presents faster, so per-pixel cost differs by what is
 drawn — solid fills are the cheap case, gradients and strokes on `surfaces` and
 glyph sampling through 375 separate commands on `typography` cost more per pixel
