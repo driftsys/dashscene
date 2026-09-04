@@ -7,8 +7,9 @@ text in any player build on any platform (issue #1389), and it had gone
 unnoticed through ten green configurations.
 
 The same API has a **second** property that reports nothing when it is broken,
-and §5d carries it: a draw command that states a sorting position may name only
-one visible instance, or Unity drops commands from single frames (issue #1401).
+and §5d carries it, with §5e the same measurement on Android over Vulkan: a draw
+command that states a sorting position may name only one visible instance, or
+Unity drops commands from single frames (issue #1401).
 
 Companion reading: `rendering-and-painters.md` §10 records **why** BRG was
 chosen over a GameObject per node. This note is about how it behaves once
@@ -128,11 +129,11 @@ takes the commands out of material grouping, and the emission order as still
 load-bearing.
 
 The consequence, isolated in a player build on macOS/Metal — the symptom, no
-text at all, reproduces on Android/Vulkan and has not been isolated there: the
-backdrop is the first row the packer writes and it sits on the class material,
-so it joins the class material's group — which is drawn after the glyph
-commands. **The backdrop is painted last, over the text.** The glyphs were drawn
-correctly and then covered.
+text at all, reproduces on Android/Vulkan, and §5e's flag-off arm isolates it
+there too: the backdrop is the first row the packer writes and it sits on the
+class material, so it joins the class material's group — which is drawn after
+the glyph commands. **The backdrop is painted last, over the text.** The glyphs
+were drawn correctly and then covered.
 
 ## 5. What the measurements showed
 
@@ -259,7 +260,8 @@ itself is not the same as one that always does.
 a single frame when a command carrying `HasSortingPosition` names more than one
 visible instance.** macOS/Metal, Apple M3, Unity 6000.3.23f1, URP 17.3.0,
 windowed player, vSyncCount 1, measured 2026-09-03. This is issue #1401, and it
-is why `OnPerformCulling` now emits one command per instance.
+is why `OnPerformCulling` now emits one command per instance. The same arms on
+the Pixel 5 over Vulkan are §5e.
 
 The dropped frame renders the affected region as **bare backdrop** — a large
 contiguous set of panels and glyph runs missing for exactly one frame, with the
@@ -339,17 +341,16 @@ that shape matches what §3 attributes to Unity's own GPU Resident Drawer.
 
 **What this does not establish.** Nothing here reads Unity's sort, so the
 mechanism is unknown; the shape is a measured boundary, not an explanation. It
-is macOS/Metal only — no Android or Vulkan arm has been run (issue #1403), and
-the fix is platform-independent either way. And **§5b's rows were all taken
-under the multi-instance shape**, including the `RunEnd` material-run walk it
-names, which this change removed: those measurements describe commands this
-painter no longer emits, so the order question they left open is reopened rather
-than answered. §5c's single unreproduced dark frame is **consistent** with this
-defect and is not identified as it: that rig captures one frame per player run,
-so one dark result in about forty runs is one dark frame in about forty, which
-is the same order as the 1.5 % to 2.1 % measured here on a live host — well
-above the 0.58 % (115/20,000) measured with the host frozen. Nothing re-ran it
-under a counting instrument.
+is macOS/Metal only; the same arms on the Pixel 5 over Vulkan are §5e. And
+**§5b's rows were all taken under the multi-instance shape**, including the
+`RunEnd` material-run walk it names, which this change removed: those
+measurements describe commands this painter no longer emits, so the order
+question they left open is reopened rather than answered. §5c's single
+unreproduced dark frame is **consistent** with this defect and is not identified
+as it: that rig captures one frame per player run, so one dark result in about
+forty runs is one dark frame in about forty, which is the same order as the 1.5
+% to 2.1 % measured here on a live host — well above the 0.58 % (115/20,000)
+measured with the host frozen. Nothing re-ran it under a counting instrument.
 
 **The paint entry, re-measured on the fix build.** The filed configuration — the
 paint entry, 16 instances, one material, one flagged command, which is issue
@@ -370,6 +371,89 @@ The tables, the per-run logs, the anomalous frame captures and the probe patch
 are on the evidence shelf at
 `driftsys/dashscene-v021-lanes/probe-1401/2026-09-03-arms/RESULTS.md`, outside
 this repository.
+
+## 5e. The same arms on the Pixel 5, over Vulkan
+
+**The defect exists on Android/Vulkan, and the one-instance shape reads clean
+there too — on three events.** Pixel 5 (Adreno 620, Android 14), Unity
+6000.3.23f1, IL2CPP arm64, Vulkan chosen by `DemoBuild`, measured 2026-09-03 —
+issue #1403's device round. Same instrument as §5d, ported in three changes: an
+Android player has no environment, so each switch arrives as an Intent string
+extra (`--es probe1401_measure 1`), the mechanism the showcase's own capture
+request already uses; the PNG directory maps to
+`Application.persistentDataPath`; and `Debug.Log` stack traces are switched off
+so one event is one logcat line. The player paced itself at 30 fps throughout
+this round, for the reason `docs/design/android-toolchain.md`'s "The Unity
+host's presented rate" gives, where the macOS arms ran at 60 Hz vsync.
+
+**The arms, on the story branch's base `dd20a18` and on `5b279f6` with PR #1407
+merged**, typography scene, 381 instances, four materials:
+
+| log (`probe-1403/logs/`) | build     | the shape the painter emitted                             | frames | DROP lines | band-frames |
+| ------------------------ | --------- | --------------------------------------------------------- | -----: | ---------: | ----------: |
+| `before-asbuilt1`        | `dd20a18` | multi-instance commands, flag set                         |  5,693 |      6,986 |           1 |
+| `before-asbuilt2`        | `dd20a18` | multi-instance commands, flag set                         | 20,000 |     24,474 |           2 |
+| `before-split1`          | `dd20a18` | flag kept, one visible instance per command (same build)  | 20,000 |     24,481 |           0 |
+| `before-keysoff1`        | `dd20a18` | flag removed, no keys — issue #1389's picture again       | 20,000 |     24,476 |           0 |
+| `before-freeze`          | `dd20a18` | as built, every per-frame host call stopped from frame 60 | 20,000 |          0 |           0 |
+| `after-shipped1`         | `5b279f6` | one visible instance per command, as shipped              | 20,000 |     24,477 |           0 |
+| `after-paint`            | `5b279f6` | the paint entry — issue #1401's filed configuration       | 20,000 |          0 |           0 |
+
+The first arm's log stream was cut at 5,693 frames: a Unity build for the other
+APK ran on the same machine during the soak, and a Unity Android build ends by
+killing the adb server (`Killing ADB server` in its editor log). That is not
+another lane at the device, which the one-device rule of #1403 forbids and which
+did not happen; it is the measurer's own tooling on the same machine. Its one
+event is counted, and the figures below are given with and without that arm.
+**Every band-frame is the drop §5d describes** — a contiguous band of the
+document at bare backdrop for one frame, the rest drawn — read here as the six
+cells of one grid row at the backdrop value, `gap=0` between them, and the
+dumped frame pair shows the title, readout and bar gone to bare backdrop while
+the lower text still draws. The instrument's liveness holds per run: 15 to 16
+distinct `BASELINE` cells with glyphs drawn, 8 with the flag off and the glyphs
+hidden, 20 on the paint document, and about 24,470 single-cell events per 20,000
+frames from the typography scene's own pulse. The frozen arm and the paint arm
+logged no event at all, which is what a static picture reads; their liveness
+rests on the `BASELINE` line and on the frame captures each arm kept
+(`frame-150-rt.png`, `frame-900-rt.png`).
+
+**What the counts support, stated two ways.** Three band-frames in 25,693
+as-built frames is 1.2 × 10⁻⁴ per frame, between one hundredth and one
+two-hundredth of §5d's 1.5 % to 2.1 % — a ratio confounded by pacing, since the
+two hosts ran at 30 and 60 fps and the next paragraph finds pacing matters.
+Taking that rate as known, one 20,000-frame arm expects 2.3 events and a single
+zero has a 10 % chance of occurring by chance, so the flag-off and frozen arms
+settle nothing on their own; the pooled one-instance reading, 0 in 40,000 across
+the same-build switch and the shipped commit, expects 4.7 and has a 0.9 % chance
+if the shape changed nothing. But the rate rests on three events, and the exact
+conditional test — the chance that all three land in the 25,693 as-built frames
+out of 65,693, if the shape made no difference — gives 6 %; without the cut arm,
+2 events in 20,000 against 0 in 40,000, it gives 11 %. So the device round is
+consistent with the fix, as the Mac's 410 to 0 is, and it does not carry the fix
+alone — the Mac's rows do: that is what #1403's soak established. Frame cost
+held as on macOS, over each run's 240-frame reports: typography `draw mean` 0.41
+ms before and 0.42 ms after (the mode of the reports), `tick` 0.15 to 0.20 ms on
+both builds with the mode at 0.18 to 0.19.
+
+**A second round at the display rate suggests the rate also depends on timing.**
+With the player asked for 60 Hz and Unity's optimized frame pacing on, the
+as-built and shipped arms re-run with the probe's camera rendering into its
+1024x768 target (§5d's instrument) at about 50 fps, and the **as-built** shape
+then gave 0 band-frames in 40,000 — 0.9 % under the 30 fps rate taken as known,
+6 % by the same exact test. The shipped shape gave 0 in 40,000 as well, and 0 in
+the 5,091 valid frames of a first run that a touch on the phone cut short
+(`after60-shipped-INVALID-touched-at-frame-5091`). Read with §5d's frozen arm
+(115 against ~300 per 20,000), it points at pacing or frame rate entering the
+defect's rate — the round changed both at once, which is a fact issue #1405's
+standalone reproduction depends on; and a run at that pacing has no positive
+control, so the fix's verification rests on the 30 fps arms.
+
+**What this does not establish.** The mechanism, still. Whether the per-frame
+host path matters on Android — the frozen arm's zero is a 10 % reading at best.
+Anything from the 60 fps round on its own: no arm at that pacing showed the
+defect, so it has no positive control. Anything about a GLES player, which was
+not built. Evidence, logs, the ported patches and the frame pairs:
+`driftsys/dashscene-v021-lanes/probe-1403/RESULTS.md`, outside this repository.
 
 ## 6. Why no test caught it
 
