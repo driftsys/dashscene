@@ -895,12 +895,12 @@ Unity, Vulkan, `RawBuffer`, 1080x2340, three sweeps over the three scenes:
     layout      0.05   0.19        0.18-0.19   0.24-0.25   0.31-0.37
 
 **Each row is one sample per sweep, and every one of them is a first sample.** A
-report covers 240 drawn frames and the loop is paced well under the display
-rate, so the fourteen seconds each entry was left drawing yielded one sample,
-not the three the dwell was chosen for. The lean painter's table below discounts
-its own first sample as pipeline warm-up; nothing here can, so `max` in
-particular carries warm-up. That is what the `typography` spread of 0.45 to 0.76
-is.
+report covers 240 drawn frames and the loop is paced well under the display rate
+— 30 fps, and "The Unity host's presented rate" below says why —, so the
+fourteen seconds each entry was left drawing yielded one sample, not the three
+the dwell was chosen for. The lean painter's table below discounts its own first
+sample as pipeline warm-up; nothing here can, so `max` in particular carries
+warm-up. That is what the `typography` spread of 0.45 to 0.76 is.
 
 The lean painter over the same three scenes, on the same device the same day,
 release, 1080x1984, three samples per scene:
@@ -979,6 +979,7 @@ presented rate has been read at all; the lean painter's has been read from the
 same instrument since 2026-08-17, below.
 
 **Lifting the cap took three things, and the second reading was misleading.**
+Issue #1408 carries the change and the same account; this is the measurement.
 Setting the target in `Start()` from `Screen.currentResolution.refreshRateRatio`
 gave ~32 fps with a bimodal interval — 87 of 125 presented intervals at 33.4 ms,
 16 at 16.7 — frames ready about 21 ms before they were shown: Unity's default
@@ -1007,16 +1008,17 @@ scene's covered area, not its instance count.** Per scene, same source at
 kept: `surfaces` (56 instances, large overlapping panels and gradient tiles)
 32.0 to 32.6 fps; `typography` (381 instances, mostly small glyph quads) 42 to
 50 fps across three readings, its intervals a 17 ms and 33 ms mix; `layout` (29
-instances) 60 to 62.5 fps, the display rate. **HDR is not the cause**: the same
-source rebuilt with `supportsHDR` off in the URP asset `DemoBuild` creates gave
-33.2, 51.4 and 62.5 — about one frame per second for the intermediate and its
-blit — and the HDR-off typography dump shows 97 of 126 presented intervals at 17
-ms, 26 at 33, 2 at 34 and 1 at 16. What remains is overdraw through the overlay
-class's per-pixel SDF shader: every node is a blended quad, so the pixels under
-a panel, its glyph runs and the tile behind them are shaded once per layer with
-no early depth rejection. Where inside that shader the time goes is not
-separated here, and `/sys/class/kgsl` is refused to shell on this device, so no
-clock or busy figure accompanies it.
+instances) 60 to 62.5 fps — the panel's rate, so its cost is bounded above by a
+frame and not measured. **HDR is not the cause**: the same source rebuilt with
+`supportsHDR` off in the URP asset `DemoBuild` creates gave 33.2, 51.4 and 62.5
+— about one frame per second for the intermediate and its blit — and the HDR-off
+typography dump shows 97 of 126 presented intervals at 17 ms, 26 at 33, 2 at 34
+and 1 at 16. What remains is overdraw through the overlay class's per-pixel SDF
+shader: every node is a blended quad on a path with no depth test
+(`docs/technotes/batch-renderer-group.md` §4), so the pixels under a panel, its
+glyph runs and the tile behind them are shaded once per layer. Where inside that
+shader the time goes is not separated here, and `/sys/class/kgsl` is refused to
+shell on this device, so no clock or busy figure accompanies it.
 
 **This is the first whole-frame figure the Unity host has on this device, and it
 is a bound rather than a bracket.** The `draw` column above excludes the GPU by

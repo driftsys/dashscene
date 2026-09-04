@@ -390,23 +390,24 @@ the macOS arms ran at 60 Hz vsync.
 **The arms, on the story branch's base `dd20a18` and on `5b279f6` with PR #1407
 merged**, typography scene, 381 instances, four materials:
 
-| build     | the shape the painter emitted                             | frames | band-frames |
-| --------- | --------------------------------------------------------- | -----: | ----------: |
-| `dd20a18` | multi-instance commands, flag set                         |  5,693 |           1 |
-| `dd20a18` | multi-instance commands, flag set                         | 20,000 |           2 |
-| `dd20a18` | flag kept, one visible instance per command (same build)  | 20,000 |           0 |
-| `dd20a18` | flag removed, no keys — issue #1389's picture again       | 20,000 |           0 |
-| `dd20a18` | as built, every per-frame host call stopped from frame 60 | 20,000 |           0 |
-| `5b279f6` | one visible instance per command, as shipped              | 20,000 |           0 |
-| `5b279f6` | the paint entry — issue #1401's filed configuration       | 20,000 |  0 (0 DROP) |
+| log (`probe-1403/logs/`) | build     | the shape the painter emitted                             | frames | DROP lines | band-frames |
+| ------------------------ | --------- | --------------------------------------------------------- | -----: | ---------: | ----------: |
+| `before-asbuilt1`        | `dd20a18` | multi-instance commands, flag set                         |  5,693 |      6,986 |           1 |
+| `before-asbuilt2`        | `dd20a18` | multi-instance commands, flag set                         | 20,000 |     24,474 |           2 |
+| `before-split1`          | `dd20a18` | flag kept, one visible instance per command (same build)  | 20,000 |     24,481 |           0 |
+| `before-keysoff1`        | `dd20a18` | flag removed, no keys — issue #1389's picture again       | 20,000 |     24,476 |           0 |
+| `before-freeze`          | `dd20a18` | as built, every per-frame host call stopped from frame 60 | 20,000 |          0 |           0 |
+| `after-shipped1`         | `5b279f6` | one visible instance per command, as shipped              | 20,000 |     24,477 |           0 |
+| `after-paint`            | `5b279f6` | the paint entry — issue #1401's filed configuration       | 20,000 |          0 |           0 |
 
 The first arm's log stream was cut at 5,693 frames: a Unity build for the other
 APK ran on the same machine during the soak, and a Unity Android build ends by
 restarting the adb server — the one-device rule of #1403 broken by the
 measurer's own tooling, not by another lane. Its one event is counted, and the
-figures below are given with and without that arm. **Every band-frame carries
-§5d's signature exactly**: the six cells of one grid row at the backdrop value
-for one frame, `gap=0` between them, and the dumped frame pair shows the title,
+figures below are given with and without that arm. **Every band-frame is the
+drop §5d describes** — a contiguous band of the document at bare backdrop for
+one frame, the rest drawn — read here as the six cells of one grid row at the
+backdrop value, `gap=0` between them, and the dumped frame pair shows the title,
 readout and bar gone to bare backdrop while the lower text still draws. The
 instrument's liveness holds per run: 15 to 16 distinct `BASELINE` cells with
 glyphs drawn, 8 with the flag off and the glyphs hidden, 20 on the paint
@@ -420,10 +421,10 @@ as-built frames is 1.2 × 10⁻⁴ per frame, between one hundredth and one
 two-hundredth of §5d's 1.5 % to 2.1 % — a ratio confounded by pacing, since the
 two hosts ran at 30 and 60 fps and the next paragraph finds pacing matters.
 Taking that rate as known, one 20,000-frame arm expects 2.3 events and a single
-zero has a 10 % chance of being luck, so the flag-off and frozen arms settle
-nothing on their own; the pooled one-instance reading, 0 in 40,000 across the
-same-build switch and the shipped commit, expects 4.7 and has a 0.9 % chance if
-the shape changed nothing. But the rate rests on three events, and the exact
+zero has a 10 % chance of occurring by chance, so the flag-off and frozen arms
+settle nothing on their own; the pooled one-instance reading, 0 in 40,000 across
+the same-build switch and the shipped commit, expects 4.7 and has a 0.9 % chance
+if the shape changed nothing. But the rate rests on three events, and the exact
 conditional test — the chance that all three land in the 25,693 as-built frames
 out of 65,693, if the shape made no difference — gives 6 %; without the cut arm,
 2 events in 20,000 against 0 in 40,000, it gives 11 %. So the device round is
@@ -432,15 +433,16 @@ does not stand alone: that is what #1403's soak established. Frame cost held as
 on macOS: typography `draw mean` 0.41 ms before and 0.42 ms after, `tick` 0.15
 to 0.20 ms on both builds with the mode at 0.18 to 0.19.
 
-**A second round at the display rate suggests the rate is also a matter of
-timing.** With the player asked for 60 Hz and Unity's optimized frame pacing on,
-the render-target arms run at about 50 fps, and the **as-built** shape then gave
-0 band-frames in 40,000 — 0.9 % under the 30 fps rate taken as known, 6 % by the
-same exact test. The shipped shape gave 0 in 40,000 as well. Read with §5d's
-frozen arm (115 against ~300 per 20,000), it points at pacing or frame rate
-entering the defect's rate — the round changed both at once; and a run at that
-pacing has no positive control, so the fix's verification rests on the 30 fps
-arms.
+**A second round at the display rate suggests the rate also depends on timing.**
+With the player asked for 60 Hz and Unity's optimized frame pacing on, the
+render-target arms run at about 50 fps, and the **as-built** shape then gave 0
+band-frames in 40,000 — 0.9 % under the 30 fps rate taken as known, 6 % by the
+same exact test. The shipped shape gave 0 in 40,000 as well, and 0 in the 5,091
+valid frames of a first run that a touch on the phone cut short (its log is
+kept, marked invalid). Read with §5d's frozen arm (115 against ~300 per 20,000),
+it points at pacing or frame rate entering the defect's rate — the round changed
+both at once; and a run at that pacing has no positive control, so the fix's
+verification rests on the 30 fps arms.
 
 **What this does not establish.** The mechanism, still. Whether the per-frame
 host path matters on Android — the frozen arm's zero is a 10 % reading at best.
