@@ -80,6 +80,15 @@ png.workspace = true
 # consumer of this crate carries none of them (`docs/design/dashscene-gpu.md`,
 # "The probe table, and what stays a property").
 [dev-dependencies]
+# The showcase scenes, for `tests/shaded_area.rs` (issue #1296). A
+# dev-dependency and not a plain one: nothing this crate ships knows a scene.
+# `corpus/showcase` depends on core, engine, typeset, dashpaint, dashlang and
+# dashc and NOT on this crate, so the edge introduces no cycle.
+showcase = { path = "../../corpus/showcase" }
+# The arena `tests/shaded_area.rs` builds a scene into and commits. This crate
+# takes boundary-B tables and knows nothing of an arena in what it ships, which
+# is why this is dev-only.
+dashscene-core.workspace = true
 serde.workspace = true
 # `float_roundtrip` because this crate's use of serde_json is numeric
 # interchange, and its default **parser** is not exact. Measured: the file

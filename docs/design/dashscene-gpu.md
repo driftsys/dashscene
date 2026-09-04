@@ -957,6 +957,22 @@ there, and the last paragraph of this section says where it is:
   rejection, and group opacity where contents overlap.
 - `frame_path.rs` — the incremental-upload path, asserted through
   `InstanceUpload` rather than through the picture.
+- `shaded_area.rs` — what each `corpus/showcase` scene shades in one frame at
+  2340x1080, pinned per scene (issue #1296). Not a gate over a picture: it is a
+  monitor over one number, and the number is a fill-rate reading taken with no
+  device, because `pack::pack` states every quad's `bounds` and `outset` on the
+  CPU before anything is uploaded. It is the only test here that reaches
+  `corpus/showcase`, through a dev-dependency; that crate depends on core,
+  engine, typeset, dashpaint, dashlang and dashc and not on this one, so the
+  edge introduces no cycle.
+
+  **The instance count is compared for equality and the area within 0.1 %**, and
+  0.1 % is measured rather than chosen: zeroing the stroke outset in `pack.rs`
+  moves `surfaces` by 0.18 % and the other two scenes not at all, so a 1 % band
+  — the first draft's — passed a mutated painter. What the reading is not is a
+  rasterization: node-level clip regions and rotation are not applied, so it is
+  an upper bound on what the painter **submits**, which is the quantity a
+  fill-rate regression moves.
 
 `goldens/tooling/tests/lean_painter_text.rs` and `lean_painter_baked_assets.rs`
 exercise this painter against real corpus assets from the golden side of the
