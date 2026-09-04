@@ -46,8 +46,8 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   scenes, drawn by either painter on the target device at the panel's native
   extent, shall present at the panel's refresh rate. On the Pixel 5 that is
   1080x2340 at 60 Hz: the `surfaces` scene's GPU frame, about 31 ms when this
-  was ruled, shall come inside 16.7 ms. The halving is the ruling; the frame is
-  the number that results.
+  was ruled, shall come inside 16.7 ms — the halving, rounded to the frame the
+  panel imposes.
 - **D2 — the instrument is the compositor, not the painter.** The rate that
   meets or misses the budget is read from `dumpsys SurfaceFlinger --timestats`
   on the player's surface, with the entry named by the player's own `drew` line
@@ -82,13 +82,12 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   substitute.
 - Whether the halving gates v0.21 is a separate ruling this record does not
   make; epic #1120's standing declaration (`docs/roadmap.md`, v0.21) is where
-  that is held, and the stories are placed so that they stay placed under either
-  ruling.
-- Issue #549 stands: this record pins one device and one extent for one budget,
-  and the specification still pins no display geometry. The records that said
-  this project has no frame budget now say it has one for this device and none
-  for a display class — `docs/design/android-toolchain.md`'s "Frame costs" and
-  Q-6 sections, and the frame-delta record above.
+  that is held, and stories #1412 and #1413 stay on v0.21 under #1120 under
+  either ruling.
+- The records that said this project has no frame budget now say it has one for
+  this device and none for a display class (issue #549 stands, as the `related`
+  line says) — `docs/design/android-toolchain.md`'s "Frame costs" and Q-6
+  sections, and the frame-delta record above.
 
 ## Alternatives considered
 
@@ -98,7 +97,8 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   person sees. The frame is the unit the panel imposes.
 - **Reducing resolution or render scale.** Rejected as the route: it meets the
   number by drawing less of the document, which the goldens would show, and says
-  nothing about the painter. It stays the diagnostic it was.
+  nothing about the painter. It remains what it was used as on 2026-09-03: the
+  diagnostic that showed the frame is fill-bound.
 - **Turning HDR off in the URP asset.** Measured at about one frame per second
   for the intermediate and its blit, on the two scenes below the panel rate, so
   it is not a route on its own; it may travel with the per-kind story if the

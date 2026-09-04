@@ -1029,20 +1029,20 @@ shaded area itself was derived with no device, by packing each scene's committed
 tables through the lean painter's CPU-only packer and summing every instance
 quad clipped to the extent: `surfaces` 6.06 Mpx (2.40 panels), `typography` 3.17
 Mpx (1.25), `layout` 5.43 Mpx (2.15); the Unity host draws less of `surfaces`
-than its 6.06 Mpx, since it refuses the shadow, the backdrop blur, the image
-fill, the baked vector nodes and the render-target groups — 9 rects, by its own
-line. `layout` shades more than `typography` and presents faster, so per-pixel
-cost differs by what is drawn — solid fills are the cheap case, gradients and
-strokes on `surfaces` and glyph sampling through 375 separate commands on
-`typography` cost more per pixel or per command — and the lean painter's 1.9 ms
-per megapixel measured on solid rects above is a floor, not the rate. Part of
-the remainder is overdraw through the overlay class's per-pixel SDF shader:
-every node is a blended quad — rects through the overlay class, glyph runs
-through the separate `Dashscene/Text` shader — on paths with no depth test
-(`docs/technotes/batch-renderer-group.md` §4), so the pixels under a panel, its
-glyph runs and the tile behind them are shaded once per layer. Where inside that
-shader the time goes, and how much of `typography`'s frame is the command count
-rather than its pixels (issue #1406), is not separated here, and
+than its 6.06 Mpx — nearer 5.2 — since it refuses the shadow, the backdrop blur,
+the image fill, the baked vector nodes and the render-target groups — 9 rects,
+by its own line. `layout` shades more than `typography` and presents faster, so
+per-pixel cost differs by what is drawn — solid fills are the cheap case,
+gradients and strokes on `surfaces` and glyph sampling through 375 separate
+commands on `typography` cost more per pixel or per command — and the lean
+painter's 1.9 ms per megapixel measured on solid rects above is a floor, not the
+rate. Part of the remainder is overdraw through the overlay class's per-pixel
+SDF shader: every node is a blended quad — rects through the overlay class,
+glyph runs through the separate `Dashscene/Text` shader — on paths with no depth
+test (`docs/technotes/batch-renderer-group.md` §4), so the pixels under a panel,
+its glyph runs and the tile behind them are shaded once per layer. Where inside
+that shader the time goes, and how much of `typography`'s frame is the command
+count rather than its pixels (issue #1406), is not separated here, and
 `/sys/class/kgsl` is refused to shell on this device, so no clock or busy figure
 accompanies it.
 
