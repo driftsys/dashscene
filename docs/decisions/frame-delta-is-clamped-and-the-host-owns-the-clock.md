@@ -2,7 +2,8 @@
 
     status   accepted (story #572, 2026-07-31); rule 1 amended by story #810,
              2026-08-08 — the clamp moved from each host into
-             `LiveScene::tick`
+             `LiveScene::tick`; the upper bound's first input noted as
+             supplied for one device on 2026-09-04
     scope    crates/dashlang (MAX_FRAME_DELTA and the clamp, since story #810),
              demo/src/shell.rs and demo-web/src/host.rs (the frame loops, which
              own their clocks), demo/tests/clock_invariant.rs and
@@ -120,12 +121,16 @@ reason. Anything under about 50 ms would be wrong for that reason alone.
 Deriving it needs two things: the stiffest spring the vocabulary permits, and a
 frame budget for the animation update to fit the resulting substep burst inside.
 **Epic #476 states there is no frame budget and no target-hardware
-measurement**, so the second input does not exist.
+measurement**, which was true when this was written; since 2026-09-04
+`the-gpu-frame-on-the-target-device-is-budgeted.md` supplies a frame budget for
+one named device — the Pixel 5 at 1080x2340, one 60 Hz frame — so the second
+input exists for that device and the bound can be derived against it there.
 
 **What would settle it**, in the order the inputs become available:
 
 - a measured frame budget on a named target device, which is what turns "13
-  substeps" into "13 substeps costs X of Y milliseconds";
+  substeps" into "13 substeps costs X of Y milliseconds" — supplied for the
+  Pixel 5 on 2026-09-04, and for no other device;
 - the stiffest spring the authoring vocabulary allows, which today is unbounded:
   `Spring::new(stiffness, damping_ratio)` takes any stiffness a producer writes,
   so the worst case is not a property of the vocabulary yet;

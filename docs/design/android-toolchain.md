@@ -321,9 +321,11 @@ build, three reported samples of 240 drawn frames per scene, at **2340x805**:
 The instrument reports per sample and the table is not averaged precisely so
 that warm-up is visible rather than folded in.
 
-**Read against a 16.67 ms budget** — which is a 60 Hz budget and **not** a
-requirement this project has set; nothing in the specification pins display
-geometry, and #549 is open against exactly that:
+**Read against a 16.67 ms budget** — a 60 Hz budget, which since 2026-09-04 is a
+requirement for this device and extent
+(`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`) and still
+not one for a display class: nothing in the specification pins display geometry,
+and #549 is open against exactly that:
 
 - `surfaces` spends about 25 ms at p50 and reaches 60 at p95.
 - `typography` spends 11.6 at p50 and 19.6 at p95.
@@ -602,9 +604,12 @@ the R-T1 argument, measured for the first time.
 
 **The constant does not change, and this is why.**
 `dashscene_validator::RENDER_TARGET_BUDGET_PLACEHOLDER` is a **count**, and what
-was measured is a **cost**. Turning one into the other needs a frame budget, and
-this project deliberately has none: no display geometry is pinned (#549), so any
-count written here would be derived from an invented budget. What the
+was measured is a **cost**. Turning one into the other needs a frame budget for
+a display class, and this project deliberately has none: no display geometry is
+pinned (#549), so any count written here would be derived from an invented
+budget. The one-device budget of 2026-09-04
+(`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`) is a budget
+for the Pixel 5 at one extent and derives no count for the class. What the
 measurement does settle is the shape of the answer:
 
 - **A fixed count cannot be right at any value.** 1.95 ms is a cost per switch
@@ -616,7 +621,8 @@ measurement does settle is the shape of the answer:
   was ever read as "eight is fine", that reading is now measured to be wrong.
 - **`paint.render-target-budget` stays a warning**, for the same reason: an
   error would enforce a threshold nobody has derived. It becomes an error when a
-  frame budget exists to derive one from.
+  display-class frame budget exists to derive one from; the one-device budget of
+  2026-09-04 is not that.
 
 ### The attach, and what it does and does not say
 

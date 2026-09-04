@@ -1957,6 +1957,20 @@ for the failure reporting the C ABI gains here.
 which are the MVP pair, and #1120, which holds what is not MVP.** The design
 findings are held on tracking issue #851 and must not be re-derived.
 
+**Added 2026-09-04, on the owner's ruling to halve the GPU frame, and placed
+above the 2026-08-18 block so that block's "everything below is earlier" still
+holds.** The Pixel 5 measurement
+([`design/android-toolchain.md`](design/android-toolchain.md), "The Unity host's
+presented rate") found the Unity host GPU fill-bound at native resolution. The
+ruling is
+[`decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`](decisions/the-gpu-frame-on-the-target-device-is-budgeted.md):
+one display frame at native resolution, read from the compositor. It is carried
+under #1120 by #1412 (R-T2 in the Unity painter) and #1413 (per-kind cost and
+fast paths), with #1293 and #1296 moved up from `v1` as the lean painter's
+measure-then-decide half and the instrument; the order is #1408 and #1402 first,
+then #1412, then #1413. Whether the halving gates the slice is not ruled here;
+the epic's non-gating declaration below stands until it is.
+
 **Revised at the v0.20 phase-end revision (2026-08-18).** The scope is again
 unchanged — three epics, the MVP pair plus the non-gating one — and this
 revision changed four things. **Everything below this block is earlier** — the
@@ -2072,18 +2086,6 @@ Android platform. Optimization and debt this slice motivates sit on #1120, and
 anything that would read the same if v0.21 had never happened goes to `v1`
 instead. **#1120 does not gate the slice** — v0.21 closes when the two MVP epics
 close, and whatever #1120 still holds moves out rather than holding it open.
-
-**Added 2026-09-04 on the owner's ruling to halve the GPU frame.** The Pixel 5
-measurement (`design/android-toolchain.md`, "The Unity host's presented rate")
-found the Unity host GPU fill-bound at native resolution — `surfaces` at 32.5
-fps, 31 ms a frame, CPU idle. The ruling is recorded as
-[`decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`](decisions/the-gpu-frame-on-the-target-device-is-budgeted.md):
-one display frame at native resolution, read from the compositor. It is carried
-by #1412 (R-T2 in the Unity painter) and #1413 (per-kind cost and fast paths)
-under #1120, with #1293 and #1296 moved up from `v1` as the lean painter's half
-and the instrument, in that order after #1408 and #1402. Whether the halving
-gates the slice is not ruled here; the epic's non-gating declaration stands
-until it is.
 
 **The slice took nine existing issues from other milestones on 2026-08-16**, in
 four passes over one day. Re-derive that figure from the issues' timelines

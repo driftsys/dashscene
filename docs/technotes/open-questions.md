@@ -46,11 +46,14 @@ example, `Q-4` still resolves once `specs/` is gone. It decides nothing.
 
   **The placeholder is unchanged, and that is the finding rather than a
   shortfall.** `RENDER_TARGET_BUDGET_PLACEHOLDER` is a **count** and what was
-  measured is a **cost**; converting one to the other needs a frame budget, and
-  no display geometry is pinned (#549). What the number does settle is that a
-  fixed count cannot be right at any value — the affordable number of switches
-  is `budget / cost` and both terms belong to the target — and that eight is not
-  a conservative choice: at this cost it is about 15.6 ms, a whole 60 Hz frame.
+  measured is a **cost**; converting one to the other needs a frame budget for a
+  display class, and no display geometry is pinned (#549) — the one-device
+  budget of 2026-09-04
+  (`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`) derives
+  none. What the number does settle is that a fixed count cannot be right at any
+  value — the affordable number of switches is `budget / cost` and both terms
+  belong to the target — and that eight is not a conservative choice: at this
+  cost it is about 15.6 ms, a whole 60 Hz frame.
 
   **This row pointed at #44 until 2026-08-17**, a closed v0.8 story that built
   the feature the budget bounds and never addressed the value, which is how the
