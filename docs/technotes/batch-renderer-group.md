@@ -260,7 +260,8 @@ itself is not the same as one that always does.
 a single frame when a command carrying `HasSortingPosition` names more than one
 visible instance.** macOS/Metal, Apple M3, Unity 6000.3.23f1, URP 17.3.0,
 windowed player, vSyncCount 1, measured 2026-09-03. This is issue #1401, and it
-is why `OnPerformCulling` now emits one command per instance.
+is why `OnPerformCulling` now emits one command per instance. The same arms on
+the Pixel 5 over Vulkan are §5e.
 
 The dropped frame renders the affected region as **bare backdrop** — a large
 contiguous set of panels and glyph runs missing for exactly one frame, with the
@@ -443,14 +444,15 @@ then gave 0 band-frames in 40,000 — 0.9 % under the 30 fps rate taken as known
 the 5,091 valid frames of a first run that a touch on the phone cut short
 (`after60-shipped-INVALID-touched-at-frame-5091`). Read with §5d's frozen arm
 (115 against ~300 per 20,000), it points at pacing or frame rate entering the
-defect's rate — the round changed both at once, and issue #1405's standalone
-reproduction should be planned with that in mind; and a run at that pacing has
-no positive control, so the fix's verification rests on the 30 fps arms.
+defect's rate — the round changed both at once, which is a fact issue #1405's
+standalone reproduction depends on; and a run at that pacing has no positive
+control, so the fix's verification rests on the 30 fps arms.
 
 **What this does not establish.** The mechanism, still. Whether the per-frame
 host path matters on Android — the frozen arm's zero is a 10 % reading at best.
-Anything about a GLES player, which was not built. Evidence, logs, the ported
-patches and the frame pairs:
+Anything from the 60 fps round on its own: no arm at that pacing showed the
+defect, so it has no positive control. Anything about a GLES player, which was
+not built. Evidence, logs, the ported patches and the frame pairs:
 `driftsys/dashscene-v021-lanes/probe-1403/RESULTS.md`, outside this repository.
 
 ## 6. Why no test caught it

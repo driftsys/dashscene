@@ -963,9 +963,7 @@ missing display geometry; these are figures and the record that holds them.
             from the compositor — `dumpsys SurfaceFlinger --timestats` and
             `--latency` on the player's `SurfaceView` layer — not from the
             player. This is issue #1347's Unity half, read whole-frame.
-            Nothing here is committed as a change: the pacing edits — three scripts on the evidence shelf, applied in order, of which the explicit target and optimized frame pacing are the two that stand — and the HDR-off toggle live there as patches, and the pacing change is issue #1408 — until it lands, every figure past
-            the first paragraph describes a build this tree does not produce,
-            and wants re-reading once it does.
+            Nothing here is committed as a change: the pacing edits — three scripts on the evidence shelf, applied in order, of which the explicit target and optimized frame pacing are the two that stand — and the HDR-off toggle live there as patches, and the pacing change is issue #1408 — until it lands, every presented-rate figure past the first paragraph describes a build this tree does not produce, and wants re-reading once it does; the shaded areas are derived from committed scene data and do not.
 
 **The table above was taken at 30 fps, and now says why.** "Paced well under the
 display rate" was an observation; the cause is that nothing in the shipped
