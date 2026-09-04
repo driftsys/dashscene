@@ -13,7 +13,13 @@
              the target device's native resolution. "The target device" in
              this record is the device it names, the Pixel 5: the one
              target-class device this project has, and not the fleet
-    related  docs/specification/03-target-hardware-rules.md (R-T2, the rule projected to do about half of the halving — 7 of the 14 ms); issue #549 (no display geometry is pinned by the specification, which this record does not change: it names one device and one extent, not a display class — a tier of the specification's target-hardware rules with a stated panel, which is what #549 would pin, and where a budget as a requirement would then belong);
+    related  docs/specification/03-target-hardware-rules.md (R-T2, the rule
+             projected to do about half of the halving — 7 of the 14 ms);
+             issue #549 (no display geometry is pinned by the specification,
+             which this record does not change: it names one device and one
+             extent, not a display class — a tier of the specification's
+             target-hardware rules with a stated panel, which is what #549
+             would pin, and where a budget as a requirement would then belong);
              docs/decisions/frame-delta-is-clamped-and-the-host-owns-the-clock.md
              (whose upper bound waited on a frame budget on a named device,
              which D1 now supplies for one)
@@ -54,17 +60,16 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   too and has no carrier in this record; another device's budget is that
   device's mode, and each is its own row.
 - **D2 — the instruments are the compositor's, not the painter's.** Two
-  readings, both from `dumpsys SurfaceFlinger` on the player's
-  `SurfaceView …
-  (BLAST)` layer, both kept: `--timestats` over a 10 s window —
-  the window the 31 ms baseline was read over — gives the rate D1 is met by,
-  with the display mode pinned by its `displayRefreshRate` line; and
-  `--latency`'s `frameReady` cadence gives the GPU frame itself, which is how
-  the 31 ms was read and the only way to see a frame that shortens without
-  crossing a vsync — a frame anywhere between 16.7 and 33.3 ms presents at the
-  same rate, so a story's progress short of D1 is read from the cadence, not the
-  rate. The entry is named by the player's own `[showcase] drew` logcat line; a
-  plain launch opens entry 0, `surfaces`, and no intent extra selects it.
+  readings, both from `dumpsys SurfaceFlinger` on the player's `SurfaceView`
+  layer's `(BLAST)` child, both kept: `--timestats` over a 10 s window — the
+  window the 31 ms baseline was read over — gives the rate D1 is met by, with
+  the display mode pinned by its `displayRefreshRate` line; and `--latency`'s
+  `frameReady` cadence gives the GPU frame itself, which is how the 31 ms was
+  read and the only way to see a frame that shortens without crossing a vsync —
+  a frame anywhere between 16.7 and 33.3 ms presents at the same rate, so a
+  story's progress short of D1 is read from the cadence, not the rate. The entry
+  is named by the player's own `[showcase] drew` logcat line; a plain launch
+  opens entry 0, `surfaces`, and no intent extra selects it.
   `measure/android/gpu-capture.sh <out> com.driftsys.dashscene.showcase` with
   `DS_GPU_WINDOW=10` takes both dumps; its package parameter defaults to the
   lean painter's demo and must be given. Neither painter's per-frame report is
