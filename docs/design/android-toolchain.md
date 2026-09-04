@@ -981,7 +981,7 @@ first place the Unity host's presented rate has been read at all.
 
 **Lifting the cap took two changes, and a reading that looked like a third was
 misleading.** Issue #1408 carries the changes and the same account; this is the
-measurement. Setting the target in `Start()` from
+measurement. Setting the target in `Awake()` from
 `Screen.currentResolution.refreshRateRatio` — which read 60 on that first build,
 with no frame-rate override yet in force — gave ~32 fps with a bimodal interval
 — 87 of 125 presented intervals at 33.4 ms, 16 between 16.6 and 16.9 — frames
