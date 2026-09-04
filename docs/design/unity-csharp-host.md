@@ -577,14 +577,14 @@ Both runs were the probe-instrumented soak builds — the camera rendering into 
 explicit 1024x768 `RenderTexture` rather than the window directly — so the
 figures bracket packing and upload either way.
 
-The same pair on the Pixel 5 over Vulkan is in
-[the technote's §5e](../technotes/batch-renderer-group.md), and held there too.
-
 A command count 34.6 times higher left the **mean** where it was, at 0.19 ms.
 The median moved 0.01 ms down, the 95th percentile 0.01 ms up and the maximum
 0.13 ms up — run-to-run noise, and well inside the spread one run shows against
 itself: the before run's last two windows report a maximum of 2.49 ms and then
 1.02 ms.
+
+The same pair on the Pixel 5 over Vulkan is in
+[the technote's §5e](../technotes/batch-renderer-group.md), and held there too.
 
 **What that pair does not measure is the loop that grew.** The figure covers the
 frame lease, `BrgPainter.Draw` and the release; Unity runs `OnPerformCulling`

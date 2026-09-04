@@ -401,20 +401,21 @@ merged**, typography scene, 381 instances, four materials:
 
 The first arm's log stream was cut at 5,693 frames: a Unity build for the other
 APK ran on the same machine during the soak, and a Unity Android build ends by
-restarting the adb server. That is not another lane at the device, which the
-one-device rule of #1403 forbids and which did not happen; it is the measurer's
-own tooling on the same machine. Its one event is counted, and the figures below
-are given with and without that arm. **Every band-frame is the drop §5d
-describes** — a contiguous band of the document at bare backdrop for one frame,
-the rest drawn — read here as the six cells of one grid row at the backdrop
-value, `gap=0` between them, and the dumped frame pair shows the title, readout
-and bar gone to bare backdrop while the lower text still draws. The instrument's
-liveness holds per run: 15 to 16 distinct `BASELINE` cells with glyphs drawn, 8
-with the flag off and the glyphs hidden, 20 on the paint document, and about
-24,470 single-cell events per 20,000 frames from the typography scene's own
-pulse. The frozen arm and the paint arm logged no event at all, which is what a
-static picture reads; their liveness rests on the `BASELINE` line and on the
-frame captures each arm kept (`frame-150-rt.png`, `frame-900-rt.png`).
+killing the adb server (`Killing ADB server` in its editor log). That is not
+another lane at the device, which the one-device rule of #1403 forbids and which
+did not happen; it is the measurer's own tooling on the same machine. Its one
+event is counted, and the figures below are given with and without that arm.
+**Every band-frame is the drop §5d describes** — a contiguous band of the
+document at bare backdrop for one frame, the rest drawn — read here as the six
+cells of one grid row at the backdrop value, `gap=0` between them, and the
+dumped frame pair shows the title, readout and bar gone to bare backdrop while
+the lower text still draws. The instrument's liveness holds per run: 15 to 16
+distinct `BASELINE` cells with glyphs drawn, 8 with the flag off and the glyphs
+hidden, 20 on the paint document, and about 24,470 single-cell events per 20,000
+frames from the typography scene's own pulse. The frozen arm and the paint arm
+logged no event at all, which is what a static picture reads; their liveness
+rests on the `BASELINE` line and on the frame captures each arm kept
+(`frame-150-rt.png`, `frame-900-rt.png`).
 
 **What the counts support, stated two ways.** Three band-frames in 25,693
 as-built frames is 1.2 × 10⁻⁴ per frame, between one hundredth and one
