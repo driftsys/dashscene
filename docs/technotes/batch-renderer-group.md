@@ -428,9 +428,10 @@ conditional test — the chance that all three land in the 25,693 as-built frame
 out of 65,693, if the shape made no difference — gives 6 %; without the cut arm,
 2 events in 20,000 against 0 in 40,000, it gives 11 %. So the device round is
 consistent with the fix and points the same way as the Mac's 410 to 0, and it
-does not stand alone: that is what #1403's soak established. Frame cost held as
-on macOS: typography `draw mean` 0.41 ms before and 0.42 ms after, `tick` 0.15
-to 0.20 ms on both builds with the mode at 0.18 to 0.19.
+does not carry the fix alone — the Mac's rows do: that is what #1403's soak
+established. Frame cost held as on macOS, over each run's 240-frame reports:
+typography `draw mean` 0.41 ms before and 0.42 ms after (the mode of the
+reports), `tick` 0.15 to 0.20 ms on both builds with the mode at 0.18 to 0.19.
 
 **A second round at the display rate suggests the rate also depends on timing.**
 With the player asked for 60 Hz and Unity's optimized frame pacing on, the
@@ -438,12 +439,12 @@ as-built and shipped arms re-run with the probe's camera rendering into its
 1024x768 target (§5d's instrument) at about 50 fps, and the **as-built** shape
 then gave 0 band-frames in 40,000 — 0.9 % under the 30 fps rate taken as known,
 6 % by the same exact test. The shipped shape gave 0 in 40,000 as well, and 0 in
-the 5,091 valid frames of a first run that a touch on the phone cut short (its
-log is kept, marked invalid). Read with §5d's frozen arm (115 against ~300 per
-20,000), it points at pacing or frame rate entering the defect's rate — the
-round changed both at once, and issue #1405's standalone reproduction should be
-planned with that in mind; and a run at that pacing has no positive control, so
-the fix's verification rests on the 30 fps arms.
+the 5,091 valid frames of a first run that a touch on the phone cut short
+(`after60-shipped-INVALID-touched-at-frame-5091`). Read with §5d's frozen arm
+(115 against ~300 per 20,000), it points at pacing or frame rate entering the
+defect's rate — the round changed both at once, and issue #1405's standalone
+reproduction should be planned with that in mind; and a run at that pacing has
+no positive control, so the fix's verification rests on the 30 fps arms.
 
 **What this does not establish.** The mechanism, still. Whether the per-frame
 host path matters on Android — the frozen arm's zero is a 10 % reading at best.
