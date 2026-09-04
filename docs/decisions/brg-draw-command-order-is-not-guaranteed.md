@@ -140,10 +140,9 @@ frames per run:
 `docs/technotes/batch-renderer-group.md` §5d carries the tables, each count's
 `grep`/`awk` derivation, and the instrument's own liveness proof.
 
-The same arms on the Pixel 5 over Vulkan, the same day (§5e): the multi-instance
-shape 3 dropped-band frames in 25,693, the one-instance shape 0 in 40,000. On
-three events the exact test puts that at 6 %, so the device round is consistent
-with D5 and does not carry it alone; the macOS rows do.
+The same arms on the Pixel 5 over Vulkan, the same day, are §5e: consistent with
+D5 on three events, and not carrying it alone — the macOS rows do. The counts
+live there and are not restated here.
 
 **What D5 does not say.** It does not say why Unity drops those commands: the
 sort is not readable from C# and no measurement here reached it. It does not say

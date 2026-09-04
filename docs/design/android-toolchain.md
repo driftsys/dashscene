@@ -968,9 +968,10 @@ missing display geometry; these are figures and the record that holds them.
 display rate" was an observation; the cause is that nothing in the shipped
 package or the demo player sets `Application.targetFrameRate`, and Unity's
 Android default for -1 is 30 whatever the panel does. (`unity/render-gate`'s
-desktop gate does set it, to 60, but vSync governs there, so the setting has no
-effect.) The compositor's `--timestats` counted 30.3 fps with no dropped frame,
-and the sample's own reports came every 8.0 s for 240 frames. **The
+desktop gate does set it, to 60, but that player runs in batch mode and renders
+on demand through `SubmitRenderRequest`, so nothing presents and the setting has
+no effect.) The compositor's `--timestats` counted 30.3 fps with no dropped
+frame, and the sample's own reports came every 8.0 s for 240 frames. **The
 `fps if unpaced` figure in those reports is the inverse of the measured `tick`
 plus `draw` sum, not a presented rate**, and this section is the first place the
 Unity host's presented rate has been read at all; the lean painter's has been
@@ -1042,10 +1043,10 @@ would settle the comparison. **Where each figure comes from.** The interval
 histograms and the 31 ms production cadence are re-derivable from the latency
 dumps under `driftsys/dashscene-v021-lanes/probe-1403/logs/sf-latency-*.txt`,
 and `--latency` returned 126 to 129 frame rows per dump on this Android 14
-device, against the note in "The measurement apparatus" below that it returns
-nothing on Android 15 — this Pixel 5 runs Android 14 and returned rows on every
-dump, and the two readings are left for a human to reconcile. The `--timestats`
-rates and the `top` sample were read off the tool and transcribed into
+device, which is the older-release case the note in "The measurement apparatus"
+below already states: it returns nothing on Android 15 and works on older
+releases, and this Pixel 5 runs Android 14. The `--timestats` rates and the
+`top` sample were read off the tool and transcribed into
 `driftsys/dashscene-v021-lanes/probe-1403/RESULTS.md`, except the per-scene
 re-read of 2026-09-04, whose dumps are kept beside it as
 `logs/timestats-hdr-on-per-scene.txt` with the `drew` lines in
