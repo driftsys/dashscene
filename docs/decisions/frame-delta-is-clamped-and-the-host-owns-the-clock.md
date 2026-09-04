@@ -123,15 +123,17 @@ frame budget for the animation update to fit the resulting substep burst inside.
 measurement**, which was true when this was written; target-hardware
 measurements exist since 2026-08-17 (`docs/design/android-toolchain.md`), and
 since 2026-09-04 `the-gpu-frame-on-the-target-device-is-budgeted.md` supplies a
-frame budget for one named device — the Pixel 5 at 1080x2340, one 60 Hz frame —
-so that input exists for that device; the other, the stiffest spring, is still
-unbounded below, and the bound is not derivable until it is.
+frame budget for one named device — the Pixel 5 at its 2340x1080 drawable, one
+60 Hz frame, ruled on a measured 31 ms — so that input exists for that device;
+the other, the stiffest spring, is still unbounded below, and the bound is not
+derivable until it is.
 
 **What would settle it**, in the order the inputs become available:
 
 - a measured frame budget on a named target device, which is what turns "13
   substeps" into "13 substeps costs X of Y milliseconds" — supplied for the
-  Pixel 5 on 2026-09-04, and for no other device;
+  Pixel 5 on 2026-09-04 as a ruling on a measured frame, and for no other
+  device;
 - the stiffest spring the authoring vocabulary allows, which today is unbounded:
   `Spring::new(stiffness, damping_ratio)` takes any stiffness a producer writes,
   so the worst case is not a property of the vocabulary yet;

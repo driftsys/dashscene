@@ -47,14 +47,15 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   render-target groups) reopens the reading. On the Pixel 5 the drawable is
   2340x1080, the panel's 1080x2340 in landscape, in the 60 Hz mode (a 90 Hz mode
   exists and is not the one measured): the scene's GPU frame, about 31 ms when
-  this was ruled, shall come inside 16.7 ms — the halving, rounded to the frame
-  the panel imposes. **Met when**, over the window D2 names, the compositor's
-  `averageFPS` on the player's surface is at or above 59 with `droppedFrames` 0,
-  and no more than one presented interval in a hundred exceeds 17 ms. The tool's
-  window average can read above the panel's rate; that is at the rate, not above
-  it. `typography`, at 42 to 50 fps, is over the frame too and has no carrier in
-  this record; another device's budget is that device's mode, and each is its
-  own row.
+  this was ruled — read on a build with issue #1408's two changes applied, which
+  the tree does not yet produce — shall come inside 16.7 ms — the halving,
+  rounded to the frame the panel imposes. **Met when**, over the window D2
+  names, the compositor's `averageFPS` on the player's surface is at or above 59
+  with `droppedFrames` 0, and no more than one presented interval in a hundred
+  exceeds 17 ms. The tool's window average can read above the panel's rate; that
+  is at the rate, not above it. `typography`, at 42 to 50 fps, is over the frame
+  too and has no carrier in this record; another device's budget is that
+  device's mode, and each is its own row.
 - **D2 — the instruments are the compositor's, not the painter's.** Two
   readings, both from `dumpsys SurfaceFlinger` on the player's
   `SurfaceView …
@@ -72,11 +73,11 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   lean painter's demo and must be given. Neither painter's per-frame report is
   an instrument: the Unity host's `fps if unpaced` is the inverse of tick plus
   draw and excludes the GPU; the lean painter's `Sample::fps_if_unpaced` is the
-  inverse of tick plus paint plus submit, and its submit term is mostly waiting
-  on the swapchain, so it counts waiting as work. Both are headroom figures. A
-  player capped by its own pacing reads the cap, not the GPU: issue #1408's two
-  changes must be in place, and a tree without them reads 30 fps and does not
-  test D1.
+  inverse of tick plus paint plus submit, and its submit term includes the
+  swapchain acquire, so a vsync-paced loop times its own waiting as work. Both
+  are headroom figures. A player capped by its own pacing reads the cap, not the
+  GPU: issue #1408's two changes must be in place, and a tree without them reads
+  30 fps and does not test D1.
 - **D3 — the route is R-T2 first, then the per-kind cost.** Opaque cores drawn
   front-to-back with depth, and a blended fringe, come first; the cost of the
   kinds that stay shaded — per pixel, or per command where issue #1406 finds the
@@ -101,11 +102,12 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
 - Stories #1412 and #1413 each carry a before-and-after reading of both D2
   instruments in `docs/design/android-toolchain.md`; the pair closes the Unity
   painter against D1 on the device this record names, and each story's own
-  target is its own. The lean painter's `surfaces` frame is about 22 ms on the
-  same device, over the budget too; issue #1293 measures it against D1 and
-  either implements or files the story that does — D1 binds it as much as the
-  Unity painter, and #1293 is where that can fail. A reading on another device,
-  another extent or another scene is a new row, not a substitute.
+  target is its own. The lean painter has no compositor reading yet; its own
+  `submit` of about 22 ms on the same device, which includes swapchain waiting,
+  says it is not at the display rate either. Issue #1293 measures it against D1
+  and either implements or files the story that does — D1 binds it as much as
+  the Unity painter, and #1293 is where that can fail. A reading on another
+  device, another extent or another scene is a new row, not a substitute.
 - This record binds the two stories and not the slice. Under epic #1120's
   standing declaration (`docs/roadmap.md`, v0.21) they may move out unfinished
   at the slice close; if the owner rules that the halving gates v0.21, they move
