@@ -435,14 +435,15 @@ to 0.20 ms on both builds with the mode at 0.18 to 0.19.
 
 **A second round at the display rate suggests the rate also depends on timing.**
 With the player asked for 60 Hz and Unity's optimized frame pacing on, the
-render-target arms run at about 50 fps, and the **as-built** shape then gave 0
-band-frames in 40,000 — 0.9 % under the 30 fps rate taken as known, 6 % by the
-same exact test. The shipped shape gave 0 in 40,000 as well, and 0 in the 5,091
-valid frames of a first run that a touch on the phone cut short (its log is
-kept, marked invalid). Read with §5d's frozen arm (115 against ~300 per 20,000),
-it points at pacing or frame rate entering the defect's rate — the round changed
-both at once; and a run at that pacing has no positive control, so the fix's
-verification rests on the 30 fps arms.
+as-built and shipped arms re-run with the probe's camera rendering into its
+1024x768 target (§5d's instrument) at about 50 fps, and the **as-built** shape
+then gave 0 band-frames in 40,000 — 0.9 % under the 30 fps rate taken as known,
+6 % by the same exact test. The shipped shape gave 0 in 40,000 as well, and 0 in
+the 5,091 valid frames of a first run that a touch on the phone cut short (its
+log is kept, marked invalid). Read with §5d's frozen arm (115 against ~300 per
+20,000), it points at pacing or frame rate entering the defect's rate — the
+round changed both at once; and a run at that pacing has no positive control, so
+the fix's verification rests on the 30 fps arms.
 
 **What this does not establish.** The mechanism, still. Whether the per-frame
 host path matters on Android — the frozen arm's zero is a 10 % reading at best.

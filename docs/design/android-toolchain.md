@@ -970,13 +970,13 @@ missing display geometry; these are figures and the record that holds them.
 display rate" was an observation; the cause is that nothing in the shipped
 package or the demo player sets `Application.targetFrameRate`, and Unity's
 Android default for -1 is 30 whatever the panel does. (`unity/render-gate`'s
-desktop gate does set it, to 60, where vSync governs and it is inert.) The
-compositor's `--timestats` counted 30.3 fps with no dropped frame, and the
-sample's own reports came every 8.0 s for 240 frames. **The `fps if unpaced`
-figure in those reports is the inverse of the measured `tick` plus `draw` sum,
-not a presented rate**, and this section is the first place the Unity host's
-presented rate has been read at all; the lean painter's has been read from the
-same instrument since 2026-08-17, below.
+desktop gate does set it, to 60, but vSync governs there, so the setting has no
+effect.) The compositor's `--timestats` counted 30.3 fps with no dropped frame,
+and the sample's own reports came every 8.0 s for 240 frames. **The
+`fps if unpaced` figure in those reports is the inverse of the measured `tick`
+plus `draw` sum, not a presented rate**, and this section is the first place the
+Unity host's presented rate has been read at all; the lean painter's has been
+read from the same instrument since 2026-08-17, below.
 
 **Lifting the cap took three things, and the second reading was misleading.**
 Issue #1408 carries the change and the same account; this is the measurement.
@@ -991,7 +991,7 @@ SurfaceFlinger for 30 Hz (`setFrameRate=(uid, 30.00 Hz)` in
 app's reported refresh rate is the rate it was granted, so "the display's rate"
 read back 30 and set 30 again. An explicit 60 set at
 `RuntimeInitializeLoadType.SubsystemRegistration`, before the first frame, is
-what made the compositor show `60.00 Hz` asked. The player log of that second
+what made the compositor show `60.00 Hz` asked. The player log of the Swappy
 step was not kept; the other two are on the shelf.
 
 **With every cap lifted, the panel resolution is the limit.** At 1080x2340, on
@@ -1031,9 +1031,10 @@ would settle the comparison. **Where each figure comes from.** The interval
 histograms and the 31 ms production cadence are re-derivable from the latency
 dumps under `driftsys/dashscene-v021-lanes/probe-1403/logs/sf-latency-*.txt`,
 and `--latency` returned 126 to 129 frame rows per dump on this Android 14
-device, against the note below that it returns none, taken 2026-08-17 on the
-same device and not reproduced here. The `--timestats` rates and the `top`
-sample were read off the tool and transcribed into
+device, against the note in "The measurement apparatus" below that it returns
+nothing on Android 15 — this Pixel 5 runs Android 14 and returned rows on every
+dump, and the two readings are left for a human to reconcile. The `--timestats`
+rates and the `top` sample were read off the tool and transcribed into
 `driftsys/dashscene-v021-lanes/probe-1403/RESULTS.md`, except the per-scene
 re-read of 2026-09-04, whose dumps are kept beside it as
 `logs/timestats-hdr-on-per-scene.txt` with the `drew` lines in
