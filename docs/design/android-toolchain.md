@@ -955,15 +955,16 @@ instrument would report as two samples because it discards across that boundary.
 **No budget is set here.** #1107 says so in terms and #549 is open against the
 missing display geometry; these are figures and the record that holds them.
 
-### The Unity host's presented rate, and what bounds it (2026-09-03)
+### The Unity host's presented rate, and what bounds it (2026-09-03 and 04)
 
-    status  taken 2026-09-03 on the same Pixel 5, from players built by
+    status  taken 2026-09-03, and the per-scene sweep after midnight on
+            2026-09-04, on the same Pixel 5, from players built by
             `just unity-demo-android` at `5b279f6` on the story branch. Read
             from the compositor — `dumpsys SurfaceFlinger --timestats` and
             `--latency` on the player's `SurfaceView` layer — not from the
-            player. Nothing here is committed as a change: the pacing edits it
-            names live as patches on the evidence shelf, and the code change
-            is issue #1408.
+            player. Nothing here is committed as a change: the two pacing
+            edits and the HDR-off toggle live as patches on the evidence
+            shelf, and the pacing change is issue #1408.
 
 **The table above was taken at 30 fps, and now says why.** "Paced well under the
 display rate" was an observation; the cause is that nothing in the shipped
