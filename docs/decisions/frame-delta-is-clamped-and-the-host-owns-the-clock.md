@@ -2,8 +2,7 @@
 
     status   accepted (story #572, 2026-07-31); rule 1 amended by story #810,
              2026-08-08 — the clamp moved from each host into
-             `LiveScene::tick`; the upper bound's first input noted as
-             supplied for one device on 2026-09-04
+             `LiveScene::tick`; one of the upper bound's two inputs, the frame budget, noted as supplied for one device on 2026-09-04
     scope    crates/dashlang (MAX_FRAME_DELTA and the clamp, since story #810),
              demo/src/shell.rs and demo-web/src/host.rs (the frame loops, which
              own their clocks), demo/tests/clock_invariant.rs and
@@ -125,8 +124,8 @@ measurement**, which was true when this was written; target-hardware
 measurements exist since 2026-08-17 (`docs/design/android-toolchain.md`), and
 since 2026-09-04 `the-gpu-frame-on-the-target-device-is-budgeted.md` supplies a
 frame budget for one named device — the Pixel 5 at 1080x2340, one 60 Hz frame —
-so the second input exists for that device and the bound can be derived against
-it there.
+so that input exists for that device; the other, the stiffest spring, is still
+unbounded below, and the bound is not derivable until it is.
 
 **What would settle it**, in the order the inputs become available:
 

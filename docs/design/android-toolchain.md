@@ -321,11 +321,12 @@ build, three reported samples of 240 drawn frames per scene, at **2340x805**:
 The instrument reports per sample and the table is not averaged precisely so
 that warm-up is visible rather than folded in.
 
-**Read against a 16.67 ms budget** — a 60 Hz budget, which since 2026-09-04 is a
-requirement for this device and extent
-(`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`) and still
-not one for a display class: nothing in the specification pins display geometry,
-and #549 is open against exactly that:
+**Read against a 16.67 ms budget** — a 60 Hz budget. Since 2026-09-04 there is
+one for this device at its native drawable
+(`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`), read from
+the compositor; this table, at 2340x805 and a per-frame report, is not what it
+is read against, and no budget exists for a display class — nothing in the
+specification pins display geometry, and #549 is open against exactly that:
 
 - `surfaces` spends about 25 ms at p50 and reaches 60 at p95.
 - `typography` spends 11.6 at p50 and 19.6 at p95.

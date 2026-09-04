@@ -30,9 +30,10 @@ on the Pixel 5 supplied it — `docs/design/android-toolchain.md`, "The Unity
 host's presented rate, and what bounds it", carries the figures and what is
 known about why. The two that the ruling rests on: with every pacing cap lifted,
 the Unity host presents the `surfaces` scene at 32.5 fps at 1080x2340, a frame
-every 31 ms; and the same build with the display forced to a quarter of the
-pixels presents at the display rate. The host is GPU fill-bound at native
-resolution.
+every 31 ms — read before D2's procedure existed, with the entry inferred from
+the launch, and re-read with the `drew` line kept at 32.0; and the same build
+with the display forced to a quarter of the pixels presents at the display rate.
+The host is GPU fill-bound at native resolution.
 
 The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
 
@@ -128,7 +129,7 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   nothing about the painter. It remains what it was used as on 2026-09-03: the
   diagnostic that showed the frame is fill-bound.
 - **Turning HDR off in the URP asset.** Worth about one frame per second on
-  `surfaces` and `typography` for the intermediate and its blit, and
-  unmeasurable on `layout`, which is at the panel rate either way; not a route
-  on its own, and it may be combined with the per-kind story if the sweep says
-  so.
+  `surfaces` for the intermediate and its blit; unresolved on `typography`,
+  whose two readings without it differ by eight frames per second; unmeasurable
+  on `layout`, which is at the panel rate either way; not a route on its own,
+  and it may be combined with the per-kind story if the sweep says so.
