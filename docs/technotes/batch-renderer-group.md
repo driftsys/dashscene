@@ -428,11 +428,11 @@ if the shape changed nothing. But the rate rests on three events, and the exact
 conditional test — the chance that all three land in the 25,693 as-built frames
 out of 65,693, if the shape made no difference — gives 6 %; without the cut arm,
 2 events in 20,000 against 0 in 40,000, it gives 11 %. So the device round is
-consistent with the fix and points the same way as the Mac's 410 to 0, and it
-does not carry the fix alone — the Mac's rows do: that is what #1403's soak
-established. Frame cost held as on macOS, over each run's 240-frame reports:
-typography `draw mean` 0.41 ms before and 0.42 ms after (the mode of the
-reports), `tick` 0.15 to 0.20 ms on both builds with the mode at 0.18 to 0.19.
+consistent with the fix, as the Mac's 410 to 0 is, and it does not carry the fix
+alone — the Mac's rows do: that is what #1403's soak established. Frame cost
+held as on macOS, over each run's 240-frame reports: typography `draw mean` 0.41
+ms before and 0.42 ms after (the mode of the reports), `tick` 0.15 to 0.20 ms on
+both builds with the mode at 0.18 to 0.19.
 
 **A second round at the display rate suggests the rate also depends on timing.**
 With the player asked for 60 Hz and Unity's optimized frame pacing on, the

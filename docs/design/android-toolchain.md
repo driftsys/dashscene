@@ -986,7 +986,7 @@ Issue #1408 carries the change and the same account; this is the measurement.
 Setting the target in `Start()` from `Screen.currentResolution.refreshRateRatio`
 gave ~32 fps with a bimodal interval — 87 of 125 presented intervals at 33.4 ms,
 16 between 16.6 and 16.9 — frames ready about 21 ms before they were shown:
-Unity's default pacing sleeps to the target and lands on every other vsync.
+Unity's default pacing sleeps to the target and presents on every other vsync.
 Enabling `PlayerSettings.Android.optimizedFramePacing` (Swappy) returned 30.3
 fps, and the player logged `targetFrameRate 30`: the init had already asked
 SurfaceFlinger for 30 Hz (`setFrameRate=(uid, 30.00 Hz)` in
