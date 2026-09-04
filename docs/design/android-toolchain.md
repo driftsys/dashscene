@@ -962,9 +962,7 @@ missing display geometry; these are figures and the record that holds them.
             `just unity-demo-android` at `5b279f6` on the story branch. Read
             from the compositor — `dumpsys SurfaceFlinger --timestats` and
             `--latency` on the player's `SurfaceView` layer — not from the
-            player. Nothing here is committed as a change: the two pacing
-            edits and the HDR-off toggle live as patches on the evidence
-            shelf, and the pacing change is issue #1408.
+            player. This is issue #1347's Unity half, read whole-frame. Nothing here is committed as a change: the two pacing edits and the HDR-off toggle live as patches on the evidence shelf, and the pacing change is issue #1408 — until it lands, every figure past the first paragraph describes a build this tree does not produce, and wants re-reading once it does.
 
 **The table above was taken at 30 fps, and now says why.** "Paced well under the
 display rate" was an observation; the cause is that nothing in the shipped
@@ -1014,7 +1012,8 @@ frame and not measured. **HDR is not the cause**: the same source rebuilt with
 — about one frame per second for the intermediate and its blit — and the HDR-off
 typography dump shows 97 of 126 presented intervals at 17 ms, 26 at 33, 2 at 34
 and 1 at 16. What remains is overdraw through the overlay class's per-pixel SDF
-shader: every node is a blended quad on a path with no depth test
+shader: every node is a blended quad — rects through the overlay class, glyph
+runs through the separate `Dashscene/Text` shader — on paths with no depth test
 (`docs/technotes/batch-renderer-group.md` §4), so the pixels under a panel, its
 glyph runs and the tile behind them are shaded once per layer. Where inside that
 shader the time goes is not separated here, and `/sys/class/kgsl` is refused to

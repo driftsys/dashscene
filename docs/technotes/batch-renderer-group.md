@@ -338,12 +338,11 @@ command gives zero over 60,000 frames while drawing the document correctly, and
 that shape matches what §3 attributes to Unity's own GPU Resident Drawer.
 
 **What this does not establish.** Nothing here reads Unity's sort, so the
-mechanism is unknown; the shape is a measured boundary, not an explanation. The
-same arms were run on the Pixel 5 over Vulkan on 2026-09-03 — §5e — where the
-defect reproduces with this signature and the one-instance shape reads clean, on
-three events. And **§5b's rows were all taken under the multi-instance shape**,
-including the `RunEnd` material-run walk it names, which this change removed:
-those measurements describe commands this painter no longer emits, so the order
+mechanism is unknown; the shape is a measured boundary, not an explanation. It
+is macOS/Metal only; the same arms on the Pixel 5 over Vulkan are §5e. And
+**§5b's rows were all taken under the multi-instance shape**, including the
+`RunEnd` material-run walk it names, which this change removed: those
+measurements describe commands this painter no longer emits, so the order
 question they left open is reopened rather than answered. §5c's single
 unreproduced dark frame is **consistent** with this defect and is not identified
 as it: that rig captures one frame per player run, so one dark result in about
@@ -442,7 +441,8 @@ then gave 0 band-frames in 40,000 — 0.9 % under the 30 fps rate taken as known
 the 5,091 valid frames of a first run that a touch on the phone cut short (its
 log is kept, marked invalid). Read with §5d's frozen arm (115 against ~300 per
 20,000), it points at pacing or frame rate entering the defect's rate — the
-round changed both at once; and a run at that pacing has no positive control, so
+round changed both at once, and issue #1405's standalone reproduction should be
+planned with that in mind; and a run at that pacing has no positive control, so
 the fix's verification rests on the 30 fps arms.
 
 **What this does not establish.** The mechanism, still. Whether the per-frame
