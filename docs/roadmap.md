@@ -2073,6 +2073,18 @@ anything that would read the same if v0.21 had never happened goes to `v1`
 instead. **#1120 does not gate the slice** — v0.21 closes when the two MVP epics
 close, and whatever #1120 still holds moves out rather than holding it open.
 
+**Added 2026-09-04 on the owner's ruling to halve the GPU frame.** The Pixel 5
+measurement (`design/android-toolchain.md`, "The Unity host's presented rate")
+found the Unity host GPU fill-bound at native resolution — `surfaces` at 32.5
+fps, 31 ms a frame, CPU idle. The ruling is recorded as
+[`decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`](decisions/the-gpu-frame-on-the-target-device-is-budgeted.md):
+one display frame at native resolution, read from the compositor. It is carried
+by #1412 (R-T2 in the Unity painter) and #1413 (per-kind cost and fast paths)
+under #1120, with #1293 and #1296 moved up from `v1` as the lean painter's half
+and the instrument, in that order after #1408 and #1402. Whether the halving
+gates the slice is not ruled here; the epic's non-gating declaration stands
+until it is.
+
 **The slice took nine existing issues from other milestones on 2026-08-16**, in
 four passes over one day. Re-derive that figure from the issues' timelines
 rather than trusting it, and note that the earliest predates this slice's
