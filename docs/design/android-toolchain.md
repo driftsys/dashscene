@@ -839,11 +839,74 @@ of the two everything in the bundle is timed by, which is the other half of
 ## The two hosts share one surface
 
 Both Android hosts draw the same scenes, take the same input vocabulary and run
-at the same extent, which is what makes the two tables below comparable at all.
+at the same extent. **The two frame-cost tables below predate that surface and
+are not yet comparable**: "Frame costs (#842)" is a `release` build in landscape
+at 2340x805, and "The Unity painter, on the same device" is a `demo-release`
+build in portrait at 1080x2340. Extent, orientation and build profile all
+differ, and this record's own note under the first table says a set taken across
+mixed orientations cannot be compared. The run that takes both hosts at one
+extent, one orientation and one profile is issue #1329's remaining limb, and
+nothing has taken it.
+
 The rules, the key events an `adb`-driven run sends, and the three changes that
 took `demo-android` from 1080x1984 to the full display extent are
 [`decisions/the-showcase-hosts-share-one-surface.md`](../decisions/the-showcase-hosts-share-one-surface.md).
 They are not restated here.
+
+## What the two hosts drew, compared (2026-08-29)
+
+The pixel half of the comparison has been taken; the frame-cost half above has
+not. Six captures, one per host per scene, on the same Pixel 5, both hosts in
+capture mode at `phase 0` and `signal 0.5` and both at **2340x1080** — one
+extent, which is what makes the pair comparable. The captures and the full
+threshold sweep are archived under
+[`archive/2026-08-29-showcase-host-parity/`](../archive/2026-08-29-showcase-host-parity/README.md);
+they were compared with `goldens`' `compare-images` binary by hand, because
+`measure/android/host-parity.sh` does not exist yet (issue #1329).
+
+**A differing-pixel count at threshold 0 says nothing about two painters.** The
+`layout` pair differs in 99.98 % of its pixels at threshold 0 while looking
+identical: sampled at five coordinates, the two hosts differ by one to three
+levels per channel almost everywhere. That is the right measure for a golden,
+where the reviewed image comes from the same painter, and the wrong one here.
+The count stops moving above threshold 3 and the bounding box collapses onto one
+band, so threshold 8 is where the three scenes are read:
+
+    scene        differing   bounds                  max delta
+    surfaces      31.10%     [50,50 - 2289,808]        240
+    typography     2.36%     [62,78 - 2106,794]        222
+    layout         1.67%     [586,916 - 1753,989]      210
+
+**No tolerance is set from these.** They are one run of one pair of builds on
+one device, and the threshold-8 reading is a baseline for issue #1329's harness
+to enforce against, not a threshold this record adopts.
+
+**`surfaces` is explained and is not a defect.** The Unity painter reports five
+kinds refused on it over 9 rects — shadows, backdrop blurs, image fills, baked
+vector nodes and render-target groups — so the two hosts draw different pictures
+on purpose. That is P4 working, and issue #1344 carries it.
+
+**The design session's prediction failed, and the half that mattered held.** It
+predicted `typography` would be the closest match of the three because Unity's
+HLSL is generated from the same `sdf.wgsl`; `layout` is closer. Its actionable
+half was that `typography` diverging _more than_ `surfaces` would mean a defect
+in the text seam rather than a tolerance to widen, and `typography` is nowhere
+near `surfaces`.
+
+**The finding this comparison exists to have found: the Unity host draws no text
+on this device.** `unity-typography.png` carries the scene's panels and its bar
+and no glyphs at all, while `lean-typography.png` carries every run. It is not a
+capture-mode artifact — the player walked to the entry by hand renders no glyphs
+either, while its own IMGUI readout does. The host reports success throughout:
+`[showcase] drew scene typography: 381 instance(s), rung RawBuffer`, no refusal
+and no diagnostic. **This is what issue #1389 was opened on, and the painter
+draws its text now** — the sorting-key repair landed on this branch and
+`unity-csharp-host.md` and `docs/technotes/batch-renderer-group.md` carry it.
+The capture is kept because it is the reading that found the defect. No gate saw
+it because `just unity-demo-android` asserts that every entry drew and never
+compares a frame against anything, and 381 submitted instances satisfy every
+check it makes; the text seam was verified on macOS/Metal, where it does draw
+(`unity-csharp-host.md`).
 
 ## The Unity painter, on the same device (2026-08-29)
 

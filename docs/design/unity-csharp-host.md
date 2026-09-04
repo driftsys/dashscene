@@ -999,11 +999,27 @@ the fourth throwaway Unity project in this repository and a fourth copy of the
 bring-up the other three carry, which issue #1316 factors out together rather
 than any one of them doing it to the others.
 
-**What it draws**, in one list the arrow keys walk: the three `corpus/showcase`
+**What it draws**, in one list the page keys walk: the three `corpus/showcase`
 scenes first, then committed documents staged into `StreamingAssets` with a
 manifest, with the font cascade — `corpus/fonts/inter/Inter-Regular.otf` and the
 `corpus/atlas/inter-ascii` sheet and metrics — beside them for the document that
 carries text. A `-cycle <seconds>` argument advances without a key press.
+
+**The sample implements the shared showcase surface**, which is why the page
+keys walk the list and the arrow keys do not.
+`docs/decisions/the-showcase-hosts-share-one-surface.md` is the contract: every
+host drawing the `corpus/showcase` scenes presents the same entry order, the
+same input vocabulary, the same extent policy and the same readout rule, and the
+left and right keys mean the showing scene's own signal on all of them. This
+sample may extend it and does — the committed `.dsb` documents append after the
+three scenes — but it may not disagree with it, and until 2026-08-29 it did:
+`Samples~/Showcase/DashsceneShowcase.cs` bound the arrow keys to the previous
+and next entry while `demo/src/input.rs` bound them to the two ends of the
+signal range. What the sample gained with the contract is a touch vocabulary
+(the scenes were reachable only from a keyboard, which a phone does not have), a
+readout suppressed by a flag rather than by disabling the behaviour that draws
+it, and capture mode. `docs/design/android-toolchain.md` carries the other
+host's half and the two hosts' first compared captures.
 
 **The scenes arrive through a native producer** (story #1342). They are Rust,
 built into a live arena by `dashlang`, and their motion is host-driven — so a C#

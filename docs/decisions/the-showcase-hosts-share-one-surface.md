@@ -124,6 +124,35 @@ The phase and the signal are both pinned because a scene's appearance is a
 function of both. Two hosts captured at one phase and two signal values differ
 for a reason that has nothing to do with either painter.
 
+## Alternatives considered
+
+**One driver in Rust behind the C ABI.** Move the navigation state into
+`unity/demo-producer`, re-sited as a workspace crate, and have both hosts call
+it, so the state machine has one implementation and cannot drift. Rejected: it
+re-sites a `publish = false` crate out of `unity/`, it adds an FFI hop to a Rust
+host that has no product reason for one, and the state machine it would
+single-source is about thirty lines. The part that would genuinely be worth
+single-sourcing — the scene registry — already is.
+
+**A harness-only parity.** Both hosts accept the same key events and nothing
+else changes. Rejected because it leaves both builds drivable only by `adb`, and
+neither is then a demonstration anyone can pick up by hand.
+
+**Both hosts compared against a Skia golden** rather than against each other. A
+stronger claim, because each host would be pinned to the specification rather
+than to the other. Rejected because it reverses the recorded decision to leave
+the showcase scenes un-goldened, after which every re-authoring of a scene
+churns committed images. `corpus/showcase/src/lib.rs` carries that reasoning.
+
+**Comparing the committed paint tables instead of the pixels.** Device-free and
+cheap, and it would catch a document or an ABI divergence. Rejected as the
+primary check because it cannot see a shading difference, which is precisely
+where two painters diverge.
+
+**The Unity sample running on the package as a customer installs it**, rather
+than on a staged library exporting `ds_demo_*`. Offered on 2026-08-29 and not
+taken; it stays issue #1352.
+
 ## What this obliges
 
 - A new command is added here first, then to every host that draws these scenes.

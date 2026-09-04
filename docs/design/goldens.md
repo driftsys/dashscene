@@ -30,7 +30,13 @@ All in `goldens/tooling/src/lib.rs`:
 
     pub fn assert_matches_golden(name: &str, png_bytes: &[u8])
     pub fn assert_matches_golden_within(name: &str, png_bytes: &[u8], max_differing_fraction: f64)
+    pub fn assert_matches_golden_max_pixels(name: &str, png_bytes: &[u8], max_differing_pixels: usize)
     pub fn pixel(rgba: &[u8], width: usize, x: usize, y: usize) -> [u8; 4]
+
+    pub struct Comparison { total: usize, differing: usize, first: Option<(i32, i32)>, bounds: Option<(i32, i32, i32, i32)>, max_channel_delta: u8 }
+    pub fn compare_rgba(left: &[u8], right: &[u8], width: i32, threshold: u8) -> Comparison
+    pub fn compare_pngs(left: &[u8], right: &[u8], threshold: u8) -> Result<Comparison, String>
+    pub fn decode_for_sampling(png_bytes: &[u8]) -> Option<((i32, i32), Vec<u8>)>
 
 `assert_matches_golden` compares a render against the checked-in golden
 `goldens/images/{name}.png` bit-exactly; `assert_matches_golden_within` allows a
@@ -56,6 +62,39 @@ choice is `docs/decisions/golden-comparison-space.md`. Neither is repeated here.
 `goldens::oracle` (story #284) is the design-source render oracle — a second,
 distinct diff path from `assert_matches_golden*` above. Its bands, manifest, and
 gate are documented in their own section below.
+
+### Comparing two images when neither is a golden (story #1329)
+
+`compare_rgba` is the arithmetic the three `assert_matches_golden*` helpers now
+share, lifted out of `assert_matches_golden_within` and made public.
+`compare_pngs` is the same comparison over two encoded PNGs, and the
+`compare-images` binary prints its result as JSON so a shell harness can read
+it. `decode_for_sampling` is the comparison path's own decode without the panic,
+so a caller looking at _why_ two frames differ reads the bytes the count was
+taken over.
+
+**Three numbers rather than one, because a fraction alone passes a real
+difference.** A systematic shift confined to one region of the frame is a small
+fraction of the whole, so `Comparison` also carries the bounding box of the
+differing pixels and the maximum per-channel delta. Measured on a Pixel 5 on
+2026-08-29 over the `layout` scene: above threshold 3 the differing count stops
+moving at 1.67% and the bounding box collapses onto one band, which a fraction
+on its own could not have located.
+
+**`threshold` is 0 for a golden and is not 0 for two painters.** A golden has a
+reviewed image on one side, produced by the same painter, so any difference is a
+change. Two painters drawing one document at one extent differ by one to three
+levels per channel on **99.98%** of the frame — measured in the same run — so a
+count taken at 0 says nothing about them. `compare_pngs` refuses two images of
+different extents rather than reporting a difference: two frames of different
+extents answer no question about whether two painters agree.
+
+The caller decides what a difference means. Nothing here carries a tolerance,
+which is why this path is not a gate and the `assert_matches_golden*` helpers
+above are. `docs/decisions/the-showcase-hosts-share-one-surface.md` is the
+contract that makes the two captures comparable at all, and
+`docs/archive/2026-08-29-showcase-host-parity/README.md` holds the first
+readings.
 
 ## Golden scene (fixture)
 
@@ -504,6 +543,9 @@ against that image is the exit criterion itself.
   goldens); issue #11's v0.2 flex goldens; issue #14's v0.3 golden; issue #97's
   clip golden; issue #284's design-source render oracle tooling (exit criterion
   E7, guardrail G-11); story #435's profile-preview oracle and weld (epic #345).
+- Story #1329's two-image comparison — `Comparison`, `compare_rgba`,
+  `compare_pngs`, `decode_for_sampling` and the `compare-images` binary — which
+  serves the Android host-parity capture rather than any golden.
 - Closes epic #1's story list (v0.1 walking skeleton, milestone 1).
 - Closes epic #7's story list (v0.2 flex core) — issue #11 was its last open
   story.

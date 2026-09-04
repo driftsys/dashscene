@@ -1,5 +1,20 @@
 # Showcase host parity implementation plan
 
+    status  plan, tasks 1 to 7 executed. Archived 2026-09-05, verbatim below
+            this block, with the design capture it belongs to
+            (2026-08-29-showcase-host-parity-design.md).
+    issue   #1329 (story, v0.21)
+    warning **The 78 checkboxes below are all unticked and none of them was
+            ever ticked, so this file is not a progress record.** Re-derive
+            each task's state from the tree. Tasks 1 to 7 landed: the
+            showcase::input module, ds_demo_signal, goldens' two-image
+            comparison, demo-android's native and Java halves, the Unity
+            showcase's vocabulary and capture mode, and the harness call
+            sites — `git grep "keyevent 22"` returns no hit outside this
+            file and the design capture. Tasks 8 and 9 did not:
+            measure/android/host-parity.sh and host-parity-test.sh do not
+            exist. Task 10 is the device pass and needs hardware.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
 > superpowers:executing-plans to implement this plan task-by-task. Steps use

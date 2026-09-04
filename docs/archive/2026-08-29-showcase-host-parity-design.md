@@ -1,5 +1,39 @@
 # The showcase, the same on both Android hosts
 
+    status  design capture, 2026-08-29. Archived 2026-09-05, verbatim below
+            this block, once the durable records had landed.
+    issue   #1329 (story, v0.21), under epic #1107 Track B
+    built   W1, W2 and W4 — plan tasks 1 to 7. W3, W5 and W6 were not built
+            and are issue #1329's remaining limb, tracked there rather than
+            held in docs/wip/, because W6 needs a device.
+    records docs/decisions/the-showcase-hosts-share-one-surface.md (the
+            contract, including the Alternatives below);
+            docs/design/android-toolchain.md (the two hosts' compared
+            captures and the extent history); docs/design/goldens.md (the
+            two-image comparison); docs/design/unity-csharp-host.md (the
+            Unity sample's half). The captures themselves are in
+            docs/archive/2026-08-29-showcase-host-parity/.
+
+Four corrections, noted here rather than in the body, which is unedited:
+
+1.  The contract record is linked from `docs/design/android-toolchain.md` and
+    `docs/design/unity-csharp-host.md`, not from
+    `docs/design/host-integration.md` as "The contract" below says. Those two
+    are the records that describe the hosts the contract binds;
+    `host-integration.md` covers the `dashscene-web` and `dashscene-desktop`
+    crates.
+2.  "What that churns is three call sites" is four. `unity-frame-cost.sh` plus
+    three in the `unity-demo-android` recipe — the send, the hint it prints and
+    the comment explaining the choice. The decision record states four.
+3.  **The prediction under "The tolerance" failed.** `typography` is not the
+    closest match of the three; `layout` is. Its actionable half held —
+    `typography` diverging more than `surfaces` would have meant a text-seam
+    defect, and it is nowhere near `surfaces`.
+4.  The same run found a defect the design session did not anticipate: the Unity
+    host drew no glyphs at all on the device while reporting 381 instances and
+    no diagnostic. That is issue #1389, and the repair landed on this same
+    branch.
+
 Design session of 2026-08-29. Working memory: this file is gardened into the
 durable records by the branch that implements it, and is removed from
 `docs/wip/` in the same commit.
