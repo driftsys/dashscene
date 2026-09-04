@@ -577,6 +577,9 @@ Both runs were the probe-instrumented soak builds — the camera rendering into 
 explicit 1024x768 `RenderTexture` rather than the window directly — so the
 figures bracket packing and upload either way.
 
+The same pair on the Pixel 5 over Vulkan, at 30 fps, 20,000 frames each:
+`draw mean` 0.41 ms before and 0.42 ms after (`batch-renderer-group.md` §5e).
+
 A command count 34.6 times higher left the **mean** where it was, at 0.19 ms.
 The median moved 0.01 ms down, the 95th percentile 0.01 ms up and the maximum
 0.13 ms up — run-to-run noise, and well inside the spread one run shows against

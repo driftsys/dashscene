@@ -9,7 +9,7 @@
              "What is still owed" names what would close it.
     date     2026-08-31
     source   issue #1389; docs/technotes/batch-renderer-group.md §4 and §5b.
-             D5 is issue #1401 and §5d
+             D5 is issue #1401, §5d and §5e
     scope    unity/com.driftsys.dashscene/Runtime/Engine/BrgPainter.cs, and any
              painter that draws a dashscene document with more than one material
     related  docs/decisions/unity-painter-uses-brg.md (D1 chooses BRG and buys
@@ -127,8 +127,8 @@ shape. `visibleCount = 1` per flagged command is the shape
 `docs/technotes/batch-renderer-group.md` §3 attributes to Unity's own GPU
 Resident Drawer, and it is the only shape measured free of the defect.
 
-The measured basis, all macOS/Metal, Apple M3, Unity 6000.3.23f1, URP 17.3.0,
-the showcase typography scene, 20,000 frames per run, 2026-09-03 — dropped-band
+The measured basis on macOS/Metal, Apple M3, Unity 6000.3.23f1, URP 17.3.0, the
+showcase typography scene, 20,000 frames per run, 2026-09-03 — dropped-band
 frames per run:
 
 - the multi-instance shape carrying the flag: 292, 311 and 317 over three runs,
@@ -139,6 +139,11 @@ frames per run:
 
 `docs/technotes/batch-renderer-group.md` §5d carries the tables, each count's
 `grep`/`awk` derivation, and the instrument's own liveness proof.
+
+The same arms on the Pixel 5 over Vulkan, the same day (§5e): the multi-instance
+shape 3 dropped-band frames in 25,693, the one-instance shape 0 in 40,000. On
+three events the exact test puts that at 6 %, so the device round is consistent
+with D5 and does not carry it alone; the macOS rows do.
 
 **What D5 does not say.** It does not say why Unity drops those commands: the
 sort is not readable from C# and no measurement here reached it. It does not say

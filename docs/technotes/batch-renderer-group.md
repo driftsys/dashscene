@@ -373,16 +373,19 @@ this repository.
 
 ## 5e. The same arms on the Pixel 5, over Vulkan
 
-**The defect exists on Android/Vulkan, at roughly one hundredth of the Metal
-rate, and the one-instance shape is clean there too.** Pixel 5 (Adreno 620,
-Android 14), Unity 6000.3.23f1, IL2CPP arm64, Vulkan chosen by `DemoBuild`,
-measured 2026-09-03 — issue #1403's device half. Same instrument as §5d, ported
-by one change: an Android player has no environment, so each switch arrives as
-an Intent string extra (`--es probe1401_measure 1`), the mechanism the
-showcase's own capture request already uses. The player paced itself at 30 fps
-throughout this round — Unity's Android default with `targetFrameRate` left at
--1, which nothing in the project sets (`docs/design/android-toolchain.md`, "The
-Unity host's presented rate").
+**The defect exists on Android/Vulkan, and the one-instance shape reads clean
+there too — on three events.** Pixel 5 (Adreno 620, Android 14), Unity
+6000.3.23f1, IL2CPP arm64, Vulkan chosen by `DemoBuild`, measured 2026-09-03 —
+issue #1403's device round. Same instrument as §5d, ported in three changes: an
+Android player has no environment, so each switch arrives as an Intent string
+extra (`--es probe1401_measure 1`), the mechanism the showcase's own capture
+request already uses; the PNG directory maps to
+`Application.persistentDataPath`; and `Debug.Log` stack traces are switched off
+so one event is one logcat line. The player paced itself at 30 fps throughout
+this round — Unity's Android default with `targetFrameRate` left at -1, which
+nothing in the shipped package or the demo player sets
+(`docs/design/android-toolchain.md`, "The Unity host's presented rate") — where
+the macOS arms ran at 60 Hz vsync.
 
 **The arms, on the story branch's base `dd20a18` and on `5b279f6` with PR #1407
 merged**, typography scene, 381 instances, four materials:
@@ -397,40 +400,52 @@ merged**, typography scene, 381 instances, four materials:
 | `5b279f6` | one visible instance per command, as shipped              | 20,000 |           0 |
 | `5b279f6` | the paint entry — issue #1401's filed configuration       | 20,000 |  0 (0 DROP) |
 
-The first arm's log stream was cut at 5,693 frames by a concurrent Unity build
-restarting the adb server; the player itself ran to 20,000, and its one event
-stands. **Every band-frame carries §5d's signature exactly**: the six cells of
-one grid row at the backdrop value for one frame, `gap=0` between them, and the
-dumped frame pair shows the title, readout and bar gone to bare backdrop while
-the lower text still draws. The instrument's liveness holds per run — 15 to 16
-distinct `BASELINE` cells with glyphs drawn, 8 with the flag off and the glyphs
-hidden, and about 24,470 single-cell events per 20,000 frames from the scene's
-own pulse.
+The first arm's log stream was cut at 5,693 frames: a Unity build for the other
+APK ran on the same machine during the soak, and a Unity Android build ends by
+restarting the adb server — the one-device rule of #1403 broken by the
+measurer's own tooling, not by another lane. Its one event is counted, and the
+figures below are given with and without that arm. **Every band-frame carries
+§5d's signature exactly**: the six cells of one grid row at the backdrop value
+for one frame, `gap=0` between them, and the dumped frame pair shows the title,
+readout and bar gone to bare backdrop while the lower text still draws. The
+instrument's liveness holds per run: 15 to 16 distinct `BASELINE` cells with
+glyphs drawn, 8 with the flag off and the glyphs hidden, 20 on the paint
+document, and about 24,470 single-cell events per 20,000 frames from the
+typography scene's own pulse. The frozen arm and the paint arm logged no event
+at all, which is what a static picture reads; their liveness rests on the
+`BASELINE` line alone.
 
-**What the counts support.** Three band-frames in 25,693 as-built frames is 1.2
-× 10⁻⁴ per frame, against 1.5 % to 2.1 % on the M3. At that rate one
-20,000-frame arm expects 2.3 events, so any single zero has a 10 % chance of
-being luck — the flag-off and frozen arms are consistent with §5d and settle
-nothing on their own. The pooled one-instance reading, 0 in 40,000 across the
+**What the counts support, stated two ways.** Three band-frames in 25,693
+as-built frames is 1.2 × 10⁻⁴ per frame, between one hundredth and one
+two-hundredth of §5d's 1.5 % to 2.1 % — a ratio confounded by pacing, since the
+two hosts ran at 30 and 60 fps and the next paragraph finds pacing matters.
+Taking that rate as known, one 20,000-frame arm expects 2.3 events and a single
+zero has a 10 % chance of being luck, so the flag-off and frozen arms settle
+nothing on their own; the pooled one-instance reading, 0 in 40,000 across the
 same-build switch and the shipped commit, expects 4.7 and has a 0.9 % chance if
-the shape changed nothing. That is the verification #1403 asked for. Frame cost
-held as on macOS: typography `draw mean` 0.41 ms before and 0.42 ms after,
-`tick` 0.17 to 0.18 ms both.
+the shape changed nothing. But the rate rests on three events, and the exact
+conditional test — the chance that all three land in the 25,693 as-built frames
+out of 65,693, if the shape made no difference — gives 6 %; without the cut arm,
+2 events in 20,000 against 0 in 40,000, it gives 11 %. So the device round is
+consistent with the fix and points the same way as the Mac's 410 to 0, and it
+does not stand alone: that is what #1403's soak established. Frame cost held as
+on macOS: typography `draw mean` 0.41 ms before and 0.42 ms after, `tick` 0.15
+to 0.20 ms on both builds with the mode at 0.18 to 0.19.
 
-**A second round at the display rate found the rate is also a matter of
+**A second round at the display rate suggests the rate is also a matter of
 timing.** With the player asked for 60 Hz and Unity's optimized frame pacing on,
 the render-target arms run at about 50 fps, and the **as-built** shape then gave
-0 band-frames in 40,000 — a reading with a 0.9 % chance under the 30 fps rate.
-The shipped shape gave 0 in 40,000 as well. So on this device the dropout
-depends on pacing as well as on the command shape, the same direction as the
-frozen arm's 115 against ~300 in §5d, and a run at that pacing has no positive
-control: the fix's verification rests on the 30 fps arms.
+0 band-frames in 40,000 — 0.9 % under the 30 fps rate taken as known, 6 % by the
+same exact test. The shipped shape gave 0 in 40,000 as well. Read with §5d's
+frozen arm (115 against ~300 per 20,000), it points at pacing entering the
+defect's rate; and a run at that pacing has no positive control, so the fix's
+verification rests on the 30 fps arms.
 
 **What this does not establish.** The mechanism, still. Whether the per-frame
-host path matters on Android — the frozen arm's zero is a 10 % reading. Anything
-about a GLES player, which was not built. Evidence, logs, the ported patches and
-the frame pairs: `driftsys/dashscene-v021-lanes/probe-1403/RESULTS.md`, outside
-this repository.
+host path matters on Android — the frozen arm's zero is a 10 % reading at best.
+Anything about a GLES player, which was not built. Evidence, logs, the ported
+patches and the frame pairs:
+`driftsys/dashscene-v021-lanes/probe-1403/RESULTS.md`, outside this repository.
 
 ## 6. Why no test caught it
 
