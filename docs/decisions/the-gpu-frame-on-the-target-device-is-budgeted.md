@@ -63,8 +63,8 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   opens entry 0, `surfaces`; no intent extra selects it. Neither painter's
   per-frame report is the instrument: the Unity host's `fps if unpaced` is the
   inverse of tick plus draw and excludes the GPU; the lean painter's
-  `Sample::fps_if_unpaced` is the inverse of tick plus paint plus present, and
-  its present term is mostly waiting on the swapchain, so it counts waiting as
+  `Sample::fps_if_unpaced` is the inverse of tick plus paint plus submit, and
+  its submit term is mostly waiting on the swapchain, so it counts waiting as
   work. Both are headroom figures, not a rate the compositor showed. A player
   capped by its own pacing reads the cap, not the GPU: issue #1408's two changes
   must be in place, and a tree without them reads 30 fps and does not test D1.
@@ -75,12 +75,14 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   path is written, and comes second. The projection behind the order — about 10
   ms of the 31 on `surfaces` from rejecting the covered backdrop — and its
   arithmetic are story #1412's, and nothing yet falsifies it; the shaded-area
-  derivation of issue #1296 is what would show the rejected pixels without a
-  device, so it lands before #1412, and the fringe's order against the
-  transparent instances is issue #1402's ruling, which #1412 depends on and must
-  not re-derive. Story #1412 is the Unity painter's first; issue #1293 holds the
-  lean painter's half and stays measure-then-decide, as its own body says the
-  saving there is unproven; story #1413 is the second.
+  derivation of issue #1296 gives the area each shape submits, before and after,
+  without a device — no derivation in the tree counts the pixels depth rejects;
+  the compositor reading of D2 is what shows the frame — so it lands before
+  #1412, and the fringe's order against the transparent instances is issue
+  #1402's ruling, which #1412 depends on and must not re-derive. Story #1412 is
+  the Unity painter's first; issue #1293 holds the lean painter's half and stays
+  measure-then-decide, as its own body says the saving there is unproven; story
+  #1413 is the second.
 
 ## Consequences
 

@@ -121,10 +121,12 @@ reason. Anything under about 50 ms would be wrong for that reason alone.
 Deriving it needs two things: the stiffest spring the vocabulary permits, and a
 frame budget for the animation update to fit the resulting substep burst inside.
 **Epic #476 states there is no frame budget and no target-hardware
-measurement**, which was true when this was written; since 2026-09-04
-`the-gpu-frame-on-the-target-device-is-budgeted.md` supplies a frame budget for
-one named device — the Pixel 5 at 1080x2340, one 60 Hz frame — so the second
-input exists for that device and the bound can be derived against it there.
+measurement**, which was true when this was written; target-hardware
+measurements exist since 2026-08-17 (`docs/design/android-toolchain.md`), and
+since 2026-09-04 `the-gpu-frame-on-the-target-device-is-budgeted.md` supplies a
+frame budget for one named device — the Pixel 5 at 1080x2340, one 60 Hz frame —
+so the second input exists for that device and the bound can be derived against
+it there.
 
 **What would settle it**, in the order the inputs become available:
 

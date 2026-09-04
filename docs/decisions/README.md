@@ -677,8 +677,8 @@ their parent rather than apart from it:
   Pixel 5 that moves the `surfaces` scene's GPU frame from about 31 ms to inside
   16.7 ms. The route is R-T2 first — story #1412 for the Unity painter, issue
   #1293 measure-then-decide for the lean one — then the per-kind cost (#1413);
-  the shaded-area derivation of #1296 shows the rejected pixels. Pins one device
-  and one extent, not a display class — #549 stands.
+  the shaded-area derivation of #1296 gives the submitted area before and after.
+  Pins one device and one extent, not a display class — #549 stands.
 - [unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md](unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md)
   — **accepted** (2026-08-21, story #1125): UPM over a Git URL, and every file
   Unity imports carries a committed `.meta`, because a Git-URL package is
