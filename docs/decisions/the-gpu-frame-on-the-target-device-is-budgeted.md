@@ -13,9 +13,7 @@
              the target device's native resolution. "The target device" in
              this record is the device it names, the Pixel 5: the one
              target-class device this project has, and not the fleet
-    related  docs/specification/03-target-hardware-rules.md (R-T2, the rule projected to do about half of the halving — 7 of the 14 ms); issue #549 (no display geometry
-             is pinned by the specification, which this record does not
-             change: it names one device and one extent, not a class);
+    related  docs/specification/03-target-hardware-rules.md (R-T2, the rule projected to do about half of the halving — 7 of the 14 ms); issue #549 (no display geometry is pinned by the specification, which this record does not change: it names one device and one extent, not a display class — a tier of the specification's target-hardware rules with a stated panel, which is what #549 would pin, and where a budget as a requirement would then belong);
              docs/decisions/frame-delta-is-clamped-and-the-host-owns-the-clock.md
              (whose upper bound waited on a frame budget on a named device,
              which D1 now supplies for one)
