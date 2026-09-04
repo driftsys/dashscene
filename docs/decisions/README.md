@@ -675,12 +675,11 @@ their parent rather than apart from it:
   at the display mode's refresh rate at the native drawable on the target
   device, read from the compositor — the rate for the budget, the frame cadence
   for progress — and not from either painter's own headroom figure. On the Pixel
-  5 the `surfaces` scene's GPU frame, about 31 ms when this was ruled, shall
-  come inside 16.7 ms. The route is R-T2 first — story #1412 for the Unity
-  painter, issue #1293 measure-then-decide for the lean one — then the per-kind
-  cost (#1413); the shaded-area derivation of #1296 gives the submitted area
-  before and after. Pins one device and one extent, not a display class — #549
-  stands.
+  5 the `surfaces` scene's GPU frame, about 31 ms when this was ruled, shall not
+  exceed 16.7 ms. The route is R-T2 first — story #1412 for the Unity painter,
+  issue #1293 measure-then-decide for the lean one — then the per-kind cost
+  (#1413); the shaded-area derivation of #1296 gives the submitted area before
+  and after. Pins one device and one extent, not a display class — #549 stands.
 - [unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md](unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md)
   — **accepted** (2026-08-21, story #1125): UPM over a Git URL, and every file
   Unity imports carries a committed `.meta`, because a Git-URL package is

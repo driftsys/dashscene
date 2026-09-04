@@ -48,7 +48,7 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   2340x1080, the panel's 1080x2340 in landscape, in the 60 Hz mode (a 90 Hz mode
   exists and is not the one measured): the scene's GPU frame, about 31 ms when
   this was ruled — read on a build with issue #1408's two changes applied, which
-  the tree does not yet produce — shall come inside 16.7 ms — the halving,
+  the tree does not yet produce — shall not exceed 16.7 ms — the halving,
   rounded to the frame the panel imposes. **Met when**, over the window D2
   names, the compositor's `averageFPS` on the player's surface is at or above 59
   with `droppedFrames` 0, and no more than one presented interval in a hundred
@@ -95,19 +95,20 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   re-derive, and #1296 lands before #1412. Story #1412 is the Unity painter's
   first; issue #1293 holds the lean painter's half and stays
   measure-then-decide, as its own body says the saving there is unproven; story
-  #1413 is the second.
+  #1413 is the second step's.
 
 ## Consequences
 
 - Stories #1412 and #1413 each carry a before-and-after reading of both D2
   instruments in `docs/design/android-toolchain.md`; the pair closes the Unity
   painter against D1 on the device this record names, and each story's own
-  target is its own. The lean painter has no compositor reading yet; its own
-  `submit` of about 22 ms on the same device, which includes swapchain waiting,
-  says it is not at the display rate either. Issue #1293 measures it against D1
-  and either implements or files the story that does — D1 binds it as much as
-  the Unity painter, and #1293 is where that can fail. A reading on another
-  device, another extent or another scene is a new row, not a substitute.
+  target is its own: #1412's the 7 ms it projects, #1413's the remainder to the
+  frame. The lean painter has no compositor reading yet; its own `submit` of
+  about 22 ms on the same device, which includes swapchain waiting, says it is
+  not at the display rate either. Issue #1293 measures it against D1 and either
+  implements or files the story that does — D1 binds it as much as the Unity
+  painter, and #1293 is where that can fail. A reading on another device,
+  another extent or another scene is a new row, not a substitute.
 - This record binds the two stories and not the slice. Under epic #1120's
   standing declaration (`docs/roadmap.md`, v0.21) they may move out unfinished
   at the slice close; if the owner rules that the halving gates v0.21, they move
