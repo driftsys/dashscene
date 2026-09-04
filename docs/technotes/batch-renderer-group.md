@@ -7,8 +7,9 @@ text in any player build on any platform (issue #1389), and it had gone
 unnoticed through ten green configurations.
 
 The same API has a **second** property that reports nothing when it is broken,
-and §5d carries it: a draw command that states a sorting position may name only
-one visible instance, or Unity drops commands from single frames (issue #1401).
+and §5d carries it, with §5e the same measurement on Android over Vulkan: a draw
+command that states a sorting position may name only one visible instance, or
+Unity drops commands from single frames (issue #1401).
 
 Companion reading: `rendering-and-painters.md` §10 records **why** BRG was
 chosen over a GameObject per node. This note is about how it behaves once
@@ -381,10 +382,8 @@ extra (`--es probe1401_measure 1`), the mechanism the showcase's own capture
 request already uses; the PNG directory maps to
 `Application.persistentDataPath`; and `Debug.Log` stack traces are switched off
 so one event is one logcat line. The player paced itself at 30 fps throughout
-this round — Unity's Android default with `targetFrameRate` left at -1, which
-nothing in the shipped package or the demo player sets
-(`docs/design/android-toolchain.md`, "The Unity host's presented rate") — where
-the macOS arms ran at 60 Hz vsync.
+this round, for the reason `docs/design/android-toolchain.md`'s "The Unity
+host's presented rate" gives, where the macOS arms ran at 60 Hz vsync.
 
 **The arms, on the story branch's base `dd20a18` and on `5b279f6` with PR #1407
 merged**, typography scene, 381 instances, four materials:

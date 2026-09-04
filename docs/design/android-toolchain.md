@@ -972,14 +972,16 @@ missing display geometry; these are figures and the record that holds them.
 **The table above was taken at 30 fps, and now says why.** "Paced well under the
 display rate" was an observation; the cause is that nothing in the shipped
 package or the demo player sets `Application.targetFrameRate`, and Unity's
-Android default for -1 is 30 whatever the panel does. (`unity/render-gate`'s
-desktop gate does set it, to 60, but that player runs in batch mode and renders
-on demand through `SubmitRenderRequest`, so nothing presents and the setting has
-no effect.) The compositor's `--timestats` counted 30.3 fps with no dropped
-frame, and the sample's own reports came every 8.0 s for 240 frames. **The
+Android default for -1 is 30 whatever the panel does.
+(`unity/render-gate/DashsceneRenderGate.cs` does set it, to 60, but the
+`unity-render` recipe runs that player in batch mode and it renders on demand
+through `SubmitRenderRequest`, so nothing presents and the setting has no
+effect.) The compositor's `--timestats` counted 30.3 fps with no dropped frame,
+and the sample's own reports came every 8.0 s for 240 frames. **The
 `fps if unpaced` figure in those reports is the inverse of the measured `tick`
-plus `draw` sum, not a presented rate**, and this section is the first place the
-Unity host's presented rate has been read at all.
+plus `draw` sum, not a presented rate** — the apparatus section below says the
+same of the lean painter's `Sample::fps_if_unpaced` — and this section is the
+first place the Unity host's presented rate has been read at all.
 
 **Lifting the cap took two changes, and a reading that looked like a third was
 misleading.** Issue #1408 carries the changes and the same account; this is the
@@ -1056,9 +1058,12 @@ are re-derivable from the latency dumps under
 Android 14 device, which is the older-release case the note in "The measurement
 apparatus, and the procedure at the device" below already states: it returns
 nothing on Android 15 and works on older releases, and this Pixel 5 runs
-Android 14. The `--timestats` rates and the `top` sample were read off the tool
-and transcribed into `driftsys/dashscene-v021-lanes/probe-1403/RESULTS.md`,
-except the per-scene re-read of 2026-09-04, whose dumps are kept beside it as
+Android 14. The `--timestats` rates, the `top` sample and the two `setFrameRate`
+readings were read off the tool and transcribed into
+`driftsys/dashscene-v021-lanes/probe-1403/RESULTS.md` — whose HDR table printed
+the `layout` row under the variant-shelf document's 3 instances until its
+"Corrections" section and the re-read put the scene's 29 beside it — except the
+per-scene re-read of 2026-09-04, whose dumps are kept beside it as
 `logs/timestats-hdr-on-per-scene.txt` with the `drew` lines in
 `logs/showcase-hdr-on-per-scene.log`. All of it is outside this repository.
 
