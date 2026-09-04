@@ -1003,41 +1003,42 @@ since no `drew` line was kept for these steps — the player presented 32.5 fps 
 `--timestats` and 31.8 by the latency dump's own timestamps: a frame produced
 every 31 ms (89 of 126 `frameReady` deltas at 31 ms, 34 at 32), with `UnityMain`
 at 14 % of a core and the render thread at 7 % in one `top` sample. The same
-build with the display forced to 540x1170 presented 62.5 fps by `--timestats`,
-whose average over its own window can exceed the panel's 60 Hz; restored, 32.5
-again. **The Unity host is GPU fill-bound at native resolution on the Adreno
-620, at about 31 ms of GPU per frame on `surfaces` — and shaded area alone does
-not order the three scenes.** Per scene, same source at `5b279f6`, explicit 60
-asked, `--timestats` over 10 s each — the 2026-09-04 re-read kept the `drew`
-lines, and it corroborates the entry order the 2026-09-03 readings assumed:
-`surfaces` (56 instances, large overlapping panels and gradient tiles) 32.0 to
-32.6 fps; `typography` (381 instances, mostly small glyph quads) 50.2 fps on
-2026-09-03 and 42.4 on the 2026-09-04 re-read, its intervals a 17 ms and 33 ms
-mix; `layout` (29 instances) 60 to 62.5 fps — the panel's rate, so its cost is
-bounded above by a frame and not measured. **HDR is not the cause**: the same
-source, rebuilt with `supportsHDR` off in the URP asset `DemoBuild` creates,
-gave 33.2, 51.4 and 62.5 — about one frame per second for the intermediate and
-its blit — and the HDR-off typography dump shows 97 of 126 presented intervals
-at 17 ms, 26 at 33, 2 at 34 and 1 at 16. The shaded area itself was derived with
-no device, by packing each scene's committed tables through the lean painter's
-CPU-only packer and summing every instance quad clipped to the extent:
-`surfaces` 6.06 Mpx (2.40 panels), `typography` 3.17 Mpx (1.25), `layout` 5.43
-Mpx (2.15); the Unity host draws less of `surfaces` than its 6.06 Mpx, since it
-refuses the shadow, the backdrop blur, the image fill, the baked vector nodes
-and the render-target groups — 9 rects, by its own line. `layout` shades more
-than `typography` and presents faster, so per-pixel cost differs by what is
-drawn — solid fills are the cheap case, gradients and strokes on `surfaces` and
-glyph sampling through 375 separate commands on `typography` cost more per pixel
-or per command — and the lean painter's 1.9 ms per megapixel measured on solid
-rects above is a floor, not the rate. Part of the remainder is overdraw through
-the overlay class's per-pixel SDF shader: every node is a blended quad — rects
-through the overlay class, glyph runs through the separate `Dashscene/Text`
-shader — on paths with no depth test (`docs/technotes/batch-renderer-group.md`
-§4), so the pixels under a panel, its glyph runs and the tile behind them are
-shaded once per layer. Where inside that shader the time goes, and how much of
-`typography`'s frame is the command count rather than its pixels (issue #1406),
-is not separated here, and `/sys/class/kgsl` is refused to shell on this device,
-so no clock or busy figure accompanies it.
+build with the display forced to 540x1170 counted 899 frames in about 15 s —
+62.5 fps by `--timestats`' own window, 59.9 by the wall clock; restored, 481
+frames, 32.5 and 32.1 the same two ways. **The Unity host is GPU fill-bound at
+native resolution on the Adreno 620, at about 31 ms of GPU per frame on
+`surfaces` — and shaded area alone does not order the three scenes.** Per scene,
+same source at `5b279f6`, explicit 60 asked, `--timestats` over 10 s each — the
+2026-09-04 re-read kept the `drew` lines, and it corroborates the entry order
+the 2026-09-03 readings assumed: `surfaces` (56 instances, large overlapping
+panels and gradient tiles) 32.0 to 32.6 fps; `typography` (381 instances, mostly
+small glyph quads) 50.2 fps on 2026-09-03 and 42.4 on the 2026-09-04 re-read,
+its intervals a 17 ms and 33 ms mix; `layout` (29 instances) 60 to 62.5 fps —
+the panel's rate, so its cost is bounded above by a frame and not measured.
+**HDR is not the cause**: the same source, rebuilt with `supportsHDR` off in the
+URP asset `DemoBuild` creates, gave 33.2, 51.4 and 62.5 — about one frame per
+second for the intermediate and its blit — and the HDR-off typography dump shows
+97 of 126 presented intervals at 17 ms, 26 at 33, 2 at 34 and 1 at 16. The
+shaded area itself was derived with no device, by packing each scene's committed
+tables through the lean painter's CPU-only packer and summing every instance
+quad clipped to the extent: `surfaces` 6.06 Mpx (2.40 panels), `typography` 3.17
+Mpx (1.25), `layout` 5.43 Mpx (2.15); the Unity host draws less of `surfaces`
+than its 6.06 Mpx, since it refuses the shadow, the backdrop blur, the image
+fill, the baked vector nodes and the render-target groups — 9 rects, by its own
+line. `layout` shades more than `typography` and presents faster, so per-pixel
+cost differs by what is drawn — solid fills are the cheap case, gradients and
+strokes on `surfaces` and glyph sampling through 375 separate commands on
+`typography` cost more per pixel or per command — and the lean painter's 1.9 ms
+per megapixel measured on solid rects above is a floor, not the rate. Part of
+the remainder is overdraw through the overlay class's per-pixel SDF shader:
+every node is a blended quad — rects through the overlay class, glyph runs
+through the separate `Dashscene/Text` shader — on paths with no depth test
+(`docs/technotes/batch-renderer-group.md` §4), so the pixels under a panel, its
+glyph runs and the tile behind them are shaded once per layer. Where inside that
+shader the time goes, and how much of `typography`'s frame is the command count
+rather than its pixels (issue #1406), is not separated here, and
+`/sys/class/kgsl` is refused to shell on this device, so no clock or busy figure
+accompanies it.
 
 **This is the first whole-frame figure the Unity host has on this device, and it
 is a bound rather than a bracket.** The `draw` column above excludes the GPU by
@@ -1050,17 +1051,17 @@ previous section already names as what would settle the comparison. **Where each
 figure comes from.** The interval histograms and the 31 ms production cadence
 are re-derivable from the latency dumps under
 `driftsys/dashscene-v021-lanes/probe-1403/logs/sf-latency-*.txt`, and
-`--latency` returned 126 or 127 frame rows in each of the four dumps on this
-Android 14 device, which is the older-release case the note in "The measurement
-apparatus, and the procedure at the device" below already states: it returns
-nothing on Android 15 and works on older releases, and this Pixel 5 runs
-Android 14. The `--timestats` rates, the `top` sample and the two `setFrameRate`
-readings were read off the tool and transcribed into
-`driftsys/dashscene-v021-lanes/probe-1403/RESULTS.md` — whose HDR table printed
-the `layout` row under the variant-shelf document's 3 instances until its
-"Corrections" section and the re-read put the scene's 29 beside it — except the
-per-scene re-read of 2026-09-04, whose dumps are kept beside it as
-`logs/timestats-hdr-on-per-scene.txt` with the `drew` lines in
+`--latency` returned 127 frame rows in each of the four dumps on this Android 14
+device, 126 or 127 of them with a completed present, which is the older-release
+case the note in "The measurement apparatus, and the procedure at the device"
+below already states: it returns nothing on Android 15 and works on older
+releases, and this Pixel 5 runs Android 14. The `--timestats` rates, the `top`
+sample and the two `setFrameRate` readings were read off the tool and
+transcribed into `driftsys/dashscene-v021-lanes/probe-1403/RESULTS.md` — whose
+HDR table printed the `layout` row under the variant-shelf document's 3
+instances until its "Corrections" section and the re-read put the scene's 29
+beside it — except the per-scene re-read of 2026-09-04, whose dumps are kept
+beside it as `logs/timestats-hdr-on-per-scene.txt` with the `drew` lines in
 `logs/showcase-hdr-on-per-scene.log`. All of it is outside this repository.
 
 ## Unity's Android lifecycle over the lease (2026-08-29)
