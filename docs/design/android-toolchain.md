@@ -971,13 +971,14 @@ missing display geometry; these are figures and the record that holds them.
             player. This is issue #1347's Unity half, read whole-frame.
             Nothing here is committed as a change: the pacing edits — three scripts on the evidence shelf, applied in order, of which the explicit target and optimized frame pacing are the two that stand — and the HDR-off toggle live there as patches, and the pacing change is issue #1408 — until it lands, every presented-rate figure past the first paragraph describes a build this tree does not produce, and wants re-reading once it does; the shaded areas are derived from committed scene data and do not.
 
-**The table above was taken at 30 fps, and now says why.** "Paced well under the
-display rate" was an observation; the cause is that nothing in the shipped
-package or the demo player sets `Application.targetFrameRate`, and Unity's
-Android default for -1 is 30 whatever the panel does.
-(`unity/render-gate/DashsceneRenderGate.cs` does set it, to 60, but the
-`unity-render` recipe runs that player in batch mode and it renders on demand
-through `SubmitRenderRequest`, so nothing presents and the setting has no
+**The panel is 1080x2340 at 60 Hz** — `dumpsys display` lists a 90 Hz mode as
+well, unused throughout. **The table above was taken at 30 fps, and now says
+why.** "Paced well under the display rate" was an observation; the cause is that
+nothing in the shipped package or the demo player sets
+`Application.targetFrameRate`, and Unity's Android default for -1 is 30 whatever
+the panel does. (`unity/render-gate/DashsceneRenderGate.cs` does set it, to 60,
+but the `unity-render` recipe runs that player in batch mode and it renders on
+demand through `SubmitRenderRequest`, so nothing presents and the setting has no
 effect.) The compositor's `--timestats` counted 30.3 fps with no dropped frame,
 and the sample's own reports came every 8.0 s for 240 frames. **The
 `fps if unpaced` figure in those reports is the inverse of the measured `tick`

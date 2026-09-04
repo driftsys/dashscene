@@ -21,22 +21,16 @@
 
 ## Context
 
-Until 2026-09-03 no whole-frame figure existed for the Unity host on a device.
-`docs/design/android-toolchain.md`'s Unity table brackets the lease, the pack
-and the upload — a few tenths of a millisecond — and excludes the GPU by
-construction; the lean painter's `submit` includes the swapchain and is not the
-same quantity. Reading the compositor on the Pixel 5 (Adreno 620, Android 14)
-supplied the missing figure: with every pacing cap lifted, the Unity host
-presents the `surfaces` scene at 32.5 fps at 1080x2340, a frame every 31 ms,
-with `UnityMain` at 14 % of a core and the render thread at 7 % in one `top`
-sample; the same build with the display forced to 540x1170 — a quarter of the
-pixels — presents at the display rate. The host is GPU fill-bound at native
-resolution. What is known about why: the shaded area per scene, derived with no
-device, is 2.40 panels' worth on `surfaces`, of which the Unity host draws less,
-since it refuses nine rects (the shadow, the backdrop blur, the image fill, the
-baked vectors, the render-target groups); shaded area alone does not order the
-three scenes; and per-pixel cost differs by paint kind, so solid fills are cheap
-and gradients, strokes and glyph sampling are not.
+Until 2026-09-03 no whole-frame figure existed for the Unity host on a device:
+its own table brackets the lease, the pack and the upload and excludes the GPU,
+and the lean painter's `submit` is a different quantity. Reading the compositor
+on the Pixel 5 supplied it — `docs/design/android-toolchain.md`, "The Unity
+host's presented rate, and what bounds it", carries the figures and what is
+known about why. The two that the ruling rests on: with every pacing cap lifted,
+the Unity host presents the `surfaces` scene at 32.5 fps at 1080x2340, a frame
+every 31 ms; and the same build with the display forced to a quarter of the
+pixels presents at the display rate. The host is GPU fill-bound at native
+resolution.
 
 The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
 
@@ -60,26 +54,28 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   the GPU, so the reading is taken with the pacing changes of issue #1408 in
   place.
 - **D3 — the route is R-T2 first, then the per-kind cost.** Opaque cores drawn
-  front-to-back with depth, and a blended fringe, are projected to remove about
-  10 ms of the 31 on `surfaces`: the full-screen gradient backdrop is 2.53 Mpx,
-  the opaque panel and tiles cover roughly three quarters of it, and at the 5 to
-  6 ms per megapixel the overlay path costs on that scene, rejecting about 1.9
-  Mpx is about 10 ms. That is a projection nothing yet falsifies; the
-  shaded-area instrument of issue #1296 is what would show the rejected pixels
-  without a device, and the compositor reading of D2 is what would show the
-  frame. The remainder is the per-pixel cost of the kinds that stay shaded,
-  which a variant sweep measures before any fast path is written. Story #1412 is
-  the first for the Unity painter; issue #1293 holds the lean painter's half and
-  stays measure-then-decide, as its own body says the saving there is unproven;
-  story #1413 is the second.
+  front-to-back with depth, and a blended fringe, come first; the per-pixel cost
+  of the kinds that stay shaded is measured by a variant sweep before any fast
+  path is written, and comes second. The projection behind the order — about 10
+  ms of the 31 on `surfaces` from rejecting the covered backdrop — and its
+  arithmetic are story #1412's, and nothing yet falsifies it; the shaded-area
+  derivation of issue #1296 is what would show the rejected pixels without a
+  device, so it lands before #1412, and the fringe's order against the
+  transparent instances is issue #1402's ruling, which #1412 depends on and must
+  not re-derive. Story #1412 is the Unity painter's first; issue #1293 holds the
+  lean painter's half and stays measure-then-decide, as its own body says the
+  saving there is unproven; story #1413 is the second.
 
 ## Consequences
 
 - Stories #1412 and #1413 each carry a before-and-after compositor reading in
-  `docs/design/android-toolchain.md`; the pair closes against D1 on the device
-  this record names, and each story's own target is its own. A reading on
-  another device, another extent or another scene is a new row, not a
-  substitute.
+  `docs/design/android-toolchain.md`; the pair closes the Unity painter against
+  D1 on the device this record names, and each story's own target is its own.
+  The lean painter's `surfaces` frame is about 22 ms on the same device, over
+  the budget too; issue #1293 measures it against D1 and either implements or
+  files the story that does — D1 binds it as much as the Unity painter, and
+  #1293 is where that can fail. A reading on another device, another extent or
+  another scene is a new row, not a substitute.
 - Whether the halving gates v0.21 is a separate ruling this record does not
   make; epic #1120's standing declaration (`docs/roadmap.md`, v0.21) is where
   that is held, and stories #1412 and #1413 stay on v0.21 under #1120 under

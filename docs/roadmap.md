@@ -1961,15 +1961,15 @@ findings are held on tracking issue #851 and must not be re-derived.
 above the 2026-08-18 block so that block's "everything below is earlier" still
 holds.** The Pixel 5 measurement
 ([`design/android-toolchain.md`](design/android-toolchain.md), "The Unity host's
-presented rate") found the Unity host GPU fill-bound at native resolution. The
-ruling is
+presented rate") found the Unity host GPU fill-bound at native resolution; the
+record carries the figures. The ruling is
 [`decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`](decisions/the-gpu-frame-on-the-target-device-is-budgeted.md):
 one display frame at native resolution, read from the compositor. It is carried
 under #1120 by #1412 (R-T2 in the Unity painter) and #1413 (per-kind cost and
 fast paths), with #1293 and #1296 moved up from `v1` as the lean painter's
-measure-then-decide half and the instrument; the order is #1408 and #1402 first,
-then #1412, then #1413. Whether the halving gates the slice is not ruled here;
-the epic's non-gating declaration below stands until it is.
+measure-then-decide half and the shaded-area derivation; the order is #1408 and
+#1402 first, #1296 before #1412, then #1413. Whether the halving gates the slice
+is not ruled here; the epic's non-gating declaration below stands until it is.
 
 **Revised at the v0.20 phase-end revision (2026-08-18).** The scope is again
 unchanged — three epics, the MVP pair plus the non-gating one — and this
