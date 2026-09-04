@@ -339,17 +339,17 @@ that shape matches what §3 attributes to Unity's own GPU Resident Drawer.
 
 **What this does not establish.** Nothing here reads Unity's sort, so the
 mechanism is unknown; the shape is a measured boundary, not an explanation. The
-same arms were run on the Pixel 5 over Vulkan on 2026-09-03 — §5e — and the fix
-is platform-independent either way. And **§5b's rows were all taken under the
-multi-instance shape**, including the `RunEnd` material-run walk it names, which
-this change removed: those measurements describe commands this painter no longer
-emits, so the order question they left open is reopened rather than answered.
-§5c's single unreproduced dark frame is **consistent** with this defect and is
-not identified as it: that rig captures one frame per player run, so one dark
-result in about forty runs is one dark frame in about forty, which is the same
-order as the 1.5 % to 2.1 % measured here on a live host — well above the 0.58 %
-(115/20,000) measured with the host frozen. Nothing re-ran it under a counting
-instrument.
+same arms were run on the Pixel 5 over Vulkan on 2026-09-03 — §5e — where the
+defect reproduces with this signature and the one-instance shape reads clean, on
+three events. And **§5b's rows were all taken under the multi-instance shape**,
+including the `RunEnd` material-run walk it names, which this change removed:
+those measurements describe commands this painter no longer emits, so the order
+question they left open is reopened rather than answered. §5c's single
+unreproduced dark frame is **consistent** with this defect and is not identified
+as it: that rig captures one frame per player run, so one dark result in about
+forty runs is one dark frame in about forty, which is the same order as the 1.5
+% to 2.1 % measured here on a live host — well above the 0.58 % (115/20,000)
+measured with the host frozen. Nothing re-ran it under a counting instrument.
 
 **The paint entry, re-measured on the fix build.** The filed configuration — the
 paint entry, 16 instances, one material, one flagged command, which is issue
