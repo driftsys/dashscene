@@ -671,13 +671,14 @@ their parent rather than apart from it:
   single frames when one named more. That reopens the order question rather than
   settling it — every §5b measurement was taken under the shape D5 forbids.
 - [the-gpu-frame-on-the-target-device-is-budgeted.md](the-gpu-frame-on-the-target-device-is-budgeted.md)
-  — **accepted** (2026-09-04, owner ruling): the showcase scenes shall present
-  at the panel's refresh rate at native resolution on the target device, read
-  from the compositor and not from either painter's own headroom figure. On the
-  Pixel 5 that moves the `surfaces` scene's GPU frame from about 31 ms to inside
-  16.7 ms. The route is R-T2 first — story #1412 for the Unity painter, issue
-  #1293 measure-then-decide for the lean one — then the per-kind cost (#1413);
-  the shaded-area derivation of #1296 gives the submitted area before and after.
+  — **accepted** (2026-09-04, owner ruling): the `surfaces` scene shall present
+  at the display mode's refresh rate at the native drawable on the target
+  device, read from the compositor — the rate for the budget, the frame cadence
+  for progress — and not from either painter's own headroom figure. On the Pixel
+  5 that moves the `surfaces` scene's GPU frame from about 31 ms to inside 16.7
+  ms. The route is R-T2 first — story #1412 for the Unity painter, issue #1293
+  measure-then-decide for the lean one — then the per-kind cost (#1413); the
+  shaded-area derivation of #1296 gives the submitted area before and after.
   Pins one device and one extent, not a display class — #549 stands.
 - [unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md](unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md)
   — **accepted** (2026-08-21, story #1125): UPM over a Git URL, and every file
