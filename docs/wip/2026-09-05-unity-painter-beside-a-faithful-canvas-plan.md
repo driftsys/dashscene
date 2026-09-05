@@ -233,8 +233,12 @@ Run:
 just prim && just test
 ```
 
-Expected: green. `just test` is the sanity tier and reads records; a heading the
-parser expects and does not find fails here.
+Expected: green. **Corrected while executing this task:** nothing in the sanity
+tier reads this record, so `just test` cannot fail on its shape. The one
+record-parsing test in the tree, `unity/package-gate/tests/plugin_meta.rs`, is
+fixed to `docs/decisions/the-native-library-ships-inside-the-unity-package.md`,
+and `demo/tests/ci_gating.rs` enumerates the four tests that open any file under
+`docs/`. `just prim` is the only gate this change has; the review is the rest.
 
 - [ ] **Step 5: Commit, review, PR**
 

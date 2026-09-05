@@ -677,6 +677,19 @@ their parent rather than apart from it:
   issue #1293 measure-then-decide for the lean one — then the per-kind cost
   (#1413); the shaded-area derivation of #1296 gives the submitted area before
   and after. Pins one device and one extent, not a display class — #549 stands.
+- [the-unity-painter-is-measured-against-a-faithful-canvas.md](the-unity-painter-is-measured-against-a-faithful-canvas.md)
+  — **accepted** (2026-09-05, owner ruling): the Unity painter is measured
+  beside a uGUI Canvas built from the same document, and on the target device
+  its `frameReady` cadence mean shall be at or below the Canvas's with no
+  tolerance above, while its process CPU per presented frame and its main-thread
+  cost above an empty-scene floor shall both be lower. D2 is the eight fairness
+  rules that make the Canvas the one a careful Unity UI team would ship; D3
+  defines the instruments against `demo/src/shell.rs` and
+  `DashsceneFrameCost.cs`; D4 carries R-T2's reinterpretation — its intent is
+  met by story #1450's occlusion pass as well as by the depth-tested core the
+  rule names — until that story writes it beside the rule. Binds the ten stories
+  of gating epic #1441. The budget record above is a separate obligation and
+  still binds; #549 still stands.
 - [unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md](unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md)
   — **accepted** (2026-08-21, story #1125): UPM over a Git URL, and every file
   Unity imports carries a committed `.meta`, because a Git-URL package is
