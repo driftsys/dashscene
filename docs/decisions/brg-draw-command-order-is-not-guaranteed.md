@@ -191,10 +191,13 @@ and draws the node whole — so the soak would decide a cost for one frame, not 
 picture. Issue #1404 closes on this record with that caveat, and the soak is the
 arm to run if a core is ever seen to flicker.
 
-**What it costs.** The command count becomes the instance count, and so does the
-count of sorting keys that must stay distinct floats.
-`docs/design/unity-csharp-host.md` carries the before/after frame-cost pair
-measured across that rise, and
+**What it costs.** On the target device, as written, more than it rejects: the
+Pixel 5's `frameReady` cadence on `surfaces` went from 31.2 to 56.9 ms with the
+cores (2026-09-05; `docs/design/android-toolchain.md`'s presented-rate section
+carries the readings and the candidate cause). The command count becomes the
+instance count, and so does the count of sorting keys that must stay distinct
+floats. `docs/design/unity-csharp-host.md` carries the before/after frame-cost
+pair measured across that rise, and
 `unity/package-gate/tests/sorting_key_arithmetic.rs`'s
 `the_floor_keeps_instance_scale_command_counts_distinct` re-checks D4's
 precision floor at a command count of that order.

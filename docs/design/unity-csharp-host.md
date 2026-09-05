@@ -581,12 +581,17 @@ Mpx the Unity painter shades (28 %), almost all of it the gradient backdrop
 under the header and the sixteen tiles; `typography` 0.45 of 3.17 Mpx; `layout`
 2.84 of 5.42 Mpx. `just unity-render` draws the same ink numbers and the same
 seven order probes with the cores as without them (2026-09-05), which is the
-whole of what the Mac can say — the frame the rejection buys is the compositor's
-`frameReady` cadence on the Pixel 5, still owed. Until issue #1401 it emitted
-one command per contiguous run of instances sharing a material, split at 256:
-Unity's sorted-transparent path was measured dropping a contiguous subset of
-commands for single frames under that shape, rendering the affected region as
-bare backdrop with nothing logged.
+whole of what the Mac can say. The Pixel 5 said the opposite of the derivation
+the same day: with the cores, `surfaces`' `frameReady` cadence went from 31.2 to
+56.9 ms, `typography`'s from 20.7 to 26.7, `layout`'s from 16.7 to 30.0 —
+`docs/design/android-toolchain.md`'s presented-rate section carries the readings
+and the candidate cause, a core pass that clips while writing depth. As written,
+this painter's R-T2 costs more than it rejects on the target device, and story
+#1412 stays open on that reading. Until issue #1401 it emitted one command per
+contiguous run of instances sharing a material, split at 256: Unity's
+sorted-transparent path was measured dropping a contiguous subset of commands
+for single frames under that shape, rendering the affected region as bare
+backdrop with nothing logged.
 [../decisions/brg-draw-command-order-is-not-guaranteed.md](../decisions/brg-draw-command-order-is-not-guaranteed.md)
 D5 is the constraint and
 [../technotes/batch-renderer-group.md](../technotes/batch-renderer-group.md) §5d
@@ -1229,17 +1234,22 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   so the assumption is checked in the run that makes it rather than assumed.
   What is not measured is the same order on GLES and Vulkan, where no player
   build has drawn the order fixture.
-- **R-T2's cores are measured for the picture, derived for the area, and not yet
-  measured for the frame** (story #1412). `just unity-render` draws the cored
-  painter to the same ink numbers and order probes as before, and a core pass
-  tinted magenta turns the gate red, which is what says the cores own the
-  interior pixels; the rejected area per scene is the shelf derivation cited
-  above. What is owed: the `frameReady` cadence on the Pixel 5 before and after,
-  which needs the device; the same gate on GLES and Vulkan; and #1404's soak,
-  which D6 of the order record says would decide a per-frame cost and not a
-  picture. Two consequences a host should know: the overlay class now tests
-  depth against the scene, and a document of more than 65,536 instances runs
-  past the ordinal span.
+- **R-T2's cores are measured for the picture, derived for the area, and
+  measured for the frame — which they lengthen** (story #1412).
+  `just
+  unity-render` draws the cored painter to the same ink numbers and
+  order probes as before, and a core pass tinted magenta turns the gate red,
+  which is what says the cores own the interior pixels; the rejected area per
+  scene is the shelf derivation cited above. On the Pixel 5 the `surfaces`
+  `frameReady` cadence went from 31.2 to 56.9 ms with the cores (2026-09-05, the
+  presented-rate section of `docs/design/android-toolchain.md`). What is owed:
+  the change that makes the pass reject before it shades, with a core shrunk in
+  the vertex stage rather than clipped in the fragment stage as the first
+  experiment; the same gate on GLES and Vulkan; and #1404's soak, which D6 of
+  the order record says would decide a per-frame cost and not a picture. Two
+  consequences a host should know: the overlay class now tests depth against the
+  scene, and a document of more than 65,536 instances runs past the ordinal
+  span.
 - **The corner silhouette is checked by nothing.** `unity/render-gate` probes a
   point inside a node's box and outside its rounded corner, and skips any probe
   another instance's quad can reach — because a document is drawn back to front

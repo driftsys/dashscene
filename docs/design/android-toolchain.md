@@ -1043,7 +1043,8 @@ these are figures and the record that holds them.
     status  taken 2026-09-03, the per-scene sweep after midnight on
             2026-09-04, and the committed tree on 2026-09-05, on the same
             Pixel 5, from players built by `just unity-demo-android` at
-            `5b279f6` on the story branch and at `19de616` on issue #1408's. Read
+            `5b279f6` on the story branch, at `19de616` on issue #1408's,
+            and at `81c3b17` on story #1412's. Read
             from the compositor — `dumpsys SurfaceFlinger --timestats` and
             `--latency` on the player's `SurfaceView` layer — not from the
             player. This is issue #1347's Unity half, read whole-frame.
@@ -1211,6 +1212,40 @@ entries and reached the other two rows. Against D1's "met when": `surfaces` and
 `driftsys/dashscene-v021-lanes/probe-1412/2026-09-05-pacing-19de616/`, and the
 script that derives both cadence histograms from a latency dump,
 `latency-cadence.py`, one directory above.
+
+**Story #1412's cores, read against that (2026-09-05, later the same morning).**
+The same procedure on a player built at `81c3b17` — `story/v021-opaque-cores`
+with issue #1408's two commits cherry-picked onto it, so the one change between
+the two players is the story's own: R-T2's opaque cores through
+`Dashscene/OverlayCore` (`ZWrite On`, `ZTest LEqual`, the geometry queue) and
+`ZTest Less` on the blended passes, `docs/design/unity-csharp-host.md`. The
+`drew` lines count the cores — 75 instances on `surfaces` (56 and 19 cores), 386
+on `typography` (381 and 5), 56 on `layout` (29 and 27) — and the compositor
+listed the same `60.00 Hz` request. **The frame lengthened on every scene, and
+most where the derivation rejects most:**
+
+| scene        | before — `averageFPS`; `frameReady` cadence | after — `averageFPS`; `frameReady` cadence                                                          |
+| ------------ | ------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `surfaces`   | 32.44; 74 at 31 ms, 52 at 32; mean 31.2     | 17.60 (176 frames), 17.61 in a second window; 59 at 56 ms, 26 at 57, 41 at 58; mean 56.9, then 57.0 |
+| `typography` | 49.89; mean 20.7, median 18.5               | 38.34 (376); 51 at 26 ms, 65 at 27, 8 at 28, 1 at 29; mean 26.7                                     |
+| `layout`     | 62.50; mean 16.7                            | 33.81 (333); 124 at 30 ms; mean 30.0                                                                |
+
+The player's own CPU brackets moved by hundredths of a millisecond (`draw` mean
+0.26 against 0.20 ms on `surfaces`), so the term is the GPU. The added time
+follows the cores' own area, not the area they were derived to reject: `layout`,
+where 27 of 29 instances are cores over 5.4 Mpx, gains at least 13 ms;
+`surfaces` gains 26 ms over about 4 Mpx of core, the gradient backdrop among
+them; `typography`, with five small cores, gains 6 ms. That is the shape of a
+core pass shaded in full and rejecting nothing — the cores' cost added to an
+unchanged fringe cost. The candidate cause is that the core pass discards
+(`clip` on coverage in `OverlayCore.shader`) while writing depth, the shape both
+tiling-GPU vendors' guides warn loses early depth rejection; it is a hypothesis,
+and the experiment that tests it is one build with the core shrunk in the vertex
+stage rather than clipped in the fragment stage, which this session did not run
+— its instruction was to read and stop. Against D1 nothing is met, and D3's
+projection of about 7 ms saved is not what this implementation of R-T2 does on
+this device. Dumps, `drew` lines and the same script under
+`driftsys/dashscene-v021-lanes/probe-1412/2026-09-05-cores-81c3b17/`.
 
 ## Unity's Android lifecycle over the lease (2026-08-29)
 

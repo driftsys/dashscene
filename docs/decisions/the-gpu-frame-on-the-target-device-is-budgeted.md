@@ -95,15 +95,19 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   over it are the header and the sixteen tiles, about 1.3 Mpx — the gallery is a
   layout node that draws nothing and the frost is translucent — and at the 5 to
   6 ms per megapixel the overlay path costs on this scene, rejecting that area
-  is about 7 ms of the 31. Nothing yet falsifies it; the shaded-area derivation
-  of issue #1296 gives the area each shape submits before and after, without a
-  device — no derivation in the tree counts the pixels depth rejects — and D2's
-  cadence is what shows the frame. The fringe's order against the transparent
-  instances is issue #1402's ruling, which story #1412 depends on and must not
-  re-derive, and #1296 lands before #1412. Story #1412 is the Unity painter's
-  first; issue #1293 holds the lean painter's half and stays
-  measure-then-decide, as its own body says the saving there is unproven; story
-  #1413 is the second step's.
+  is about 7 ms of the 31. Story #1412's first device reading does not bear it
+  out as implemented: the cores lengthened the `surfaces` frame from 31.2 to
+  56.9 ms (2026-09-05, `docs/design/android-toolchain.md`'s presented-rate
+  section, with the candidate cause), so the saving depends on the pass
+  rejecting before it shades, which that implementation does not; the
+  shaded-area derivation of issue #1296 gives the area each shape submits before
+  and after, without a device — no derivation in the tree counts the pixels
+  depth rejects — and D2's cadence is what shows the frame. The fringe's order
+  against the transparent instances is issue #1402's ruling, which story #1412
+  depends on and must not re-derive, and #1296 lands before #1412. Story #1412
+  is the Unity painter's first; issue #1293 holds the lean painter's half and
+  stays measure-then-decide, as its own body says the saving there is unproven;
+  story #1413 is the second step's.
 
 ## Consequences
 
@@ -111,12 +115,15 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   instruments in `docs/design/android-toolchain.md`; the pair closes the Unity
   painter against D1 on the device this record names, and each story's own
   target is its own: #1412's the 7 ms it projects, #1413's the remainder to the
-  frame. The lean painter has no compositor reading yet; its own `submit` of
-  about 22 ms on the same device, which includes swapchain waiting, says it is
-  not at the display rate either. Issue #1293 measures it against D1 and either
-  implements or files the story that does — D1 binds it as much as the Unity
-  painter, and #1293 is where that can fail. A reading on another device,
-  another extent or another scene is a new row, not a substitute.
+  frame. #1412's pair is on record as of 2026-09-05 and reads the wrong way —
+  31.2 to 56.9 ms on `surfaces` — so the story does not meet its target on that
+  reading and stays open. The lean painter has no compositor reading yet; its
+  own `submit` of about 22 ms on the same device, which includes swapchain
+  waiting, says it is not at the display rate either. Issue #1293 measures it
+  against D1 and either implements or files the story that does — D1 binds it as
+  much as the Unity painter, and #1293 is where that can fail. A reading on
+  another device, another extent or another scene is a new row, not a
+  substitute.
 - This record binds the two stories and not the slice. Under epic #1120's
   standing declaration (`docs/roadmap.md`, v0.21) they may move out unfinished
   at the slice close; if the owner rules that the halving gates v0.21, they move
