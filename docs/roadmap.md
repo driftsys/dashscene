@@ -23,7 +23,7 @@ The dividing line is churn. A slice-level dependency — "v0.6 needs v0.5's atla
 v0. A story-level dependency — "issue X blocks issue Y" — changes weekly and
 stays in the issue body, where it already lives. This file therefore names each
 slice's epic issues — usually one, more where its parts gate separately or where
-one of them is declared not to gate the slice at all, as v0.21's three do — and
+one of them is declared not to gate the slice at all, as v0.21's four do — and
 links no further: the stories under them, and their state, are GitHub's job.
 
 ## Why this file exists at all
@@ -1952,6 +1952,17 @@ Depends on: v0.19, for the Android code it hardens. v0.21 depends on it in turn,
 for the failure reporting the C ABI gains here.
 
 ### v0.21 — Unity and Android on target hardware — open
+
+**A third gating epic since 2026-09-05, #1441.** The owner ruled that the Unity
+painter is measured beside a faithful uGUI Canvas — lower on CPU, at or below on
+GPU — and that the criterion holds the slice open. The slice now closes when all
+three of its gating epics have closed — #1106 did on 2026-09-05, #1107 and #1441
+remain. #1120 is still the non-gating one, and the MVP pair is still the pair:
+#1441 gates beside it. The sentence in the 2026-08-16 block below that reads
+"v0.21 closes when the two MVP epics close" is superseded by this paragraph and
+left as written. The specification and its plan are in `docs/wip/` until the
+epic's last story, #1451, archives them; the ten stories are #1442 to #1451,
+listed in the epic's table.
 
 **Three epics, all filed 2026-08-16: #1106 (Unity) and #1107 (target hardware),
 which are the MVP pair, and #1120, which holds what is not MVP.** The design
