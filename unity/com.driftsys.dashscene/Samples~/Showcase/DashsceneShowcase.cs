@@ -8,7 +8,9 @@
 // deliberately narrower than they are. Issue #1329.
 //
 // **What it shows, and how the two halves differ.** The list is the showcase
-// scenes first, then the committed documents, and left/right walks all of them:
+// scenes first, then the committed documents, and the page keys walk all of
+// them — the arrow keys drive the showing scene's signal
+// (`docs/decisions/the-showcase-hosts-share-one-surface.md`):
 //
 // - **The scenes** — `surfaces`, `typography` and `layout`, built into the
 //   runtime's arena by a native producer, with their scripted pulse and, where
@@ -28,7 +30,7 @@
 // plus those entry points; `just unity-demo` builds it and stages it under the
 // shipped library's file name, and `just demo-exports` asserts it is the
 // shipped seventeen unchanged plus a `ds_demo_`-prefixed set, and
-// `unity/ffi-check`'s demonstration pass names the six. With
+// `unity/ffi-check`'s demonstration pass names them. With
 // `DASHSCENE_DEMO_PRODUCER` undefined this file compiles to the document half
 // alone, which is what a customer's own build of the sample does.
 //
@@ -136,7 +138,7 @@ namespace Driftsys.Dashscene.Samples
         ///
         /// That file's other constant, `PULSES_PER_SCENE`, is deliberately NOT
         /// mirrored: nothing here advances an entry on a pulse count. Without
-        /// `-cycle` this sample waits for an arrow key, and with it the switch
+        /// `-cycle` this sample waits for a page key, and with it the switch
         /// is on elapsed seconds. An earlier version of this comment claimed
         /// both constants, which described behaviour this file does not have.
         private const float PulseSeconds = 2.5f;
@@ -181,10 +183,49 @@ namespace Driftsys.Dashscene.Samples
         private string _status = string.Empty;
         private GUIStyle _readout;
 
+        /// Whether the frame-cost readout is drawn.
+        ///
+        /// **Read inside `OnGUI` rather than by disabling this behaviour.**
+        /// Unity delivers `OnGUI` only to an enabled behaviour, so disabling
+        /// took the readout down together with the frame loop — the trap this
+        /// file already records one field below. A capture starts with it off,
+        /// because `adb screencap` composites the readout into the photograph
+        /// and a comparison of two overlays is not a comparison of two painters.
+        private bool _readoutVisible = true;
+
+        /// Below this, a movement is a tap that wandered rather than a swipe.
+        private const float SwipeMinPixels = 120.0f;
+
+        /// Above this, a touch that neither swiped nor dragged is a long press.
+        private const float LongPressSeconds = 0.5f;
+
+        /// A launch photographing one scene in one state, rather than running
+        /// the demonstration.
+        ///
+        /// The three parameters arrive together or not at all. A capture with a
+        /// defaulted phase or signal photographs a different state than the
+        /// other host is holding, and the comparison it feeds would be
+        /// meaningless rather than merely wrong — so a partial set is not a
+        /// capture, and the player runs the demonstration instead.
+        private sealed class CaptureRequest
+        {
+            internal string Scene;
+            internal ulong Phase;
+            internal float Signal;
+        }
+
+        private CaptureRequest _capture;
+
+        private Vector2 _touchStart;
+
+        private float _touchStartedAt;
+
+        private bool _touchDragged;
+
         private int _readoutHeight;
 
         /// Seconds between automatic switches, from `-cycle <seconds>` on the
-        /// command line. Zero leaves switching to the arrow keys.
+        /// command line. Zero leaves switching to the page keys.
         ///
         /// **A demonstration takes a key press; a check cannot.** Without
         /// this, whether every document in the manifest loads and draws is
@@ -277,6 +318,13 @@ namespace Driftsys.Dashscene.Samples
         private void Awake()
         {
             _pacer = new CommitPacer(commitHz);
+            _capture = ReadCaptureRequest();
+            if (_capture != null)
+            {
+                _readoutVisible = false;
+                Debug.Log($"[showcase] capture: {_capture.Scene} phase {_capture.Phase} "
+                          + $"signal {_capture.Signal:F3}");
+            }
 
             try
             {
@@ -383,7 +431,24 @@ namespace Driftsys.Dashscene.Samples
                       + $"{SystemInfo.graphicsDeviceName}, "
                       + $"{SystemInfo.graphicsDeviceVersion}");
 
-            Show(0);
+            // A capture opens on the scene it names, not on the first entry.
+            // An unknown name is refused rather than defaulted: drawing
+            // something anyway is right for a demonstration and wrong for a
+            // measurement, where it photographs the wrong scene silently. This
+            // is `Capture::parse`'s rule on the Rust side, and the two hosts
+            // must agree about it or a capture pair is not a pair.
+            var opening = 0;
+            if (_capture != null)
+            {
+                opening = Array.IndexOf(_sceneNames, _capture.Scene);
+                if (opening < 0)
+                {
+                    Fail($"capture_scene '{_capture.Scene}' is not one of the "
+                         + $"{SceneCount} scenes this library carries");
+                    return;
+                }
+            }
+            Show(opening);
         }
 
         private void Update()
@@ -494,6 +559,56 @@ namespace Driftsys.Dashscene.Samples
             }
         }
 
+        /// The capture this launch asked for, or null.
+        ///
+        /// **Read from the activity's `Intent`**, the same three extras
+        /// `demo-android` reads, so one harness command drives both hosts:
+        ///
+        /// <code>--es capture_scene layout --ei capture_phase 2 --ef capture_signal 0.5</code>
+        ///
+        /// Returns null off Android, and null for any partial or unparseable
+        /// set — never a capture with a defaulted field.
+        private CaptureRequest ReadCaptureRequest()
+        {
+#if UNITY_ANDROID && !UNITY_EDITOR
+            try
+            {
+                using var player = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
+                using var activity = player.GetStatic<AndroidJavaObject>("currentActivity");
+                using var intent = activity.Call<AndroidJavaObject>("getIntent");
+
+                var scene = intent.Call<string>("getStringExtra", "capture_scene");
+                if (string.IsNullOrEmpty(scene))
+                {
+                    return null;
+                }
+                var phase = intent.Call<int>("getIntExtra", "capture_phase", -1);
+                var signal = intent.Call<float>("getFloatExtra", "capture_signal", float.NaN);
+                if (phase < 0 || float.IsNaN(signal) || float.IsInfinity(signal))
+                {
+                    Debug.LogWarning($"[showcase] capture_scene {scene} came without a usable "
+                                     + $"phase ({phase}) or signal ({signal}); running the "
+                                     + "demonstration instead");
+                    return null;
+                }
+                return new CaptureRequest
+                {
+                    Scene = scene,
+                    Phase = (ulong)phase,
+                    Signal = Mathf.Clamp01(signal),
+                };
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[showcase] the capture extras could not be read "
+                                 + $"({e.GetType().Name}: {e.Message})");
+                return null;
+            }
+#else
+            return null;
+#endif
+        }
+
         /// Advances the showing scene's scripted signal, on `demo`'s own
         /// cadence.
         ///
@@ -508,6 +623,29 @@ namespace Driftsys.Dashscene.Samples
 #if DASHSCENE_DEMO_PRODUCER
             if (!IsScene(_index) || _runtime == null || _failed)
             {
+                return;
+            }
+
+            if (_capture != null)
+            {
+                // **Written once and then held.** The whole point of a capture
+                // is that the other host can be photographed in the same state,
+                // and a phase advancing on a clock is a different state on
+                // every launch.
+                if (_phase == _capture.Phase)
+                {
+                    return;
+                }
+                _phase = _capture.Phase;
+                try
+                {
+                    _runtime.PulseDemoScene(_phase);
+                    _runtime.SetDemoSignal(_capture.Signal);
+                }
+                catch (DashsceneException e)
+                {
+                    Fail($"the capture state could not be set: {e.Message}");
+                }
                 return;
             }
 
@@ -580,15 +718,32 @@ namespace Driftsys.Dashscene.Samples
 #endif
         }
 
+        /// Reads the shared showcase vocabulary, from keys and from touch.
+        ///
+        /// **The arrow keys drive the signal and do not navigate.** This file
+        /// bound them to the previous and next entry, and `demo/src/input.rs`
+        /// binds them to the two ends of the scene's own signal range — two
+        /// hosts of one showcase disagreeing about what a key means. The owner
+        /// settled it on 2026-08-29 in favour of the desktop binding, which is
+        /// the older of the two and the one written to name no scene, so
+        /// navigation moved to the page keys.
+        /// `docs/decisions/the-showcase-hosts-share-one-surface.md` carries the
+        /// table; `measure/android/unity-frame-cost.sh` and the `unity-demo-android`
+        /// recipe send the page key because of it.
         private void ReadInput()
         {
-            // Left, right, space and up. A binding named nowhere is a smaller
-            // version of the same defect, so the readout names all four.
-            if (Input.GetKeyDown(KeyCode.RightArrow))
+            if (_capture != null)
+            {
+                // A capture holds one state. Input would move it off the state
+                // the other host is being photographed in.
+                return;
+            }
+
+            if (Input.GetKeyDown(KeyCode.PageDown))
             {
                 Show((_index + 1) % TotalCount);
             }
-            else if (Input.GetKeyDown(KeyCode.LeftArrow))
+            else if (Input.GetKeyDown(KeyCode.PageUp))
             {
                 Show((_index + TotalCount - 1) % TotalCount);
             }
@@ -600,6 +755,111 @@ namespace Driftsys.Dashscene.Samples
             {
                 ToggleOrientation();
             }
+            else if (Input.GetKeyDown(KeyCode.R))
+            {
+                _readoutVisible = !_readoutVisible;
+                Debug.Log($"[showcase] readout: {(_readoutVisible ? "shown" : "hidden")}");
+            }
+            else if (Input.GetKeyDown(KeyCode.LeftArrow))
+            {
+                DriveSignal(0.0f);
+            }
+            else if (Input.GetKeyDown(KeyCode.RightArrow))
+            {
+                DriveSignal(1.0f);
+            }
+
+            ReadTouch();
+        }
+
+        /// The same five bindings on touch, so the player is drivable by hand.
+        ///
+        /// A device has no keyboard, so before this the player could only be
+        /// driven by `adb shell input keyevent` — which made it a harness and
+        /// not a demonstration.
+        private void ReadTouch()
+        {
+            if (Input.touchCount == 2)
+            {
+                var second = Input.GetTouch(1);
+                if (second.phase == TouchPhase.Began)
+                {
+                    ToggleOrientation();
+                }
+                return;
+            }
+
+            if (Input.touchCount != 1)
+            {
+                return;
+            }
+
+            var touch = Input.GetTouch(0);
+            switch (touch.phase)
+            {
+                case TouchPhase.Began:
+                    _touchStart = touch.position;
+                    _touchStartedAt = Time.unscaledTime;
+                    _touchDragged = false;
+                    break;
+                case TouchPhase.Moved:
+                    if (Mathf.Abs(touch.position.x - _touchStart.x)
+                        > Mathf.Abs(touch.position.y - _touchStart.y))
+                    {
+                        // Horizontal is the signal's, and it is written while
+                        // the finger moves rather than when it lifts.
+                        _touchDragged = true;
+                        DriveSignal(touch.position.x / Mathf.Max(1, Screen.width));
+                    }
+                    break;
+                case TouchPhase.Ended:
+                    var held = Time.unscaledTime - _touchStartedAt;
+                    var dy = touch.position.y - _touchStart.y;
+                    var dx = touch.position.x - _touchStart.x;
+                    if (!_touchDragged && Mathf.Abs(dy) > SwipeMinPixels
+                        && Mathf.Abs(dy) > Mathf.Abs(dx))
+                    {
+                        // Unity's y grows upward, so a swipe up is a positive
+                        // dy — the opposite sign to the Android host's, which
+                        // reads a MotionEvent whose y grows downward. Both bind
+                        // "swipe up" to the next entry.
+                        Show(dy > 0
+                            ? (_index + 1) % TotalCount
+                            : (_index + TotalCount - 1) % TotalCount);
+                    }
+                    else if (!_touchDragged && held >= LongPressSeconds)
+                    {
+                        _readoutVisible = !_readoutVisible;
+                        Debug.Log($"[showcase] readout: {(_readoutVisible ? "shown" : "hidden")}");
+                    }
+                    else if (!_touchDragged)
+                    {
+                        RunTheScenesOwnSwitch();
+                    }
+                    break;
+            }
+        }
+
+        /// Writes the showing scene's own scalar signal.
+        ///
+        /// A no-op on a committed `.dsb` document: `ds_demo_signal` addresses
+        /// the scene the producer installed, and a loaded document has none.
+        private void DriveSignal(float value)
+        {
+#if DASHSCENE_DEMO_PRODUCER
+            if (_runtime == null || !IsScene(_index))
+            {
+                return;
+            }
+            try
+            {
+                _runtime.SetDemoSignal(value);
+            }
+            catch (DashsceneException e)
+            {
+                Fail($"the signal write failed: {e.Message}");
+            }
+#endif
         }
 
         /// Rotates the player between portrait and landscape.
@@ -1077,6 +1337,11 @@ namespace Driftsys.Dashscene.Samples
 
         private void OnGUI()
         {
+            if (!_readoutVisible)
+            {
+                return;
+            }
+
             var label = TotalCount > 0 ? Label(_index) : "nothing to show";
             var summary = TotalCount > 0 ? Summary(_index) : string.Empty;
 
@@ -1103,8 +1368,9 @@ namespace Driftsys.Dashscene.Samples
             var lines = new List<string>
             {
                 $"{label}   [{_index + 1}/{Math.Max(TotalCount, 1)}]   "
-                + "left/right to switch, space for a scene's variant switch, "
-                + "up to rotate",
+                + "page up/down or swipe to switch, left/right or drag for the "
+                + "signal, space or tap for a scene's variant switch, up or two "
+                + "fingers to rotate, R or long press for this readout",
                 $"rung {_painter?.Rung.ToString() ?? "none"}   "
                 + $"{_painter?.InstanceCount ?? 0} instances",
             };

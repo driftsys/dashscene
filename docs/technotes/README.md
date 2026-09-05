@@ -24,6 +24,13 @@ Notes:
   the Figma export boundary, no neutral IR above dashscene, compile-path vs
   arena-path, Penpot as a candidate second producer, and the Slint
   build-vs-adopt call.
+- [batch-renderer-group.md](batch-renderer-group.md) — what `BatchRendererGroup`
+  is, how the Unity painter uses it, and the ordering pitfall it presents to a
+  painter's-algorithm renderer: BRG does not preserve the order draw commands
+  are emitted in, which is why the Unity painter drew no text in any player
+  build (issue #1389). Also the band defect — Unity drops commands from single
+  frames when a sorted command names more than one visible instance (issue
+  #1401) — and the four smaller pitfalls in the same API.
 - [rendering-and-painters.md](rendering-and-painters.md) — the SDF-quad-atlas
   model and why it is fast, the tiered backends (Unity / trimmed-Skia / lean),
   the Skia trim profile, and the Unity painter internals (BRG, Burst, lit/unlit,

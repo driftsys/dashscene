@@ -90,6 +90,8 @@ pub mod typography;
 pub mod vocabulary;
 
 use dashlang::LiveScene;
+pub mod input;
+
 use dashscene_core::Arena;
 
 /// Builds a scene into `arena` for a drawable of `width` x `height` physical

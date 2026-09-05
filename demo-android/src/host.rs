@@ -7,22 +7,26 @@
 //! and a `.dsb` does not — the arena, the `LiveScene`, the painter and the
 //! surface.
 
+use std::collections::VecDeque;
 use std::ffi::c_void;
+use std::sync::Mutex;
 use std::time::Instant;
 
 use dashlang::LiveScene;
 use dashpaint::Painter;
+
 use dashscene_android::{AttachError, Frames, Step, log};
 use dashscene_core::Arena;
 use dashscene_gpu::{Changes, GpuPainter, SurfaceRenderer};
 use jni::EnvUnowned;
 use jni::errors::LogErrorAndDefault;
 use jni::objects::{JClass, JObject, JString};
-use jni::sys::{jboolean, jint, jlong};
+use jni::sys::{jboolean, jfloat, jint, jlong};
 
 use crate::refusal::Refusal;
-use crate::select;
+use crate::timing::Sample;
 use crate::timing::Timing;
+use crate::{Capture, CaptureRequest, Command, Walk, advance, readout, select};
 
 /// How long each scripted phase lasts, in seconds.
 ///
@@ -33,9 +37,57 @@ use crate::timing::Timing;
 /// Android host was running the script two and a half times faster.
 const PHASE_SECONDS: f32 = 2.5;
 
+/// What the UI thread has asked the render thread to do.
+///
+/// **A channel this crate owns, not one `dashscene-android` grew.** On Android
+/// the input arrives on the UI thread and `ShowcaseFrames` lives on the render
+/// thread and is not `Send`, so a command has to cross. `loop_` exposes
+/// `start`, `resize`, `is_running` and `destroy` and nothing else, and input is
+/// not in that crate's scope — the surface handoff, the choreographer loop and
+/// the destroy handshake are. This module's own header states the rule this
+/// follows: the scene registry, the scripted pulse and the instrument are
+/// demonstration concerns, and an embedder writes its own `Frames`. So the
+/// queue is a demonstration concern too.
+///
+/// Only plain values cross. `Command` and `f32` are `Send`; nothing here holds
+/// a reference into either thread's state.
+static PENDING: Mutex<Pending> = Mutex::new(Pending::new());
+
+/// The other direction: what the render thread last measured, for the UI
+/// thread's readout to show. Written once per completed sample.
+static READOUT: Mutex<String> = Mutex::new(String::new());
+
+/// Commands and drags waiting for the next frame.
+struct Pending {
+    commands: VecDeque<Command>,
+    /// The most recent drag position, in physical pixels. Coalesced rather than
+    /// queued: a drag produces a `MotionEvent` per touch sample and only the
+    /// latest names where the finger is now, so a queue would replay a stale
+    /// path one position per frame.
+    drag_x: Option<f32>,
+}
+
+impl Pending {
+    const fn new() -> Self {
+        Self {
+            commands: VecDeque::new(),
+            drag_x: None,
+        }
+    }
+}
+
 /// One showcase scene, drawn through the lean painter.
 struct ShowcaseFrames {
     scene: &'static showcase::Showcase,
+    /// Where `scene` sits in `showcase::SCENES`, so `advance` can walk from it.
+    scene_index: usize,
+    /// The extent the scene was last built for, so a scene change can rebuild
+    /// at the same size without waiting for a resize that is not coming.
+    extent: (u32, u32),
+    /// Set when this launch is photographing one state rather than running the
+    /// demonstration: the phase does not advance, the signal is held, and the
+    /// readout stays hidden.
+    capture: Option<Capture>,
     arena: Arena,
     live: Option<LiveScene>,
     painter: GpuPainter,
@@ -69,15 +121,40 @@ struct ShowcaseFrames {
 }
 
 impl ShowcaseFrames {
-    /// Builds the scene for this extent, into a fresh arena.
+    /// Installs `self.scene` at this extent: a fresh arena, a fresh
+    /// `LiveScene`, and the extent recorded beside them.
+    ///
+    /// **The only place a scene is installed**, and so the only place `extent`
+    /// is written — because the extent and the scene are one fact and a path
+    /// that installs one without the other is a defect this host has already
+    /// had. (`detach` clears `live` and `arena` without touching `extent`,
+    /// which is correct: it uninstalls rather than installs, and the extent it
+    /// would clear is the one the next `attach` arrives with.) `attach` built the scene itself and left
+    /// `extent` at the `(0, 0)` its factory gives it:
+    /// `dashscene_android::LoopState::step` calls `Frames::resize` only when
+    /// the extent **changes**, so a launch whose surface reports one extent and
+    /// never moves — which the fullscreen theme, the hidden bars and the
+    /// consumed insets in `DemoActivity` exist to produce — never reached
+    /// `build` at all. Every input needing a width was then dead:
+    /// `showcase::input::signal_from_x(x, 0)` answers `None`, so the drag and
+    /// both arrow keys wrote no signal; a scene change rebuilt at 0x0; and the
+    /// readout printed `0x0` as the extent the shared-surface record says both
+    /// hosts must agree on.
     ///
     /// A scene built in code derives every offset from the drawable it is given,
     /// so a new extent means a new scene — the same answer `demo` and
     /// `demo-web` give. The scene brings its own solver, which is why its text
     /// has a typesetter at all.
-    fn build(&mut self, width: u32, height: u32) {
+    fn install(&mut self, width: u32, height: u32) {
+        self.extent = (width, height);
         self.arena = Arena::new();
         self.live = Some((self.scene.build)(&mut self.arena, width, height));
+    }
+
+    /// [`ShowcaseFrames::install`], plus everything a **re**build has to
+    /// discard that a first install has nothing of.
+    fn build(&mut self, width: u32, height: u32) {
+        self.install(width, height);
         // The incoming arena's generations start again, and nothing in the
         // frames themselves says so.
         if let Some(renderer) = self.renderer.as_mut() {
@@ -94,6 +171,73 @@ impl ShowcaseFrames {
     }
 }
 
+impl ShowcaseFrames {
+    /// Applies everything the UI thread queued since the last frame.
+    ///
+    /// Before anything borrows `live`, because a scene change rebuilds through
+    /// `build`, which takes the whole of `self`.
+    fn drain_input(&mut self) {
+        let (commands, drag_x) = {
+            let mut pending = PENDING.lock().expect("the input queue is never poisoned");
+            (std::mem::take(&mut pending.commands), pending.drag_x.take())
+        };
+
+        for command in commands {
+            match command {
+                Command::Next | Command::Previous => {
+                    let walk = if command == Command::Next {
+                        Walk::Next
+                    } else {
+                        Walk::Previous
+                    };
+                    self.scene_index = advance(self.scene_index, showcase::SCENES.len(), walk);
+                    self.scene = &showcase::SCENES[self.scene_index];
+                    let (width, height) = self.extent;
+                    self.build(width, height);
+                    log(&format!(
+                        "entry {} — {}",
+                        self.scene.name, self.scene.summary
+                    ));
+                }
+                Command::Action => {
+                    let action = self.scene.action;
+                    if let Some(live) = self.live.as_mut() {
+                        showcase::input::run_action(live, &mut self.arena, action);
+                    }
+                }
+                // **The Java half's, not this thread's.** `setRequestedOrientation`
+                // and a `View`'s visibility are UI-thread calls, and routing them
+                // down here only to send them back would add a thread hop to
+                // reach the same object.
+                Command::Orientation | Command::Readout => {}
+            }
+        }
+
+        if let Some(x) = drag_x {
+            let signal = self.scene.signal;
+            let width = self.extent.0;
+            if let Some(live) = self.live.as_mut()
+                && let Some(value) = showcase::input::signal_from_x(x as f64, width)
+            {
+                showcase::input::set_signal(live, signal, value);
+            }
+        }
+    }
+
+    /// Hands the finished sample to the UI thread's readout.
+    ///
+    /// Skipped under a capture: the readout would be composited into the frame
+    /// `adb screencap` takes, and a comparison of two hosts' overlays is not a
+    /// comparison of two painters.
+    fn publish_readout(&self, sample: &Sample) {
+        if self.capture.is_some() {
+            return;
+        }
+        let (width, height) = self.extent;
+        *READOUT.lock().expect("the readout is never poisoned") = readout(sample, width, height);
+    }
+}
+
 impl Frames for ShowcaseFrames {
     unsafe fn attach(
         &mut self,
@@ -101,6 +245,17 @@ impl Frames for ShowcaseFrames {
         width: u32,
         height: u32,
     ) -> Result<(), AttachError> {
+        // **Anything queued before this attach belongs to a surface that is
+        // gone.** `PENDING` is process-global, so a command sent while the last
+        // surface was tearing down would otherwise be applied to the first
+        // frame of the next one — a scene change nobody asked for, at a moment
+        // that reads as a launch bug.
+        {
+            let mut pending = PENDING.lock().expect("the input queue is never poisoned");
+            pending.commands.clear();
+            pending.drag_x = None;
+        }
+
         let Some(window) = std::ptr::NonNull::new(window) else {
             return Err("the window is null".to_owned());
         };
@@ -117,12 +272,20 @@ impl Frames for ShowcaseFrames {
             self.scene.name,
         ));
         self.renderer = Some(renderer);
-        // Not `build`: that reports `document_replaced`, and this renderer was
-        // constructed three lines ago with nothing uploaded. `dashscene-web`
-        // names that as the second mechanism not to add — the constructor
-        // already establishes the state it would clear.
-        self.arena = Arena::new();
-        self.live = Some((self.scene.build)(&mut self.arena, width, height));
+        // `install` rather than `build`: the latter reports `document_replaced`,
+        // and this renderer was constructed three lines ago with nothing
+        // uploaded. `dashscene-web` names that as the second mechanism not to
+        // add — the constructor already establishes the state it would clear.
+        // What this must NOT do is build the scene itself, which is what it did
+        // until the extent went with it.
+        //
+        // **It does not reset `Timing`, and on the rebuild path that mixes two
+        // swapchains' samples** — `detach` leaves the accumulator alone and
+        // `Timing::push` clears only when the scene NAME changes, so up to 239
+        // spans measured through a destroyed swapchain are averaged into the
+        // next published sample. `build` resets for exactly this reason.
+        // Issue #1424.
+        self.install(width, height);
         self.phase = u64::MAX;
         Ok(())
     }
@@ -177,6 +340,8 @@ impl Frames for ShowcaseFrames {
     }
 
     fn frame(&mut self, dt: f32, forced: bool) -> Step {
+        self.drain_input();
+
         let Some(live) = self.live.as_mut() else {
             return Step::Stop;
         };
@@ -188,11 +353,27 @@ impl Frames for ShowcaseFrames {
         // whole per-frame job, and it is what makes the scene move at all: with
         // nothing writing a signal, `tick` takes its idle early return after the
         // first commit and the picture parks.
-        self.elapsed += dt;
-        let phase = (self.elapsed / PHASE_SECONDS) as u64;
-        if phase != self.phase {
-            self.phase = phase;
-            (self.scene.pulse)(live, phase);
+        match self.capture.as_ref() {
+            // **A capture holds one state rather than running the script.** The
+            // phase is written once and the signal with it, because the whole
+            // point of the mode is that the other host can be photographed in
+            // the same state — and a phase advancing on a clock is a different
+            // state on every launch.
+            Some(capture) => {
+                if self.phase != capture.phase {
+                    self.phase = capture.phase;
+                    (self.scene.pulse)(live, capture.phase);
+                    showcase::input::set_signal(live, self.scene.signal, capture.signal);
+                }
+            }
+            None => {
+                self.elapsed += dt;
+                let phase = (self.elapsed / PHASE_SECONDS) as u64;
+                if phase != self.phase {
+                    self.phase = phase;
+                    (self.scene.pulse)(live, phase);
+                }
+            }
         }
 
         let before_tick = Instant::now();
@@ -306,6 +487,7 @@ impl Frames for ShowcaseFrames {
                 "{} — {runs} run(s), {quads} glyph(s)",
                 sample.line()
             ));
+            self.publish_readout(&sample);
         }
         Step::Continue
     }
@@ -353,6 +535,9 @@ pub extern "system" fn Java_dev_driftsys_dashscene_demo_DemoNative_nativeStart<'
     scene: JString<'local>,
     width: jint,
     height: jint,
+    capture_scene: JString<'local>,
+    capture_phase: jint,
+    capture_signal: jfloat,
 ) -> jlong {
     unowned
         .with_env(|env| -> jni::errors::Result<jlong> {
@@ -361,8 +546,59 @@ pub extern "system" fn Java_dev_driftsys_dashscene_demo_DemoNative_nativeStart<'
             } else {
                 Some(scene.try_to_string(env)?)
             };
-            let chosen = select(name.as_deref());
-            log(&format!("scene {} — {}", chosen.name, chosen.summary));
+            let capture_name: Option<String> = if capture_scene.is_null() {
+                None
+            } else {
+                Some(capture_scene.try_to_string(env)?)
+            };
+            // **Three outcomes, and the middle one is why this is not an
+            // `Option`.** A capture naming a scene the registry does not carry
+            // is refused rather than defaulted — `DemoActivity` has already
+            // hidden the readout by then, so falling back to `SCENES[0]` would
+            // photograph the wrong scene, in a state the wall clock chose,
+            // with nothing on screen to say so. One mistyped letter in
+            // `--es capture_scene` is the whole input needed.
+            let request = CaptureRequest::of(
+                capture_name.as_deref(),
+                Some(i64::from(capture_phase)),
+                Some(capture_signal),
+            );
+            let capture = match request {
+                CaptureRequest::UnknownScene(name) => {
+                    log(&format!(
+                        "capture_scene '{name}' is not one of the {} showcase \
+                         scenes — refusing rather than photographing another \
+                         one. Launch without the capture extras to run the \
+                         demonstration.",
+                        showcase::SCENES.len(),
+                    ));
+                    return Ok(0);
+                }
+                CaptureRequest::Partial => {
+                    log("capture_scene arrived without a usable phase and \
+                         signal — running the demonstration instead. A capture \
+                         takes all three of capture_scene, capture_phase and \
+                         capture_signal.");
+                    None
+                }
+                CaptureRequest::Absent => None,
+                CaptureRequest::Ready(capture) => Some(capture),
+            };
+            let chosen = match capture.as_ref() {
+                Some(capture) => capture.scene,
+                None => select(name.as_deref()),
+            };
+            let chosen_index = showcase::SCENES
+                .iter()
+                .position(|entry| entry.name == chosen.name)
+                .unwrap_or(0);
+            match capture.as_ref() {
+                Some(capture) => log(&format!(
+                    "capture {} phase {} signal {:.3}",
+                    chosen.name, capture.phase, capture.signal
+                )),
+                None => log(&format!("scene {} — {}", chosen.name, chosen.summary)),
+            }
 
             // SAFETY: `env` and `surface` are the JVM's own, valid for this call.
             let window = unsafe {
@@ -379,6 +615,9 @@ pub extern "system" fn Java_dev_driftsys_dashscene_demo_DemoNative_nativeStart<'
             let frames = move || -> Box<dyn Frames> {
                 Box::new(ShowcaseFrames {
                     scene: chosen,
+                    scene_index: chosen_index,
+                    extent: (0, 0),
+                    capture,
                     arena: Arena::new(),
                     live: None,
                     painter: GpuPainter::new(),
@@ -447,6 +686,59 @@ pub unsafe extern "system" fn Java_dev_driftsys_dashscene_demo_DemoNative_native
     // SAFETY: the caller promises this is the handle's last use.
     unsafe { dashscene_android::loop_::destroy(handle as *mut dashscene_android::AndroidHost) };
     log("stopped — the surface is gone");
+}
+
+/// Queues one command for the render thread to apply on its next frame.
+///
+/// Takes no handle: `PENDING` is process-global because this demonstration runs
+/// one activity and one loop at a time. An unknown code is dropped rather than
+/// guessed at — the codes are the contract's, and inventing a meaning for a
+/// sixth would bind a gesture nobody wrote.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_driftsys_dashscene_demo_DemoNative_nativeCommand(
+    _env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    code: jint,
+) {
+    let Some(command) = Command::from_code(code) else {
+        log(&format!("command {code} is not one this host binds"));
+        return;
+    };
+    PENDING
+        .lock()
+        .expect("the input queue is never poisoned")
+        .commands
+        .push_back(command);
+}
+
+/// Reports where a horizontal drag currently is, in physical pixels.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_driftsys_dashscene_demo_DemoNative_nativeDrag(
+    _env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    x_physical: jfloat,
+) {
+    PENDING
+        .lock()
+        .expect("the input queue is never poisoned")
+        .drag_x = Some(x_physical);
+}
+
+/// The readout text the render thread last published.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_driftsys_dashscene_demo_DemoNative_nativeReadout<'local>(
+    mut unowned: EnvUnowned<'local>,
+    _class: JClass<'local>,
+) -> jni::sys::jstring {
+    unowned
+        .with_env(|env| -> jni::errors::Result<jni::sys::jstring> {
+            let text = READOUT
+                .lock()
+                .expect("the readout is never poisoned")
+                .clone();
+            Ok(env.new_string(text)?.into_raw())
+        })
+        .resolve::<LogErrorAndDefault>()
 }
 
 /// Whether the frame loop is still live.

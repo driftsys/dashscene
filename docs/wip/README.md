@@ -26,9 +26,33 @@ the work it carried. **v0.21's stories have each archived their working memory
 inside the pull request that landed the work**, so none of it is in this
 directory's history on `main`: story #1230's driver prompt is
 `2026-08-17-v021-UNITY-TOOLCHAIN-DRIVER-PROMPT.md`, story #1229's is
-`2026-08-17-v021-ANDROID-MEASUREMENT-DRIVER-PROMPT.md`, and story #1125 archived
-a capture rather than a prompt,
+`2026-08-17-v021-ANDROID-MEASUREMENT-DRIVER-PROMPT.md`, story #1125 archived a
+capture rather than a prompt,
 `2026-08-21-v021-unity-packaging-and-deployment.md`. See below.
+
+**Story #1329 is the exception, and it is the first one.** Its design and its
+plan were tracked here while the work ran and are archived as
+`2026-08-29-showcase-host-parity-design.md` and
+`2026-08-29-showcase-host-parity-plan.md`. Unlike every v0.21 story before it,
+they **are** in this directory's history on `main`: that story landed as a
+branch carrying four already-merged pull requests, so it was not squashed to one
+commit, and the two files appear here and are then removed by the gardening
+commit. The count moved four times inside this one branch: ten at its base,
+twelve when #1329's pair landed, **fourteen** while the single-instance lane's
+own design and plan were staged here beside them (`bfc5bc3` through `3a39728`),
+twelve again when that lane archived its two, and ten at the head. Only the base
+and the head are on `main`.
+
+**What the pair gardened into.** The contract half is
+`docs/decisions/the-showcase-hosts-share-one-surface.md`; the pixel readings and
+the text finding are in `docs/design/android-toolchain.md`; the two-image
+comparison is in `docs/design/goldens.md`; the Unity sample's half is in
+`docs/design/unity-csharp-host.md`. The one limb none of those covers — a
+frame-cost run of both hosts at one extent, one orientation and one build
+profile — is tracked on issue #1329 rather than held here, because it needs a
+device and this directory is not an issue tracker. That is the same disposition
+`2026-08-09-v019-ANDROID-DRIVER-PROMPT.md` was given when its remaining stories
+moved to another slice.
 
 **One claim in #1229's was false, and the archive keeps it** as every archived
 prompt keeps what it actually said: it asserts that "no scene in the workspace

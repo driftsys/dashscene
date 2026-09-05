@@ -15,6 +15,7 @@ make room, so gaps and out-of-sequence arrivals are expected and cost nothing.
 - [06-dashc-figma-lowering.md](06-dashc-figma-lowering.md) — the Figma lowering
   spec (stories #139 and #17)
 - [07-embedding-and-distribution.md](07-embedding-and-distribution.md) —
-  R-E1..R-E21; what an engine host and its package must satisfy (story #1125)
+  R-E1..R-E22; what an engine host and its package must satisfy (story #1125,
+  with R-E22 added by issue #1389)
 
 See the `sdd-working-memory-lifecycle` rule.

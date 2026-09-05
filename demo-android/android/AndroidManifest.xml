@@ -14,6 +14,7 @@
             android:name="dev.driftsys.dashscene.demo.DemoActivity"
             android:exported="true"
             android:resizeableActivity="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
             android:label="dashscene showcase">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

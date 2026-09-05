@@ -321,9 +321,12 @@ build, three reported samples of 240 drawn frames per scene, at **2340x805**:
 The instrument reports per sample and the table is not averaged precisely so
 that warm-up is visible rather than folded in.
 
-**Read against a 16.67 ms budget** — which is a 60 Hz budget and **not** a
-requirement this project has set; nothing in the specification pins display
-geometry, and #549 is open against exactly that:
+**Read against a 16.67 ms budget** — a 60 Hz budget. Since 2026-09-04 there is
+one for this device at its native drawable
+(`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`), read from
+the compositor; this table, at 2340x805 and a per-frame report, is not what it
+is read against, and no budget exists for a display class — nothing in the
+specification pins display geometry, and #549 is open against exactly that:
 
 - `surfaces` spends about 25 ms at p50 and reaches 60 at p95.
 - `typography` spends 11.6 at p50 and 19.6 at p95.
@@ -602,9 +605,12 @@ the R-T1 argument, measured for the first time.
 
 **The constant does not change, and this is why.**
 `dashscene_validator::RENDER_TARGET_BUDGET_PLACEHOLDER` is a **count**, and what
-was measured is a **cost**. Turning one into the other needs a frame budget, and
-this project deliberately has none: no display geometry is pinned (#549), so any
-count written here would be derived from an invented budget. What the
+was measured is a **cost**. Turning one into the other needs a frame budget for
+a display class, and this project deliberately has none: no display geometry is
+pinned (#549), so any count written here would be derived from an invented
+budget. The one-device budget of 2026-09-04
+(`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`) is a budget
+for the Pixel 5 at one extent and derives no count for the class. What the
 measurement does settle is the shape of the answer:
 
 - **A fixed count cannot be right at any value.** 1.95 ms is a cost per switch
@@ -616,7 +622,8 @@ measurement does settle is the shape of the answer:
   was ever read as "eight is fine", that reading is now measured to be wrong.
 - **`paint.render-target-budget` stays a warning**, for the same reason: an
   error would enforce a threshold nobody has derived. It becomes an error when a
-  frame budget exists to derive one from.
+  display-class frame budget exists to derive one from; the one-device budget of
+  2026-09-04 is not that.
 
 ### The attach, and what it does and does not say
 
@@ -784,8 +791,10 @@ it — and not a whole core throughout, which is why the figure there is split a
   measured against each other rather than argued about. What is not answered is
   why one of the five debug attempts took 14.57 s; that is an unexplained
   outlier, and the typical first-launch premium is far too small to be it.
-- **No frame budget is established.** The 16.67 ms above is a reference point
-  for reading the table, not a requirement.
+- **No frame budget for a display class is established.** Since 2026-09-04 one
+  exists for this device at one extent
+  (`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`). The
+  16.67 ms above is a reference point for reading the table, not a requirement.
 - **One device.** Nothing here says what a different Adreno, a Mali or a PowerVR
   does, and the GLES row's zero headroom is the figure most likely to differ.
 
@@ -826,6 +835,80 @@ device-clock and is therefore correct; only the provenance line was misleading.
 `environment.md` now records the host's clock beside the device's and says which
 of the two everything in the bundle is timed by, which is the other half of
 #1236.
+
+## The two hosts share one surface
+
+Both Android hosts draw the same scenes, take the same input vocabulary and run
+at the same extent. **This record's two frame-cost tables predate that surface
+and are not yet comparable**, and only one of them is below this line: "Frame
+costs (#842)", further up, is a `release` build in landscape at 2340x805, and
+"The Unity painter, on the same device", below, is a `demo-release` build in
+portrait at 1080x2340. Extent, orientation and build profile all differ, and
+this record's own note under the first table says a set taken across mixed
+orientations cannot be compared. The run that takes both hosts at one extent,
+one orientation and one profile is issue #1329's remaining limb, and nothing has
+taken it.
+
+The rules, the key events an `adb`-driven run sends, and the three changes that
+took `demo-android` from 1080x1984 to the full display extent are
+[`decisions/the-showcase-hosts-share-one-surface.md`](../decisions/the-showcase-hosts-share-one-surface.md).
+They are not restated here.
+
+## What the two hosts drew, compared (2026-08-29)
+
+The pixel half of the comparison has been taken; the frame-cost half above has
+not. Six captures, one per host per scene, on the same Pixel 5, both hosts in
+capture mode at `phase 0` and `signal 0.5` and both at **2340x1080** — one
+extent, which is what makes the pair comparable. The captures and the full
+threshold sweep are archived under
+[`archive/2026-08-29-showcase-host-parity/`](../archive/2026-08-29-showcase-host-parity/README.md);
+they were compared with `goldens`' `compare-images` binary by hand, because
+`measure/android/host-parity.sh` does not exist yet (issue #1329).
+
+**A differing-pixel count at threshold 0 says nothing about two painters.** The
+`layout` pair differs in 99.98 % of its pixels at threshold 0 while looking
+identical: sampled at three coordinates spread across the frame, the two hosts
+differ by one to three levels per channel at every one of them. That is the
+right measure for a golden, where the reviewed image comes from the same
+painter, and the wrong one here. The count stops moving above threshold 3 and
+the bounding box collapses onto one band, so threshold 8 is where the three
+scenes are read:
+
+    scene        differing   bounds                  max delta
+    surfaces      31.10%     [50,50 - 2289,808]        240
+    typography     2.36%     [62,78 - 2106,794]        222
+    layout         1.67%     [586,916 - 1753,989]      210
+
+**No tolerance is set from these.** They are one run of one pair of builds on
+one device, and the threshold-8 reading is a baseline for issue #1329's harness
+to enforce against, not a threshold this record adopts.
+
+**`surfaces` is explained and is not a defect.** The Unity painter reports five
+kinds refused on it over 9 rects — shadows, backdrop blurs, image fills, baked
+vector nodes and render-target groups — so the two hosts draw different pictures
+on purpose. That is P4 working, and issue #1344 carries it.
+
+**The design session's prediction failed, and the half that mattered held.** It
+predicted `typography` would be the closest match of the three because Unity's
+HLSL is generated from the same `sdf.wgsl`; `layout` is closer. Its actionable
+half was that `typography` diverging _more than_ `surfaces` would mean a defect
+in the text seam rather than a tolerance to widen, and `typography` is nowhere
+near `surfaces`.
+
+**The finding this comparison exists to have found: the Unity host draws no text
+on this device.** `unity-typography.png` carries the scene's panels and its bar
+and no glyphs at all, while `lean-typography.png` carries every run. It is not a
+capture-mode artifact — the player walked to the entry by hand renders no glyphs
+either, while its own IMGUI readout does. The host reports success throughout:
+`[showcase] drew scene typography: 381 instance(s), rung RawBuffer`, no refusal
+and no diagnostic. **This is what issue #1389 was opened on, and the painter
+draws its text now** — the sorting-key repair landed on this branch and
+`unity-csharp-host.md` and `docs/technotes/batch-renderer-group.md` carry it.
+The capture is kept because it is the reading that found the defect. No gate saw
+it because `just unity-demo-android` asserts that every entry drew and never
+compares a frame against anything, and 381 submitted instances satisfy every
+check it makes; the text seam was verified on macOS/Metal, where it does draw
+(`unity-csharp-host.md`).
 
 ## The Unity painter, on the same device (2026-08-29)
 
@@ -887,11 +970,11 @@ Unity, Vulkan, `RawBuffer`, 1080x2340, three sweeps over the three scenes:
 
 **Each row is one sample per sweep, and every one of them is a first sample.** A
 report covers 240 drawn frames and the loop is paced well under the display
-rate, so the fourteen seconds each entry was left drawing yielded one sample,
-not the three the dwell was chosen for. The lean painter's table below discounts
-its own first sample as pipeline warm-up; nothing here can, so `max` in
-particular carries warm-up. That is what the `typography` spread of 0.45 to 0.76
-is.
+rate, at 30 fps — "The Unity host's presented rate" below says why — so the
+fourteen seconds each entry was left drawing yielded one sample, not the three
+the dwell was chosen for. The lean painter's table below discounts its own first
+sample as pipeline warm-up; nothing here can, so `max` in particular carries
+warm-up. That is what the `typography` spread of 0.45 to 0.76 is.
 
 The lean painter over the same three scenes, on the same device the same day,
 release, 1080x1984, three samples per scene:
@@ -943,8 +1026,124 @@ Vulkan sweeps hold one extent throughout and so say nothing about this at all.
 What would settle it is one Vulkan process rotated part-way, which the
 instrument would report as two samples because it discards across that boundary.
 
-**No budget is set here.** #1107 says so in terms and #549 is open against the
-missing display geometry; these are figures and the record that holds them.
+**No budget is set here.** One was set after these figures, for this device at
+one extent, on 2026-09-04
+(`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`); #1107 says
+none is set for the class and #549 is open against the missing display geometry;
+these are figures and the record that holds them.
+
+### The Unity host's presented rate, and what bounds it (2026-09-03 and 04)
+
+    status  taken 2026-09-03, and the per-scene sweep after midnight on
+            2026-09-04, on the same Pixel 5, from players built by
+            `just unity-demo-android` at `5b279f6` on the story branch. Read
+            from the compositor — `dumpsys SurfaceFlinger --timestats` and
+            `--latency` on the player's `SurfaceView` layer — not from the
+            player. This is issue #1347's Unity half, read whole-frame.
+            Nothing here is committed as a change: the pacing edits — three scripts on the evidence shelf, applied in order, of which the explicit target and optimized frame pacing are the two that stand — and the HDR-off toggle live there as patches, and the pacing change is issue #1408 — until it lands, every presented-rate figure past the first paragraph describes a build this tree does not produce, and wants re-reading once it does; the shaded areas are derived from committed scene data and do not.
+
+**The panel is 1080x2340 at 60 Hz** — `dumpsys display` lists a 90 Hz mode as
+well, unused throughout. **The table above was taken at 30 fps, and now says
+why.** "Paced well under the display rate" was an observation; the cause is that
+nothing in the shipped package or the demo player sets
+`Application.targetFrameRate`, and Unity's Android default for -1 is 30 whatever
+the panel does. (`unity/render-gate/DashsceneRenderGate.cs` does set it, to 60,
+but the `unity-render` recipe runs that player in batch mode and it renders on
+demand through `SubmitRenderRequest`, so nothing presents and the setting has no
+effect.) The compositor's `--timestats` counted 30.3 fps with no dropped frame,
+and the sample's own reports came every 8.0 s for 240 frames. **The
+`fps if unpaced` figure in those reports is the inverse of the measured `tick`
+plus `draw` sum, not a presented rate** — the apparatus section below says the
+same of the lean painter's `Sample::fps_if_unpaced` — and this section is the
+first place the Unity host's presented rate has been read at all.
+
+**Lifting the cap took two changes, and a reading that looked like a third was
+misleading.** Issue #1408 carries the changes and the same account; this is the
+measurement. Setting the target in `Awake()` from
+`Screen.currentResolution.refreshRateRatio` — which read 60 on that first build,
+with no frame-rate override yet in force — gave ~32 fps with a bimodal interval
+— 87 of 125 presented intervals at 33.4 ms, 16 between 16.6 and 16.9 — frames
+ready about 21 ms before they were shown: Unity's default pacing sleeps to the
+target and presents on every other vsync. Enabling
+`PlayerSettings.Android.optimizedFramePacing` (Swappy) returned 30.3 fps, and
+the player logged `targetFrameRate 30`: the init had already asked
+SurfaceFlinger for 30 Hz (`setFrameRate=(uid, 30.00 Hz)` in
+`dumpsys SurfaceFlinger`), and under Android's per-app frame-rate override the
+app's reported refresh rate is the rate it was granted, so "the display's rate"
+read back 30 and set 30 again. An explicit 60 set at
+`RuntimeInitializeLoadType.SubsystemRegistration`, before the first frame, is
+what made the compositor show `60.00 Hz` asked. The player logs of the three
+steps were not kept; their compositor dumps are.
+
+**With every cap lifted, the panel resolution is the limit.** At 1080x2340, on
+entry 0 — `surfaces`, which a plain launch opens; inferred from the launch,
+since no `drew` line was kept for these steps — the player presented 32.5 fps by
+`--timestats` and 31.8 by the latency dump's own timestamps: a frame produced
+every 31 ms (89 of 126 `frameReady` deltas at 31 ms, 34 at 32), with `UnityMain`
+at 14 % of a core and the render thread at 7 % in one `top` sample. The same
+build with the display forced to 540x1170 counted 899 frames in about 15 s —
+62.5 fps by `--timestats`' own window, 59.9 by the wall clock; restored, 481
+frames, 32.5 and 32.1 the same two ways. **The Unity host is GPU fill-bound at
+native resolution on the Adreno 620, at about 31 ms of GPU per frame on
+`surfaces` — and shaded area alone does not order the three scenes.** Per scene,
+same source at `5b279f6`, explicit 60 asked, `--timestats` over 10 s each — the
+2026-09-04 re-read kept the `drew` lines, and it corroborates the entry order
+the 2026-09-03 readings assumed: `surfaces` (56 instances, large overlapping
+panels and gradient tiles) 32.0 to 32.6 fps; `typography` (381 instances, mostly
+small glyph quads) 50.2 fps on 2026-09-03 and 42.4 on the 2026-09-04 re-read,
+its intervals a 17 ms and 33 ms mix; `layout` (29 instances) 60 to 62.5 fps —
+the panel's rate, so its cost is bounded above by a frame and not measured.
+**HDR is not the cause**: the same source, rebuilt with `supportsHDR` off in the
+URP asset `DemoBuild` creates, gave 33.2, 51.4 and 62.5 — about one frame per
+second for the intermediate and its blit — and the HDR-off typography dump shows
+97 of 126 presented intervals at 17 ms, 26 at 33, 2 at 34 and 1 at 16. The
+shaded area itself was derived with no device, by packing each scene's committed
+tables through the lean painter's CPU-only packer and summing every instance
+quad clipped to the extent: `surfaces` 6.06 Mpx (2.40 panels), `typography` 3.17
+Mpx (1.25), `layout` 5.43 Mpx (2.15); the Unity host draws less of `surfaces`
+than its 6.06 Mpx — nearer 5.2 — since it refuses the shadow, the backdrop blur,
+the image fill, the baked vector nodes and the render-target groups — 9 rects,
+by its own line. `layout` shades more than `typography` and presents faster, so
+per-pixel cost differs by what is drawn — solid fills are the cheap case,
+gradients and strokes on `surfaces` and glyph sampling through 375 separate
+commands on `typography` cost more per pixel or per command — and the lean
+painter's 1.9 ms per megapixel measured on solid rects above is a floor, not the
+rate. Divided by the derived areas, the presented frames give about 5 to 6 ms
+per megapixel on `surfaces` over the Unity host's nearer 5.2 Mpx, about 5.4 on
+`typography` — or a per-command term, unseparated — and at most 3.1 on `layout`.
+Part of the remainder is overdraw through the overlay class's per-pixel SDF
+shader: every node is a blended quad — rects through the overlay class, glyph
+runs through the separate `Dashscene/Text` shader — on paths with no depth test
+(`docs/technotes/batch-renderer-group.md` §4), so the pixels under a panel, its
+glyph runs and the tile behind them are shaded once per layer. Where inside that
+shader the time goes, and how much of `typography`'s frame is the command count
+rather than its pixels (issue #1406), is not separated here, and
+`/sys/class/kgsl` is refused to shell on this device, so no clock or busy figure
+accompanies it.
+
+**This is the first whole-frame figure the Unity host has on this device, and it
+is a bound rather than a bracket.** The `draw` column above excludes the GPU by
+construction; the presented interval includes everything after `Update` returns.
+It says the Unity host's frame at native resolution is about 31 ms on `surfaces`
+and about 20 on `typography`, which sit beside the lean painter's `submit` of
+21.9 and about 10 ms on the same scenes above only as an order of magnitude —
+the two hosts were not run at one extent with one producer profile, which the
+previous section already names as what would settle the comparison. **Where each
+figure comes from.** The interval histograms and the 31 ms production cadence
+are re-derivable from the latency dumps under
+`driftsys/dashscene-v021-lanes/probe-1403/logs/sf-latency-*.txt`, and
+`--latency` returned 127 frame rows in each of the four dumps on this Android 14
+device, 126 or 127 of them with a completed present, which is the older-release
+case the note in "The measurement apparatus, and the procedure at the device"
+below already states: it returns nothing on Android 15 and works on older
+releases, and this Pixel 5 runs Android 14. The `--timestats` rates, the `top`
+sample and the two `setFrameRate` readings were read off the tool and
+transcribed into `driftsys/dashscene-v021-lanes/probe-1403/RESULTS.md` — whose
+HDR table printed the `layout` row under the variant-shelf document's 3
+instances until its "Corrections" section and the re-read put the scene's 29
+beside it — except the per-scene re-read of 2026-09-04, whose dumps are kept
+beside it as `logs/timestats-hdr-on-per-scene.txt` with the `drew` lines in
+`logs/showcase-hdr-on-per-scene.log`. All of it is outside this repository.
 
 ## Unity's Android lifecycle over the lease (2026-08-29)
 

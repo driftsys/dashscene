@@ -327,9 +327,13 @@ Checked against `crates/dashscene-core/src/arena.rs`,
       dominated by waiting on the swapchain, which no measurement here separates
       from GPU work. **No tuning has been done against them**, which is what
       keeps this box unticked. The roughly twenty specific improvements stay
-      held on v1 (epic #476): none has a frame budget or a device measurement
-      behind it, so fixing one now would produce a change whose only success
-      criterion is that the tests still pass.
+      held on v1 (epic #476): none had a frame budget or a device measurement
+      behind it, so fixing one would have produced a change whose only success
+      criterion is that the tests still pass. Since 2026-09-04 one budget
+      exists, for the Pixel 5 at one extent
+      (`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`), and
+      the two GPU stories it carries, #1412 and #1413, are on v0.21; the v1 hold
+      stands for the rest.
 
 ## 6. The design file format
 
@@ -664,7 +668,7 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       which asserts nothing about what it drew. The scenes carry their
       scripted pulse, and the one that declares a variant set carries that
       too, while the documents carry neither, because the motion comes from `unity/demo-producer` — a
-      demonstration library that is `dashscene-ffi` plus six `ds_demo_*`
+      demonstration library that is `dashscene-ffi` plus seven `ds_demo_*`
       entry points — and not from the shipped ABI, which still has no
       producer-side call (story #1342). `Samples~/FrameLoop` is compiled by `just unity-editor` and run
       by nothing. Measured on

@@ -640,6 +640,14 @@ their parent rather than apart from it:
   its painter with `--painter` and swaps it with a key; the frame path holds its
   buffers across frames and applies a dirty range only when the commit
   generation says this frame follows the one on the device (story #585).
+- [the-showcase-hosts-share-one-surface.md](the-showcase-hosts-share-one-surface.md)
+  — **accepted** (2026-08-29): every host drawing the `corpus/showcase` scenes
+  presents one entry order, one input vocabulary, one extent policy and one
+  readout rule. Settles the left and right keys as the scene's signal rather
+  than navigation, which `demo/src/input.rs` and `DashsceneShowcase.cs` had
+  bound two different ways, and moves the Unity sample's navigation to the page
+  keys. Carries the capture mode both Android hosts take, and the measured
+  extents that let their frame costs be compared at all.
 - [unity-painter-uses-brg.md](unity-painter-uses-brg.md) — **accepted**
   (2026-08-18, owner's ruling on issue #171): BatchRendererGroup over
   GameObject-per-node for the Unity painter, targeting Unity 6.3 LTS since
@@ -648,6 +656,30 @@ their parent rather than apart from it:
   of which are carried; D3 is the ladder and D4 is the read that selects between
   its rungs. The minimum Unity version is `07-embedding-and-distribution.md`
   R-E1, settled by story #1125's spike.
+- [brg-draw-command-order-is-not-guaranteed.md](brg-draw-command-order-is-not-guaranteed.md)
+  — **accepted** (2026-08-31, issue #1389): `BatchRendererGroup` groups draw
+  commands by material, which is why the Unity painter drew every surface and no
+  glyph. Setting `HasSortingPosition` and writing a key per command is what
+  makes glyphs draw, and it is **not** established that those keys order the
+  picture — reversing them draws more of the document, and changing the batch
+  size changes the frame. A third measurement, over commands tied on equal keys,
+  is recorded as weaker because it does not isolate the tied group. Recorded as
+  a constraint so no gate is written as though a legible frame proved an order.
+  Depth writes stay rejected. **Amended 2026-09-03 (issue #1401) with D5**: a
+  command carrying `HasSortingPosition` names exactly one visible instance,
+  because Unity's sorted-transparent path was measured dropping commands from
+  single frames when one named more. That reopens the order question rather than
+  settling it — every §5b measurement was taken under the shape D5 forbids.
+- [the-gpu-frame-on-the-target-device-is-budgeted.md](the-gpu-frame-on-the-target-device-is-budgeted.md)
+  — **accepted** (2026-09-04, owner ruling): the `surfaces` scene shall present
+  at the display mode's refresh rate at the native drawable on the target
+  device, read from the compositor — the rate for the budget, the frame cadence
+  for progress — and not from either painter's own headroom figure. On the Pixel
+  5 the `surfaces` scene's GPU frame, about 31 ms when this was ruled, shall not
+  exceed 16.7 ms. The route is R-T2 first — story #1412 for the Unity painter,
+  issue #1293 measure-then-decide for the lean one — then the per-kind cost
+  (#1413); the shaded-area derivation of #1296 gives the submitted area before
+  and after. Pins one device and one extent, not a display class — #549 stands.
 - [unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md](unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md)
   — **accepted** (2026-08-21, story #1125): UPM over a Git URL, and every file
   Unity imports carries a committed `.meta`, because a Git-URL package is
@@ -868,12 +900,13 @@ their parent rather than apart from it:
   guards frame **cost**, not correctness: substep count scales with `dt`. **100
   ms is a convention, not a derived bound** — the lower bound is real (it must
   sit above ordinary hitches) but nothing distinguishes it from Unity's 333 ms,
-  and deriving it needs a frame budget #476 says does not exist. The binding
-  clause is therefore not the value but **cross-painter agreement**: both
-  product painters clamp at the same value, configured rather than inherited
-  from either engine's default. Also lands the clock invariant — no crate at or
-  below `LiveScene` reads a clock — as a committed source scan rather than a
-  convention (story #572).
+  and deriving it needs a frame budget #476 said did not exist — one exists for
+  one device since 2026-09-04, and the other input, the stiffest spring, is
+  still unbounded. The binding clause is therefore not the value but
+  **cross-painter agreement**: both product painters clamp at the same value,
+  configured rather than inherited from either engine's default. Also lands the
+  clock invariant — no crate at or below `LiveScene` reads a clock — as a
+  committed source scan rather than a convention (story #572).
 
 - [test-tiers.md](test-tiers.md) — the workspace suite runs as three nextest
   tiers: `sanity` before every commit, `regression` as the gate, `calibration`

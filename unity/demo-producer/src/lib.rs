@@ -206,6 +206,51 @@ pub extern "C" fn ds_demo_pulse(runtime: DsRuntime, phase: u64) -> DsStatus {
     })
 }
 
+/// Sets the installed scene's own scalar signal to `value`.
+///
+/// Distinct from [`ds_demo_pulse`], which applies the scene's *scripted* phase
+/// and is a function of a frame counter. This one is the channel a person
+/// drives — a drag, or the two keys that put it at either end of its range —
+/// and the channel a capture pins so that two hosts can be photographed in the
+/// same state.
+///
+/// **`value` is clamped to `0.0..=1.0`**, the range every showcase signal is
+/// authored over, because a C caller can pass anything and the drag path on
+/// every Rust host clamps for the same reason.
+///
+/// **A non-finite value lands at the bottom of the range**, and is not
+/// refused. `f32::clamp` propagates NaN rather than clamping it, and a NaN
+/// written into a signal reaches the solver, so it cannot be passed through.
+/// Refusing it would need a `DsStatus` for an out-of-range scalar and none
+/// exists — adding one is a C ABI change, which a demonstration entry point is
+/// the wrong place to force. `Mathf.Clamp01` returns NaN for NaN, so a Unity
+/// host is a caller that can reach this.
+///
+/// A scene declaring no such signal name is not an error, and **this entry
+/// point does not report it either**: `showcase::input::set_signal` answers
+/// `false`, and that answer is dropped here, so a C caller reads `DsStatus::Ok`
+/// whether the write landed or not. `ds_demo_action` carries an `out_ran` for
+/// exactly this and this one has no equivalent, because adding one is a C ABI
+/// change and a demonstration entry point is the wrong place to force it. Every
+/// showcase scene declares a signal, so the case is unreachable from the three
+/// hosts that drive it.
+///
+/// Stages, never commits. The write is visible to the next `ds_runtime_tick`.
+#[unsafe(no_mangle)]
+pub extern "C" fn ds_demo_signal(runtime: DsRuntime, value: f32) -> DsStatus {
+    let Some((entry, generation)) = installed(runtime) else {
+        return nothing_installed("ds_demo_signal");
+    };
+    let clamped = if value.is_nan() {
+        0.0
+    } else {
+        value.clamp(0.0, 1.0)
+    };
+    demo::with_scene(runtime, generation, "ds_demo_signal", |live, _arena| {
+        showcase::input::set_signal(live, entry.signal, clamped);
+    })
+}
+
 /// Runs the installed scene's own variant switch, if it declares one.
 ///
 /// `out_ran` reports whether there was one to run, so a host can say "this scene
@@ -536,6 +581,136 @@ mod tests {
             );
             assert_eq!(ds_runtime_free(handle), DsStatus::Ok);
         }
+    }
+
+    /// Kills: emptying the signal write, and ignoring `value`.
+    ///
+    /// Two values compared, not one frame inspected, for
+    /// `a_pulse_changes_what_the_scene_commits`'s reason: a scene commits rects
+    /// and glyph runs perfectly well with a signal nobody ever wrote.
+    #[test]
+    fn a_signal_changes_what_the_scene_commits() {
+        for name in ["layout", "typography"] {
+            let handle = runtime();
+            assert_eq!(
+                ds_demo_build(handle, index_of(name), 1280, 800),
+                DsStatus::Ok
+            );
+
+            assert_eq!(ds_demo_signal(handle, 0.0), DsStatus::Ok);
+            let low = committed(handle, 600);
+            assert_eq!(ds_demo_signal(handle, 1.0), DsStatus::Ok);
+            let high = committed(handle, 600);
+
+            assert!(
+                low != high,
+                "{name}: the top of the signal's range committed exactly what the \
+                 bottom did, so the write reached nothing"
+            );
+            assert_eq!(ds_runtime_free(handle), DsStatus::Ok);
+        }
+    }
+
+    /// The value carried across, not merely that something changed.
+    ///
+    /// **`low != high` is satisfied by a scaled write.**
+    /// `set_signal(live, name, value * 0.5)` keeps 0.0 and 1.0 committing
+    /// differently, and keeps 1.0 and 40.0 landing together, so both tests
+    /// beside this one stay green while the Unity host holds a different
+    /// signal from the Rust host for the same `--ef capture_signal` — and a
+    /// capture pair then photographs two different states, which is the one
+    /// thing this entry point exists to prevent. This drives one scene through
+    /// the ABI and an identical scene through `showcase::input::set_signal`
+    /// directly, and requires the two committed states to be equal.
+    #[test]
+    fn the_signal_that_crosses_the_abi_is_the_signal_the_scene_receives() {
+        for name in ["layout", "typography"] {
+            let handle = runtime();
+            assert_eq!(
+                ds_demo_build(handle, index_of(name), 1280, 800),
+                DsStatus::Ok
+            );
+            assert_eq!(ds_demo_signal(handle, 0.75), DsStatus::Ok);
+            let across_the_abi = committed(handle, 600);
+            assert_eq!(ds_runtime_free(handle), DsStatus::Ok);
+
+            let handle = runtime();
+            assert_eq!(
+                ds_demo_build(handle, index_of(name), 1280, 800),
+                DsStatus::Ok
+            );
+            let (entry, generation) = installed(handle).expect("a scene is installed");
+            let direct = demo::with_scene(
+                handle,
+                generation,
+                "the test's own write",
+                |live, _arena| {
+                    showcase::input::set_signal(live, entry.signal, 0.75);
+                },
+            );
+            assert_eq!(direct, DsStatus::Ok, "{name}: the direct write landed");
+            let beside_it = committed(handle, 600);
+            assert_eq!(ds_runtime_free(handle), DsStatus::Ok);
+
+            assert_eq!(
+                across_the_abi, beside_it,
+                "{name}: ds_demo_signal(0.75) committed something other than \
+                 set_signal(.., 0.75), so the two hosts hold different states \
+                 for one capture_signal"
+            );
+        }
+    }
+
+    /// Kills: passing `value` through unclamped, and letting NaN through.
+    ///
+    /// Every showcase signal is authored over `0.0..=1.0` and a C caller can
+    /// pass anything, so out of range must land at the end of the range —
+    /// which is what the drag path does on every Rust host. NaN needs its own
+    /// case because `f32::clamp` propagates it rather than clamping it.
+    #[test]
+    fn a_signal_outside_the_range_lands_at_the_end_of_it() {
+        let handle = runtime();
+        assert_eq!(
+            ds_demo_build(handle, index_of("layout"), 1280, 800),
+            DsStatus::Ok
+        );
+
+        assert_eq!(ds_demo_signal(handle, 1.0), DsStatus::Ok);
+        let at_the_top = committed(handle, 600);
+        assert_eq!(ds_demo_signal(handle, 40.0), DsStatus::Ok);
+        let past_the_top = committed(handle, 600);
+        assert_eq!(
+            at_the_top, past_the_top,
+            "40.0 committed something 1.0 did not, so the value was not clamped"
+        );
+
+        assert_eq!(ds_demo_signal(handle, 0.0), DsStatus::Ok);
+        let at_the_bottom = committed(handle, 600);
+        assert_eq!(ds_demo_signal(handle, f32::NAN), DsStatus::Ok);
+        let not_a_number = committed(handle, 600);
+        assert_eq!(
+            at_the_bottom, not_a_number,
+            "NaN committed something 0.0 did not, so it reached the solver"
+        );
+        assert_eq!(ds_runtime_free(handle), DsStatus::Ok);
+    }
+
+    /// Kills: returning a bare `NoDocument` with no `set_last_error`, which
+    /// hands a host whatever unrelated failure was recorded last.
+    #[test]
+    fn a_signal_with_nothing_built_is_refused_and_says_why() {
+        let handle = runtime();
+        assert_ne!(
+            unsafe { ds_runtime_load_document(handle, b"not a dsb".as_ptr(), 9) },
+            DsStatus::Ok
+        );
+        assert_ne!(ds_demo_signal(handle, 0.5), DsStatus::Ok);
+        let message = last_error();
+        assert!(
+            message.contains("ds_demo_signal"),
+            "the refusal names the entry point that refused: {message:?}"
+        );
+        assert_eq!(ds_runtime_free(handle), DsStatus::Ok);
     }
 
     /// Kills: emptying `action(live, arena)`.

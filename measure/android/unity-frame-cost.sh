@@ -130,9 +130,18 @@ for index in $(seq 1 "${sweeps}"); do
         exit 1
     fi
 
+    # **93 is PAGE_DOWN, and it walks the entries.** This sent 22
+    # (DPAD_RIGHT) until 2026-08-29, when the two hosts' vocabularies were
+    # reconciled: `demo/src/input.rs` binds the left and right keys to the two
+    # ends of the scene's own signal range and the Unity sample bound them to
+    # the previous and next entry, so one key meant two things. The desktop
+    # binding won, and navigation moved to the page keys — see
+    # `docs/decisions/the-showcase-hosts-share-one-surface.md`. Sending 22 here
+    # now drives the signal to the top of its range and never leaves the first
+    # entry, which would report one scene measured three times.
     for _ in $(seq 1 "${total}"); do
         sleep "${dwell}"
-        "${adb}" shell input keyevent 22 >/dev/null 2>&1 || true
+        "${adb}" shell input keyevent 93 >/dev/null 2>&1 || true
     done
     sleep 3
     "${adb}" logcat -d > "${log}" 2>/dev/null || true

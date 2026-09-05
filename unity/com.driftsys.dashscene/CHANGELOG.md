@@ -26,6 +26,48 @@ the Cargo workspace rather than moving on its own.
 
 ### Fixed
 
+- **A sorted draw command now names exactly one visible instance.** Unity's
+  sorted-transparent `BatchRendererGroup` path was measured dropping a
+  contiguous subset of draw commands for single frames when a command carrying
+  `BatchDrawCommandFlags.HasSortingPosition` named more than one: the affected
+  region of that frame renders as bare backdrop, nothing is logged, no exception
+  is raised, and the painter's own culling emission is byte-identical on it.
+  `BrgPainter` now emits one draw command per instance, the shape
+  `docs/technotes/batch-renderer-group.md` §3 attributes to Unity's own GPU
+  Resident Drawer and the only one measured free of the defect. On macOS/Metal,
+  Apple M3, Unity 6000.3.23f1, the showcase typography scene: 410 affected
+  frames per 20,000 before, 0 per 20,000 after. The showcase's reported frame
+  cost held its mean at 0.19 ms, though the command count rose from 11 to 381
+  per view — the small movements in the median, 95th percentile and maximum are
+  run-to-run noise, and the figure excludes Unity's culling callback;
+  `docs/design/unity-csharp-host.md` states what it covers.
+  `docs/technotes/batch-renderer-group.md` §5d carries the tables. Issue #1401.
+- **The painter draws its text.** `BrgPainter` drew every surface and no glyph,
+  in every player build on every platform, through ten green configurations —
+  `BatchRendererGroup` groups draw commands by material before drawing them, so
+  the painter's emission order did not survive and the document's backdrop was
+  drawn over the glyphs. The painter now sets
+  `BatchDrawCommandFlags.HasSortingPosition` on every command and writes one
+  sorting key per command, which is what makes the glyphs reach the screen.
+  **The order it draws them in is NOT established**: the measurements that would
+  have settled it were taken under the multi-instance shape the single-instance
+  repair now forbids and have not been re-run, so the question is reopened
+  rather than answered, and
+  `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` records that as a
+  constraint rather than claiming a fix. Do not read a legible frame from this
+  painter as evidence that it has an order. Issue #1389.
+- **Every batch after the first is registered on the RawBuffer rung.**
+  `AddBatches` passed a non-zero window offset there, where Unity requires both
+  window parameters to be zero and refuses the batch otherwise — through a log
+  line rather than an exception, so the loss was silent. The batch's byte offset
+  is folded into the metadata offsets instead. Unreachable through this
+  package's own API today, because the rung's per-batch capacity doubles until
+  one batch covers the whole document. Issue #1389.
+- **A frame the painter cuts short says so.** `OnPerformCulling` now reports,
+  once, when it emitted fewer instances than the frame packed — which happens
+  when `Draw` throws part-way — instead of handing over a partial picture in
+  silence.
+
 - **The manifest no longer says the painter draws no text.** `package.json`'s
   `description` — what a UPM registry listing shows — still said the painter
   draws "no shadows, blurs, images or text" after story #1123 had landed the
@@ -67,20 +109,20 @@ the Cargo workspace rather than moving on its own.
   three, only `layout` does. `Runtime/` gains the `ds_demo_*` declarations for
   it, behind `DASHSCENE_DEMO_PRODUCER`, which no shipped configuration defines:
   the entry points are exported by `unity/demo-producer`, a demonstration
-  library that is `dashscene-ffi` plus six calls, and the shipped C ABI still
+  library that is `dashscene-ffi` plus seven calls, and the shipped C ABI still
   has no producer-side entry point. When layers 1 and 2 land the demonstration
   moves to C# and all of this goes away (story #1342,
   `docs/decisions/the-demo-producer-links-the-abi-rather-than-shipping-in-it.md`).
 - **A showcase sample, and `just unity-demo` to build and run it.**
   `Samples~/Showcase` reads a manifest of documents from `StreamingAssets`,
-  switches on the arrow keys or on a `-cycle <seconds>` argument, and reports
-  the rung, the instance count and every construct the painter refused. The
-  recipe stages the committed documents, the font cascade and — because the
-  package ships no binary — the native library itself, which is why it
-  demonstrates the package's C# and shaders as installed but says nothing about
-  a released plugin layout (issue #1334). It is a demonstration rather than a
-  gate: its `cycle` action asserts that every entry reached the painter, and
-  `unity/render-gate` is what asserts anything about the picture (issue #1329).
+  switches on the page keys or on a `-cycle <seconds>` argument, and reports the
+  rung, the instance count and every construct the painter refused. The recipe
+  stages the committed documents, the font cascade and — because the package
+  ships no binary — the native library itself, which is why it demonstrates the
+  package's C# and shaders as installed but says nothing about a released plugin
+  layout (issue #1334). It is a demonstration rather than a gate: its `cycle`
+  action asserts that every entry reached the painter, and `unity/render-gate`
+  is what asserts anything about the picture (issue #1329).
 - **Text.** The MSDF glyph atlas a run samples crosses the C ABI on its own call
   — `ds_runtime_atlas_count` and `ds_runtime_atlas`, keyed by a `GlyphRun`'s
   atlas index and carrying the sheet as well as the per-glyph placement, because

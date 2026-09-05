@@ -176,6 +176,98 @@ pub fn pixel(rgba: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {
 /// The comparison body, with the images root injected (unit tests use
 /// a temporary root; [`assert_matches_golden`] passes the repository's
 /// `goldens/images/`).
+/// What comparing two same-sized, tightly packed RGBA8888 buffers found.
+///
+/// Carries three numbers rather than one because a differing fraction alone
+/// passes a systematic difference confined to one region of the frame:
+/// [`Comparison::bounds`] and [`Comparison::max_channel_delta`] are what see
+/// it. A golden comparison has a reviewed image on one side and can rely on a
+/// fraction; two hosts drawing the same scene through different painters
+/// cannot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Comparison {
+    /// Pixels in the frame.
+    pub total: usize,
+    /// Pixels counted as differing: some channel differs by more than the
+    /// threshold the comparison was taken at. At threshold 0, which is every
+    /// golden, that is every pixel whose four bytes are not identical.
+    pub differing: usize,
+    /// The first differing pixel in row-major order, as `(x, y)`.
+    pub first: Option<(i32, i32)>,
+    /// The differing pixels' bounding box, as `(min_x, min_y, max_x, max_y)`.
+    pub bounds: Option<(i32, i32, i32, i32)>,
+    /// The largest absolute single-channel difference anywhere in the frame.
+    pub max_channel_delta: u8,
+}
+
+impl Comparison {
+    /// The differing pixels as a fraction of the frame.
+    ///
+    /// `0.0` for an empty frame: no caller can produce one, and dividing by
+    /// zero to say so would be worse than answering.
+    pub fn fraction(&self) -> f64 {
+        if self.total == 0 {
+            return 0.0;
+        }
+        self.differing as f64 / self.total as f64
+    }
+}
+
+/// Compares two tightly packed RGBA8888 buffers of the same width, counting a
+/// pixel as differing only when some channel differs by more than `threshold`.
+///
+/// **`threshold` is 0 for a golden**, where one side is a reviewed image
+/// produced by the same painter and any difference is a change. It is not 0
+/// for two painters: measured on a Pixel 5 on 2026-08-29, the lean painter and
+/// the Unity BRG painter drawing the same document at the same extent differ by
+/// one to three levels per channel on **99.98%** of the frame — a systematic
+/// rounding difference that is invisible and that swamps any count taken at 0.
+///
+/// The caller establishes that the two are the same size — `compare_against`
+/// against the golden's dimensions, and any other caller after decoding.
+pub fn compare_rgba(left: &[u8], right: &[u8], width: i32, threshold: u8) -> Comparison {
+    let total = left.len() / 4;
+    let mut differing = 0usize;
+    let mut first = None;
+    let mut bounds: Option<(i32, i32, i32, i32)> = None;
+    let mut max_channel_delta = 0u8;
+
+    for (i, (a, b)) in left.chunks_exact(4).zip(right.chunks_exact(4)).enumerate() {
+        let delta = a
+            .iter()
+            .zip(b.iter())
+            .map(|(channel_a, channel_b)| channel_a.abs_diff(*channel_b))
+            .max()
+            .unwrap_or(0);
+        // **The maximum is taken over every pixel, not only counted ones.** A
+        // threshold that also hid the largest delta would report a frame as
+        // matching and give no number saying how nearly.
+        max_channel_delta = max_channel_delta.max(delta);
+        if delta <= threshold {
+            continue;
+        }
+        differing += 1;
+        let (x, y) = (i as i32 % width, i as i32 / width);
+        if first.is_none() {
+            first = Some((x, y));
+        }
+        bounds = Some(match bounds {
+            None => (x, y, x, y),
+            Some((min_x, min_y, max_x, max_y)) => {
+                (min_x.min(x), min_y.min(y), max_x.max(x), max_y.max(y))
+            }
+        });
+    }
+
+    Comparison {
+        total,
+        differing,
+        first,
+        bounds,
+        max_channel_delta,
+    }
+}
+
 fn compare_against(root: &Path, name: &str, png_bytes: &[u8], budget: Budget) {
     let golden_path = root.join(format!("{name}.png"));
     let golden_bytes = match std::fs::read(&golden_path) {
@@ -214,23 +306,19 @@ fn compare_against(root: &Path, name: &str, png_bytes: &[u8], budget: Budget) {
     }
 
     let (width, _) = golden_size;
-    let total = golden_pixels.len() / 4;
-    let mut differing = 0usize;
-    let mut first = None;
-    for (i, (golden, actual)) in golden_pixels
-        .chunks_exact(4)
-        .zip(actual_pixels.chunks_exact(4))
-        .enumerate()
-    {
-        if golden != actual {
-            differing += 1;
-            if first.is_none() {
-                first = Some((i as i32 % width, i as i32 / width));
-            }
-        }
-    }
+    // The walk is `compare_rgba`'s, which the parity harness also uses over two
+    // device captures. A golden comparison needs only the count and the first
+    // coordinate; it ignores the bounds and the channel delta, which exist for
+    // the caller that has no reviewed image on either side.
+    // Threshold 0: one side is a reviewed image from this same painter, so any
+    // difference at all is a change. The tolerance a golden carries is a count
+    // of differing pixels, not a per-channel band.
+    let comparison = compare_rgba(&golden_pixels, &actual_pixels, width, 0);
+    let total = comparison.total;
+    let differing = comparison.differing;
+    let first = comparison.first;
 
-    let fraction = differing as f64 / total as f64;
+    let fraction = comparison.fraction();
     let (within_budget, limit) = match budget {
         Budget::Fraction(max) => (fraction <= max, format!("{:.3}% tolerance", max * 100.0)),
         Budget::Pixels(max) => (differing <= max, format!("{max} px budget")),
@@ -279,9 +367,22 @@ fn remove_stale_actual(root: &Path, name: &str) {
 /// Decodes a PNG to `((width, height), unpremultiplied RGBA8888 rows)`.
 /// `label` names the image in failure messages (golden vs render).
 fn decode_rgba(png_bytes: &[u8], label: &str) -> ((i32, i32), Vec<u8>) {
+    match try_decode_rgba(png_bytes, label) {
+        Ok(decoded) => decoded,
+        // The two messages are the golden path's and are pinned by this
+        // module's `should_panic` tests: `try_decode_rgba` formats them and
+        // this re-raises them unchanged.
+        Err(message) => panic!("{message}"),
+    }
+}
+
+/// [`decode_rgba`] without the panic, for a caller comparing two images
+/// neither of which is a reviewed golden.
+fn try_decode_rgba(png_bytes: &[u8], label: &str) -> Result<((i32, i32), Vec<u8>), String> {
     let data = Data::new_copy(png_bytes);
-    let image = images::deferred_from_encoded_data(data, None)
-        .unwrap_or_else(|| panic!("{label} is not a decodable PNG"));
+    let Some(image) = images::deferred_from_encoded_data(data, None) else {
+        return Err(format!("{label} is not a decodable PNG"));
+    };
     let (width, height) = (image.width(), image.height());
     let info = ImageInfo::new(
         (width, height),
@@ -298,11 +399,47 @@ fn decode_rgba(png_bytes: &[u8], label: &str) -> ((i32, i32), Vec<u8>) {
         (0, 0),
         skia_safe::image::CachingHint::Disallow,
     );
-    assert!(
-        read,
-        "{label} has a readable header but its pixel data does not decode (truncated or corrupt)"
-    );
-    ((width, height), pixels)
+    if !read {
+        return Err(format!(
+            "{label} has a readable header but its pixel data does not decode (truncated or corrupt)"
+        ));
+    }
+    Ok(((width, height), pixels))
+}
+
+/// Decodes a PNG to unpremultiplied RGBA8888 for [`pixel`], or `None`.
+///
+/// The comparison path's own decode, exposed so that a caller looking at *why*
+/// two frames differ reads the same bytes the count was taken over.
+pub fn decode_for_sampling(png_bytes: &[u8]) -> Option<((i32, i32), Vec<u8>)> {
+    try_decode_rgba(png_bytes, "the image").ok()
+}
+
+/// Compares two encoded PNGs.
+///
+/// `Err` when either buffer does not decode, or when the two are different
+/// sizes — which is a refusal rather than a difference: two frames of
+/// different extents answer no question about whether two painters agree.
+///
+/// The counterpart of `assert_matches_golden_within` for a caller with no
+/// reviewed image on either side, such as the Android host-parity harness
+/// comparing one capture from each host.
+pub fn compare_pngs(left: &[u8], right: &[u8], threshold: u8) -> Result<Comparison, String> {
+    let (left_size, left_pixels) = try_decode_rgba(left, "the left image")?;
+    let (right_size, right_pixels) = try_decode_rgba(right, "the right image")?;
+    if left_size != right_size {
+        return Err(format!(
+            "the left image is {}x{} but the right is {}x{} — two extents answer \
+             no question about whether the two agree",
+            left_size.0, left_size.1, right_size.0, right_size.1
+        ));
+    }
+    Ok(compare_rgba(
+        &left_pixels,
+        &right_pixels,
+        left_size.0,
+        threshold,
+    ))
 }
 
 #[cfg(test)]
@@ -312,7 +449,7 @@ mod tests {
     use skia_safe::{Color4f, surfaces};
     use tempfile::TempDir;
 
-    use super::{Budget, compare_against};
+    use super::{Budget, compare_against, compare_pngs, compare_rgba};
 
     /// A 2×2 PNG: three pixels of `base`, the bottom-right pixel of
     /// `corner`. Encoded directly through skia rather than through
@@ -500,6 +637,183 @@ mod tests {
         assert!(
             message.contains("over 0 px budget") && message.contains("1/4 pixel(s) differ"),
             "unexpected report: {message}"
+        );
+    }
+
+    #[test]
+    fn two_identical_pngs_compare_equal() {
+        let png = tiny_png(RED, RED);
+        let c = compare_pngs(&png, &png, 0).expect("both decode and match in size");
+        assert_eq!(c.differing, 0);
+        assert_eq!(c.total, 4);
+    }
+
+    #[test]
+    fn two_differing_pngs_report_the_pixel_that_differs() {
+        let left = tiny_png(RED, RED);
+        let right = tiny_png(RED, BLUE);
+        let c = compare_pngs(&left, &right, 0).expect("both decode and match in size");
+        assert_eq!(c.differing, 1);
+        assert_eq!(c.first, Some((1, 1)));
+        assert_eq!(c.bounds, Some((1, 1, 1, 1)));
+        assert!(c.max_channel_delta > 0);
+    }
+
+    #[test]
+    fn an_undecodable_image_is_an_error_rather_than_a_panic() {
+        let png = tiny_png(RED, RED);
+        let error = compare_pngs(b"not a png", &png, 0).expect_err("undecodable left");
+        assert!(
+            error.contains("not a decodable PNG"),
+            "the error names what failed: {error:?}"
+        );
+        let error = compare_pngs(&png, b"not a png", 0).expect_err("undecodable right");
+        assert!(
+            error.contains("not a decodable PNG"),
+            "the right image is checked too: {error:?}"
+        );
+    }
+
+    /// Two extents are refused rather than compared: a capture of one host at
+    /// a different extent than the other answers no question about whether the
+    /// two painters agree, and reporting a huge differing fraction for it
+    /// would look like a rendering difference.
+    #[test]
+    fn two_extents_are_refused_rather_than_compared() {
+        let small = tiny_png(RED, BLUE);
+        let mut surface = surfaces::raster_n32_premul((4, 4)).expect("surface");
+        surface.canvas().clear(RED);
+        let large = surface
+            .image_snapshot()
+            .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+            .expect("PNG encode")
+            .as_bytes()
+            .to_vec();
+
+        let error = compare_pngs(&small, &large, 0).expect_err("different extents");
+        assert!(
+            error.contains("2x2") && error.contains("4x4"),
+            "the refusal names both extents: {error:?}"
+        );
+    }
+
+    /// A `width` x `width` transparent-black RGBA8888 buffer.
+    fn blank(width: usize) -> Vec<u8> {
+        vec![0u8; width * width * 4]
+    }
+
+    #[test]
+    fn identical_buffers_compare_equal() {
+        let a = blank(4);
+        let c = compare_rgba(&a, &a, 4, 0);
+        assert_eq!(c.differing, 0);
+        assert_eq!(c.total, 16);
+        assert_eq!(c.fraction(), 0.0);
+        assert_eq!(c.first, None);
+        assert_eq!(c.bounds, None);
+        assert_eq!(c.max_channel_delta, 0);
+    }
+
+    #[test]
+    fn one_differing_pixel_is_located_and_bounded() {
+        let a = blank(4);
+        let mut b = a.clone();
+        // pixel (2, 1), green channel: row 1 of a 4-wide image, column 2.
+        b[(4 + 2) * 4 + 1] = 9;
+        let c = compare_rgba(&a, &b, 4, 0);
+        assert_eq!(c.differing, 1);
+        assert_eq!(c.first, Some((2, 1)));
+        assert_eq!(c.bounds, Some((2, 1, 2, 1)));
+        assert_eq!(c.max_channel_delta, 9);
+    }
+
+    /// The case a differing fraction alone cannot see: a small, dense,
+    /// systematic difference confined to one region of an otherwise identical
+    /// frame. The fraction reads as noise; the bounding box and the channel
+    /// delta are what report it.
+    ///
+    /// This is why [`Comparison`] carries three numbers rather than one.
+    #[test]
+    fn a_region_shifted_image_is_reported_by_its_bounds_not_its_fraction() {
+        let width = 100usize;
+        let a = blank(width);
+        let mut b = a.clone();
+        for y in 10..20 {
+            for x in 30..40 {
+                b[(y * width + x) * 4] = 255;
+            }
+        }
+        let c = compare_rgba(&a, &b, width as i32, 0);
+        assert_eq!(c.differing, 100);
+        assert!(
+            c.fraction() < 0.02,
+            "the differing fraction alone reads as noise: {}",
+            c.fraction()
+        );
+        assert_eq!(c.bounds, Some((30, 10, 39, 19)));
+        assert_eq!(c.max_channel_delta, 255);
+        // The *first* differing pixel in row-major order, not the last.
+        // `compare_against`'s failure message says "first at (x, y)" and
+        // points a reader at it, so recording the last one would send them to
+        // the wrong corner of the region. A single-pixel case cannot tell the
+        // two apart; this one can.
+        assert_eq!(c.first, Some((30, 10)));
+    }
+
+    /// `threshold` is the reason this function is public, and every test above
+    /// passes 0 — which is the one value at which the parameter can be ignored
+    /// without any of them noticing.
+    ///
+    /// Two mutations this kills, both of which survive the tests above:
+    /// replacing the `delta <= threshold` skip with `delta == 0`, so the
+    /// parameter does nothing and the Android parity pair reads 99.98 %
+    /// differing; and taking `max_channel_delta` only over counted pixels
+    /// rather than over every pixel, which is what that field's own comment
+    /// says it does not do.
+    #[test]
+    fn a_threshold_excludes_smaller_deltas_and_still_reports_the_largest() {
+        let a = blank(4);
+        let mut b = a.clone();
+        // Three differing pixels on row 0, with red deltas of 1, 2 and 3.
+        b[0] = 1;
+        b[4] = 2;
+        b[8] = 3;
+
+        let strict = compare_rgba(&a, &b, 4, 0);
+        assert_eq!(strict.differing, 3, "every delta counts at threshold 0");
+
+        let banded = compare_rgba(&a, &b, 4, 2);
+        assert_eq!(
+            banded.differing, 1,
+            "only the delta of 3 exceeds a threshold of 2"
+        );
+        assert_eq!(
+            banded.first,
+            Some((2, 0)),
+            "the located pixel is the one that exceeded the threshold"
+        );
+        assert_eq!(banded.bounds, Some((2, 0, 2, 0)));
+        assert_eq!(
+            banded.max_channel_delta, 3,
+            "the maximum is taken over every pixel, not only counted ones"
+        );
+        assert_eq!(banded.total, 16, "the total is the frame, not the count");
+    }
+
+    /// The golden path is strict on purpose and nothing pinned it: every
+    /// fixture above differs by a saturated 255, so raising
+    /// `compare_against`'s threshold from 0 to 3 would leave the whole
+    /// workspace's goldens green while every one-to-three-level regression
+    /// became invisible.
+    #[test]
+    fn a_golden_differing_by_one_level_still_counts_as_differing() {
+        let a = blank(4);
+        let mut b = a.clone();
+        b[0] = 1;
+        let c = compare_rgba(&a, &b, 4, 0);
+        assert_eq!(
+            c.differing, 1,
+            "a golden has one painter on both sides, so one level is a change"
         );
     }
 }

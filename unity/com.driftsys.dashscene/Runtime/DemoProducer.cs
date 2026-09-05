@@ -106,6 +106,18 @@ namespace Driftsys.Dashscene
             }
         }
 
+        internal static DsStatus ds_demo_signal(ulong runtime, float value)
+        {
+            try
+            {
+                return Imports.ds_demo_signal(runtime, value);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw Native.SymbolMissing(e);
+            }
+        }
+
         internal static DsStatus ds_demo_action(ulong runtime, out byte outRan)
         {
             try
@@ -141,6 +153,9 @@ namespace Driftsys.Dashscene
 
             [DllImport(Native.Lib, CallingConvention = CallingConvention.Cdecl)]
             internal static extern DsStatus ds_demo_pulse(ulong runtime, ulong phase);
+
+            [DllImport(Native.Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_demo_signal(ulong runtime, float value);
 
             /// `outRan` is a `bool` in the producer and binds as `byte`, for the
             /// reason the note at the top of `Native.cs` gives: .NET's default
@@ -231,6 +246,23 @@ namespace Driftsys.Dashscene
         public void PulseDemoScene(ulong phase)
         {
             Check(DemoNative.ds_demo_pulse(Handle(), phase), "ds_demo_pulse");
+        }
+
+        /// Sets the installed scene's own scalar signal.
+        ///
+        /// Distinct from [`PulseDemoScene`], which applies the scene's
+        /// *scripted* phase. This is the channel a person drives — a drag, or
+        /// the two keys that put it at either end of its range — and the one a
+        /// capture pins so two hosts can be photographed in the same state.
+        ///
+        /// The producer clamps to `0.0..=1.0` and lands a non-finite value at
+        /// the bottom of that range, so `Mathf.Clamp01` returning NaN for NaN
+        /// is handled on the other side rather than here.
+        ///
+        /// Stages, never commits. The write is visible to the next `Tick`.
+        public void SetDemoSignal(float value)
+        {
+            Check(DemoNative.ds_demo_signal(Handle(), value), "ds_demo_signal");
         }
 
         /// Runs the installed scene's own variant switch.

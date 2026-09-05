@@ -321,7 +321,7 @@ Check("every declared entry point resolves in the library", () =>
     };
 
 #if DASHSCENE_DEMO_PRODUCER
-    // The demonstration configuration's six, which `unity/demo-producer`
+    // The demonstration configuration's seven, which `unity/demo-producer`
     // exports beside the shipped set. Listed here rather than derived, on this
     // check's own grounds: the set is this gate's copy of the contract and
     // moves only when a person moves it.
@@ -338,6 +338,7 @@ Check("every declared entry point resolves in the library", () =>
         "ds_demo_scene_count",
         "ds_demo_scene_name",
         "ds_demo_scene_summary",
+        "ds_demo_signal",
     });
 #endif
 
@@ -1300,7 +1301,7 @@ Check("every managed entry point a host can call reports the missing symbol", ()
         ("ds_runtime_atlas_count",
             () => Call("ReadAtlases", Type.EmptyTypes, null)),
 #if DASHSCENE_DEMO_PRODUCER
-        // The demonstration's six, driven rather than exempted (story #1342).
+        // The demonstration's seven, driven rather than exempted (story #1342).
         //
         // **This is the whole reason the demo configuration exists.** These
         // imports sit behind a `#if` the shipped pass never defines, so without
@@ -1318,6 +1319,11 @@ Check("every managed entry point a host can call reports the missing symbol", ()
             () => Call("PulseDemoScene", new[] { typeof(ulong) }, new object[] { 1ul })),
         ("ds_demo_action",
             () => Call("RunDemoAction", Type.EmptyTypes, null)),
+        // The signal is the channel a person drives, distinct from the pulse
+        // above; issue #1389 found it declared and bound by nothing, because
+        // story #1342's set was written when there were six.
+        ("ds_demo_signal",
+            () => Call("SetDemoSignal", new[] { typeof(float) }, new object[] { 0.5f })),
         // The three readers are static on `DemoScenes` rather than members of
         // the runtime, so they are reached through the probe's own copy of that
         // type rather than through `Call`.
