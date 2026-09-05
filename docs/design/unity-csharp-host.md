@@ -1486,9 +1486,39 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   developer minutes or tens of minutes into an editor run rather than on the
   pull request that broke it.
 
-  **Three measurements narrow the choice the issue leaves open, and none of them
-  closes it.** Referencing an editor's own managed assemblies makes CI depend on
-  an installed editor, which
+  **One of the three shapes is now refused, by the owner's ruling of 2026-09-05:
+  no Roslyn-as-a-library parse gate.** Two reasons, and the second is the one
+  that decides it.
+
+  It would be the first `PackageReference` in any `.csproj` here — there are
+  three, and none has one, nor is there a `nuget.config`, a `packages.lock.json`
+  or a `Directory.Build.props` — so it opens a supply chain along with the
+  policy that has to govern it, which the Rust half answered long ago in
+  [`../decisions/cargo-lock-is-committed.md`](../decisions/cargo-lock-is-committed.md)
+  and this half has never had to.
+
+  **And it would be the wrong compiler.** Unity ships its own Roslyn:
+  `Unity.app/Contents/Resources/Scripting/DotNetSdkRoslyn/csc.dll`, which
+  `csc.deps.json` names as `Microsoft.CodeAnalysis.CSharp/4.3.1-3.22526.13` on
+  `net6.0` for editor `6000.3.23f1`. A `PackageReference` resolved for these
+  `net10.0` projects — SDK `10.0.400` here — brings a Roslyn roughly three
+  language versions newer, and none of the three `.csproj` pins `LangVersion`.
+  So the gate would accept syntax the editor rejects: green on a pull request,
+  broken the moment someone opens Unity, which is the failure it exists to catch
+  and in the direction that matters. Pinning `LangVersion` to the editor's would
+  be a second version to keep synchronised, of the kind the `ANDROID_API` floor
+  already is.
+
+  What it would buy either way is thin: a parser sees syntax, not binding, and
+  the realistic break here is a renamed `UnityEditor` type or a changed
+  signature after an editor bump. **The compiler that would catch those is the
+  one Unity ships**, and reaching it needs the installed editor D4 rules out for
+  CI — so what remains is a job that compiles these files inside a real Unity
+  project, which is issue #1316's factoring rather than a fourth shape.
+
+  **Three measurements narrowed the choice, and none of them closed it.**
+  Referencing an editor's own managed assemblies makes CI depend on an installed
+  editor, which
   [`../decisions/the-native-library-ships-inside-the-unity-package.md`](../decisions/the-native-library-ships-inside-the-unity-package.md)
   D4 rules out, and those assemblies are Unity's to license rather than this
   repository's to vendor. A formatter is not a syntax gate:
@@ -1496,15 +1526,14 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   whitespace --verify-no-changes` runs over these files with no
   reference assemblies at all and reports formatting drift, and it exits **0**
   over a copy of `DashsceneAndroidProbe.cs` carrying `error CS1026: ) expected`
-  — so the cheap form of a Roslyn pass would need Roslyn as a library, which
-  would be the first `PackageReference` in any `.csproj` here. And a vendored
-  facade is not a small one: these files reach `UnityEngine`, `UnityEditor`,
-  `UnityEditor.Build`, `UnityEditor.Build.Reporting`,
-  `UnityEditor.SceneManagement`, `UnityEngine.Rendering`, URP's
-  `UnityEngine.Rendering.Universal` — which lives in a package assembly rather
-  than in the editor install — and the package's own `Runtime/Engine/` types.
-  With no references the compiler stops after about a hundred errors, so that
-  surface cannot even be enumerated in one pass.
+  — so the cheap form of a Roslyn pass would need Roslyn as a library, which the
+  ruling above refuses. And a vendored facade is not a small one: these files
+  reach `UnityEngine`, `UnityEditor`, `UnityEditor.Build`,
+  `UnityEditor.Build.Reporting`, `UnityEditor.SceneManagement`,
+  `UnityEngine.Rendering`, URP's `UnityEngine.Rendering.Universal` — which lives
+  in a package assembly rather than in the editor install — and the package's
+  own `Runtime/Engine/` types. With no references the compiler stops after about
+  a hundred errors, so that surface cannot even be enumerated in one pass.
 
 - **No release, and therefore no tag.** Story #1334 landed the library on
   2026-08-24: the package ships macOS arm64 and Android arm64 under
