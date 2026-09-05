@@ -957,6 +957,50 @@ there, and the last paragraph of this section says where it is:
   rejection, and group opacity where contents overlap.
 - `frame_path.rs` — the incremental-upload path, asserted through
   `InstanceUpload` rather than through the picture.
+- `shaded_area.rs` — what each `corpus/showcase` scene shades in one frame at
+  2340x1080, pinned per scene (issue #1296). Not a gate over a picture: it is a
+  monitor over three numbers per scene, taken with no device, because
+  `pack::pack` states every quad's `bounds` and `outset` on the CPU before
+  anything is uploaded. It is the only test here that reaches `corpus/showcase`,
+  through a dev-dependency; that crate depends on core, engine, typeset,
+  dashpaint, dashlang and dashc and not on this one, so the edge introduces no
+  cycle.
+
+      scene        instances   shaded        groups
+      surfaces            65   6.1083 Mpx         1
+      typography         381   3.2100 Mpx         0
+      layout              29   5.4616 Mpx         0
+
+  **Instances and groups are compared for equality; the area within 0.01 %.**
+  The band has been tightened twice, each time by a mutation the previous one
+  let through: 1 % passed a `pack.rs` with its stroke outset zeroed, which moves
+  `surfaces` by 0.18 %; 0.1 % passed half of that mutation — an outside stroke
+  treated as centred, about 0.09 % — and a blur support trimmed from
+  `3.0 * sigma` to `2.7 *`.
+
+  **The area includes `AA_WIDTH`, and a first draft did not.** `paint.wgsl`'s
+  vertex stage computes `globals.aa + instance_outset(inst)`, so every quad is
+  one pixel larger per side than `bounds` grown by `outset` — worth 1.36 % on
+  `typography`, whose 375 glyph quads are a few tens of pixels across. That
+  constant is private to `render.rs`, so the test carries a copy and a second
+  test holds the two equal by reading the source.
+
+  **The group count is pinned because the megapixel sum does not carry it.**
+  `composite.wgsl`'s `vs_composite` builds a full-target quad from the vertex
+  index alone, and `pack` emits no instance for a group — so `surfaces`' one
+  group costs another 2.5272 Mpx, taking its real per-frame shading to about
+  8.64 Mpx, **3.4x the extent** rather than the 2.4x the instance sum alone
+  reports. A scene that gained a group would otherwise shade 2.5 Mpx more and
+  move the pinned number by nothing.
+
+  **What it still does not cover**, stated so the figure is not read as a whole
+  frame: the backdrop's full-target snapshot, its base blit and its two blur
+  passes; the substituted plane quad a `shape` mask draws instead of `bounds`;
+  and, within the instances it does cover, node-level clip regions and rotation
+  — an instance a clip would cut down is counted whole. Issue #1425 records one
+  more: the sum cannot separate a centred stroke from an outside one, because
+  the only two non-inside strokes in the showcase are the same box at the same
+  width.
 
 `goldens/tooling/tests/lean_painter_text.rs` and `lean_painter_baked_assets.rs`
 exercise this painter against real corpus assets from the golden side of the
