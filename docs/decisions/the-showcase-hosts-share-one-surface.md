@@ -38,7 +38,7 @@ makes a build usable by hand, and the key event makes it drivable by
 drag drives it from the pointer's normalised horizontal position; the left and
 right keys set it to the bottom and the top of its range.
 
-**Four commands.** `next` and `previous` walk the entries, `action` runs the
+**Five commands.** `next` and `previous` walk the entries, `action` runs the
 scene's own variant switch, `orientation` swaps portrait and landscape, and
 `readout` shows or hides the frame-cost readout.
 
@@ -54,6 +54,13 @@ scene's own variant switch, `orientation` swaps portrait and landscape, and
 `demo/src/input.rs`'s binding, which is the older of the two and the one written
 to name no scene, and it is the one that wins. The Unity sample's navigation
 moved to the page keys on 2026-08-29.
+
+**One of the five key events is measured on a device and the other four are
+not.** `PAGE_DOWN` is; `PAGE_UP` (92), `SPACE` (62), `DPAD_UP` (19) and `R` (46)
+reaching `KeyCode.PageUp`, `Space`, `UpArrow` and `R` are assumed by the same
+table, on the strength of `DPAD_RIGHT` and `PAGE_DOWN` both arriving. A run
+driving each of the four and reporting a distinct effect is what would settle
+them.
 
 **`PAGE_DOWN` reaching `KeyCode.PageDown` under Unity on Android is measured,
 not assumed.** Taken on a Pixel 5 (`redfin`, Android 14) on 2026-08-29: a
@@ -77,7 +84,7 @@ until a fourth scene lands and the hosts silently disagree.
 ## Extent
 
 Both Android hosts draw at the full display extent. `demo-android` reaches it
-with three changes, each of which was needed and none of which any gate here can
+with four changes, each of which was needed and none of which any gate here can
 see — measured on the Pixel 5 on 2026-08-29:
 
 |                                             | extent                                      |
@@ -87,15 +94,31 @@ see — measured on the Pixel 5 on 2026-08-29:
 | plus `LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS` | 2340x948 landscape                          |
 | plus a fullscreen theme                     | **2340x1080 landscape, 1080x2340 portrait** |
 
+The fourth is not an extent step and so has no row: the root view consumes the
+window insets (`WindowInsets.CONSUMED`). Hiding the bars and going edge to edge
+still left this host at 1080x2186, because the insets were being applied to the
+content; consuming them is what makes the drawable the whole display.
+
 `mMaxBounds` for that device is 1080x2340, and the Unity player reports
 2340x1080 in the same orientation. The two now agree.
 
 ## The readout
 
-Same fields, in the same order, in the same units, and suppressible on both
-hosts. **Suppressed by a flag, never by disabling whatever draws it** —
-`DashsceneShowcase.cs` records that disabling the behaviour took the frame loop
-down together with the readout.
+**Suppressible on both hosts, by a flag, never by disabling whatever draws it**
+— `DashsceneShowcase.cs` records that disabling the behaviour took the frame
+loop down together with the readout. That is the half of the drift this contract
+closes, and it is closed on both.
+
+**The fields are not yet the same, and this records the difference rather than
+asserting it away.** `demo-android` draws entry, extent, then `tick`, `paint`,
+`submit`, `p50`, `p95`, `max` and a frame count, on screen. The Unity sample's
+on-screen label carries the entry, the rung, the instance count and the
+diagnostics, and its frame cost — entry, extent, frames, `tick`, `draw` mean,
+`p50`, `p95`, `max` and an unpaced-fps figure — goes to logcat through
+`DashsceneFrameCost.Line()`. So one host shows its frame cost and the other logs
+it, and the two orders differ in where the frame count sits. Bringing the Unity
+frame cost on screen is what closes this; until then a reader comparing the two
+readouts is comparing two shapes.
 
 The shape is shared and the term names are not. Each host names its own measured
 spans, because `paint` and `submit` on the lean host and `draw` on the Unity
@@ -108,7 +131,10 @@ the error `demo/src/shell.rs` warns about.
 `capture <scene> <phase> <signal>`, delivered as three intent extras
 (`--es capture_scene`, `--ei capture_phase`, `--ef capture_signal`). The host
 builds that scene, pins that phase, sets that signal, suppresses the readout,
-draws a fixed number of frames and holds.
+and holds that state for as long as the launch runs. **Neither host counts
+frames**, and this record asked for a fixed count before either was written:
+what the comparison needs is the state pinned, and a `screencap` takes whatever
+frame is on the display when it runs.
 
 **All three or none.** A capture with a defaulted phase or signal photographs a
 different state than the other host is holding, and a comparison fed by it would

@@ -1,16 +1,26 @@
 //! Compares two PNGs and prints what differs, as JSON.
 //!
-//! The way a shell harness reaches [`goldens::compare_pngs`]:
-//! `measure/android/host-parity.sh` captures one frame from each Android host
-//! and needs the three numbers this prints. A binary rather than a test,
-//! because the two images are device captures that exist only during a run and
-//! neither is a reviewed golden.
+//! How a shell harness reaches [`goldens::compare_pngs`]. A binary rather than
+//! a test, because the two images are device captures that exist only during a
+//! run and neither is a reviewed golden.
+//!
+//! **It has no caller in the tree yet**, and the harness that will call it —
+//! `measure/android/host-parity.sh` — is issue #1329's remaining limb and does
+//! not exist. The Android host-parity captures of 2026-08-29 were compared by
+//! running this binary by hand; `docs/design/android-toolchain.md` records the
+//! readings and says the same thing from the other side. Issue #1399 is the
+//! ticket for the gap.
 //!
 //! ```text
 //! compare-images lean.png unity.png
 //! {"differing":1234,"total":2527200,"fraction":0.000488,
-//!  "bounds":[30,10,39,19],"max_channel_delta":255}
+//!  "bounds":[30,10,39,19],"max_channel_delta":255,"threshold":0}
 //! ```
+//!
+//! `threshold` is echoed back because it is read from `COMPARE_THRESHOLD` and
+//! an unparseable value falls back to 0 — which reads 99.98 % differing on two
+//! painters, so a caller needs the value in the output rather than in its own
+//! assumption.
 //!
 //! Exit 0 when the two decode and share an extent, whatever they show — a
 //! difference is a result, not a failure. Exit 2 when they cannot be compared

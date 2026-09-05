@@ -668,7 +668,7 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
       which asserts nothing about what it drew. The scenes carry their
       scripted pulse, and the one that declares a variant set carries that
       too, while the documents carry neither, because the motion comes from `unity/demo-producer` — a
-      demonstration library that is `dashscene-ffi` plus six `ds_demo_*`
+      demonstration library that is `dashscene-ffi` plus seven `ds_demo_*`
       entry points — and not from the shipped ABI, which still has no
       producer-side call (story #1342). `Samples~/FrameLoop` is compiled by `just unity-editor` and run
       by nothing. Measured on

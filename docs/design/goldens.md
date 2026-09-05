@@ -37,6 +37,7 @@ All in `goldens/tooling/src/lib.rs`:
     pub fn compare_rgba(left: &[u8], right: &[u8], width: i32, threshold: u8) -> Comparison
     pub fn compare_pngs(left: &[u8], right: &[u8], threshold: u8) -> Result<Comparison, String>
     pub fn decode_for_sampling(png_bytes: &[u8]) -> Option<((i32, i32), Vec<u8>)>
+    impl Comparison { pub fn fraction(&self) -> f64 }
 
 `assert_matches_golden` compares a render against the checked-in golden
 `goldens/images/{name}.png` bit-exactly; `assert_matches_golden_within` allows a

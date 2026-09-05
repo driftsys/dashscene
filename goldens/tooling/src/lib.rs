@@ -188,7 +188,9 @@ pub fn pixel(rgba: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {
 pub struct Comparison {
     /// Pixels in the frame.
     pub total: usize,
-    /// Pixels whose four bytes are not identical.
+    /// Pixels counted as differing: some channel differs by more than the
+    /// threshold the comparison was taken at. At threshold 0, which is every
+    /// golden, that is every pixel whose four bytes are not identical.
     pub differing: usize,
     /// The first differing pixel in row-major order, as `(x, y)`.
     pub first: Option<(i32, i32)>,
@@ -756,5 +758,62 @@ mod tests {
         // the wrong corner of the region. A single-pixel case cannot tell the
         // two apart; this one can.
         assert_eq!(c.first, Some((30, 10)));
+    }
+
+    /// `threshold` is the reason this function is public, and every test above
+    /// passes 0 — which is the one value at which the parameter can be ignored
+    /// without any of them noticing.
+    ///
+    /// Two mutations this kills, both of which survive the tests above:
+    /// replacing the `delta <= threshold` skip with `delta == 0`, so the
+    /// parameter does nothing and the Android parity pair reads 99.98 %
+    /// differing; and taking `max_channel_delta` only over counted pixels
+    /// rather than over every pixel, which is what that field's own comment
+    /// says it does not do.
+    #[test]
+    fn a_threshold_excludes_smaller_deltas_and_still_reports_the_largest() {
+        let a = blank(4);
+        let mut b = a.clone();
+        // Three differing pixels on row 0, with red deltas of 1, 2 and 3.
+        b[0] = 1;
+        b[4] = 2;
+        b[8] = 3;
+
+        let strict = compare_rgba(&a, &b, 4, 0);
+        assert_eq!(strict.differing, 3, "every delta counts at threshold 0");
+
+        let banded = compare_rgba(&a, &b, 4, 2);
+        assert_eq!(
+            banded.differing, 1,
+            "only the delta of 3 exceeds a threshold of 2"
+        );
+        assert_eq!(
+            banded.first,
+            Some((2, 0)),
+            "the located pixel is the one that exceeded the threshold"
+        );
+        assert_eq!(banded.bounds, Some((2, 0, 2, 0)));
+        assert_eq!(
+            banded.max_channel_delta, 3,
+            "the maximum is taken over every pixel, not only counted ones"
+        );
+        assert_eq!(banded.total, 16, "the total is the frame, not the count");
+    }
+
+    /// The golden path is strict on purpose and nothing pinned it: every
+    /// fixture above differs by a saturated 255, so raising
+    /// `compare_against`'s threshold from 0 to 3 would leave the whole
+    /// workspace's goldens green while every one-to-three-level regression
+    /// became invisible.
+    #[test]
+    fn a_golden_differing_by_one_level_still_counts_as_differing() {
+        let a = blank(4);
+        let mut b = a.clone();
+        b[0] = 1;
+        let c = compare_rgba(&a, &b, 4, 0);
+        assert_eq!(
+            c.differing, 1,
+            "a golden has one painter on both sides, so one level is a change"
+        );
     }
 }

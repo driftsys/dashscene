@@ -8,7 +8,9 @@
 // deliberately narrower than they are. Issue #1329.
 //
 // **What it shows, and how the two halves differ.** The list is the showcase
-// scenes first, then the committed documents, and left/right walks all of them:
+// scenes first, then the committed documents, and the page keys walk all of
+// them — the arrow keys drive the showing scene's signal
+// (`docs/decisions/the-showcase-hosts-share-one-surface.md`):
 //
 // - **The scenes** — `surfaces`, `typography` and `layout`, built into the
 //   runtime's arena by a native producer, with their scripted pulse and, where
@@ -28,7 +30,7 @@
 // plus those entry points; `just unity-demo` builds it and stages it under the
 // shipped library's file name, and `just demo-exports` asserts it is the
 // shipped seventeen unchanged plus a `ds_demo_`-prefixed set, and
-// `unity/ffi-check`'s demonstration pass names the six. With
+// `unity/ffi-check`'s demonstration pass names them. With
 // `DASHSCENE_DEMO_PRODUCER` undefined this file compiles to the document half
 // alone, which is what a customer's own build of the sample does.
 //
@@ -136,7 +138,7 @@ namespace Driftsys.Dashscene.Samples
         ///
         /// That file's other constant, `PULSES_PER_SCENE`, is deliberately NOT
         /// mirrored: nothing here advances an entry on a pulse count. Without
-        /// `-cycle` this sample waits for an arrow key, and with it the switch
+        /// `-cycle` this sample waits for a page key, and with it the switch
         /// is on elapsed seconds. An earlier version of this comment claimed
         /// both constants, which described behaviour this file does not have.
         private const float PulseSeconds = 2.5f;
@@ -223,7 +225,7 @@ namespace Driftsys.Dashscene.Samples
         private int _readoutHeight;
 
         /// Seconds between automatic switches, from `-cycle <seconds>` on the
-        /// command line. Zero leaves switching to the arrow keys.
+        /// command line. Zero leaves switching to the page keys.
         ///
         /// **A demonstration takes a key press; a check cannot.** Without
         /// this, whether every document in the manifest loads and draws is

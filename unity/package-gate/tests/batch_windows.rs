@@ -24,7 +24,7 @@
 //! WITHOUT folding the offset into the metadata, which points every batch at
 //! batch zero's property arrays and says nothing at all.
 
-use package_gate::cs_scan::member_body;
+use package_gate::cs_scan::{assignment_count, member_body};
 use package_gate::painter_source as painter;
 
 use package_gate::PAINTER_PATH as PAINTER;
@@ -116,11 +116,25 @@ fn the_batch_offset_is_folded_into_the_metadata_offsets() {
     // points every batch at batch zero's property arrays — the mutation this
     // file's own header calls worse than the bug it closes, since Unity logs
     // nothing at all for it.
-    let assignments = body.matches("window =").count();
+    //
+    // **`assignment_count`, not `matches("window =")`.** The spaced literal is
+    // the exact defeat `cs_scan`'s own documentation records — `window=0;`,
+    // legal and uncaught, because no formatter covers `Runtime/Engine/`. It
+    // also counted `window ==` as an assignment.
+    let assignments = assignment_count(body, "window");
     assert_eq!(
         assignments, 1,
         "{PAINTER}'s AddBatches assigns `window` {assignments} time(s), not \
          once. A second assignment undoes the rung split without changing the \
          initialiser this file pins."
     );
+    // The compound spellings `assignment_count` structurally cannot see, named
+    // one at a time so a reader knows the list is the whole of it.
+    for spelling in ["window +=", "window-=", "window +=", "window++", "window--"] {
+        assert!(
+            !body.contains(spelling),
+            "{PAINTER}'s AddBatches carries `{spelling}`, which moves the \
+             window without an assignment `assignment_count` can see."
+        );
+    }
 }

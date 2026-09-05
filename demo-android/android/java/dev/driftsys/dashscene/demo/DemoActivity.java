@@ -23,13 +23,18 @@ import android.widget.TextView;
  * The showcase on Android: the same demonstration {@code demo} and
  * {@code demo-web} run.
  *
- * <p>Which scene is a launch parameter rather than a keystroke, because Android
- * has no command line and no keyboard:
+ * <p>Which scene a launch OPENS on is a launch parameter, because Android has
+ * no command line:
  *
  * <pre>adb shell am start -n ... --es scene typography</pre>
  *
  * <p>An absent or unknown name draws the first scene rather than failing the
  * launch.
+ *
+ * <p>Which scene is SHOWING is not fixed for the run. The page keys and a
+ * vertical swipe walk the entries, and the whole vocabulary — gestures and the
+ * key events an {@code adb}-driven run sends — is
+ * {@code docs/decisions/the-showcase-hosts-share-one-surface.md}.
  *
  * <p><b>Input is wired, and the signal is still written from Rust.</b> This
  * class forwards a gesture or a key as one command; it authors nothing. The
@@ -117,9 +122,23 @@ public final class DemoActivity extends Activity implements SurfaceHolder.Callba
             Log.i(TAG, "demo: capture extras = " + captureScene + " phase " + capturePhase
                     + " signal " + captureSignal);
             // A capture is photographed, and the readout would composite into
-            // the photograph. The native half refuses a partial capture; this
-            // side only has to stop drawing over it.
-            readoutVisible = false;
+            // the photograph.
+            //
+            // **The same three-way test the native half applies**, and not
+            // `captureScene != null`. A partial set is not a capture — the
+            // native half says so and runs the demonstration — so hiding the
+            // readout on the name alone left a demonstration running with its
+            // readout gone and no way back to it but finding the `R` key.
+            // `-1` and `NaN` are the sentinels the two `getExtra` defaults
+            // above return for an absent extra, which is what `Capture::parse`
+            // rejects on the other side.
+            boolean whole = capturePhase >= 0 && !Float.isNaN(captureSignal);
+            if (whole) {
+                readoutVisible = false;
+            } else {
+                Log.w(TAG, "demo: capture_scene came without a usable phase and signal — "
+                        + "running the demonstration, readout shown");
+            }
         }
 
         // **Edge to edge, and the bars hidden.** The Unity player runs

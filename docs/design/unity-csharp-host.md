@@ -1025,9 +1025,9 @@ host's half and the two hosts' first compared captures.
 built into a live arena by `dashlang`, and their motion is host-driven — so a C#
 host cannot animate them while layers 1 and 2 are `v1`, and re-authoring them in
 C# would be a second definition that drifts from the one `demo-android` draws.
-`unity/demo-producer` is `dashscene-ffi` linked as an rlib plus six `ds_demo_*`
-entry points; `just unity-demo` builds and stages it in place of the shipped
-library and defines `DASHSCENE_DEMO_PRODUCER` for the player build.
+`unity/demo-producer` is `dashscene-ffi` linked as an rlib plus seven
+`ds_demo_*` entry points; `just unity-demo` builds and stages it in place of the
+shipped library and defines `DASHSCENE_DEMO_PRODUCER` for the player build.
 `docs/decisions/the-demo-producer-links-the-abi-rather-than-shipping-in-it.md`
 carries why it is a separate crate rather than a feature of the shipped one, and
 `just demo-exports` is what holds it to being the shipped seventeen plus a set
@@ -1203,12 +1203,14 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   so the run says so and asserts nothing. A fixture with one isolated rounded
   node would change it; issue #828's suite is where that belongs.
 - **No frustum culling.** `OnPerformCulling` reads one field of its
-  `BatchCullingContext` — `lodParameters.cameraPosition`, which issue #1389's
-  sorting keys are built from, so the command stream is camera-dependent — and
-  uses none of the culling planes. It emits every instance for every camera. For
-  a full-screen overlay that is the right answer and costs nothing; for a
-  document placed in a 3D scene it is work per camera proportional to the whole
-  document.
+  `BatchCullingContext` — `localToWorldMatrix.GetColumn(3)`, the view's
+  position, which issue #1389's sorting keys are built from, so the command
+  stream is camera-dependent — and uses none of the culling planes. Not
+  `lodParameters.cameraPosition`, which the painter's own comment rejects by
+  name and which appears nowhere in it. It emits every instance for every
+  camera. For a full-screen overlay that is the right answer and costs nothing;
+  for a document placed in a 3D scene it is work per camera proportional to the
+  whole document.
 - **R-T4's dirty-range upload is not implemented, and this is what the full
   repack costs.** The painter repacks every rect and re-uploads the whole
   instance buffer — including capacity past the live instances — on every frame,

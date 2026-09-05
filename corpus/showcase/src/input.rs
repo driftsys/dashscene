@@ -6,9 +6,12 @@
 //! [`crate::Showcase`]. That is what lets hosts with unrelated event types
 //! share one vocabulary rather than author one each.
 //!
-//! **`demo` is the only caller today.** `demo-android` and the Unity sample
-//! reach it as the showcase-parity work lands; until they do, this module is
-//! shared by intent rather than in fact.
+//! **Three callers, on three hosts.** `demo/src/input.rs` on the desktop,
+//! `demo-android/src/host.rs` through the touch and key vocabulary, and
+//! `unity/demo-producer`'s `ds_demo_signal` for the Unity sample. That is what
+//! makes it shared in fact rather than by intent, and it is the reason the
+//! module names no scene: every one of the three looks the signal's name up on
+//! the `Showcase` entry it is showing.
 //!
 //! This is the second home of these bodies. They were `demo/src/input.rs`'s,
 //! where story #573 wrote them to name no scene deliberately; what kept them
@@ -67,6 +70,27 @@ pub fn run_action(live: &mut LiveScene, arena: &mut Arena, action: Option<SceneA
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The other half of [`set_signal`]'s stated rule, which no caller in this
+    /// workspace exercises because every showcase scene declares its signal.
+    /// A document loaded from a `.dsb` is the case that presents it, and the
+    /// answer must be `false` rather than a panic — and rather than `true`,
+    /// which would have both Android hosts force a redraw on every pointer
+    /// sample against a document declaring no such name.
+    #[test]
+    fn an_undeclared_signal_name_reports_that_nothing_was_written() {
+        let mut arena = dashscene_core::Arena::new();
+        let scene = &crate::SCENES[0];
+        let mut live = (scene.build)(&mut arena, 1280, 800);
+        assert!(
+            set_signal(&mut live, scene.signal, 0.5),
+            "the scene's own signal is declared"
+        );
+        assert!(
+            !set_signal(&mut live, "no-scene-declares-this", 0.5),
+            "an undeclared name reports that nothing was written"
+        );
+    }
 
     #[test]
     fn a_zero_width_drawable_yields_no_signal_value() {

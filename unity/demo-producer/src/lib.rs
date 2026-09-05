@@ -226,9 +226,14 @@ pub extern "C" fn ds_demo_pulse(runtime: DsRuntime, phase: u64) -> DsStatus {
 /// the wrong place to force. `Mathf.Clamp01` returns NaN for NaN, so a Unity
 /// host is a caller that can reach this.
 ///
-/// A scene declaring no such signal name is not an error: the write reports
-/// that nothing happened, which is the rule `showcase::input::set_signal`
-/// carries for every host.
+/// A scene declaring no such signal name is not an error, and **this entry
+/// point does not report it either**: `showcase::input::set_signal` answers
+/// `false`, and that answer is dropped here, so a C caller reads `DsStatus::Ok`
+/// whether the write landed or not. `ds_demo_action` carries an `out_ran` for
+/// exactly this and this one has no equivalent, because adding one is a C ABI
+/// change and a demonstration entry point is the wrong place to force it. Every
+/// showcase scene declares a signal, so the case is unreachable from the three
+/// hosts that drive it.
 ///
 /// Stages, never commits. The write is visible to the next `ds_runtime_tick`.
 #[unsafe(no_mangle)]
@@ -603,6 +608,56 @@ mod tests {
                  bottom did, so the write reached nothing"
             );
             assert_eq!(ds_runtime_free(handle), DsStatus::Ok);
+        }
+    }
+
+    /// The value carried across, not merely that something changed.
+    ///
+    /// **`low != high` is satisfied by a scaled write.**
+    /// `set_signal(live, name, value * 0.5)` keeps 0.0 and 1.0 committing
+    /// differently, and keeps 1.0 and 40.0 landing together, so both tests
+    /// beside this one stay green while the Unity host holds a different
+    /// signal from the Rust host for the same `--ef capture_signal` — and a
+    /// capture pair then photographs two different states, which is the one
+    /// thing this entry point exists to prevent. This drives one scene through
+    /// the ABI and an identical scene through `showcase::input::set_signal`
+    /// directly, and requires the two committed states to be equal.
+    #[test]
+    fn the_signal_that_crosses_the_abi_is_the_signal_the_scene_receives() {
+        for name in ["layout", "typography"] {
+            let handle = runtime();
+            assert_eq!(
+                ds_demo_build(handle, index_of(name), 1280, 800),
+                DsStatus::Ok
+            );
+            assert_eq!(ds_demo_signal(handle, 0.75), DsStatus::Ok);
+            let across_the_abi = committed(handle, 600);
+            assert_eq!(ds_runtime_free(handle), DsStatus::Ok);
+
+            let handle = runtime();
+            assert_eq!(
+                ds_demo_build(handle, index_of(name), 1280, 800),
+                DsStatus::Ok
+            );
+            let (entry, generation) = installed(handle).expect("a scene is installed");
+            let direct = demo::with_scene(
+                handle,
+                generation,
+                "the test's own write",
+                |live, _arena| {
+                    showcase::input::set_signal(live, entry.signal, 0.75);
+                },
+            );
+            assert_eq!(direct, DsStatus::Ok, "{name}: the direct write landed");
+            let beside_it = committed(handle, 600);
+            assert_eq!(ds_runtime_free(handle), DsStatus::Ok);
+
+            assert_eq!(
+                across_the_abi, beside_it,
+                "{name}: ds_demo_signal(0.75) committed something other than \
+                 set_signal(.., 0.75), so the two hosts hold different states \
+                 for one capture_signal"
+            );
         }
     }
 

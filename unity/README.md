@@ -124,7 +124,7 @@ repository builds and records.
                               (story #1342). `just demo-exports` holds it to
                               the shipped seventeen plus a set carrying only
                               the `ds_demo_` prefix — `unity/ffi-check`'s
-                              demonstration pass is what names the six. Needs
+                              demonstration pass is what names them. Needs
                               neither an editor nor the .NET SDK, so CI's
                               `demo-build` job runs it on every code diff
 

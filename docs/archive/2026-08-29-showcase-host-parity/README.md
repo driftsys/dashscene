@@ -15,8 +15,8 @@ Compared with `cargo run -p goldens --bin compare-images`.
 ## The noise floor is one to three levels, and it is systematic
 
 At threshold 0 the `layout` pair differs in **99.98%** of its pixels while
-looking identical. Sampled at five coordinates, the two hosts differ by one to
-three levels per channel almost everywhere:
+looking identical. Sampled at three coordinates spread across the frame, the two
+hosts differ by one to three levels per channel at every one of them:
 
     (10,10)     left [14, 18, 30]    right [14, 18, 29]
     (400,120)   left [33, 41, 59]    right [32, 40, 59]

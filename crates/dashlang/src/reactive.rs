@@ -1108,7 +1108,8 @@ struct BuildCtx {
 ///
 /// **100 ms is a choice, not a derivation.** It has to sit above ordinary
 /// hitches or it fires in normal operation, and nothing distinguishes it from
-/// Unity's 333 ms without a frame budget — this project had none until 2026-09-04, and has one for one device since. What the
+/// Unity's 333 ms without a frame budget — this project had none until
+/// 2026-09-04, and has one for one device since. What the
 /// binding rule fixes is that every host clamps at the *same* value and that
 /// the value is configured rather than inherited from an engine default —
 /// `docs/decisions/frame-delta-is-clamped-and-the-host-owns-the-clock.md`.

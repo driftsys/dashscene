@@ -49,8 +49,10 @@ the Cargo workspace rather than moving on its own.
   drawn over the glyphs. The painter now sets
   `BatchDrawCommandFlags.HasSortingPosition` on every command and writes one
   sorting key per command, which is what makes the glyphs reach the screen.
-  **The order it draws them in is NOT established**: measurement rules out the
-  keys imposing it, and
+  **The order it draws them in is NOT established**: the measurements that would
+  have settled it were taken under the multi-instance shape the single-instance
+  repair now forbids and have not been re-run, so the question is reopened
+  rather than answered, and
   `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` records that as a
   constraint rather than claiming a fix. Do not read a legible frame from this
   painter as evidence that it has an order. Issue #1389.
@@ -107,20 +109,20 @@ the Cargo workspace rather than moving on its own.
   three, only `layout` does. `Runtime/` gains the `ds_demo_*` declarations for
   it, behind `DASHSCENE_DEMO_PRODUCER`, which no shipped configuration defines:
   the entry points are exported by `unity/demo-producer`, a demonstration
-  library that is `dashscene-ffi` plus six calls, and the shipped C ABI still
+  library that is `dashscene-ffi` plus seven calls, and the shipped C ABI still
   has no producer-side entry point. When layers 1 and 2 land the demonstration
   moves to C# and all of this goes away (story #1342,
   `docs/decisions/the-demo-producer-links-the-abi-rather-than-shipping-in-it.md`).
 - **A showcase sample, and `just unity-demo` to build and run it.**
   `Samples~/Showcase` reads a manifest of documents from `StreamingAssets`,
-  switches on the arrow keys or on a `-cycle <seconds>` argument, and reports
-  the rung, the instance count and every construct the painter refused. The
-  recipe stages the committed documents, the font cascade and — because the
-  package ships no binary — the native library itself, which is why it
-  demonstrates the package's C# and shaders as installed but says nothing about
-  a released plugin layout (issue #1334). It is a demonstration rather than a
-  gate: its `cycle` action asserts that every entry reached the painter, and
-  `unity/render-gate` is what asserts anything about the picture (issue #1329).
+  switches on the page keys or on a `-cycle <seconds>` argument, and reports the
+  rung, the instance count and every construct the painter refused. The recipe
+  stages the committed documents, the font cascade and — because the package
+  ships no binary — the native library itself, which is why it demonstrates the
+  package's C# and shaders as installed but says nothing about a released plugin
+  layout (issue #1334). It is a demonstration rather than a gate: its `cycle`
+  action asserts that every entry reached the painter, and `unity/render-gate`
+  is what asserts anything about the picture (issue #1329).
 - **Text.** The MSDF glyph atlas a run samples crosses the C ABI on its own call
   — `ds_runtime_atlas_count` and `ds_runtime_atlas`, keyed by a `GlyphRun`'s
   atlas index and carrying the sheet as well as the per-glyph placement, because

@@ -11,9 +11,12 @@
             comparison, demo-android's native and Java halves, the Unity
             showcase's vocabulary and capture mode, and the harness call
             sites — `git grep "keyevent 22"` returns no hit outside this
-            file and the design capture. Tasks 8 and 9 did not:
-            measure/android/host-parity.sh and host-parity-test.sh do not
-            exist. Task 10 is the device pass and needs hardware.
+            file and the design capture. Task 8 did not:
+            measure/android/host-parity.sh and host-parity-test.sh, both of
+            its deliverables, do not exist. Task 9 did not either, and its
+            evidence is separate: measure/android/unity-frame-cost.sh changed
+            only its keyevent, and neither host's build profile or dwell
+            moved. Task 10 is the device pass and needs hardware.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or

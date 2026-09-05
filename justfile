@@ -2703,9 +2703,10 @@ demo-exports profile="debug":
     # **The added count is printed, not asserted, and the difference matters.**
     # This recipe requires the added set to be non-empty and wholly
     # `ds_demo_`-prefixed; it does not pin how many there are, so a seventh
-    # entry point would pass here. `unity/ffi-check`'s `expected` set is what
-    # names the six, and it names what the PACKAGE declares. Four documents
-    # claimed "exactly six" of this recipe until the review of PR #1365.
+    # entry point would pass here — and a seventh, `ds_demo_signal`, has since
+    # landed. `unity/ffi-check`'s `expected` set is what names them, and it
+    # names what the PACKAGE declares. Four documents claimed "exactly six" of
+    # this recipe until the review of PR #1365.
     echo "demo-exports: OK ({{profile}}) — $(printf '%s\n' "${shipped}" | wc -l | tr -d ' ') shipped entry \
     points present unchanged, $(printf '%s\n' "${added}" | wc -l | tr -d ' ') ds_demo_ added:"
     printf '  %s\n' ${added}
@@ -2886,7 +2887,7 @@ unity-demo unity_version="6000.3.23f1" action="run":
     # asserted that this file exports the shipped seventeen unchanged, compiled
     # from the same crate, plus a set carrying only the `ds_demo_` prefix.
     # (That recipe pins the prefix, not the cardinality; `unity/ffi-check`'s
-    # demonstration pass is what holds the six by name.)
+    # demonstration pass is what holds them by name.)
     staged="${project}/Assets/Plugins/$(basename "${lib}" | sed 's/demo_producer/dashscene_ffi/')"
     cp "${lib}" "${staged}"
     echo "unity-demo: staged $(basename "${lib}") as $(basename "${staged}")"
@@ -3164,7 +3165,8 @@ unity-demo unity_version="6000.3.23f1" action="run":
     # `unity-render`, which is why that gate is `-batchmode`. Neither action
     # works on a session with no display at all; `cycle` at least fails at its
     # bound rather than hanging.
-    echo "unity-demo: left/right switch documents, close the window to finish"
+    echo "unity-demo: page up/down walk the entries, left/right drive the signal"
+    echo "unity-demo: close the window to finish"
     echo "unity-demo: log at ${player_log}"
     bundle="${player%/Contents/MacOS/*}"
     if [ -d "${bundle}" ]; then

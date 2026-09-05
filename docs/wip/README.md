@@ -37,7 +37,11 @@ plan were tracked here while the work ran and are archived as
 they **are** in this directory's history on `main`: that story landed as a
 branch carrying four already-merged pull requests, so it was not squashed to one
 commit, and the two files appear here and are then removed by the gardening
-commit. The count went ten to twelve and back to ten inside one branch.
+commit. The count moved four times inside this one branch: ten at its base,
+twelve when #1329's pair landed, **fourteen** while the single-instance lane's
+own design and plan were staged here beside them (`bfc5bc3` through `3a39728`),
+twelve again when that lane archived its two, and ten at the head. Only the base
+and the head are on `main`.
 
 **What the pair gardened into.** The contract half is
 `docs/decisions/the-showcase-hosts-share-one-surface.md`; the pixel readings and

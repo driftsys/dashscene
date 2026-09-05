@@ -176,6 +176,56 @@ impl Capture {
     }
 }
 
+/// What the three capture extras asked for.
+///
+/// **Three outcomes, not two.** `Capture::parse` answers `Option`, and a
+/// caller reading `None` as "no capture was asked for" runs the demonstration
+/// on `SCENES[0]` while `DemoActivity` has already hidden the readout — so a
+/// single mistyped letter in `--es capture_scene` produced a plausible
+/// photograph of the wrong scene at whatever phase the wall clock had reached,
+/// silently. That is the exact outcome
+/// `docs/decisions/the-showcase-hosts-share-one-surface.md` forbids, and the
+/// Unity sample already refuses it by name.
+// No `PartialEq`: `Ready` carries a `&'static Showcase`, which holds function
+// pointers and derives nothing. Tests match on the variant.
+#[derive(Debug, Clone)]
+pub enum CaptureRequest {
+    /// No `capture_scene` extra. Run the demonstration.
+    Absent,
+    /// `capture_scene` named a scene the registry does not carry. **Refused**:
+    /// a measurement that photographs a scene nobody asked for is worse than
+    /// no measurement, which is why this is not `select`'s fall back to the
+    /// first.
+    UnknownScene(String),
+    /// `capture_scene` arrived without a usable phase or signal. Not a
+    /// capture, so the demonstration runs — and the readout is shown, because
+    /// nothing is being photographed.
+    Partial,
+    /// All three, and the scene exists.
+    Ready(Capture),
+}
+
+impl CaptureRequest {
+    /// Reads the three extras.
+    ///
+    /// The sentinels are `DemoNative.nativeStart`'s: a phase of `-1` and a
+    /// signal of `NaN` are what `getIntExtra`/`getFloatExtra` return for an
+    /// absent extra, and both read as [`CaptureRequest::Partial`].
+    #[must_use]
+    pub fn of(scene: Option<&str>, phase: Option<i64>, signal: Option<f32>) -> Self {
+        let Some(name) = scene else {
+            return Self::Absent;
+        };
+        if showcase::by_name(name).is_none() {
+            return Self::UnknownScene(name.to_owned());
+        }
+        match Capture::parse(Some(name), phase, signal) {
+            Some(capture) => Self::Ready(capture),
+            None => Self::Partial,
+        }
+    }
+}
+
 /// The on-screen readout's text: the scene, the extent, and every term this
 /// host measures.
 ///
@@ -295,6 +345,113 @@ mod tests {
         assert!(Capture::parse(Some("not-a-scene"), Some(0), Some(0.0)).is_none());
     }
 
+    /// The three outcomes are distinguishable, which is the whole point of the
+    /// type: reading a bare `None` as "no capture was asked for" ran the
+    /// demonstration on the first scene with the readout already hidden.
+    #[test]
+    fn a_refused_capture_is_not_the_same_answer_as_no_capture() {
+        assert!(matches!(
+            CaptureRequest::of(None, None, None),
+            CaptureRequest::Absent
+        ));
+        assert!(
+            matches!(
+                CaptureRequest::of(Some("typograhy"), Some(2), Some(0.5)),
+                CaptureRequest::UnknownScene(ref name) if name == "typograhy"
+            ),
+            "one transposed letter must not read as `no capture was asked for`"
+        );
+        assert!(matches!(
+            CaptureRequest::of(Some("layout"), None, Some(0.5)),
+            CaptureRequest::Partial
+        ));
+        assert!(matches!(
+            CaptureRequest::of(Some("layout"), Some(2), Some(0.5)),
+            CaptureRequest::Ready(_)
+        ));
+    }
+
+    /// The two sentinels `DemoNative.nativeStart` actually delivers for an
+    /// absent extra. Neither may become a capture, and `-1` in particular must
+    /// not wrap: `u64::MAX` is the "phase not yet written" value
+    /// `ShowcaseFrames` initialises to, so a wrapped `-1` would make the first
+    /// frame skip both the pulse and the signal.
+    #[test]
+    fn the_absent_extra_sentinels_are_not_a_capture() {
+        assert!(
+            matches!(
+                CaptureRequest::of(Some("layout"), Some(-1), Some(0.5)),
+                CaptureRequest::Partial
+            ),
+            "getIntExtra's -1 default must not become a phase"
+        );
+        assert!(
+            matches!(
+                CaptureRequest::of(Some("layout"), Some(2), Some(f32::NAN)),
+                CaptureRequest::Partial
+            ),
+            "getFloatExtra's NaN default must not become a signal"
+        );
+        assert!(matches!(
+            CaptureRequest::of(Some("layout"), Some(2), Some(f32::INFINITY)),
+            CaptureRequest::Partial
+        ));
+    }
+
+    /// A signal outside the authored range lands at the end of it rather than
+    /// being refused, because a harness rounding 1.0 to 1.0000001 is not asking
+    /// for a different state.
+    #[test]
+    fn a_capture_signal_outside_the_range_is_clamped_into_it() {
+        let above = Capture::parse(Some("layout"), Some(0), Some(40.0)).expect("a capture");
+        assert!(
+            (above.signal - 1.0).abs() < f32::EPSILON,
+            "{}",
+            above.signal
+        );
+        let below = Capture::parse(Some("layout"), Some(0), Some(-40.0)).expect("a capture");
+        assert!(below.signal.abs() < f32::EPSILON, "{}", below.signal);
+    }
+
+    /// Every path that installs a scene records the extent it installed it at.
+    ///
+    /// **A structural scan, and it says what it cannot do.** `host.rs` is
+    /// `#[cfg(target_os = "android")]`, so no test on a workstation can
+    /// construct a `ShowcaseFrames` or drive `attach` — and the defect this
+    /// pins was exactly that: `attach` built a scene and left `extent` at
+    /// `(0, 0)`, while `dashscene_android::LoopState::step` calls `resize` only
+    /// when the extent CHANGES, so a surface that never resized left every
+    /// width-dependent input dead for its whole life. What holds the invariant
+    /// now is that `extent`, `arena` and `live` are written in one place;
+    /// this asserts there is still only one such place. It cannot tell whether
+    /// the extent written is the right one — that is the device pass on issue
+    /// #1329.
+    #[test]
+    fn a_scene_is_installed_in_exactly_one_place_and_it_records_the_extent() {
+        let host = include_str!("host.rs");
+        assert_eq!(
+            host.matches("self.live = Some(").count(),
+            1,
+            "a second place that installs a scene is a second place that can \
+             forget the extent; put it through `install` instead"
+        );
+        assert_eq!(
+            host.matches("self.extent = ").count(),
+            1,
+            "the extent is written where the scene is installed and nowhere else"
+        );
+        let install = host
+            .split_once("fn install(&mut self, width: u32, height: u32) {")
+            .expect("host.rs still declares `fn install`")
+            .1;
+        let body = &install[..install.find("\n    }").expect("`install` still ends")];
+        assert!(
+            body.contains("self.extent = ") && body.contains("self.live = Some("),
+            "both writes belong to `install`, so neither path can take one \
+             without the other: {body}"
+        );
+    }
+
     #[test]
     fn the_readout_names_the_scene_the_extent_and_every_measured_term() {
         let sample = Sample {
@@ -312,11 +469,21 @@ mod tests {
         let text = readout(&sample, 1080, 2340);
         assert!(text.contains("layout"), "{text}");
         assert!(text.contains("1080x2340"), "{text}");
-        assert!(text.contains("tick"), "{text}");
-        assert!(text.contains("paint"), "{text}");
-        assert!(text.contains("submit"), "{text}");
-        assert!(text.contains("0.18"), "the tick value is shown: {text}");
-        assert!(text.contains("9.94"), "the submit mean is shown: {text}");
+        // **Label and value together, not each separately.** Asserting
+        // `contains("tick")` and `contains("0.18")` passed with the arguments
+        // transposed, which is the one thing the readout's stated order exists
+        // to prevent.
+        assert!(text.contains("tick 0.18 ms"), "{text}");
+        assert!(text.contains("paint 0.01 ms"), "{text}");
+        assert!(text.contains("submit 9.94 ms"), "{text}");
+        assert!(text.contains("p50 9.90"), "{text}");
+        assert!(text.contains("p95 10.84"), "{text}");
+        assert!(text.contains("max 11.17"), "{text}");
+        assert!(text.contains("240 frames"), "{text}");
+        let tick = text.find("tick").expect("tick is named");
+        let paint = text.find("paint").expect("paint is named");
+        let submit = text.find("submit").expect("submit is named");
+        assert!(tick < paint && paint < submit, "the stated order: {text}");
     }
 
     #[test]

@@ -839,14 +839,15 @@ of the two everything in the bundle is timed by, which is the other half of
 ## The two hosts share one surface
 
 Both Android hosts draw the same scenes, take the same input vocabulary and run
-at the same extent. **The two frame-cost tables below predate that surface and
-are not yet comparable**: "Frame costs (#842)" is a `release` build in landscape
-at 2340x805, and "The Unity painter, on the same device" is a `demo-release`
-build in portrait at 1080x2340. Extent, orientation and build profile all
-differ, and this record's own note under the first table says a set taken across
-mixed orientations cannot be compared. The run that takes both hosts at one
-extent, one orientation and one profile is issue #1329's remaining limb, and
-nothing has taken it.
+at the same extent. **This record's two frame-cost tables predate that surface
+and are not yet comparable**, and only one of them is below this line: "Frame
+costs (#842)", further up, is a `release` build in landscape at 2340x805, and
+"The Unity painter, on the same device", below, is a `demo-release` build in
+portrait at 1080x2340. Extent, orientation and build profile all differ, and
+this record's own note under the first table says a set taken across mixed
+orientations cannot be compared. The run that takes both hosts at one extent,
+one orientation and one profile is issue #1329's remaining limb, and nothing has
+taken it.
 
 The rules, the key events an `adb`-driven run sends, and the three changes that
 took `demo-android` from 1080x1984 to the full display extent are
@@ -866,11 +867,12 @@ they were compared with `goldens`' `compare-images` binary by hand, because
 
 **A differing-pixel count at threshold 0 says nothing about two painters.** The
 `layout` pair differs in 99.98 % of its pixels at threshold 0 while looking
-identical: sampled at five coordinates, the two hosts differ by one to three
-levels per channel almost everywhere. That is the right measure for a golden,
-where the reviewed image comes from the same painter, and the wrong one here.
-The count stops moving above threshold 3 and the bounding box collapses onto one
-band, so threshold 8 is where the three scenes are read:
+identical: sampled at three coordinates spread across the frame, the two hosts
+differ by one to three levels per channel at every one of them. That is the
+right measure for a golden, where the reviewed image comes from the same
+painter, and the wrong one here. The count stops moving above threshold 3 and
+the bounding box collapses onto one band, so threshold 8 is where the three
+scenes are read:
 
     scene        differing   bounds                  max delta
     surfaces      31.10%     [50,50 - 2289,808]        240

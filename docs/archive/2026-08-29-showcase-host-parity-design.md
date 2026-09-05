@@ -3,9 +3,16 @@
     status  design capture, 2026-08-29. Archived 2026-09-05, verbatim below
             this block, once the durable records had landed.
     issue   #1329 (story, v0.21), under epic #1107 Track B
-    built   W1, W2 and W4 — plan tasks 1 to 7. W3, W5 and W6 were not built
-            and are issue #1329's remaining limb, tracked there rather than
-            held in docs/wip/, because W6 needs a device.
+    built   W1, W2 and W4 — plan tasks 1 to 7. W3 and W5 were not built.
+            W6 was taken by hand rather than by W5's harness: the six captures
+            were compared on a Pixel 5 on 2026-08-29 and both halves of its
+            deliverable exist — the readings are in
+            docs/design/android-toolchain.md and the captures are archived
+            beside this file. What W6 has NOT had is its stated input, a
+            frame-cost run of both hosts under one condition, which is W3.
+            That and W5's harness are issue #1329's remaining limb, tracked
+            there rather than held in docs/wip/, because the run needs a
+            device.
     records docs/decisions/the-showcase-hosts-share-one-surface.md (the
             contract, including the Alternatives below);
             docs/design/android-toolchain.md (the two hosts' compared

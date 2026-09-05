@@ -121,16 +121,37 @@ struct ShowcaseFrames {
 }
 
 impl ShowcaseFrames {
-    /// Builds the scene for this extent, into a fresh arena.
+    /// Installs `self.scene` at this extent: a fresh arena, a fresh
+    /// `LiveScene`, and the extent recorded beside them.
+    ///
+    /// **The only place `extent`, `arena` and `live` are written**, because
+    /// they are one fact and a path that writes two of the three is a defect
+    /// this host has already had. `attach` built the scene itself and left
+    /// `extent` at the `(0, 0)` its factory gives it:
+    /// `dashscene_android::LoopState::step` calls `Frames::resize` only when
+    /// the extent **changes**, so a launch whose surface reports one extent and
+    /// never moves — which the fullscreen theme, the hidden bars and the
+    /// consumed insets in `DemoActivity` exist to produce — never reached
+    /// `build` at all. Every input needing a width was then dead:
+    /// `showcase::input::signal_from_x(x, 0)` answers `None`, so the drag and
+    /// both arrow keys wrote no signal; a scene change rebuilt at 0x0; and the
+    /// readout printed `0x0` as the extent the shared-surface record says both
+    /// hosts must agree on.
     ///
     /// A scene built in code derives every offset from the drawable it is given,
     /// so a new extent means a new scene — the same answer `demo` and
     /// `demo-web` give. The scene brings its own solver, which is why its text
     /// has a typesetter at all.
-    fn build(&mut self, width: u32, height: u32) {
+    fn install(&mut self, width: u32, height: u32) {
         self.extent = (width, height);
         self.arena = Arena::new();
         self.live = Some((self.scene.build)(&mut self.arena, width, height));
+    }
+
+    /// [`ShowcaseFrames::install`], plus everything a **re**build has to
+    /// discard that a first install has nothing of.
+    fn build(&mut self, width: u32, height: u32) {
+        self.install(width, height);
         // The incoming arena's generations start again, and nothing in the
         // frames themselves says so.
         if let Some(renderer) = self.renderer.as_mut() {
@@ -248,12 +269,13 @@ impl Frames for ShowcaseFrames {
             self.scene.name,
         ));
         self.renderer = Some(renderer);
-        // Not `build`: that reports `document_replaced`, and this renderer was
-        // constructed three lines ago with nothing uploaded. `dashscene-web`
-        // names that as the second mechanism not to add — the constructor
-        // already establishes the state it would clear.
-        self.arena = Arena::new();
-        self.live = Some((self.scene.build)(&mut self.arena, width, height));
+        // `install` rather than `build`: the latter reports `document_replaced`
+        // and resets `Timing`, and this renderer was constructed three lines ago
+        // with nothing uploaded and nothing sampled. `dashscene-web` names that
+        // as the second mechanism not to add — the constructor already
+        // establishes the state it would clear. What this must NOT do is build
+        // the scene itself, which is what it did until the extent went with it.
+        self.install(width, height);
         self.phase = u64::MAX;
         Ok(())
     }
@@ -519,14 +541,39 @@ pub extern "system" fn Java_dev_driftsys_dashscene_demo_DemoNative_nativeStart<'
             } else {
                 Some(capture_scene.try_to_string(env)?)
             };
-            // A capture names its own scene and refuses an unknown one; the
-            // demonstration path falls back to the first. `Capture::parse`
-            // carries both rules and the reason they differ.
-            let capture = Capture::parse(
+            // **Three outcomes, and the middle one is why this is not an
+            // `Option`.** A capture naming a scene the registry does not carry
+            // is refused rather than defaulted — `DemoActivity` has already
+            // hidden the readout by then, so falling back to `SCENES[0]` would
+            // photograph the wrong scene, in a state the wall clock chose,
+            // with nothing on screen to say so. One mistyped letter in
+            // `--es capture_scene` is the whole input needed.
+            let request = CaptureRequest::of(
                 capture_name.as_deref(),
                 Some(i64::from(capture_phase)),
                 Some(capture_signal),
             );
+            let capture = match request {
+                CaptureRequest::UnknownScene(name) => {
+                    log(&format!(
+                        "capture_scene '{name}' is not one of the {} showcase \
+                         scenes — refusing rather than photographing another \
+                         one. Launch without the capture extras to run the \
+                         demonstration.",
+                        showcase::SCENES.len(),
+                    ));
+                    return Ok(0);
+                }
+                CaptureRequest::Partial => {
+                    log("capture_scene arrived without a usable phase and \
+                         signal — running the demonstration instead. A capture \
+                         takes all three of capture_scene, capture_phase and \
+                         capture_signal.");
+                    None
+                }
+                CaptureRequest::Absent => None,
+                CaptureRequest::Ready(capture) => Some(capture),
+            };
             let chosen = match capture.as_ref() {
                 Some(capture) => capture.scene,
                 None => select(name.as_deref()),
