@@ -182,6 +182,22 @@ impl ShowcaseFrames {
             (std::mem::take(&mut pending.commands), pending.drag_x.take())
         };
 
+        // **A capture holds one state, so input is drained and discarded**
+        // (issue #1395). `DashsceneShowcase.ReadInput` returns early for the
+        // same reason and this host did not: a stray touch, or an
+        // `adb shell input` from an overlapping harness step, switched the
+        // scene or scrubbed the signal off the pinned state, and the
+        // `screencap` that followed photographed a state the other host is not
+        // in. Silent and intermittent, which is the worst shape for a
+        // comparison harness.
+        //
+        // Drained rather than left queued: the queue is process-global and a
+        // capture never ends, so anything left in it would accumulate for the
+        // life of the run.
+        if self.capture.is_some() {
+            return;
+        }
+
         for command in commands {
             match command {
                 Command::Next | Command::Previous => {
@@ -192,6 +208,20 @@ impl ShowcaseFrames {
                     };
                     self.scene_index = advance(self.scene_index, showcase::SCENES.len(), walk);
                     self.scene = &showcase::SCENES[self.scene_index];
+                    // **The clock starts with the new scene** (issue #1396),
+                    // and here rather than in `build`, which a resize also
+                    // calls. `phase` was reset by both and `elapsed` ran on,
+                    // so a swipe at 32.5 s computed phase 13 and applied it to
+                    // a scene that had never seen phases 0 to 12 — `surfaces`
+                    // opening at `SWEEP = 1.0` instead of 0.0.
+                    //
+                    // **A resize must NOT reset it**, which putting this in
+                    // `build` would have done. `demo/src/shell.rs::build`
+                    // states the rule: a rebuild re-applies the pulse at the
+                    // SAME phase, "so a resize would otherwise snap every
+                    // signal back to its initial value part-way through a
+                    // transition".
+                    self.elapsed = 0.0;
                     let (width, height) = self.extent;
                     self.build(width, height);
                     log(&format!(

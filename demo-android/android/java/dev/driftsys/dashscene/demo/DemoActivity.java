@@ -282,22 +282,102 @@ public final class DemoActivity extends Activity implements SurfaceHolder.Callba
         }
     }
 
+    /** Where the current single-finger gesture started, for the axis test. */
+    private float touchStartX;
+
+    private float touchStartY;
+
+    /**
+     * Set while a two-finger gesture is in flight, cleared on the next
+     * {@code ACTION_DOWN}.
+     *
+     * <p>Issue #1397. The comment this replaces claimed a two-finger gesture
+     * "is never also read as a tap" because the check runs before the
+     * detector. It is not enough: returning early leaves the detector holding
+     * finger 0's {@code ACTION_DOWN}, and two things then fire from it. The
+     * long press fires from the {@code LONG_PRESS} timer the detector posted
+     * on that {@code ACTION_DOWN}, with no further event needed at all — so
+     * holding two fingers for half a second toggled the readout. The tap
+     * fires from the {@code ACTION_UP} that arrives once the pointer count is
+     * back to 1. {@code ACTION_CANCEL} closes both, because
+     * {@code GestureDetector.cancel()} removes the pending timer; the latch
+     * is what withholds the rest of the gesture.
+     */
+    private boolean multiTouch;
+
+    /**
+     * Whether this launch is photographing one state.
+     *
+     * <p>Issue #1395. The native half refuses the commands that cross to the
+     * render thread, and {@code orientation} and {@code readout} never cross:
+     * they are {@code setRequestedOrientation} and a {@code TextView}'s
+     * visibility, both UI-thread calls. So a capture had to be refused here
+     * too, or {@code keyevent 46} composited the readout into the photograph
+     * and {@code keyevent 19} recreated the Activity at a different extent —
+     * both of which the capture exists to prevent, and both reachable from an
+     * overlapping harness step. {@code DashsceneShowcase.ReadInput} returns
+     * before all five, which is the parity this restores.
+     */
+    private boolean capturing() {
+        return captureScene != null
+                && capturePhase >= 0
+                && !Float.isNaN(captureSignal)
+                && !Float.isInfinite(captureSignal);
+    }
+
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        // Two fingers down is the orientation command, and is checked before
-        // the detector so a two-finger gesture is never also read as a tap.
-        if (event.getPointerCount() == 2 && event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN) {
-            command(3);
+        if (capturing()) {
             return true;
         }
-        if (event.getActionMasked() == MotionEvent.ACTION_MOVE && event.getPointerCount() == 1) {
-            DemoNative.nativeDrag(event.getX());
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            touchStartX = event.getX();
+            touchStartY = event.getY();
+            multiTouch = false;
+        }
+        // Two fingers down is the orientation command.
+        if (event.getPointerCount() == 2 && action == MotionEvent.ACTION_POINTER_DOWN) {
+            command(3);
+            if (!multiTouch) {
+                multiTouch = true;
+                // Withdraw the gesture from the detector rather than merely
+                // returning: see `multiTouch`.
+                MotionEvent cancel = MotionEvent.obtain(event);
+                cancel.setAction(MotionEvent.ACTION_CANCEL);
+                gestures.onTouchEvent(cancel);
+                cancel.recycle();
+            }
+            return true;
+        }
+        if (multiTouch) {
+            // The tail of a two-finger gesture, which has already done what it
+            // means. Held until the next ACTION_DOWN, because the fingers lift
+            // one at a time.
+            return true;
+        }
+        if (action == MotionEvent.ACTION_MOVE && event.getPointerCount() == 1) {
+            // **Horizontal is the signal's, and only horizontal** (issue
+            // #1398). Without the axis test a vertical swipe — which means
+            // "next entry" and nothing else — wrote the signal on every
+            // sample on its way up, so the scene changed AND its signal was
+            // scrubbed. `DashsceneShowcase.ReadTouch` has had this test since
+            // it was written; this host did not, and the two are one
+            // vocabulary.
+            if (Math.abs(event.getX() - touchStartX) > Math.abs(event.getY() - touchStartY)) {
+                DemoNative.nativeDrag(event.getX());
+            }
         }
         return gestures.onTouchEvent(event) || super.onTouchEvent(event);
     }
 
     @Override
     public boolean onKeyDown(int code, KeyEvent event) {
+        if (capturing()) {
+            // A capture holds one state, and every key in the vocabulary moves
+            // it. See `capturing()`.
+            return true;
+        }
         // The bindings the measurement harness sends. The two arrow keys drive
         // the signal rather than navigating, which is demo/src/input.rs's
         // binding and the one the contract adopts; navigation is on the page
