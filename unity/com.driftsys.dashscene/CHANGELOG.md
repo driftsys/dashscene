@@ -8,6 +8,19 @@ the Cargo workspace rather than moving on its own.
 
 ### Added
 
+- **The Showcase sample asks for 60 fps before its first frame** (issue #1408).
+  `Samples~/Showcase/DashsceneFramePacing.cs` sets
+  `Application.targetFrameRate = 60` at `SubsystemRegistration` — process-wide,
+  in every player and Editor play session that compiles the sample, before the
+  first scene: a project that imports the sample and sets its own target
+  elsewhere gets this one first. On Android, which honours the target, a panel
+  above 60 Hz is capped by it; on desktop the target is ignored while vsync is
+  on, which is Unity's default for a player; the Editor's Game view has it off
+  by default, so a play session there is capped. Unity's Android default paces
+  at 30 fps whatever the panel does, and a player asked for 60 with Unity's
+  default pacing presented on every other vsync, so the repository's own demo
+  build script also turns optimized frame pacing on — measured on a Pixel 5,
+  `docs/design/android-toolchain.md`.
 - **The showcase reports what a frame cost, and states what the figure is.**
   `Samples~/Showcase/DashsceneFrameCost.cs` reports one line per 240 drawn
   frames: the runtime tick, and the drawing this package executes — the frame

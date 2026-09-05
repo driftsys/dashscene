@@ -49,16 +49,18 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   refuses landing later (the backdrop blur, the shadow, the image fill, the
   render-target groups) reopens the reading. On the Pixel 5 the drawable is
   2340x1080, the panel's 1080x2340 in landscape, in the 60 Hz mode (a 90 Hz mode
-  exists and is not the one measured): the scene's GPU frame, about 31 ms when
-  this was ruled — read on a build with issue #1408's two changes applied, which
-  the tree does not yet produce — shall not exceed 16.7 ms — the halving,
-  rounded to the frame the panel imposes. **Met when**, over the window D2
-  names, the compositor's `averageFPS` on the player's surface is at or above 59
-  with `droppedFrames` 0, and no more than one presented interval in a hundred
-  exceeds 17 ms. The tool's window average can read above the panel's rate; that
-  is at the rate, not above it. `typography`, at 42 to 50 fps, is over the frame
-  too and has no carrier in this record; another device's budget is that
-  device's mode, and each is its own row.
+  exists and is not the one measured): the scene's GPU frame shall not exceed
+  16.7 ms — the halving, rounded to the frame the panel imposes. That frame was
+  about 31 ms when this was ruled, read on a build with issue #1408's two
+  changes applied as patches, and 31.2 ms by D2's `frameReady` cadence on
+  2026-09-05 from the committed tree, which produces the two changes since that
+  issue landed. **Met when**, over the window D2 names, the compositor's
+  `averageFPS` on the player's surface is at or above 59 with `droppedFrames` 0,
+  and no more than one presented interval in a hundred exceeds 17 ms. The tool's
+  window average can read above the panel's rate; that is at the rate, not above
+  it. `typography`, at 42 to 50 fps, is over the frame too and has no carrier in
+  this record; another device's budget is that device's mode, and each is its
+  own row.
 - **D2 — the instruments are the compositor's, not the painter's.** Two
   readings, both from `dumpsys SurfaceFlinger` on the player's `SurfaceView`
   layer's `(BLAST)` child, both kept: `--timestats` over a 10 s window — the
@@ -78,8 +80,12 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   inverse of tick plus paint plus submit, and its submit term includes the
   swapchain acquire, so a vsync-paced loop times its own waiting as work. Both
   are headroom figures. A player capped by its own pacing reads the cap, not the
-  GPU: issue #1408's two changes must be in place, and a tree without them reads
-  30 fps and does not test D1.
+  GPU: issue #1408's two changes must be in place — the tree produces them since
+  it landed, and the committed tree was read on 2026-09-05 with the compositor
+  listing the player's request as `60.00 Hz` — and a tree without them — a
+  bisect build, or the android-probe player, whose recipe compiles neither
+  change and whose rate has not been read — reads Unity's default and does not
+  test D1.
 - **D3 — the route is R-T2 first, then the per-kind cost.** Opaque cores drawn
   front-to-back with depth, and a blended fringe, come first; the cost of the
   kinds that stay shaded — per pixel, or per command where issue #1406 finds the

@@ -490,12 +490,24 @@ pub fn wgsl_struct_fields(source: &str, name: &str) -> Option<Vec<String>> {
 /// because every question this crate asks about the package's C# would
 /// otherwise answer vacuously.
 pub fn package_cs_files() -> Vec<(String, String)> {
+    cs_files_under("Runtime")
+}
+
+/// Every `.cs` under one directory of the package, recursively, as (path
+/// relative to the root, source). Sorted by path. `relative_dir` is relative
+/// to the package — `"Runtime"`, `"Samples~"`, `"Samples~/Showcase"`.
+///
+/// # Panics
+///
+/// If the directory cannot be read, or if it holds no C# at all, for
+/// `package_cs_files`'s reason.
+pub fn cs_files_under(relative_dir: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    collect_cs(&root().join(PACKAGE_PATH).join("Runtime"), &mut out);
+    collect_cs(&root().join(PACKAGE_PATH).join(relative_dir), &mut out);
     assert!(
         !out.is_empty(),
-        "the package's Runtime/ holds no C# at all, so every question this \
-         crate asks about it would answer vacuously."
+        "the package's {relative_dir} holds no C# at all, so every question \
+         asked about it would answer vacuously."
     );
     out.sort();
     out

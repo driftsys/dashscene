@@ -383,8 +383,12 @@ extra (`--es probe1401_measure 1`), the mechanism the showcase's own capture
 request already uses; the PNG directory maps to
 `Application.persistentDataPath`; and `Debug.Log` stack traces are switched off
 so one event is one logcat line. The player paced itself at 30 fps throughout
-this round, for the reason `docs/design/android-toolchain.md`'s "The Unity
-host's presented rate" gives, where the macOS arms ran at 60 Hz vsync.
+this round, where the macOS arms ran at 60 Hz vsync: nothing then set
+`Application.targetFrameRate`, and Unity's Android default is 30. Issue #1408
+has since lifted the cap with the two edits `docs/design/android-toolchain.md`'s
+"The Unity host's presented rate" carries, so a re-run of these arms on the
+committed tree would pace at about the 50 fps the 60 fps round below measured
+with the same two edits as patches.
 
 **The arms, on `dd20a18` — the commit PR #1407's fix lane branched from — and on
 `5b279f6` with that PR merged**, typography scene, 381 instances, four

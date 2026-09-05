@@ -1333,7 +1333,8 @@ sdf-hlsl:
 # developer's gate: run it before opening a pull request that touches
 # `Runtime/Engine/`, `Runtime/Shaders/`, `Runtime/Resources/` or
 # `Samples~/` — the last because this is the only CHECK that compiles the
-# samples; `unity-demo` compiles the Showcase sample while building its player. CI runs the other half on every pull
+# samples; `unity-demo` and `unity-demo-android` compile the Showcase sample
+# while building their players. CI runs the other half on every pull
 # request, and `unity/package-gate` runs the parts that need no editor.
 #
 # **It also writes the `.meta` files R-E2 requires.** A `file:` dependency is a

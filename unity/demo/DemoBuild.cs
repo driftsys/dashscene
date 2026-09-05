@@ -318,6 +318,25 @@ public static class DemoBuild
             NamedBuildTarget.Android, ScriptingImplementation.IL2CPP);
         PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
 
+        // **Optimized frame pacing on.** Off — Unity's default — a player asked
+        // for 60 presented on every other vsync: measured 2026-09-03 on the
+        // Pixel 5, 87 of 125 presented intervals at 33.4 ms with each frame
+        // ready about 21 ms before it was shown (issue #1408,
+        // `docs/design/android-toolchain.md`, "The Unity host's presented
+        // rate"). The target itself is the sample's to set, before its first
+        // frame — `Samples~/Showcase/DashsceneFramePacing.cs`.
+        PlayerSettings.Android.optimizedFramePacing = true;
+                        // Read back, the shape `AndroidProbeBuild` uses for R-E7 to R-E9. The
+        // same process reads the field it set, so this holds that the
+        // assignment ran and reports the value the log below prints; it cannot
+        // tell a setter the editor ignored from one it honoured.
+        if (!PlayerSettings.Android.optimizedFramePacing)
+        {
+            failures.Add(
+                "PlayerSettings.Android.optimizedFramePacing did not read back true "
+                + "after being set, issue #1408.");
+        }
+
         // **Read from the environment rather than written here**, for
         // `AndroidProbeBuild`'s reason: the justfile's `ANDROID_API` is the one
         // copy of the floor, and every Android target — the shipped
@@ -358,6 +377,7 @@ public static class DemoBuild
 
         Debug.Log(
             $"[demo-build] android: IL2CPP, ARM64 exactly, minSdk {floor}, autorotation on, "
+            + $"optimized frame pacing {(PlayerSettings.Android.optimizedFramePacing ? "on" : "off")}, "
             + $"graphics {string.Join(",", PlayerSettings.GetGraphicsAPIs(BuildTarget.Android))}, "
             + $"id {ApplicationId}");
     }
