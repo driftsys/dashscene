@@ -1069,7 +1069,7 @@ the `unity-render` recipe runs that player in batch mode and it renders on
 demand through `SubmitRenderRequest`, so nothing presents and the setting has no
 effect). Under that cap the compositor's `--timestats` counted 30.3 fps with no
 dropped frame, and the sample's own reports came every 8.0 s for 240 frames.
-Issue #1408 closed the cap: the Showcase sample sets an explicit 60 at
+Issue #1408 lifted the cap: the Showcase sample sets an explicit 60 at
 `RuntimeInitializeLoadType.SubsystemRegistration`, and `DemoBuild` turns
 `PlayerSettings.Android.optimizedFramePacing` on for the Android player. **The
 `fps if unpaced` figure in those reports is the inverse of the measured `tick`

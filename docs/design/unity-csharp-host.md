@@ -1274,10 +1274,10 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   and `DsFrame.Dirty`'s rows are read by nothing (`FrameLease` reads its stride
   for R-E17; nothing reads the indices). For the first document
   `just unity-render` draws, `goldens/dsb/v03-paint.dsb`, every commit walks all
-  fourteen of its rect entries, rebuilds all four heap tables and re-uploads their live rows,
-  and sends one instance batch. **On the `RawBuffer` rung** — the only rung any
-  device has ever reported here — that batch is the 64-slot floor
-  `InstancesPerBatch` chooses: the shared head plus sixty-four eighty-byte
+  fourteen of its rect entries, rebuilds all four heap tables and re-uploads
+  their live rows, and sends one instance batch. **On the `RawBuffer` rung** —
+  the only rung any device has ever reported here — that batch is the 64-slot
+  floor `InstancesPerBatch` chooses: the shared head plus sixty-four eighty-byte
   slots, 112 + 5120 = **5232 bytes**, of which 112 + 29 × 80 = **2432** carry
   the twenty-nine instances the frame's draw commands read — sixteen blended
   and, since story #1412, thirteen opaque cores. All of it goes up on a commit
