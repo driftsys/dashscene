@@ -21,19 +21,54 @@
 //! grows the quad by, so a stroke's or a drop shadow's rasterized quad is
 //! larger than its `bounds` alone — then clipped to the extent.
 //!
-//! # What it is not
+//! # What this number is, and what it leaves out
 //!
-//! **It is an upper bound on shaded area, not a rasterization.** Node-level
-//! clip regions are not applied and rotation is not applied, so an instance
-//! that a clip would cut down is counted whole. That is deliberate: the
-//! quantity being pinned is what the painter *submits*, and a change to what
-//! it submits is the regression this catches. It is a monitor over one number
-//! per scene, not a gate over a picture — `goldens/` and `conformance/` own
-//! correctness.
+//! **It is the paint pipeline's instances and nothing else.** Three things a
+//! frame really shades are not in the instance buffer at all, so no change to
+//! any of them moves this reading:
+//!
+//! - **Group composites.** `composite.wgsl`'s `vs_composite` builds a
+//!   full-target quad from the vertex index alone, so every group costs the
+//!   whole extent — 2.5272 Mpx at 2340x1080, which is 41 % of what `surfaces`
+//!   reports here. `pack` emits no instance for a group. The group counts are
+//!   pinned below beside the areas for exactly this reason: they are the
+//!   multiplier this sum does not carry.
+//! - **The backdrop passes.** A backdrop pays a full-target snapshot copy and
+//!   a base blit, plus the blur's axis and resolve quads.
+//! - **Anything a `shape` mask substitutes.** For a masked instance the vertex
+//!   stage uses `bounds.xy + field.plane` rather than `bounds`, and this reads
+//!   `bounds`.
+//!
+//! **Within the instances it does cover it is an upper bound, not a
+//! rasterization.** Node-level clip regions and rotation are not applied, so
+//! an instance a clip would cut down is counted whole.
+//!
+//! **One blind spot worth naming, because the fixture causes it.** The sum
+//! cannot separate `StrokeAlign::Center` from `StrokeAlign::Outside`: the only
+//! two non-inside strokes in the whole showcase are `tile-linear` and
+//! `tile-radial`, the same box at the same width, so swapping the two arms of
+//! `stroke_outset` is symmetric and moves this total by zero. Issue #1425
+//! carries it.
+//!
+//! So this is a monitor over one number per scene, not a gate over a picture —
+//! `goldens/` and `conformance/` own correctness.
 //!
 //! **The per-kind weight is not here.** Issue #1296's second half asks for a
 //! cost per instance kind, which needs a device to calibrate. This half needs
 //! none.
+//!
+//! # Why a test that a scene edit invalidates lives here at all
+//!
+//! `corpus/showcase/src/lib.rs` rules that "a test that would need updating
+//! because a scene was re-authored is a coverage test wearing another name,
+//! and belongs in the checklist instead". This file does need updating when a
+//! scene is re-authored, and it is not that thing: it asserts no construct is
+//! drawn, and a green run here stands in for no coverage claim. What it pins
+//! is a **cost**, which has no right answer independent of the scenes — the
+//! scenes are the workload the target device is budgeted against
+//! (`docs/decisions/the-gpu-frame-on-the-target-device-is-budgeted.md`). It
+//! also lives in this crate rather than in `corpus/showcase`, so that rule's
+//! subject — the tests in that crate — is unchanged.
 
 use dashpaint::Painter;
 use dashscene_core::Arena;
@@ -56,20 +91,38 @@ struct Expected {
     instances: usize,
     /// Shaded megapixels, summed over every instance.
     shaded_mpx: f64,
+    /// Groups the document carries.
+    ///
+    /// **Pinned because it is the term the megapixel sum does not carry.**
+    /// Each group costs a full-target composite quad — 2.5272 Mpx at this
+    /// extent — and `pack` emits no instance for one, so a scene that gains a
+    /// group shades 2.5 Mpx more per frame and moves `shaded_mpx` by nothing
+    /// at all. A count rather than an area, because a group's cost is the
+    /// extent and the extent is a constant here.
+    groups: usize,
 }
 
 /// Measured on 2026-09-04 at 2340x1080 and re-derived by this test on every
 /// run.
 ///
-/// **The tolerance is relative and it is 0.1 %, and that number is measured
-/// rather than chosen.** It is not zero, because the sum is f32 geometry
-/// accumulated in f64 and the solver reaches libm, so the last places are not
-/// portable across architectures. It was 1 % in a first draft and 1 % had no
-/// teeth: zeroing the stroke outset in `pack.rs` — a real packer defect, and
-/// the term `Instance::outset` exists for — moves `surfaces` by **0.18 %** and
-/// the other two scenes not at all, so a 1 % band passed a mutated painter.
-/// 0.1 % fails it, and still leaves about four orders of magnitude over f32
-/// last-place drift, which moves a 6 Mpx sum by parts in ten million.
+/// **The tolerance is relative and it is 0.01 %, and it has been tightened
+/// twice, each time by a mutation the previous band let through.**
+///
+/// 1 % was the first draft. Zeroing the stroke outset in `pack.rs` — a real
+/// packer defect, and the term `Instance::outset` exists to prevent — moves
+/// `surfaces` by 0.18 % and the other two scenes not at all, so 1 % passed a
+/// mutated painter. 0.1 % was the second. Treating one `StrokeAlign::Outside`
+/// as centred is **half** of that mutation, about 0.09 %, and passed; so did
+/// trimming `shadow_ink_reach`'s blur support from `3.0 * sigma` to `2.7 *`.
+/// 0.01 % fails both.
+///
+/// It is not zero because the sum is f32 geometry accumulated in f64. It is
+/// nearly portable all the same: nothing on the path from a scene to `bounds`
+/// and `outset` reaches libm — the fonts and the MSDF sheets are vendored and
+/// loaded rather than generated, shaping is IEEE `+ - * /` which Rust does not
+/// contract to FMA, and `tick(0.0)` at pulse 0 writes each signal's initial
+/// value so no spring integrates. If a Linux runner ever disagrees at 0.01 %,
+/// that is a finding about the solver rather than a reason to widen the band.
 ///
 /// The instance counts below are the strict half. A shaping or layout
 /// difference large enough to matter changes how many quads are emitted, and
@@ -78,27 +131,48 @@ const EXPECTED: &[Expected] = &[
     Expected {
         scene: "surfaces",
         instances: 65,
-        shaded_mpx: 6.0601,
+        shaded_mpx: 6.1083,
+        groups: 1,
     },
     Expected {
         scene: "typography",
         instances: 381,
-        shaded_mpx: 3.1669,
+        shaded_mpx: 3.2100,
+        groups: 0,
     },
     Expected {
         scene: "layout",
         instances: 29,
-        shaded_mpx: 5.4260,
+        shaded_mpx: 5.4616,
+        groups: 0,
     },
 ];
 
 /// The relative band each scene's shaded area is held to.
-const TOLERANCE: f64 = 0.001;
+const TOLERANCE: f64 = 0.0001;
 
-/// `bounds` grown by `outset` on every side, then clipped to the extent, in
-/// square pixels.
+/// What the vertex stage grows every quad by, on top of the instance's own
+/// `outset`.
+///
+/// `paint.wgsl`'s `vs_main` computes `let margin = globals.aa +
+/// instance_outset(inst);`, and `globals.aa` is fed `AA_WIDTH` unconditionally
+/// — text included. So the rasterized quad is one pixel larger on every side
+/// than `bounds` grown by `outset`, and a reading that left this out
+/// understated `typography` by the most: 375 of its 381 instances are glyph
+/// quads a few tens of pixels across, where one pixel of margin per side is a
+/// large fraction of the area.
+///
+/// It is duplicated here because `AA_WIDTH` is private to
+/// `crates/dashscene-gpu/src/render.rs`, and
+/// [`the_painters_antialiasing_margin_is_the_one_this_file_adds`] is what stops
+/// the two from drifting apart.
+const AA_MARGIN: f32 = 1.0;
+
+/// `bounds` grown by `outset` and the antialiasing margin on every side, then
+/// clipped to the extent, in square pixels.
 fn clipped_area(bounds: [f32; 4], outset: f32) -> f64 {
     let [x, y, w, h] = bounds;
+    let outset = outset + AA_MARGIN;
     let (x, y, w, h) = (x - outset, y - outset, w + 2.0 * outset, h + 2.0 * outset);
     let x0 = x.max(0.0);
     let y0 = y.max(0.0);
@@ -111,7 +185,7 @@ fn clipped_area(bounds: [f32; 4], outset: f32) -> f64 {
 
 /// Builds, solves and packs one scene, and returns its instance count and
 /// shaded megapixels.
-fn measure(scene: &showcase::Showcase) -> (usize, f64) {
+fn measure(scene: &showcase::Showcase) -> (usize, f64, usize) {
     let mut arena = Arena::new();
     let mut live = (scene.build)(&mut arena, WIDTH, HEIGHT);
     (scene.pulse)(&mut live, 0);
@@ -129,12 +203,13 @@ fn measure(scene: &showcase::Showcase) -> (usize, f64) {
         None,
     );
 
+    let groups = committed.groups().len();
     let instances = painter.instances().instances();
     let shaded_px: f64 = instances
         .iter()
         .map(|instance| clipped_area(instance.bounds, instance.outset))
         .sum();
-    (instances.len(), shaded_px / 1_000_000.0)
+    (instances.len(), shaded_px / 1_000_000.0, groups)
 }
 
 #[test]
@@ -147,7 +222,15 @@ fn every_showcase_scene_shades_what_it_did() {
             .find(|candidate| candidate.name == expected.scene)
             .unwrap_or_else(|| panic!("no showcase scene named {}", expected.scene));
 
-        let (instances, shaded_mpx) = measure(scene);
+        let (instances, shaded_mpx, groups) = measure(scene);
+
+        if groups != expected.groups {
+            failures.push(format!(
+                "{}: {groups} group(s), expected {}. Each one is a \
+                 full-target composite this sum does not count.",
+                expected.scene, expected.groups
+            ));
+        }
 
         if instances != expected.instances {
             failures.push(format!(
@@ -180,16 +263,43 @@ fn every_showcase_scene_shades_what_it_did() {
     );
 }
 
+/// `AA_MARGIN` is `render.rs`'s `AA_WIDTH`, and this is what keeps them equal.
+///
+/// The constant is private to that module, so this file carries its own copy.
+/// A copy that can drift silently is worse than no copy: the whole table above
+/// would shift by about 1 % and stay green, because every row would shift
+/// together. Read as source rather than linked, which is what a private const
+/// leaves available.
+#[test]
+fn the_painters_antialiasing_margin_is_the_one_this_file_adds() {
+    let render = include_str!("../src/render.rs");
+    let declared = format!("const AA_WIDTH: f32 = {AA_MARGIN:.1};");
+    assert!(
+        render.contains(&declared),
+        "crates/dashscene-gpu/src/render.rs no longer declares `{declared}`, \
+         so AA_MARGIN in this file is measuring a margin the painter does not \
+         apply. Re-derive the table above with the new value."
+    );
+}
+
 #[test]
 fn the_table_covers_every_scene_the_registry_carries() {
-    // A scene added to the registry and not to the table would be measured by
-    // nothing, and the test above would still pass — it iterates the table.
+    // **The set of names, not the count.** `len() == len()` passes a table
+    // holding one scene twice and another not at all — the realistic
+    // copy-paste edit — and the test above iterates the table, so the missing
+    // scene would then be measured by nothing while both tests stayed green.
+    let mut pinned: Vec<&str> = EXPECTED.iter().map(|row| row.scene).collect();
+    pinned.sort_unstable();
+    let before = pinned.len();
+    pinned.dedup();
+    assert_eq!(before, pinned.len(), "a scene is pinned twice: {pinned:?}");
+
+    let mut registered: Vec<&str> = showcase::SCENES.iter().map(|s| s.name).collect();
+    registered.sort_unstable();
+
     assert_eq!(
-        showcase::SCENES.len(),
-        EXPECTED.len(),
-        "the registry carries {} scenes and this file pins {}; \
-         add the new scene's measured row to EXPECTED",
-        showcase::SCENES.len(),
-        EXPECTED.len()
+        pinned, registered,
+        "every registry scene has a measured row and every row names a \
+         registry scene; add the new scene's measured row to EXPECTED"
     );
 }
