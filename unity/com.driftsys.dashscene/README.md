@@ -150,7 +150,9 @@ Two things it does not catch, both measured rather than reasoned about:
   declared as `float`.
 - A member added to the **Rust** type that fits inside padding already there, so
   no size and no offset moves. `abi_surface!`'s member lists are hand-written,
-  which is what leaves that open; issue #1252 carries it.
+  which is what left that open until issue #1252 closed it: `abi_surface!`
+  rebuilds each type from its declared members, so an unlisted one fails the
+  build.
 
 `unity/abi-check/Program.cs` states both.
 

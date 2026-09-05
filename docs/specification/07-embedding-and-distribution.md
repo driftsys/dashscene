@@ -240,7 +240,17 @@ rejected and nothing more — a check that writes what it then reads cannot fail
 for the requirement. That project is regenerated under `target/` on every run,
 so it is not the shipping project this section scopes these three to. Issue
 #1353 stays open and records what would discharge it: a read of a project this
-repository did not configure, or of the artifact a build produced.
+repository did not configure, or of the artifact a build produced. What does
+hold the committed build scripts to it is
+`unity/package-gate/tests/android_player_settings.rs`, which derives every C#
+that builds an Android player — the predicate is `BuildPipeline.BuildPlayer`
+beside `BuildTarget.Android`, so a new one cannot escape by **not being listed**
+— and refuses one that does not select IL2CPP, or that never calls the member it
+sets the three in. That is a scan over source, and a weaker claim than reading
+`PlayerSettings`. **The predicate has one blind spot**: a script setting its
+target through `EditorUserBuildSettings.activeBuildTarget`, as
+`unity/render-gate/RenderGateBuild.cs` does for the desktop, names
+`BuildTarget.Android` nowhere and is invisible to it.
 
 **R-E8** — the host project shall set `AndroidTargetArchitectures` to exactly
 `AndroidArchitecture.ARM64`. _Check:_ read `PlayerSettings` and compare for
@@ -254,7 +264,11 @@ compared to itself, and it is the strongest evidence any of these three carries
 — but the APK is the probe's rather than a shipping project's, so issue #1353
 stays open. The equality is the point of the rule, so a project needing a second
 ABI — an emulator farm — is a separate project rather than a reason to widen
-this.
+this. `unity/package-gate/tests/android_player_settings.rs` holds every
+committed Android build script to the equality in source: the assignment is
+matched exactly and **counted**, so a second one widening the set — the shape
+`unity/android-probe/negative-control.tsv`'s `r-e8-fat-apk` row uses — fails it,
+as do the compound spellings a count cannot see.
 
 **R-E9** — the host project shall set `AndroidMinSdkVersion` to the value of
 `ANDROID_API` in the `justfile`, or higher. _Check:_ read `PlayerSettings` and
@@ -270,6 +284,11 @@ against a floor `just unity-android` passes in as `DASHSCENE_ANDROID_API` rather
 than a literal the build script holds — so the comparison is against the
 variable, and closing issue #1235 moves both. Issue #1353 stays open for the
 same reason it does for R-E7.
+`unity/package-gate/tests/android_player_settings.rs` holds every committed
+Android build script to reading `DASHSCENE_ANDROID_API` rather than a literal,
+with the assignment matched exactly so no literal can follow it, and holds every
+recipe passing `DASHSCENE_ANDROID_API` to passing `{{ ANDROID_API }}` rather
+than a number — so the floor cannot acquire a second copy at either end.
 
 **R-E10** — every C# type under `unity/com.driftsys.dashscene/Runtime/` shall
 compile against `netstandard.dll` version 2.1.0, so the package builds under
