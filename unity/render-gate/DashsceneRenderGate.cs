@@ -681,7 +681,11 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         var probe = new FramePacker();
         probe.Pack(lease.Frame, MaterialClass.UnlitOverlay);
         _probe = probe;
-        _overlayInstances = probe.InstanceCount;
+        // **Cores are not sampled.** Since story #1412 the overlay packing
+        // emits an opaque core before every fully opaque fill, with the same
+        // box, pivot and paint as the blended instance after it; the picture
+        // is that node's once, and the cutout packing carries no cores at all.
+        _overlayInstances = probe.InstanceCount - Cores(probe);
 
         var cutoutProbe = new FramePacker();
         cutoutProbe.Pack(lease.Frame, MaterialClass.LitCutout);
@@ -691,6 +695,10 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         _samples = new List<Sample>(probe.InstanceCount);
         for (var i = 0; i < probe.InstanceCount; i++)
         {
+            if (probe.InstanceIsCore[i])
+            {
+                continue;
+            }
             var x = probe.Quad[(i * 4) + 0];
             var y = probe.Quad[(i * 4) + 1];
             var w = probe.Quad[(i * 4) + 2];
@@ -942,19 +950,48 @@ public sealed class DashsceneRenderGate : MonoBehaviour
     /// meant to sit outside of, and every other field could still agree.
     private static int FirstDisagreement(FramePacker a, FramePacker b)
     {
-        var count = Mathf.Min(a.InstanceCount, b.InstanceCount);
-        for (var i = 0; i < count * 4; i++)
+        // `a` is the overlay packing, whose cores are skipped: the cutout
+        // packing has none, so instance `j` of `b` is the `j`-th non-core
+        // instance of `a`. `Shade.w` — the paint ordinal — is not compared,
+        // because a core and its fringe share one and the cutout packing
+        // counts differently.
+        var j = 0;
+        for (var i = 0; i < a.InstanceCount && j < b.InstanceCount; i++)
         {
-            if (a.Quad[i] != b.Quad[i]
-                || a.Pivot[i] != b.Pivot[i]
-                || a.Corners[i] != b.Corners[i]
-                || a.Shade[i] != b.Shade[i]
-                || a.Paint[i] != b.Paint[i])
+            if (a.InstanceIsCore[i])
             {
-                return i / 4;
+                continue;
             }
+            for (var k = 0; k < 4; k++)
+            {
+                var ai = (i * 4) + k;
+                var bj = (j * 4) + k;
+                if (a.Quad[ai] != b.Quad[bj]
+                    || a.Pivot[ai] != b.Pivot[bj]
+                    || a.Corners[ai] != b.Corners[bj]
+                    || (k != 3 && a.Shade[ai] != b.Shade[bj])
+                    || a.Paint[ai] != b.Paint[bj])
+                {
+                    return j;
+                }
+            }
+            j++;
         }
         return -1;
+    }
+
+    /// How many instances of a packing are opaque cores.
+    private static int Cores(FramePacker packer)
+    {
+        var n = 0;
+        for (var i = 0; i < packer.InstanceCount; i++)
+        {
+            if (packer.InstanceIsCore[i])
+            {
+                n++;
+            }
+        }
+        return n;
     }
 
     /// A placed document point in viewport coordinates.
@@ -1400,7 +1437,19 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         }
 
         var packer = _orderProbe;
-        Line($"order: {packer.InstanceCount} instances, diagnostics {packer.Diagnostics}");
+        Line($"order: {packer.InstanceCount} instances of which {Cores(packer)} cores, "
+             + $"diagnostics {packer.Diagnostics}");
+        // **Two cores, asserted.** The backdrop and the fill are the fixture's
+        // two fully opaque fills on a node at opacity 1; the veil is
+        // translucent and the glyphs are text, so nothing else may core. A
+        // packer that stopped emitting cores would draw the same picture —
+        // that is R-T2's whole point — so the count is the only thing on this
+        // side of the boundary that says the cores exist (story #1412).
+        if (Cores(packer) != 2)
+        {
+            Fail($"the order fixture packs {Cores(packer)} opaque cores; its backdrop and "
+                 + "fill are exactly two (R-T2, story #1412).");
+        }
         if (!packer.Diagnostics.IsClean)
         {
             Fail("the order fixture packs with diagnostics, so part of it is not drawn and "
@@ -1476,7 +1525,10 @@ public sealed class DashsceneRenderGate : MonoBehaviour
                 bold.Add(centre);
             }
             classes[i] = cls;
-            Line($"order: instance {i} {cls} kind {kind} box ({F(x)}, {F(y)}, {F(w)}, {F(h)}) "
+            // A core shares its fringe's class: same box, same paint, so the
+            // covering sets below are the same with or without it.
+            Line($"order: instance {i} {cls}{(packer.InstanceIsCore[i] ? " (core)" : "")} "
+                 + $"kind {kind} box ({F(x)}, {F(y)}, {F(w)}, {F(h)}) "
                  + $"solid {(solid == null ? "none" : Rgba(solid.Value))} "
                  + $"opacity {F(packer.Shade[(i * 4) + 0])}");
         }

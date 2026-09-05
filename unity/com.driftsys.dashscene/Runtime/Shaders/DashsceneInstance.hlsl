@@ -17,13 +17,16 @@
 // chance of drawing the same picture, and it is what issue #828's portable
 // conformance suite will be stated over.
 //
-// Four shaders include this file, each defining exactly one of
+// Five shaders include this file, each defining exactly one of
 // `DASHSCENE_CLASS_UNLIT_OVERLAY`, `DASHSCENE_CLASS_LIT_OPAQUE`,
-// `DASHSCENE_CLASS_LIT_CUTOUT` or `DASHSCENE_CLASS_TEXT` before it. The first
-// three are `docs/decisions/unity-painter-uses-brg.md` D1's material classes;
-// the fourth is **not** a class — MSDF coverage is partial coverage by
+// `DASHSCENE_CLASS_LIT_CUTOUT`, `DASHSCENE_CLASS_TEXT` or
+// `DASHSCENE_CLASS_OVERLAY_CORE` before it. The first three are
+// `docs/decisions/unity-painter-uses-brg.md` D1's material classes; the last
+// two are **not** classes. Text: MSDF coverage is partial coverage by
 // construction, so a glyph cannot be drawn by the non-blending opaque class at
-// all, and text is always blended whichever class the NODES take.
+// all, and text is always blended whichever class the NODES take. The overlay
+// core: R-T2's opaque core of a fully opaque fill on the overlay class, drawn
+// once before the blended instance, writing depth (story #1412).
 
 #ifndef DASHSCENE_INSTANCE_INCLUDED
 #define DASHSCENE_INSTANCE_INCLUDED
@@ -48,22 +51,49 @@
 // Exactly one class, and the shader that includes this says which. A file
 // reached with none defined would compile — silently, as an overlay — which is
 // the failure mode `#error` exists for.
-#if !defined(DASHSCENE_CLASS_UNLIT_OVERLAY) && !defined(DASHSCENE_CLASS_LIT_OPAQUE) && !defined(DASHSCENE_CLASS_LIT_CUTOUT) && !defined(DASHSCENE_CLASS_TEXT)
-#error "define one of DASHSCENE_CLASS_UNLIT_OVERLAY, DASHSCENE_CLASS_LIT_OPAQUE, DASHSCENE_CLASS_LIT_CUTOUT or DASHSCENE_CLASS_TEXT before including DashsceneInstance.hlsl"
+#if !defined(DASHSCENE_CLASS_UNLIT_OVERLAY) && !defined(DASHSCENE_CLASS_LIT_OPAQUE) && !defined(DASHSCENE_CLASS_LIT_CUTOUT) && !defined(DASHSCENE_CLASS_TEXT) && !defined(DASHSCENE_CLASS_OVERLAY_CORE)
+#error "define one of DASHSCENE_CLASS_UNLIT_OVERLAY, DASHSCENE_CLASS_LIT_OPAQUE, DASHSCENE_CLASS_LIT_CUTOUT, DASHSCENE_CLASS_TEXT or DASHSCENE_CLASS_OVERLAY_CORE before including DashsceneInstance.hlsl"
 #endif
 // **Two is as wrong as none**, and a first version guarded only the second: a
 // shader defining two compiled, and `unity/package-gate` then read whichever
 // appeared first, so a shader could declare the right class and the wrong one
 // together and pass.
-#if defined(DASHSCENE_CLASS_UNLIT_OVERLAY) && (defined(DASHSCENE_CLASS_LIT_OPAQUE) || defined(DASHSCENE_CLASS_LIT_CUTOUT) || defined(DASHSCENE_CLASS_TEXT))
+#if defined(DASHSCENE_CLASS_UNLIT_OVERLAY) && (defined(DASHSCENE_CLASS_LIT_OPAQUE) || defined(DASHSCENE_CLASS_LIT_CUTOUT) || defined(DASHSCENE_CLASS_TEXT) || defined(DASHSCENE_CLASS_OVERLAY_CORE))
 #error "exactly one DASHSCENE_CLASS_* may be defined"
 #endif
-#if defined(DASHSCENE_CLASS_LIT_OPAQUE) && (defined(DASHSCENE_CLASS_LIT_CUTOUT) || defined(DASHSCENE_CLASS_TEXT))
+#if defined(DASHSCENE_CLASS_LIT_OPAQUE) && (defined(DASHSCENE_CLASS_LIT_CUTOUT) || defined(DASHSCENE_CLASS_TEXT) || defined(DASHSCENE_CLASS_OVERLAY_CORE))
 #error "exactly one DASHSCENE_CLASS_* may be defined"
 #endif
-#if defined(DASHSCENE_CLASS_LIT_CUTOUT) && defined(DASHSCENE_CLASS_TEXT)
+#if defined(DASHSCENE_CLASS_LIT_CUTOUT) && (defined(DASHSCENE_CLASS_TEXT) || defined(DASHSCENE_CLASS_OVERLAY_CORE))
 #error "exactly one DASHSCENE_CLASS_* may be defined"
 #endif
+#if defined(DASHSCENE_CLASS_TEXT) && defined(DASHSCENE_CLASS_OVERLAY_CORE)
+#error "exactly one DASHSCENE_CLASS_* may be defined"
+#endif
+
+// **The paint order as depth — R-T2, story #1412.** Every instance carries its
+// paint ordinal in `_DsShade.w`, later is nearer, and `DsVertex` moves the
+// vertex toward the viewer by that ordinal's share of the distance from the
+// sheet to the near plane. The span bounds the ordinal: a document of more
+// instances than this would run past the near plane. The share is taken of
+// the near margin so no ordinal can cross it, whatever the host's camera; its
+// depth resolution is that margin over the span, which on a 24-bit depth
+// buffer is distinct for every ordinal at any margin over a few world units.
+//
+// **An order encoding, not geometry.** The lean painter has no such term
+// because its own pipeline draws in submission order; here the geometry queue
+// draws before the transparent one, and the depth test is what puts a core
+// the document painted later over one it painted earlier, and rejects a
+// blended fragment under a later core. A core and its fringe share one
+// ordinal, so their depths are the same float and `ZTest Less` rejects
+// exactly the fringe's interior.
+#define DS_ORDINAL_SPAN 65536.0
+
+// The coverage below which a core fragment is discarded and left to the
+// blended pass. The packer emits a core only where the node's opacity and the
+// paint's alpha are one, so `shaded.a` under this is the shape's or a clip
+// edge's antialiasing ramp.
+#define DS_CORE_FLOOR 0.999
 
 // What one instance draws. The same partition `paint.wgsl` uses, renumbered to
 // the three this painter emits — a kind it does not emit is not declared here,
@@ -439,11 +469,20 @@ DsVaryings DsVertex(DsAttributes input)
 
     output.local = local;
     output.placed = placed;
-    // URP's own transform rather than `mul(UNITY_MATRIX_VP, mul(UNITY_MATRIX_M,
-    // …))`: it resolves the DOTS instanced object-to-world where one is bound
+    // URP's own transforms rather than `mul(UNITY_MATRIX_VP, mul(UNITY_MATRIX_M,
+    // …))`: they resolve the DOTS instanced object-to-world where one is bound
     // and the per-draw matrix where one is not, so the shader draws the same
-    // whether or not `DOTS_INSTANCING_ON` is set.
-    output.positionCS = TransformObjectToHClip(float3(placed, 0.0));
+    // whether or not `DOTS_INSTANCING_ON` is set. World, then view, then clip,
+    // because the ordinal is applied in view space: `_ProjectionParams.y` is
+    // the near plane, `-positionVS.z` the vertex's view depth, and the
+    // difference is the margin the ordinal takes its share of — `nearMargin`,
+    // since `margin` above is the quad's own outset. Unity's view space looks
+    // down -z, so nearer is a larger z.
+    float3 positionWS = TransformObjectToWorld(float3(placed, 0.0));
+    float3 positionVS = TransformWorldToView(positionWS);
+    float nearMargin = max(-positionVS.z - _ProjectionParams.y, 0.0);
+    positionVS.z += nearMargin * (shade.w / DS_ORDINAL_SPAN);
+    output.positionCS = TransformWViewToHClip(positionVS);
     return output;
 }
 

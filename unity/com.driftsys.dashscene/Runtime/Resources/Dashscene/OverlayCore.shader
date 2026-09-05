@@ -1,11 +1,19 @@
-// The unlit overlay class — `docs/decisions/unity-painter-uses-brg.md` D1's
-// first, and the one the bulk of a UI takes.
+// The overlay class's opaque-core pass — R-T2 in this painter, story #1412.
 //
-// Alpha-blended, writing no depth and testing none, so a document draws over
-// whatever the engine drew before it. Coverage IS the alpha here, which is what
-// lets a rounded corner, a stroke and a clip edge all be anti-aliased; the two
-// lit classes below it cannot express partial coverage that way and say so.
-Shader "Dashscene/UnlitOverlay"
+// **One pass, drawn once per fully opaque fill before the blended instance.**
+// It writes depth in the geometry queue and keeps only the fragments the
+// node's shape and its clip cover completely, so a later-painted node's core
+// rejects the pixels under it and the blended pass's own interior — at the
+// same depth, under `ZTest Less` — is never shaded again. What is left to the
+// blended pass is the antialiasing band, where this pass discarded. The
+// picture is the one the overlay class drew before: an interior fragment reads
+// the fill colour either way.
+//
+// Not a `MaterialClass`, for the reason `Dashscene/Text` is not: a host
+// chooses the overlay class, and this is how that class draws opaque fills.
+// Unlit, deliberately — `DsLit` would shade a core black in a scene with no
+// light, which is what the showcase host builds.
+Shader "Dashscene/OverlayCore"
 {
     Properties
     {
@@ -37,8 +45,8 @@ Shader "Dashscene/UnlitOverlay"
     {
         Tags
         {
-            "RenderType" = "Transparent"
-            "Queue" = "Transparent"
+            "RenderType" = "Opaque"
+            "Queue" = "Geometry"
             "RenderPipeline" = "UniversalPipeline"
             // Declared as well as pragma'd. Unity reads this tag to decide
             // whether a SubShader is usable at all on the running device, and
@@ -49,20 +57,11 @@ Shader "Dashscene/UnlitOverlay"
 
         Pass
         {
-            Name "DashsceneUnlitOverlay"
+            Name "DashsceneOverlayCore"
             Tags { "LightMode" = "UniversalForward" }
 
-            Blend SrcAlpha OneMinusSrcAlpha
-            ZWrite Off
-            // **`Less`, against the opaque cores' depth (R-T2, story #1412).**
-            // Every instance sits one ordinal nearer than the one painted
-            // before it, and a fully opaque fill's core writes that depth
-            // over its interior. `Less` rejects this pass's own interior over
-            // its core — equal depth — and any fragment under a core the
-            // document painted later; the antialiasing band, where no core
-            // wrote, passes and blends. Nothing on this pass writes depth: D3
-            // of the order record stands.
-            ZTest Less
+            ZWrite On
+            ZTest LEqual
             Cull Off
 
             HLSLPROGRAM
@@ -74,7 +73,7 @@ Shader "Dashscene/UnlitOverlay"
             #pragma vertex DsVertexStage
             #pragma fragment DsFragmentStage
 
-            #define DASHSCENE_CLASS_UNLIT_OVERLAY
+            #define DASHSCENE_CLASS_OVERLAY_CORE
             #include "Packages/com.driftsys.dashscene/Runtime/Shaders/DashsceneInstance.hlsl"
 
             DsVaryings DsVertexStage(DsAttributes input)
@@ -85,21 +84,14 @@ Shader "Dashscene/UnlitOverlay"
             float4 DsFragmentStage(DsVaryings input) : SV_Target
             {
                 float4 shaded = DsShade(input);
-                // Straight alpha, not premultiplied: the blend state above is
-                // `SrcAlpha OneMinusSrcAlpha`, and
-                // `docs/decisions/blur-blends-in-srgb-encoded-space.md` makes
-                // the space a term of boundary B rather than a painter's
-                // choice.
-                //
-                // **The lean painter differs here, in the destination alpha
-                // only.** It uses `PREMULTIPLIED_ALPHA_BLENDING` and
-                // premultiplies in the shader, so the two agree on every colour
-                // channel and disagree on what accumulates in the target's
-                // alpha — `src.a` there against `src.a * src.a` here.
-                // Irrelevant against an opaque backbuffer, and not irrelevant
-                // the moment a host draws the document into a render texture
-                // whose alpha it then consumes.
-                return shaded;
+                // **Only full coverage survives.** `shaded.a` is the shape's
+                // coverage times the clip's times the node's opacity times the
+                // paint's alpha, and the packer emits a core only where the
+                // last two are one — so anything under `DS_CORE_FLOOR` is the
+                // antialiasing ramp of the shape or of a clip edge, and the
+                // blended pass draws it.
+                clip(shaded.a - DS_CORE_FLOOR);
+                return float4(shaded.rgb, 1.0);
             }
             ENDHLSL
         }

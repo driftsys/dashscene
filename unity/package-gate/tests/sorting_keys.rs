@@ -371,8 +371,11 @@ fn every_reported_length_is_the_emitted_one() {
         "drawCommands->drawCommandCount = command;",
         "drawCommands->visibleInstanceCount = visible;",
         "drawCommands->instanceSortingPositionFloatCount = 3 * command;",
-        "drawCommands->drawRanges[0].drawCommandsCount = (uint)command;",
-        "drawCommands->drawRangeCount = command > 0 ? 1 : 0;",
+        // The two ranges since story #1412: the cores' and the blended
+        // commands', each stated from the command index the emission reached.
+        "drawCommandsCount = (uint)coreCommands,",
+        "drawCommandsCount = (uint)(command - coreCommands),",
+        "drawCommands->drawRangeCount = ranges;",
     ] {
         assert!(
             body.contains(fragment),

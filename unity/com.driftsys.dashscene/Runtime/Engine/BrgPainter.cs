@@ -135,6 +135,12 @@ namespace Driftsys.Dashscene
         private BatchMeshID _meshId;
         private BatchMaterialID _materialId;
 
+        /// The overlay class's opaque-core material (R-T2, story #1412), and
+        /// null on the two lit classes, which write depth on every fragment
+        /// already.
+        private Material _coreMaterial;
+        private BatchMaterialID _coreMaterialId;
+
         private GraphicsBuffer _instanceBuffer;
         private GraphicsBuffer _paintBuffer;
         private GraphicsBuffer _clipBuffer;
@@ -463,6 +469,25 @@ namespace Driftsys.Dashscene
                 _brg.SetGlobalBounds(_globalBounds);
                 _meshId = _brg.RegisterMesh(_mesh);
                 _materialId = _brg.RegisterMaterial(_material);
+
+                // **R-T2's core pass, for the overlay class alone.** The two
+                // lit classes write depth on every fragment and have nothing
+                // to split. Loaded the way the class shader is, for the same
+                // reason: a player strips what nothing references.
+                if (materialClass == MaterialClass.UnlitOverlay)
+                {
+                    var coreShader = Resources.Load<Shader>(PaintShaders.OverlayCore);
+                    if (coreShader == null)
+                    {
+                        throw new DashscenePainterException(
+                            $"the shader '{PaintShaders.OverlayCore}' was not found. It ships "
+                            + $"in this package at Runtime/Resources/{PaintShaders.OverlayCore}"
+                            + ".shader and is loaded with Resources.Load; its absence is R-E2, "
+                            + "as the class shader's would be.");
+                    }
+                    _coreMaterial = new Material(coreShader) { hideFlags = HideFlags.HideAndDontSave };
+                    _coreMaterialId = _brg.RegisterMaterial(_coreMaterial);
+                }
             }
             catch
             {
@@ -823,6 +848,12 @@ namespace Driftsys.Dashscene
             for (var b = 0; b < _batchCount; b++)
             {
                 _commandCount += InstancesInBatch(b);
+                // The cores of a batch travel in multi-instance commands of
+                // their own, at most `MaxInstancesPerDrawCommand` each, so
+                // every core is one instance fewer and every chunk one command
+                // more (R-T2, story #1412).
+                var cores = CoresInBatch(b);
+                _commandCount += CoreCommands(cores) - cores;
             }
 
             // The two counts agree again, so a later short frame is a new
@@ -875,7 +906,10 @@ namespace Driftsys.Dashscene
             // as well would be a dead store, and a reader would have to work
             // out which of the two assignments reaches Unity.
             drawCommands->drawCommands = Malloc<BatchDrawCommand>(commandCount);
-            drawCommands->drawRanges = Malloc<BatchDrawRange>(1);
+            // Two ranges: the opaque cores first, then the blended commands
+            // with their sort keys. A range describing zero commands is not
+            // handed over; the count is settled after the emission.
+            drawCommands->drawRanges = Malloc<BatchDrawRange>(2);
             drawCommands->visibleInstances = Malloc<int>(InstanceCount);
             // **The paint order, stated rather than assumed — issue #1389.**
             // `BatchRendererGroup` groups draw commands by material before it
@@ -1000,36 +1034,79 @@ namespace Driftsys.Dashscene
             // one, and no span can reach the camera.
             var sortStep = Math.Max(Math.Max(distance, sortBase.magnitude), 1.0f) * 1e-5f;
 
-            drawCommands->drawRanges[0] = new BatchDrawRange
+            var filter = new BatchFilterSettings
             {
-                drawCommandsBegin = 0,
-                // `drawCommandsCount` is stated after the emission loop, with
-                // the other four lengths, from what was actually written. Set
-                // here it would be a dead store the reconciliation always
-                // overwrites — and the initialiser zeroes it in any case.
-                filterSettings = new BatchFilterSettings
-                {
-                    renderingLayerMask = 0xffffffff,
-                    layer = 0,
-                    motionMode = MotionVectorGenerationMode.Camera,
-                    shadowCastingMode = ShadowCastingMode.Off,
-                    receiveShadows = false,
-                    staticShadowCaster = false,
-                    // **False, though every command in this range now carries
-                    // `HasSortingPosition`** — which is the property Unity
-                    // documents this field as asserting, so the range
-                    // under-declares itself on purpose. Setting it true was
-                    // measured and changes no pixel
-                    // (`docs/technotes/batch-renderer-group.md` §5c), and false
-                    // is what Unity's own producer passes. It is left false so
-                    // that nothing here claims an ordering guarantee the
-                    // measurements do not support.
-                    allDepthSorted = false,
-                },
+                renderingLayerMask = 0xffffffff,
+                layer = 0,
+                motionMode = MotionVectorGenerationMode.Camera,
+                shadowCastingMode = ShadowCastingMode.Off,
+                receiveShadows = false,
+                staticShadowCaster = false,
+                // **False, though every command in the blended range carries
+                // `HasSortingPosition`** — which is the property Unity
+                // documents this field as asserting, so the range
+                // under-declares itself on purpose. Setting it true was
+                // measured and changes no pixel
+                // (`docs/technotes/batch-renderer-group.md` §5c), and false
+                // is what Unity's own producer passes. The core range carries
+                // no keys at all and is ordered by the depth test.
+                allDepthSorted = false,
             };
 
             var visible = 0;
             var command = 0;
+
+            // **The opaque cores first, nearest first, in commands of their
+            // own** (R-T2, story #1412). A core carries no sorting key: the
+            // depth test orders the cores, so they travel as multi-instance
+            // commands — the shape D5 forbids only to a FLAGGED command — and
+            // are walked from the last-painted instance back, so a core the
+            // document painted later is drawn before the one under it and
+            // rejects its pixels. A chunk is at most
+            // `MaxInstancesPerDrawCommand` instances, the shader's bound.
+            for (var b = 0; b < _batchCount; b++)
+            {
+                var first = b * _instancesPerBatch;
+                var limit = first + InstancesInBatch(b);
+                var chunk = 0;
+                for (var coreAt = limit - 1; coreAt >= first && command < commandCount; coreAt--)
+                {
+                    if (!_packer.InstanceIsCore[coreAt])
+                    {
+                        continue;
+                    }
+                    if (chunk == 0)
+                    {
+                        drawCommands->drawCommands[command] = new BatchDrawCommand
+                        {
+                            visibleOffset = (uint)visible,
+                            visibleCount = 0,
+                            batchID = _batches[b],
+                            materialID = _coreMaterialId,
+                            meshID = _meshId,
+                            submeshIndex = 0,
+                            splitVisibilityMask = 0xff,
+                            flags = BatchDrawCommandFlags.None,
+                            sortingPosition = 0,
+                        };
+                    }
+                    drawCommands->visibleInstances[visible] = coreAt - first;
+                    visible++;
+                    chunk++;
+                    drawCommands->drawCommands[command].visibleCount = (uint)chunk;
+                    if (chunk == MaxInstancesPerDrawCommand)
+                    {
+                        chunk = 0;
+                        command++;
+                    }
+                }
+                if (chunk > 0)
+                {
+                    command++;
+                }
+            }
+            var coreCommands = command;
+
             for (var b = 0; b < _batchCount; b++)
             {
                 var first = b * _instancesPerBatch;
@@ -1047,6 +1124,13 @@ namespace Driftsys.Dashscene
                 // reconciled after the loop.
                 for (var at = first; at < limit && command < commandCount;)
                 {
+                    // A core was emitted above, in the core range.
+                    if (_packer.InstanceIsCore[at])
+                    {
+                        at++;
+                        continue;
+                    }
+
                     // **One visible instance per command — issue #1401.**
                     // Unity's sorted-transparent path was measured dropping
                     // a contiguous subset of draw commands for single
@@ -1117,8 +1201,29 @@ namespace Driftsys.Dashscene
             drawCommands->drawCommandCount = command;
             drawCommands->visibleInstanceCount = visible;
             drawCommands->instanceSortingPositionFloatCount = 3 * command;
-            drawCommands->drawRanges[0].drawCommandsCount = (uint)command;
-            drawCommands->drawRangeCount = command > 0 ? 1 : 0;
+
+            // The ranges, from what was written: the cores' where any core was
+            // emitted, the blended commands' where any of those were.
+            var ranges = 0;
+            if (coreCommands > 0)
+            {
+                drawCommands->drawRanges[ranges++] = new BatchDrawRange
+                {
+                    drawCommandsBegin = 0,
+                    drawCommandsCount = (uint)coreCommands,
+                    filterSettings = filter,
+                };
+            }
+            if (command > coreCommands)
+            {
+                drawCommands->drawRanges[ranges++] = new BatchDrawRange
+                {
+                    drawCommandsBegin = (uint)coreCommands,
+                    drawCommandsCount = (uint)(command - coreCommands),
+                    filterSettings = filter,
+                };
+            }
+            drawCommands->drawRangeCount = ranges;
 
             // **A short frame is a named diagnostic, never a silent drop** —
             // P4's rule, and this is the one path that can produce one. It
@@ -1165,6 +1270,10 @@ namespace Driftsys.Dashscene
         /// is not that the wrong picture is a tidy one.
         private BatchMaterialID MaterialOf(int at)
         {
+            if (_packer.InstanceIsCore[at])
+            {
+                return _coreMaterialId;
+            }
             var atlas = _packer.InstanceAtlas[at];
             return atlas >= 0 && atlas < _textMaterialIds.Length
                 ? _textMaterialIds[atlas]
@@ -1180,6 +1289,29 @@ namespace Driftsys.Dashscene
         {
             var start = b * _instancesPerBatch;
             return Math.Max(Math.Min(_instancesPerBatch, InstanceCount - start), 0);
+        }
+
+        /// How many of batch `b`'s instances are opaque cores.
+        private int CoresInBatch(int b)
+        {
+            var first = b * _instancesPerBatch;
+            var limit = first + InstancesInBatch(b);
+            var cores = 0;
+            for (var at = first; at < limit; at++)
+            {
+                if (_packer.InstanceIsCore[at])
+                {
+                    cores++;
+                }
+            }
+            return cores;
+        }
+
+        /// How many draw commands `cores` cores take, at most
+        /// `MaxInstancesPerDrawCommand` per command.
+        private static int CoreCommands(int cores)
+        {
+            return (cores + MaxInstancesPerDrawCommand - 1) / MaxInstancesPerDrawCommand;
         }
 
         private static unsafe T* Malloc<T>(int count) where T : unmanaged
@@ -1613,6 +1745,10 @@ namespace Driftsys.Dashscene
             var scalars = new Vector4(
                 EdgeWidth, _packer.SolidBase, _packer.GradientBase, 0.0f);
             BindHeapTo(_material, scalars);
+            if (_coreMaterial != null)
+            {
+                BindHeapTo(_coreMaterial, scalars);
+            }
             for (var i = 0; i < _textMaterials.Length; i++)
             {
                 BindHeapTo(_textMaterials[i], scalars);
@@ -1749,6 +1885,11 @@ namespace Driftsys.Dashscene
             {
                 UnityEngine.Object.DestroyImmediate(_material);
                 _material = null;
+            }
+            if (_coreMaterial != null)
+            {
+                UnityEngine.Object.DestroyImmediate(_coreMaterial);
+                _coreMaterial = null;
             }
             if (_mesh != null)
             {

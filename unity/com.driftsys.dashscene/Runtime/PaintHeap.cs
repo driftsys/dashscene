@@ -127,6 +127,13 @@ namespace Driftsys.Dashscene
         /// sheet is a texture, and a texture is a per-material binding.
         public const string Text = "Dashscene/Text";
 
+        /// The overlay class's opaque-core pass (R-T2, story #1412): the
+        /// depth-writing, non-blending shader every fully opaque fill on
+        /// `UnlitOverlay` is drawn through once before its blended instance.
+        /// Not a `MaterialClass`, for `Text`'s reason: a host chooses a class,
+        /// and the core is how that class draws.
+        public const string OverlayCore = "Dashscene/OverlayCore";
+
         /// The shader one material class draws with.
         ///
         /// A `switch` with no default arm reaching a throw, rather than an

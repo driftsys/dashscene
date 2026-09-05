@@ -100,7 +100,15 @@ Shader "Dashscene/Text"
 
             Blend SrcAlpha OneMinusSrcAlpha
             ZWrite Off
-            ZTest Always
+            // **`Less`, against the opaque cores' depth (R-T2, story #1412).**
+            // Every instance sits one ordinal nearer than the one painted
+            // before it, and a fully opaque fill's core writes that depth
+            // over its interior. `Less` rejects this pass's own interior over
+            // its core — equal depth — and any fragment under a core the
+            // document painted later; the antialiasing band, where no core
+            // wrote, passes and blends. Nothing on this pass writes depth: D3
+            // of the order record stands.
+            ZTest Less
             Cull Off
 
             HLSLPROGRAM

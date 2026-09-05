@@ -153,6 +153,15 @@ namespace Driftsys.Dashscene
         /// knows what a material is.
         private int[] _instanceAtlas = new int[64];
 
+        /// Which instances are opaque cores (R-T2, story #1412): a second
+        /// instance emitted before a fully opaque fill's own, drawn through
+        /// the depth-writing core pass, sharing the fill's ordinal.
+        private bool[] _instanceIsCore = new bool[64];
+
+        /// The paint ordinal of the next instance: later is nearer. A core and
+        /// its fringe share one.
+        private int _ordinal;
+
         private PackDiagnostic _flags;
         private int _affectedRects;
         private int _firstAffectedRect = -1;
@@ -218,6 +227,19 @@ namespace Driftsys.Dashscene
         /// instance arrays follow.
         public int[] InstanceAtlas => _instanceAtlas;
 
+        /// Whether instance `i` is an opaque core, drawn through
+        /// `Dashscene/OverlayCore` rather than the class material.
+        ///
+        /// **R-T2 in this painter.** A fully opaque fill on the overlay class —
+        /// solid alpha 1 or an all-opaque gradient, on a node at opacity 1 —
+        /// is packed twice: first the core, which writes depth and keeps only
+        /// fragments its shape and clip cover completely, then the blended
+        /// instance as before, whose interior the depth test then rejects.
+        /// Both carry the same ordinal in `_DsShade.w`, which is what makes
+        /// their depths bit-identical. Strokes, translucent fills and glyphs
+        /// have no core.
+        public bool[] InstanceIsCore => _instanceIsCore;
+
         /// What the last pack was handed and did not draw.
         public PackDiagnostics Diagnostics { get; private set; }
 
@@ -261,6 +283,7 @@ namespace Driftsys.Dashscene
             _firstAffectedRect = -1;
             _lastAffectedRect = -1;
             InstanceCount = 0;
+            _ordinal = 0;
 
             PackHeap(frame);
             PackClipBoxes(frame);
@@ -588,8 +611,10 @@ namespace Driftsys.Dashscene
                         Affect(index, PackDiagnostic.CoverageNotExpressible);
                         break;
                     }
-                    Emit(rect, entry, PaintKindTag.FillSolid, fill.Index,
-                         clipOffset, clipCount, 0.0f);
+                    EmitFillWithCore(
+                        rect, entry, PaintKindTag.FillSolid, fill.Index, clipOffset, clipCount,
+                        materialClass == MaterialClass.UnlitOverlay
+                            && _solidOpaque[fill.Index] && rect.Opacity >= 1.0f);
                     break;
                 case PaintTag.Gradient:
                     if (fill.Index >= (uint)bounds.Gradients)
@@ -602,8 +627,10 @@ namespace Driftsys.Dashscene
                         Affect(index, PackDiagnostic.CoverageNotExpressible);
                         break;
                     }
-                    Emit(rect, entry, PaintKindTag.FillGradient, fill.Index,
-                         clipOffset, clipCount, 0.0f);
+                    EmitFillWithCore(
+                        rect, entry, PaintKindTag.FillGradient, fill.Index, clipOffset, clipCount,
+                        materialClass == MaterialClass.UnlitOverlay
+                            && _gradientOpaque[fill.Index] && rect.Opacity >= 1.0f);
                     break;
                 case PaintTag.Image:
                     Affect(index, PackDiagnostic.ImageFill);
@@ -621,7 +648,45 @@ namespace Driftsys.Dashscene
             }
         }
 
+        /// A fill, with an opaque core before it where the class and the fill
+        /// allow one (R-T2, story #1412).
+        ///
+        /// **The core shares the fringe's ordinal**, so the two sit at one
+        /// depth: the fringe's interior fragments fail `ZTest Less` against
+        /// the core, its antialiasing band — where the core discarded — passes.
+        /// A later-painted node is one ordinal nearer and rejects both.
+        private void EmitFillWithCore(
+            in RectEntry rect,
+            in PaintEntry entry,
+            PaintKindTag kind,
+            uint row,
+            uint clipOffset,
+            uint clipCount,
+            bool cored)
+        {
+            var ordinal = _ordinal++;
+            if (cored)
+            {
+                EmitAt(ordinal, true, rect, entry, kind, row, clipOffset, clipCount, 0.0f);
+            }
+            EmitAt(ordinal, false, rect, entry, kind, row, clipOffset, clipCount, 0.0f);
+        }
+
         private void Emit(
+            in RectEntry rect,
+            in PaintEntry entry,
+            PaintKindTag kind,
+            uint row,
+            uint clipOffset,
+            uint clipCount,
+            float outset)
+        {
+            EmitAt(_ordinal++, false, rect, entry, kind, row, clipOffset, clipCount, outset);
+        }
+
+        private void EmitAt(
+            int ordinal,
+            bool core,
             in RectEntry rect,
             in PaintEntry entry,
             PaintKindTag kind,
@@ -647,7 +712,9 @@ namespace Driftsys.Dashscene
             _shade[f] = rect.Opacity;
             _shade[f + 1] = outset;
             _shade[f + 2] = rect.Rotation;
-            _shade[f + 3] = 0.0f;
+            // The paint ordinal, which the vertex stage turns into depth:
+            // later is nearer. `DashsceneInstance.hlsl` reads it as `shade.w`.
+            _shade[f + 3] = ordinal;
 
             // Document space, not node-relative: `RectEntry.RotationAnchor` is
             // `(0, 0)` at the node's top-left, and the vertex stage turns a
@@ -668,6 +735,7 @@ namespace Driftsys.Dashscene
             // slot a previous pack wrote a real atlas into would otherwise send
             // this instance to a text material.
             _instanceAtlas[at] = -1;
+            _instanceIsCore[at] = core;
 
             InstanceCount = at + 1;
         }
@@ -1030,6 +1098,7 @@ namespace Driftsys.Dashscene
                 var slot = InstanceCount;
                 Grow(slot + 1);
                 var f = slot * Float4;
+                var ordinal = _ordinal++;
 
                 _quad[f] = quad.X + (left * size);
                 _quad[f + 1] = quad.Y - (top * size);
@@ -1064,7 +1133,9 @@ namespace Driftsys.Dashscene
                 _shade[f] = run.Opacity;
                 _shade[f + 1] = 0.0f;
                 _shade[f + 2] = rect.Rotation;
-                _shade[f + 3] = 0.0f;
+                // A glyph is nearer than the rect it is anchored to, and never
+                // a core: MSDF coverage is partial by construction.
+                _shade[f + 3] = ordinal;
 
                 _pivot[f] = pivotX;
                 _pivot[f + 1] = pivotY;
@@ -1077,6 +1148,7 @@ namespace Driftsys.Dashscene
                 _paint[f + 3] = clipCount;
 
                 _instanceAtlas[slot] = _runAtlas[runRow];
+                _instanceIsCore[slot] = false;
                 InstanceCount = slot + 1;
             }
         }
@@ -1177,6 +1249,16 @@ namespace Driftsys.Dashscene
             KeepFloats(ref _pivot, floats);
             KeepUints(ref _paint, floats);
             KeepInts(ref _instanceAtlas, instances);
+            KeepBools(ref _instanceIsCore, instances);
+        }
+
+        private static void KeepBools(ref bool[] array, int wanted)
+        {
+            if (array.Length >= wanted)
+            {
+                return;
+            }
+            Array.Resize(ref array, Capacity(array.Length, wanted));
         }
 
         /// Grows by doubling, never shrinks, and copies what was there.
