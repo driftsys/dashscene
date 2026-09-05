@@ -903,16 +903,21 @@ namespace Driftsys.Dashscene
             // flagged command below carries exactly one visible instance,
             // per issue #1401, with the measurements in the technote.
             //
-            // **Setting the flag is what makes glyphs reach the screen; the key
-            // values are NOT measured to order the picture.** Do not read a
-            // legible frame as evidence that this painter has an order — the
-            // emission order is still load-bearing.
+            // **Setting the flag is what made glyphs reach the screen on the
+            // typography scene (issue #1389), and under one instance per
+            // command the keys' RANK is the draw order**: farthest first, so
+            // command 0 draws first and the emission order is the picture —
+            // measured on 2026-09-05 (issue #1402), on one graphics API. `just
+            // unity-render`'s order phase pins the composite on every run;
+            // negating the step below drew the backdrop last in a hand-run
+            // arm, which the gate itself does not run, and the flag-off arm
+            // composites in order on that fixture, which the order record
+            // lists as owed.
             // `docs/decisions/brg-draw-command-order-is-not-guaranteed.md`
-            // holds the constraint and
-            // `docs/technotes/batch-renderer-group.md` §5b the measurements,
-            // including the two explanations that were tested and ruled out.
-            // The evidence lives there rather than here, so that settling it
-            // edits one place.
+            // holds the claim and its limits and
+            // `docs/technotes/batch-renderer-group.md` §5b the four arms. The
+            // evidence lives there rather than here, so that revising it edits
+            // one place.
             drawCommands->instanceSortingPositions = Malloc<float>(3 * commandCount);
 
             // **One base point for every command, and only the index varies.**
@@ -1079,9 +1084,11 @@ namespace Driftsys.Dashscene
                         submeshIndex = 0,
                         splitVisibilityMask = 0xff,
                         // Command 0 is farthest and each later command a step
-                        // nearer, all of them behind the sheet. **Which end of
-                        // that the renderer draws first is NOT established** —
-                        // see the measurements above the allocation.
+                        // nearer, all of them behind the sheet. The renderer
+                        // draws the farthest first — measured, see above the
+                        // allocation — so the sign of the step below is the
+                        // order, and negating it drew the backdrop last, over
+                        // everything.
                         flags = BatchDrawCommandFlags.HasSortingPosition,
                         sortingPosition = 3 * command,
                     };

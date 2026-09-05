@@ -19,3 +19,12 @@ publish = false
 # `hlsl-out` pulls no dependency of its own and `wgsl-in` pulls only
 # `unicode-ident`, both already in the lockfile through wgpu.
 naga = { version = "30", features = ["wgsl-in", "hlsl-out"] }
+
+[dev-dependencies]
+# `tests/order_fixture.rs` compiles `unity/render-gate/order.json` to the
+# committed `order.dsb` the render gate draws, the way `crates/dashc`'s own
+# tests pin `goldens/dsb/`. Dev-only: nothing the gate ships depends on the
+# compiler, and the sanity tier already builds `dashc` for its own tests.
+dashc.workspace = true
+dashscene-validator.workspace = true
+serde_json.workspace = true

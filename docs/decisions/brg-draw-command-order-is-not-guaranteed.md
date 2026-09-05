@@ -1,12 +1,12 @@
 # BatchRendererGroup draw-command order is not a guarantee this painter may rest on
 
     status   **accepted (2026-08-31, issue #1389); amended 2026-09-03 (issue
-             #1401) with D5**. What is accepted is the CONSTRAINT — D1–D5
-             below bind downstream work now. What is not settled is the
-             ordering mechanism itself, which is larger than the lane that found
-             it; this record exists so the repository stops saying something
-             untrue about how the picture is ordered while that remains so, and
-             "What is still owed" names what would close it.
+             #1401) with D5; amended 2026-09-05 (issue #1402): D1 and D2
+             revised on the single-instance measurement, the fixture and the
+             gate exist**. What is accepted is the CONSTRAINT — D1–D5 below
+             bind downstream work now. What is not settled is the mechanism
+             inside Unity, which nothing reads; its observable behaviour is
+             measured and pinned, and "What is still owed" names what is not.
     date     2026-08-31
     source   issue #1389; docs/technotes/batch-renderer-group.md §4 and §5b.
              D5 is issue #1401, §5d and §5e
@@ -44,14 +44,27 @@ painter's order through them.
 ## Decision
 
 **D1 — the painter sets `HasSortingPosition` and writes one key per command, and
-the repository does not claim that those keys order the picture.**
+under D5's shape the keys are measured to order the picture.**
 
-Setting the flag and writing the keys is what takes the commands out of material
-grouping, and it is what makes glyphs reach the screen at all. That is measured
-and repeatable. What is **not** established is that the resulting order is the
-painter's order, and three measurements say it is not — two of them cleanly, the
-third only weakly. The table and the reasoning are in
-`docs/technotes/batch-renderer-group.md` §5b:
+Setting the flag and writing the keys takes the commands out of material
+grouping — measured and repeatable since 2026-08-31 — and, **once each flagged
+command names one visible instance (D5), the keys' rank is the draw order**:
+Unity's sorted-transparent path draws the commands farthest-first, the painter
+lays command 0 farthest, and the emission order is what reaches the screen.
+Measured 2026-09-05 on the fixture this record asked for, in a macOS/Metal
+player build: seven composite probes read the painter's order, negating the step
+drew the backdrop last, over everything, and
+`docs/technotes/batch-renderer-group.md` §5b carries the four arms. **The
+composite is pinned; the keys' part in it is measured, not pinned**:
+`just unity-render`'s order phase runs those probes on every pass and fails the
+run on any other composite — which on this fixture the flag-off arm also
+produces — and the negated-step and tied-key arms that discriminate the keys
+were hand-run from the evidence shelf, not by the gate. One graphics API, as
+every claim that gate makes.
+
+The three multi-instance measurements of 2026-08-31 once said the keys did not
+order the picture — two of them cleanly, the third only weakly. They were taken
+under commands D5 has since forbidden, and §5b keeps them as history:
 
 - reversing the keys draws more of the document rather than a reversed picture;
 - two key sets that tie the same ten commands produce different pictures, one
@@ -76,7 +89,10 @@ runs and all but the first two characters of the clipped line are occluded, and
 under one of the others both panels are emptied. A global "is there near-white
 on screen" count separates the defect from a fix, which is what R-E22 asks of
 it, and does not separate a correct order from a wrong one. Any test that pins
-ORDER needs a fixture where every permutation gives a different composite.
+ORDER needs a fixture where every order of its nodes gives a different composite
+— `unity/render-gate/order.json` is that fixture since issue #1402, and the
+order phase of `just unity-render` is the test: it asserts seven composite
+pixels and counts nothing.
 
 **D3 — depth writes remain rejected as a way to order the OVERLAY path.** This
 does not say no shipped class writes depth: `LitOpaque` and `LitCutout` both do,
@@ -145,10 +161,8 @@ D5 on three events, and not carrying it alone — the macOS rows do. The counts
 live there and are not restated here.
 
 **What D5 does not say.** It does not say why Unity drops those commands: the
-sort is not readable from C# and no measurement here reached it. It does not say
-the keys now order the picture — D1's caution stands unchanged, because §5b's
-order measurements were taken under the multi-instance shape and have not been
-re-run under this one.
+sort is not readable from C# and no measurement here reached it. What the keys
+order under this shape is D1's, re-measured on 2026-09-05 (issue #1402).
 
 **What it costs.** The command count becomes the instance count, and so does the
 count of sorting keys that must stay distinct floats.
@@ -160,29 +174,31 @@ precision floor at a command count of that order.
 
 ## What this costs, and what is still owed
 
-The painter draws its text today and the ordering it draws it in is not
-specified. Any document this painter draws with more than one material therefore
-still has an order that rests on unspecified behaviour — text is only where it
-was total, because a backdrop hides glyphs completely.
+The painter draws its text, and the order it draws it in is the emission order,
+through the keys, measured on one graphics API; the composite is pinned by a
+gate that runs on that API, and the keys' part in it by arms hand-run from the
+evidence shelf. What is still owed, and what this record does not decide:
 
-What is owed, and what this record does not decide:
+- **A mutation arm the gate runs.** Issue #1402 asked for the negated-step
+  mutation in the gate; it was run by hand from
+  `dashscene-v021-lanes/probe-1402/`, outside this repository, and nothing in
+  the tree re-runs it — so a change to the key step is caught by no gate, while
+  the flag-off arm shows the composite survives without the keys on this
+  fixture.
 
-- **§5b's order measurements, re-run under D5's shape.** Every row in that table
-  was taken with the multi-instance shape D5 now forbids, so none of them
-  describes the commands this painter emits. Whether one key per instance
-  reproduces the emission order is therefore reopened as a question rather than
-  answered: it is a follow-up story (issue #1402), and D1 and D2 stand until it
-  reports.
-- **The fixture.** A document with a full-bleed backdrop, text in at least two
-  atlases, and a node packed after a glyph run. `goldens/dsb/` has none — the
-  `v07-text-*` files are byte records pinned by `crates/dashc/tests/`, not
-  renderable fixtures with atlases. Whether the gate grows an atlas-install path
-  or the showcase's typography scene becomes the gate is undecided.
-- **What the native sort actually does with these keys.** It is not readable
-  from C#, and the measurements above rule out a plain distance sort without
-  replacing it with anything.
-- **Whether the keys should be kept at all** if the order they impose cannot be
-  established. They are kept for now because without them no glyph draws.
+- **The same gate on GLES and Vulkan.** `just unity-render` runs on the
+  developer's Metal; the fleet's two APIs have no player-build reading of the
+  order fixture. §5e's device arms read the band defect there, not the order.
+- **What the native sort actually does with these keys.** Still not readable
+  from C#. What is measured is its observable: farthest-first by rank under one
+  instance per command, and the fall-back order — text materials first, the
+  class material last — when every key ties.
+- **Why the flag-off arm composites in order on the fixture.** #1389's flag-off
+  reading, every surface and no glyph, was the typography scene under
+  multi-instance commands; the fixture under single-instance commands draws in
+  the painter's order with the flag off. Whether the shape or the document
+  carries that difference is unmeasured, and the keys are kept because theirs is
+  the path whose order is both measured and mutable.
 
 ## Alternatives considered
 

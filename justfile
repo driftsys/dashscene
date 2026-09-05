@@ -1878,6 +1878,33 @@ unity-render unity_version="6000.3.23f1" timeout="180":
     cp "${root}/unity/render-gate/RenderGateBuild.cs" "${project}/Assets/Editor/"
     cp "${fixture}" "${project}/Assets/StreamingAssets/document.dsb"
 
+    # **The order fixture and the two faces its text needs** (issue #1402).
+    # `unity/render-gate/order.dsb` is re-derived from `order.json` by
+    # `unity/package-gate`'s `order_fixture`; the fonts and sheets are the
+    # committed ones `unity-demo` stages, plus the bold face for the second
+    # atlas. Every input is committed; nothing here is generated at build
+    # time.
+    order="${root}/unity/render-gate/order.dsb"
+    fonts="${root}/corpus/fonts/inter"
+    atlases="${root}/corpus/atlas"
+    for input in "${order}" "${fonts}/Inter-Regular.otf" "${fonts}/Inter-Bold.otf" \
+      "${atlases}/inter-ascii/atlas.png" "${atlases}/inter-ascii/atlas.metrics" \
+      "${atlases}/inter-ascii-bold/atlas.png" "${atlases}/inter-ascii-bold/atlas.metrics"; do
+      if [ ! -f "${input}" ]; then
+        echo "unity-render: ${input} is missing; the order fixture cannot be drawn" >&2
+        exit 1
+      fi
+    done
+    mkdir -p "${project}/Assets/StreamingAssets/cascade/regular" \
+      "${project}/Assets/StreamingAssets/cascade/bold"
+    cp "${order}" "${project}/Assets/StreamingAssets/order.dsb"
+    cp "${fonts}/Inter-Regular.otf" "${project}/Assets/StreamingAssets/cascade/Inter-Regular.otf"
+    cp "${fonts}/Inter-Bold.otf" "${project}/Assets/StreamingAssets/cascade/Inter-Bold.otf"
+    cp "${atlases}/inter-ascii/atlas.png" "${project}/Assets/StreamingAssets/cascade/regular/atlas.png"
+    cp "${atlases}/inter-ascii/atlas.metrics" "${project}/Assets/StreamingAssets/cascade/regular/atlas.metrics"
+    cp "${atlases}/inter-ascii-bold/atlas.png" "${project}/Assets/StreamingAssets/cascade/bold/atlas.png"
+    cp "${atlases}/inter-ascii-bold/atlas.metrics" "${project}/Assets/StreamingAssets/cascade/bold/atlas.metrics"
+
     cat > "${project}/ProjectSettings/ProjectSettings.asset" <<'YAML'
     %YAML 1.1
     %TAG !u! tag:unity3d.com,2011:

@@ -121,12 +121,16 @@ null`, and `allDepthSorted = false`. It stated no
 order at all. It assumed the emission order survives, and across materials it
 does not.
 
-**Stating the order did not settle it, and §5b is the reason.** The painter now
-sets `HasSortingPosition` and writes a key per command, which is what makes
-glyphs reach the screen at all. It does not follow that the keys order the
-picture, and measurement says they do not. Treat the keys as the thing that
-takes the commands out of material grouping, and the emission order as still
-load-bearing.
+**Stating the order settled it only under the single-instance shape, and §5b
+carries both measurements.** The painter sets `HasSortingPosition` and writes a
+key per command. Under the multi-instance commands it emitted until issue #1401,
+that was measured to take the commands out of material grouping without ordering
+the picture; under D5's one instance per command it was measured on 2026-09-05
+to order the picture — the draw order is the keys' rank, farthest first, and
+negating the step drew the backdrop last, over everything. The emission order is
+load-bearing because the keys encode it; `just unity-render`'s order phase pins
+the composite on every run, and the keys' part in it is what the hand-run arms
+of §5b measured.
 
 The consequence, isolated in a player build on macOS/Metal — the symptom, no
 text at all, reproduces on Android/Vulkan, and §5e's flag-off arm isolates it
@@ -161,12 +165,17 @@ glyph runs belonging to the other two atlases sample the wrong sheet.
 
 ## 5b. What the sorting keys were measured to do
 
-All of this is macOS/Metal, Apple M3, Unity 6000.3.23f1, a player build, the
-showcase typography scene — four materials, 381 instances, eleven draw commands
-— on 2026-08-31. Every row was taken three times and did not move. `white`
-counts near-white pixels, which for this document is the paragraph text alone.
-The keys are built from one base point on the sheet, one direction from that
-point to the camera, and a per-command step along it.
+Two measurements, under two command shapes. The first, of 2026-08-31, was taken
+under the multi-instance commands D5 has since forbidden and is kept as the
+history it is; the second, of 2026-09-05, is the one that describes the commands
+this painter emits.
+
+**Under the multi-instance shape, 2026-08-31 — superseded.** macOS/Metal, Apple
+M3, Unity 6000.3.23f1, a player build, the showcase typography scene — four
+materials, 381 instances, eleven draw commands. Every row was taken three times
+and did not move. `white` counts near-white pixels, which for this document is
+the paragraph text alone. The keys are built from one base point on the sheet,
+one direction from that point to the camera, and a per-command step along it.
 
 | the keys each command was given                      | white |
 | ---------------------------------------------------- | ----: |
@@ -206,11 +215,58 @@ something legible. That much is settled.
   needs the `AddBatches` window-offset fix in the same change to be measurable
   at all; without it Unity refuses seven of the eight batches.)
 
-So the mechanism is **recorded as unsettled**. Do not describe this painter as
-ordering its picture through `BatchDrawCommand` sorting positions, and do not
-read a legible frame as evidence that it does. A test that pins the order needs
-a fixture where every permutation gives a different composite — §6 — and that
-fixture does not exist yet.
+Those three rows were read under commands that D5 later measured dropping a
+contiguous subset of commands for single frames, so a single captured frame
+could differ from its neighbour by the drop alone; they describe commands the
+painter no longer emits, and the `RunEnd` walk the batch row cites was removed
+with them.
+
+**Under the single-instance shape, 2026-09-05 — the measurement that stands.**
+macOS/Metal, Apple M3, Unity 6000.3.23f1, a player build through
+`just unity-render`, on the fixture the order record asked for:
+`unity/render-gate/order.json` — a full-bleed blue backdrop, a yellow opaque
+fill, twelve black regular glyphs over it, a red veil at half alpha over both,
+and two white bold glyphs from a second atlas over the veil; five nodes,
+seventeen instances, one command each, three materials. Every opaque colour is 0
+or 1 per channel, so seven probes discriminate the painter's order from every
+other order of the five nodes — a permutation inside one glyph run moves no node
+over another and is not distinguished — without modelling the pipeline's colour
+handling, and `unity/package-gate/tests/order_fixture.rs` re-derives the `.dsb`
+and pins the colours. Each arm is one run of the gate; the run prints every
+probe's read-back value, and the undrawn control frame satisfies 0 of 7 on every
+run.
+
+| the keys each command was given                                 | probes in the painter's order | the frame                                                                                                    |
+| --------------------------------------------------------------- | ----------------------------: | ------------------------------------------------------------------------------------------------------------ |
+| as built — command 0 farthest, each later command a step nearer |                        7 of 7 | backdrop, fill, black glyphs, the veil tinting all three, white on top                                       |
+| the step negated — command 0 nearest                            |                        1 of 7 | the backdrop alone: drawn last, it covers everything                                                         |
+| the flag removed, no keys                                       |                        7 of 7 | the painter's order, on this fixture                                                                         |
+| every command on one key                                        |                        4 of 7 | the text materials first, the class material last: the glyphs under the fill, the bold glyphs under the veil |
+
+**What the rows say.** Under one instance per flagged command, the
+sorted-transparent path draws the commands farthest-first by their key, and the
+painter lays command 0 farthest — so the draw order is the emission order, and
+negating the step draws the backdrop last, which, opaque and full-bleed, covers
+every probe whatever the other sixteen commands did; that is the mutation the
+story required before any order claim was recorded, and it is what a reversal
+produces on this fixture rather than a reading of the whole reversed order. The
+tied row is #1389's picture: with nothing to sort by, the text materials draw
+before the class material. The flag-off row is not #1389's picture, and it does
+not overturn it: #1389's flag-off reading — every surface, no glyph — was the
+typography scene under multi-instance commands, and this fixture under
+single-instance commands composites in the painter's order with the flag off.
+Which of the two differences carries that is not measured. The painter keeps the
+flag and the keys, because the flagged path is the one whose order is both
+measured and mutable, and the tied row shows what the fall-back order is.
+
+**What this does not establish.** One graphics API, Metal, in one player, one
+settled frame per arm — a timing race of D5's kind would not show here. The
+three mutation arms were taken under the predicate before its opaque bound was
+tightened to R-E22's 0.016; only the as-built arm was re-run under the committed
+predicate. Nothing reads Unity's sort: the observable is pinned, the mechanism
+is not. Frames, reports and the arm scripts:
+`driftsys/dashscene-v021-lanes/probe-1402/2026-09-05-order-gate/`, outside this
+repository.
 
 ## 5c. Two explanations that were tested and ruled out
 
@@ -235,8 +291,9 @@ than left for someone to spend a day on.
   0.004.
 
 Magnitude and axis therefore both drop out, and only the RANK of the keys has
-any effect at all. That is the signature of a comparison sort being fed these
-keys and then not ordering the draw by them.
+any effect at all — which §5b's 2026-09-05 rows now read as a comparison sort
+ordering the draw by that rank, farthest first, once each command names one
+instance.
 
 **One construction detail, because it is easy to get wrong twice.** The keys are
 laid out behind the sheet and run back toward it, so command 0 is farthest and
@@ -345,12 +402,13 @@ is macOS/Metal only; the same arms on the Pixel 5 over Vulkan are §5e. And
 **§5b's rows were all taken under the multi-instance shape**, including the
 `RunEnd` material-run walk it names, which this change removed: those
 measurements describe commands this painter no longer emits, so the order
-question they left open is reopened rather than answered. §5c's single
-unreproduced dark frame is **consistent** with this defect and is not identified
-as it: that rig captures one frame per player run, so one dark result in about
-forty runs is one dark frame in about forty, which is the same order as the 1.5
-% to 2.1 % measured here on a live host — well above the 0.58 % (115/20,000)
-measured with the host frozen. Nothing re-ran it under a counting instrument.
+question they left open is reopened rather than answered — and answered by §5b's
+2026-09-05 rows. §5c's single unreproduced dark frame is **consistent** with
+this defect and is not identified as it: that rig captures one frame per player
+run, so one dark result in about forty runs is one dark frame in about forty,
+which is the same order as the 1.5 % to 2.1 % measured here on a live host —
+well above the 0.58 % (115/20,000) measured with the host frozen. Nothing re-ran
+it under a counting instrument.
 
 **The paint entry, re-measured on the fix build.** The filed configuration — the
 paint entry, 16 instances, one material, one flagged command, which is issue
@@ -468,7 +526,10 @@ The gates asserted that _something_ drew, and checked instance counts. A painter
 that draws every surface and no glyph passes both. **A count measures the near
 side of the boundary.** What is needed is per-atlas ink attribution — for each
 font sheet, at least one pixel that demonstrably came from _that_ sheet — and a
-node packed after a glyph shown to paint over it.
+node packed after a glyph shown to paint over it. Both exist since issue #1402:
+`just unity-render`'s order phase draws `unity/render-gate/order.dsb` through
+two atlases, probes one glyph pixel per sheet, and probes the veil packed after
+the regular run over those glyphs.
 
 The standalone BRG harness written to reproduce the fault could not, because it
 laid its instances out in a grid where nothing overlaps. Reordering
@@ -512,7 +573,9 @@ the picture change?_ If the answer is yes, the order has to be stated rather
 than assumed.
 
 The cheapest test is to remove things rather than rearrange them. Rearranging
-the emission order proves nothing here — the shipped order, glyph runs first and
-surfaces first all produce the same frame, because emission order is not what
-reaches the GPU. Deleting the one command that overlaps everything else is what
-isolates it.
+the emission order proved nothing under the multi-instance shape — the shipped
+order, glyph runs first and surfaces first all produced the same frame, because
+emission order was not what reached the GPU. Deleting the one command that
+overlaps everything else is what isolates it. Once an order IS stated, the test
+is the one §5b's 2026-09-05 rows ran: a fixture where every order of its nodes
+composites differently, and a mutation of the key step that must flip it.

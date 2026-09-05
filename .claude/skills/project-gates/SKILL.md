@@ -325,10 +325,15 @@ documentation-only diff most jobs skip. Read the individual jobs.
                       predicate first, and the run fails if that frame passes
                       (issue #1029 is this repository's own black-frame gate).
                       It also settles issue #1307 by drawing the cutout class
-                      at two cutoffs and comparing. It measures ONE graphics
-                      API — Metal on macOS — over ONE document, and asserts
-                      that ink landed where a node is, not that the ink is
-                      right; issue #828's suite is what judges the colour.
+                      at two cutoffs and comparing. It measures ONE graphics API
+                      — Metal on macOS — over two documents: `v03-paint.dsb`,
+                      where it asserts that ink landed where a node is, not that
+                      the ink is right, and since issue #1402
+                      `unity/render-gate/order.dsb`, where an order phase reads
+                      seven composite pixels — three of them, one per material,
+                      to R-E22's tolerance — each first refused on the undrawn
+                      frame; issue #828's suite is what judges the colour
+                      elsewhere.
                       Needs a Unity editor, so it is outside `check` and
                       outside CI. Costs tens of minutes: the project is rebuilt
                       from scratch each run and R-E6's `KeepAll` makes the

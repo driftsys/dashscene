@@ -33,7 +33,10 @@ use std::path::{Path, PathBuf};
 /// read from disk here rather than taken through that constant so this crate
 /// does not depend on a crate that pulls in wgpu — the gate compiles in
 /// seconds and runs in the sanity tier, and a wgpu dependency would put it
-/// behind a two-minute build.
+/// behind a two-minute build. That holds for the library and the binary; the
+/// tests' dev-dependencies pull in `dashc` since story #1402, for the order
+/// fixture's derivation, which a cold `cargo test -p package-gate` pays for
+/// and a workspace run does not.
 ///
 /// The two are held together by [`WGSL_IS_THE_CRATE_S_OWN`]'s test, which
 /// asserts this path is the one `shader.rs` includes.
@@ -248,8 +251,9 @@ pub fn generate_hlsl(wgsl: &str) -> Result<String, String> {
 ///
 /// **[`package_cs_files`] does NOT share that scope**, and the difference is
 /// load-bearing rather than an oversight to tidy: it walks `Runtime/` only, so
-/// every question this crate asks about C# is a question about the compiled
-/// half of the package. The shaders moved once
+/// a question this crate asks through it is a question about the compiled
+/// half of the package; the scans that also reach the samples take
+/// [`cs_files_under`], since issue #1408's pacing scan. The shaders moved once
 /// already — issue #1313 put them under `Runtime/Resources/` so a player build
 /// keeps them — and a collector pointed at a directory answers "R-E11 and R-E12
 /// hold over what I found there", which is not the requirement. Where they are

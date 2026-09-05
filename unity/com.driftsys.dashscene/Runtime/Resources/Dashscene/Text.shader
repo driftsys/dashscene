@@ -27,11 +27,11 @@
 // sheet no depth test orders, whichever class its nodes took — text drawn after
 // a lit-opaque node is not occluded by it.
 //
-// **That is not the same as "drawn in submission order", which it is not.**
-// `BatchRendererGroup` groups draw commands by material, and issue #1389
-// measured that the sorting keys the painter now writes are not established to
-// restore the painter's order —
-// `docs/decisions/brg-draw-command-order-is-not-guaranteed.md`.
+// **Within the transparent queue the order is the painter's, through the
+// sorting keys.** `BatchRendererGroup` groups draw commands by material
+// (issue #1389); with `HasSortingPosition` and one instance per command the
+// keys' rank is the draw order, measured on one graphics API (issue #1402) —
+// `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` D1.
 Shader "Dashscene/Text"
 {
     Properties
