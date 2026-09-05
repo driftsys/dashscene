@@ -211,17 +211,31 @@ impl CaptureRequest {
     /// The sentinels are `DemoNative.nativeStart`'s: a phase of `-1` and a
     /// signal of `NaN` are what `getIntExtra`/`getFloatExtra` return for an
     /// absent extra, and both read as [`CaptureRequest::Partial`].
+    /// **Partial is decided before the name is looked up**, which is the order
+    /// `DashsceneShowcase.ReadCaptureRequest` uses and the order that keeps a
+    /// launch recoverable. Deciding the name first makes a request that is
+    /// both mistyped and partial — `--es capture_scene typograhy` with no
+    /// other extra, one keystroke away — a refusal, and a refusal stops the
+    /// loop before it starts, so the surface stays black for the life of the
+    /// activity. A partial set was never a capture; it runs the demonstration
+    /// whatever the name says.
     #[must_use]
     pub fn of(scene: Option<&str>, phase: Option<i64>, signal: Option<f32>) -> Self {
         let Some(name) = scene else {
             return Self::Absent;
         };
-        if showcase::by_name(name).is_none() {
-            return Self::UnknownScene(name.to_owned());
+        if name.is_empty() {
+            return Self::Partial;
         }
-        match Capture::parse(Some(name), phase, signal) {
+        let (Some(phase), Some(signal)) = (phase, signal) else {
+            return Self::Partial;
+        };
+        if u64::try_from(phase).is_err() || !signal.is_finite() {
+            return Self::Partial;
+        }
+        match Capture::parse(Some(name), Some(phase), Some(signal)) {
             Some(capture) => Self::Ready(capture),
-            None => Self::Partial,
+            None => Self::UnknownScene(name.to_owned()),
         }
     }
 }
@@ -368,6 +382,40 @@ mod tests {
         assert!(matches!(
             CaptureRequest::of(Some("layout"), Some(2), Some(0.5)),
             CaptureRequest::Ready(_)
+        ));
+    }
+
+    /// A request that is both mistyped and partial is **partial**, not
+    /// refused — and the order matters because a refusal stops the loop
+    /// before it starts.
+    ///
+    /// `--es capture_scene typograhy` with no other extra is one keystroke
+    /// from a real launch. Looking the name up first made it a refusal, so the
+    /// surface stayed black for the life of the activity while the Java half,
+    /// which never sees the name, had left the readout visible and logged that
+    /// the demonstration was running. `DashsceneShowcase.ReadCaptureRequest`
+    /// guards the phase and the signal before the name for the same reason.
+    #[test]
+    fn a_mistyped_name_without_the_other_extras_runs_the_demonstration() {
+        assert!(
+            matches!(
+                CaptureRequest::of(Some("typograhy"), Some(-1), Some(f32::NAN)),
+                CaptureRequest::Partial
+            ),
+            "a partial set was never a capture, whatever the name says"
+        );
+        assert!(
+            matches!(
+                CaptureRequest::of(Some(""), Some(2), Some(0.5)),
+                CaptureRequest::Partial
+            ),
+            "an empty name is what `getStringExtra` gives for `--es capture_scene \"\"`"
+        );
+        // Refused only when the request is otherwise whole, which is the one
+        // case where drawing something anyway photographs the wrong scene.
+        assert!(matches!(
+            CaptureRequest::of(Some("typograhy"), Some(2), Some(0.5)),
+            CaptureRequest::UnknownScene(_)
         ));
     }
 

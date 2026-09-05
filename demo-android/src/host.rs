@@ -124,9 +124,12 @@ impl ShowcaseFrames {
     /// Installs `self.scene` at this extent: a fresh arena, a fresh
     /// `LiveScene`, and the extent recorded beside them.
     ///
-    /// **The only place `extent`, `arena` and `live` are written**, because
-    /// they are one fact and a path that writes two of the three is a defect
-    /// this host has already had. `attach` built the scene itself and left
+    /// **The only place a scene is installed**, and so the only place `extent`
+    /// is written — because the extent and the scene are one fact and a path
+    /// that installs one without the other is a defect this host has already
+    /// had. (`detach` clears `live` and `arena` without touching `extent`,
+    /// which is correct: it uninstalls rather than installs, and the extent it
+    /// would clear is the one the next `attach` arrives with.) `attach` built the scene itself and left
     /// `extent` at the `(0, 0)` its factory gives it:
     /// `dashscene_android::LoopState::step` calls `Frames::resize` only when
     /// the extent **changes**, so a launch whose surface reports one extent and
@@ -269,12 +272,19 @@ impl Frames for ShowcaseFrames {
             self.scene.name,
         ));
         self.renderer = Some(renderer);
-        // `install` rather than `build`: the latter reports `document_replaced`
-        // and resets `Timing`, and this renderer was constructed three lines ago
-        // with nothing uploaded and nothing sampled. `dashscene-web` names that
-        // as the second mechanism not to add — the constructor already
-        // establishes the state it would clear. What this must NOT do is build
-        // the scene itself, which is what it did until the extent went with it.
+        // `install` rather than `build`: the latter reports `document_replaced`,
+        // and this renderer was constructed three lines ago with nothing
+        // uploaded. `dashscene-web` names that as the second mechanism not to
+        // add — the constructor already establishes the state it would clear.
+        // What this must NOT do is build the scene itself, which is what it did
+        // until the extent went with it.
+        //
+        // **It does not reset `Timing`, and on the rebuild path that mixes two
+        // swapchains' samples** — `detach` leaves the accumulator alone and
+        // `Timing::push` clears only when the scene NAME changes, so up to 239
+        // spans measured through a destroyed swapchain are averaged into the
+        // next published sample. `build` resets for exactly this reason.
+        // Issue #1424.
         self.install(width, height);
         self.phase = u64::MAX;
         Ok(())

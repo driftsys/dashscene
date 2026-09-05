@@ -130,9 +130,15 @@ public final class DemoActivity extends Activity implements SurfaceHolder.Callba
             // readout on the name alone left a demonstration running with its
             // readout gone and no way back to it but finding the `R` key.
             // `-1` and `NaN` are the sentinels the two `getExtra` defaults
-            // above return for an absent extra, which is what `Capture::parse`
-            // rejects on the other side.
-            boolean whole = capturePhase >= 0 && !Float.isNaN(captureSignal);
+            // above return for an absent extra. Infinity and the empty string
+            // are tested too, because the native half rejects on
+            // `f32::is_finite` and on an empty name, and a test that admits
+            // what the other half rejects hides the readout for a launch that
+            // then runs the demonstration.
+            boolean whole = !captureScene.isEmpty()
+                    && capturePhase >= 0
+                    && !Float.isNaN(captureSignal)
+                    && !Float.isInfinite(captureSignal);
             if (whole) {
                 readoutVisible = false;
             } else {

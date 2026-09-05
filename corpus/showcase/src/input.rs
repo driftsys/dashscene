@@ -74,9 +74,10 @@ mod tests {
     /// The other half of [`set_signal`]'s stated rule, which no caller in this
     /// workspace exercises because every showcase scene declares its signal.
     /// A document loaded from a `.dsb` is the case that presents it, and the
-    /// answer must be `false` rather than a panic — and rather than `true`,
-    /// which would have both Android hosts force a redraw on every pointer
-    /// sample against a document declaring no such name.
+    /// answer must be `false` rather than a panic. Only `demo`'s desktop host
+    /// propagates it today — `demo-android` and `ds_demo_signal` both discard
+    /// it — so what a wrong answer costs is a redraw per pointer sample on the
+    /// one host that reads it, and a rule the other two cannot rely on.
     #[test]
     fn an_undeclared_signal_name_reports_that_nothing_was_written() {
         let mut arena = dashscene_core::Arena::new();

@@ -130,7 +130,14 @@ fn the_batch_offset_is_folded_into_the_metadata_offsets() {
     );
     // The compound spellings `assignment_count` structurally cannot see, named
     // one at a time so a reader knows the list is the whole of it.
-    for spelling in ["window +=", "window-=", "window +=", "window++", "window--"] {
+    for spelling in [
+        "window +=",
+        "window+=",
+        "window -=",
+        "window-=",
+        "window++",
+        "window--",
+    ] {
         assert!(
             !body.contains(spelling),
             "{PAINTER}'s AddBatches carries `{spelling}`, which moves the \
