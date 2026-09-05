@@ -294,16 +294,42 @@ public final class DemoActivity extends Activity implements SurfaceHolder.Callba
      * <p>Issue #1397. The comment this replaces claimed a two-finger gesture
      * "is never also read as a tap" because the check runs before the
      * detector. It is not enough: returning early leaves the detector holding
-     * finger 0's {@code ACTION_DOWN}, so the {@code ACTION_UP} that follows —
-     * by which time the pointer count is 1 again — reaches it and fires
-     * {@code onSingleTapUp} or a long press. The detector has to be told the
-     * gesture was cancelled, and later events in the same gesture withheld
-     * from it.
+     * finger 0's {@code ACTION_DOWN}, and two things then fire from it. The
+     * long press fires from the {@code LONG_PRESS} timer the detector posted
+     * on that {@code ACTION_DOWN}, with no further event needed at all — so
+     * holding two fingers for half a second toggled the readout. The tap
+     * fires from the {@code ACTION_UP} that arrives once the pointer count is
+     * back to 1. {@code ACTION_CANCEL} closes both, because
+     * {@code GestureDetector.cancel()} removes the pending timer; the latch
+     * is what withholds the rest of the gesture.
      */
     private boolean multiTouch;
 
+    /**
+     * Whether this launch is photographing one state.
+     *
+     * <p>Issue #1395. The native half refuses the commands that cross to the
+     * render thread, and {@code orientation} and {@code readout} never cross:
+     * they are {@code setRequestedOrientation} and a {@code TextView}'s
+     * visibility, both UI-thread calls. So a capture had to be refused here
+     * too, or {@code keyevent 46} composited the readout into the photograph
+     * and {@code keyevent 19} recreated the Activity at a different extent —
+     * both of which the capture exists to prevent, and both reachable from an
+     * overlapping harness step. {@code DashsceneShowcase.ReadInput} returns
+     * before all five, which is the parity this restores.
+     */
+    private boolean capturing() {
+        return captureScene != null
+                && capturePhase >= 0
+                && !Float.isNaN(captureSignal)
+                && !Float.isInfinite(captureSignal);
+    }
+
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        if (capturing()) {
+            return true;
+        }
         int action = event.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {
             touchStartX = event.getX();
@@ -347,6 +373,11 @@ public final class DemoActivity extends Activity implements SurfaceHolder.Callba
 
     @Override
     public boolean onKeyDown(int code, KeyEvent event) {
+        if (capturing()) {
+            // A capture holds one state, and every key in the vocabulary moves
+            // it. See `capturing()`.
+            return true;
+        }
         // The bindings the measurement harness sends. The two arrow keys drive
         // the signal rather than navigating, which is demo/src/input.rs's
         // binding and the one the contract adopts; navigation is on the page

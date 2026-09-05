@@ -498,14 +498,37 @@ mod tests {
             "both writes belong to `install`, so neither path can take one \
              without the other: {body}"
         );
-        // Issue #1396: `elapsed` is the third thing a fresh scene needs, and
-        // it ran on across a scene change, so the new scene skipped every
-        // phase the old one had reached. It belongs to the same one place, for
-        // the same reason.
+        // Issue #1396's reset is deliberately NOT here: `build` calls
+        // `install` and `resize` calls `build`, so a clock reset in either
+        // would snap a transition back to phase 0 on every resize — which
+        // `demo/src/shell.rs::build` records as the thing a rebuild must not
+        // do. It belongs to the scene change alone, and the test below pins
+        // that.
+        assert!(
+            !body.contains("self.elapsed"),
+            "the clock is not reset where a resize would reach it: {body}"
+        );
+    }
+
+    /// Issue #1396. The clock starts with a new scene and survives a resize,
+    /// and those are two different call sites.
+    #[test]
+    fn a_scene_change_starts_the_clock_and_a_resize_does_not() {
+        let host = include_str!("host.rs");
+        assert_eq!(
+            host.matches("self.elapsed = 0.0;").count(),
+            1,
+            "one reset, in the scene-change arm"
+        );
+        let drain = host
+            .split_once("fn drain_input(&mut self) {")
+            .expect("host.rs still declares `fn drain_input`")
+            .1;
+        let body = &drain[..drain.find("\n    }").expect("`drain_input` still ends")];
         assert!(
             body.contains("self.elapsed = 0.0;"),
-            "installing a scene starts its clock; a scene that inherits the \
-             last one's `elapsed` skips its own phase 0: {body}"
+            "the reset is in the scene-change arm, which is the only place a \
+             scene changes: {body}"
         );
     }
 
@@ -530,6 +553,27 @@ mod tests {
         let guard = body
             .find("if self.capture.is_some() {")
             .expect("drain_input still refuses to apply input under a capture");
+        // **The guard has to leave**, not merely exist: replacing `return;`
+        // with a log line is a guard that reads as present and refuses
+        // nothing.
+        let after = &body[guard..];
+        let block_end = after.find("\n        }").expect("the guard's block ends");
+        assert!(
+            after[..block_end].contains("return;"),
+            "the capture guard must return: {}",
+            &after[..block_end]
+        );
+        // **And it has to follow the drain**, which is what the comment above
+        // it promises: the queue is process-global and a capture never ends,
+        // so a guard hoisted above `mem::take` leaves every command to
+        // accumulate for the life of the run.
+        let take = body
+            .find("std::mem::take(&mut pending.commands)")
+            .expect("drain_input still empties the queue");
+        assert!(
+            take < guard,
+            "the queue is emptied before the capture refuses to apply it"
+        );
         for applied in ["self.build(", "run_action(", "set_signal("] {
             let at = body
                 .find(applied)

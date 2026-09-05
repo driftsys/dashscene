@@ -147,13 +147,6 @@ impl ShowcaseFrames {
     /// has a typesetter at all.
     fn install(&mut self, width: u32, height: u32) {
         self.extent = (width, height);
-        // **The clock starts with the scene** (issue #1396). `phase` is reset
-        // by both callers so the pulse is re-applied, but `elapsed` ran on —
-        // so a swipe after 30 s computed `phase = (30.0 / 2.5) = 12` and
-        // applied it to a scene that had never seen phases 0 to 11.
-        // `DashsceneShowcase.Show` sets `_sincePulse = 0` beside its `_phase`,
-        // and `layout`'s phase 0 is what sets its spread and topology at all.
-        self.elapsed = 0.0;
         self.arena = Arena::new();
         self.live = Some((self.scene.build)(&mut self.arena, width, height));
     }
@@ -215,6 +208,20 @@ impl ShowcaseFrames {
                     };
                     self.scene_index = advance(self.scene_index, showcase::SCENES.len(), walk);
                     self.scene = &showcase::SCENES[self.scene_index];
+                    // **The clock starts with the new scene** (issue #1396),
+                    // and here rather than in `build`, which a resize also
+                    // calls. `phase` was reset by both and `elapsed` ran on,
+                    // so a swipe at 32.5 s computed phase 13 and applied it to
+                    // a scene that had never seen phases 0 to 12 — `surfaces`
+                    // opening at `SWEEP = 1.0` instead of 0.0.
+                    //
+                    // **A resize must NOT reset it**, which putting this in
+                    // `build` would have done. `demo/src/shell.rs::build`
+                    // states the rule: a rebuild re-applies the pulse at the
+                    // SAME phase, "so a resize would otherwise snap every
+                    // signal back to its initial value part-way through a
+                    // transition".
+                    self.elapsed = 0.0;
                     let (width, height) = self.extent;
                     self.build(width, height);
                     log(&format!(

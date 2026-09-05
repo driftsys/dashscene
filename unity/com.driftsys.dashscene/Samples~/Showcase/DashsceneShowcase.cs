@@ -482,7 +482,13 @@ namespace Driftsys.Dashscene.Samples
 
             ReadInput();
 
-            if (_cycleSeconds > 0.0f && TotalCount > 1)
+            // **A capture holds one entry too.** The cycle timer is the one
+            // path that could `Show` under a capture, and `_captureApplied`
+            // would then still be set, so the new scene received neither its
+            // pulse nor its signal. The Rust host is self-healing here —
+            // `build` resets `phase` to `u64::MAX` — and this is what gives
+            // this host the same property.
+            if (_capture == null && _cycleSeconds > 0.0f && TotalCount > 1)
             {
                 _sinceSwitch += Time.deltaTime;
                 if (_sinceSwitch >= _cycleSeconds)
@@ -821,12 +827,13 @@ namespace Driftsys.Dashscene.Samples
                 // **Latched, so the fingers lifting is not also a tap** (issue
                 // #1397). Finger 0's `Began` had already recorded
                 // `_touchStart` and `_touchStartedAt` on the frame before
-                // finger 1 arrived, so when both lift, `touchCount` passes
-                // through 1 and finger 0's `Ended` arrives with a near-zero
-                // displacement — the long-press branch if the gesture lasted
-                // half a second, `RunTheScenesOwnSwitch` if it did not.
-                // `DemoActivity.onTouchEvent` guards the same case on the
-                // other host, and its comment says so.
+                // finger 1 arrived, so a staggered lift — one finger leaving
+                // before the other — brings `touchCount` back to 1 and finger
+                // 0's `Ended` arrives with a near-zero displacement: the
+                // long-press branch if the gesture lasted half a second,
+                // `RunTheScenesOwnSwitch` if it did not. A simultaneous lift
+                // gives 2 then 0 and never reaches it, which is why the defect
+                // was intermittent.
                 _multiTouch = true;
                 return;
             }
@@ -848,6 +855,17 @@ namespace Driftsys.Dashscene.Samples
                     _multiTouch = false;
                     break;
                 case TouchPhase.Moved:
+                    if (_multiTouch)
+                    {
+                        // The tail of a two-finger gesture. Gating only
+                        // `Ended` left this open: one finger leaving a frame
+                        // before the other gives the remaining one a `Moved`
+                        // with real drift, which wrote the signal — so the
+                        // orientation gesture scrubbed it on this host and not
+                        // on `demo-android`, whose `onTouchEvent` withholds
+                        // every event after the latch.
+                        break;
+                    }
                     if (Mathf.Abs(touch.position.x - _touchStart.x)
                         > Mathf.Abs(touch.position.y - _touchStart.y))
                     {
