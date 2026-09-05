@@ -90,6 +90,15 @@ count taken at 0 says nothing about them. `compare_pngs` refuses two images of
 different extents rather than reporting a difference: two frames of different
 extents answer no question about whether two painters agree.
 
+**Two refusals, and one fail-open that is named.** `compare_pngs` refuses two
+images of different extents and says which of the two failed to decode;
+`compare-images`' `COMPARE_AT` diagnostic makes both of those refusals too, and
+refuses a coordinate outside the extent rather than panicking on the slice index
+(issue #1392). `compare_rgba` takes a width and cannot refuse, because
+`Comparison` is not a `Result` — a width of zero answers `total: 0`, which reads
+as "nothing differs", so a `debug_assert` bounds it. Neither in-tree caller can
+reach it.
+
 The caller decides what a difference means. Nothing here carries a tolerance,
 which is why this path is not a gate and the `assert_matches_golden*` helpers
 above are. `docs/decisions/the-showcase-hosts-share-one-surface.md` is the

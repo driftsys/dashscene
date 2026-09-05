@@ -10,13 +10,19 @@
 //! running this binary by hand; `docs/design/android-toolchain.md` records the
 //! readings and says the same thing from the other side.
 //!
-//! **What keeps the surface honest without one** are the unit tests at the
-//! foot of this file and `goldens`' own: `compare_rgba`, `compare_pngs` and
-//! [`sample_pair`] each carry cases that fail when the behaviour they name is
-//! wrong, including at a non-zero threshold. Two defects shipped here before
-//! those existed — issues #1392 and #1393, a right image indexed with the left
-//! one's width and a fraction understated by half — which is what a public
-//! surface with no consumer costs.
+//! **What holds part of the surface without one**, and what still holds none
+//! of it. [`sample_pair`] has the tests at the foot of this file, and
+//! `compare_rgba` and `compare_pngs` have `goldens`' own — `compare_rgba`
+//! including a case at a non-zero threshold, which is the parameter this
+//! binary's whole reason for existing turns on. **`main` has none**: its
+//! argument arity, the `COMPARE_THRESHOLD` fallback described below, the JSON
+//! keys and the exit codes are a contract with no test behind it, and a
+//! harness reading this file is relying on prose.
+//!
+//! Issue #1399 is the ticket for the missing caller, and issue #1392 is what
+//! the absence of one cost here: the right image was indexed with the left
+//! image's width, in the diagnostic path a mismatched pair is most likely to
+//! reach.
 //!
 //! ```text
 //! compare-images lean.png unity.png
@@ -96,13 +102,15 @@ fn main() -> ExitCode {
 /// The two images' pixels at `x,y` as decimal RGBA, or why they could not be
 /// sampled.
 ///
-/// **Every refusal `compare_pngs` makes, this makes too.** It used the LEFT
-/// image's width to index the RIGHT one and skipped the extent check
-/// altogether, because `COMPARE_AT` returns before `compare_pngs` ever runs —
-/// so on the mismatched captures this tool exists to look at, the right sample
-/// came from a different row, and near the end of the buffer `goldens::pixel`
-/// panicked on the slice index with no message and exit 101, where every other
-/// failure here is exit 2 with a reason.
+/// **The refusals `compare_pngs` makes, this makes too**, including naming
+/// which of the two failed to decode. It used the LEFT image's width to index
+/// the RIGHT one and skipped the extent check altogether, because
+/// `COMPARE_AT` returns before `compare_pngs` ever runs —
+/// so on a mismatched pair the right sample came from a different row, and
+/// near the end of the buffer `goldens::pixel` panicked on the slice index —
+/// the range panic, before its own `expect("pixel in range")` message could be
+/// produced — for exit 101, where every other failure here is exit 2 with a
+/// reason.
 fn sample_pair(left: &[u8], right: &[u8], at: &str) -> Result<String, String> {
     let Some((x, y)) = at.split_once(',') else {
         return Err(format!("COMPARE_AT must be `x,y`, got {at:?}"));
@@ -113,10 +121,18 @@ fn sample_pair(left: &[u8], right: &[u8], at: &str) -> Result<String, String> {
 
     // Decoded through the same path the comparison uses, so a difference seen
     // here is a difference the comparison saw.
-    let Some((((left_w, left_h), left_px), ((right_w, right_h), right_px))) =
-        goldens::decode_for_sampling(left).zip(goldens::decode_for_sampling(right))
-    else {
-        return Err("one of the images did not decode".to_owned());
+    let (Some(((left_w, left_h), left_px)), Some(((right_w, right_h), right_px))) = (
+        goldens::decode_for_sampling(left),
+        goldens::decode_for_sampling(right),
+    ) else {
+        // Named, as `compare_pngs` names it: "one of them" sends a reader to
+        // check both files.
+        let which = if goldens::decode_for_sampling(left).is_none() {
+            "left"
+        } else {
+            "right"
+        };
+        return Err(format!("the {which} image is not a decodable PNG"));
     };
     if (left_w, left_h) != (right_w, right_h) {
         return Err(format!(
@@ -125,7 +141,12 @@ fn sample_pair(left: &[u8], right: &[u8], at: &str) -> Result<String, String> {
              to compare at it"
         ));
     }
-    let (width, height) = (left_w.max(0) as usize, left_h.max(0) as usize);
+    // `try_decode_rgba` allocates `width * 4 * height`, so a negative extent
+    // would have failed there; these are non-negative by construction.
+    let (width, height) = (
+        left_w.unsigned_abs() as usize,
+        left_h.unsigned_abs() as usize,
+    );
     if x >= width || y >= height {
         return Err(format!("({x},{y}) is outside {width}x{height}"));
     }
@@ -165,10 +186,15 @@ mod tests {
             .to_vec()
     }
 
-    /// Issue #1392. Two captures of different extents are what this tool is
-    /// most often pointed at — it exists because two hosts disagreed about
-    /// theirs — so it is the case the sampling path has to refuse rather than
-    /// the one it may assume away.
+    /// Issue #1392. Two extents is the case the sampling path assumed away
+    /// while the comparison path refused it, and the two have to agree —
+    /// otherwise `COMPARE_AT`, which a reader reaches precisely when a
+    /// comparison looks wrong, answers where the comparison would not.
+    ///
+    /// Every recorded use of this tool has been at one extent: the six
+    /// 2026-08-29 Android captures were all 2340x1080, which is what made them
+    /// comparable at all. The mismatch is the case a reader hits when
+    /// something has already gone wrong, not the ordinary one.
     #[test]
     fn two_extents_are_refused_rather_than_sampled_with_one_width() {
         let left = png(8, 8, skia_safe::Color4f::new(1.0, 0.0, 0.0, 1.0));
@@ -187,13 +213,55 @@ mod tests {
         assert!(why.contains("outside 4x4"), "{why}");
     }
 
+    /// A PNG whose every pixel differs from every other, so a sample can only
+    /// be right for one coordinate in one image.
+    ///
+    /// **Two solid fills cannot pin this**, which a first version of this test
+    /// used: reading the right image out of the left buffer, which is issue
+    /// #1392 itself, still printed the right colour, and so did any `x`/`y`
+    /// swap or offset slip.
+    fn ramp(width: i32, height: i32, tint: u8) -> Vec<u8> {
+        let mut surface = skia_safe::surfaces::raster_n32_premul((width, height)).expect("surface");
+        let canvas = surface.canvas();
+        for y in 0..height {
+            for x in 0..width {
+                let colour = skia_safe::Color4f::new(
+                    f32::from(u8::try_from(x).expect("small")) / 255.0,
+                    f32::from(u8::try_from(y).expect("small")) / 255.0,
+                    f32::from(tint) / 255.0,
+                    1.0,
+                );
+                let mut paint = skia_safe::Paint::new(colour, None);
+                paint.set_anti_alias(false);
+                canvas.draw_rect(
+                    skia_safe::Rect::from_xywh(x as f32, y as f32, 1.0, 1.0),
+                    &paint,
+                );
+            }
+        }
+        surface
+            .image_snapshot()
+            .encode(None, skia_safe::EncodedImageFormat::PNG, None)
+            .expect("PNG encode")
+            .as_bytes()
+            .to_vec()
+    }
+
+    /// The successful path, pinned by value rather than by label.
+    ///
+    /// Kills: sampling the right image out of the left buffer (issue #1392),
+    /// and transposing `x` and `y`.
     #[test]
-    fn a_coordinate_inside_two_matching_extents_is_sampled() {
-        let left = png(4, 4, skia_safe::Color4f::new(1.0, 0.0, 0.0, 1.0));
-        let right = png(4, 4, skia_safe::Color4f::new(0.0, 0.0, 1.0, 1.0));
+    fn each_image_is_sampled_at_the_asked_coordinate_from_its_own_bytes() {
+        let left = ramp(4, 4, 0);
+        let right = ramp(4, 4, 255);
         let line = sample_pair(&left, &right, "2,3").expect("both decode and agree");
-        assert!(line.starts_with("(2,3) left "), "{line}");
-        assert!(line.contains("right "), "{line}");
+        assert_eq!(
+            line, "(2,3) left [2, 3, 0, 255] right [2, 3, 255, 255]",
+            "the red channel is x, the green is y and the blue tells the two \
+             images apart, so this string is wrong under any of the three \
+             slips it exists to catch"
+        );
     }
 
     #[test]

@@ -183,7 +183,12 @@ pub fn pixel(rgba: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {
 /// cannot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Comparison {
-    /// Pixels in the frame.
+    /// Pixels compared.
+    ///
+    /// The frame, for every caller that establishes two equal extents first —
+    /// which is both of the in-tree ones. When the two buffers differ in
+    /// length this is the shorter of them, because that is what the walk
+    /// covers and what [`Comparison::fraction`] is therefore a fraction of.
     pub total: usize,
     /// Pixels counted as differing: some channel differs by more than the
     /// threshold the comparison was taken at. At threshold 0, which is every
@@ -200,8 +205,10 @@ pub struct Comparison {
 impl Comparison {
     /// The differing pixels as a fraction of the frame.
     ///
-    /// `0.0` for an empty frame: no caller can produce one, and dividing by
-    /// zero to say so would be worse than answering.
+    /// `0.0` for an empty frame. One caller can now produce one —
+    /// [`compare_rgba`] answers a width of zero with `total: 0` rather than
+    /// dividing by it — and otherwise no caller does. Dividing by zero to say
+    /// so would be worse than answering.
     pub fn fraction(&self) -> f64 {
         if self.total == 0 {
             return 0.0;
@@ -231,6 +238,19 @@ pub fn compare_rgba(left: &[u8], right: &[u8], width: i32, threshold: u8) -> Com
     // device captures, where a zero extent is a decode that went wrong rather
     // than a caller that should have known better. Nothing can be located
     // without a width, so there is nothing to report.
+    // **This is a fail-open and the type cannot make it anything else.**
+    // `Comparison` is not a `Result`, so "nothing could be compared" and
+    // "nothing differs" are the same value: `fraction()` is 0.0 and both
+    // budgets pass. A review asked for a `debug_assert!` here to bound it, and
+    // that is refused: every test in this workspace runs in a debug build, so
+    // it would reintroduce for them exactly the panic issue #1393 asked to
+    // remove, and leave the function behaving differently in the two profiles
+    // — which is worse for one whose whole contract is that it answers.
+    //
+    // What bounds it instead: neither in-tree caller can reach it — both take
+    // the width from a decoded PNG, and `compare_against` short-circuits on
+    // equal buffers first — and a caller that wants a refusal has
+    // `compare_pngs`, which returns `Result`.
     if width <= 0 {
         return Comparison {
             total: 0,
