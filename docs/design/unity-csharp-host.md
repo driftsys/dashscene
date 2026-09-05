@@ -73,6 +73,19 @@ assemblies, so a `UnityEngine` type fails there with `CS0246` whatever its API
 compatibility level actually is — which is what story #1121 predicted as issue
 #1286 and story #1122 met with 26 errors on its first build.
 
+**Three files story #1443 added are placed by the same rule.**
+`Runtime/ThreadCostMath.cs` and `Runtime/ThreadCostAccumulator.cs` hold the
+thread-time line's arithmetic and its sampling window and reference no engine
+type, so they sit in the checked half where `unity/ffi-check` both compiles and
+**executes** them — the same argument `CommitPacer.cs` is here for, and the
+reason the numeric claims in them (a 240-frame window, a 60-frame warm-up, a
+percentile that rounds away from zero, and a steady frame that allocates
+nothing) are gated rather than commented.
+`Runtime/Engine/DashsceneThreadCost.cs` holds the five `ProfilerRecorder`
+handles those two report over; `Unity.Profiling` is an engine namespace, so it
+sits in the half an editor checks, and `unity/package-gate`'s
+`thread_cost_instrument` scans it as text.
+
 **The split is drawn so that what decides the picture stays in the checked
 half.** `FramePacker` reads the committed tables, resolves each rect's kind and
 row, packs the paint heap and produces the five per-instance arrays — all of it

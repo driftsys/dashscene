@@ -8,6 +8,26 @@ the Cargo workspace rather than moving on its own.
 
 ### Added
 
+- **A thread-time instrument, beside the frame-cost line** (story #1443).
+  `Runtime/Engine/DashsceneThreadCost.cs` reads five of Unity's own
+  `ProfilerRecorder` counters — `Main Thread` and `Render Thread` under
+  `ProfilerCategory.Internal`, `Canvas.SendWillRenderCanvases` and
+  `Canvas.BuildBatch` under `Gui`, and `GC Allocated In Frame` under `Memory` —
+  and reports them per 240 drawn frames after a 60-frame warm-up. It measures
+  what a bracket in `Update` cannot reach: the culling callback, the render
+  thread's encode and a Canvas rebuild. `-no-thread-cost` turns it off.
+  `Runtime/ThreadCostMath.cs` and `Runtime/ThreadCostAccumulator.cs` carry the
+  arithmetic and the sampling, in `Runtime/` rather than in the sample because
+  no CI job compiles a sample and `unity/ffi-check` executes these. A counter
+  this player cannot record reports an **em dash** rather than a zero: a
+  `ProfilerRecorder` over an unregistered counter is not an error, and a zero
+  Canvas-rebuild term reads as a Canvas that rebuilds nothing. The sampling key
+  is compared field by field rather than composed into a string, so a steady
+  frame allocates no managed bytes **in the accumulator** — 192 per push before
+  the change, measured. That is not the whole frame: the render gate's own line
+  reads 832 B/frame after it, and D3's zero-allocation rule over the host's
+  `Update` is story #1445's measurement.
+
 - **The Showcase sample asks for 60 fps before its first frame** (issue #1408).
   `Samples~/Showcase/DashsceneFramePacing.cs` sets
   `Application.targetFrameRate = 60` at `SubsystemRegistration` — process-wide,
