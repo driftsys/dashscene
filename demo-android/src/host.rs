@@ -147,6 +147,13 @@ impl ShowcaseFrames {
     /// has a typesetter at all.
     fn install(&mut self, width: u32, height: u32) {
         self.extent = (width, height);
+        // **The clock starts with the scene** (issue #1396). `phase` is reset
+        // by both callers so the pulse is re-applied, but `elapsed` ran on —
+        // so a swipe after 30 s computed `phase = (30.0 / 2.5) = 12` and
+        // applied it to a scene that had never seen phases 0 to 11.
+        // `DashsceneShowcase.Show` sets `_sincePulse = 0` beside its `_phase`,
+        // and `layout`'s phase 0 is what sets its spread and topology at all.
+        self.elapsed = 0.0;
         self.arena = Arena::new();
         self.live = Some((self.scene.build)(&mut self.arena, width, height));
     }
@@ -181,6 +188,22 @@ impl ShowcaseFrames {
             let mut pending = PENDING.lock().expect("the input queue is never poisoned");
             (std::mem::take(&mut pending.commands), pending.drag_x.take())
         };
+
+        // **A capture holds one state, so input is drained and discarded**
+        // (issue #1395). `DashsceneShowcase.ReadInput` returns early for the
+        // same reason and this host did not: a stray touch, or an
+        // `adb shell input` from an overlapping harness step, switched the
+        // scene or scrubbed the signal off the pinned state, and the
+        // `screencap` that followed photographed a state the other host is not
+        // in. Silent and intermittent, which is the worst shape for a
+        // comparison harness.
+        //
+        // Drained rather than left queued: the queue is process-global and a
+        // capture never ends, so anything left in it would accumulate for the
+        // life of the run.
+        if self.capture.is_some() {
+            return;
+        }
 
         for command in commands {
             match command {

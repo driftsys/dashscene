@@ -282,16 +282,65 @@ public final class DemoActivity extends Activity implements SurfaceHolder.Callba
         }
     }
 
+    /** Where the current single-finger gesture started, for the axis test. */
+    private float touchStartX;
+
+    private float touchStartY;
+
+    /**
+     * Set while a two-finger gesture is in flight, cleared on the next
+     * {@code ACTION_DOWN}.
+     *
+     * <p>Issue #1397. The comment this replaces claimed a two-finger gesture
+     * "is never also read as a tap" because the check runs before the
+     * detector. It is not enough: returning early leaves the detector holding
+     * finger 0's {@code ACTION_DOWN}, so the {@code ACTION_UP} that follows —
+     * by which time the pointer count is 1 again — reaches it and fires
+     * {@code onSingleTapUp} or a long press. The detector has to be told the
+     * gesture was cancelled, and later events in the same gesture withheld
+     * from it.
+     */
+    private boolean multiTouch;
+
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        // Two fingers down is the orientation command, and is checked before
-        // the detector so a two-finger gesture is never also read as a tap.
-        if (event.getPointerCount() == 2 && event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN) {
+        int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_DOWN) {
+            touchStartX = event.getX();
+            touchStartY = event.getY();
+            multiTouch = false;
+        }
+        // Two fingers down is the orientation command.
+        if (event.getPointerCount() == 2 && action == MotionEvent.ACTION_POINTER_DOWN) {
             command(3);
+            if (!multiTouch) {
+                multiTouch = true;
+                // Withdraw the gesture from the detector rather than merely
+                // returning: see `multiTouch`.
+                MotionEvent cancel = MotionEvent.obtain(event);
+                cancel.setAction(MotionEvent.ACTION_CANCEL);
+                gestures.onTouchEvent(cancel);
+                cancel.recycle();
+            }
             return true;
         }
-        if (event.getActionMasked() == MotionEvent.ACTION_MOVE && event.getPointerCount() == 1) {
-            DemoNative.nativeDrag(event.getX());
+        if (multiTouch) {
+            // The tail of a two-finger gesture, which has already done what it
+            // means. Held until the next ACTION_DOWN, because the fingers lift
+            // one at a time.
+            return true;
+        }
+        if (action == MotionEvent.ACTION_MOVE && event.getPointerCount() == 1) {
+            // **Horizontal is the signal's, and only horizontal** (issue
+            // #1398). Without the axis test a vertical swipe — which means
+            // "next entry" and nothing else — wrote the signal on every
+            // sample on its way up, so the scene changed AND its signal was
+            // scrubbed. `DashsceneShowcase.ReadTouch` has had this test since
+            // it was written; this host did not, and the two are one
+            // vocabulary.
+            if (Math.abs(event.getX() - touchStartX) > Math.abs(event.getY() - touchStartY)) {
+                DemoNative.nativeDrag(event.getX());
+            }
         }
         return gestures.onTouchEvent(event) || super.onTouchEvent(event);
     }

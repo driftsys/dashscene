@@ -222,6 +222,28 @@ namespace Driftsys.Dashscene.Samples
 
         private bool _touchDragged;
 
+        /// <summary>
+        /// Whether this capture's phase and signal have been written.
+        /// </summary>
+        /// <remarks>
+        /// Issue #1394. Tracked separately from <c>_phase</c>, which
+        /// <c>Show</c> initialises to 0 — so a <c>capture_phase 0</c> launch,
+        /// the one a harness is most likely to ask for, compared equal on its
+        /// first frame and never reached <c>SetDemoSignal</c>.
+        /// </remarks>
+        private bool _captureApplied;
+
+        /// <summary>
+        /// Set while a two-finger gesture is in flight, and cleared on the
+        /// next single-finger <c>Began</c>.
+        /// </summary>
+        /// <remarks>
+        /// Issue #1397. Without it the two fingers lifting completes finger
+        /// 0's gesture — a tap, or a long press — because that finger's
+        /// <c>Began</c> ran on the frame before the second arrived.
+        /// </remarks>
+        private bool _multiTouch;
+
         private int _readoutHeight;
 
         /// Seconds between automatic switches, from `-cycle <seconds>` on the
@@ -632,10 +654,20 @@ namespace Driftsys.Dashscene.Samples
                 // is that the other host can be photographed in the same state,
                 // and a phase advancing on a clock is a different state on
                 // every launch.
-                if (_phase == _capture.Phase)
+                //
+                // **Tracked separately from the phase value** (issue #1394).
+                // `Show` sets `_phase = 0`, so comparing against `_phase`
+                // returned on the first frame of a `capture_phase 0` launch —
+                // the phase a harness is most likely to ask for — and
+                // `SetDemoSignal` was never reached, leaving the scene on its
+                // built-in default signal while the other host held the one it
+                // was told. The Rust host has no such hole because
+                // `ShowcaseFrames` starts `phase` at `u64::MAX`.
+                if (_captureApplied)
                 {
                     return;
                 }
+                _captureApplied = true;
                 _phase = _capture.Phase;
                 try
                 {
@@ -779,13 +811,23 @@ namespace Driftsys.Dashscene.Samples
         /// not a demonstration.
         private void ReadTouch()
         {
-            if (Input.touchCount == 2)
+            if (Input.touchCount >= 2)
             {
                 var second = Input.GetTouch(1);
                 if (second.phase == TouchPhase.Began)
                 {
                     ToggleOrientation();
                 }
+                // **Latched, so the fingers lifting is not also a tap** (issue
+                // #1397). Finger 0's `Began` had already recorded
+                // `_touchStart` and `_touchStartedAt` on the frame before
+                // finger 1 arrived, so when both lift, `touchCount` passes
+                // through 1 and finger 0's `Ended` arrives with a near-zero
+                // displacement — the long-press branch if the gesture lasted
+                // half a second, `RunTheScenesOwnSwitch` if it did not.
+                // `DemoActivity.onTouchEvent` guards the same case on the
+                // other host, and its comment says so.
+                _multiTouch = true;
                 return;
             }
 
@@ -801,6 +843,9 @@ namespace Driftsys.Dashscene.Samples
                     _touchStart = touch.position;
                     _touchStartedAt = Time.unscaledTime;
                     _touchDragged = false;
+                    // A fresh single-finger gesture, so whatever the last
+                    // two-finger one latched is spent.
+                    _multiTouch = false;
                     break;
                 case TouchPhase.Moved:
                     if (Mathf.Abs(touch.position.x - _touchStart.x)
@@ -816,6 +861,14 @@ namespace Driftsys.Dashscene.Samples
                     var held = Time.unscaledTime - _touchStartedAt;
                     var dy = touch.position.y - _touchStart.y;
                     var dx = touch.position.x - _touchStart.x;
+                    if (_multiTouch)
+                    {
+                        // The tail of a two-finger gesture, which has already
+                        // done what it means. It stays latched until the next
+                        // `Began`, because a two-finger lift can deliver more
+                        // than one `Ended`.
+                        break;
+                    }
                     if (!_touchDragged && Mathf.Abs(dy) > SwipeMinPixels
                         && Mathf.Abs(dy) > Mathf.Abs(dx))
                     {

@@ -498,6 +498,48 @@ mod tests {
             "both writes belong to `install`, so neither path can take one \
              without the other: {body}"
         );
+        // Issue #1396: `elapsed` is the third thing a fresh scene needs, and
+        // it ran on across a scene change, so the new scene skipped every
+        // phase the old one had reached. It belongs to the same one place, for
+        // the same reason.
+        assert!(
+            body.contains("self.elapsed = 0.0;"),
+            "installing a scene starts its clock; a scene that inherits the \
+             last one's `elapsed` skips its own phase 0: {body}"
+        );
+    }
+
+    /// Issue #1395. A capture holds one state, so the host that photographs it
+    /// must not apply input — `DashsceneShowcase.ReadInput` returns early for
+    /// this reason and this host did not, so a stray touch or an overlapping
+    /// `adb shell input` moved the scene off the state being photographed.
+    ///
+    /// **A source scan, and it says what it cannot do.** `host.rs` is
+    /// `#[cfg(target_os = "android")]`, so nothing here can construct a
+    /// `ShowcaseFrames` and drive `frame`. This asserts the guard is present
+    /// and that it precedes every application; it cannot assert that the guard
+    /// is reached. The device pass on issue #1329 is what would.
+    #[test]
+    fn a_capture_drains_input_without_applying_it() {
+        let host = include_str!("host.rs");
+        let drain = host
+            .split_once("fn drain_input(&mut self) {")
+            .expect("host.rs still declares `fn drain_input`")
+            .1;
+        let body = &drain[..drain.find("\n    }").expect("`drain_input` still ends")];
+        let guard = body
+            .find("if self.capture.is_some() {")
+            .expect("drain_input still refuses to apply input under a capture");
+        for applied in ["self.build(", "run_action(", "set_signal("] {
+            let at = body
+                .find(applied)
+                .unwrap_or_else(|| panic!("drain_input no longer applies `{applied}`"));
+            assert!(
+                guard < at,
+                "the capture guard must precede `{applied}`, or a capture \
+                 applies it before refusing"
+            );
+        }
     }
 
     #[test]
