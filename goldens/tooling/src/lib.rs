@@ -173,9 +173,6 @@ pub fn pixel(rgba: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {
     rgba[offset..offset + 4].try_into().expect("pixel in range")
 }
 
-/// The comparison body, with the images root injected (unit tests use
-/// a temporary root; [`assert_matches_golden`] passes the repository's
-/// `goldens/images/`).
 /// What comparing two same-sized, tightly packed RGBA8888 buffers found.
 ///
 /// Carries three numbers rather than one because a differing fraction alone
@@ -186,7 +183,12 @@ pub fn pixel(rgba: &[u8], width: usize, x: usize, y: usize) -> [u8; 4] {
 /// cannot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Comparison {
-    /// Pixels in the frame.
+    /// Pixels compared.
+    ///
+    /// The frame, for every caller that establishes two equal extents first —
+    /// which is both of the in-tree ones. When the two buffers differ in
+    /// length this is the shorter of them, because that is what the walk
+    /// covers and what [`Comparison::fraction`] is therefore a fraction of.
     pub total: usize,
     /// Pixels counted as differing: some channel differs by more than the
     /// threshold the comparison was taken at. At threshold 0, which is every
@@ -203,8 +205,10 @@ pub struct Comparison {
 impl Comparison {
     /// The differing pixels as a fraction of the frame.
     ///
-    /// `0.0` for an empty frame: no caller can produce one, and dividing by
-    /// zero to say so would be worse than answering.
+    /// `0.0` for an empty frame. One caller can now produce one —
+    /// [`compare_rgba`] answers a width of zero with `total: 0` rather than
+    /// dividing by it — and otherwise no caller does. Dividing by zero to say
+    /// so would be worse than answering.
     pub fn fraction(&self) -> f64 {
         if self.total == 0 {
             return 0.0;
@@ -224,15 +228,50 @@ impl Comparison {
 /// rounding difference that is invisible and that swamps any count taken at 0.
 ///
 /// The caller establishes that the two are the same size — `compare_against`
-/// against the golden's dimensions, and any other caller after decoding.
+/// against the golden's dimensions, and any other caller after decoding. When
+/// it does not, this reports over the shorter of the two rather than over the
+/// longer, so the fraction is of what was actually compared. A width of zero
+/// or less reports nothing rather than dividing by it.
 pub fn compare_rgba(left: &[u8], right: &[u8], width: i32, threshold: u8) -> Comparison {
-    let total = left.len() / 4;
+    // **A zero width answers rather than dividing by it.** This is `pub`, and
+    // `compare_against` is only one of its callers — the other decodes two
+    // device captures, where a zero extent is a decode that went wrong rather
+    // than a caller that should have known better. Nothing can be located
+    // without a width, so there is nothing to report.
+    // **This is a fail-open and the type cannot make it anything else.**
+    // `Comparison` is not a `Result`, so "nothing could be compared" and
+    // "nothing differs" are the same value: `fraction()` is 0.0 and both
+    // budgets pass. A review asked for a `debug_assert!` here to bound it, and
+    // that is refused: every test in this workspace runs in a debug build, so
+    // it would reintroduce for them exactly the panic issue #1393 asked to
+    // remove, and leave the function behaving differently in the two profiles
+    // — which is worse for one whose whole contract is that it answers.
+    //
+    // What bounds it instead: neither in-tree caller can reach it — both take
+    // the width from a decoded PNG, and `compare_against` short-circuits on
+    // equal buffers first — and a caller that wants a refusal has
+    // `compare_pngs`, which returns `Result`.
+    if width <= 0 {
+        return Comparison {
+            total: 0,
+            differing: 0,
+            first: None,
+            bounds: None,
+            max_channel_delta: 0,
+        };
+    }
+    // **Counted from the walk, not from the left buffer.** The walk stops at
+    // the shorter of the two, so taking the total from `left` reported a right
+    // buffer half its length as at most 50 % differing and understated
+    // `fraction()` by 2x — which passes a `Budget::Fraction` check silently.
+    let mut total = 0usize;
     let mut differing = 0usize;
     let mut first = None;
     let mut bounds: Option<(i32, i32, i32, i32)> = None;
     let mut max_channel_delta = 0u8;
 
     for (i, (a, b)) in left.chunks_exact(4).zip(right.chunks_exact(4)).enumerate() {
+        total += 1;
         let delta = a
             .iter()
             .zip(b.iter())
@@ -268,6 +307,9 @@ pub fn compare_rgba(left: &[u8], right: &[u8], width: i32, threshold: u8) -> Com
     }
 }
 
+/// The comparison body, with the images root injected (unit tests use
+/// a temporary root; [`assert_matches_golden`] passes the repository's
+/// `goldens/images/`).
 fn compare_against(root: &Path, name: &str, png_bytes: &[u8], budget: Budget) {
     let golden_path = root.join(format!("{name}.png"));
     let golden_bytes = match std::fs::read(&golden_path) {
@@ -814,6 +856,46 @@ mod tests {
         assert_eq!(
             c.differing, 1,
             "a golden has one painter on both sides, so one level is a change"
+        );
+    }
+
+    /// Issue #1393, first half. `compare_rgba` is `pub` and `compare_pngs` is
+    /// only one of its callers, so a zero width has to answer rather than
+    /// divide.
+    #[test]
+    fn a_zero_width_is_refused_rather_than_dividing_by_it() {
+        let a = vec![0u8; 16];
+        let mut b = a.clone();
+        b[0] = 255;
+        let c = compare_rgba(&a, &b, 0, 0);
+        assert_eq!(c.differing, 0, "nothing can be located without a width");
+        assert_eq!(c.total, 0);
+        assert_eq!(c.first, None);
+        assert_eq!(c.bounds, None);
+        assert_eq!(c.fraction(), 0.0);
+    }
+
+    /// Issue #1393, second half. The walk stops at the shorter buffer and
+    /// `total` was taken from the left one, so a right buffer half the left's
+    /// length reported at most 50 % differing and a `fraction()` understated
+    /// by 2x — which silently passes a `Budget::Fraction` check.
+    #[test]
+    fn a_short_buffer_does_not_understate_the_fraction() {
+        let a = vec![0u8; 8 * 4];
+        let b = vec![255u8; 4 * 4];
+        let c = compare_rgba(&a, &b, 4, 0);
+        assert_eq!(
+            c.differing, 4,
+            "four pixels were compared, and all four differ"
+        );
+        assert_eq!(
+            c.total, 4,
+            "the total is what was compared, not what the longer buffer holds"
+        );
+        assert!(
+            (c.fraction() - 1.0).abs() < f64::EPSILON,
+            "every compared pixel differs, so the fraction is 1.0, not 0.5: {}",
+            c.fraction()
         );
     }
 }
