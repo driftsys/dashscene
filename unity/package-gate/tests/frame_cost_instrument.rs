@@ -152,11 +152,19 @@ fn every_reported_row_names_the_extent_it_was_drawn_at() {
 
 /// The reported line's format is pinned whole, and its readers are named.
 ///
-/// **Three parsers outside this language depend on it.**
+/// **Four parsers outside this language depend on it.**
 /// `measure/android/unity-lifecycle.sh` reads the extent out of it to decide
 /// whether a lifecycle event reached the app, `measure/android/unity-frame-cost.sh`
-/// reshapes every field of it into the table it publishes, and
-/// `measure/android/record-check.py` re-derives the design record from it. A
+/// reads the same extent out of every captured line to refuse a run whose sweeps
+/// drifted across two geometries, `measure/android/frame-table.py` is the parser
+/// that turns each line into a published row, and
+/// `measure/android/record-check.py` re-derives the design record from it.
+///
+/// **`frame-table.py` is the newest and the strictest.** Story #1443 retired the
+/// eight-group `sed` that used to build the table inside
+/// `unity-frame-cost.sh`; what replaced it is anchored on the whole line, so a
+/// format change does not degrade its output — it files every line as
+/// unreadable and the table comes out empty. A
 /// review of PR #1377 changed ` at ` to ` @ ` in the format string and all four
 /// tests here stayed green, because each asserted a fragment: the shell tests
 /// stayed green too, because their stub writes its own copy of the line and so
@@ -174,10 +182,10 @@ fn the_reported_line_format_is_pinned_whole_and_its_readers_are_named() {
                 + "({9:F1} fps if unpaced)""#;
     assert!(
         source.contains(FORMAT),
-        "DashsceneFrameCost's reported line format has changed. Three parsers \
+        "DashsceneFrameCost's reported line format has changed. Four parsers \
          outside this language read it — measure/android/unity-lifecycle.sh, \
-         measure/android/unity-frame-cost.sh and \
-         measure/android/record-check.py — and each one silently stops \
+         measure/android/unity-frame-cost.sh, measure/android/frame-table.py \
+         and measure/android/record-check.py — and each one silently stops \
          matching rather than failing. Move them with it, then update this \
          literal.\n\nexpected to find:\n{FORMAT}"
     );
@@ -185,6 +193,7 @@ fn the_reported_line_format_is_pinned_whole_and_its_readers_are_named() {
     for reader in [
         "measure/android/unity-lifecycle.sh",
         "measure/android/unity-frame-cost.sh",
+        "measure/android/frame-table.py",
         "measure/android/record-check.py",
     ] {
         let path = package_gate::root().join(reader);

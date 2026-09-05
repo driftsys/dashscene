@@ -44,6 +44,13 @@ What is here:
 - `Runtime/CommitPacer.cs` — committing below the display rate without drifting
   off it. In `Runtime/` rather than in the sample because no CI job compiles a
   sample, and this carries a numeric claim worth gating.
+- `Runtime/ThreadCostMath.cs`, `ThreadCostAccumulator.cs` — the thread-time
+  line's arithmetic and its sampling window. In `Runtime/` for `CommitPacer`'s
+  reason, and `unity/ffi-check` executes both.
+- `Runtime/Engine/DashsceneThreadCost.cs` — the five `ProfilerRecorder` counters
+  those two report over: what the frame-cost line excludes by construction,
+  which is the culling callback, the render thread's encode and a Canvas
+  rebuild.
 - `Runtime/PaintHeap.cs`, `PaintProperties.cs`, `PaintBindings.cs`,
   `FramePacker.cs`, `PackDiagnostics.cs` — the half of the painter that decides
   what the picture is: the heap layout, the per-instance and per-material
