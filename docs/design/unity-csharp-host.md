@@ -1486,35 +1486,21 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   developer minutes or tens of minutes into an editor run rather than on the
   pull request that broke it.
 
-  **One of the three shapes is now refused, by the owner's ruling of 2026-09-05:
-  no Roslyn-as-a-library parse gate.** Two reasons, and the second is the one
-  that decides it.
+  **One of the three shapes is refused**, by the owner's ruling of 2026-09-05:
+  no Roslyn as a library, parsed on a pull request.
+  [`../decisions/a-second-c-sharp-compiler-is-not-a-gate.md`](../decisions/a-second-c-sharp-compiler-is-not-a-gate.md)
+  carries it and the measurement behind it — Unity bundles a Roslyn four
+  language versions behind the one a `PackageReference` resolves, so the gate
+  would accept syntax the editor rejects. It rules nothing about NuGet in
+  general and nothing about the other two shapes.
 
-  It would be the first `PackageReference` in any `.csproj` here — there are
-  three, and none has one, nor is there a `nuget.config`, a `packages.lock.json`
-  or a `Directory.Build.props` — so it opens a supply chain along with the
-  policy that has to govern it, which the Rust half answered long ago in
-  [`../decisions/cargo-lock-is-committed.md`](../decisions/cargo-lock-is-committed.md)
-  and this half has never had to.
-
-  **And it would be the wrong compiler.** Unity ships its own Roslyn:
-  `Unity.app/Contents/Resources/Scripting/DotNetSdkRoslyn/csc.dll`, which
-  `csc.deps.json` names as `Microsoft.CodeAnalysis.CSharp/4.3.1-3.22526.13` on
-  `net6.0` for editor `6000.3.23f1`. A `PackageReference` resolved for these
-  `net10.0` projects — SDK `10.0.400` here — brings a Roslyn roughly three
-  language versions newer, and none of the three `.csproj` pins `LangVersion`.
-  So the gate would accept syntax the editor rejects: green on a pull request,
-  broken the moment someone opens Unity, which is the failure it exists to catch
-  and in the direction that matters. Pinning `LangVersion` to the editor's would
-  be a second version to keep synchronised, of the kind the `ANDROID_API` floor
-  already is.
-
-  What it would buy either way is thin: a parser sees syntax, not binding, and
-  the realistic break here is a renamed `UnityEditor` type or a changed
-  signature after an editor bump. **The compiler that would catch those is the
-  one Unity ships**, and reaching it needs the installed editor D4 rules out for
-  CI — so what remains is a job that compiles these files inside a real Unity
-  project, which is issue #1316's factoring rather than a fourth shape.
+  **What that leaves is not a path to this gap's own criterion.** The
+  requirement is a job on every pull request; shape 1 needs an installed editor
+  and shape 2, a vendored facade, is the only remaining candidate that could run
+  on one — unruled, and the size the paragraph below measures. Issue #1316's
+  factoring would give a job compiling these files inside a real Unity project,
+  with the right compiler and therefore binding errors too, and it runs locally
+  rather than on a pull request. Better than nothing; not the criterion.
 
   **Three measurements narrowed the choice, and none of them closed it.**
   Referencing an editor's own managed assemblies makes CI depend on an installed
