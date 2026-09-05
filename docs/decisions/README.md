@@ -660,16 +660,13 @@ their parent rather than apart from it:
   — **accepted** (2026-08-31, issue #1389): `BatchRendererGroup` groups draw
   commands by material, which is why the Unity painter drew every surface and no
   glyph. Setting `HasSortingPosition` and writing a key per command is what
-  makes glyphs draw, and it is **not** established that those keys order the
-  picture — reversing them draws more of the document, and changing the batch
-  size changes the frame. A third measurement, over commands tied on equal keys,
-  is recorded as weaker because it does not isolate the tied group. Recorded as
-  a constraint so no gate is written as though a legible frame proved an order.
-  Depth writes stay rejected. **Amended 2026-09-03 (issue #1401) with D5**: a
-  command carrying `HasSortingPosition` names exactly one visible instance,
-  because Unity's sorted-transparent path was measured dropping commands from
-  single frames when one named more. That reopens the order question rather than
-  settling it — every §5b measurement was taken under the shape D5 forbids.
+  makes glyphs draw. Depth writes stay rejected. **Amended 2026-09-03 (issue
+  #1401) with D5**: a command carrying `HasSortingPosition` names exactly one
+  visible instance, because Unity's sorted-transparent path was measured
+  dropping commands from single frames when one named more. **Amended 2026-09-05
+  (issue #1402)**: under D5's shape the keys' rank is measured to be the draw
+  order, farthest first, on one graphics API — D1 and D2 revised, and
+  `just unity-render`'s order phase pins the composite on every run.
 - [the-gpu-frame-on-the-target-device-is-budgeted.md](the-gpu-frame-on-the-target-device-is-budgeted.md)
   — **accepted** (2026-09-04, owner ruling): the `surfaces` scene shall present
   at the display mode's refresh rate at the native drawable on the target

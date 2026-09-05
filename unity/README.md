@@ -70,7 +70,8 @@ repository builds and records.
                               compares them against a committed table — the one
                               below runs shader code too, and reads PIXELS.
                               Needs an editor, so it runs on no CI runner
-    render-gate/              two scripts `just unity-render` copies into
+    render-gate/              two scripts and the order fixture's `order.dsb`
+                              (compiled from `order.json` beside it) `just unity-render` copies into
                               another throwaway project: it builds a PLAYER,
                               runs it, draws a document into a RenderTexture
                               and reads that back. The only CHECK here that

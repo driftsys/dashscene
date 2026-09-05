@@ -61,14 +61,15 @@ the Cargo workspace rather than moving on its own.
   the painter's emission order did not survive and the document's backdrop was
   drawn over the glyphs. The painter now sets
   `BatchDrawCommandFlags.HasSortingPosition` on every command and writes one
-  sorting key per command, which is what makes the glyphs reach the screen.
-  **The order it draws them in is NOT established**: the measurements that would
-  have settled it were taken under the multi-instance shape the single-instance
-  repair now forbids and have not been re-run, so the question is reopened
-  rather than answered, and
-  `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` records that as a
-  constraint rather than claiming a fix. Do not read a legible frame from this
-  painter as evidence that it has an order. Issue #1389.
+  sorting key per command, which is what makes the glyphs reach the screen
+  (issue #1389). **The order it draws them in is the emission order**, measured
+  under one instance per command on one graphics API (issue #1402): the keys'
+  rank is the draw order, farthest first, on the flagged path — the fixture
+  composites in order with the flag off as well, which the record lists as
+  unexplained — and `just unity-render`'s order phase reads seven composite
+  pixels of a fixture built for it on every run;
+  `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` D1 carries the
+  claim and its limits.
 - **Every batch after the first is registered on the RawBuffer rung.**
   `AddBatches` passed a non-zero window offset there, where Unity requires both
   window parameters to be zero and refuses the batch otherwise — through a log

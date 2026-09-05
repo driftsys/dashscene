@@ -176,15 +176,15 @@ variant would make a host unable to tell a bad sheet from a bad index.
   `TextAtlas.PixelRange` computes it in C#, and nothing compares them — the same
   shape as the heap row widths before `unity/package-gate` held those together.
   Issue #828's portable conformance suite is where the comparison belongs.
-- **A glyph has now drawn, and no gate watches it.** The geometry, the run heap
-  and the atlas lookup are executed by `unity/ffi-check` on any pull request
-  whose diff is not documentation-only; the material, the texture and the draw
+- **A glyph has drawn, and one gate watches it.** The geometry, the run heap and
+  the atlas lookup are executed by `unity/ffi-check` on any pull request whose
+  diff is not documentation-only; the material, the texture and the draw
   commands are `Runtime/Engine/`, which only a Unity editor compiles and only a
   player or a device runs. Issue #1389 drew glyphs in a macOS/Metal player build
   on 2026-08-31 — before that the painter had drawn every surface and no glyph
-  on every platform, and no gate reported it. `just unity-render` still asserts
-  nothing about atlases or glyphs, so the claim this bullet used to make is now
-  false about the painter and still true about the gates.
+  on every platform, and no gate reported it. Since issue #1402
+  `just unity-render`'s order phase probes one glyph pixel per atlas sheet and
+  fails the run on a miss (R-E22), on the developer's Metal and on no CI runner.
 - **A document that names more atlases than a host can hold textures for** has
   no bound and no diagnostic. A cascade is a handful of faces today, so nothing
   measures where that stops being true.

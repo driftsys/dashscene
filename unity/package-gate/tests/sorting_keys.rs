@@ -29,13 +29,13 @@
 //! thing keeping these shut.
 //!
 //! **What this does NOT assert, deliberately.** Not that the keys order the
-//! picture — `docs/decisions/brg-draw-command-order-is-not-guaranteed.md`
-//! records that they are not measured to, and a test asserting an order nobody
-//! can predict would pin a guess. These assert that the painter still STATES an
-//! order, which is the property that separates the defect from its repair.
+//! picture — that is measured, on one graphics API, by `just unity-render`'s
+//! order phase (`docs/decisions/brg-draw-command-order-is-not-guaranteed.md`
+//! D1, issue #1402), which needs an editor and runs on no CI runner. These
+//! assert that the painter still STATES an order, which is the property that
+//! separates the defect from its repair and the one a pull request can hold.
 //! Text is weak: it says the fields are still written where the design says
-//! they are, never that Unity honours them. R-E22 is the requirement that would
-//! replace it with pixels.
+//! they are, never that Unity honours them; the pixels are the gate's.
 
 use package_gate::cs_scan::{assignment_count, member_body, squeeze};
 use package_gate::painter_source as painter;
@@ -119,15 +119,13 @@ fn every_draw_command_is_initialised_with_a_sorting_position_flag() {
     // **The range stays `allDepthSorted = false`, deliberately.** Every
     // command in it now carries the flag, which is the property Unity
     // documents that field as asserting — so the range under-declares itself
-    // on purpose. Setting it true was measured and changes no pixel; it is
-    // held false so that nothing here states an ordering guarantee the
-    // measurements do not support.
+    // on purpose. Setting it true was measured and changes no pixel (§5c), so
+    // it is held false because flipping it buys nothing and reads as a claim.
     assert!(
         body.contains("allDepthSorted = false,"),
         "{PAINTER}'s draw range no longer declares `allDepthSorted = false`. \
-         Flipping it claims an ordering guarantee that \
-         docs/decisions/brg-draw-command-order-is-not-guaranteed.md records as \
-         unestablished, and §5c measured that it changes no pixel."
+         Flipping it was measured to change no pixel (§5c), and this test holds the \
+         range's declaration where the design says it is."
     );
 
     for defeated in [

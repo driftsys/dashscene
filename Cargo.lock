@@ -2205,7 +2205,10 @@ dependencies = [
 name = "package-gate"
 version = "0.0.0"
 dependencies = [
+ "dashc",
+ "dashscene-validator",
  "naga",
+ "serde_json",
 ]
 
 [[package]]

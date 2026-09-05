@@ -26,9 +26,11 @@ Notes:
   build-vs-adopt call.
 - [batch-renderer-group.md](batch-renderer-group.md) — what `BatchRendererGroup`
   is, how the Unity painter uses it, and the ordering pitfall it presents to a
-  painter's-algorithm renderer: BRG does not preserve the order draw commands
-  are emitted in, which is why the Unity painter drew no text in any player
-  build (issue #1389). Also the band defect — Unity drops commands from single
+  painter's-algorithm renderer: BRG groups draw commands by material and does
+  not preserve their emission order on its own, which is why the Unity painter
+  drew no text in any player build (issue #1389); with sorting keys and one
+  instance per command the emission order is measured to be the draw order
+  (issue #1402, §5b). Also the band defect — Unity drops commands from single
   frames when a sorted command names more than one visible instance (issue
   #1401) — and the four smaller pitfalls in the same API.
 - [rendering-and-painters.md](rendering-and-painters.md) — the SDF-quad-atlas

@@ -407,22 +407,29 @@ document's own tables give that node, which is what `DashsceneRenderGate`
 already reads for its per-instance assertion. _Check:_ draw a document whose
 text names at least two glyph atlases in a player build, and assert one probed
 pixel per registered material, each named in the check's output;
-`unity/render-gate` is where that check belongs. **Not met today.**
-`just
-unity-render` counts ink at sampled node centres and attributes none of it
-to a material: `unity/render-gate/DashsceneRenderGate.cs` and
-`RenderGateBuild.cs` contain neither the string `atlas` nor the string `glyph`,
-so a painter that draws every surface and no glyph passes the gate — which is
-precisely what issue #1389 found it doing on every platform. Meeting this needs
-a fixture that `goldens/dsb/` does not hold: the `v07-text-*` files are byte
-records pinned by `crates/dashc/tests/text_lowering.rs`, not renderable
-documents with atlases.
+`unity/render-gate` is where that check belongs. **Met since issue #1402**, by
+the order phase of `just unity-render`: it loads `unity/render-gate/order.dsb`
+through a two-face Inter cascade — two atlases, so two text materials beside the
+class material — and asserts one probed pixel per material, each named in the
+run's output (`fill` for the class material, `regular-glyph` and `bold-glyph`
+for the two atlas materials), with every channel within 0.016 of the colour the
+document's tables give that pixel, in the encoding the frame is read back in;
+and the second comparison holds for those three because each expects its
+channels at 0 or 1 and the clear colour, (0.15, 0.15, 0.18), is further than
+0.016 from either end on every channel; every probe is also run on the undrawn
+frame first, and one the clear colour satisfies fails the run. The two glyph
+runs are held to two atlas indices in the packing, not counted at the cascade.
+The fixture is re-derived from `order.json`, its boxes and glyph strings pinned,
+by `unity/package-gate/tests/order_fixture.rs`, and the phase's hooks and probe
+names by `order_gate_claims.rs`. One graphics API, the developer's Metal, as
+every `unity-render` claim is; until that story the gate drew a document with no
+glyph runs, which is how issue #1389 reached every platform green.
 
-**R-E22 is not an ordering requirement**, and deliberately so.
-`docs/decisions/brg-draw-command-order-is-not-guaranteed.md` records that the
-order this painter draws in is not established; a requirement that asserted an
-order would be unverifiable until that is settled. This one asserts only that
-each registered material reaches the frame.
+**R-E22 is not an ordering requirement**, and deliberately so. The order this
+painter draws in is established and pinned by the same gate since issue #1402
+(`docs/decisions/brg-draw-command-order-is-not-guaranteed.md` D1); this
+requirement asserts only that each registered material reaches the frame, and
+the order phase's seven probes are their own check.
 
 ## The ABI a host sits on
 

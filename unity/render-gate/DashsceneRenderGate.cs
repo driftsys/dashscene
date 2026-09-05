@@ -36,8 +36,24 @@
 //   the API beside it.
 // - It is not an oracle. It asserts that ink landed where the committed tables
 //   put a node, not that the ink is the right colour — that is issue #828's
-//   portable conformance suite.
-// - It draws one document, `goldens/dsb/v03-paint.dsb`.
+//   portable conformance suite — except at three of the order check's seven
+//   points, one per material, whose predicates read the colour to R-E22's
+//   tolerance; the four over the veil bound it loosely.
+// - It draws two documents: `goldens/dsb/v03-paint.dsb` for the ink checks,
+//   and `unity/render-gate/order.dsb` for the order check below.
+//
+// **The order check (issue #1402)** draws a second document through the
+// cascade — a full-bleed backdrop, black glyphs over an opaque fill, a
+// half-alpha veil over both, and white bold glyphs from a second atlas over
+// the veil — and reads seven points of the composite. Every opaque colour in
+// that fixture is 0 or 1 per channel, so each point's predicate holds under
+// any monotone colour transfer that fixes both ends, and among the orders
+// that move one node over another only the painter's satisfies all seven — a
+// permutation inside one glyph run moves no node and is not distinguished.
+// `unity/package-gate`'s `order_fixture` re-derives the `.dsb` from
+// `order.json` and pins the colours and boxes the predicates are written
+// against. Every probe is run on the undrawn control frame first and must
+// fail there, one by one.
 //
 // **The negative control runs on every pass**, and it is the reason this file
 // is longer than it looks like it needs to be. Issue #1029 is this repository's
@@ -51,6 +67,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using Driftsys.Dashscene;
 using UnityEngine;
@@ -61,6 +78,35 @@ public sealed class DashsceneRenderGate : MonoBehaviour
 {
     /// The document, relative to StreamingAssets. Written there by the recipe.
     private const string DocumentFile = "document.dsb";
+
+    /// The order fixture, relative to StreamingAssets. Written there by the
+    /// recipe beside the two faces its text needs.
+    private const string OrderDocumentFile = "order.dsb";
+
+    /// The lower bound of a channel that is `1` in the fixture, and the upper
+    /// bound of one that is `0`, after whatever the pipeline does to colours.
+    ///
+    /// Every opaque colour in `order.dsb` sits at 0 or 1 per channel, and a
+    /// transfer that fixes both ends — the identity, or sRGB encoding — leaves
+    /// them there, so the opaque probes are held to R-E22's own tolerance,
+    /// [`ColourEpsilon`], in the encoding the frame is read back in. The
+    /// half-alpha veil is the one term between the two, and [`MidLow`] and
+    /// [`MidHigh`] bound it loosely: a blend of 0 and 1 at alpha one half is
+    /// 0.5 in linear and 0.735 sRGB-encoded, and the alternative the predicate
+    /// has to tell it from is always a 0 or a 1. [`MidLow`] is also the
+    /// camera's clear colour on its red and green channels
+    /// (`RenderGateBuild.cs`), so on the undrawn frame the veil probes' `>
+    /// MidLow` term is false by one quantisation step and a term at a channel
+    /// end — `< Low` on green, or `> High` on red for `veil-over-fill` — is
+    /// what fails them; a clear colour that moved would show in the
+    /// per-probe control below rather than in a verdict.
+    private const float High = 1.0f - ColourEpsilon;
+
+    private const float Low = ColourEpsilon;
+
+    private const float MidLow = 0.15f;
+
+    private const float MidHigh = 0.9f;
 
     /// The render target's size, in pixels.
     ///
@@ -249,6 +295,15 @@ public sealed class DashsceneRenderGate : MonoBehaviour
     /// Which class the live painter is on.
     private MaterialClass _currentClass = MaterialClass.UnlitOverlay;
 
+    /// Whether the run has moved on from the plan above to the order fixture.
+    private bool _orderPhase;
+
+    /// The order fixture's packing, from which the glyph probes are placed.
+    private FramePacker _orderProbe;
+
+    /// The two sheets the order fixture's runs sample.
+    private TextAtlasSet _orderAtlases;
+
     private void Awake()
     {
         // **The measurement, made by the gate rather than by a person.** Issue
@@ -396,6 +451,13 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         // hook is needed anywhere in this file.
         if (_framesInStep > SettleFrames)
         {
+            if (_orderPhase)
+            {
+                Capture("order");
+                JudgeOrder();
+                Finish();
+                return;
+            }
             Capture(Plan[_step].Label);
             if (!Advance())
             {
@@ -410,12 +472,21 @@ public sealed class DashsceneRenderGate : MonoBehaviour
             _runtime.Tick(Time.deltaTime);
             using (var lease = _runtime.AcquireFrame())
             {
-                if (_painter != null && Plan[_step].Draw)
+                if (_painter != null && (_orderPhase || Plan[_step].Draw))
                 {
                     _painter.Draw(lease);
                     lease.MarkDrawn();
 
-                    if (_samples == null)
+                    if (_orderPhase)
+                    {
+                        if (_orderProbe == null)
+                        {
+                            _orderProbe = new FramePacker();
+                            _orderProbe.Pack(
+                                lease.Frame, MaterialClass.UnlitOverlay, _orderAtlases);
+                        }
+                    }
+                    else if (_samples == null)
                     {
                         BuildSamples(lease);
                     }
@@ -482,8 +553,12 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         if (_step >= Plan.Length)
         {
             Judge();
-            Finish();
-            return false;
+            if (!BeginOrder())
+            {
+                Finish();
+                return false;
+            }
+            return true;
         }
 
         var step = Plan[_step];
@@ -747,24 +822,22 @@ public sealed class DashsceneRenderGate : MonoBehaviour
     /// Whether any instance drawn AFTER this one reaches a placed document
     /// point.
     ///
-    /// **This ASSUMES draw order is submission order, and that assumption is
-    /// now known to be FALSE** — it was merely unconfirmed when this was
-    /// written. Issue #1389 measured it:
-    /// `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` records
-    /// that `BatchRendererGroup` groups the commands by material, and that the
-    /// sorting keys the painter now writes are not measured to impose the
-    /// painter's order either. The painter emits its draw commands in rect
-    /// order inside one `BatchDrawRange`, so a higher index is INTENDED to be
-    /// drawn later and on top; whether it is, is exactly what is unsettled.
+    /// **This assumes draw order is submission order, and the same run
+    /// measures that assumption** rather than trusting it. Without the sorting
+    /// keys `BatchRendererGroup` groups the commands by material (issue
+    /// #1389); with them, and one instance per command, the draw order is the
+    /// keys' rank — the painter emits its draw commands in rect order and lays
+    /// command 0 farthest, so a higher index is drawn later and on top
+    /// (issue #1402, `docs/decisions/brg-draw-command-order-is-not-guaranteed.md`
+    /// D1). [`JudgeOrder`] checks exactly that on `order.dsb` in the run this
+    /// method's verdicts belong to, and fails the run otherwise.
     ///
-    /// **So the wrong verdict this comment describes below is live, not
-    /// hypothetical**: where a lower-indexed node covers this centre and its
-    /// colour is nearer this node's own than the clear colour is, the run
-    /// PASSES on ink that is not this node's. The predicate was left as it is
-    /// rather than widened, because widening it removes the stronger form
-    /// entirely for the reason the next paragraph gives — but it is now a known
-    /// unsound assumption rather than an unconfirmed one, and R-E22 plus the
-    /// fixture that record calls for are what would retire it.
+    /// The wrong verdict this predicate would give under any other order —
+    /// where a lower-indexed node covers this centre and its colour is nearer
+    /// this node's own than the clear colour is, the run PASSES on ink that is
+    /// not this node's — is therefore caught by the order phase rather than
+    /// left to the assumption. The predicate is not widened, for the reason
+    /// the next paragraph gives.
     ///
     /// **The assumption cannot be dropped by widening the search**, which is
     /// why the sibling [`NothingElseCovers`] is not used here. A document's
@@ -977,20 +1050,16 @@ public sealed class DashsceneRenderGate : MonoBehaviour
              + "colour, the rest against the clear colour; smallest advantage over the clear "
              + $"colour {Headroom(headroom)} (threshold 0.000)");
 
-        // **Said out loud on every run, because a PASS here is weaker than it
-        // was and nothing else would tell a reader so.** The stronger
-        // per-instance assertion excludes a centre only when a HIGHER-indexed
-        // instance reaches it, which is sound only while draw order is
-        // submission order — and issue #1389 measured that it is not
-        // (`docs/decisions/brg-draw-command-order-is-not-guaranteed.md`). The
-        // predicate is unchanged because widening it leaves the stronger form
-        // nothing to judge; what changed is that this is now a known unsound
-        // assumption rather than an unconfirmed one, so the run states it.
+        // **Said out loud on every run.** The stronger per-instance assertion
+        // excludes a centre only when a HIGHER-indexed instance reaches it,
+        // which is sound only while draw order is submission order — and this
+        // run's order phase measures that on its own fixture rather than
+        // assuming it (issue #1402). The predicate is unchanged because
+        // widening it leaves the stronger form nothing to judge.
         Line(
             "overlay: the per-instance assertion assumes a lower-indexed node cannot cover "
-            + "a centre, which issue #1389 measured to be false — where one does, and its "
-            + "colour is nearer this node's own than the clear colour is, this run passes "
-            + "on ink that is not the node's. R-E22's fixture is what would retire this.");
+            + "a centre; the order phase below measures that order on order.dsb, so a "
+            + "PASS here depends on a PASS there.");
 
         // **A run where none got the stronger form is a run of the weaker gate,
         // whatever its verdict says.** The document has solid fills that
@@ -1161,6 +1230,506 @@ public sealed class DashsceneRenderGate : MonoBehaviour
                 + "carry ink on the LitCutout class at its default cutoff, so the class is "
                 + "drawing every fragment of its quad rather than the node's silhouette.");
         }
+    }
+
+    /// Load the order fixture through the cascade and put an overlay painter
+    /// over it. False with the failure recorded, or when nothing is left to
+    /// judge.
+    ///
+    /// **Refused after any failure**, for `JudgeCutoff`'s reason: a painter
+    /// that already drew nothing would give the order predicate a blank frame
+    /// and the report would then blame the order.
+    private bool BeginOrder()
+    {
+        if (_failures.Count > 0)
+        {
+            Line("order: NOT judged — an earlier step failed, so the order frame would say "
+                 + "nothing about the order.");
+            return false;
+        }
+
+        var path = Path.Combine(Application.streamingAssetsPath, OrderDocumentFile);
+        if (!File.Exists(path))
+        {
+            Fail($"no {OrderDocumentFile} under StreamingAssets, so the draw order is judged by "
+                 + "nothing. The recipe stages it beside the cascade.");
+            return false;
+        }
+
+        // The cutout painter of the last plan step is replaced, not reused:
+        // the order question is the overlay class's (D3 of the order record),
+        // and a painter owns its group, mesh and materials.
+        _painter?.Dispose();
+        _painter = null;
+
+        try
+        {
+            _runtime.LoadDocumentWithText(File.ReadAllBytes(path), Cascade());
+            _orderAtlases = _runtime.ReadAtlases();
+        }
+        catch (Exception e)
+        {
+            Fail($"{OrderDocumentFile}, or a cascade file under StreamingAssets/cascade/, did "
+                 + "not load: "
+                 + $"{e.GetType().Name}: {e.Message}");
+            return false;
+        }
+
+        // **Two, and it is a property the fixture is written against.** The
+        // regular and bold runs sample different sheets, which is what makes
+        // the bold glyphs a second material — the case issue #1389 measured
+        // the grouping on. One atlas would collapse it back to one material
+        // and the probe over the bold glyphs would then test nothing.
+        if (_orderAtlases.Count != 2)
+        {
+            Fail($"the cascade installed {_orderAtlases.Count} atlas(es); the order fixture "
+                 + "needs its regular and bold faces on two sheets.");
+            return false;
+        }
+
+        if (!MakePainter(MaterialClass.UnlitOverlay, CutoffLow))
+        {
+            return false;
+        }
+        if (_painter.Rung == BrgRung.InstancedWithoutBrg)
+        {
+            Fail($"the order phase's painter reports rung {_painter.Rung}, which draws "
+                 + "nothing, so an order verdict would be a verdict on an undrawn frame.");
+            return false;
+        }
+        // Caught here, for `MakePainter`'s reason: `SetAtlases` throws when the
+        // text shader is missing from the player — issue #1313's class — or a
+        // sheet does not decode, and `Advance` runs before `Update`'s own try,
+        // so an uncaught throw here leaves `_step` past the plan and the next
+        // frame reports an index out of range instead of the cause.
+        try
+        {
+            _painter.SetAtlases(_orderAtlases);
+        }
+        catch (Exception e)
+        {
+            Fail($"the order phase's painter refused the cascade's atlases: "
+                 + $"{e.GetType().Name}: {e.Message}");
+            return false;
+        }
+
+        _orderPhase = true;
+        _orderProbe = null;
+        _framesInStep = 0;
+        Line($"step order: {MaterialClass.UnlitOverlay}, {OrderDocumentFile} through "
+             + $"{_orderAtlases.Count} atlases");
+        return true;
+    }
+
+    /// The two Inter faces the order fixture names, each with its committed
+    /// sheet — `corpus/fonts/inter` and `corpus/atlas/inter-ascii*`, staged by
+    /// the recipe.
+    private static IReadOnlyList<TextFontFace> Cascade()
+    {
+        return new[]
+        {
+            new TextFontFace
+            {
+                Family = "Inter",
+                Weight = 400,
+                FontBytes = Streaming("cascade/Inter-Regular.otf"),
+                AtlasPng = Streaming("cascade/regular/atlas.png"),
+                AtlasMetrics = Streaming("cascade/regular/atlas.metrics"),
+            },
+            new TextFontFace
+            {
+                Family = "Inter",
+                Weight = 700,
+                FontBytes = Streaming("cascade/Inter-Bold.otf"),
+                AtlasPng = Streaming("cascade/bold/atlas.png"),
+                AtlasMetrics = Streaming("cascade/bold/atlas.metrics"),
+            },
+        };
+    }
+
+    private static byte[] Streaming(string relative)
+    {
+        return File.ReadAllBytes(Path.Combine(Application.streamingAssetsPath, relative));
+    }
+
+    /// One point of the order composite: where it is, what covers it, and what
+    /// the painter's order leaves there.
+    private struct OrderProbe
+    {
+        public string Name;
+
+        /// The point, in document units.
+        public Vector2 Document;
+
+        /// Which instance classes the fixture puts over this point. Checked
+        /// against the packing, so a probe that drifted off its node fails
+        /// as a fixture defect rather than as an order defect.
+        public string[] Covered;
+
+        /// What the painter's order composites here, as a predicate on the
+        /// pixel read back, and in words.
+        public Func<Color, bool> Expect;
+
+        public string Means;
+    }
+
+    /// Issue #1402: is the composite the painter's order, and no other?
+    ///
+    /// **Seven points, one predicate each, and among the orders that move one
+    /// node over another only the painter's satisfies all seven.** The fixture's opaque colours are 0 or 1 per
+    /// channel, so what the alternative orders put at each point is always a
+    /// 0 or a 1 where the expected value is the other end or the veil's
+    /// midpoint — the predicate never has to know what the pipeline did to a
+    /// colour beyond fixing its ends and keeping it monotone.
+    ///
+    /// `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` D2: a
+    /// legible frame is not evidence of a correct order, so no count of
+    /// bright pixels appears here. The undrawn control frame is put through
+    /// every probe first and must fail each of them.
+    private void JudgeOrder()
+    {
+        var order = Shot("order");
+        var control = Shot("control");
+        if (order == null || control == null || _orderProbe == null)
+        {
+            if (_orderProbe == null)
+            {
+                Fail("the order fixture was never packed, so no probe has a position.");
+            }
+            return;
+        }
+
+        var packer = _orderProbe;
+        Line($"order: {packer.InstanceCount} instances, diagnostics {packer.Diagnostics}");
+        if (!packer.Diagnostics.IsClean)
+        {
+            Fail("the order fixture packs with diagnostics, so part of it is not drawn and "
+                 + "the composite is not the one the probes are written against.");
+            return;
+        }
+
+        // **Every instance named, so a probe can be checked against what the
+        // packer actually emitted.** The three solids and every glyph are here
+        // — a text node's own box packs no instance; the report prints the
+        // table so a mismatch can be read rather than guessed.
+        var classes = new string[packer.InstanceCount];
+        int? backdrop = null, fill = null, veil = null;
+        var regularOutside = new List<Vector2>();
+        var regularUnderVeil = new List<Vector2>();
+        var bold = new List<Vector2>();
+        var regularIndices = new List<int>();
+        var boldIndices = new List<int>();
+        for (var i = 0; i < packer.InstanceCount; i++)
+        {
+            var x = packer.Quad[(i * 4) + 0];
+            var y = packer.Quad[(i * 4) + 1];
+            var w = packer.Quad[(i * 4) + 2];
+            var h = packer.Quad[(i * 4) + 3];
+            var kind = packer.Paint[(i * 4) + 0];
+            // Placed, not the box's own centre: the invariant `Placed` states.
+            var centre = Placed(packer, i, new Vector2(x + (w * 0.5f), y + (h * 0.5f)));
+            var solid = SolidRow(packer, i);
+            var alpha = solid?.a ?? 0.0f;
+
+            var cls = "other";
+            if (kind == (uint)PaintKindTag.FillSolid && alpha > 0.99f
+                && Near(x, 0) && Near(y, 0) && Near(w, 960) && Near(h, 680))
+            {
+                cls = "backdrop";
+                backdrop ??= i;
+            }
+            else if (kind == (uint)PaintKindTag.FillSolid && alpha > 0.99f
+                     && Near(x, 160) && Near(y, 160) && Near(w, 480) && Near(h, 260))
+            {
+                cls = "fill";
+                fill ??= i;
+            }
+            else if (kind == (uint)PaintKindTag.FillSolid && alpha > 0.4f && alpha < 0.6f)
+            {
+                cls = "veil";
+                veil ??= i;
+            }
+            else if (kind == (uint)PaintKindTag.Text && centre.x < 690.0f)
+            {
+                // The regular run. A glyph is a probe only where its whole
+                // quad, antialiasing margin included, sits clear of the veil's
+                // left edge at x = 420 — a glyph that straddles it (one, on this
+                // fixture) is a regular glyph and probes nothing. The split
+                // reads the box, not the placed centre: the fixture rotates
+                // nothing, and a rotated run would need both halves placed.
+                cls = "regular";
+                regularIndices.Add(i);
+                var margin = _painter.EdgeWidth + 2.0f;
+                if (x + w + margin < 420.0f)
+                {
+                    regularOutside.Add(centre);
+                }
+                else if (x - margin > 420.0f)
+                {
+                    regularUnderVeil.Add(centre);
+                }
+            }
+            else if (kind == (uint)PaintKindTag.Text && centre.x > 690.0f)
+            {
+                cls = "bold";
+                boldIndices.Add(i);
+                bold.Add(centre);
+            }
+            classes[i] = cls;
+            Line($"order: instance {i} {cls} kind {kind} box ({F(x)}, {F(y)}, {F(w)}, {F(h)}) "
+                 + $"solid {(solid == null ? "none" : Rgba(solid.Value))} "
+                 + $"opacity {F(packer.Shade[(i * 4) + 0])}");
+        }
+
+        if (backdrop == null || fill == null || veil == null
+            || regularOutside.Count == 0 || regularUnderVeil.Count == 0 || bold.Count == 0)
+        {
+            Fail("the order fixture's packing does not carry every node the probes need: "
+                 + $"backdrop {backdrop != null}, fill {fill != null}, veil {veil != null}, "
+                 + $"regular glyphs outside the veil {regularOutside.Count}, under it "
+                 + $"{regularUnderVeil.Count}, bold glyphs {bold.Count}. Read the instance "
+                 + "table above.");
+            return;
+        }
+        if (!(backdrop < fill && fill < veil))
+        {
+            Fail($"the packer emits backdrop {backdrop}, fill {fill} and veil {veil}, which is "
+                 + "not the fixture's paint order, so the probes' expectations do not "
+                 + "describe this packing.");
+            return;
+        }
+        // The glyph runs' places in the emission order are what the three
+        // glyph probes are written against, and a packer that moved a run
+        // would otherwise be reported as Unity's order defect.
+        if (!(fill < regularIndices.Min() && regularIndices.Max() < veil
+              && veil < boldIndices.Min()))
+        {
+            Fail($"the packer emits the regular glyphs at {regularIndices.Min()}..{regularIndices.Max()} "
+                 + $"and the bold glyphs from {boldIndices.Min()}, around fill {fill} and veil "
+                 + $"{veil}, which is not the fixture's paint order, so the glyph probes' "
+                 + "expectations do not describe this packing.");
+            return;
+        }
+        // **Two materials, read from the packing and not counted at the
+        // cascade.** R-E22 asks for one probed pixel per registered material,
+        // and a bold run resolved to the regular sheet would draw the same
+        // white `I` from the same glyph slot — the probe cannot tell the
+        // sheets apart, so the atlas each run samples is held here.
+        var regularAtlas = packer.InstanceAtlas[regularIndices[0]];
+        var boldAtlas = packer.InstanceAtlas[boldIndices[0]];
+        if (regularAtlas < 0 || boldAtlas < 0 || regularAtlas == boldAtlas
+            || regularIndices.Any(i => packer.InstanceAtlas[i] != regularAtlas)
+            || boldIndices.Any(i => packer.InstanceAtlas[i] != boldAtlas))
+        {
+            Fail($"the regular run samples atlas {regularAtlas} and the bold run atlas "
+                 + $"{boldAtlas}; the order fixture needs the two runs on two sheets, so that "
+                 + "the bold probe is a second text material (R-E22).");
+            return;
+        }
+        Line($"order: the regular run samples atlas {regularAtlas}, the bold run atlas {boldAtlas}");
+        for (var i = 0; i < classes.Length; i++)
+        {
+            if (classes[i] == "other")
+            {
+                Fail($"instance {i} of the order fixture is nothing the probes account for.");
+                return;
+            }
+        }
+
+        var probes = new[]
+        {
+            new OrderProbe
+            {
+                Name = "backdrop",
+                Document = new Vector2(80, 600),
+                Covered = new[] { "backdrop" },
+                Expect = c => c.r < Low && c.g < Low && c.b > High,
+                Means = "blue: the backdrop drew",
+            },
+            new OrderProbe
+            {
+                Name = "fill",
+                Document = new Vector2(180, 400),
+                Covered = new[] { "backdrop", "fill" },
+                Expect = c => c.r > High && c.g > High && c.b < Low,
+                Means = "yellow: the fill is over the backdrop",
+            },
+            new OrderProbe
+            {
+                Name = "regular-glyph",
+                Document = regularOutside[0],
+                Covered = new[] { "backdrop", "fill", "regular" },
+                Expect = c => c.r < Low && c.g < Low && c.b < Low,
+                Means = "black: the regular glyph is over the fill and the backdrop",
+            },
+            new OrderProbe
+            {
+                Name = "veil-over-backdrop",
+                Document = new Vector2(800, 400),
+                Covered = new[] { "backdrop", "veil" },
+                Expect = c => c.r > MidLow && c.r < MidHigh && c.g < Low,
+                Means = "half red over blue: the veil is over the backdrop and translucent",
+            },
+            new OrderProbe
+            {
+                Name = "veil-over-fill",
+                Document = new Vector2(560, 400),
+                Covered = new[] { "backdrop", "fill", "veil" },
+                Expect = c => c.r > High && c.g > MidLow && c.g < MidHigh && c.b < Low,
+                Means = "half red over yellow: the veil is over the fill",
+            },
+            new OrderProbe
+            {
+                Name = "veil-over-regular-glyph",
+                Document = regularUnderVeil[regularUnderVeil.Count - 1],
+                Covered = new[] { "backdrop", "fill", "regular", "veil" },
+                Expect = c => c.r > MidLow && c.r < MidHigh && c.g < Low && c.b < Low,
+                Means = "half red over black: the veil is over the regular glyph",
+            },
+            new OrderProbe
+            {
+                Name = "bold-glyph",
+                Document = bold[0],
+                Covered = new[] { "backdrop", "veil", "bold" },
+                Expect = c => c.r > High && c.g > High && c.b > High,
+                Means = "white: the bold glyph, from the second atlas, is over the veil",
+            },
+        };
+
+        // The fixture and the probes have to agree before the frame is read:
+        // a probe that a class the fixture puts there does not reach, or that
+        // an unexpected one does, is a fixture defect and is reported as one.
+        foreach (var probe in probes)
+        {
+            var covering = new List<string>();
+            for (var i = 0; i < packer.InstanceCount; i++)
+            {
+                if (Reaches(packer, i, probe.Document))
+                {
+                    if (!covering.Contains(classes[i]))
+                    {
+                        covering.Add(classes[i]);
+                    }
+                }
+            }
+            covering.Sort(StringComparer.Ordinal);
+            var expected = new List<string>(probe.Covered);
+            expected.Sort(StringComparer.Ordinal);
+            if (!covering.SequenceEqual(expected))
+            {
+                Fail($"order probe {probe.Name} at ({F(probe.Document.x)}, "
+                     + $"{F(probe.Document.y)}) is reached by [{string.Join(", ", covering)}] "
+                     + $"and was written for [{string.Join(", ", expected)}]. The fixture and "
+                     + "the probes no longer agree.");
+            }
+        }
+        if (_failures.Count > 0)
+        {
+            return;
+        }
+
+        // 1. The negative control: the undrawn frame must fail every probe,
+        // one by one — a probe the clear colour satisfies discriminates
+        // nothing on the order frame, so one holding is enough to void the
+        // verdict. A first version failed only when all seven held, which two
+        // contradictory probes made unreachable.
+        var controlHolds = new List<string>();
+        foreach (var probe in probes)
+        {
+            var pixel = Read(control, ToViewport(probe.Document));
+            var held = probe.Expect(pixel);
+            Line($"order: control {probe.Name} reads {Rgb(pixel)}: {(held ? "HOLDS" : "fails")}");
+            if (held)
+            {
+                controlHolds.Add(probe.Name);
+            }
+        }
+        Line($"order: control frame satisfies {controlHolds.Count} of {probes.Length} probes");
+        if (controlHolds.Count != 0)
+        {
+            Fail($"the order predicate holds on the CONTROL frame at [{string.Join(", ", controlHolds)}], "
+                 + "which the painter did not draw, so those probes' verdicts on the order "
+                 + "frame mean nothing.");
+            return;
+        }
+
+        // 2. The order frame.
+        var holds = 0;
+        foreach (var probe in probes)
+        {
+            var pixel = Read(order, ToViewport(probe.Document));
+            var ok = probe.Expect(pixel);
+            holds += ok ? 1 : 0;
+            Line($"order: {probe.Name} at ({F(probe.Document.x)}, {F(probe.Document.y)}) "
+                 + $"reads {Rgb(pixel)} — expected {probe.Means}: {(ok ? "OK" : "WRONG")}");
+        }
+        Line($"order: {holds} of {probes.Length} probes composite in the painter's order");
+        if (holds != probes.Length)
+        {
+            Fail($"{probes.Length - holds} of {probes.Length} order probes do not read what "
+                 + "the painter's order composites. The draw order is not the emission order "
+                 + "(issue #1402).");
+        }
+    }
+
+    /// The solid row an instance names with the node's opacity folded into its
+    /// alpha, whatever that alpha is, or null for a kind that has none.
+    private static Color? SolidRow(FramePacker packer, int instance)
+    {
+        var raw = RawSolid(packer, instance);
+        if (raw == null)
+        {
+            return null;
+        }
+        var c = raw.Value;
+        return new Color(c.r, c.g, c.b, c.a * packer.Shade[(instance * 4) + 0]);
+    }
+
+    /// The solid row an instance names, as the heap holds it, or null for a
+    /// kind that has none or a row past the heap. The one place the row's
+    /// address is decoded; [`SolidRow`] and [`SolidColour`] both read through
+    /// it.
+    private static Color? RawSolid(FramePacker packer, int instance)
+    {
+        if (packer.Paint[(instance * 4) + 0] != (uint)PaintKindTag.FillSolid)
+        {
+            return null;
+        }
+        var at = (int)(packer.SolidBase + packer.Paint[(instance * 4) + 1]) * 4;
+        if (at < 0 || at + 3 >= packer.PaintFloats)
+        {
+            return null;
+        }
+        return new Color(
+            packer.Paints[at + 0],
+            packer.Paints[at + 1],
+            packer.Paints[at + 2],
+            packer.Paints[at + 3]);
+    }
+
+    private static bool Near(float a, float b)
+    {
+        return Mathf.Abs(a - b) < 0.5f;
+    }
+
+    private static string F(float value)
+    {
+        return value.ToString("0.0", CultureInfo.InvariantCulture);
+    }
+
+    private static string Rgb(Color c)
+    {
+        return $"({F3(c.r)}, {F3(c.g)}, {F3(c.b)})";
+    }
+
+    private static string F3(float value)
+    {
+        return value.ToString("0.000", CultureInfo.InvariantCulture);
+    }
+
+    private static string Rgba(Color c)
+    {
+        return $"({F(c.r)}, {F(c.g)}, {F(c.b)}, {F(c.a)})";
     }
 
     /// Whether every countable sample centre carries the ink it should.
@@ -1349,16 +1918,12 @@ public sealed class DashsceneRenderGate : MonoBehaviour
             return null;
         }
 
-        var at = (int)(packer.SolidBase + packer.Paint[(instance * 4) + 1]) * 4;
-        if (at < 0 || at + 3 >= packer.PaintFloats)
+        var raw = RawSolid(packer, instance);
+        if (raw == null)
         {
             return null;
         }
-        var colour = new Color(
-            packer.Paints[at + 0],
-            packer.Paints[at + 1],
-            packer.Paints[at + 2],
-            packer.Paints[at + 3]);
+        var colour = raw.Value;
         var alpha = colour.a * packer.Shade[(instance * 4) + 0];
         return alpha >= 0.99f ? colour : (Color?)null;
     }
