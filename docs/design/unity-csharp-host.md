@@ -1242,14 +1242,16 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   which is what says the cores own the interior pixels; the rejected area per
   scene is the shelf derivation cited above. On the Pixel 5 the `surfaces`
   `frameReady` cadence went from 31.2 to 56.9 ms with the cores (2026-09-05, the
-  presented-rate section of `docs/design/android-toolchain.md`). What is owed:
-  the change that makes the pass reject before it shades, with a core shrunk in
-  the vertex stage rather than clipped in the fragment stage as the first
-  experiment; the same gate on GLES and Vulkan; and #1404's soak, which D6 of
-  the order record says would decide a per-frame cost and not a picture. Two
-  consequences a host should know: the overlay class now tests depth against the
-  scene, and a document of more than 65,536 instances runs past the ordinal
-  span.
+  presented-rate section of `docs/design/android-toolchain.md`); with the core
+  inset in the vertex stage and no `clip`, 48.7 — the discard is a third of the
+  added time, and the cores still cost about their own area. What is owed: the
+  reading that says whether `ZTest Less` rejects the fringe's interior on this
+  device's Vulkan at all (the Mac's magenta-core mutation, read on the Pixel 5),
+  and then the change that makes the pass a saving; the same gate on GLES and
+  Vulkan; and #1404's soak, which D6 of the order record says would decide a
+  per-frame cost and not a picture. Two consequences a host should know: the
+  overlay class now tests depth against the scene, and a document of more than
+  65,536 instances runs past the ordinal span.
 - **The corner silhouette is checked by nothing.** `unity/render-gate` probes a
   point inside a node's box and outside its rounded corner, and skips any probe
   another instance's quad can reach — because a document is drawn back to front

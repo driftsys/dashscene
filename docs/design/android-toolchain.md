@@ -1240,12 +1240,26 @@ core pass shaded in full and rejecting nothing — the cores' cost added to an
 unchanged fringe cost. The candidate cause is that the core pass discards
 (`clip` on coverage in `OverlayCore.shader`) while writing depth, the shape both
 tiling-GPU vendors' guides warn loses early depth rejection; it is a hypothesis,
-and the experiment that tests it is one build with the core shrunk in the vertex
-stage rather than clipped in the fragment stage, which this session did not run
-— its instruction was to read and stop. Against D1 nothing is met, and D3's
-projection of about 7 ms saved is not what this implementation of R-T2 does on
-this device. Dumps, `drew` lines and the same script under
-`driftsys/dashscene-v021-lanes/probe-1412/2026-09-05-cores-81c3b17/`.
+and the owner's ruling the same morning was to run the one build that tests it:
+the core quad inset in the vertex stage by its largest corner radius plus the
+antialiasing width plus one pixel, and the fragment stage's `clip` removed —
+applied as an uncommitted patch on `d1129ea`, kept on the shelf, not on this
+branch, because it handles no clip box. Read the same way: `surfaces` 20.51 and
+20.55 fps in two windows, every `frameReady` interval at 48 to 50 ms (mean 48.7,
+then 48.8); `typography` 46.13 fps, mean 22.3 ms; `layout` 46.26 fps, mean 22.2
+ms. **The discard is about a third of the added time, not the cause**: on
+`surfaces` the frame went 31.2 → 56.9 → 48.7 ms, so with no discard at all the
+cores still add 17 ms — about their own area at the overlay path's rate — and
+the depth rejection the pass exists for buys nothing this instrument can see.
+The Mac's magenta-core mutation says `ZTest Less` rejects the fringe's interior
+on Metal; nothing yet says it does on this device's Vulkan, and that is the next
+experiment: the same tinted core read on the Pixel 5, which separates "the test
+does not reject here" from "the core pass costs as much as what it rejects".
+Against D1 nothing is met, and D3's projection of about 7 ms saved is not what
+this implementation of R-T2 does on this device. Dumps, `drew` lines and the
+same script under
+`driftsys/dashscene-v021-lanes/probe-1412/2026-09-05-cores-81c3b17/` and
+`2026-09-05-experiment-core-inset-no-clip/`, the patch beside them.
 
 ## Unity's Android lifecycle over the lease (2026-08-29)
 

@@ -97,17 +97,17 @@ The owner's ruling on that measurement, 2026-09-04, was to halve the GPU frame.
   6 ms per megapixel the overlay path costs on this scene, rejecting that area
   is about 7 ms of the 31. Story #1412's first device reading does not bear it
   out as implemented: the cores lengthened the `surfaces` frame from 31.2 to
-  56.9 ms (2026-09-05, `docs/design/android-toolchain.md`'s presented-rate
-  section, with the candidate cause), so the saving depends on the pass
-  rejecting before it shades, which that implementation does not; the
-  shaded-area derivation of issue #1296 gives the area each shape submits before
-  and after, without a device — no derivation in the tree counts the pixels
-  depth rejects — and D2's cadence is what shows the frame. The fringe's order
-  against the transparent instances is issue #1402's ruling, which story #1412
-  depends on and must not re-derive, and #1296 lands before #1412. Story #1412
-  is the Unity painter's first; issue #1293 holds the lean painter's half and
-  stays measure-then-decide, as its own body says the saving there is unproven;
-  story #1413 is the second step's.
+  56.9 ms, and to 48.7 with the pass's discard removed (2026-09-05,
+  `docs/design/android-toolchain.md`'s presented-rate section), so the saving
+  depends on the depth test rejecting before the fringe shades, which nothing on
+  this device yet shows it doing; the shaded-area derivation of issue #1296
+  gives the area each shape submits before and after, without a device — no
+  derivation in the tree counts the pixels depth rejects — and D2's cadence is
+  what shows the frame. The fringe's order against the transparent instances is
+  issue #1402's ruling, which story #1412 depends on and must not re-derive, and
+  #1296 lands before #1412. Story #1412 is the Unity painter's first; issue
+  #1293 holds the lean painter's half and stays measure-then-decide, as its own
+  body says the saving there is unproven; story #1413 is the second step's.
 
 ## Consequences
 
