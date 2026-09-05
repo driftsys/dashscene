@@ -28,27 +28,31 @@
 // compared above. A `[StructLayout(Pack = 1)]` on a C# declaration moves an
 // offset and fails there.
 //
-// WHAT IT STILL CANNOT SEE — two things, both measured
+// WHAT IT STILL CANNOT SEE — one thing, measured. A second is recorded below
+// it because it was true when this comment was written and issue #1252 closed
+// it.
 //
 // A member whose C# type has the same size but different meaning — `uint`
 // declared as `float`. Both are four bytes at the same offset, and the
 // round-trip returns the same bytes into the same member, so nothing here
 // separates them.
 //
-// A member added to the RUST type that fits inside padding already there.
-// `abi_surface!`'s member lists are hand-written, so an unlisted member is
-// reported by nothing, and one that fits in padding moves no size and no
-// offset either. Adding `quality: u8` to `dashpaint::Blur` between `kind` and
-// `radius` leaves this check green while `BoundaryB.cs` is missing a member.
-// Issue #1252 closed it, and not the way this comment predicted: a struct
-// expression inside the existing `macro_rules!` is exhaustive on stable, so
-// `abi_surface!` rebuilds each type from its declared members and an unlisted
-// member fails the build with `E0063`. No proc-macro crate and no new
-// dependency for `dashpaint`. What that comment expected instead was a derive,
-// and `dashpaint` declares no dependencies at all today.
+// CLOSED, and the prediction was wrong: a member added to the RUST type that
+// fits inside padding already there. That used to be invisible, because
+// `abi_surface!`'s member lists were hand-written and a member that fits in
+// padding moves no size and no offset either — adding `quality: u8` to
+// `dashpaint::Blur` between `kind` and `radius` left this check green while
+// `BoundaryB.cs` was missing a member.
 //
-// Reading `BoundaryB.cs` against `crates/dashpaint/src/lib.rs` is what catches
-// both.
+// Issue #1252 closed it **without a derive**, which this comment used to say
+// it would need. A struct expression inside the existing `macro_rules!` is
+// exhaustive on stable, so `abi_surface!` rebuilds each type from its declared
+// members and an unlisted member now fails the build with `E0063` — no
+// proc-macro crate, and no dependency added to `dashpaint`, which still
+// declares none at all.
+//
+// So reading `BoundaryB.cs` against `crates/dashpaint/src/lib.rs` is what
+// catches the FIRST of the two. The second is caught by the compiler.
 
 using System.Globalization;
 using System.Reflection;
