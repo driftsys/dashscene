@@ -969,12 +969,18 @@ Unity, Vulkan, `RawBuffer`, 1080x2340, three sweeps over the three scenes:
     layout      0.05   0.19        0.18-0.19   0.24-0.25   0.31-0.37
 
 **Each row is one sample per sweep, and every one of them is a first sample.** A
-report covers 240 drawn frames and the loop is paced well under the display
-rate, at 30 fps — "The Unity host's presented rate" below says why — so the
-fourteen seconds each entry was left drawing yielded one sample, not the three
-the dwell was chosen for. The lean painter's table below discounts its own first
-sample as pipeline warm-up; nothing here can, so `max` in particular carries
-warm-up. That is what the `typography` spread of 0.45 to 0.76 is.
+report covers 240 drawn frames and the loop was paced well under the display
+rate, at 30 fps — Unity's default, lifted since by issue #1408; "The Unity
+host's presented rate" below says why — so the fourteen seconds each entry was
+left drawing yielded one sample, not the three the dwell was chosen for. At the
+rates the committed tree presented on 2026-09-05 the same dwell would yield 3.6
+reports on `layout`, 1.9 on `surfaces`, and on `typography` between 2.2 by its
+frames per second of window and 2.9 by the tool's rate (14 s over 240 frames at
+62.5, 32.4, and 37.4 or 49.9 fps) — a projection, since no frame-cost sweep has
+been taken on the committed tree — so a re-run of this sweep is not one sample
+per entry. The lean painter's table below discounts its own first sample as
+pipeline warm-up; nothing here can, so `max` in particular carries warm-up. That
+is what the `typography` spread of 0.45 to 0.76 is.
 
 The lean painter over the same three scenes, on the same device the same day,
 release, 1080x1984, three samples per scene:
@@ -1032,45 +1038,60 @@ one extent, on 2026-09-04
 none is set for the class and #549 is open against the missing display geometry;
 these are figures and the record that holds them.
 
-### The Unity host's presented rate, and what bounds it (2026-09-03 and 04)
+### The Unity host's presented rate, and what bounds it (2026-09-03 to 05)
 
-    status  taken 2026-09-03, and the per-scene sweep after midnight on
-            2026-09-04, on the same Pixel 5, from players built by
-            `just unity-demo-android` at `5b279f6` on the story branch. Read
+    status  taken 2026-09-03, the per-scene sweep after midnight on
+            2026-09-04, and the committed tree on 2026-09-05, on the same
+            Pixel 5, from players built by `just unity-demo-android` at
+            `5b279f6` on the story branch and at `19de616` on issue #1408's. Read
             from the compositor — `dumpsys SurfaceFlinger --timestats` and
             `--latency` on the player's `SurfaceView` layer — not from the
             player. This is issue #1347's Unity half, read whole-frame.
-            Nothing here is committed as a change: the pacing edits — three scripts on the evidence shelf, applied in order, of which the explicit target and optimized frame pacing are the two that stand — and the HDR-off toggle live there as patches, and the pacing change is issue #1408 — until it lands, every presented-rate figure past the first paragraph describes a build this tree does not produce, and wants re-reading once it does; the shaded areas are derived from committed scene data and do not.
+            The pacing edits — the explicit target and optimized frame
+            pacing, the two of the shelf's three scripts that stand — are
+            committed since issue #1408:
+            `Samples~/Showcase/DashsceneFramePacing.cs` and
+            `unity/demo/DemoBuild.cs`, each pinned by
+            `unity/package-gate/tests/frame_pacing.rs`. The HDR-off toggle
+            stays a shelf patch. The three pacing steps in the second
+            paragraph were read from shelf builds of `5b279f6` carrying the
+            script each step names; every later figure from builds carrying those same two edits as patches, the HDR-off trio a third; and the committed tree was read on 2026-09-05 for the three HDR-on scenes — the last paragraphs of this section. The HDR-off trio and the 540x1170 diagnostic were not re-read from the committed tree. The shaded areas
+            are derived from committed scene data.
 
 **The panel is 1080x2340 at 60 Hz** — `dumpsys display` lists a 90 Hz mode as
 well, unused throughout. **The table above was taken at 30 fps, and now says
-why.** "Paced well under the display rate" was an observation; the cause is that
-nothing in the shipped package or the demo player sets
+why.** "Paced well under the display rate" was an observation; the cause was
+that nothing in the shipped package or the demo player set
 `Application.targetFrameRate`, and Unity's Android default for -1 is 30 whatever
-the panel does. (`unity/render-gate/DashsceneRenderGate.cs` does set it, to 60,
-but the `unity-render` recipe runs that player in batch mode and it renders on
+the panel does (`unity/render-gate/DashsceneRenderGate.cs` sets it, to 60, but
+the `unity-render` recipe runs that player in batch mode and it renders on
 demand through `SubmitRenderRequest`, so nothing presents and the setting has no
-effect.) The compositor's `--timestats` counted 30.3 fps with no dropped frame,
-and the sample's own reports came every 8.0 s for 240 frames. **The
+effect). Under that cap the compositor's `--timestats` counted 30.3 fps with no
+dropped frame, and the sample's own reports came every 8.0 s for 240 frames.
+Issue #1408 closed the cap: the Showcase sample sets an explicit 60 at
+`RuntimeInitializeLoadType.SubsystemRegistration`, and `DemoBuild` turns
+`PlayerSettings.Android.optimizedFramePacing` on for the Android player. **The
 `fps if unpaced` figure in those reports is the inverse of the measured `tick`
 plus `draw` sum, not a presented rate** — the apparatus section below says the
 same of the lean painter's `Sample::fps_if_unpaced` — and this section is the
 first place the Unity host's presented rate has been read at all.
 
 **Lifting the cap took two changes, and a reading that looked like a third was
-misleading.** Issue #1408 carries the changes and the same account; this is the
-measurement. Setting the target in `Awake()` from
-`Screen.currentResolution.refreshRateRatio` — which read 60 on that first build,
-with no frame-rate override yet in force — gave ~32 fps with a bimodal interval
-— 87 of 125 presented intervals at 33.4 ms, 16 between 16.6 and 16.9 — frames
-ready about 21 ms before they were shown: Unity's default pacing sleeps to the
-target and presents on every other vsync. Enabling
-`PlayerSettings.Android.optimizedFramePacing` (Swappy) returned 30.3 fps, and
-the player logged `targetFrameRate 30`: the init had already asked
-SurfaceFlinger for 30 Hz (`setFrameRate=(uid, 30.00 Hz)` in
-`dumpsys SurfaceFlinger`), and under Android's per-app frame-rate override the
-app's reported refresh rate is the rate it was granted, so "the display's rate"
-read back 30 and set 30 again. An explicit 60 set at
+misleading.** Issue #1408 landed the changes and carries the same account; this
+is the measurement, taken with them applied to `5b279f6` as shelf patches.
+Setting the target in `Awake()` from `Screen.currentResolution.refreshRateRatio`
+— which read 60 on that first build, with no frame-rate override yet in force —
+gave ~32 fps with a bimodal interval — 87 of 125 presented intervals at 33.4 ms,
+16 between 16.6 and 16.9 — frames ready about 21 ms before they were shown:
+Unity's default pacing sleeps to the target and presents on every other vsync.
+Enabling `PlayerSettings.Android.optimizedFramePacing` (Swappy) returned 30.3
+fps, and the player logged `targetFrameRate 30`: the init had already asked
+SurfaceFlinger for 30 Hz (read off `dumpsys SurfaceFlinger` on 2026-09-03 and
+transcribed as `setFrameRate=(uid 10273, 30.00 Hz)`; the dump's literal form,
+kept for the 60 Hz case on 2026-09-05, lists the request under
+`FrameRateOverrides`), and under Android's per-app frame-rate override the app's
+reported refresh rate is the rate it was granted, so "the display's rate" read
+back 30 and set 30 again. An explicit 60 set at
 `RuntimeInitializeLoadType.SubsystemRegistration`, before the first frame, is
 what made the compositor show `60.00 Hz` asked. The player logs of the three
 steps were not kept; their compositor dumps are.
@@ -1137,13 +1158,59 @@ device, 126 or 127 of them with a completed present, which is the older-release
 case the note in "The measurement apparatus, and the procedure at the device"
 below already states: it returns nothing on Android 15 and works on older
 releases, and this Pixel 5 runs Android 14. The `--timestats` rates, the `top`
-sample and the two `setFrameRate` readings were read off the tool and
-transcribed into `driftsys/dashscene-v021-lanes/probe-1403/RESULTS.md` — whose
-HDR table printed the `layout` row under the variant-shelf document's 3
+sample and the two frame-rate requests (30.00 and 60.00 Hz) were read off the
+tool and transcribed into `driftsys/dashscene-v021-lanes/probe-1403/RESULTS.md`
+— whose HDR table printed the `layout` row under the variant-shelf document's 3
 instances until its "Corrections" section and the re-read put the scene's 29
 beside it — except the per-scene re-read of 2026-09-04, whose dumps are kept
 beside it as `logs/timestats-hdr-on-per-scene.txt` with the `drew` lines in
 `logs/showcase-hdr-on-per-scene.log`. All of it is outside this repository.
+
+**The committed tree, read (2026-09-05).** The same two instruments on a player
+built by `just unity-demo-android 6000.3.23f1 build` at `19de616` — the
+`debt/v021-frame-pacing` branch, profile `demo-release`, Vulkan, with issue
+#1408's two edits as committed code and nothing applied as a patch — on the same
+Pixel 5 at 1080x2340 in the 60 Hz mode, installed from the recipe's APK and
+launched on entry 0. The compositor shows #1408's claim first:
+`dumpsys SurfaceFlinger` lists the player under `FrameRateOverrides` as
+`(uid, frameRate)={10273, 60.00 Hz}`, and the `--timestats` layer payload
+carries the layer's own vote, `frameRate = 60.00`. Then, per scene,
+`--timestats` over a 10 s window (`statsStart` and `statsEnd` 10 s apart in
+every dump) and one `--latency` dump of 127 rows, so 126 intervals, with the
+`drew` line kept beside each:
+
+| scene, by its `drew` line             |       `averageFPS` (layer frames in the window) | `droppedFrames` | `frameReady` cadence, 126 intervals                                                           | presented intervals                     |
+| ------------------------------------- | ----------------------------------------------: | --------------: | --------------------------------------------------------------------------------------------- | --------------------------------------- |
+| `surfaces`, 56 instances, as launched |                                     32.44 (320) |               0 | 74 at 31 ms, 52 at 32; mean 31.2 ms                                                           | 17 at 17 ms, 103 at 33, 6 at 34         |
+| `typography`, 381 instances           | 49.89 (374, which is 37.4 per second of window) |               0 | 14 at 17 ms, 38 at 18, 28 at 19, the rest spread from 3 to 38; mean 20.7 ms, median 18.5      | 3 at 16 ms, 93 at 17, 28 at 33, 2 at 34 |
+| `layout`, 29 instances                |                                     62.50 (601) |               0 | 1 at 15 ms, 46 at 16, 77 at 17, 2 at 18; mean 16.7 ms — the pace, an upper bound on the frame | 2 at 16 ms, 124 at 17                   |
+
+`averageFPS` is the tool's own figure — 1000 over the mean of its
+present-to-present histogram's bucket labels, so `layout`'s 62.50 is 1000/16 on
+a 60 Hz panel — and the frame count is the layer's frames in the 10 s window.
+`typography`'s 374 frames are 37.4 per second of window against the tool's 49.89
+because its intervals do not fill the window: its histogram holds 285 in the 16
+ms bucket and 89 in the 33 ms bucket, 7.7 s at the panel's 16.67 and 33.33 ms
+(7.5 s by the tool's floored labels), so for 2.3 to 2.5 s of the window the
+layer presented nothing, which the dump does not explain (the compositor's own
+count exceeded the layer's by 112 frames); that row's window is not the other
+two's, and its rate is the rate while it presented. The committed tree
+reproduces the shelf-patch readings: `surfaces` at 32.4 fps and a frame every 31
+ms; `typography` at 49.9 by the tool, between the two shelf readings — 50.2 by
+the tool on 2026-09-03 and 42.4 by frames per window on 2026-09-04 — with the 17
+and 33 ms mix; `layout` at the panel's rate, where the `frameReady` cadence is
+the pace and says only that the frame fits in it. The `surfaces` row is the
+before-number story #1412 is read against. Two further `surfaces` windows, taken
+after one and two `DPAD_RIGHT` presses, read 32.45 each with the same cadence (2
+at 30 ms, 91 at 31 and 33 at 32; 88 at 31 and 38 at 32): on this sample
+`DPAD_RIGHT` is `KeyCode.RightArrow`, which drives the showing scene's signal,
+and `KeyCode.PageDown` — `adb shell input keyevent 93` — is what walks the
+entries and reached the other two rows. Against D1's "met when": `surfaces` and
+`typography` are not met, `layout` is. The dumps and the player log with its
+`drew` lines are under
+`driftsys/dashscene-v021-lanes/probe-1412/2026-09-05-pacing-19de616/`, and the
+script that derives both cadence histograms from a latency dump,
+`latency-cadence.py`, one directory above.
 
 ## Unity's Android lifecycle over the lease (2026-08-29)
 

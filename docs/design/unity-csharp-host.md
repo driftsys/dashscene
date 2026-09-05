@@ -1556,17 +1556,21 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   has not been. An earlier draft of this bullet said it could not, which was
   wrong. Mutating the release ordering back leaves the gate green, measured
   rather than assumed. Issue #1289 carries the threaded harness it needs.
-- **No CI job compiles `Samples~/`, and two developer gates do** —
-  `just unity-editor`, whose purpose it is, and `just unity-demo`, which
-  compiles the Showcase sample while building its player. Not because of the
-  `~`, which only hides it from Unity's importer: `package-compat` and
-  `ffi-check` glob `Runtime/**/*.cs`, so anything outside `Runtime/` is out of
-  scope wherever it sits, and no CI job runs an editor. That is why
-  `CommitPacer` sits in `Runtime/` rather than in the sample: the pacing
-  arithmetic carries a numeric claim, so it lives where a gate can reach it.
-  Story #1124's Android resolver briefly carried one too, and moved to
-  `Runtime/Engine/` once the two-halves ruling gave engine-referencing code a
-  gate.
+- **No CI job compiles `Samples~/`, and three developer gates do** —
+  `just unity-editor`, whose purpose it is, and `just unity-demo` and
+  `just unity-demo-android`, which compile the Showcase sample while building
+  their players. Not because of the `~`, which only hides it from Unity's
+  importer: `package-compat` and `ffi-check` glob `Runtime/**/*.cs`, so anything
+  outside `Runtime/` is out of scope wherever it sits, and no CI job runs an
+  editor. That is why `CommitPacer` sits in `Runtime/` rather than in the
+  sample: the pacing arithmetic carries a numeric claim, so it lives where a
+  gate can reach it. A numeric claim in a sample stays there with a scan over
+  it: `DashsceneFrameCost.TimingSample`, held equal to the other hosts' sample
+  size by `frame_cost_instrument.rs`, and the frame-rate target of
+  `Samples~/Showcase/DashsceneFramePacing.cs` (issue #1408), the sample's own
+  policy, held by `frame_pacing.rs`. Story #1124's Android resolver briefly
+  carried one too, and moved to `Runtime/Engine/` once the two-halves ruling
+  gave engine-referencing code a gate.
 
   **The sample stopped being claim-free at issue #1298**, which put the
   painter's construction, the `Draw`-then-`MarkDrawn` ordering inside the

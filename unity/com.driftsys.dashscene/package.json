@@ -21,7 +21,7 @@
     },
     {
       "displayName": "Showcase",
-      "description": "The demonstration: the three corpus showcase scenes and several committed documents from a manifest in StreamingAssets, walked with the arrow keys or on a timer, with the rung, the instance count and every construct the painter refused reported on screen. Space runs a scene's own variant switch where it declares one. Needs the same host project R-E4, R-E5 and R-E6 describe. The scenes need a native producer the shipped library does not carry — they are built in Rust against a live arena, and no entry point on the shipped C ABI mutates a document — so a build without the DASHSCENE_DEMO_PRODUCER define draws the documents alone, which is what a customer's own build of this sample does.",
+      "description": "The demonstration: the three corpus showcase scenes and several committed documents from a manifest in StreamingAssets, walked with the arrow keys or on a timer, with the rung, the instance count and every construct the painter refused reported on screen. Space runs a scene's own variant switch where it declares one. Needs the same host project R-E4, R-E5 and R-E6 describe. The scenes need a native producer the shipped library does not carry — they are built in Rust against a live arena, and no entry point on the shipped C ABI mutates a document — so a build without the DASHSCENE_DEMO_PRODUCER define draws the documents alone, which is what a customer's own build of this sample does. Importing it also sets Application.targetFrameRate to 60 at startup, process-wide; the CHANGELOG says why.",
       "path": "Samples~/Showcase"
     }
   ]
