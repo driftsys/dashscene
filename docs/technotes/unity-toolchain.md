@@ -457,9 +457,12 @@ types are asked for.
   draw commands, and `Shader.Find("Universal Render Pipeline/Unlit")` returned
   null in the player, so it fell back to `Sprites/Default`. Nothing was ever
   shaded.
-- **Issue #1267's question 2 is untouched** — whether `DS_WRONG_THREAD` should
-  distinguish a thread that has exited from a foreign one is an owner's ruling
-  and is not this measurement's.
+- **Issue #1267's question 2 was outside this measurement's scope, and has since
+  been ruled** (2026-08-23,
+  `docs/decisions/ds-wrong-thread-stands-for-a-dead-thread-too.md`): it stands
+  for a dead thread as well as a foreign one. What was true here, and stays
+  true, is the scope claim: that question was an owner's ruling and not this
+  measurement's to make.
 
 ## What is still unknown
 

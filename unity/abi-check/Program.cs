@@ -40,7 +40,11 @@
 // reported by nothing, and one that fits in padding moves no size and no
 // offset either. Adding `quality: u8` to `dashpaint::Blur` between `kind` and
 // `radius` leaves this check green while `BoundaryB.cs` is missing a member.
-// Issue #1252 carries it: closing it needs a derive over the boundary-B types,
+// Issue #1252 closed it, and not the way this comment predicted: a struct
+// expression inside the existing `macro_rules!` is exhaustive on stable, so
+// `abi_surface!` rebuilds each type from its declared members and an unlisted
+// member fails the build with `E0063`. No proc-macro crate and no new
+// dependency for `dashpaint`. What that comment expected instead was a derive,
 // and `dashpaint` declares no dependencies at all today.
 //
 // Reading `BoundaryB.cs` against `crates/dashpaint/src/lib.rs` is what catches

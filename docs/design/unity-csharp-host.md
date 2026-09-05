@@ -289,12 +289,23 @@ this one is meant to match is worth more than picking again.
 
 **That `min` is an interim default and issue #1281 says so.** The reference
 painter pushes one anti-aliased clip per box and lets Skia's clip stack combine
-them; `min` and a clip stack agree wherever at most one box covers a pixel
-fractionally, and can differ where two clip edges cross one pixel. Nothing here
-measures that case — `v03-clips` looks like it draws it and does not, because
-every box in it is integer- and axis-aligned — so this painter is the **third**
-implementation of a combination rule that has never been compared. #1281 exists
-so the choice does not become the ruling by being the thing that shipped.
+them; `min` and a clip stack agree wherever at most one box **is listed** and
+covers a pixel fractionally, and can differ where two clip edges cross one
+pixel.
+
+**The qualifier is load-bearing, and a first version of this sentence did not
+carry it.** A `ClipRegion` holds ancestor boxes and is not pre-intersected, so
+one distinct box can be listed twice — a pixel that at most one box covers
+fractionally — and there the two painters already differ: `min` is idempotent
+and reads 128, the product is not and reads 64.
+
+**The crossing case has now been compared**, which it had not when this
+paragraph was written: at a pixel two clip edges cross, the true covered area is
+0.25, `min` gives alpha 128 and Skia's clip stack gives 64.
+`docs/decisions/clip-edge-semantics.md` carries the table and what each option
+costs. So this painter is the **third** implementation of a combination rule,
+and the ruling is still open — #1281 exists so the choice does not become the
+ruling by being the thing that shipped.
 
 **The material class is a host setting, not a document property.** D1 names
 three — unlit-overlay, lit-opaque, lit-cutout — and nothing on boundary B says
@@ -1551,8 +1562,11 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   `OnPerformCulling` on the main thread under `6000.3.22f1` with URP on macOS
   and Metal, so a host can bracket its job dispatch — but the target is Android,
   where no reading has been taken. Issue #1267 question 2, whether
-  `DS_WRONG_THREAD` should distinguish a dead thread from a foreign one, is
-  untouched and remains an owner's ruling.
+  `DS_WRONG_THREAD` should distinguish a dead thread from a foreign one, was
+  **ruled by the owner on 2026-08-23**: it stands for both, and the header says
+  it does not report which
+  (`docs/decisions/ds-wrong-thread-stands-for-a-dead-thread-too.md`). What
+  remains open is the Android reading, not that question.
 
   **Issue #1346 did not take the Android reading either, and the reason is
   mechanical.** The only place the callback's own thread can be observed is
