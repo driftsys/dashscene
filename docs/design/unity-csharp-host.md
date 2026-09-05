@@ -1486,9 +1486,25 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   developer minutes or tens of minutes into an editor run rather than on the
   pull request that broke it.
 
-  **Three measurements narrow the choice the issue leaves open, and none of them
-  closes it.** Referencing an editor's own managed assemblies makes CI depend on
-  an installed editor, which
+  **One of the three shapes is refused**, by the owner's ruling of 2026-09-05:
+  no Roslyn as a library, parsed on a pull request.
+  [`../decisions/a-second-c-sharp-compiler-is-not-a-gate.md`](../decisions/a-second-c-sharp-compiler-is-not-a-gate.md)
+  carries it and the measurement behind it — Unity bundles a Roslyn four
+  language versions behind the one a `PackageReference` resolves, so the gate
+  would accept syntax the editor rejects. It rules nothing about NuGet in
+  general and nothing about the other two shapes.
+
+  **What that leaves is not a path to this gap's own criterion.** The
+  requirement is a job on every pull request; shape 1 needs an installed editor
+  and shape 2, a vendored facade, is the only remaining candidate that could run
+  on one — unruled, and the size the paragraph below measures. Issue #1316's
+  factoring would give a job compiling these files inside a real Unity project,
+  with the right compiler and therefore binding errors too, and it runs locally
+  rather than on a pull request. Better than nothing; not the criterion.
+
+  **Three measurements narrowed the choice, and none of them closed it.**
+  Referencing an editor's own managed assemblies makes CI depend on an installed
+  editor, which
   [`../decisions/the-native-library-ships-inside-the-unity-package.md`](../decisions/the-native-library-ships-inside-the-unity-package.md)
   D4 rules out, and those assemblies are Unity's to license rather than this
   repository's to vendor. A formatter is not a syntax gate:
@@ -1496,15 +1512,14 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   whitespace --verify-no-changes` runs over these files with no
   reference assemblies at all and reports formatting drift, and it exits **0**
   over a copy of `DashsceneAndroidProbe.cs` carrying `error CS1026: ) expected`
-  — so the cheap form of a Roslyn pass would need Roslyn as a library, which
-  would be the first `PackageReference` in any `.csproj` here. And a vendored
-  facade is not a small one: these files reach `UnityEngine`, `UnityEditor`,
-  `UnityEditor.Build`, `UnityEditor.Build.Reporting`,
-  `UnityEditor.SceneManagement`, `UnityEngine.Rendering`, URP's
-  `UnityEngine.Rendering.Universal` — which lives in a package assembly rather
-  than in the editor install — and the package's own `Runtime/Engine/` types.
-  With no references the compiler stops after about a hundred errors, so that
-  surface cannot even be enumerated in one pass.
+  — so the cheap form of a Roslyn pass would need Roslyn as a library, which the
+  ruling above refuses. And a vendored facade is not a small one: these files
+  reach `UnityEngine`, `UnityEditor`, `UnityEditor.Build`,
+  `UnityEditor.Build.Reporting`, `UnityEditor.SceneManagement`,
+  `UnityEngine.Rendering`, URP's `UnityEngine.Rendering.Universal` — which lives
+  in a package assembly rather than in the editor install — and the package's
+  own `Runtime/Engine/` types. With no references the compiler stops after about
+  a hundred errors, so that surface cannot even be enumerated in one pass.
 
 - **No release, and therefore no tag.** Story #1334 landed the library on
   2026-08-24: the package ships macOS arm64 and Android arm64 under

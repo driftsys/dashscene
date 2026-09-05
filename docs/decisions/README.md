@@ -697,6 +697,16 @@ their parent rather than apart from it:
   does yet (#1360), and one gate over the P/Invoke boundary covers IL2CPP; R-E8
   binds the shipping project and a farm project is a separate one. Settles issue
   #1348; the farm's ABI is left open.
+- [a-second-c-sharp-compiler-is-not-a-gate.md](a-second-c-sharp-compiler-is-not-a-gate.md)
+  — **accepted** (2026-09-05, the owner, on issue #1350): the eight editor-only
+  C# files are not gated by Roslyn as a `PackageReference` parsed on a pull
+  request. Unity bundles its own Roslyn four language versions behind the one a
+  package resolves — C# 10 against C# 14, measured with
+  `dotnet <csc.dll> -langversion:?` — so such a gate accepts syntax the editor
+  rejects and fails open, which is the defect it would exist to catch. That it
+  would be the repository's first `PackageReference` is the smaller half.
+  Refuses one shape only: it rules nothing about NuGet in general, and issue
+  #1350 stays open with no cheap path to a job on every pull request.
 - [the-package-and-its-library-are-one-versioned-artifact.md](the-package-and-its-library-are-one-versioned-artifact.md)
   — **accepted** (2026-08-21, story #1125): the package version tracks the Cargo
   workspace, one git tag selects both halves, `ds_abi_version` is a mandatory
