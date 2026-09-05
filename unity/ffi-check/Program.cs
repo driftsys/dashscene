@@ -1925,6 +1925,149 @@ Check("NearestDivisor advises a rate that divides, or leaves it alone", () =>
     Expect(CommitPacer.NearestDivisor(0, 30) == 30, "an unknown refresh rate is not advised on");
 });
 
+// ------------------------------------------------------------------- thread cost
+
+// **The other half of the same argument `CommitPacer` is here for.** The
+// thread-cost line's arithmetic and its sampling sit in `Runtime/` rather than
+// beside the recorders in `Runtime/Engine/` precisely so this project compiles
+// and RUNS them; nothing else in the tree executes either class. The recorders
+// themselves are Unity's and are checked by `just unity-render`, which
+// constructs the instrument in a player and fails unless it arms.
+
+Check("the thread-cost arithmetic is the frame-cost line's", () =>
+{
+    Expect(ThreadCostMath.Mean(new[] { 1.0, 2.0, 3.0 }) == 2.0, "mean");
+
+    // **Filled in reverse, so the sort is part of what this asserts.** A P95
+    // that indexed the caller's array without sorting returns element 18 of a
+    // descending run — 1.0 — and a version that sorted IN PLACE would pass this
+    // while reordering an accumulator buffer that is still being filled.
+    var twenty = new double[20];
+    for (var i = 0; i < 20; i++)
+    {
+        twenty[19 - i] = i;
+    }
+
+    Expect(
+        ThreadCostMath.P95(twenty) == 18.0,
+        "p95 is values[round(19 * 0.95)] = values[18] of the sorted copy");
+    Expect(
+        twenty[0] == 19.0,
+        "P95 sorted the caller's array in place, so a partly filled accumulator "
+        + "buffer would be reordered under the frames still to be written into it");
+
+    // **31 samples, because that is where the two rounding modes disagree.**
+    // (31 - 1) * 0.95 is 28.5. `MidpointRounding.AwayFromZero` — which
+    // `DashsceneFrameCost.At` uses — gives 29; C#'s default banker's rounding
+    // gives 28. Nothing else in this check would notice that difference, and it
+    // is the one that would put the two lines of a run a frame apart.
+    var thirtyOne = new double[31];
+    for (var i = 0; i < 31; i++)
+    {
+        thirtyOne[i] = i;
+    }
+
+    Expect(
+        ThreadCostMath.P95(thirtyOne) == 29.0,
+        "(31 - 1) * 0.95 = 28.5 rounds away from zero, as DashsceneFrameCost.At does");
+
+    Expect(ThreadCostMath.NsToMs(1_500_000) == 1.5, "ns to ms");
+    Expect(ThreadCostMath.PerFrame(2400, 240) == 10, "bytes per frame");
+});
+
+Check("the accumulator discards the warm-up, samples every 240 drawn frames, and resets on a key change", () =>
+{
+    var acc = new ThreadCostAccumulator();
+    for (var f = 0; f < ThreadCostAccumulator.WarmUp + ThreadCostAccumulator.Sample - 1; f++)
+    {
+        Expect(
+            acc.Push("a", 10, 20, 1_000_000, 500_000, 0, 24) == null,
+            $"no sample before the window closes (frame {f})");
+    }
+
+    var sample = acc.Push("a", 10, 20, 1_000_000, 500_000, 0, 24);
+    Expect(sample != null, "no sample after 60 warm-up and 240 collected frames");
+    Expect(sample.Frames == 240, $"the sample covers {sample.Frames} frames, not 240");
+    Expect(sample.Width == 10 && sample.Height == 20, "the sample carries the extent it was pushed with");
+    Expect(sample.MainMean == 1.0, $"main mean {sample.MainMean} ms, not 1.0");
+    Expect(sample.RenderMean == 0.5, $"render mean {sample.RenderMean} ms, not 0.5");
+    Expect(
+        sample.GcAllocBytesPerFrame == 24,
+        $"gc {sample.GcAllocBytesPerFrame} B/frame, not 24 — the total is summed and divided once");
+
+    // The extent is in the line and not only in the object: the sweep script
+    // reads it back off every captured line and refuses a run whose sweeps
+    // drifted across two geometries (issue #1236).
+    Expect(
+        sample.Line().Contains(" at 10x20 over 240 frames"),
+        $"the line carries the extent the sweep script checks: {sample.Line()}");
+
+    // A new key resets and warms up again, so the frames either side of an
+    // entry change are never averaged together — and the 100 frames collected
+    // under the old key are discarded rather than carried into the new sample.
+    for (var f = 0; f < 100; f++)
+    {
+        acc.Push("a", 10, 20, 1_000_000, 500_000, 0, 0);
+    }
+
+    Expect(
+        acc.Push("b", 10, 20, 1_000_000, 500_000, 0, 0) == null,
+        "a new entry resets and warms up again");
+});
+
+Check("a counter this player cannot record is an em dash on the line, never a zero", () =>
+{
+    // **The hazard the whole nullable chain exists for.** A `ProfilerRecorder`
+    // over a counter Unity has not registered is not an error: it reports
+    // `LastValue` 0 for ever. `unity/render-gate` is such a player — measured
+    // on 6000.3.23f1, macOS/Metal, 2026-09-05, it is `-batchmode` so it carries
+    // no `Render Thread`, and it draws no Canvas so it carries no
+    // `Canvas.SendWillRenderCanvases` — and a zero Canvas-rebuild term there
+    // would read as a Canvas that rebuilds nothing, which is the finding D3's
+    // instrument exists to be able to make.
+    var acc = new ThreadCostAccumulator();
+    ThreadCostSample sample = null;
+    for (var f = 0; f < ThreadCostAccumulator.WarmUp + ThreadCostAccumulator.Sample; f++)
+    {
+        sample = acc.Push("a", 10, 20, 2_000_000, null, null, null);
+    }
+
+    Expect(sample != null, "no sample after 60 warm-up and 240 collected frames");
+    Expect(sample.MainMean == 2.0, $"the recorded term is still reported: {sample.MainMean}");
+    Expect(!sample.RenderMean.HasValue, "an unrecorded render term must not be a number");
+    Expect(!sample.CanvasRebuildMean.HasValue, "an unrecorded canvas term must not be a number");
+    Expect(
+        !sample.GcAllocBytesPerFrame.HasValue,
+        "an unrecorded allocation term must not be a number — a zero there answers D3's "
+        + "allocation rule with a measurement nobody took");
+
+    var line = sample.Line();
+    Expect(
+        line.Contains("render mean — p95 — ms, canvas — ms, gc — B/frame"),
+        $"the line reports an em dash for every unrecorded term: {line}");
+    Expect(!line.Contains("0.00"), $"no unrecorded term reached the line as a zero: {line}");
+
+    // And one frame without a term disqualifies the window: a mean over a
+    // sample that carried the counter for part of it describes neither part.
+    var mixed = new ThreadCostAccumulator();
+    for (var f = 0; f < ThreadCostAccumulator.WarmUp; f++)
+    {
+        mixed.Push("a", 10, 20, 1_000_000, 500_000, 0, 0);
+    }
+
+    ThreadCostSample partial = null;
+    for (var f = 0; f < ThreadCostAccumulator.Sample; f++)
+    {
+        partial = mixed.Push("a", 10, 20, 1_000_000, f == 0 ? (long?)null : 500_000, 0, 0);
+    }
+
+    Expect(partial != null, "no sample after the window closed");
+    Expect(
+        !partial.RenderMean.HasValue,
+        "one frame without the render term left a mean over a window that carried it for "
+        + "239 of 240 frames");
+});
+
 // ------------------------------------------------------------------- reflection helpers
 
 static ulong HandleOf(DashsceneRuntime runtime)

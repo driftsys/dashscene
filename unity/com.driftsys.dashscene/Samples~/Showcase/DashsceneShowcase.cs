@@ -178,6 +178,15 @@ namespace Driftsys.Dashscene.Samples
         /// third limb, and the figure issue #1347 sets beside the lean
         /// painter's.
         private readonly DashsceneFrameCost _frameCost = new DashsceneFrameCost();
+
+        /// The thread-time instrument, whose terms are the ones the frame-cost
+        /// line excludes by construction: the culling callback, the render
+        /// thread's encode and a Canvas rebuild. D3 of
+        /// `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`,
+        /// and `Runtime/Engine/DashsceneThreadCost.cs` states the definition
+        /// term by term.
+        private readonly DashsceneThreadCost _threadCost =
+            new DashsceneThreadCost(Environment.GetCommandLineArgs());
         private CommitPacer _pacer;
         private int _index;
         private string _status = string.Empty;
@@ -346,6 +355,26 @@ namespace Driftsys.Dashscene.Samples
                 _readoutVisible = false;
                 Debug.Log($"[showcase] capture: {_capture.Scene} phase {_capture.Phase} "
                           + $"signal {_capture.Signal:F3}");
+            }
+
+            // **Said once, at launch, rather than left as an absent line.** A
+            // run whose thread-cost lines never appear is otherwise
+            // indistinguishable from a run too short to close a 300-frame
+            // window, and the likeliest reason — the Canvas markers are absent
+            // from a non-development player — is one the reader can act on.
+            if (!_threadCost.Armed)
+            {
+                Debug.LogWarning($"[showcase] thread cost disarmed: {_threadCost.Reason}");
+            }
+            else if (_threadCost.Unrecorded.Length > 0)
+            {
+                // Armed, and some terms will report an em dash rather than a
+                // number. Said once here so a reader of a column of dashes
+                // knows which counter this player lacks, and that the answer to
+                // a missing allocation counter is a development build.
+                Debug.LogWarning(
+                    "[showcase] thread cost counters this player cannot record: "
+                    + _threadCost.Unrecorded);
             }
 
             try
@@ -567,6 +596,18 @@ namespace Driftsys.Dashscene.Samples
                 if (cost != null)
                 {
                     Debug.Log($"[showcase] frame cost — {cost.Line()}");
+                }
+
+                // **Directly after the frame-cost push, on drawn frames only.**
+                // Both instruments then cover the same frames, so the two lines
+                // of one run can be read together — which is the whole point of
+                // a term that includes what the other excludes. A recorder's
+                // `LastValue` moves once per Unity frame, so one push here is
+                // one reading.
+                var thread = _threadCost.Push(Label(_index), Screen.width, Screen.height);
+                if (thread != null)
+                {
+                    Debug.Log($"[showcase] thread cost — {thread.Line()}");
                 }
             }
             catch (DashsceneAbiMismatchException e)
@@ -1493,6 +1534,10 @@ namespace Driftsys.Dashscene.Samples
                 ReportDisposeVerdict();
                 _runtime = null;
             }
+
+            // The recorders are Unity's, and a player that keeps five of them
+            // open across a scene reload accumulates them.
+            _threadCost.Dispose();
         }
     }
 }

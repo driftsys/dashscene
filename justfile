@@ -4271,9 +4271,11 @@ unity-android-negative name="all" action="run" unity_version="6000.3.23f1" timeo
 #
 # Neither test needs a device, an SDK or an NDK. **The recipe as a whole costs
 # about 98 s, measured on 2026-08-29** — the two named above are about two
-# seconds of it and the seven added since are the rest, nearly all of it the
+# seconds of it and the eight added since are the rest, nearly all of it the
 # deliberate waiting the stub-driven tests do inside their script's own poll
-# loops. It was 47 s over six scripts on 2026-08-24.
+# loops. It was 47 s over six scripts on 2026-08-24. The eighth,
+# `unity-frame-table-test.sh`, is story #1443's and runs two parser passes over
+# a committed capture, so the 98 s is not re-measured for it.
 # `.github/workflows/ci.yml` carries the same figure and **is out of date**: it
 # still reads 47 s, because that file belonged to another lane for the whole of
 # this work. Issue #1378 is the one-line correction, and this note is here
@@ -4302,6 +4304,10 @@ harness-tests:
     # by which time the marker has been written. Synthetic markers are the only
     # way to reach them.
     ./measure/android/frame-table-test.py
+    # And the same parser's two Unity tables (story #1443), whose lines were
+    # reshaped by a `sed` inside `unity-frame-cost.sh` that no gate could reach:
+    # that script needs a device with a Unity player installed on it.
+    ./measure/android/unity-frame-table-test.sh
     ./measure/android/attach-outcome-test.sh
     # And the wiring between those two decisions, which neither of them
     # reaches: `attach-timing-test.sh` drives the script itself against a stub
