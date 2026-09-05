@@ -3,7 +3,24 @@
     status    WIP — specification (2026-09-05, owner + Fable). The design was approved in session on
               2026-09-05. The epic and its ten stories are filed — #1441, and
               #1442 to #1451 — and nothing is implemented. The implementation
-              plan follows in this directory.
+              plan follows in this directory. **PARTLY GARDENED by story
+              #1442**: the record
+              docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md
+              owns §2, §3, §4 and §9 — the criterion, the fairness rules, the
+              instruments and the alternatives considered — and is what every
+              later story cites. Those four sections are superseded here rather
+              than deleted, because the nine later stories still read this file
+              for the story shape; they leave with the plan when story #1451
+              archives both. Where this file and that record differ, the record
+              is what binds. Two differences so far, both corrections: §4 says
+              demo/src/shell.rs brackets "tick, paint and present", where Timing
+              brackets tick and present with paint inside present; and §4 and
+              §5.1 say the process sampler in measure/android/lib.sh "already
+              runs", where measure/android/frame-capture.sh starts it for the
+              lean host and nothing starts it for the Unity one. A third: §3's
+              rule 4 says the Canvas takes "the same font file" and is "Latin
+              only, as the showcase is", where corpus/showcase/src/typography.rs
+              draws three Arabic runs from a second family with its own atlas.
     scope     the Unity painter — `unity/com.driftsys.dashscene/Runtime/Engine/
               BrgPainter.cs`, `Runtime/FramePacker.cs`, the two samples under
               `Samples~/`, the demo host under `unity/demo/` — the shared
