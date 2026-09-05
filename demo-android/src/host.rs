@@ -26,7 +26,7 @@ use jni::sys::{jboolean, jfloat, jint, jlong};
 use crate::refusal::Refusal;
 use crate::timing::Sample;
 use crate::timing::Timing;
-use crate::{Capture, Command, Walk, advance, readout, select};
+use crate::{Capture, CaptureRequest, Command, Walk, advance, readout, select};
 
 /// How long each scripted phase lasts, in seconds.
 ///
