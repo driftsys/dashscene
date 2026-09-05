@@ -2107,9 +2107,14 @@ Check("the packer's growth preserves the instances already written", () =>
         var packer = new FramePacker();
         packer.Pack(frame, MaterialClass.UnlitOverlay);
 
+        // **Two per rect since story #1412.** The solid is opaque and the node
+        // is at opacity 1, so on the overlay class each rect packs an opaque
+        // core and then its blended instance (R-T2); both must survive the
+        // growth, and the core flag must too — it rides in its own array.
         Expect(
-            packer.InstanceCount == rects,
-            $"the packer emitted {packer.InstanceCount} instances for {rects} single-fill rects");
+            packer.InstanceCount == 2 * rects,
+            $"the packer emitted {packer.InstanceCount} instances for {rects} opaque "
+            + "single-fill rects, not a core and a fringe each");
 
         // **Every instance, not just the last.** A growth that discarded would
         // leave the ones written before the doubling zeroed, and the tail — the
@@ -2117,13 +2122,26 @@ Check("the packer's growth preserves the instances already written", () =>
         // row alone, is exactly what would miss it.
         for (var i = 0; i < rects; i++)
         {
-            Expect(
-                Math.Abs(packer.Quad[i * 4] - i) < 1e-3f,
-                $"instance {i} carries x={packer.Quad[i * 4]}, not {i} — the growth path "
-                + "discarded what was written before it");
-            Expect(
-                Math.Abs(packer.Quad[i * 4 + 2] - 10.0f) < 1e-3f,
-                $"instance {i} carries w={packer.Quad[i * 4 + 2]}, not 10");
+            for (var half = 0; half < 2; half++)
+            {
+                var at = (2 * i) + half;
+                var role = half == 0 ? "core" : "fringe";
+                Expect(
+                    Math.Abs(packer.Quad[at * 4] - i) < 1e-3f,
+                    $"instance {at} (rect {i}'s {role}) carries x={packer.Quad[at * 4]}, not "
+                    + $"{i} — the growth path discarded what was written before it");
+                Expect(
+                    Math.Abs(packer.Quad[at * 4 + 2] - 10.0f) < 1e-3f,
+                    $"instance {at} (rect {i}'s {role}) carries w={packer.Quad[at * 4 + 2]}, not 10");
+                Expect(
+                    packer.InstanceIsCore[at] == (half == 0),
+                    $"instance {at} (rect {i}'s {role}) has IsCore={packer.InstanceIsCore[at]} — "
+                    + "the core flag did not survive the growth");
+                Expect(
+                    Math.Abs(packer.Shade[at * 4 + 3] - i) < 1e-3f,
+                    $"instance {at} (rect {i}'s {role}) carries ordinal "
+                    + $"{packer.Shade[at * 4 + 3]}, not {i} — a core and its fringe share one");
+            }
         }
     }
     finally
