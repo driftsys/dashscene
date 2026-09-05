@@ -206,9 +206,12 @@ namespace Driftsys.Dashscene
     /// vocabulary rather than validating it, which P4 forbids.
     public enum MaterialClass
     {
-        /// Alpha-blended, writing no depth and testing none. Coverage is the
-        /// alpha, so corners, strokes and clip edges are anti-aliased. The
-        /// class the bulk of a UI takes.
+        /// Alpha-blended, writing no depth, and since story #1412 testing it
+        /// against its own opaque cores (R-T2): every fully opaque fill is
+        /// drawn once through `PaintShaders.OverlayCore`, which writes depth,
+        /// and the blended pass rejects what a later-painted core covers.
+        /// Coverage is the alpha, so corners, strokes and clip edges are
+        /// anti-aliased. The class the bulk of a UI takes.
         UnlitOverlay = 0,
 
         /// Writes depth, does not blend, takes the engine's main light.

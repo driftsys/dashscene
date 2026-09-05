@@ -1,10 +1,19 @@
 // The unlit overlay class — `docs/decisions/unity-painter-uses-brg.md` D1's
 // first, and the one the bulk of a UI takes.
 //
-// Alpha-blended, writing no depth and testing none, so a document draws over
-// whatever the engine drew before it. Coverage IS the alpha here, which is what
+// Alpha-blended, writing no depth. Coverage IS the alpha here, which is what
 // lets a rounded corner, a stroke and a clip edge all be anti-aliased; the two
 // lit classes below it cannot express partial coverage that way and say so.
+//
+// **It tests depth since story #1412 (R-T2), against this class's own opaque
+// cores.** Every fully opaque fill is drawn first through
+// `Dashscene/OverlayCore`, which writes depth over the fill's interior, and
+// this pass — at the same depth for the same node, nearer for a later-painted
+// one — rejects its own interior and anything under a later core, leaving the
+// antialiasing band to blend. A document therefore no longer draws over
+// whatever the engine drew before it regardless of depth: it is depth-tested
+// at the sheet's position, which is the cost `docs/design/unity-csharp-host.md`
+// records.
 Shader "Dashscene/UnlitOverlay"
 {
     Properties

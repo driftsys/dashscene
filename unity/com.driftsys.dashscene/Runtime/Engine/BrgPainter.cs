@@ -917,10 +917,12 @@ namespace Driftsys.Dashscene
             // logged. This painter emits its instances in painter's-algorithm
             // order, and the two SHADERS a text document draws through —
             // `UnlitOverlay`, the class material, and `Text`, one material per
-            // glyph atlas — declare `ZWrite Off` and `ZTest Always`, so on that
-            // path sequence is the only thing that decides what covers what.
-            // (`Text` is not a `MaterialClass`; the enum's other two values,
-            // `LitOpaque` and `LitCutout`, declare `ZWrite On` and
+            // glyph atlas — declare `ZWrite Off` and, since story #1412,
+            // `ZTest Less` against the opaque cores emitted above: among
+            // blended fragments sequence is still what decides what covers
+            // what, and a core the document painted later rejects what lies
+            // under it. (`Text` is not a `MaterialClass`; the enum's other two
+            // values, `LitOpaque` and `LitCutout`, declare `ZWrite On` and
             // `ZTest LEqual`. The keys below are set whichever class the
             // painter was built with, and were measured on `UnlitOverlay`
             // alone.) Emission order

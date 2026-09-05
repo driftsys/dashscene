@@ -103,9 +103,13 @@ it must state that order explicitly — or it has no order at all.**
 
 A dashscene document is a flat list drawn back to front, the way a painter works
 on canvas: backdrop first, then panels, then glyphs on top. The two classes a
-text document draws with — `UnlitOverlay` and `Text` — declare `ZWrite Off` and
-`ZTest Always`, so on that path there is no depth buffer and no depth test, and
-nothing but sequence decides what covers what.
+text document draws with — `UnlitOverlay` and `Text` — declared `ZWrite Off` and
+`ZTest Always` until story #1412, so on that path there was no depth test and
+nothing but sequence decided what covers what. Since that story both test depth
+(`ZTest Less`) against the opaque cores R-T2 adds and still write none: among
+blended fragments sequence still decides, and a core the document painted later
+rejects what lies under it. The blended commands' order — this note's subject —
+is unchanged by it.
 
 **That is a property of the overlay path, not of every class.** `MaterialClass`
 has three values (`PaintHeap.cs`), and `LitOpaque` and `LitCutout` declare

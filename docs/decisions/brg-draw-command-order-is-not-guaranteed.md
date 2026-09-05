@@ -2,8 +2,9 @@
 
     status   **accepted (2026-08-31, issue #1389); amended 2026-09-03 (issue
              #1401) with D5; amended 2026-09-05 (issue #1402): D1 and D2
-             revised on the single-instance measurement, the fixture and the
-             gate exist**. What is accepted is the CONSTRAINT — D1–D5 below
+                          revised on the single-instance measurement, the fixture and the
+             gate exist; amended 2026-09-05 (story #1412) with D6, the opaque
+             cores' shape**. What is accepted is the CONSTRAINT — D1–D6 below
              bind downstream work now. What is not settled is the mechanism
              inside Unity, which nothing reads; its observable behaviour is
              measured and pinned, and "What is still owed" names what is not.
@@ -20,9 +21,11 @@
 
 A dashscene document is a flat list drawn back to front. The two SHADERS a text
 document draws through — `UnlitOverlay`, the class material, and `Text`, one
-material per glyph atlas — declare `ZWrite Off` and `ZTest Always`, so on that
-path there is no depth buffer and no depth test: sequence is the only thing that
-decides what covers what.
+material per glyph atlas — declared `ZWrite Off` and `ZTest Always` when this
+record was written, so on that path there was no depth test: sequence was the
+only thing that decided what covers what. Since story #1412 both test depth
+against R-T2's opaque cores and still write none (D6), and sequence still
+decides what covers what among blended fragments.
 
 **`Text` is not a `MaterialClass`.** That enum has three values —
 `UnlitOverlay`, `LitOpaque` and `LitCutout` (`PaintHeap.cs`) — and the latter
@@ -163,6 +166,30 @@ live there and are not restated here.
 **What D5 does not say.** It does not say why Unity drops those commands: the
 sort is not readable from C# and no measurement here reached it. What the keys
 order under this shape is D1's, re-measured on 2026-09-05 (issue #1402).
+
+**D6 — the opaque cores carry no sorting key and travel as multi-instance
+commands in a draw range of their own, nearest first (R-T2, story #1412).**
+
+The depth test orders a core, not the sort: a core's fragment under a
+later-painted core fails `ZTest LEqual` whatever order the two commands are
+drawn in, so the flag D5 is stated for has nothing to do on a core. The cores of
+a batch are one command per 256 instances (R-E20's bound), walked from the
+last-painted instance back so the nearer core is drawn first and rejects the
+most. The blended commands keep D5's shape and D1's keys, and now test depth
+(`ZTest Less`, writing none) against the cores; D3 stands, because nothing
+blended writes depth.
+
+**What is measured.** `just unity-render` draws `v03-paint.dsb`'s thirteen cores
+and the order fixture's two through that shape on every pass, and the picture is
+the one the flagged single-instance shape drew: the ink numbers and the seven
+order probes are unchanged (2026-09-05, Metal). **What is not**: a 20,000-frame
+soak on §5d's instrument, which is what would say whether the drop D5 measured
+is specific to the flagged path. Issue #1404 asked that of `LitOpaque` and
+`LitCutout`; the cores are the measured case, and a dropped core frame is
+invisible — the fringe's interior then passes `ZTest Less` against the far plane
+and draws the node whole — so the soak would decide a cost for one frame, not a
+picture. Issue #1404 closes on this record with that caveat, and the soak is the
+arm to run if a core is ever seen to flicker.
 
 **What it costs.** The command count becomes the instance count, and so does the
 count of sorting keys that must stay distinct floats.

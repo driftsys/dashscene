@@ -23,9 +23,12 @@
 // name double as the path.
 //
 // The blend state is the overlay class's: coverage IS the alpha, which is what
-// anti-aliases a glyph's edge. `ZTest Always` as well, so a document is a flat
-// sheet no depth test orders, whichever class its nodes took — text drawn after
-// a lit-opaque node is not occluded by it.
+// anti-aliases a glyph's edge. `ZTest Less` as well, since story #1412: every
+// instance carries its paint ordinal as depth, so a glyph is occluded by a
+// node the document painted after it — an overlay node's opaque core, or a
+// lit node — and draws over what came before, whichever class the nodes took.
+// It writes no depth: an MSDF edge has fractional coverage, and a depth write
+// there would cut a halo (D3 of the order record).
 //
 // **Within the transparent queue the order is the painter's, through the
 // sorting keys.** `BatchRendererGroup` groups draw commands by material

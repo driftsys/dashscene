@@ -549,17 +549,44 @@ Against `LitOpaque` (geometry) or `LitCutout` (alpha test) it does: a render
 pipeline sorts by queue before it sorts by anything a draw command carries, so
 every glyph is submitted after every node fill whatever order the document put
 them in. A later node that overlaps a text node covers its glyphs in both
-reference painters and does not here. This is not fixed by the single-instance
-command shape, which preserves order only inside one pass, and it is a property
-of drawing blended text beside opaque geometry rather than of this painter.
+reference painters, and since story #1412 it does here too: every instance
+carries its paint ordinal as depth and the text pass tests it (`ZTest Less`), so
+a glyph under a node the document painted later — a lit node, or an overlay
+node's opaque core — is rejected by the depth test whichever queue drew it. The
+queue split remains; the depth is what makes the split invisible.
 
-**The culling callback emits one draw command per visible instance**, each
-carrying `BatchDrawCommandFlags.HasSortingPosition` and one sorting key, so the
-command count is the instance count and R-E20's 256 is met without splitting
-anything. Until issue #1401 it emitted one command per contiguous run of
-instances sharing a material, split at 256: Unity's sorted-transparent path was
-measured dropping a contiguous subset of commands for single frames under that
-shape, rendering the affected region as bare backdrop with nothing logged.
+**The culling callback emits one draw command per visible blended instance**,
+each carrying `BatchDrawCommandFlags.HasSortingPosition` and one sorting key, so
+the blended command count is the blended instance count and R-E20's 256 is met
+without splitting anything. Since story #1412 a first draw range precedes those:
+the opaque cores R-T2 adds, one multi-instance command per batch and 256
+instances, no flag, walked from the last-painted instance back —
+`docs/decisions/brg-draw-command-order-is-not-guaranteed.md` D6. **R-T2 in this
+painter, in one paragraph.** Every fully opaque fill on the overlay class —
+solid alpha 1 or an all-opaque gradient, node opacity 1 — is packed twice: a
+core through `Dashscene/OverlayCore` (`ZWrite On`, `ZTest LEqual`, the geometry
+queue, unlit, discarding any fragment under full coverage so the antialiasing
+band is left to the fringe), then the blended instance as before. Every instance
+carries its paint ordinal in `_DsShade.w`; `DsVertex` moves it toward the viewer
+by that ordinal's share of the near margin, with a span of 65,536, so a core and
+its fringe share one depth and a later-painted node is nearer. The overlay and
+text passes test that depth with `ZTest Less` and write none: the fringe's
+interior over its own core is rejected, and so is any blended fragment under a
+core the document painted later. **What that changes for a host:** the overlay
+class no longer ignores the depth buffer — a document drawn over 3D geometry is
+depth-tested at the sheet's position against it, where `ZTest Always` drew over
+everything. What it rejects, derived with no device by the shelf example under
+`dashscene-v021-lanes/probe-1412/`: on `surfaces` at 2340x1080, 1.36 of the 4.85
+Mpx the Unity painter shades (28 %), almost all of it the gradient backdrop
+under the header and the sixteen tiles; `typography` 0.45 of 3.17 Mpx; `layout`
+2.84 of 5.42 Mpx. `just unity-render` draws the same ink numbers and the same
+seven order probes with the cores as without them (2026-09-05), which is the
+whole of what the Mac can say — the frame the rejection buys is the compositor's
+`frameReady` cadence on the Pixel 5, still owed. Until issue #1401 it emitted
+one command per contiguous run of instances sharing a material, split at 256:
+Unity's sorted-transparent path was measured dropping a contiguous subset of
+commands for single frames under that shape, rendering the affected region as
+bare backdrop with nothing logged.
 [../decisions/brg-draw-command-order-is-not-guaranteed.md](../decisions/brg-draw-command-order-is-not-guaranteed.md)
 D5 is the constraint and
 [../technotes/batch-renderer-group.md](../technotes/batch-renderer-group.md) §5d
@@ -1202,6 +1229,17 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   so the assumption is checked in the run that makes it rather than assumed.
   What is not measured is the same order on GLES and Vulkan, where no player
   build has drawn the order fixture.
+- **R-T2's cores are measured for the picture, derived for the area, and not yet
+  measured for the frame** (story #1412). `just unity-render` draws the cored
+  painter to the same ink numbers and order probes as before, and a core pass
+  tinted magenta turns the gate red, which is what says the cores own the
+  interior pixels; the rejected area per scene is the shelf derivation cited
+  above. What is owed: the `frameReady` cadence on the Pixel 5 before and after,
+  which needs the device; the same gate on GLES and Vulkan; and #1404's soak,
+  which D6 of the order record says would decide a per-frame cost and not a
+  picture. Two consequences a host should know: the overlay class now tests
+  depth against the scene, and a document of more than 65,536 instances runs
+  past the ordinal span.
 - **The corner silhouette is checked by nothing.** `unity/render-gate` probes a
   point inside a node's box and outside its rounded corner, and skips any probe
   another instance's quad can reach — because a document is drawn back to front
@@ -1224,13 +1262,14 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   and `DsFrame.Dirty`'s rows are read by nothing (`FrameLease` reads its stride
   for R-E17; nothing reads the indices). For the first document
   `just unity-render` draws, `goldens/dsb/v03-paint.dsb`, every commit walks all
-  fourteen of its rect entries, rebuilds all four heap tables and re-uploads
-  their live rows, and sends one instance batch. **On the `RawBuffer` rung** —
-  the only rung any device has ever reported here — that batch is the 64-slot
-  floor `InstancesPerBatch` chooses: the shared head plus sixty-four eighty-byte
-  slots, 112 + 5120 = **5232 bytes**, of which 112 + 16 × 80 = **1392** carry
-  the sixteen instances the frame's draw commands read. All of it goes up on a
-  commit whose dirty set is empty, and none of it is derived from that set. The
+  fourteen of its rect entries, rebuilds all four heap tables and re-uploads their live rows,
+  and sends one instance batch. **On the `RawBuffer` rung** — the only rung any
+  device has ever reported here — that batch is the 64-slot floor
+  `InstancesPerBatch` chooses: the shared head plus sixty-four eighty-byte
+  slots, 112 + 5120 = **5232 bytes**, of which 112 + 29 × 80 = **2432** carry
+  the twenty-nine instances the frame's draw commands read — sixteen blended
+  and, since story #1412, thirteen opaque cores. All of it goes up on a commit
+  whose dirty set is empty, and none of it is derived from that set. The
   `ConstantBuffer` rung sizes its batch from the device's own window instead, so
   the same document costs more there: a 16 KB window with 256-byte alignment
   fits `(16384 - 112) / 80` = 203 slots, and `BatchStrideBytes` rounds
