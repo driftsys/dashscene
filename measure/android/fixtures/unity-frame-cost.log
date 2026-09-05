@@ -1,0 +1,9 @@
+         1705476852.254 20396 20422 I Unity   : [showcase] frame cost — scene surfaces at 1080x2340 over 240 frames — tick 0.12 ms, draw mean 0.20 p50 0.21 p95 0.26 max 0.29 ms (3102.9 fps if unpaced)
+         1705476854.224 20396 20422 I Unity   : [showcase] thread cost — scene surfaces at 1080x2340 over 240 frames — main mean 32.83 p95 34.14 ms, render mean — p95 — ms, canvas — ms, gc — B/frame
+         1705476859.853 20593 20593 I dashscene-cpu: 20396 (hscene.showcase) S 1041 1041 0 0 -1 1077936448 54492 0 0 0 453 146 0 0 10 -10 50 0 164770818 19923255296 84999 18446744073709551615 1 1 0 0 0 0 4612 1 1619039480 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1705476860.120 20396 20422 I Unity   : [showcase] frame cost — scene surfaces at 1080x2340 over 240 frames — tick 0.14 ms, draw mean 0.22 p50 0.22 p95 0.26 max 0.33 ms (2810.2 fps if unpaced)
+         1705476862.090 20396 20422 I Unity   : [showcase] thread cost — scene surfaces at 1080x2340 over 240 frames — main mean 32.76 p95 34.76 ms, render mean — p95 — ms, canvas — ms, gc — B/frame
+         1705476868.320 20646 20646 I dashscene-cpu: 20396 (hscene.showcase) S 1041 1041 0 0 -1 1077936448 58611 0 0 0 716 209 0 0 10 -10 50 0 164770818 19925250048 87725 18446744073709551615 1 1 0 0 0 0 4612 1 1619039480 0 0 0 17 6 0 0 0 0 0 0 0 0 0 0 0 0 0
+         1705476868.554 20396 20422 I Unity   : [showcase] frame cost — scene typography at 1080x2340 over 240 frames — tick 0.11 ms, draw mean 0.31 p50 0.35 p95 0.38 max 0.44 ms (2399.7 fps if unpaced)
+         1705476869.558 20396 20422 I Unity   : [showcase] thread cost — scene typography at 1080x2340 over 240 frames — main mean 16.76 p95 17.77 ms, render mean — p95 — ms, canvas — ms, gc — B/frame
+         1705476872.561 20396 20422 I Unity   : [showcase] frame cost — scene typography at 1080x2340 over 240 frames — tick 0.15 ms, draw mean 0.34 p50 0.36 p95 0.41 max 0.46 ms 

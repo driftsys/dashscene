@@ -14,14 +14,23 @@ rather than preferred: the CPU attribution below joins two line kinds by time,
 and `-v time` gives no year, so two captures either side of midnight cannot be
 ordered. `measure/android/frame-capture.sh` passes it.
 
-Two line kinds are read and everything else is ignored:
+Five line kinds are read and everything else is ignored:
 
     <epoch> <pid> <tid> I dashscene: <scene> over <n> frames — tick ...
+    <epoch> <pid> <tid> I Unity   : [showcase] frame cost — <entry> at WxH ...
+    <epoch> <pid> <tid> I Unity   : [showcase] thread cost — <entry> at WxH ...
+    <epoch> <pid> <tid> I dashscene: attached a WxH surface
     <epoch> <pid> <tid> I dashscene-cpu: <the /proc/<pid>/stat line>
 
-The first is `Sample::line()`. The second is written by the device-side sampler
-`frame-capture.sh` starts, through the `log` command, **so that both kinds carry
-one clock and one ordering**. Reading `/proc/<pid>/stat` into a host file
+The first is `Sample::line()`, the lean host's. The next two are the Unity
+showcase player's, from `DashsceneFrameCost.Line()` and
+`ThreadCostSample.Line()` — one parser reads all three because the CPU join
+below is the same join for each, and a second script would be a second place for
+it to be wrong. The fourth is the lean host's attach line, which is where its
+rows get the extent a Unity row carries in its own line. The last is written by
+the device-side sampler
+`frame-capture.sh` and `unity-frame-cost.sh` start, through the `log` command,
+**so that every kind carries one clock and one ordering**. Reading `/proc/<pid>/stat` into a host file
 instead would need the device epoch mapped onto the host's, and `date +%s` on
 the device is whole seconds — a ±1 s error on an interval of a few seconds.
 Routing the readings through logcat removes the mapping rather than estimating
@@ -40,14 +49,36 @@ carries pipeline warm-up — 369 ms in a measured `max` against a 14 ms p50 — 
 mean over all of them describes no frame. Every sample is a row, numbered, and
 the reader drops what they judge to be warm-up.
 
+## Which table
+
+`--table` selects the kind, because the three carry different columns and a
+table that reported a Unity line under `paint`/`submit` headings would be
+labelling a quantity with another instrument's word. `lean` is the default and
+is what `frame-capture.sh` asks for; `unity-frames` and `unity-threads` are the
+two `unity-frame-cost.sh` writes from one set of captures.
+
+## Unreadable lines
+
+A line that carries an instrument's marker and does not parse is **reported**,
+under its own heading below the table, rather than silently dropped. The whole
+reason each pattern is anchored on the end of the line is to reject a record the
+logcat ring cut in half, and a rejection nothing states reads exactly like a run
+that reported fewer samples.
+
+It cannot catch every truncation: a line cut before its marker is complete is
+not recognised as that kind at all, and nothing here can distinguish it from an
+unrelated log record.
+
 ## Exit status
 
-0 with a table, 1 when the capture holds no sample at all, 2 on usage or a file
-that cannot be read. 1 and 2 are separate for the reason `assert-drew.py`
-separates its own: 1 is a result about the run, and 2 is "ask me again".
+0 with a table, 1 when the capture holds no sample of the requested kind, 2 on
+usage or a file that cannot be read. 1 and 2 are separate for the reason
+`assert-drew.py` separates its own: 1 is a result about the run, and 2 is "ask
+me again".
 """
 
 import argparse
+import os
 import re
 import sys
 
@@ -112,6 +143,70 @@ SAMPLE_COMBINED = re.compile(
     r"\((?P<fps>[\d.]+) fps if unpaced\)\s*$"
 )
 
+# The Unity showcase player's two lines, from `DashsceneFrameCost.Line()` and
+# `ThreadCostSample.Line()`.
+#
+# **The tag is `Unity`, padded.** `Debug.Log` reaches logcat under Unity's own
+# tag, and logcat pads a tag shorter than eight characters — `I Unity   :`. The
+# lean host writes through `__android_log_print` with its own tag, which is why
+# the two prefixes differ here rather than being shared.
+#
+# **The entry is not one token.** `scene surfaces` is what the player writes, so
+# the lean pattern's `(?P<scene>\S+)` would match `scene` and then fail on
+# ` surfaces at`. It is non-greedy up to ` at WxH over `, which is the first
+# place the shape becomes unambiguous.
+#
+# **The extent is in the line itself**, unlike the lean host's, whose extent
+# comes from a separate `attached a WxH surface` record. So a Unity row's extent
+# is a property of the sample rather than of the interval around it, and the row
+# says so exactly.
+#
+# Anchored at both ends for the reason every pattern here is: a line the ring cut
+# must be rejected and reported, not half-read.
+UNITY_PREFIX = r"^\s*(?P<epoch>\d+\.\d+)\s+(?P<pid>\d+)\s+(?P<tid>\d+)\s+I\s+Unity\s*:\s+"
+UNITY_HEAD = (
+    r"(?P<scene>.+?) at (?P<width>\d+)x(?P<height>\d+) over (?P<frames>\d+) frames — "
+)
+
+SAMPLE_UNITY_FRAME = re.compile(
+    UNITY_PREFIX
+    + r"\[showcase\] frame cost — "
+    + UNITY_HEAD
+    + r"tick (?P<tick>[\d.]+) ms, "
+    r"draw mean (?P<mean>[\d.]+) p50 (?P<p50>[\d.]+) p95 (?P<p95>[\d.]+) "
+    r"max (?P<max>[\d.]+) ms "
+    r"\((?P<fps>[\d.]+) fps if unpaced\)\s*$"
+)
+
+SAMPLE_UNITY_THREAD = re.compile(
+    UNITY_PREFIX
+    + r"\[showcase\] thread cost — "
+    + UNITY_HEAD
+    + r"main mean (?P<main_mean>[\d.]+) p95 (?P<main_p95>[\d.]+) ms, "
+    # **An em dash is a value here, and a legitimate one.** A counter this
+    # player does not carry reports `—` rather than a zero, because a zero
+    # Canvas-rebuild term reads as a Canvas that rebuilds nothing —
+    # `ThreadCostSample.Line` states the rule. Rejecting the line would file a
+    # correct reading under `Unreadable`; only the main-thread terms are
+    # required to be numbers, because the instrument refuses to arm without
+    # them.
+    r"render mean (?P<render_mean>[\d.]+|—) p95 (?P<render_p95>[\d.]+|—) ms, "
+    r"canvas (?P<canvas>[\d.]+|—) ms, gc (?P<gc>\d+|—) B/frame\s*$"
+)
+
+# What makes a line one of the four kinds at all, for the unreadable report.
+#
+# **Deliberately looser than the pattern it guards**, and only just: it stops
+# before the first field a truncation can eat, so a line that carries the marker
+# and fails the full pattern is reported rather than dropped. A marker that went
+# as far as the numbers would be satisfied by the same truncations the anchor
+# exists to reject.
+MARKERS = {
+    "lean": re.compile(r"^\s*\d+\.\d+\s+\d+\s+\d+\s+I\s+dashscene:\s+\S+ over \d+ frames"),
+    "unity-frames": re.compile(UNITY_PREFIX + r"\[showcase\] frame cost — "),
+    "unity-threads": re.compile(UNITY_PREFIX + r"\[showcase\] thread cost — "),
+}
+
 # The extent the painter drew at, logged by `machine.rs` on every successful
 # attach. Its pid column is the app's own, unlike the CPU sampler's line, so it
 # joins onto a sample directly.
@@ -170,15 +265,30 @@ def stat_jiffies(stat):
         return None
 
 
+class Capture:
+    """Everything read out of one set of logcat files.
+
+    One object rather than a widening tuple: the three sample kinds are read by
+    one pass, joined to one CPU series and reported by three emitters, and a
+    six-element return would have to be unpacked correctly at every call site.
+    """
+
+    def __init__(self):
+        # Per kind, in time order: "lean", "unity-frames", "unity-threads".
+        self.samples = {kind: [] for kind in MARKERS}
+        # Per kind, the lines that carried the marker and did not parse.
+        self.unreadable = {kind: [] for kind in MARKERS}
+        # pid -> time-ordered [(epoch, jiffies)].
+        self.cpu = {}
+        # pid -> time-ordered [(epoch, (width, height))].
+        self.attaches = {}
+
+
 def read(paths):
-    """Return (samples, cpu, attaches) from the given logcat captures.
+    """Return a `Capture` over the given logcat captures.
 
-    `samples` is a list of dicts in file order; `cpu` maps pid to a
-    time-ordered list of (epoch, jiffies); `attaches` maps pid to a
-    time-ordered list of (epoch, (width, height)).
-
-    **Three line kinds are read and everything else is ignored**, and all three
-    are de-duplicated by (pid, epoch) for the reason the samples are.
+    **Five line kinds are read and everything else is ignored**, and every one
+    of them is de-duplicated by (pid, epoch) for the reason the samples are.
 
     **Every kind is de-duplicated by (pid, epoch)**, and `frame-capture.sh`
     passes every `frames-<scene>.log` at once, so a line present in two captures
@@ -206,9 +316,19 @@ def read(paths):
     drops re-reads of the same record and keeps two genuinely distinct samples
     even when their other fields are identical.
     """
-    samples, cpu, attaches = [], {}, {}
+    capture = Capture()
+    cpu, attaches = capture.cpu, capture.attaches
     seen_samples, seen_cpu, seen_attach = set(), set(), set()
     for path in paths:
+        # **The capture file's stem, kept per row.** `unity-frame-cost.sh` takes
+        # several independent sweeps and its header promises each row names the
+        # sweep it came from. The pid distinguishes them too — each sweep is its
+        # own launch — but a letter is what the record's reader compares.
+        sweep = os.path.basename(path)
+        if sweep.endswith(".log"):
+            sweep = sweep[: -len(".log")]
+        if sweep.startswith("sweep-"):
+            sweep = sweep[len("sweep-") :]
         try:
             # `errors="replace"`: a logcat ring can cut a UTF-8 sequence in
             # half, and one bad byte must not lose the whole capture.
@@ -228,15 +348,23 @@ def read(paths):
                 row.setdefault("paint", None)
                 row.setdefault("paint50", None)
                 row.setdefault("quads", None)
-                row["epoch"] = float(row["epoch"])
-                row["pid"] = int(row["pid"])
-                row["frames"] = int(row["frames"])
-                key = (row["pid"], row["epoch"])
-                if key in seen_samples:
-                    continue
-                seen_samples.add(key)
-                samples.append(row)
+                keep(capture, "lean", row, sweep, seen_samples)
                 continue
+            found = SAMPLE_UNITY_FRAME.match(line)
+            if found:
+                keep(capture, "unity-frames", found.groupdict(), sweep, seen_samples)
+                continue
+            found = SAMPLE_UNITY_THREAD.match(line)
+            if found:
+                keep(capture, "unity-threads", found.groupdict(), sweep, seen_samples)
+                continue
+            # **Asked only after every pattern has been tried.** A line that
+            # matched one of them is readable by definition; this is the branch
+            # for one that carries a marker and nothing else matched.
+            for kind, marker in MARKERS.items():
+                if marker.match(line):
+                    capture.unreadable[kind].append((path, line.strip()))
+                    break
             found = ATTACH.match(line)
             if found:
                 pid = int(found.group("pid"))
@@ -274,8 +402,33 @@ def read(paths):
     # a scene carries pipeline warm-up" is then about an arbitrary row. Sorting
     # also makes a negative `wall s` structurally impossible rather than merely
     # unobserved.
-    samples.sort(key=lambda row: (row["epoch"], row["pid"]))
-    return samples, cpu, attaches
+    for rows_of_kind in capture.samples.values():
+        rows_of_kind.sort(key=lambda row: (row["epoch"], row["pid"]))
+    return capture
+
+
+def keep(capture, kind, row, sweep, seen):
+    """Record one parsed sample, unless it is a re-read of the same record.
+
+    Returns False when it was dropped as a duplicate. The (pid, epoch) key is
+    shared across the three kinds because it identifies a logcat RECORD, and two
+    kinds cannot occupy one — the pid and the millisecond together are what
+    `-T 1`'s re-print of the newest record would repeat.
+    """
+    row["epoch"] = float(row["epoch"])
+    row["pid"] = int(row["pid"])
+    row["frames"] = int(row["frames"])
+    row["sweep"] = sweep
+    if "width" in row:
+        # A Unity line carries its own extent, so the row states it exactly
+        # rather than inferring one from the attach events around it.
+        row["extent"] = (int(row["width"]), int(row["height"]))
+    key = (row["pid"], row["epoch"])
+    if key in seen:
+        return False
+    seen.add(key)
+    capture.samples[kind].append(row)
+    return True
 
 
 class Unreadable(Exception):
@@ -365,6 +518,17 @@ def rows(samples, cpu, attaches, clk_tck):
         opened = start is None
         if start is None:
             start = readings[0][0] if readings else None
+            # **An interval that opens after it closes is not an interval.**
+            # The first sample of a process has no previous line, so its
+            # interval opens when the SAMPLER started — and a sampler started
+            # after that sample was reported was not running across it at all.
+            # Taking the difference anyway prints a negative `wall s`, which is
+            # a measurement no reader can act on and worse than a missing one.
+            # The same defect reached the table once before by another route,
+            # from a duplicated first row; `read`'s de-duplication closed that
+            # one and could not close this one.
+            if start is not None and start > sample["epoch"]:
+                start = None
         span = None if start is None else sample["epoch"] - start
         out.append(
             {
@@ -372,11 +536,18 @@ def rows(samples, cpu, attaches, clk_tck):
                 "index": index[key],
                 "span": span,
                 "opened": opened,
+                # **A Unity sample states its own extent**, because the player
+                # writes it into every line and discards a part-sample when it
+                # changes. Deriving one from the attach events instead would
+                # mark a row `(changed)` on the strength of what was in force
+                # when the interval opened, which for these rows is a fact about
+                # the PREVIOUS sample. Everything else takes the join below.
+                #
                 # **Per pid, like the CPU join.** A relaunch at a new extent
                 # must not relabel the run before it.
-                "extents": extent_over(
-                    attaches.get(pid, []), start, sample["epoch"]
-                ),
+                "extents": [sample["extent"]]
+                if "extent" in sample
+                else extent_over(attaches.get(pid, []), start, sample["epoch"]),
                 "cpu": (
                     None
                     if start is None
@@ -404,6 +575,14 @@ SOURCES = {
         "and read `docs/design/android-toolchain.md` for what the adapter probe "
         "adds to it."
     ),
+    "unity-showcase": (
+        "Device result, from the Unity showcase player — "
+        "`measure/android/unity-frame-cost.sh`, one row per reported sample and "
+        "nothing averaged across sweeps. The engine floor is in every figure "
+        "here: both instruments are inside a Unity frame, so the renderer's "
+        "share is the difference from the empty entry's row and not the row "
+        "itself. Name the device beside this table when it is recorded."
+    ),
 }
 
 
@@ -424,7 +603,83 @@ def extent_cell(extents):
     )
 
 
-def emit(table, source, describe, clk_tck, out):
+def cpu_footnote(clk_tck, out):
+    """The CPU column's meaning, written once for all three tables.
+
+    One function rather than three copies: the `—` rule below is the difference
+    between "the sampler was not running" and "the process was idle", and a rule
+    stated in three places drifts in one of them.
+    """
+    print(
+        f"CPU is `utime + stime` from `/proc/<pid>/stat` over the interval each "
+        f"sample covers, at {clk_tck} jiffies per second, as a percentage of one "
+        f"core — so a value above 100 is a process using more than one. `—` "
+        f"means the sampler was not running across that interval, which is not "
+        f"the same as an idle process. A `(open)` interval begins when the "
+        f"sampler started rather than at a sample boundary.",
+        file=out,
+    )
+
+
+def unreadable_report(lines, kind, out):
+    """The lines that carried this table's marker and did not parse.
+
+    **Reported rather than dropped.** Every pattern in this file is anchored on
+    the end of the line so a record the logcat ring cut in half is rejected
+    instead of half-read — and a rejection nothing states looks exactly like a
+    run that reported fewer samples. A bullet list rather than a table, so a
+    reader parsing the table's rows by their pipes does not pick these up as
+    rows.
+    """
+    print(file=out)
+    print("## Unreadable", file=out)
+    print(file=out)
+    if not lines:
+        print(
+            f"None. Every `{kind}` line in these captures parsed whole.",
+            file=out,
+        )
+        return
+    print(
+        f"{len(lines)} line(s) carried the `{kind}` marker and did not parse — a "
+        "record the logcat ring cut, or an instrument whose line shape changed "
+        "without this parser. Each is quoted verbatim; none of them is in the "
+        "table above.",
+        file=out,
+    )
+    print(file=out)
+    for path, line in lines:
+        print(f"- `{os.path.basename(path)}`: `{line}`", file=out)
+
+
+def extent_summary(table, out):
+    """One sentence about the extents in a table whose rows each state their own.
+
+    The Unity player writes the extent into every line and discards a sample
+    that spans a change, so no row here can span two — which is why this is a
+    sentence and not the four-way statement `emit` needs for a host whose extent
+    comes from a separate record.
+    """
+    seen = []
+    for row in table:
+        for extent in row["extents"]:
+            if extent not in seen:
+                seen.append(extent)
+    if len(seen) == 1:
+        print(f"Every row below was drawn at {seen[0][0]}x{seen[0][1]}.", file=out)
+        return
+    print(
+        "**The rows below were not all drawn at one extent.** Every extent "
+        "these captures reported: "
+        + ", ".join(f"`{width}x{height}`" for width, height in seen)
+        + ". Each row states its own and no row spans two — the player discards "
+        "a sample the extent changed inside — but rows at different extents are "
+        "not comparable with each other (issue #1236).",
+        file=out,
+    )
+
+
+def emit(table, source, describe, clk_tck, unreadable, out):
     print(f"# Frame costs — {describe}" if describe else "# Frame costs", file=out)
     print(file=out)
     print(SOURCES[source], file=out)
@@ -540,31 +795,177 @@ def emit(table, source, describe, clk_tck, out):
         file=out,
     )
     for row in table:
-        span = "—" if row["span"] is None else f"{row['span']:.1f}"
-        if row["opened"] and row["span"] is not None:
-            # Marked rather than dropped: it is a real interval, it just does
-            # not begin at a sample boundary.
-            span += " (open)"
-        cpu = "—" if row["cpu"] is None else f"{row['cpu']:.0f}"
         print(
             f"| {row['scene']} | {extent_cell(row['extents'])} | {row['index']} "
             f"| {row['pid']} | {row['frames']} "
             f"| {row['tick']} | {row['paint'] or '—'} | {row['paint50'] or '—'} "
             f"| {row['mean']} "
             f"| {row['p50']} | {row['p95']} | {row['max']} "
-            f"| {row.get('quads') or '—'} | {row['fps']} | {span} | {cpu} |",
+            f"| {row.get('quads') or '—'} | {row['fps']} | {span_cell(row)} "
+            f"| {cpu_cell(row)} |",
             file=out,
         )
     print(file=out)
+    cpu_footnote(clk_tck, out)
+    unreadable_report(unreadable, "lean", out)
+
+
+def emit_unity_frames(table, source, describe, clk_tck, unreadable, out):
+    """The Unity showcase player's frame-cost table.
+
+    **Its own columns, and not the lean host's.** `draw` is one term where the
+    lean host reports `paint` and `submit` apart, and printing it under either
+    of those headings would label this quantity with a word that already names a
+    different one — the rule `demo-android` renamed its own term for.
+    """
+    print(f"# Unity frame cost — {describe}" if describe else "# Unity frame cost", file=out)
+    print(file=out)
+    print(SOURCES[source], file=out)
+    print(file=out)
     print(
-        f"CPU is `utime + stime` from `/proc/<pid>/stat` over the interval each "
-        f"sample covers, at {clk_tck} jiffies per second, as a percentage of one "
-        f"core — so a value above 100 is a process using more than one. `—` "
-        f"means the sampler was not running across that interval, which is not "
-        f"the same as an idle process. A `(open)` interval begins when the "
-        f"sampler started rather than at a sample boundary.",
+        "`tick` is `ds_runtime_tick`, the one term directly comparable with the "
+        "lean host's. `draw` is the frame lease, `BrgPainter.Draw`, the mark and "
+        "the release — every part of the frame this project executes — and "
+        "EXCLUDES the GPU's execution of the batches, URP's own passes, culling "
+        "and the swapchain present, because Unity runs those after `Update` "
+        "returns. `unity-threads.md` beside this file reports what that "
+        "excludes. "
+        "`unity/com.driftsys.dashscene/Samples~/Showcase/DashsceneFrameCost.cs` "
+        "states the definition term by term.",
         file=out,
     )
+    print(file=out)
+    extent_summary(table, out)
+    print(file=out)
+    print(
+        "One row per reported sample of 240 **drawn** frames. Rows are not "
+        "averaged: the first sample of an entry carries pipeline warm-up, which "
+        "reaches `max` and not `p50`.",
+        file=out,
+    )
+    print(file=out)
+    print(
+        "`fps if unpaced` is **not the frame rate** — Unity paces the loop, and "
+        "this is the rate the two measured terms alone would allow. `wall` is "
+        "how long the sample's frames took.",
+        file=out,
+    )
+    print(file=out)
+    print(
+        "| sweep | entry | extent | # | pid | frames | tick ms | draw mean "
+        "| p50 | p95 | max | fps if unpaced | wall s | cpu % of one core |",
+        file=out,
+    )
+    print(
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- "
+        "| --- | --- | --- |",
+        file=out,
+    )
+    for row in table:
+        print(
+            f"| {row['sweep']} | {row['scene']} | {extent_cell(row['extents'])} "
+            f"| {row['index']} | {row['pid']} | {row['frames']} | {row['tick']} "
+            f"| {row['mean']} | {row['p50']} | {row['p95']} | {row['max']} "
+            f"| {row['fps']} | {span_cell(row)} | {cpu_cell(row)} |",
+            file=out,
+        )
+    print(file=out)
+    cpu_footnote(clk_tck, out)
+    unreadable_report(unreadable, "unity-frames", out)
+
+
+def emit_unity_threads(table, source, describe, clk_tck, unreadable, out):
+    """The Unity showcase player's thread-time table.
+
+    **Every term here includes the engine floor**, and the table says so rather
+    than subtracting a guess: the counters are Unity's own and are closed over
+    the whole frame. The renderer's share is the difference from the empty
+    entry's row taken in the same run.
+    """
+    print(f"# Unity thread cost — {describe}" if describe else "# Unity thread cost", file=out)
+    print(file=out)
+    print(SOURCES[source], file=out)
+    print(file=out)
+    print(
+        "These are Unity's own `ProfilerRecorder` counters, not a bracket around "
+        "code this project executes — so they include what `unity-frames.md` "
+        "excludes by construction: the culling callback, the render thread's "
+        "encode, URP's passes and a Canvas rebuild. `canvas` is "
+        "`Canvas.SendWillRenderCanvases` plus `Canvas.BuildBatch`, which is zero "
+        "for the painter and is the term a Canvas renderer is judged on. `gc` is "
+        "`GC Allocated In Frame` divided by the sample's frames. "
+        "`unity/com.driftsys.dashscene/Runtime/Engine/DashsceneThreadCost.cs` "
+        "states the definition term by term.",
+        file=out,
+    )
+    print(file=out)
+    print(
+        "**Every column carries the engine floor.** Subtract the empty entry's "
+        "row, taken in the same run, for a renderer's own share; a figure read "
+        "off one row alone describes Unity as much as it describes the "
+        "renderer.",
+        file=out,
+    )
+    print(file=out)
+    extent_summary(table, out)
+    print(file=out)
+    print(
+        "One row per reported sample of 240 **drawn** frames, after 60 warm-up "
+        "frames discarded at every entry change — so no row carries an entry's "
+        "load or its first Canvas bakes.",
+        file=out,
+    )
+    print(file=out)
+    print(
+        "| sweep | entry | extent | # | pid | frames | main mean | main p95 "
+        "| render mean | render p95 | canvas ms | gc B/frame | wall s "
+        "| cpu % of one core |",
+        file=out,
+    )
+    print(
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- "
+        "| --- | --- | --- |",
+        file=out,
+    )
+    for row in table:
+        print(
+            f"| {row['sweep']} | {row['scene']} | {extent_cell(row['extents'])} "
+            f"| {row['index']} | {row['pid']} | {row['frames']} "
+            f"| {row['main_mean']} | {row['main_p95']} "
+            f"| {row['render_mean']} | {row['render_p95']} "
+            f"| {row['canvas']} | {row['gc']} "
+            f"| {span_cell(row)} | {cpu_cell(row)} |",
+            file=out,
+        )
+    print(file=out)
+    cpu_footnote(clk_tck, out)
+    unreadable_report(unreadable, "unity-threads", out)
+
+
+def span_cell(row):
+    """The `wall s` cell — the same rule the lean table prints inline."""
+    if row["span"] is None:
+        return "—"
+    span = f"{row['span']:.1f}"
+    if row["opened"]:
+        # Marked rather than dropped: it is a real interval, it just does not
+        # begin at a sample boundary.
+        span += " (open)"
+    return span
+
+
+def cpu_cell(row):
+    """The CPU cell. `—` where no pair of readings brackets the interval."""
+    return "—" if row["cpu"] is None else f"{row['cpu']:.0f}"
+
+
+# One emitter per table kind, keyed by the same names `MARKERS` uses so a kind
+# cannot exist without both a pattern and a table to print it in.
+EMITTERS = {
+    "lean": emit,
+    "unity-frames": emit_unity_frames,
+    "unity-threads": emit_unity_threads,
+}
 
 
 def main(argv):
@@ -575,6 +976,11 @@ def main(argv):
     # its own output whether it is describing an emulator, and a default would
     # be the one path that produces an unlabelled table.
     parser.add_argument("--source", required=True, choices=sorted(SOURCES))
+    # **Which instrument's table, with no widening of one to hold all three.**
+    # A Unity `draw` printed under a `submit` heading would label a quantity
+    # with a word that already names a different one, which is the rename
+    # `demo-android/src/timing.rs` records.
+    parser.add_argument("--table", default="lean", choices=sorted(MARKERS))
     parser.add_argument(
         "--describe",
         default="",
@@ -588,32 +994,55 @@ def main(argv):
         return 2
 
     try:
-        samples, cpu, attaches = read(args.logcat)
+        capture = read(args.logcat)
     except Unreadable as error:
         print(f"frame-table: {error}", file=sys.stderr)
         return 2
 
+    samples = capture.samples[args.table]
+    unreadable = capture.unreadable[args.table]
     if not samples:
         print(
-            "frame-table: no frame sample in "
+            f"frame-table: no {args.table} sample in "
             f"{', '.join(args.logcat)}. One line per 240 drawn frames is "
             "expected, so a run that idled, drew nothing, or was captured for "
             "less than a sample has none.",
             file=sys.stderr,
         )
-        print(
-            "frame-table: check the capture for 'first frame' — if that is "
-            "absent the painter never drew, and on an emulator that is the "
-            "launch mode: restart it with `-gpu host` (issue #1158).",
-            file=sys.stderr,
-        )
+        # **The lines that carried the marker, on the way out.** With no sample
+        # there is no table to report them under, and "no sample" over a capture
+        # full of truncated ones sends a reader to the player rather than to the
+        # ring.
+        if unreadable:
+            print(
+                f"frame-table: {len(unreadable)} line(s) carried the "
+                f"{args.table} marker and did not parse — the logcat ring cut "
+                "them, or the instrument's line shape changed. First: "
+                f"{unreadable[0][1]}",
+                file=sys.stderr,
+            )
+        if args.table == "lean":
+            print(
+                "frame-table: check the capture for 'first frame' — if that is "
+                "absent the painter never drew, and on an emulator that is the "
+                "launch mode: restart it with `-gpu host` (issue #1158).",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "frame-table: check the capture for '[showcase] drew' — if that "
+                "is absent the painter never drew; and for '[showcase] thread "
+                "cost disarmed', which says the player cannot record a counter.",
+                file=sys.stderr,
+            )
         return 1
 
-    emit(
-        rows(samples, cpu, attaches, args.clk_tck),
+    EMITTERS[args.table](
+        rows(samples, capture.cpu, capture.attaches, args.clk_tck),
         args.source,
         args.describe,
         args.clk_tck,
+        unreadable,
         sys.stdout,
     )
     return 0

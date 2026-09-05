@@ -976,11 +976,14 @@ left drawing yielded one sample, not the three the dwell was chosen for. At the
 rates the committed tree presented on 2026-09-05 the same dwell would yield 3.6
 reports on `layout`, 1.9 on `surfaces`, and on `typography` between 2.2 by its
 frames per second of window and 2.9 by the tool's rate (14 s over 240 frames at
-62.5, 32.4, and 37.4 or 49.9 fps) — a projection, since no frame-cost sweep has
-been taken on the committed tree — so a re-run of this sweep is not one sample
-per entry. The lean painter's table below discounts its own first sample as
-pipeline warm-up; nothing here can, so `max` in particular carries warm-up. That
-is what the `typography` spread of 0.45 to 0.76 is.
+62.5, 32.4, and 37.4 or 49.9 fps) — a projection made while no frame-cost sweep
+had been taken on the committed tree. **One has since**, at the 20 s dwell story
+#1443 raised the sweep to: 2 samples per sweep on `surfaces`, 4 on `typography`
+and 5 on `layout`, identical across all three sweeps. "The thread-time line, and
+the URP floor" below carries that run. So a re-run of this sweep is not one
+sample per entry. The lean painter's table below discounts its own first sample
+as pipeline warm-up; nothing here can, so `max` in particular carries warm-up.
+That is what the `typography` spread of 0.45 to 0.76 is.
 
 The lean painter over the same three scenes, on the same device the same day,
 release, 1080x1984, three samples per scene:
@@ -1211,6 +1214,138 @@ entries and reached the other two rows. Against D1's "met when": `surfaces` and
 `driftsys/dashscene-v021-lanes/probe-1412/2026-09-05-pacing-19de616/`, and the
 script that derives both cadence histograms from a latency dump,
 `latency-cadence.py`, one directory above.
+
+### The thread-time line, and the URP floor (2026-09-05)
+
+Story #1443, and D3 of
+[`../decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`](../decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md).
+The two instruments this project already had both bracket code it executes, so
+neither sees the culling callback, the render thread or a Canvas rebuild.
+`Runtime/Engine/DashsceneThreadCost.cs` reads Unity's own `ProfilerRecorder`
+counters instead, which are closed over the whole frame, and reports them per
+240 drawn frames in the same shape as the frame-cost line.
+
+**The headline is the ratio.** On `scene surfaces` the frame-cost line reports a
+`draw` mean of **0.19-0.22 ms** and the thread-time line reports a main-thread
+mean of **32.76-32.83 ms** over the same run — so the term this project can
+bracket is **under one per cent** of the frame the engine actually spends. 0.22
+over 32.76 is 0.67 %. Every range below is derived from the rows of
+`driftsys/dashscene-v021-lanes/probe-1443/unity-frame-cost/`, taken on the Pixel
+5 (Adreno 620, Vulkan 1.1.0, rung `RawBuffer`) at 1080x2340, three sweeps of 20
+s per entry, host clock `20260905T202831Z`, commit `c9eedae`.
+
+    entry                       main mean ms   main p95 ms   cpu % of one core   n
+    scene surfaces              32.76-32.83    33.89-34.76   25-27               6
+    scene typography            16.67-16.76    17.41-17.77   44-57              12
+    scene layout                16.68-16.69    17.27-17.56   47-49              12
+    paint: fills, strokes, …    16.68-16.75    17.35-17.58   45-48              12
+    layout: a variant set, …    16.68-16.69    17.39-17.64   45-48              12
+    layout: the variant shelf   16.68-16.69    17.41-17.59   45-48              12
+
+**The main-thread term is wall time, and reading it as CPU cost inverts the
+answer.** `surfaces` is the slowest row at 32.8 ms and the _idlest_ at 25-27 %
+of one core; the five 16.7 ms rows sit at 44-57 %. The 32.8 ms is mostly the
+main thread waiting, which agrees with what this record already establishes one
+section above — `surfaces` is GPU fill-bound through the overlay class's
+per-pixel shader. The CPU column beside it is what separates spent time from
+waited time, which is why D3 pairs the two instruments rather than publishing
+either alone.
+
+**16.7 ms is one 60 Hz frame**, so five of the six entries are paced rather than
+work-bound: their main-thread cost is bounded above by a frame and is not
+measured by this reading. Only `surfaces` exceeds the budget.
+
+**Two independent instruments agree on `surfaces`.**
+`dumpsys SurfaceFlinger
+--timestats` over a 10 s window on the same build
+reports `averageFPS = 33.130` across 326 frames with none dropped, and a
+present-to-present histogram of 272 intervals at 33 ms against 54 at 16 ms —
+against the player's own main-thread mean of 32.8 ms. The dumps are under
+`driftsys/dashscene-v021-lanes/probe-1443/gpu-thread-cost/`.
+
+#### Which of the five counters a player carries
+
+**A `ProfilerRecorder` over a counter Unity has not registered is not an
+error**: it stays invalid and reports `LastValue` 0 for ever. The instrument
+therefore reports an em dash for a term it could not record, never a zero — a
+zero Canvas rebuild reads as a Canvas that rebuilds nothing, which is the
+finding D3 exists to be able to make. What each player carried, measured rather
+than assumed:
+
+    player                                        Main   Render   Canvas.Send   Canvas.Build   GC Alloc
+    unity/render-gate, 6000.3.23f1, macOS/Metal    yes     no          no           yes          yes
+    demo player on the Pixel 5, BuildOptions.None  yes     no          no            no           no
+
+The render-gate player is `-batchmode`, so it has no render thread, and it
+constructs no Canvas, so `Canvas.SendWillRenderCanvases` never registers.
+Building it with `BuildOptions.Development` is what made `GC Allocated In Frame`
+recordable; constructing the instrument after several frames had rendered
+changed nothing, so the two it lacks are absent rather than late. The Android
+player is `BuildOptions.None`, which leaves only `Main Thread`.
+
+**So `Canvas.SendWillRenderCanvases` is confirmed by neither**, and it cannot
+be: it needs a player that draws a Canvas, which is story #1444's.
+`Main Thread`, `Canvas.BuildBatch` and `GC Allocated In Frame` are confirmed on
+an editor by `just unity-render`, whose report carries the line; `Main Thread`
+is confirmed again on the device by the table above.
+
+**The Android reading was deliberately NOT taken on a development player.**
+Every other Unity figure in this record was taken on a `BuildOptions.None`
+build, and a development player is a different build — its rows would not be one
+series with theirs. The cost is the four em-dash columns above. A reading that
+needs the Canvas or allocation terms on this device is a development build and a
+new series, and must say so.
+
+#### The URP floor
+
+`DemoBuild.CreatePipeline` and `RenderGateBuild.CreatePipeline` now set HDR,
+MSAA, the camera depth texture, the camera opaque texture and post-processing
+explicitly, and each build logs the defaults it replaced before doing so. On
+6000.3.23f1 that line reads:
+
+    [render-gate-build] URP defaults before the floor: supportsHDR True,
+    msaa 1, depthTexture False, opaqueTexture False, postProcessData null
+
+**So the change is HDR off, and four pins.** Four of the five were already at
+the floor on this editor version; setting them explicitly is what stops a later
+version's default from moving the reading without saying so. `just unity-render`
+reads all five back off `GraphicsSettings.currentRenderPipeline` in the built
+player and fails on a mismatch, so the source scan in
+`unity/package-gate/tests/thread_cost_instrument.rs` and the built asset are
+both held.
+
+**The before-and-after of the one field that moves is already in this record.**
+The 2026-09-04 re-read compared the same source with `supportsHDR` on and off on
+this device: `surfaces` 32.0-32.6 fps on, 33.2 off. Today's reading is taken
+with the floor in force and the compositor reports 33.13 fps on `surfaces` —
+which reproduces that HDR-off figure to within 0.1 fps, on a build made six
+weeks later. No separate "before" APK was built for this story: the field's
+effect was already measured on this device, and the other four fields were
+measured to be at their defaults by the line quoted above.
+
+#### The capture apparatus
+
+`measure/android/unity-frame-cost.sh` no longer reshapes the player's lines with
+a `sed` of its own. `frame-table.py` is the one parser for every instrument line
+this apparatus reads, and the sweep script hands it the captures and gets
+`unity-frames.md` and `unity-threads.md` back. Three consequences worth naming:
+
+- the captures are now `adb logcat -v epoch`, which is the only format that
+  parser reads. Captures taken before this story are in logcat's default
+  `threadtime` format and are not re-readable by it; `record-check.py` reads
+  those directly and is unaffected;
+- `ds_cpu_sampler_start` runs for the Unity capture, which is why the table
+  above has a CPU column at all. `frame-capture.sh` started it for the lean host
+  and nothing started it for this one;
+- the dwell is 20 s rather than 14, because the thread-time line needs 300 drawn
+  frames — 60 warm-up discarded at every entry change plus a 240-frame window —
+  where the frame-cost line needs 240.
+
+`measure/android/unity-frame-table-test.sh` holds the parser to a committed
+capture cut out of this run, and `just harness-tests` runs it. It found a defect
+on its first run: the first sample of a process took its interval from the
+earliest CPU reading without checking that reading came first, so a sampler
+started after that sample printed a **negative** wall time.
 
 ## Unity's Android lifecycle over the lease (2026-08-29)
 

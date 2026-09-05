@@ -126,6 +126,46 @@ public static class DemoBuild
         AssetDatabase.CreateAsset(urp, "Assets/ShowcaseURP.asset");
 
         urp.useSRPBatcher = true;
+
+        // **The shared floor, set explicitly rather than left to a default.**
+        // D3 of `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`
+        // compares two renderers inside one player, and a default that helps
+        // one of them more than the other is a confound in every row. It is
+        // also a property of the editor VERSION, so a reading taken on another
+        // one would not be comparable with this one.
+        //
+        // **The defaults are logged rather than only commented**, because a
+        // comment naming a default is a claim nothing re-derives — issue #1411
+        // is that class. The line below reports what this editor supplied, so a
+        // version that changes one is visible in the build log.
+        Debug.Log(
+            $"[demo-build] URP defaults before the floor: supportsHDR {urp.supportsHDR}, "
+            + $"msaa {urp.msaaSampleCount}, depthTexture {urp.supportsCameraDepthTexture}, "
+            + $"opaqueTexture {urp.supportsCameraOpaqueTexture}, "
+            + $"postProcessData {(renderer.postProcessData == null ? "null" : "set")}");
+
+        // **HDR is the only one of the five this editor version changes.** The
+        // line above reported `supportsHDR True, msaa 1, depthTexture False,
+        // opaqueTexture False, postProcessData null` on 6000.3.23f1, read out
+        // of a build of this recipe on 2026-09-05 — so four of the five are
+        // pinned at a default and one is turned off. Pinning the four is the
+        // point: a default is a property of the editor version, and D3's
+        // reading is compared against readings taken on other ones.
+        //
+        // HDR costs an intermediate target and its blit: measured at about one
+        // frame per second on all three showcase scenes on the Pixel 5 —
+        // `docs/design/android-toolchain.md`, the 2026-09-04 re-read.
+        urp.supportsHDR = false;
+        // MSAA over a painter that draws screen-aligned quads buys nothing and
+        // costs bandwidth on a tiler, which is R-T1's subject.
+        urp.msaaSampleCount = 1;
+        // Neither texture is read by either renderer. Both cost a copy of the
+        // frame when on.
+        urp.supportsCameraDepthTexture = false;
+        urp.supportsCameraOpaqueTexture = false;
+        // Post-processing adds passes to every frame of both renderers.
+        renderer.postProcessData = null;
+        EditorUtility.SetDirty(renderer);
         EditorUtility.SetDirty(urp);
 
         GraphicsSettings.defaultRenderPipeline = urp;

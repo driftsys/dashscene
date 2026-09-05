@@ -72,6 +72,7 @@ using System.Text;
 using Driftsys.Dashscene;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
 
 /// <summary>Draws a document in a player and checks that ink landed.</summary>
 public sealed class DashsceneRenderGate : MonoBehaviour
@@ -181,11 +182,18 @@ public sealed class DashsceneRenderGate : MonoBehaviour
     private readonly struct Step
     {
         public Step(string label, MaterialClass materialClass, bool draw, float cutoff)
+            : this(label, materialClass, draw, cutoff, SettleFrames)
+        {
+        }
+
+        public Step(
+            string label, MaterialClass materialClass, bool draw, float cutoff, int frames)
         {
             Label = label;
             MaterialClass = materialClass;
             Draw = draw;
             Cutoff = cutoff;
+            Frames = frames;
         }
 
         /// The name the capture is written under.
@@ -199,6 +207,15 @@ public sealed class DashsceneRenderGate : MonoBehaviour
 
         /// The cutout class's threshold. Ignored by the other two.
         public float Cutoff { get; }
+
+        /// How many frames this step runs for before its capture is taken.
+        ///
+        /// **A property of the step and not of the gate**, because the four
+        /// picture steps need a settled frame and the thread-cost step needs a
+        /// whole sampling window. Each step's body runs `Frames + 1` times: the
+        /// capture is taken on the frame AFTER the last one that rendered,
+        /// which is the offset `Update` documents.
+        public int Frames { get; }
     }
 
     /// The run, in order.
@@ -213,7 +230,23 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         new Step("overlay", MaterialClass.UnlitOverlay, true, CutoffLow),
         new Step("cutout-low", MaterialClass.LitCutout, true, CutoffLow),
         new Step("cutout-high", MaterialClass.LitCutout, true, CutoffHigh),
+        new Step(
+            "thread-cost", MaterialClass.UnlitOverlay, true, CutoffLow, ThreadCostFrames),
     };
+
+    /// How many frames the thread-cost step runs.
+    ///
+    /// **Derived from the accumulator rather than written as 300**, so a change
+    /// to either constant cannot leave this step one frame short of a sample —
+    /// which would read as the instrument being broken.
+    ///
+    /// **Pushed once per `Update`, never in a loop inside `Judge`.** A
+    /// `ProfilerRecorder`'s `LastValue` moves when a Unity FRAME ends, and this
+    /// gate renders on demand inside `Update` — so 300 synchronous `Render()`
+    /// calls would read one frame's value 300 times, close a sample, and
+    /// publish a mean over one reading.
+    private const int ThreadCostFrames =
+        ThreadCostAccumulator.WarmUp + ThreadCostAccumulator.Sample;
 
     /// One place the gate expects ink, and one it expects none.
     private struct Sample
@@ -259,6 +292,24 @@ public sealed class DashsceneRenderGate : MonoBehaviour
 
     private DashsceneRuntime _runtime;
     private BrgPainter _painter;
+
+    /// D3's thread-time instrument, constructed with an empty command line so
+    /// nothing in this player can disarm it: the point of the step below is to
+    /// confirm on an editor that Unity carries the five counter names, and an
+    /// instrument that quietly did not arm would report that as a pass.
+    ///
+    /// **This player carries three of the five counters, and that is not a
+    /// defect.** Measured on 6000.3.23f1, macOS/Metal, 2026-09-05: it is
+    /// `-batchmode`, so there is no `Render Thread`, and it draws no Canvas, so
+    /// there is no `Canvas.SendWillRenderCanvases`. Constructing the instrument
+    /// after several frames had rendered changed neither — the counters are
+    /// absent, not late. Those two terms report an em dash on the line below
+    /// rather than a zero, which is what lets this gate confirm the three names
+    /// it can without publishing a measurement it did not take.
+    private readonly DashsceneThreadCost _threadCost = new DashsceneThreadCost(new string[0]);
+
+    /// The one sample the thread-cost step closes, or null.
+    private ThreadCostSample _threadSample;
     private Camera _camera;
     private RenderTexture _target;
     private string _outDir;
@@ -449,7 +500,11 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         // carries what frame N-1 asked for — which is why a step's capture is
         // taken one frame after its last settled frame, and why no end-of-frame
         // hook is needed anywhere in this file.
-        if (_framesInStep > SettleFrames)
+        // **The step says how long it runs.** The order phase runs past the
+        // end of `Plan`, so it takes the settle count directly rather than
+        // indexing a step that does not exist.
+        var runFor = _orderPhase ? SettleFrames : Plan[_step].Frames;
+        if (_framesInStep > runFor)
         {
             if (_orderPhase)
             {
@@ -490,6 +545,20 @@ public sealed class DashsceneRenderGate : MonoBehaviour
                     {
                         BuildSamples(lease);
                     }
+                }
+            }
+
+            // **One push per `Update`, on the steps that draw.** This is the
+            // same phase the showcase host pushes from, and one Unity frame has
+            // ended between two `Update` calls — so each push is one reading.
+            // The accumulator is keyed on the entry, so the four picture steps
+            // reset it and only the thread-cost step's window closes.
+            if (!_orderPhase && Plan[_step].Draw)
+            {
+                var sample = _threadCost.Push(Plan[_step].Label, Width, Height);
+                if (sample != null)
+                {
+                    _threadSample = sample;
                 }
             }
 
@@ -1136,7 +1205,137 @@ public sealed class DashsceneRenderGate : MonoBehaviour
                 + "nodes.");
         }
 
+        // 4. THE THREAD-TIME INSTRUMENT, and the URP floor it is read over.
+        //    Story #1443's first "done when": the five counter names D3 gives
+        //    are confirmed on an editor here rather than assumed, because a
+        //    `ProfilerRecorder` over a name Unity does not carry is not an
+        //    error — it stays invalid and reports `LastValue` 0 for ever, and a
+        //    zero Canvas-rebuild term reads as a Canvas that rebuilds nothing.
+        JudgeThreadCost();
+
         JudgeCutoff();
+    }
+
+    /// The instrument armed, closed a sample, and the sample is not zero.
+    ///
+    /// **Three separate failures, because they send a reader to three different
+    /// places.** A disarmed instrument names the counter this player cannot
+    /// record; no sample means the step is shorter than a window or the push
+    /// left `Update`; a zero mean means a counter that exists and is not
+    /// written to, which is the same wrong number as an invalid one with
+    /// nothing saying so.
+    private void JudgeThreadCost()
+    {
+        Line($"thread cost armed {_threadCost.Armed}");
+
+        // **Said out loud on every run**, because these are the terms that
+        // report an em dash rather than a number: a reader of the line below
+        // who does not know which counters this player carries would read a
+        // dash as a defect in the instrument.
+        Line("thread cost counters this player cannot record: "
+             + (_threadCost.Unrecorded.Length == 0 ? "none" : _threadCost.Unrecorded));
+
+        if (!_threadCost.Armed)
+        {
+            Fail(
+                "the thread-time instrument did not arm in this player: "
+                + $"{_threadCost.Reason}. It refuses only on the Main Thread counter, which "
+                + "every player carries and which D3's criterion is stated on — the other "
+                + "four report an em dash where this player lacks them, so a refusal here "
+                + "is not a missing Canvas marker.");
+        }
+        else if (_threadSample == null)
+        {
+            Fail(
+                $"the instrument armed and closed no sample over the {ThreadCostFrames}-frame "
+                + $"step, which is {ThreadCostAccumulator.WarmUp} warm-up frames and "
+                + $"{ThreadCostAccumulator.Sample} collected ones. Every push must be a "
+                + "separate Unity frame; a push moved inside a synchronous render loop reads "
+                + "one frame's value repeatedly.");
+        }
+        else
+        {
+            Line($"thread cost — {_threadSample.Line()}");
+            if (_threadSample.MainMean <= 0.0)
+            {
+                Fail(
+                    "the main-thread counter reported a mean of "
+                    + $"{_threadSample.MainMean.ToString(CultureInfo.InvariantCulture)} ms over "
+                    + $"{_threadSample.Frames} frames. A recorder that is valid and reads zero "
+                    + "is a counter that exists and is not being written to, which publishes "
+                    + "the same wrong number as an invalid one and says nothing about it.");
+            }
+        }
+
+        JudgeUrpFloor();
+    }
+
+    /// The five URP fields, read off the pipeline this player is running.
+    ///
+    /// **The built asset, not the source that made it.**
+    /// `unity/package-gate`'s `thread_cost_instrument` pins the five
+    /// assignments in `DemoBuild.cs` and `RenderGateBuild.cs`; this pins the
+    /// values that reached the player, so a later import, a preset or a
+    /// serialised override that overwrote one of them is caught. Both are
+    /// needed: a scan cannot see the asset, and the asset cannot say which
+    /// source built it.
+    private void JudgeUrpFloor()
+    {
+        var urp = GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
+        if (urp == null)
+        {
+            Fail(
+                "GraphicsSettings.currentRenderPipeline is not a UniversalRenderPipelineAsset, "
+                + "so the five floor fields cannot be read back at all. R-E4 is checked at "
+                + "build time; this is the same asset seen from inside the player.");
+            return;
+        }
+
+        var list = urp.rendererDataList;
+        var renderer = list.Length > 0 ? list[0] as UniversalRendererData : null;
+        var post = renderer == null
+            ? "unreadable"
+            : renderer.postProcessData == null ? "null" : "set";
+        Line(
+            $"urp floor: supportsHDR {urp.supportsHDR}, msaa {urp.msaaSampleCount}, "
+            + $"depthTexture {urp.supportsCameraDepthTexture}, "
+            + $"opaqueTexture {urp.supportsCameraOpaqueTexture}, postProcessData {post}");
+
+        if (urp.supportsHDR)
+        {
+            Fail("the URP asset in this player has supportsHDR on, which costs an "
+                 + "intermediate target and its blit on both renderers.");
+        }
+
+        if (urp.msaaSampleCount != 1)
+        {
+            Fail($"the URP asset in this player has msaaSampleCount {urp.msaaSampleCount}, "
+                 + "which costs bandwidth on a tiler and buys a painter of screen-aligned "
+                 + "quads nothing (R-T1).");
+        }
+
+        if (urp.supportsCameraDepthTexture)
+        {
+            Fail("the URP asset in this player has supportsCameraDepthTexture on, which "
+                 + "copies the frame's depth every frame and is read by neither renderer.");
+        }
+
+        if (urp.supportsCameraOpaqueTexture)
+        {
+            Fail("the URP asset in this player has supportsCameraOpaqueTexture on, which "
+                 + "copies the frame's colour every frame and is read by neither renderer.");
+        }
+
+        if (renderer == null)
+        {
+            Fail("the URP asset carries no UniversalRendererData, so post-processing cannot "
+                 + "be read back. The other four fields above were read.");
+        }
+        else if (renderer.postProcessData != null)
+        {
+            Fail("the URP renderer in this player carries post-process data, which adds "
+                 + "passes to every frame of both renderers.");
+        }
     }
 
     /// Issue #1307: does `_DsCutoff` reach the fragment stage?
@@ -2167,6 +2366,10 @@ public sealed class DashsceneRenderGate : MonoBehaviour
     private void OnDestroy()
     {
         Application.logMessageReceived -= OnPainterLog;
+
+        // Five Unity recorders. `Finish` deliberately does not release them:
+        // it ends the RUN, and this object outlives its own verdict.
+        _threadCost.Dispose();
         _painter?.Dispose();
         _painter = null;
         _runtime?.Dispose();
