@@ -198,13 +198,14 @@ phase-end revision: the **slice-planning** skill.
 
 v0 is built one slice at a time, v0.1 onward — the count grows as phase-end
 revisions open new ones, so read the roadmap for the range rather than a number
-here. **`docs/roadmap.md` holds the slice map** — which slices are done and
-which remain, what each delivers, and how they depend on each other — and marks
-each slice closed or open. The current slice is the first one still open; the
-epics under "Plan tracking" track the live work inside it. The roadmap is
-revised at each phase-end epic close, so read it for slice status rather than
-trusting a slice named in prose here, which goes stale the moment an epic
-closes.
+here. **`docs/roadmap.md` holds the slice map** — every open slice in full, and
+an index of the closed ones marking what each delivered and when it closed. The
+closed slices' full records — scope, dependencies and the revision notes written
+at each close — are in `docs/roadmap-closed.md`. The current slice is the first
+one still open; the epics under "Plan tracking" track the live work inside it.
+The roadmap is revised at each phase-end epic close, so read it for slice status
+rather than trusting a slice named in prose here, which goes stale the moment an
+epic closes.
 
 For the parts already on `main`: as-built component status is in `docs/design/`
 (start at `docs/design/architecture.md`), the decisions behind it are in
