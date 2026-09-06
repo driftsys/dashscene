@@ -58,6 +58,75 @@ public static class DemoBuild
     private static bool BuildingForAndroid =>
         Environment.GetEnvironmentVariable("DASHSCENE_DEMO_TARGET") == "android";
 
+    /// Whether to build a development player, read from the environment.
+    ///
+    /// **It does NOT make `Render Thread` recordable, and it was built in the
+    /// belief that it would.** `docs/design/android-toolchain.md` stated the
+    /// condition for that counter as a player which is neither `-batchmode` nor
+    /// `BuildOptions.None`; story #1447 built exactly that on 2026-09-06 and
+    /// the counter still does not register — the player reports
+    /// `thread cost counters this player cannot record: Render Thread,
+    /// Canvas.SendWillRenderCanvases`. Issue #1458 carries what is still
+    /// missing. Do not use this switch expecting a render-thread figure.
+    ///
+    /// **What it does provide** is `GC Allocated In Frame`, which is an em dash
+    /// on a `BuildOptions.None` Android player and reads on this one.
+    ///
+    /// **Off by default, and the default is what every other reading was taken
+    /// on.** A development player is a different build: its rows are not one
+    /// series with the `BuildOptions.None` rows already in that record, which is
+    /// why this is a switch rather than a change of the default. A reading taken
+    /// with it set says so.
+    ///
+    /// An environment variable rather than a `-buildOptions` argument, which is
+    /// how [`BuildingForAndroid`] and `DASHSCENE_ANDROID_API` already reach this
+    /// script: the recipes pass a fixed argument list — `-batchmode -quit
+    /// -projectPath -executeMethod -logFile` — and carry everything
+    /// build-specific in the environment beside it, so adding a switch costs no
+    /// change to the argument list and cannot depend on its ordering.
+    private static bool BuildingDevelopmentPlayer =>
+        DevPlayerSetting == "1";
+
+    /// `DASHSCENE_DEV_PLAYER` as it was set, or the empty string.
+    private static string DevPlayerSetting =>
+        Environment.GetEnvironmentVariable("DASHSCENE_DEV_PLAYER") ?? string.Empty;
+
+    /// Refuses a `DASHSCENE_DEV_PLAYER` that is neither on nor off.
+    ///
+    /// **A misspelt value is silent in the direction that corrupts a
+    /// measurement.** `true`, `TRUE` and a trailing newline all read as "not
+    /// 1", so the build quietly makes a `BuildOptions.None` player and its rows
+    /// are then filed as the development series — the one confusion
+    /// `docs/design/android-toolchain.md` keeps two sets of rows apart to
+    /// prevent. P4's rule — an unrecognised value is a named diagnostic, never a
+    /// silent fallback — is what this applies to a build switch.
+    ///
+    /// **It is stricter than `DASHSCENE_ANDROID_API`'s check, not the same
+    /// one.** That one is `int.TryParse`, which accepts leading and trailing
+    /// whitespace and a sign, so `" 24"` passes there where `" 1"` is refused
+    /// here. Both refuse rather than falling back silently; only this one
+    /// refuses a value that merely LOOKS right.
+    ///
+    /// **The value is rendered rather than interpolated raw.** A trailing
+    /// newline is one of the shapes this exists to catch, and a newline inside
+    /// `Debug.LogError` puts the explanation on a line that does not begin with
+    /// `[demo-build]` — which the recipes' line-anchored `grep` then drops,
+    /// showing the operator the truncated half of the message that says least.
+    private static void RefuseUnrecognisedDevPlayer(List<string> failures)
+    {
+        var raw = DevPlayerSetting;
+        if (raw.Length == 0 || raw == "0" || raw == "1")
+        {
+            return;
+        }
+
+        var shown = raw.Replace("\r", "\\r").Replace("\n", "\\n");
+        failures.Add(
+            $"DASHSCENE_DEV_PLAYER is '{shown}', which is neither 1 nor 0. It selects "
+            + "BuildOptions.Development, and a value that is neither would silently "
+            + "build a BuildOptions.None player whose rows are not that series.");
+    }
+
     private const int WindowWidth = 1280;
 
     private const int WindowHeight = 800;
@@ -87,6 +156,15 @@ public static class DemoBuild
             EditorApplication.Exit(1);
             return;
         }
+
+        // **First, and in this sequence rather than inside `BuildPlayer`.** It
+        // was in `BuildPlayer` and that was wrong three ways: `BuildScene` had
+        // already written a scene by then, the file's other validators all
+        // report through this sequence, and `BuildPlayer` runs only when
+        // `failures` is empty — so an unrecognised value went UNREPORTED on any
+        // run where something else had already failed, which is the late
+        // discovery this check exists to prevent.
+        RefuseUnrecognisedDevPlayer(failures);
 
         CreatePipeline(failures);
         RefuseAlwaysIncludedShaders(failures);
@@ -470,7 +548,9 @@ public static class DemoBuild
             scenes = new[] { ScenePath },
             locationPathName = Path.Combine("Build", ProductName + Extension(target)),
             target = target,
-            options = BuildOptions.None,
+            options = BuildingDevelopmentPlayer
+                ? BuildOptions.Development
+                : BuildOptions.None,
 
             // **What turns the showcase scenes on** (story #1342). The package's
             // `Runtime/DemoProducer.cs` and the sample's scene half are both
@@ -485,6 +565,15 @@ public static class DemoBuild
             // the component to a scene, and the component type exists either way.
             extraScriptingDefines = new[] { "DASHSCENE_DEMO_PRODUCER" },
         };
+
+        // **Logged BEFORE the build, not after it.** These are an input, and
+        // the call below can throw — in which case the catch reports the throw
+        // and returns, and a line placed after it would never say which player
+        // was attempted. That is the case where the record matters most: a
+        // reading whose build differed in a field nobody recorded is a reading
+        // of an unknown build. The URP floor above logs its own inputs for the
+        // same reason.
+        Debug.Log($"[demo-build] player options {options.options}");
 
         BuildReport report;
         try
