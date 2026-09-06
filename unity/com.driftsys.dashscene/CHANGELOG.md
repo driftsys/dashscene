@@ -80,6 +80,23 @@ the Cargo workspace rather than moving on its own.
 
 ### Fixed
 
+- **`-renderer` draws on Android.** `DashsceneCanvasBaseline.LoadManifest` read
+  `showcase.json` with
+  `File.ReadAllText(Path.Combine(Application.streamingAssetsPath,
+  ...))`, and
+  its font-cascade `ReadBytes` read the same way — on Android that path is
+  `jar:file:///data/app/<pkg>/base.apk!/assets`, which `File` cannot open, so
+  `LoadManifest` threw, `Fail` ran, and because `Attach` had already destroyed
+  `DashsceneShowcase` the three scenes — which need no manifest at all — drew
+  nothing either. `DashsceneShowcase`'s own byte reader had the same defect,
+  latent because no showcase entry exercises its font cascade on that path. Both
+  readers are now defined once, in `Samples~/Showcase/StreamingAssetText.cs`,
+  and resolve through `StreamingAssetDocument.Resolve` the mapped load already
+  uses. Measured on a Pixel 5 with `-cycle 3`: `-renderer painter`,
+  `-renderer canvas` and `-renderer none` each report `[showcase] drew` and
+  `[showcase] all 6 entries drew` for all six entries, where before the fix all
+  three reported zero. Under `canvas` the three scenes' element counts are
+  non-zero: surfaces 33, typography 16, layout 30. Issues #1469, #1465, #1451.
 - **A sorted draw command now names exactly one visible instance.** Unity's
   sorted-transparent `BatchRendererGroup` path was measured dropping a
   contiguous subset of draw commands for single frames when a command carrying
