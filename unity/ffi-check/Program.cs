@@ -321,7 +321,7 @@ Check("every declared entry point resolves in the library", () =>
     };
 
 #if DASHSCENE_DEMO_PRODUCER
-    // The demonstration configuration's seven, which `unity/demo-producer`
+    // The demonstration configuration's nine, which `unity/demo-producer`
     // exports beside the shipped set. Listed here rather than derived, on this
     // check's own grounds: the set is this gate's copy of the contract and
     // moves only when a person moves it.
@@ -334,7 +334,9 @@ Check("every declared entry point resolves in the library", () =>
     {
         "ds_demo_action",
         "ds_demo_build",
+        "ds_demo_face_key",
         "ds_demo_pulse",
+        "ds_demo_run_text",
         "ds_demo_scene_count",
         "ds_demo_scene_name",
         "ds_demo_scene_summary",
@@ -1333,6 +1335,17 @@ Check("every managed entry point a host can call reports the missing symbol", ()
             () => CallDemoScenes("Name", 0)),
         ("ds_demo_scene_summary",
             () => CallDemoScenes("Summary", 0)),
+        // Story #1444's two. The face key is a static reader like the three
+        // above; the run text takes a runtime handle, so it is a member call
+        // like the pulse and the signal. Both answer the empty string here —
+        // no scene is installed and no library exports them — which is the
+        // point: what is driven is the FORWARDER, so a missing symbol reaches
+        // the caller as this package's own exception rather than as
+        // EntryPointNotFoundException (issue #1308).
+        ("ds_demo_face_key",
+            () => CallDemoScenes("FaceKey", 0)),
+        ("ds_demo_run_text",
+            () => Call("DemoRunText", new[] { typeof(int) }, new object[] { 0 })),
 #endif
     };
 

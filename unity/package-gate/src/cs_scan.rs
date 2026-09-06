@@ -29,6 +29,31 @@
 /// The painter uses neither today; each would need handling this deliberately
 /// does not guess at.
 pub fn blank_comments_and_strings(source: &str) -> String {
+    blank(source, true)
+}
+
+/// The source with comment bodies blanked and string bodies kept, offsets
+/// preserved.
+///
+/// **For the one question [`blank_comments_and_strings`] cannot answer**: is a
+/// literal message written in code rather than quoted in a comment above it.
+/// That scanner blanks the literal being looked for, so a test using it would
+/// find nothing whatever the file says; truncating each line at `//` instead is
+/// the defect this module's own header records. This keeps the string bodies and
+/// drops the comments, so a comment quoting the message does not satisfy the
+/// assertion and the message itself does.
+///
+/// # Panics
+///
+/// On a verbatim string (`@"…"`) or an unterminated string or block comment, for
+/// [`blank_comments_and_strings`]'s reasons — the two share one scanner.
+pub fn blank_comments_only(source: &str) -> String {
+    blank(source, false)
+}
+
+/// The one scanner both public functions are. `strings` says whether a string
+/// body is blanked as a comment is, or kept as code is.
+fn blank(source: &str, strings: bool) -> String {
     let b: Vec<char> = source.chars().collect();
     let mut out: Vec<char> = Vec::with_capacity(b.len());
     let mut i = 0;
@@ -90,16 +115,17 @@ pub fn blank_comments_and_strings(source: &str) -> String {
                 }
                 let d = b[i];
                 if depth == 0 && d == '\\' {
-                    out.push(' ');
-                    out.push(' ');
+                    let escaped = if i + 1 < b.len() { b[i + 1] } else { ' ' };
+                    out.push(if strings { ' ' } else { d });
+                    out.push(if strings { ' ' } else { escaped });
                     i += 2;
                     continue;
                 }
                 if interpolated && d == '{' {
                     // `{{` is a literal brace, not a hole.
                     if depth == 0 && i + 1 < b.len() && b[i + 1] == '{' {
-                        out.push(' ');
-                        out.push(' ');
+                        out.push(if strings { ' ' } else { '{' });
+                        out.push(if strings { ' ' } else { '{' });
                         i += 2;
                         continue;
                     }
@@ -125,7 +151,7 @@ pub fn blank_comments_and_strings(source: &str) -> String {
                     i += 1;
                     break;
                 }
-                out.push(if d == '\n' { '\n' } else { ' ' });
+                out.push(if !strings || d == '\n' { d } else { ' ' });
                 i += 1;
             }
             interp.clear();
@@ -144,6 +170,12 @@ pub fn blank_comments_and_strings(source: &str) -> String {
 ///
 /// `scanned` must already have been through [`blank_comments_and_strings`], so
 /// a brace inside a comment or a string cannot move the match.
+///
+/// **Not [`blank_comments_only`], whose output violates that precondition.**
+/// That scanner keeps string bodies, so a `{` inside a literal counts here and
+/// shifts the matched range — a check that would then assert over the wrong
+/// span, which is the silent degradation this module's header refuses. Use it
+/// for `contains` over the whole file, never as this function's input.
 ///
 /// # Panics
 ///
@@ -311,6 +343,78 @@ mod tests {
         assert!(out.contains("{Rung}"), "an interpolated expression is code");
         assert!(out.contains("{target}"));
         assert!(!out.contains("rung "), "the literal prose is blanked");
+    }
+
+    #[test]
+    fn blanking_only_comments_keeps_the_literal_and_drops_the_quotation_of_it() {
+        // The two halves a "is this message written in code" test needs: the
+        // comment quoting the message must not satisfy it, and the message must.
+        let src = "// Log(\"drew it\");\nLog($\"drew {n} it\");\n";
+        let out = blank_comments_only(src);
+        assert_eq!(out.len(), src.len(), "offsets must be preserved");
+        assert_eq!(
+            out.matches("drew").count(),
+            1,
+            "the comment's copy is gone and the literal's is kept: {out}"
+        );
+        assert!(out.contains("Log($\"drew {n} it\");"), "{out}");
+    }
+
+    /// The escape branch, in both modes.
+    ///
+    /// `blank` handles `\\` inside a string separately from the ordinary body
+    /// byte, and that branch is the one the two modes disagree about. Without
+    /// this, making it always blank — reverting `blank_comments_only`'s promise
+    /// for exactly this case — left every test green, measured.
+    #[test]
+    fn an_escape_survives_only_when_the_string_is_kept() {
+        let src = "Log($\"a\\tb\");\n";
+        let kept = blank_comments_only(src);
+        assert!(kept.contains("a\\tb"), "the escape is code here: {kept}");
+        assert_eq!(kept.len(), src.len());
+
+        let blanked = blank_comments_and_strings(src);
+        assert!(
+            !blanked.contains('\\'),
+            "the escape is prose there: {blanked}"
+        );
+        assert_eq!(blanked.len(), src.len());
+    }
+
+    /// The doubled-brace branch, in both modes, for the escape branch's reason.
+    #[test]
+    fn a_doubled_brace_survives_only_when_the_string_is_kept() {
+        let src = "Log($\"{{x}} {y}\");\n";
+        let kept = blank_comments_only(src);
+        assert!(
+            kept.contains("{{x}}"),
+            "the literal braces are code here: {kept}"
+        );
+        assert!(
+            kept.contains("{y}"),
+            "the hole is kept in both modes: {kept}"
+        );
+        assert_eq!(kept.len(), src.len());
+
+        let blanked = blank_comments_and_strings(src);
+        assert!(
+            !blanked.contains("{{x}}"),
+            "the literal braces are prose there: {blanked}"
+        );
+        assert!(
+            blanked.contains("{y}"),
+            "the hole is code in both modes: {blanked}"
+        );
+        assert_eq!(blanked.len(), src.len());
+    }
+
+    #[test]
+    fn blanking_only_comments_does_not_read_a_slash_inside_a_string() {
+        let src = "Log(\"see https://x\"); var y = 1;\n";
+        let out = blank_comments_only(src);
+        assert!(out.contains("https://x"), "the string body is kept: {out}");
+        assert!(out.contains("var y = 1;"), "code after it survives: {out}");
+        assert_eq!(out.len(), src.len());
     }
 
     #[test]

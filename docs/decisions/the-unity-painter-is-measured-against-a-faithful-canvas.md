@@ -1,6 +1,8 @@
 # The Unity painter is measured against a faithful Canvas: at or below on GPU, lower on CPU
 
-    status   **accepted (2026-09-05, owner ruling in session)**. What is
+    status   **accepted (2026-09-05, owner ruling in session)**. Amended
+             2026-09-06 by story #1444, which records under D2 the three rules
+             its implementation reads differently and why. What is
              accepted is the CRITERION, the rules for building the baseline it
              is read against, and the instruments that read it — D1 to D3 below
              bind the ten stories of epic #1441. How the criterion is met is
@@ -208,6 +210,32 @@ picture — stays out.
      scene — the structural mirror of the dirty set rule 5 hands over. Pinned at
      run time: the batch-build marker reads zero at rest, and during a pulse the
      rebuilt Canvas holds only isolated elements.
+
+  **As built, three rules read differently, and story #1444 records why here
+  rather than only in its code.** Each is a departure from this record's letter
+  that keeps its intent; a reader auditing the baseline meets them here.
+
+  - **Rule 3, every gradient kind is baked at the node's pixel size**, including
+    the linear one this record makes a 256-texel strip. A stretched strip cannot
+    carry the node's rounded corners or its anti-aliased edge, so a node with
+    either would draw a hard square boundary — a different picture, which rule 1
+    forbids. On a node with neither the two are the same texels, so what the
+    departure costs is load-time texture memory and nothing in any per-frame
+    figure, which is the term rule 3 is written about.
+  - **Rule 4 places one text object per text NODE, not per glyph run.** Boundary
+    B carries shaped glyph ids and no text, so the string comes from the
+    producer through the run's anchor rect — which means what it answers is the
+    whole node's string. A node the shaper split into two runs would otherwise
+    receive that string twice, drawn over itself. The run still names the face
+    and the size. **What this leaves open**: a node split across two faces gets
+    one object in one face, and the font assets carry no fallback table, so the
+    other face's codepoints draw as TextMeshPro's missing-glyph substitute.
+  - **Rule 8 isolates from the first pulse AFTER the first commit**, not from
+    the first dirty set. The first commit a host sees reports every rect dirty —
+    it is the commit that produced them — so isolating on it puts every element
+    of the scene on its own child Canvas. Measured: `typography` isolated 16 of
+    its 16 elements, which is many batches where a careful team would have one,
+    and the opposite of the advantage this rule exists to give.
 
 - **D3 — the instruments, and their definition stated against the two that
   exist.** One player carries both renderers and a floor: the demo player gains

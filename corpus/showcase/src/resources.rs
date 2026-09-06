@@ -139,6 +139,41 @@ fn faces(with_atlases: bool) -> Vec<FaceBytes> {
     ]
 }
 
+/// Each face of the cascade as `<family without spaces>-<weight>`, in font-slot
+/// order.
+///
+/// **The slot order is the atlas order**, which is the pairing `faces`'s own
+/// remarks call the contract: a staged run's `GlyphRun::atlas` indexes
+/// [`atlases`] directly, so it indexes this list directly too. That is what lets
+/// a host resolve a run's face without the cascade's private list — story
+/// #1444's faithful Canvas needs the FONT FILE behind a run to hand
+/// TextMeshPro's own typesetter, and boundary B carries glyph ids and no face.
+///
+/// **It is `faces`' DECLARATION order, and that is the slot order only while
+/// the list stays family-grouped.** `TextResources::from_faces` flattens
+/// family-major — families in first-appearance order, each family's faces
+/// together — so a list that interleaved two families would give slots in an
+/// order this function does not report, and a host pairing a run's atlas
+/// against it would hand TextMeshPro the wrong font file: a plausible picture,
+/// wrongly typeset, failing nothing. `faces`' own remarks call the pairing the
+/// contract, and `DashsceneRuntime.LoadDocumentWithText` says the same of its
+/// argument. `the_cascade_is_declared_family_grouped` is what holds the list to
+/// it, so an interleaving is a red test rather than a silent remap.
+///
+/// Derived from `faces` rather than written out, so a face added or reweighted
+/// there moves this with it rather than leaving a second list to go stale.
+///
+/// Computed once: `faces` reads the font files, and nothing here needs them.
+pub fn face_keys() -> &'static [String] {
+    static KEYS: LazyLock<Vec<String>> = LazyLock::new(|| {
+        faces(false)
+            .into_iter()
+            .map(|face| format!("{}-{}", face.family.replace(' ', ""), face.weight))
+            .collect()
+    });
+    &KEYS
+}
+
 /// A fresh typesetter for one scene. Each live scene owns its own, because
 /// the solver that shapes with it needs it exclusively.
 ///
@@ -346,4 +381,56 @@ pub fn baked_star(size: f32) -> Arc<BakedVector> {
             distance_range: baked.distance_range as f32,
         })
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The cascade is declared family-grouped, which is what makes
+    /// [`face_keys`]'s slot order the atlas slot order.
+    ///
+    /// **Kills an interleaved cascade.** `TextResources::from_faces` flattens
+    /// family-major, so declaring Inter, then Noto, then Inter again would give
+    /// atlas slots in an order [`face_keys`] does not report — and story
+    /// #1444's Canvas would load the wrong font asset for a run, typesetting a
+    /// Latin string in an Arabic face without failing anything.
+    #[test]
+    fn the_cascade_is_declared_family_grouped() {
+        let families: Vec<String> = faces(false).into_iter().map(|face| face.family).collect();
+        assert!(families.len() > 1, "one face cannot show a grouping rule");
+
+        let mut seen: Vec<&String> = Vec::new();
+        for (slot, family) in families.iter().enumerate() {
+            if seen.last() == Some(&family) {
+                continue;
+            }
+            assert!(
+                !seen.contains(&family),
+                "slot {slot} returns to family `{family}` after leaving it, so the \
+                 declaration order is not family-major and face_keys no longer \
+                 reports the atlas slot order"
+            );
+            seen.push(family);
+        }
+    }
+
+    /// Every slot answers a key TextMeshPro can be asked for by name.
+    #[test]
+    fn every_face_key_carries_a_family_and_a_weight() {
+        for (slot, key) in face_keys().iter().enumerate() {
+            let (family, weight) = key
+                .rsplit_once('-')
+                .unwrap_or_else(|| panic!("slot {slot} answers `{key}`, with no weight"));
+            assert!(!family.is_empty(), "slot {slot} answers no family");
+            assert!(
+                !family.contains(' '),
+                "slot {slot} answers `{key}`, and a space cannot survive the asset \
+                 name it is half of"
+            );
+            weight
+                .parse::<u16>()
+                .unwrap_or_else(|e| panic!("slot {slot}'s weight `{weight}`: {e}"));
+        }
+    }
 }
