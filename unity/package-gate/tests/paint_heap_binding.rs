@@ -48,6 +48,16 @@ const PAINTER: &str = "Runtime/Engine/BrgPainter.cs";
 
 const DRAW: &str = "public void Draw(FrameLease lease)";
 const BIND_HEAP: &str = "private void BindHeap()";
+
+/// The one construction of the `_DsGlobals` row.
+///
+/// **Read here rather than in `BindHeap`, since story #1445.** The row is
+/// compared in `UploadHeap` against what the last `BindHeap` bound — that
+/// comparison is one of the four reasons the binding is refreshed — and two
+/// spellings of the same row would make it a comparison of two constructions
+/// rather than of two values. So the order below is pinned where the row is
+/// built.
+const SCALARS: &str = "private Vector4 Scalars()";
 const BIND_HEAP_TO: &str = "private void BindHeapTo(Material material, Vector4 scalars)";
 const DISPOSE: &str = "public void Dispose()";
 
@@ -257,8 +267,10 @@ fn draw_binds_the_heap_on_every_material_the_painter_registered() {
         "{PAINTER}'s `Draw` binds the heap at {bound_at} and uploads it at \
          {uploaded_at}. `Upload` disposes and re-creates a `GraphicsBuffer` \
          when its table outgrows it, so a binding taken first names a freed \
-         buffer from the first growth onward — which is the reason `BindHeap` \
-         runs on every frame at all."
+         buffer from the first growth onward — and since story #1445 it is \
+         that upload which decides whether the binding is refreshed at all, so \
+         a guard read before it answers for the previous frame. \
+         `settle_path.rs` is where the guard itself is pinned."
     );
 
     let bind = body(&source, BIND_HEAP);
@@ -310,13 +322,28 @@ fn each_name_is_bound_to_the_buffer_it_means() {
 
     // Squeezed, because the argument list's wrapping is the formatter's and
     // not a property of the binding.
-    let bind = body(&painter(), BIND_HEAP);
-    let squeezed: String = bind.split_whitespace().collect::<Vec<_>>().join(" ");
+    let scalars = body(&painter(), SCALARS);
+    let squeezed: String = scalars.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
         squeezed.contains("EdgeWidth, _packer.SolidBase, _packer.GradientBase, 0.0f"),
-        "{PAINTER}'s `BindHeap` does not build `_DsGlobals` as `(aa, solid \
+        "{PAINTER}'s `Scalars` does not build `_DsGlobals` as `(aa, solid \
          base, gradient base, unused)`, which is the order the shading reads \
          it in."
+    );
+
+    // **And `BindHeap` binds what `Scalars` built**, rather than a second
+    // `Vector4` of its own. Splitting the construction out put a member
+    // between the order above and the `SetVector` below it, and an assertion
+    // over each half alone is satisfied by a `BindHeap` that builds its own
+    // row in some other order.
+    let bind = body(&painter(), BIND_HEAP);
+    assert!(
+        bind.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains("var scalars = Scalars();"),
+        "{PAINTER}'s `BindHeap` does not take its scalars from `Scalars()`, so \
+         the order pinned above is not necessarily the order it binds."
     );
 
     // **Both sides of the contract, because only one of them is C#.** The

@@ -16,7 +16,9 @@ namespace Driftsys.Dashscene
     /// BatchRendererGroup metadata. **`BrgPainter` resolves each of these to a
     /// property id once** and calls the `int` overloads, because the `string`
     /// ones hash the name on every call and the heap is bound per material on
-    /// every frame.
+    /// every frame whose binding has gone stale — which since story #1445 is
+    /// the frames `BrgPainter.HeapBindingPending` names rather than all of
+    /// them, and is still one hash per name per material per such frame.
     ///
     /// **Every one of them is per material, and that is issue #1297's fix.**
     /// The first five were bound with `Shader.SetGlobalBuffer` and

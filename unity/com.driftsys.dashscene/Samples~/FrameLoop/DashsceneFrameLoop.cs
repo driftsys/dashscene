@@ -86,6 +86,10 @@ namespace Driftsys.Dashscene.Samples
 
         private DashsceneRuntime _runtime;
         private CommitPacer _pacer;
+
+        /// The one decision this loop makes per frame, shared with every other
+        /// host loop in the package rather than written again here.
+        private readonly SettleLoop _settle = new SettleLoop();
         private BrgPainter _painter;
 
         private void Awake()
@@ -272,15 +276,46 @@ namespace Driftsys.Dashscene.Samples
             // frame. That is the right side of the trade for a sample: the
             // value is only ever used by the `Draw` below it, which is on the
             // same cadence.
+            // **The anti-aliasing width is a forced-redraw reason too**, and
+            // not one `NoteExtent` covers. `UpdateEdgeWidth` derives it from
+            // the camera's orthographic size as well as the screen's height, so
+            // an orthographic-size tween moves it with the extent unchanged —
+            // which the remark above `UpdateEdgeWidth` already names. It is one
+            // of the three scalars the paint heap's binding carries, so before
+            // this loop settled it was rebound on every frame and now it is
+            // rebound only on a frame that draws. A settled host would shade
+            // the new zoom at the old width for as long as the document did not
+            // change.
+            var edgeWidthBefore = _painter.EdgeWidth;
             UpdateEdgeWidth();
+            if (_painter.EdgeWidth != edgeWidthBefore)
+            {
+                _settle.ForceRedraw();
+            }
+
+            // The drawable, on every commit rather than every frame — this
+            // sits below the pacer's early return, as `UpdateEdgeWidth` does
+            // and for the same reason. Why it is polled at all is
+            // `SettleLoop.NoteExtent`'s own remark.
+            _settle.NoteExtent(Screen.width, Screen.height);
 
             try
             {
-                _runtime.Tick(dt);
+                var advanced = _runtime.Tick(dt);
 
-                // Acquire every committed frame rather than only the advanced
-                // ones: a host that skipped would never mark a commit shown, so
-                // a settled scene would keep reporting that it advanced.
+                // **The acquire is skipped only when the tick reports nothing
+                // unshown, and every acquire this loop takes is marked.** Those
+                // two halves are one rule: `Tick` answers `true` until the
+                // committed generation has been marked shown, so a loop that
+                // acquired without marking would report an advance for ever and
+                // never settle — and one that skipped the mark and the acquire
+                // together, as this one does, leaves the generation exactly
+                // where the last drawn frame left it.
+                if (!_settle.ShouldDraw(advanced))
+                {
+                    return;
+                }
+
                 using var frame = _runtime.AcquireFrame();
 
                 if (frame.DocumentReplaced)
@@ -339,6 +374,19 @@ namespace Driftsys.Dashscene.Samples
             catch (DashsceneException e)
             {
                 Debug.LogError($"[dashscene] frame failed: {e.Message}", this);
+
+                // **The one catch in this file that keeps the loop running, so
+                // the one that has to put the forced redraw back.**
+                // `ShouldDraw` consumes the pending bit when it decides the
+                // frame draws, not when the frame has drawn — so a frame that
+                // decided to draw and then threw has spent a redraw it never
+                // made. On a static document nothing raises the bit again, and
+                // the resize or rebuilt surface that asked for that frame is
+                // never serviced. The three catches above and the two other
+                // sample loops stop the loop instead, where a lost bit costs
+                // nothing.
+                _settle.ForceRedraw();
+
                 if (e.Status == DsStatus.Panic)
                 {
                     // The library is in an unspecified state: free it and make

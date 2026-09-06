@@ -198,6 +198,46 @@ namespace Driftsys.Dashscene
         private float[] _clipStaging = Array.Empty<float>();
         private float[] _strokeStaging = Array.Empty<float>();
         private float[] _glyphStaging = Array.Empty<float>();
+
+        /// How many live floats each heap table's last upload carried, or -1
+        /// where the buffer behind it was (re)created and holds nothing this
+        /// painter wrote.
+        ///
+        /// **One field per table rather than four slots of an `int[]`**, and
+        /// named after the staging arrays above them. Four `int`s addressed by
+        /// position are transposed by any edit that reorders or adds an
+        /// `Upload` call, and every slot has the same type, so nothing would
+        /// report it — the paint table's count would silently answer for the
+        /// clip table's.
+        private int _uploadedPaintFloats = -1;
+
+        /// See [`_uploadedPaintFloats`].
+        private int _uploadedClipFloats = -1;
+
+        /// See [`_uploadedPaintFloats`].
+        private int _uploadedStrokeFloats = -1;
+
+        /// See [`_uploadedPaintFloats`].
+        private int _uploadedGlyphFloats = -1;
+
+        /// Whether the heap binding no longer describes what the materials
+        /// should read.
+        ///
+        /// **True at construction**, so the first [`Draw`] binds: nothing is
+        /// bound before it, and a flag that started clear would leave every
+        /// material reading an unbound `StructuredBuffer` until the first
+        /// reallocation happened to raise it.
+        private bool _heapBindingPending = true;
+
+        /// The scalars the last [`BindHeap`] bound.
+        ///
+        /// **Compared rather than assumed constant.** The anti-aliasing width
+        /// moves with the drawable extent and the gradient base whenever the
+        /// paint table interns a new solid, and neither reallocates anything —
+        /// so a binding refreshed only on reallocation shades a resized
+        /// document at the previous size's edge width.
+        private Vector4 _boundScalars;
+
         private float _cutoff = 0.5f;
         private Bounds _globalBounds = new Bounds(Vector3.zero, Vector3.one * 10000.0f);
         private PackDiagnostics _lastDiagnostics;
@@ -243,6 +283,27 @@ namespace Driftsys.Dashscene
 
         /// How many instances the last [`Draw`] emitted.
         public int InstanceCount { get; private set; }
+
+        /// Whether the heap binding is stale and the next [`Draw`] will redo
+        /// it.
+        ///
+        /// **Read by the render gate**, which is where the consequence is
+        /// observed: a settled scene that keeps rebinding is not settled, and
+        /// a flag left raised is the same cost as no flag at all. True before
+        /// the first draw, because nothing is bound then.
+        public bool HeapBindingPending
+        {
+            get { return _heapBindingPending; }
+        }
+
+        /// How many times [`BindHeap`] has run on this painter.
+        ///
+        /// **A count rather than a bool, because the property is a rate.**
+        /// Story #1445's gate drives sixty frames over a static document and
+        /// asks that this moves once for the first draw and once more for a
+        /// changed drawable extent — a bool could not tell "bound on the two
+        /// frames that needed it" from "bound on all sixty".
+        public int HeapBindCount { get; private set; }
 
         /// What the last [`Draw`] was handed and did not draw.
         public PackDiagnostics Diagnostics => _lastDiagnostics;
@@ -507,6 +568,14 @@ namespace Driftsys.Dashscene
         {
             ThrowIfDisposed();
 
+            // **Raised before the first early return, so every path raises
+            // it.** This member mints the text materials, and a material this
+            // painter has never bound reads an unbound `_DsPaints`,
+            // `_DsClipBoxes` and `_DsStrokes` — which is the gap issue #1297's
+            // per-material binding opened and which an unconditional
+            // `BindHeap` used to cover.
+            _heapBindingPending = true;
+
             // **Nothing this painter packed earlier is drawn again**, and that
             // closes a real window rather than tidying: `OnPerformCulling` runs
             // when Unity renders, not when `Draw` returns, so a set installed
@@ -638,6 +707,14 @@ namespace Driftsys.Dashscene
             _textMaterials = Array.Empty<Material>();
             _atlasTextures = Array.Empty<Texture2D>();
             _atlases = TextAtlasSet.Empty;
+
+            // The set of materials the binding covers has changed, and
+            // `Dispose` is one of the three callers: a painter torn down while
+            // the flag was clear would leave it clear for the next `Draw` that
+            // cannot happen, which costs nothing, and raising it here keeps the
+            // rule "every change of the material set raises the flag" true of
+            // all three.
+            _heapBindingPending = true;
         }
 
         /// Report R-E5 once per pipeline instance, and only from a read that
@@ -813,7 +890,15 @@ namespace Driftsys.Dashscene
 
             UploadHeap();
             UploadInstances();
-            BindHeap();
+
+            // **After the upload, never before it.** `UploadHeap` is what
+            // raises the flag: it reports each table's reallocation and
+            // compares the scalars it would bind, so a guard read first
+            // answers for the previous frame. `BindHeapTo` makes four
+            // `Material.Set…` calls per material, and on a settled scene every
+            // one of them rebinds what is already bound — which is the cost
+            // story #1445 removes.
+            if (HeapBindingPending) { BindHeap(); }
 
             // After `UploadInstances`, which is what settles `_batchCount` and
             // `_instancesPerBatch` — the two `InstancesInBatch` is counted
@@ -1536,12 +1621,58 @@ namespace Driftsys.Dashscene
             };
         }
 
+        /// Upload the four heap tables, and decide whether the binding they
+        /// are read through still holds.
+        ///
+        /// **Every call site takes the reallocation, not one of them.** Any of
+        /// the four tables can be the one that grows, and a growth disposes the
+        /// `GraphicsBuffer` the materials name — so a `|=` on three of them
+        /// leaves every material naming freed native memory the first time the
+        /// fourth outgrows its own.
         private void UploadHeap()
         {
-            Upload(ref _paintBuffer, ref _paintStaging, _packer.Paints, _packer.PaintFloats);
-            Upload(ref _clipBuffer, ref _clipStaging, _packer.ClipBoxes, _packer.ClipFloats);
-            Upload(ref _strokeBuffer, ref _strokeStaging, _packer.Strokes, _packer.StrokeFloats);
-            Upload(ref _glyphBuffer, ref _glyphStaging, _packer.Glyphs, _packer.GlyphFloats);
+            _heapBindingPending |= Upload(
+                ref _paintBuffer, ref _paintStaging, ref _uploadedPaintFloats,
+                _packer.Paints, _packer.PaintFloats);
+            _heapBindingPending |= Upload(
+                ref _clipBuffer, ref _clipStaging, ref _uploadedClipFloats,
+                _packer.ClipBoxes, _packer.ClipFloats);
+            _heapBindingPending |= Upload(
+                ref _strokeBuffer, ref _strokeStaging, ref _uploadedStrokeFloats,
+                _packer.Strokes, _packer.StrokeFloats);
+            _heapBindingPending |= Upload(
+                ref _glyphBuffer, ref _glyphStaging, ref _uploadedGlyphFloats,
+                _packer.Glyphs, _packer.GlyphFloats);
+
+            // **The other half of what the binding carries.** `BindHeap` binds
+            // three buffers and one `Vector4`, and the `Vector4` moves with no
+            // reallocation at all: `EdgeWidth` on every change of drawable
+            // extent, `SolidBase` and `GradientBase` whenever the paint table's
+            // layout changes. Compared here rather than in `BindHeap` because
+            // this is the member `Draw` reads the flag after.
+            //
+            // **`Vector4.operator ==` is Unity's tolerant one**: it takes the
+            // Euclidean distance between the two rows over all four components
+            // at once and calls them equal below 1e-5. That is the right
+            // comparison here rather than a trap, and the reason rests on what
+            // the row carries: the two bases are row indices, so any change in
+            // one of them moves the distance by at least 1, and the only
+            // continuous component is the anti-aliasing width, which cannot
+            // move a pixel while it moves that distance less than 1e-5. A
+            // fifth continuous component would need this read again.
+            var scalars = Scalars();
+            if (scalars != _boundScalars) { _heapBindingPending = true; }
+        }
+
+        /// The `_DsGlobals` row, in the order the shading reads it.
+        ///
+        /// One expression, because [`UploadHeap`] compares it against what
+        /// [`BindHeap`] last bound and two spellings of the same row would make
+        /// that comparison a comparison of two constructions.
+        private Vector4 Scalars()
+        {
+            return new Vector4(
+                EdgeWidth, _packer.SolidBase, _packer.GradientBase, 0.0f);
         }
 
         /// Upload one heap table as `float4` rows.
@@ -1556,15 +1687,40 @@ namespace Driftsys.Dashscene
         /// instance buffer follows. `GraphicsBuffer.count` is the allocated row
         /// count rather than the used one, so the comparison below is against
         /// capacity.
-        private static void Upload(
+        ///
+        /// **Returns whether it (re)created the buffer**, which the caller
+        /// needs and this member cannot record: it is `static` over a
+        /// `ref GraphicsBuffer` — the four tables are four fields — so it can
+        /// set no instance field of its own.
+        ///
+        /// **An unchanged table is not sent again**, and the decision is
+        /// [`HeapUpload.AlreadyUploaded`]'s rather than this member's: it is
+        /// arithmetic over two arrays, it lives outside `Runtime/Engine/` so
+        /// `unity/ffi-check` executes it, and getting it wrong in the "already
+        /// there" direction freezes a table's contents for the life of the
+        /// painter. Most commits move one table and leave three, and on a
+        /// settled scene they move none. What the skip assumes is that a
+        /// `GraphicsBuffer` keeps its contents between frames while nothing
+        /// here disposes it; a graphics device that dropped them under a
+        /// painter this member had stopped writing to would draw the last
+        /// uploaded picture, which is issue #1467.
+        private static bool Upload(
             ref GraphicsBuffer buffer,
             ref float[] staging,
+            ref int uploaded,
             float[] source,
             int floats)
         {
             var rows = Math.Max((floats + 3) / 4, 1);
+            var reallocated = false;
             if (buffer == null || buffer.count < rows)
             {
+                reallocated = true;
+
+                // A fresh buffer holds nothing this painter wrote, so the
+                // comparison below cannot be taken against the staging array
+                // that was just replaced.
+                uploaded = -1;
                 // **Read before disposing.** A first version called
                 // `buffer?.Dispose()` and then read `buffer?.count` to seed the
                 // doubling — a property read on a released native object, which
@@ -1579,17 +1735,26 @@ namespace Driftsys.Dashscene
                 staging = new float[capacity * 4];
             }
 
+            if (HeapUpload.AlreadyUploaded(staging, source, uploaded, floats))
+            {
+                return reallocated;
+            }
+
+            var live = Math.Min(floats, source.Length);
+
             // Only the live floats are copied. What sits past them is whatever
             // a previous frame left, and no row index in this frame's instances
             // reaches it — the same reasoning the instance staging buffer uses
             // for the rows past `InstanceCount`.
-            Array.Copy(source, staging, Math.Min(floats, source.Length));
+            Array.Copy(source, staging, live);
             // **Only the live rows.** A first version pushed the whole doubled
             // capacity every frame — thousands of stale `float4`s for a
             // document that had once been large. Issue #1306 records the same
             // cost for the instance buffer, where the fix is a dirty range
             // rather than a length.
             buffer.SetData(staging, 0, 0, rows * 4);
+            uploaded = floats;
+            return reallocated;
         }
 
         /// Bind the paint heap on every material this painter draws with.
@@ -1602,16 +1767,21 @@ namespace Driftsys.Dashscene
         /// binds its own materials here, and a second painter in the same
         /// process reaches none of them.
         ///
-        /// **Every material, on every frame.** A heap buffer is reallocated
-        /// when its table outgrows it, so a binding taken once at construction
-        /// would name a freed buffer after the first growth — and
-        /// [`SetAtlases`] mints text materials long after the constructor has
-        /// run, so there is no earlier moment at which the set of materials is
-        /// complete.
+        /// **Every material, and on every frame the binding went stale.** A
+        /// heap buffer is reallocated when its table outgrows it, so a binding
+        /// taken once at construction would name a freed buffer after the first
+        /// growth — and [`SetAtlases`] mints text materials long after the
+        /// constructor has run, so there is no earlier moment at which the set
+        /// of materials is complete. What decides "went stale" is
+        /// [`HeapBindingPending`], raised by the four reasons the binding has:
+        /// a reallocation, a new atlas set, a released one, and a change of the
+        /// scalars.
         private void BindHeap()
         {
-            var scalars = new Vector4(
-                EdgeWidth, _packer.SolidBase, _packer.GradientBase, 0.0f);
+            var scalars = Scalars();
+            _boundScalars = scalars;
+            _heapBindingPending = false;
+            HeapBindCount++;
             BindHeapTo(_material, scalars);
             for (var i = 0; i < _textMaterials.Length; i++)
             {

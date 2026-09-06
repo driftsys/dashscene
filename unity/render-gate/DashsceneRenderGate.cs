@@ -70,6 +70,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using Driftsys.Dashscene;
+using Unity.Profiling;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
@@ -232,7 +233,44 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         new Step("cutout-high", MaterialClass.LitCutout, true, CutoffHigh),
         new Step(
             "thread-cost", MaterialClass.UnlitOverlay, true, CutoffLow, ThreadCostFrames),
+        new Step(SettleLabel, MaterialClass.UnlitOverlay, true, CutoffLow, SettleStepFrames),
     };
+
+    /// The settle step's label, compared in [`Update`] to route that one step
+    /// through [`DriveSettleFrame`].
+    ///
+    /// **A label rather than a sixth `Step` field**, because exactly one step
+    /// of the plan is driven differently and every other one would carry a
+    /// `false` that says nothing about it.
+    private const string SettleLabel = "settle";
+
+    /// How many frames the settle window observes.
+    ///
+    /// One second at the 60 Hz this player asks for, and the number story
+    /// #1445's own report line is stated over.
+    private const int SettleWindow = 60;
+
+    /// How many frames the settle step runs.
+    ///
+    /// The window, plus a forced redraw, a changed drawable extent, and one
+    /// frame that only reads the allocation counter for the frame before it.
+    /// `Update` runs a step's body `Frames + 1` times, which is the offset that
+    /// constant documents, so this is one less than the sixty-three bodies the
+    /// step runs.
+    private const int SettleStepFrames = SettleWindow + 2;
+
+    /// The two frames of the settle step that take a capture.
+    ///
+    /// **Named because two methods read them.** `DriveSettleFrame` takes the
+    /// captures and `NoteSettleAllocation` excludes those frames from both
+    /// allocation populations, and holding two copies of `2` and
+    /// `SettleWindow + 1` in step by hand is how a capture frame — a 1024x768
+    /// `Texture2D` and a PNG encode — silently joins the skipped population and
+    /// carries the verdict with it.
+    private const int SettleFirstCaptureFrame = 2;
+
+    /// See [`SettleFirstCaptureFrame`].
+    private const int SettleLastCaptureFrame = SettleWindow + 1;
 
     /// How many frames the thread-cost step runs.
     ///
@@ -310,6 +348,80 @@ public sealed class DashsceneRenderGate : MonoBehaviour
 
     /// The one sample the thread-cost step closes, or null.
     private ThreadCostSample _threadSample;
+
+    /// The settle step's own host loop, the same class the three samples run.
+    private readonly SettleLoop _settle = new SettleLoop();
+
+    /// The drawable height the settle step reports, moved by one pixel on its
+    /// last frame.
+    private int _settleHeight = Height;
+
+    /// What the settle window measured, or -1 where the step never reached the
+    /// frame that records it.
+    ///
+    /// **Seeded negative rather than zero**, so a judgement over a step that
+    /// did not run fails instead of reading a plausible number.
+    private int _settleDrawn = -1;
+
+    /// How many of the window's frames were skipped. See [`_settleDrawn`].
+    private int _settleSkipped = -1;
+
+    /// Unity's own per-frame managed-allocation counter, over the settle step.
+    ///
+    /// **`GC.GetAllocatedBytesForCurrentThread` is blind in this player, and
+    /// that is measured rather than suspected.** A run of 2026-09-06 allocated
+    /// a 4096-byte array inside every one of the settle step's sixty loop
+    /// bodies and the counter still reported zero for all of them, so an
+    /// assertion resting on it passes over any allocation whatever — the
+    /// fail-open shape this gate exists to refuse. The recorder below is the
+    /// one `Runtime/Engine/DashsceneThreadCost.cs` reads and the one
+    /// `docs/design/android-toolchain.md` records as reporting 832 B/frame in
+    /// this player, so it is known to work here. Issue #1468 carries the
+    /// measurement and what is owed elsewhere, since D3 names the blind API and
+    /// `Samples~/Showcase/DashsceneCanvasBaseline.cs` reads it in a player this
+    /// has not been measured in.
+    ///
+    /// It counts a whole Unity frame rather than the loop body, which is why
+    /// the judgement below is a comparison between this step's own skipped and
+    /// drawn frames rather than a threshold: both carry the gate's own 832 B
+    /// and their difference does not.
+    private ProfilerRecorder _settleAlloc;
+
+    /// The largest whole-frame allocation over the settle step's skipped
+    /// frames, and how many frames that is stated over.
+    private long _settleSkippedAllocMax = -1;
+
+    private int _settleSkippedAllocFrames;
+
+    /// The smallest whole-frame allocation over the settle step's drawn
+    /// frames, and how many frames that is stated over.
+    private long _settleDrawnAllocMin = -1;
+
+    private int _settleDrawnAllocFrames;
+
+    /// Whether the body before this one drew, so a reading taken one frame
+    /// late is attributed to the frame it describes.
+    private bool _settlePreviousDrew;
+
+    /// [`BrgPainter.HeapBindCount`] before the settle step's first frame.
+    ///
+    /// **A baseline rather than an absolute**, because the painter is shared
+    /// with the step before this one: `Advance` constructs a new one only when
+    /// the material class changes. Every judgement below is a difference from
+    /// this, so a step added to the plan moves the reported number and not the
+    /// verdict.
+    private int _heapBindsBeforeSettle = -1;
+
+    /// The count after a forced redraw over an unchanged document.
+    private int _heapBindsAfterForcedRedraw = -1;
+
+    /// The count after the drawable extent moved by one pixel.
+    private int _heapBindsAfterResize = -1;
+
+    /// Whether the binding was still pending after the forced redraw drew.
+    ///
+    /// **Seeded true**, so a step that never recorded it fails.
+    private bool _pendingAfterForcedRedraw = true;
     private Camera _camera;
     private RenderTexture _target;
     private string _outDir;
@@ -524,6 +636,20 @@ public sealed class DashsceneRenderGate : MonoBehaviour
 
         try
         {
+            if (!_orderPhase && Plan[_step].Label == SettleLabel)
+            {
+                DriveSettleFrame();
+
+                // **Rendered like every other frame, including the skipped
+                // ones.** A skipped frame leaves the batches registered and the
+                // culling callback re-emitting the description the last `Draw`
+                // laid out, so the camera draws the same picture with the host
+                // having done nothing — which is the positive pin an absence
+                // scan cannot give, and which the two captures below compare.
+                Render();
+                return;
+            }
+
             _runtime.Tick(Time.deltaTime);
             using (var lease = _runtime.AcquireFrame())
             {
@@ -568,6 +694,146 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         {
             Fail($"the frame loop threw: {e.GetType().Name}: {e.Message}");
             Finish();
+        }
+    }
+
+    /// One frame of the settle step, driven the way a host loop drives one.
+    ///
+    /// The same three calls the three samples make — note the extent, read the
+    /// tick's answer, decide through [`SettleLoop`] — so what this step
+    /// measures is the loop the package ships rather than an imitation of it.
+    ///
+    /// **The frames are Unity frames.** One body per `Update`, one `Render` per
+    /// body, so a skipped frame is a frame Unity actually rendered with the
+    /// host having done nothing. A synchronous loop inside `Judge` would render
+    /// sixty times inside one frame and measure nothing about idling.
+    ///
+    /// The plan of the step, by frame:
+    ///
+    /// - 1: the first `NoteExtent` is a change from the extent `SettleLoop`
+    ///   starts at, so this frame draws whatever the tick reports.
+    /// - 2: the target now holds frame 1's render, and is captured.
+    /// - 2 to 60: the document is static and the commit is marked, so the tick
+    ///   reports no advance and every one of these frames is skipped.
+    /// - 61: frame 60's render is captured, the window's counts are recorded,
+    ///   and a redraw is forced — the frame a host takes when its surface came
+    ///   back under a document that did not change. Nothing the binding
+    ///   carries has moved, so the heap must not rebind.
+    /// - 62: the drawable is reported one pixel taller and the anti-aliasing
+    ///   width with it, which moves the scalars `BindHeap` carries and nothing
+    ///   else. The heap must rebind.
+    /// - 63: nothing but the allocation reading for frame 62, which is a drawn
+    ///   frame and would otherwise have no reader. The body itself skips.
+    ///
+    /// **The allocation reading is one frame late and two frames are dropped.**
+    /// A `ProfilerRecorder`'s `LastValue` moves when a Unity frame ends, so the
+    /// value read at the top of body k describes body k-1. Bodies 2 and 61 take
+    /// a capture — a 1024x768 `Texture2D` and a PNG encode — so their frames
+    /// are excluded rather than compared: they are the harness allocating, not
+    /// the host loop.
+    private void DriveSettleFrame()
+    {
+        NoteSettleAllocation();
+
+        if (_framesInStep == 1)
+        {
+            _heapBindsBeforeSettle = _painter.HeapBindCount;
+            _settleAlloc = ProfilerRecorder.StartNew(
+                ProfilerCategory.Memory, "GC Allocated In Frame", 1);
+        }
+        else if (_framesInStep == SettleFirstCaptureFrame)
+        {
+            Capture($"{SettleLabel}-1");
+        }
+        else if (_framesInStep == SettleLastCaptureFrame)
+        {
+            Capture($"{SettleLabel}-{SettleWindow}");
+            _settleDrawn = _settle.FramesDrawn;
+            _settleSkipped = _settle.FramesSkipped;
+            _settle.ForceRedraw();
+        }
+        else if (_framesInStep == SettleWindow + 2)
+        {
+            _heapBindsAfterForcedRedraw = _painter.HeapBindCount;
+            _pendingAfterForcedRedraw = _painter.HeapBindingPending;
+
+            // **The extent is reported, not resized.** What the binding
+            // carries is the anti-aliasing width, and `MakePainter` derives it
+            // from the target's height — so a drawable one pixel taller is
+            // these two lines. Recreating the `RenderTexture` would move
+            // `Width` and `Height`, which every capture, every viewport
+            // conversion and the camera's aspect are stated over, and would
+            // measure the resize rather than the rebinding.
+            _settleHeight = Height + 1;
+            _painter.EdgeWidth = OrthographicSize * 2.0f / _settleHeight;
+        }
+
+        _settle.NoteExtent(Width, _settleHeight);
+        var advanced = _runtime.Tick(Time.deltaTime);
+        var drew = _settle.ShouldDraw(advanced);
+        if (drew)
+        {
+            using (var lease = _runtime.AcquireFrame())
+            {
+                _painter.Draw(lease);
+                lease.MarkDrawn();
+            }
+        }
+
+        _settlePreviousDrew = drew;
+
+        if (_framesInStep == SettleWindow + 2)
+        {
+            _heapBindsAfterResize = _painter.HeapBindCount;
+        }
+    }
+
+    /// Attribute the previous frame's managed allocation to the body that ran
+    /// in it.
+    ///
+    /// The counter is whole-frame and one frame late, so what this collects is
+    /// two populations from the same step under the same harness: the frames
+    /// this host skipped and the frames it drew. Their difference is the
+    /// allocation the settle path removes, and the gate's own 832 B is in both.
+    private void NoteSettleAllocation()
+    {
+        var previous = _framesInStep - 1;
+        if (previous < 1 || !_settleAlloc.Valid)
+        {
+            return;
+        }
+
+        // The two capture frames are the harness allocating a `Texture2D` and
+        // a PNG, which is neither population.
+        //
+        // **One of the two is the forced-redraw draw**, so that frame is
+        // measured by nothing. It runs the same six statements as the other two
+        // drawn frames — note the extent, tick, decide, acquire, draw, mark —
+        // and no statement anywhere runs only because a redraw was forced, so
+        // there is no forced-redraw-only path for a regression to hide in. The
+        // capture has to sit on that frame: it reads the target, which holds
+        // frame 60's render only there.
+        if (previous == SettleFirstCaptureFrame || previous == SettleLastCaptureFrame)
+        {
+            return;
+        }
+
+        var bytes = _settleAlloc.LastValue;
+        if (_settlePreviousDrew)
+        {
+            _settleDrawnAllocFrames++;
+            if (_settleDrawnAllocMin < 0 || bytes < _settleDrawnAllocMin)
+            {
+                _settleDrawnAllocMin = bytes;
+            }
+        }
+        else
+        {
+            _settleSkippedAllocFrames++;
+            if (bytes > _settleSkippedAllocMax)
+            {
+                _settleSkippedAllocMax = bytes;
+            }
         }
     }
 
@@ -1213,7 +1479,159 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         //    zero Canvas-rebuild term reads as a Canvas that rebuilds nothing.
         JudgeThreadCost();
 
+        // 5. THE SETTLE PATH. Story #1445: the host idles when the tick reports
+        //    no advance, and the heap binds when the binding goes stale rather
+        //    than on every frame. Judged last because its step runs last —
+        //    everything above is stated over pictures this gate had already
+        //    captured before that step began.
+        JudgeSettle();
+
         JudgeCutoff();
+    }
+
+    /// The host idled, the picture survived the idling, and the binding
+    /// refreshed on the change that moves it and on nothing else.
+    ///
+    /// **Four readings, because each of them can be wrong on its own.** A host
+    /// that drew every frame is the cost story #1445 removes, still there. A
+    /// host that idled and lost the picture is a saving that cannot be taken. A
+    /// skipped frame that still allocates is D3's steady-frame rule unmet with
+    /// the draw already gone. And a binding refreshed on every frame, or on
+    /// none, is the same picture drawn at two different costs — one of which is
+    /// wrong.
+    private void JudgeSettle()
+    {
+        Line($"settle — drew {_settleDrawn} of {SettleWindow} frames, "
+             + $"skipped {_settleSkipped}");
+
+        if (_settleDrawn != 1)
+        {
+            Fail(
+                $"the settle step drew {_settleDrawn} of {SettleWindow} frames over a static "
+                + "document whose commit was marked shown, where exactly one — the first, "
+                + "forced by the extent this loop had not yet reported — should have drawn. "
+                + "A count equal to the window is a tick that keeps reporting an advance or a "
+                + "loop that ignores it; a count of zero is a first frame that never drew.");
+        }
+
+        // **The positive pin.** `settle_path.rs` can see that the acquire is
+        // behind the decision and cannot see that the picture survives it: a
+        // skipped frame leaves the batches registered and the culling callback
+        // re-emitting them, and only a photograph says so.
+        var first = Shot($"{SettleLabel}-1");
+        var last = Shot($"{SettleLabel}-{SettleWindow}");
+        if (first != null && last != null)
+        {
+            var differing = DifferingPixels(first, last);
+            Line($"settle — {differing} of {Width * Height} pixels differ between the "
+                 + $"capture after frame 1 and the capture after frame {SettleWindow}");
+            if (differing != 0)
+            {
+                Fail(
+                    $"{differing} pixel(s) differ between the settle step's first drawn frame "
+                    + $"and its {SettleWindow}th, on a document nothing changed. The host "
+                    + "stopped drawing and the picture did not survive it, so the frames this "
+                    + "step skipped were frames that had work to do.");
+            }
+        }
+
+        Line($"settle — managed allocation per Unity frame: skipped max "
+             + $"{_settleSkippedAllocMax} B over {_settleSkippedAllocFrames} frame(s), "
+             + $"drawn min {_settleDrawnAllocMin} B over {_settleDrawnAllocFrames} frame(s)");
+
+        // **The counts first, because a comparison between two empty sets
+        // passes.** Fifty-eight skipped frames — the window's fifty-nine less
+        // the one that took a capture — and two drawn ones, frames 1 and 62.
+        if (_settleSkippedAllocFrames != SettleWindow - 2 || _settleDrawnAllocFrames != 2)
+        {
+            Fail(
+                $"the settle step read the allocation counter over "
+                + $"{_settleSkippedAllocFrames} skipped and {_settleDrawnAllocFrames} drawn "
+                + $"frame(s), not {SettleWindow - 2} and 2. The comparison below is stated "
+                + "over those two populations, and over an empty one it says nothing.");
+        }
+
+        // **The instrument is proved alive before it is believed**, and this is
+        // the assertion that would have caught the one it replaced.
+        // `GC.GetAllocatedBytesForCurrentThread` reported zero in this player
+        // over sixty loop bodies that each allocated a 4096-byte array, so a
+        // gate resting on it passed over any allocation whatever. A drawn Unity
+        // frame allocates — this gate's own frame is 832 B by this counter,
+        // which `docs/design/android-toolchain.md` records — so a zero here is
+        // a counter that is not reporting rather than a frame that allocated
+        // nothing.
+        if (_settleDrawnAllocMin <= 0)
+        {
+            Fail(
+                $"the `GC Allocated In Frame` counter read {_settleDrawnAllocMin} B over the "
+                + "settle step's drawn frames. A drawn frame acquires a lease, packs, uploads "
+                + "and marks, and this gate's own frame allocates 832 B by this counter — so "
+                + "this is a counter that is not reporting, and every allocation judgement in "
+                + "this step would be a judgement over a constant.");
+        }
+        else if (_settleSkippedAllocMax >= _settleDrawnAllocMin)
+        {
+            // **Strictly cheaper, not merely no dearer**, and the strictness is
+            // the second half of proving the instrument. A `ProfilerRecorder`
+            // that stopped updating and reported its last real sample for ever
+            // would pass every guard above — it is `Valid`, and it is not zero
+            // — and would report the two populations as equal, which is what
+            // this refuses. The measured gap is 688 B, so this is not a
+            // marginal comparison.
+            Fail(
+                $"a skipped settle frame allocated {_settleSkippedAllocMax} B and the "
+                + $"cheapest drawn one {_settleDrawnAllocMin} B. Skipping does the acquire's, "
+                + "the pack's, the upload's and the bind's work without any of them, so it "
+                + "must cost less managed memory than doing them — and two populations that "
+                + "read exactly alike are a counter that has stopped moving.");
+        }
+        else
+        {
+            // **The detection floor, said out loud.** This is a comparison
+            // between two populations and not a zero bar: the gate's own frame
+            // is in both, so an allocation added to the skipped path smaller
+            // than the gap below is inside the noise this cannot separate.
+            // D3's zero is stated over a per-loop-body instrument, and the one
+            // it names does not report in this player — issue #1468.
+            Line($"settle — the skipped frame is {_settleDrawnAllocMin - _settleSkippedAllocMax}"
+                 + " B/frame cheaper than the cheapest drawn one, both carrying this gate's "
+                 + "own frame; that difference is also this comparison's detection floor");
+        }
+
+        Line($"settle — heap bound {_heapBindsAfterResize} time(s) after the resize, "
+             + $"{_heapBindsAfterForcedRedraw} after the forced redraw, "
+             + $"{_heapBindsBeforeSettle} before the step");
+
+        if (_heapBindsAfterForcedRedraw != _heapBindsBeforeSettle)
+        {
+            Fail(
+                $"the heap bound {_heapBindsAfterForcedRedraw - _heapBindsBeforeSettle} "
+                + "time(s) over the settle window and the forced redraw that follows it. "
+                + "Nothing the binding carries moved: no table was reallocated, no atlas set "
+                + "changed, and the scalars are the ones the step's first frame bound. Every "
+                + "one of those binds is four Material.Set… calls per material for a binding "
+                + "that was already correct.");
+        }
+
+        if (_pendingAfterForcedRedraw)
+        {
+            Fail(
+                "the heap binding was still pending after the forced redraw drew. `BindHeap` "
+                + "clears the flag, so a flag left raised is a `Draw` that read it and did "
+                + "not bind, or a reason raising it on every frame — either of which makes "
+                + "the guard measure nothing.");
+        }
+
+        if (_heapBindsAfterResize != _heapBindsBeforeSettle + 1)
+        {
+            Fail(
+                $"the drawable extent moved by one pixel and the heap bound "
+                + $"{_heapBindsAfterResize - _heapBindsAfterForcedRedraw} time(s). The "
+                + "anti-aliasing width is one of the three scalars `BindHeap` carries and it "
+                + "is derived from that extent, so a binding that did not refresh here shades "
+                + "the resized document at the previous size's edge width — with no "
+                + "reallocation anywhere to raise the flag for it.");
+        }
     }
 
     /// The instrument armed, closed a sample, and the sample is not zero.
@@ -2369,9 +2787,16 @@ public sealed class DashsceneRenderGate : MonoBehaviour
     {
         Application.logMessageReceived -= OnPainterLog;
 
-        // Five Unity recorders. `Finish` deliberately does not release them:
-        // it ends the RUN, and this object outlives its own verdict.
+        // Five Unity recorders, and the settle step's sixth. `Finish`
+        // deliberately does not release them: it ends the RUN, and this object
+        // outlives its own verdict — so a run stopped by a Play-Mode timeout or
+        // a scene unload, which reaches this and never reaches `Finish`, is the
+        // path that would otherwise leak a native handle per run.
         _threadCost.Dispose();
+        if (_settleAlloc.Valid)
+        {
+            _settleAlloc.Dispose();
+        }
         _painter?.Dispose();
         _painter = null;
         _runtime?.Dispose();

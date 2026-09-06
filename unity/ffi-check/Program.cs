@@ -1938,6 +1938,143 @@ Check("NearestDivisor advises a rate that divides, or leaves it alone", () =>
     Expect(CommitPacer.NearestDivisor(0, 30) == 30, "an unknown refresh rate is not advised on");
 });
 
+// ------------------------------------------------------------------- settle loop
+
+// **The third piece of host arithmetic kept where a gate can run it.** The
+// decision `SettleLoop` makes is written once and followed by three sample
+// loops, none of which any CI job compiles — so this is the only place it is
+// executed. `unity/package-gate`'s `settle_path` pins that the three loops
+// route through it; what it cannot do is run it, and a class that skipped the
+// wrong frames would pass every scan in that file.
+
+Check("the settle loop skips only when nothing advanced and nothing is pending", () =>
+{
+    var loop = new SettleLoop();
+
+    // **A fresh loop draws its first frame whatever it is told**, because the
+    // pending bit starts raised rather than being raised by the first
+    // `NoteExtent`. Resting that on the extent sentinel would rest it on -1
+    // never being an extent a host reports, which nothing promises.
+    Expect(loop.Pending, "a fresh loop had nothing pending");
+    loop.NoteExtent(100, 50);
+    Expect(loop.ShouldDraw(false), "a fresh loop did not draw its first frame");
+    Expect(!loop.Pending, "the first draw did not consume the pending bit");
+    Expect(loop.FramesDrawn == 1 && loop.FramesSkipped == 0, "the counters did not record it");
+
+    Expect(!loop.ShouldDraw(false), "a settled frame drew");
+    Expect(loop.FramesSkipped == 1, $"the skip counter reads {loop.FramesSkipped}, not 1");
+
+    Expect(loop.ShouldDraw(true), "an advanced frame skipped");
+    Expect(loop.FramesDrawn == 2, $"the draw counter reads {loop.FramesDrawn}, not 2");
+
+    // **A forced redraw is ONE draw, not a mode.** A pending bit left set
+    // would draw every frame after a rebuilt surface, which is the whole cost
+    // this class removes reintroduced by the reason it exists.
+    loop.ForceRedraw();
+    Expect(loop.ShouldDraw(false), "a forced redraw did not draw");
+    Expect(!loop.ShouldDraw(false), "a forced redraw drew twice");
+
+    // The same extent is not a change. A host reads two integers every frame,
+    // so an extent that forced on every report would never settle at all.
+    loop.NoteExtent(100, 50);
+    Expect(!loop.ShouldDraw(false), "the same extent forced a draw");
+
+    // **One dimension at a time, in both directions.** A transposition alone
+    // moves both fields, so a comparison that read only the width would pass
+    // it — and a window dragged by its side edge, or a device rotated into a
+    // letterboxed mode, moves exactly one.
+    loop.NoteExtent(101, 50);
+    Expect(loop.ShouldDraw(false), "a changed width forced no draw");
+    loop.NoteExtent(101, 51);
+    Expect(loop.ShouldDraw(false), "a changed height forced no draw");
+    loop.NoteExtent(101, 51);
+    Expect(!loop.ShouldDraw(false), "the same extent forced a draw after both had moved");
+
+    loop.NoteExtent(51, 101);
+    Expect(loop.ShouldDraw(false), "a transposed extent forced no draw");
+});
+
+Check("an unchanged heap table is not uploaded again, and a changed one is", () =>
+{
+    // **`BrgPainter.Upload`'s skip, run rather than scanned.** It is the one
+    // decision in this change whose wrong direction is silent: a table reported
+    // as already uploaded is never sent again, so its rows freeze at whatever
+    // the last real upload left and the picture is a commit behind for the life
+    // of the painter. `Runtime/Engine/` is compiled by no CI job and the render
+    // gate draws one static document, so nothing else can tell "skip when
+    // unchanged" from "skip always".
+    var staging = new float[8];
+    var source = new float[] { 1f, 2f, 3f, 4f, 0f, 0f, 0f, 0f };
+
+    Expect(
+        !HeapUpload.AlreadyUploaded(staging, source, -1, 4),
+        "a buffer that was just created reported its rows as already uploaded");
+
+    Array.Copy(source, staging, 4);
+    Expect(
+        HeapUpload.AlreadyUploaded(staging, source, 4, 4),
+        "the rows that were just uploaded reported as changed");
+
+    source[3] = 9f;
+    Expect(
+        !HeapUpload.AlreadyUploaded(staging, source, 4, 4),
+        "a changed float reported as already uploaded");
+
+    // **The length, and not only the contents.** The staging array is longer
+    // than what is live, and a table that grew into floats an earlier frame
+    // left there compares equal over its new length while the rows past its old
+    // one were never sent.
+    Array.Copy(source, staging, 4);
+    Expect(
+        !HeapUpload.AlreadyUploaded(staging, source, 4, 8),
+        "a table that grew reported as already uploaded");
+    Expect(
+        !HeapUpload.AlreadyUploaded(staging, source, 8, 4),
+        "a table that shrank reported as already uploaded");
+
+    // **Past the live floats is not compared.** What sits there is whatever an
+    // earlier frame left, and no row index in this frame's instances reaches
+    // it, so a difference there is not a reason to send the table again.
+    staging[6] = 12345f;
+    Expect(
+        HeapUpload.AlreadyUploaded(staging, source, 4, 4),
+        "a difference past the live floats forced an upload");
+
+    // `SequenceEqual` compares through `IEquatable<float>`, so a NaN already in
+    // the buffer is the NaN the source still carries.
+    var nanStaging = new float[] { float.NaN };
+    var nanSource = new float[] { float.NaN };
+    Expect(
+        HeapUpload.AlreadyUploaded(nanStaging, nanSource, 1, 1),
+        "a NaN that was uploaded reported as changed");
+    Expect(
+        !HeapUpload.AlreadyUploaded(nanStaging, new float[] { 1f }, 1, 1),
+        "a NaN replaced by a number reported as already uploaded");
+});
+
+Check("a fresh runtime's first tick advances, so a load needs no forced redraw", () =>
+{
+    // **The half of the settle decision that is the runtime's**, and the
+    // reason `SettleLoop` carries no "document replaced" reason of its own:
+    // `LiveScene::advanced` is true until the first `mark_shown`, so the tick
+    // after a load reports the advance itself. A class that took a load as a
+    // host-side reason would be a second copy of a rule the library already
+    // states, and the two would drift.
+    using var runtime = new DashsceneRuntime();
+    runtime.LoadDocument(File.ReadAllBytes(fixture));
+    Expect(runtime.Tick(0f), "the first tick after a load reported no advance");
+
+    // And it stops advancing once the commit is marked shown, which is what
+    // makes a skip reachable at all: a tick that always advanced would leave
+    // `ShouldDraw` correct and every frame drawn.
+    using (var lease = runtime.AcquireFrame())
+    {
+        lease.MarkDrawn();
+    }
+
+    Expect(!runtime.Tick(0f), "a marked, static document still reported an advance");
+});
+
 // ------------------------------------------------------------------- thread cost
 
 // **The other half of the same argument `CommitPacer` is here for.** The
