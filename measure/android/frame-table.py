@@ -14,27 +14,33 @@ rather than preferred: the CPU attribution below joins two line kinds by time,
 and `-v time` gives no year, so two captures either side of midnight cannot be
 ordered. `measure/android/frame-capture.sh` passes it.
 
-Five line kinds are read and everything else is ignored:
+Six line kinds are read and everything else is ignored:
 
     <epoch> <pid> <tid> I dashscene: <scene> over <n> frames — tick ...
     <epoch> <pid> <tid> I Unity   : [showcase] frame cost — <entry> at WxH ...
     <epoch> <pid> <tid> I Unity   : [showcase] thread cost — <entry> at WxH ...
     <epoch> <pid> <tid> I dashscene: attached a WxH surface
     <epoch> <pid> <tid> I dashscene-cpu: <the /proc/<pid>/stat line>
+    <epoch> <pid> <tid> I dashscene-window: entry <n> start|end pid=<pid>
 
 The first is `Sample::line()`, the lean host's. The next two are the Unity
 showcase player's, from `DashsceneFrameCost.Line()` and
 `ThreadCostSample.Line()` — one parser reads all three because the CPU join
 below is the same join for each, and a second script would be a second place for
 it to be wrong. The fourth is the lean host's attach line, which is where its
-rows get the extent a Unity row carries in its own line. The last is written by
+rows get the extent a Unity row carries in its own line. The fifth is written by
 the device-side sampler
 `frame-capture.sh` and `unity-frame-cost.sh` start, through the `log` command,
 **so that every kind carries one clock and one ordering**. Reading `/proc/<pid>/stat` into a host file
 instead would need the device epoch mapped onto the host's, and `date +%s` on
 the device is whole seconds — a ±1 s error on an interval of a few seconds.
 Routing the readings through logcat removes the mapping rather than estimating
-it.
+it. The sixth brackets one compositor window per entry per sweep (issue
+#1457) — `unity-frame-cost.sh` logs it beside a `dumpsys SurfaceFlinger
+--timestats -clear`/`-dump` pair, states the same pid the CPU line's stat text
+does rather than a sweep letter, and `--table unity-cpu` joins the dump's own
+`totalFrames` for the package's layer, passed with `--timestats`, to the
+sampler readings this window brackets.
 
 ## What it does not do
 
@@ -51,11 +57,13 @@ the reader drops what they judge to be warm-up.
 
 ## Which table
 
-`--table` selects the kind, because the three carry different columns and a
+`--table` selects the kind, because the four carry different columns and a
 table that reported a Unity line under `paint`/`submit` headings would be
 labelling a quantity with another instrument's word. `lean` is the default and
-is what `frame-capture.sh` asks for; `unity-frames` and `unity-threads` are the
-two `unity-frame-cost.sh` writes from one set of captures.
+is what `frame-capture.sh` asks for; `unity-frames`, `unity-threads` and
+`unity-cpu` are the three `unity-frame-cost.sh` writes from one set of
+captures — the last needs `--timestats` as well, since its rows join the
+captures to files `frame-table.py` does not read as logcat.
 
 ## Unreadable lines
 
@@ -81,6 +89,7 @@ import argparse
 import os
 import re
 import sys
+from collections import Counter
 
 # `Sample::line()`, and the only place its shape is written down outside the
 # Rust that produces it.
@@ -231,6 +240,40 @@ CPU = re.compile(
     r"^\s*(?P<epoch>\d+\.\d+)\s+\d+\s+\d+\s+I\s+dashscene-cpu:\s+(?P<stat>\d+ \(.*)$"
 )
 
+# One compositor window's start or end, logged by `unity-frame-cost.sh` beside
+# a `dumpsys SurfaceFlinger --timestats -clear`/`-dump` pair (issue #1457). No
+# epoch is carried in the message itself: the boundary is the epoch `-v epoch`
+# already stamps on the line, the same source `CPU` above reads its own from,
+# rather than a device `date` — which is whole seconds and the reason this
+# project already routes the CPU reading through logcat instead of estimating
+# a host mapping for it.
+#
+# **The pid IS carried in the message**, unlike the epoch — `unity-frame-cost.sh`
+# resolves it once per sweep (the same value `ds_cpu_sampler_start` samples) and
+# writes it into every marker of that sweep. A window keyed on the sweep's
+# LETTER instead, inferred from whichever `dashscene-cpu` line came first in
+# that sweep's file, silently named an earlier sweep's process whenever
+# `ds_logcat_clear` failed to clear the ring ahead of it — which `lib.sh`
+# documents as ordinary on Android 11 and later. Keying on the pid this line
+# states directly is the same fix `stat_jiffies` already made for the CPU
+# line: identity from content, not from position in the file.
+WINDOW = re.compile(
+    r"^\s*(?P<epoch>\d+\.\d+)\s+\d+\s+\d+\s+I\s+dashscene-window:\s+"
+    r"entry (?P<entry>\d+) (?P<edge>start|end) pid=(?P<pid>\d+)\s*$"
+)
+
+# `<sweep>-entry-<n>-sf-timestats.txt`, `unity-frame-cost.sh`'s per-entry
+# compositor dump — `<sweep>` a letter at a device (`A-entry-1-...`), and
+# whatever `read`'s own stripped basename gives a capture with no `sweep-`
+# prefix, which is what the committed fixture is named for. The sweep and the
+# entry number are read off the file name rather than its content, matching
+# how a sample row's own sweep is read off its capture's file name.
+TIMESTATS_NAME = re.compile(r"^(?P<sweep>.+)-entry-(?P<entry>\d+)-sf-timestats\.txt$")
+
+# The app id `read_timestats` searches a dump's layer names for, when the
+# caller passes none of its own.
+DEFAULT_PACKAGE = "com.driftsys.dashscene.showcase"
+
 # How many drawn frames one thread-time window covers.
 #
 # **Held to `ThreadCostAccumulator.Sample` by a gate, not by a comment.** This
@@ -296,14 +339,22 @@ class Capture:
         self.cpu = {}
         # pid -> time-ordered [(epoch, (width, height))].
         self.attaches = {}
+        # (pid, entry) -> {"start": epoch, "end": epoch}, from the
+        # `dashscene-window` lines `unity-frame-cost.sh` logs per entry. Keyed
+        # on the pid the line states rather than on a sweep letter, for the
+        # reason `WINDOW`'s own comment gives.
+        self.windows = {}
 
 
 def read(paths):
     """Return a `Capture` over the given logcat captures.
 
-    **Five line kinds are read and everything else is ignored.** The three
+    **Six line kinds are read and everything else is ignored.** The three
     instrument kinds are de-duplicated by (kind, pid, epoch) and the attach and
-    CPU records by (pid, epoch), for the reason `keep` gives.
+    CPU records by (pid, epoch), for the reason `keep` gives; the sixth, a
+    `dashscene-window` boundary, is de-duplicated by keeping the first
+    occurrence per (pid, entry, edge) rather than through a separate set —
+    see the `WINDOW` branch below.
 
 **Every kind is de-duplicated**, and `frame-capture.sh` passes
     every `frames-<scene>.log` at once, so a line present in two captures would
@@ -404,6 +455,19 @@ def read(paths):
                     continue
                 seen_cpu.add((pid, epoch))
                 cpu.setdefault(pid, []).append((epoch, jiffies))
+                continue
+            found = WINDOW.match(line)
+            if found:
+                entry = int(found.group("entry"))
+                edge = found.group("edge")
+                epoch = float(found.group("epoch"))
+                window_pid = int(found.group("pid"))
+                # A re-read (`-T 1` re-printing the newest buffered record)
+                # repeats the same edge with the same epoch, so the first
+                # occurrence is kept rather than de-duplicated by a separate
+                # set — a second, different epoch for the same edge cannot
+                # happen without two entries sharing a number.
+                capture.windows.setdefault((window_pid, entry), {}).setdefault(edge, epoch)
     for readings in cpu.values():
         readings.sort()
     for events in attaches.values():
@@ -519,6 +583,188 @@ def extent_over(events, start, end):
     return distinct
 
 
+def read_timestats(path, package):
+    """The package's layer out of one `dumpsys SurfaceFlinger --timestats -dump`.
+
+    Returns `{"total_frames", "dropped_frames", "average_fps"}` or `None` when
+    no layer block names the package, or the block found does not parse as
+    whole numbers — a dump taken before the app's first frame, or one the ring
+    cut mid-write. Two or more candidate blocks are not themselves an
+    Unreadable case: the `(BLAST)` preference below picks between them, with
+    no further check that exactly one remains. `None` is reported under the
+    `unity-cpu` table's own Unreadable heading and never folded into
+    a row as a zero: a zero here would read as a compositor that presented
+    nothing, which is a claim about the run rather than about a dump this
+    parser could not read.
+
+    Blocks are separated by a blank line, the shape `gpu-capture.sh`'s own
+    dump already has; a block is a candidate when its `layerName` line
+    contains `package`, the same substring test that script's own layer
+    discovery uses (`grep -F`) rather than composing a name from parts that
+    have changed across SurfaceFlinger releases.
+
+    **A `(BLAST)` match is preferred over any other candidate**, for the
+    reason `gpu-capture.sh` gives at its own layer discovery: a SurfaceView
+    produces a container layer and a `(BLAST)` child beneath it that is the
+    one actually receiving buffers, and `--maxlayers 8` can carry both (or a
+    stale layer from a previous launch the compositor has not reaped) in one
+    dump — a name-only match would take whichever sorts first rather than the
+    layer this app is actually presenting through.
+    """
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        lines = [line.replace("\r", "") for line in handle.read().splitlines()]
+    block = []
+    blocks = []
+    for line in lines:
+        if line.strip() == "":
+            if block:
+                blocks.append(block)
+            block = []
+        else:
+            block.append(line)
+    if block:
+        blocks.append(block)
+    candidates = []
+    for block in blocks:
+        layer_line = next((line for line in block if line.startswith("layerName = ")), None)
+        if layer_line is None or package not in layer_line:
+            continue
+        candidates.append((layer_line, block))
+    if not candidates:
+        return None
+    blast = [pair for pair in candidates if "(BLAST)" in pair[0]]
+    _, block = (blast or candidates)[0]
+    values = {}
+    for line in block:
+        found = re.match(r"^(totalFrames|droppedFrames|averageFPS) = (.+)$", line)
+        if found and found.group(1) not in values:
+            values[found.group(1)] = found.group(2)
+    if "totalFrames" not in values or "droppedFrames" not in values:
+        return None
+    try:
+        total_frames = int(values["totalFrames"])
+        dropped_frames = int(values["droppedFrames"])
+    except ValueError:
+        return None
+    return {
+        "total_frames": total_frames,
+        "dropped_frames": dropped_frames,
+        "average_fps": values.get("averageFPS", "—"),
+    }
+
+
+def unity_cpu_rows(capture, timestats_paths, clk_tck, package):
+    """One row per compositor window: (sweep, entry), joined to the sampler.
+
+    **The window is the entry's dwell, per sweep** (issue #1457) — a
+    sweep-wide timestats window would give one figure per sweep rather than
+    per row, so `unity-frame-cost.sh` clears and dumps once per entry instead.
+    A frame-cost row cannot be aligned to a compositor window on its own,
+    which is why this is a fourth table with its own rows rather than a
+    column joined onto `unity-frames.md`.
+
+    Returns `(rows, unreadable)`; `unreadable` holds `(path, reason)` for a
+    dump `read_timestats` could not find the package's layer in, or whose name
+    does not fit the pattern `unity-frame-cost.sh` writes at all.
+
+    **Every path given is a row or a listed reason, never silently dropped.**
+    Unlike a logcat line, which shares its stream with content this parser has
+    no opinion about, every `--timestats` argument is a file the caller chose
+    to name specifically — so one this pattern rejects is a caller mismatch
+    worth surfacing, not an ordinary line to pass over.
+    """
+    frame_samples_by_sweep = {}
+    for sample in capture.samples["unity-frames"]:
+        frame_samples_by_sweep.setdefault(sample["sweep"], []).append(sample)
+    thread_samples_by_sweep = {}
+    for sample in capture.samples["unity-threads"]:
+        thread_samples_by_sweep.setdefault(sample["sweep"], []).append(sample)
+
+    # **Which app pid a sweep's own instrument lines carry**, the same
+    # authoritative source `rows()` already trusts for the CPU join —
+    # `dashscene-window` states its own pid directly (see `WINDOW`), but a
+    # dump's file name states only the sweep letter, so resolving "this
+    # sweep's pid" still has to go through the sweep's own samples. The mode
+    # over both instrument kinds is what survives a stray line from another
+    # launch outnumbered by the sweep's real ones; it does not survive a
+    # sweep whose own samples are themselves the minority.
+    sweep_pid = {}
+    for sweep in set(frame_samples_by_sweep) | set(thread_samples_by_sweep):
+        pids = Counter(
+            sample["pid"]
+            for sample in frame_samples_by_sweep.get(sweep, [])
+            + thread_samples_by_sweep.get(sweep, [])
+        )
+        if pids:
+            sweep_pid[sweep] = pids.most_common(1)[0][0]
+
+    out = []
+    unreadable = []
+    for path in timestats_paths:
+        name = os.path.basename(path)
+        match = TIMESTATS_NAME.match(name)
+        if match is None:
+            unreadable.append((path, "name does not fit <sweep>-entry-<n>-sf-timestats.txt"))
+            continue
+        sweep = match.group("sweep")
+        entry = int(match.group("entry"))
+
+        result = read_timestats(path, package)
+        if result is None:
+            unreadable.append(
+                (path, "no layer named the package, or its totalFrames/droppedFrames did not parse")
+            )
+            continue
+
+        pid = sweep_pid.get(sweep)
+        window = capture.windows.get((pid, entry), {}) if pid is not None else {}
+        start, end = window.get("start"), window.get("end")
+        span = None if start is None or end is None else end - start
+        # **An interval that opens after it closes is not an interval**, the
+        # same guard `cpu_over` already applies to its own pair of readings —
+        # a re-read keeping a stale epoch, or a device clock step between the
+        # two `adb shell log` round trips, must not print a negative or zero
+        # `window s` as though it were a real duration.
+        if span is not None and span <= 0:
+            span = None
+
+        readings = capture.cpu.get(pid, []) if pid is not None else []
+        cpu = None if span is None else cpu_over(readings, start, end, clk_tck)
+
+        drawn = 0
+        extents = []
+        for sample in frame_samples_by_sweep.get(sweep, []):
+            # **Scoped to the resolved pid, like the window and the CPU join
+            # above.** A stray sample from another launch sharing this
+            # sweep's capture (the same `ds_logcat_clear` failure the pid
+            # resolution above exists for) must not add its frames or its
+            # extent to a row it does not belong to.
+            if sample["pid"] != pid:
+                continue
+            if span is None or not start < sample["epoch"] <= end:
+                continue
+            drawn += sample["frames"]
+            if sample["extent"] not in extents:
+                extents.append(sample["extent"])
+
+        out.append(
+            {
+                "sweep": sweep,
+                "entry": entry,
+                "extents": extents,
+                "start": start,
+                "end": end,
+                "span": span,
+                "presented": result["total_frames"],
+                "dropped": result["dropped_frames"],
+                "cpu": cpu,
+                "drawn": drawn,
+            }
+        )
+    out.sort(key=lambda row: (row["sweep"], row["entry"]))
+    return out, unreadable
+
+
 def rows(samples, cpu, attaches, clk_tck):
     """One row per sample, numbered per (pid, scene), with CPU attributed.
 
@@ -630,9 +876,9 @@ def extent_cell(extents):
 
 
 def cpu_footnote(clk_tck, out):
-    """The CPU column's meaning, written once for all three tables.
+    """The CPU column's meaning, written once for all four tables.
 
-    One function rather than three copies: the `—` rule below is the difference
+    One function rather than four copies: the `—` rule below is the difference
     between "the sampler was not running" and "the process was idle", and a rule
     stated in three places drifts in one of them.
     """
@@ -974,6 +1220,135 @@ def emit_unity_threads(table, source, describe, clk_tck, unreadable, out):
     unreadable_report(unreadable, "unity-threads", out)
 
 
+def emit_unity_cpu(table, source, describe, clk_tck, unreadable, out):
+    """The Unity showcase player's CPU-per-presented-frame table (issue #1457).
+
+    D1 of
+    `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`
+    divides the sampler's `utime + stime` by the **compositor's** frame count
+    over the same window, not the player's own drawn-frame count — a layer
+    that presents nothing for part of a window makes drawn and presented
+    differ, which `docs/design/android-toolchain.md` records happening on
+    `typography`. `presented frames` and `dropped` are the compositor's own
+    count for the package's layer; `drawn frames (player)` is
+    `unity-frames.md`'s frame-cost samples whose epoch falls inside this same
+    window, so that gap is visible on the row rather than assumed away.
+    """
+    print(
+        f"# Unity CPU per presented frame — {describe}"
+        if describe
+        else "# Unity CPU per presented frame",
+        file=out,
+    )
+    print(file=out)
+    print(SOURCES[source], file=out)
+    print(file=out)
+    print(
+        "One row per compositor window: `dumpsys SurfaceFlinger --timestats` "
+        "cleared and dumped once per entry, over the same seconds as that "
+        "entry's dwell — a window over the whole sweep would give one figure "
+        "per sweep rather than per row. `presented frames` and `dropped` are "
+        "read from the package's own layer in that dump; a dump whose layer "
+        "cannot be found is reported under Unreadable below rather than as a "
+        "row of zeroes.",
+        file=out,
+    )
+    print(file=out)
+    print(
+        "| sweep | entry | extent | window s | presented frames | dropped "
+        "| cpu % of one core | cpu ms per presented frame "
+        "| drawn frames (player) |",
+        file=out,
+    )
+    print(
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        file=out,
+    )
+    for row in table:
+        print(
+            f"| {row['sweep']} | {row['entry']} | {extent_cell(row['extents'])} "
+            f"| {window_span_cell(row)} | {row['presented']} | {row['dropped']} "
+            f"| {cpu_cell(row)} | {cpu_ms_cell(row)} | {row['drawn']} |",
+            file=out,
+        )
+    print(file=out)
+    cpu_footnote(clk_tck, out)
+    print(
+        "`cpu ms per presented frame` is `window s × cpu % / 100 × 1000 / "
+        "presented frames` — from the three columns beside it on the same "
+        "row, never recomputed from a different pair. `(open)` in `window s` "
+        "here means one of this entry's two `dashscene-window` markers is "
+        "missing — every `log` call `unity-frame-cost.sh` makes to write one "
+        "is `|| true`, so a dropped write reads as an incomplete window rather "
+        "than aborting the sweep — which is a different cause from the one "
+        "the CPU footnote above states for its own `(open)`.",
+        file=out,
+    )
+    unity_cpu_unreadable_report(unreadable, out)
+
+
+def window_span_cell(row):
+    """The `window s` cell.
+
+    `(open)` where the window has only one boundary — a `dashscene-window`
+    marker `unity-frame-cost.sh` never wrote, since every `log` call it makes
+    to write one is `|| true`. `—` where both boundaries exist but the
+    interval they describe is not positive — a re-read that kept a stale
+    epoch, or a device clock step between the two `adb shell log` round
+    trips — which `unity_cpu_rows` already turned into a `None` span rather
+    than print a negative or zero duration as though it were real.
+    """
+    if row["start"] is None or row["end"] is None:
+        return "(open)"
+    if row["span"] is None:
+        return "—"
+    return f"{row['span']:.1f}"
+
+
+def cpu_ms_cell(row):
+    """The `cpu ms per presented frame` cell.
+
+    `—` wherever one of its three inputs is: no CPU figure, no window span, or
+    a compositor count of zero presented frames.
+    """
+    if row["cpu"] is None or row["span"] is None or row["presented"] <= 0:
+        return "—"
+    ms_per_frame = row["span"] * row["cpu"] / 100.0 * 1000.0 / row["presented"]
+    return f"{ms_per_frame:.2f}"
+
+
+def unity_cpu_unreadable_report(entries, out):
+    """The per-entry dumps this table could not place, each with its own reason.
+
+    Its own report rather than `unreadable_report`'s: that one describes a
+    logcat line that carried an instrument's marker and failed to parse, where
+    this describes a dump file — no matching layer block, a matched block
+    whose totalFrames or droppedFrames did not parse, or a name
+    `TIMESTATS_NAME` does not fit at all — a different failure, so it needs
+    its own wording rather than reusing text that would claim a marker this
+    table has none of.
+    """
+    print(file=out)
+    print("## Unreadable", file=out)
+    print(file=out)
+    if not entries:
+        print("None. Every dump named the package's layer.", file=out)
+        return
+    print(
+        f"{len(entries)} dump(s) could not be placed in the table above — no "
+        "layer naming the package (a capture taken before the app's first "
+        "frame, one the ring cut mid-write, or a layer name changed by a "
+        "SurfaceFlinger release), a matched layer whose totalFrames or "
+        "droppedFrames did not parse (the ring cut it mid-write), or a name "
+        "`TIMESTATS_NAME` does not fit at all. Each is named verbatim, with "
+        "its own reason.",
+        file=out,
+    )
+    print(file=out)
+    for path, reason in entries:
+        print(f"- `{os.path.basename(path)}`: {reason}", file=out)
+
+
 def span_cell(row):
     """The `wall s` cell — the same rule the lean table prints inline."""
     if row["span"] is None:
@@ -992,7 +1367,9 @@ def cpu_cell(row):
 
 
 # One emitter per table kind, keyed by the same names `MARKERS` uses so a kind
-# cannot exist without both a pattern and a table to print it in.
+# cannot exist without both a pattern and a table to print it in. `unity-cpu`
+# is not here: its rows come from `unity_cpu_rows`, not `rows`, and `main`
+# dispatches it separately for that reason.
 EMITTERS = {
     "lean": emit,
     "unity-frames": emit_unity_frames,
@@ -1011,14 +1388,22 @@ def main(argv):
     # **Which instrument's table, with no widening of one to hold all three.**
     # A Unity `draw` printed under a `submit` heading would label a quantity
     # with a word that already names a different one, which is the rename
-    # `demo-android/src/timing.rs` records.
-    parser.add_argument("--table", default="lean", choices=sorted(MARKERS))
+    # `demo-android/src/timing.rs` records. `unity-cpu` is a fourth choice not
+    # in `MARKERS`: its rows are a join over dump files and window lines, not
+    # one more instrument marker.
+    parser.add_argument(
+        "--table", default="lean", choices=sorted(set(MARKERS) | {"unity-cpu"})
+    )
     parser.add_argument(
         "--describe",
         default="",
         help="what was measured, put in the heading verbatim",
     )
     parser.add_argument("--clk-tck", type=int, default=CLK_TCK_DEFAULT)
+    # `--table unity-cpu` only: the per-entry `dumpsys SurfaceFlinger
+    # --timestats -dump` files, and the app id to find inside them.
+    parser.add_argument("--timestats", nargs="*", default=[])
+    parser.add_argument("--package", default=DEFAULT_PACKAGE)
     parser.add_argument("logcat", nargs="+")
     args = parser.parse_args(argv[1:])
     if args.clk_tck <= 0:
@@ -1030,6 +1415,27 @@ def main(argv):
     except Unreadable as error:
         print(f"frame-table: {error}", file=sys.stderr)
         return 2
+
+    if args.table == "unity-cpu":
+        if not args.timestats:
+            print(
+                "frame-table: --table unity-cpu needs --timestats FILE...",
+                file=sys.stderr,
+            )
+            return 2
+        cpu_table, cpu_unreadable = unity_cpu_rows(
+            capture, args.timestats, args.clk_tck, args.package
+        )
+        if not cpu_table and not cpu_unreadable:
+            print(
+                f"frame-table: no unity-cpu row over {', '.join(args.timestats)}.",
+                file=sys.stderr,
+            )
+            return 1
+        emit_unity_cpu(
+            cpu_table, args.source, args.describe, args.clk_tck, cpu_unreadable, sys.stdout
+        )
+        return 0
 
     samples = capture.samples[args.table]
     unreadable = capture.unreadable[args.table]

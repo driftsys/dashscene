@@ -1,0 +1,33 @@
+# dumpsys SurfaceFlinger --timestats
+
+Cut down the same way as `unity-frame-cost-entry-1-sf-timestats.txt`. This
+entry's window (in `unity-frame-cost.log`) opens after the fixture's last
+`dashscene-cpu` reading, so `cpu_over` has no reading to bracket it with — the
+row must read `—`, never a number extrapolated past the sampler's last
+reading.
+
+SurfaceFlinger TimeStats:
+Legacy stats are as follows:
+statsStart = 1705482075
+statsEnd = 1705482085
+totalFrames = 200
+missedFrames = 2
+
+displayRefreshRate = 60 fps
+renderRate = 60 fps
+uid = 10273
+layerName = SurfaceView[com.driftsys.dashscene.showcase/com.unity3d.player.UnityPlayerActivity](BLAST)#8329
+packageName =
+gameMode = Unsupported
+totalFrames = 200
+droppedFrames = 2
+lateAcquireFrames = 0
+badDesiredPresentFrames = 0
+Jank payload for this layer:
+totalTimelineFrames = 0
+jankyFrames = 0
+SetFrateRate vote for this layer:
+frameRate = 60.00
+frameRateCompatibility = Default
+seamlessness = ShouldBeSeamless
+averageFPS = 33.000

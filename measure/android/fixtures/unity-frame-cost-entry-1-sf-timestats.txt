@@ -1,0 +1,33 @@
+# dumpsys SurfaceFlinger --timestats
+
+Cut down from the run recorded under "The thread-time line, and the URP
+floor" in docs/design/android-toolchain.md — the full dump is
+driftsys/dashscene-v021-lanes/probe-1443/gpu-thread-cost/sf-timestats.txt.
+`unity-frame-cost.sh` takes one of these per entry per sweep, cleared and
+dumped over that entry's own dwell (issue #1457).
+
+SurfaceFlinger TimeStats:
+Legacy stats are as follows:
+statsStart = 1705482057
+statsEnd = 1705482065
+totalFrames = 163
+missedFrames = 0
+
+displayRefreshRate = 60 fps
+renderRate = 60 fps
+uid = 10273
+layerName = SurfaceView[com.driftsys.dashscene.showcase/com.unity3d.player.UnityPlayerActivity](BLAST)#8329
+packageName =
+gameMode = Unsupported
+totalFrames = 163
+droppedFrames = 0
+lateAcquireFrames = 0
+badDesiredPresentFrames = 0
+Jank payload for this layer:
+totalTimelineFrames = 0
+jankyFrames = 0
+SetFrateRate vote for this layer:
+frameRate = 60.00
+frameRateCompatibility = Default
+seamlessness = ShouldBeSeamless
+averageFPS = 33.130
