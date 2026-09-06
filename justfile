@@ -1427,6 +1427,19 @@ unity-editor method="Run" unity_version="6000.3.23f1":
     fi
     urp="$(jq -r .version "${urp_json}")"
 
+    # **uGUI, because this recipe is the only CHECK that compiles the samples.**
+    # It carries `UnityEngine.UI` and TextMeshPro, story #1444's Canvas samples
+    # compile against both, and URP depends on neither — so without this line
+    # this gate would be the first thing to go red on a story whose own "Done
+    # when" names it. `unity/package-gate`'s `canvas_baseline.rs` pins all three
+    # recipes that compile the samples against this.
+    ugui_json="${builtin}/com.unity.ugui/package.json"
+    if [ ! -f "${ugui_json}" ]; then
+      echo "unity-editor: this editor ships no built-in uGUI at ${ugui_json}" >&2
+      exit 1
+    fi
+    ugui="$(jq -r .version "${ugui_json}")"
+
     # **The package pins a URP version and this reads one; they must agree.**
     # `package.json`'s `dependencies` entry is what a consumer resolves, and it
     # is a literal — so an editor carrying a different built-in URP would be
@@ -1458,7 +1471,8 @@ unity-editor method="Run" unity_version="6000.3.23f1":
     {
       "dependencies": {
         "com.driftsys.dashscene": "file:${package}",
-        "com.unity.render-pipelines.universal": "${urp}"
+        "com.unity.render-pipelines.universal": "${urp}",
+        "com.unity.ugui": "${ugui}"
       }
     }
     JSON
@@ -1479,6 +1493,15 @@ unity-editor method="Run" unity_version="6000.3.23f1":
     # directory would make this recipe modify the thing it is checking.
     mkdir -p "${project}/Assets/Samples"
     cp -R "${package}"/Samples~/. "${project}/Assets/Samples/"
+
+    # **The bake shader is compiled here too, and it is not in the package.**
+    # `unity/demo/SpriteBake.shader` is what `CanvasSprites` resolves at load,
+    # and this recipe is the only gate that compiles shaders through a real
+    # graphics device without building a player — so staging it is what turns a
+    # shader error into a failure in minutes rather than at the end of a
+    # player build. It sits outside the package because `unity/package-gate`
+    # holds every shader inside it to being a registered painter material class.
+    cp "${root}/unity/demo/SpriteBake.shader" "${project}/Assets/"
 
     # NET_Standard is Unity's default, and this gate asserts it rather than
     # assuming it — the editor script reads the level back and fails if it is
@@ -2782,10 +2805,101 @@ demo-exports profile="debug":
 # that added a file.
 #
 
-# Build the Unity showcase player from this package and run it.
-unity-demo unity_version="6000.3.23f1" action="run":
+# TextMeshPro's essential resources, extracted into a generated project.
+#
+# **Extracted rather than imported, and that is a measurement rather than a
+# preference.** `TMP_PackageResourceImporter.ImportResources` calls
+# `AssetDatabase.ImportPackage`, which QUEUES the import: in a batch-mode
+# `-executeMethod` that returns straight into `-quit`, nothing is written at all
+# — measured on 6000.3.23f1, where the run reported success and the project had
+# no `Assets/TextMesh Pro` afterwards.
+#
+# **Why the resources are needed.** `com.unity.ugui` ships exactly one shader,
+# an editor-internal one; every run-time distance-field shader a `TMP_Text`
+# draws with is in this package of resources, and `TMP_Settings` — which
+# `TMP_FontAsset.CreateFontAsset` dereferences — is in it too.
+#
+# A `.unitypackage` is a gzipped tar of one directory per asset, each holding
+# `pathname` (the project-relative path), `asset` (the bytes) and `asset.meta`
+# (the GUID). Rebuilding the tree from `pathname` is what keeps the GUIDs, which
+# is what makes the settings asset's references to those shaders resolve.
+_tmp-essentials project editor:
     #!/usr/bin/env bash
     set -euo pipefail
+    editor_dir="$(dirname "{{ editor }}")"
+    package=""
+    for candidate in \
+      "${editor_dir}/../Resources/PackageManager/BuiltInPackages/com.unity.ugui" \
+      "${editor_dir}/Data/PackageManager/BuiltInPackages/com.unity.ugui" \
+      "${editor_dir}/../Data/PackageManager/BuiltInPackages/com.unity.ugui"; do
+      if [ -d "${candidate}" ]; then
+        package="${candidate}"
+        break
+      fi
+    done
+    if [ -z "${package}" ]; then
+      echo "_tmp-essentials: no com.unity.ugui near {{ editor }}" >&2
+      exit 1
+    fi
+
+    archive="${package}/Package Resources/TMP Essential Resources.unitypackage"
+    if [ ! -f "${archive}" ]; then
+      echo "_tmp-essentials: this editor ships no ${archive}" >&2
+      exit 1
+    fi
+
+    staging="$(mktemp -d)"
+    trap 'rm -rf "${staging}"' EXIT
+    tar -xzf "${archive}" -C "${staging}"
+
+    written=0
+    for entry in "${staging}"/*/; do
+      [ -f "${entry}pathname" ] || continue
+      relative="$(head -n 1 "${entry}pathname")"
+      case "${relative}" in
+        Assets/*) ;;
+        *) continue ;;
+      esac
+      mkdir -p "{{ project }}/$(dirname "${relative}")"
+      if [ -f "${entry}asset" ]; then
+        cp "${entry}asset" "{{ project }}/${relative}"
+        written=$((written + 1))
+      fi
+      if [ -f "${entry}asset.meta" ]; then
+        cp "${entry}asset.meta" "{{ project }}/${relative}.meta"
+      fi
+    done
+
+    # **Asserted, because an empty extraction is the failure this step exists to
+    # prevent.** A player built with no TMP resources draws a Canvas with no
+    # text, which reads as a large difference rather than as a missing input.
+    if [ "${written}" -lt 1 ]; then
+      echo "_tmp-essentials: the archive yielded no asset under Assets/." >&2
+      echo "_tmp-essentials: its layout is not the one this step reads." >&2
+      exit 1
+    fi
+    echo "_tmp-essentials: ${written} asset(s) into {{ project }}/Assets/TextMesh Pro"
+
+# Build the Unity showcase player from this package and run it.
+unity-demo unity_version="6000.3.23f1" action="run" renderer="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # **`renderer` is empty by default, and empty is not `painter`.** With no
+    # `-renderer` the player runs `DashsceneShowcase` exactly as it always has,
+    # which is what keeps `run` a demonstration; with one,
+    # `DashsceneCanvasBaseline` takes the scene over and drives that renderer
+    # (story #1444, D3's "one player, two renderers and a floor").
+    case "{{renderer}}" in
+      ""|painter|canvas|none) ;;
+      *)
+        echo "unity-demo: renderer must be painter, canvas or none, not '{{renderer}}'" >&2
+        exit 1
+        ;;
+    esac
+    renderer_args=()
+    if [ -n "{{renderer}}" ]; then
+      renderer_args=(-renderer "{{renderer}}")
+    fi
     # The editor resolution `unity-editor` and `unity-render` both use. Issue
     # #1316 is where the three copies are factored out together.
     editor="${DASHSCENE_UNITY:-/Applications/Unity/Hub/Editor/{{unity_version}}/Unity.app/Contents/MacOS/Unity}"
@@ -2823,6 +2937,19 @@ unity-demo unity_version="6000.3.23f1" action="run":
       exit 1
     fi
     urp="$(jq -r .version "${urp_json}")"
+
+    # **uGUI, read from the editor for URP's reason.** It carries
+    # `UnityEngine.UI` and TextMeshPro, which story #1444's Canvas samples
+    # compile against, and URP does not depend on it — so without this line the
+    # samples fail to compile at the end of a player build rather than at the
+    # start of one. `unity/package-gate`'s `canvas_baseline.rs` pins the three
+    # recipes that compile the samples against this.
+    ugui_json="${builtin}/com.unity.ugui/package.json"
+    if [ ! -f "${ugui_json}" ]; then
+      echo "unity-demo: this editor ships no built-in uGUI at ${ugui_json}" >&2
+      exit 1
+    fi
+    ugui="$(jq -r .version "${ugui_json}")"
 
     # A UPM dependency is a MINIMUM, so only a pin the editor is BELOW is a
     # problem — and without this the whole player build runs before UPM fails to
@@ -2898,7 +3025,8 @@ unity-demo unity_version="6000.3.23f1" action="run":
     {
       "dependencies": {
         "com.driftsys.dashscene": "file:${package}",
-        "com.unity.render-pipelines.universal": "${urp}"
+        "com.unity.render-pipelines.universal": "${urp}",
+        "com.unity.ugui": "${ugui}"
       }
     }
     JSON
@@ -2924,6 +3052,33 @@ unity-demo unity_version="6000.3.23f1" action="run":
     # is copied in rather than reached inside the package — the same reason
     # `unity-editor` copies it.
     cp "${package}"/Samples~/Showcase/*.cs "${project}/Assets/"
+
+    # **Under `Assets/Resources/`, which is not tidiness.** `CanvasSprites`
+    # resolves the bake shader with `Shader.Find`, and a player build strips a
+    # shader no scene references unless it sits under a `Resources` folder —
+    # issue #1313 is this repository's own measured case of that. The shader is
+    # outside the package because `unity/package-gate` holds every shader INSIDE
+    # it to being a registered painter material class; that file's own header
+    # carries the argument.
+    mkdir -p "${project}/Assets/Resources"
+    cp "${root}/unity/demo/SpriteBake.shader" "${project}/Assets/Resources/"
+
+    # **The corpus cascade, staged under the producer's own face keys.** Story
+    # #1444's Canvas typesets with TextMeshPro, which needs the font FILE — and a
+    # glyph run names its face only as a cascade slot, which `ds_demo_face_key`
+    # turns into `<family>-<weight>`. `DemoFonts.Create` builds one TMP asset per
+    # file here and names it by the file's stem, so a name that disagrees with a
+    # key is a counted refusal and a warning rather than a wrong glyph.
+    #
+    # The three are `corpus/showcase/src/resources.rs`'s cascade, in its order.
+    cp "${root}/unity/demo/DemoFonts.cs" "${project}/Assets/Editor/"
+    mkdir -p "${project}/Assets/Fonts"
+    cp "${root}/corpus/fonts/inter/Inter-Regular.otf" \
+      "${project}/Assets/Fonts/Inter-400.otf"
+    cp "${root}/corpus/fonts/inter/Inter-SemiBold.otf" \
+      "${project}/Assets/Fonts/Inter-600.otf"
+    cp "${root}/corpus/fonts/noto-sans-arabic/NotoSansArabic-Regular.ttf" \
+      "${project}/Assets/Fonts/NotoSansArabic-400.ttf"
 
     cp "${font}" "${project}/Assets/StreamingAssets/cascade/Inter-Regular.otf"
     cp "${atlas}/atlas.png" "${project}/Assets/StreamingAssets/cascade/atlas.png"
@@ -2987,6 +3142,32 @@ unity-demo unity_version="6000.3.23f1" action="run":
       apiCompatibilityLevelPerPlatform: {}
     YAML
 
+    # **Its own editor run, before the build.** A `TMP_FontAsset` is an asset,
+    # and `DemoBuild.Build` opens with a scene build and closes with
+    # `BuildPipeline` — so creating assets inside it would create them after the
+    # build has decided what to include. A separate `-executeMethod` costs one
+    # more editor start and keeps `DemoBuild.cs`, another lane's file, untouched.
+    # Before the editor is asked to build a font asset: `TMP_Settings` and every
+    # run-time TMP shader live in that package of resources, and the editor's own
+    # importer cannot bring them in from inside a batch-mode step.
+    just _tmp-essentials "${project}" "${editor}"
+
+    fonts_log="${project}/fonts.log"
+    echo "unity-demo: building the TMP font assets (log: ${fonts_log})"
+    set +e
+    "${editor}" -batchmode -quit -projectPath "${project}" \
+      -executeMethod DemoFonts.Create -logFile "${fonts_log}"
+    fonts_status=$?
+    set -e
+    grep -E "^\[demo-fonts\]|error CS|Compilation failed" "${fonts_log}" || true
+    if [ "${fonts_status}" -ne 0 ]; then
+      echo "unity-demo: the font assets FAILED (exit ${fonts_status})." >&2
+      echo "unity-demo: the Canvas would then draw no text at all, which reads as a" >&2
+      echo "unity-demo: large difference rather than as a missing input." >&2
+      echo "unity-demo: full log at ${fonts_log}" >&2
+      exit "${fonts_status}"
+    fi
+
     log="${project}/editor.log"
     echo "unity-demo: building the player in {{unity_version}} (log: ${log})"
     set +e
@@ -3046,7 +3227,8 @@ unity-demo unity_version="6000.3.23f1" action="run":
       # product name: `DemoBuild` says in terms that one place knows where the
       # executable is, and a second copy of that name here would fall back to
       # the launch shape measured to stall the moment it drifted.
-      "${player}" -batchmode -logFile "${player_log}" -cycle 3 -quit &
+      "${player}" -batchmode -logFile "${player_log}" -cycle 3 -quit \
+        ${renderer_args[@]+"${renderer_args[@]}"} &
       player_pid=$!
 
       # **The player's own census first, because this recipe cannot know the
@@ -3173,13 +3355,173 @@ unity-demo unity_version="6000.3.23f1" action="run":
         exit 1
       fi
 
+      # The Canvas half of the same assertion. The painter's line counts
+      # instances and the Canvas's counts elements, so the pattern above cannot
+      # see an empty Canvas — and an entry that built no element at all is
+      # exactly the failure that check exists for.
+      if grep -qE "^\[showcase\] drew .*: 0 element\(s\)" "${player_log}"; then
+        echo "unity-demo: an entry built no canvas element at all" >&2
+        echo "unity-demo: full log at ${player_log}" >&2
+        exit 1
+      fi
+
       echo "unity-demo: all ${total} entries (${scenes} distinct scene(s), ${docs} document(s))"
       echo "unity-demo: reached the painter, none empty"
       exit 0
     fi
 
+    # Story #1444: the painter's picture against the faithful Canvas's, entry by
+    # entry, through the comparator the goldens already use.
+    #
+    # **Two launches of one build, not two builds.** The player is built once
+    # above and launched twice here, so nothing about the comparison depends on
+    # two compilations agreeing.
+    #
+    # **Both runs hold their state the same way.** The player sets
+    # `Time.captureDeltaTime` under `-judge`, so each entry is photographed after
+    # exactly the same amount of SCENE time whatever the machine's load — without
+    # it a spring in flight is a different picture in each run and the fraction
+    # measures the load rather than the renderers.
+    if [ "{{action}}" = "compare" ]; then
+      out="${project}/compare"
+      rm -rf "${out}"
+      mkdir -p "${out}"
+
+      for side in painter canvas; do
+        side_log="${out}/${side}.log"
+        echo "unity-demo: judging through the ${side}"
+        "${player}" -batchmode -logFile "${side_log}" -renderer "${side}" \
+          -judge "${out}" -quit &
+        side_pid=$!
+        # Bounded for `cycle`'s reason: an entry that never draws looks exactly
+        # like a player that never exits.
+        side_status=""
+        for _ in $(seq 1 300); do
+          if ! kill -0 "${side_pid}" 2>/dev/null; then
+            wait "${side_pid}" && side_status=0 || side_status=$?
+            break
+          fi
+          sleep 1
+        done
+        if [ -z "${side_status}" ]; then
+          kill "${side_pid}" 2>/dev/null || true
+          wait "${side_pid}" 2>/dev/null || true
+          echo "unity-demo: the ${side} run did not finish within its bound." >&2
+          echo "unity-demo: full log at ${side_log}" >&2
+          exit 1
+        fi
+        grep -E "^\[showcase\]|^\[dashscene\]" "${side_log}" || true
+
+        # **The player's own status, read rather than discarded.** `Fail` quits
+        # 1 under `-judge`, so a run that died on entry 2 of 7 leaves two PNGs —
+        # and a comparison set derived from whatever is on disk would then
+        # compare those two, find both inside the band, and print PASS over five
+        # entries nobody photographed.
+        if [ "${side_status}" -ne 0 ]; then
+          echo "unity-demo: the ${side} run exited ${side_status}." >&2
+          echo "unity-demo: full log at ${side_log}" >&2
+          exit 1
+        fi
+
+        # **Against the player's own census, not against what it wrote.** The
+        # directory cannot be the check: the player creates it in `Awake`,
+        # before any capture, so it exists for a run that photographed nothing.
+        census=$({ grep -m1 -E '^\[showcase\] entries: [0-9]+ ' "${side_log}" || true; })
+        if [ -z "${census}" ]; then
+          echo "unity-demo: the ${side} run reported no entry census." >&2
+          exit 1
+        fi
+        expected=$(printf '%s' "${census}" | sed -E 's/^.*entries: ([0-9]+) .*$/\1/')
+        shopt -s nullglob
+        written=("${out}/${side}"/*.png)
+        shopt -u nullglob
+        if [ "${#written[@]}" -ne "${expected}" ]; then
+          echo "unity-demo: the ${side} run photographed ${#written[@]} of" >&2
+          echo "unity-demo: ${expected} entries. Full log at ${side_log}" >&2
+          exit 1
+        fi
+        echo "unity-demo: ${side} judged ${#written[@]} entries"
+      done
+
+      # **The band is a calibration, and the run it came from is named here.**
+      # Story #1444, 2026-09-06, macOS/Metal on an Apple M3 at 640x480, the
+      # seven entries this recipe's own manifest carries, compared exactly per
+      # channel: surfaces 0.171, typography 0.073, layout 0.182, paint 0.124,
+      # variant topology 0.016, the variant shelf 0.000 — byte identical — and
+      # the text document 0.005. The largest is layout's 0.182; this is that
+      # times 1.5, rounded up to a whole percent.
+      #
+      # **It is wider than a converged baseline would need, and it is wide for
+      # reasons that are filed rather than forgotten.** Three entries still
+      # carry fidelity defects rather than the anti-aliasing and typesetting
+      # differences a band is meant to absorb — issue #1461 names them. Until
+      # those close, a regression smaller than this band is invisible here, so
+      # the band is a floor to tighten and not a tolerance to spend.
+      #
+      # **And this gate does not yet have teeth, which issue #1462 carries.**
+      # Story #1444's own mutation — baking the sprites with no anti-aliasing
+      # band — moved the fraction by four ten-thousandths while moving
+      # `max_channel_delta` from 114 to 219 on `layout`. The fraction counts how
+      # many pixels differ and not by how much, so a change that alters an
+      # existing difference rather than adding new differing pixels does not
+      # reach it. That issue carries what would: pinning the delta beside the
+      # fraction, and tightening this band once #1461 closes.
+      band="0.28"
+      report="${out}/report.txt"
+      : > "${report}"
+      status=0
+      shopt -s nullglob
+      captures=("${out}/painter"/*.png)
+      shopt -u nullglob
+      if [ "${#captures[@]}" -eq 0 ]; then
+        echo "unity-demo: the painter run wrote no PNG, so every comparison below" >&2
+        echo "unity-demo: would be made over an empty set." >&2
+        exit 1
+      fi
+
+      # Every canvas capture is paired too, so a canvas PNG with no painter
+      # counterpart cannot be skipped in silence by a loop that walks one side.
+      shopt -s nullglob
+      right_side=("${out}/canvas"/*.png)
+      shopt -u nullglob
+      if [ "${#right_side[@]}" -ne "${#captures[@]}" ]; then
+        echo "unity-demo: the two runs photographed ${#captures[@]} and" >&2
+        echo "unity-demo: ${#right_side[@]} entries, so the pairs are not pairs." >&2
+        exit 1
+      fi
+
+      for left in "${captures[@]}"; do
+        name="$(basename "${left}")"
+        right="${out}/canvas/${name}"
+        if [ ! -f "${right}" ]; then
+          echo "FAIL ${name} the canvas run photographed no such entry" >> "${report}"
+          status=1
+          continue
+        fi
+        json="$(cargo run -q -p goldens --bin compare-images "${left}" "${right}")"
+        fraction="$(printf '%s' "${json}" | jq -r .fraction)"
+        delta="$(printf '%s' "${json}" | jq -r .max_channel_delta)"
+        verdict="PASS"
+        if awk -v f="${fraction}" -v b="${band}" 'BEGIN { exit !(f > b) }'; then
+          verdict="FAIL"
+          status=1
+        fi
+        echo "${verdict} ${name} fraction ${fraction} max_channel_delta ${delta}" \
+          >> "${report}"
+      done
+
+      cat "${report}"
+      if [ "${status}" -ne 0 ]; then
+        echo "unity-demo: at least one entry differs by more than the ${band} band." >&2
+        echo "unity-demo: captures under ${out}" >&2
+        exit 1
+      fi
+      echo "unity-demo: PASS — every entry within the ${band} band"
+      exit 0
+    fi
+
     if [ "{{action}}" != "run" ]; then
-      echo "unity-demo: unknown action '{{action}}' — pass run, build or cycle" >&2
+      echo "unity-demo: unknown action '{{action}}' — pass run, build, cycle or compare" >&2
       exit 1
     fi
 
@@ -3202,9 +3544,10 @@ unity-demo unity_version="6000.3.23f1" action="run":
       # it returns when the person closes the window — while taking the launch
       # path the `cycle` note above measured. A foreground launch here is what
       # stalled.
-      open -W "${bundle}" --args -logFile "${player_log}"
+      open -W "${bundle}" --args -logFile "${player_log}" \
+        ${renderer_args[@]+"${renderer_args[@]}"}
     else
-      "${player}" -logFile "${player_log}"
+      "${player}" -logFile "${player_log}" ${renderer_args[@]+"${renderer_args[@]}"}
     fi
 
 # **The first recipe in this repository that builds a Unity player for anything
@@ -3811,6 +4154,16 @@ unity-demo-android unity_version="6000.3.23f1" action="cycle" profile="demo-rele
       exit 1
     fi
     urp="$(jq -r .version "${urp_json}")"
+
+    # uGUI, for the reason `unity-demo` gives: it carries UnityEngine.UI and
+    # TextMeshPro, story #1444's Canvas samples compile against both, and URP
+    # depends on neither.
+    ugui_json="${builtin}/com.unity.ugui/package.json"
+    if [ ! -f "${ugui_json}" ]; then
+      echo "unity-demo-android: this editor ships no built-in uGUI at ${ugui_json}" >&2
+      exit 1
+    fi
+    ugui="$(jq -r .version "${ugui_json}")"
     # Before the IL2CPP build, for the reason `unity-render` gives about its own.
     pinned="$(jq -r '.dependencies["com.unity.render-pipelines.universal"] // empty' \
       "${package}/package.json")"
@@ -3876,13 +4229,33 @@ unity-demo-android unity_version="6000.3.23f1" action="cycle" profile="demo-rele
     cat > "${project}/Packages/manifest.json" <<JSON
     {
       "dependencies": {
-        "com.unity.render-pipelines.universal": "${urp}"
+        "com.unity.render-pipelines.universal": "${urp}",
+        "com.unity.ugui": "${ugui}"
       }
     }
     JSON
 
     cp "${root}/unity/demo/DemoBuild.cs" "${project}/Assets/Editor/"
     cp "${package}"/Samples~/Showcase/*.cs "${project}/Assets/"
+
+    # Under `Assets/Resources/`, for the reason `unity-demo` states: a player
+    # build strips a shader no scene references, and `CanvasSprites` resolves
+    # this one with `Shader.Find`.
+    mkdir -p "${project}/Assets/Resources"
+    cp "${root}/unity/demo/SpriteBake.shader" "${project}/Assets/Resources/"
+
+    # The corpus cascade under the producer's own face keys, for the reason
+    # `unity-demo` states: TextMeshPro typesets from a font FILE and a glyph run
+    # names its face only as a cascade slot.
+    cp "${root}/unity/demo/DemoFonts.cs" "${project}/Assets/Editor/"
+    mkdir -p "${project}/Assets/Fonts"
+    cp "${root}/corpus/fonts/inter/Inter-Regular.otf" \
+      "${project}/Assets/Fonts/Inter-400.otf"
+    cp "${root}/corpus/fonts/inter/Inter-SemiBold.otf" \
+      "${project}/Assets/Fonts/Inter-600.otf"
+    cp "${root}/corpus/fonts/noto-sans-arabic/NotoSansArabic-Regular.ttf" \
+      "${project}/Assets/Fonts/NotoSansArabic-400.ttf"
+
     cp "${lib}" "${project}/Assets/Plugins/libdashscene_ffi.so"
     echo "unity-demo-android: staged $(basename "${lib}") as libdashscene_ffi.so"
     echo "unity-demo-android: producer profile {{profile}}, commit $(git rev-parse --short HEAD)"
@@ -3928,6 +4301,26 @@ unity-demo-android unity_version="6000.3.23f1" action="cycle" profile="demo-rele
       apiCompatibilityLevel: 6
       apiCompatibilityLevelPerPlatform: {}
     YAML
+
+    # Its own editor run before the build, for `unity-demo`'s reason.
+    # Before the editor is asked to build a font asset: `TMP_Settings` and every
+    # run-time TMP shader live in that package of resources, and the editor's own
+    # importer cannot bring them in from inside a batch-mode step.
+    just _tmp-essentials "${project}" "${editor}"
+
+    fonts_log="${project}/fonts.log"
+    echo "unity-demo-android: building the TMP font assets (log: ${fonts_log})"
+    set +e
+    "${editor}" -batchmode -quit -projectPath "${project}" \
+      -executeMethod DemoFonts.Create -logFile "${fonts_log}"
+    fonts_status=$?
+    set -e
+    grep -E "^\[demo-fonts\]|error CS|Compilation failed" "${fonts_log}" || true
+    if [ "${fonts_status}" -ne 0 ]; then
+      echo "unity-demo-android: the font assets FAILED (exit ${fonts_status})." >&2
+      echo "unity-demo-android: full log at ${fonts_log}" >&2
+      exit "${fonts_status}"
+    fi
 
     log="${project}/editor.log"
     echo "unity-demo-android: building the APK in {{unity_version}} (log: ${log})"

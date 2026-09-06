@@ -163,10 +163,12 @@ They sit behind `DASHSCENE_DEMO_PRODUCER`, which the shipped configuration never
 defines — so without a second pass they would be compiled by nothing and bound
 by nothing, which is issue #1308's class. `just unity-ffi` therefore runs
 `unity/ffi-check` twice: once over the shipped library, once with
-`-p:DemoProducer=true` over `unity/demo-producer`. The second pass drives all
-six through the missing-symbol context alongside the shipped set, and adds three
-checks that the producer works — a scene builds and commits rects **and glyph
-runs**, a pulse before any build is refused, and the pulse and the variant
+`-p:DemoProducer=true` over `unity/demo-producer`. The second pass drives every
+one of them through the missing-symbol context alongside the shipped set — the
+count is deliberately not written here, because it was written as six while
+there were seven, and `unity/ffi-check`'s own list is what knows it — and adds
+three checks that the producer works — a scene builds and commits rects **and
+glyph runs**, a pulse before any build is refused, and the pulse and the variant
 switch both reach the scene.
 
 Verified by mutation on 2026-08-26: renaming `ds_demo_pulse` in the library

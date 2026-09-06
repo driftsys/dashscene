@@ -143,6 +143,95 @@ pub unsafe extern "C" fn ds_demo_scene_summary(index: u32, buf: *mut c_char, cap
     }
 }
 
+/// The source text of glyph run `run` in the installed scene, written as
+/// [`ds_demo_scene_name`] writes a name.
+///
+/// # Why this exists, and why it is a demonstration entry point
+///
+/// Boundary B carries **shaped glyph ids and no text**: `GlyphQuad::glyph_id` is
+/// the OpenType id rustybuzz produced, `Atlas` maps that id to placement
+/// geometry, and no member of `DsFrame` or `DsAtlas` carries a codepoint. So a
+/// host cannot recover what a run says, and reversing the ids is not a route:
+/// the showcase's Arabic runs are positional forms and ligatures with no `cmap`
+/// preimage, laid out in visual rather than logical order.
+///
+/// Story #1444's faithful Canvas needs the text, because the fairness rules'
+/// rule 4 gives the baseline **TextMeshPro's own typesetting** — which starts
+/// from a string. It is a `ds_demo_*` entry point rather than a shipped one for
+/// the reason every other one here is: this is the library a customer does not
+/// install, the comparison is a measurement harness, and widening the shipped C
+/// ABI to serve one is the wrong trade.
+///
+/// **Scenes only.** `demo::with_scene` is the seam this crate has for reaching
+/// an arena, and it resolves against the scene [`ds_demo_build`] installed — so
+/// a runtime carrying a loaded `.dsb` answers zero here, and the Canvas counts
+/// that entry's runs as text it could not obtain. The criterion is stated over
+/// the three showcase scenes, which is what this reaches.
+///
+/// Zero for a run index past the table, for a run whose anchor node carries no
+/// text, and for a runtime with no scene installed.
+///
+/// # Safety
+///
+/// `buf` is either null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ds_demo_run_text(
+    runtime: DsRuntime,
+    run: u32,
+    buf: *mut c_char,
+    cap: usize,
+) -> usize {
+    let Some((_, generation)) = installed(runtime) else {
+        return 0;
+    };
+
+    let mut needed = 0usize;
+    let status = demo::with_scene(runtime, generation, "ds_demo_run_text", |_live, arena| {
+        // The node is read out first so the committed borrow ends before the
+        // arena is asked for the text: `node_of` answers a `NodeId`, which is
+        // `Copy`, and the text lives on the intent model rather than the commit.
+        let node = {
+            let committed = arena.committed();
+            match committed.glyphs().runs().get(run as usize) {
+                Some(entry) => committed.node_of(entry.rect),
+                None => return,
+            }
+        };
+
+        if let Some(text) = arena.text(node) {
+            needed = unsafe { write_c_string(text, buf, cap) };
+        }
+    });
+
+    if status == DsStatus::Ok { needed } else { 0 }
+}
+
+/// The face at cascade slot `index`, as `<family without spaces>-<weight>`,
+/// written as [`ds_demo_scene_name`] writes a name.
+///
+/// **The slot is a `GlyphRun::atlas`**, because the showcase's cascade and its
+/// atlas set are built from one list in one step — `showcase::resources`'
+/// `faces` calls that pairing the contract. So a host holding a run knows which
+/// face shaped it, which is what rule 4's "the same font files" needs and what
+/// boundary B does not carry: an `Atlas` is an image, four scalars and a glyph
+/// table, with no family and no weight on it.
+///
+/// A static property of the corpus rather than of a runtime, so it takes no
+/// handle and answers before a scene is built.
+///
+/// Zero past the end of the cascade.
+///
+/// # Safety
+///
+/// `buf` is either null or writable for `cap` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ds_demo_face_key(index: u32, buf: *mut c_char, cap: usize) -> usize {
+    match showcase::resources::face_keys().get(index as usize) {
+        Some(key) => unsafe { write_c_string(key, buf, cap) },
+        None => 0,
+    }
+}
+
 /// Builds scene `index` into `runtime`'s arena for a drawable of `width` by
 /// `height` physical pixels, and installs it as the loaded document.
 ///
@@ -473,6 +562,54 @@ mod tests {
         .expect("the scene list is short")
     }
 
+    /// How many glyph runs the commit after `ticks` frames holds.
+    ///
+    /// Read off the frame's own count rather than divided out of a byte length,
+    /// because the row's size belongs to `dashpaint` and this crate does not
+    /// depend on it — a `size_of` written here would be a second copy of a
+    /// stride, which is the drift `DsSlice.stride` exists to prevent.
+    fn glyph_run_count(handle: DsRuntime, ticks: u32) -> usize {
+        for _ in 0..ticks {
+            let mut advanced = false;
+            assert_eq!(
+                unsafe { ds_runtime_tick(handle, 1.0 / 60.0, &mut advanced) },
+                DsStatus::Ok,
+                "ds_runtime_tick"
+            );
+        }
+
+        let mut frame = std::mem::MaybeUninit::<DsFrame>::zeroed();
+        assert_eq!(
+            unsafe { ds_runtime_acquire_frame(handle, frame.as_mut_ptr()) },
+            DsStatus::Ok,
+            "ds_runtime_acquire_frame"
+        );
+        let count = unsafe { frame.assume_init() }.glyph_runs.count;
+
+        let mut was_leased = false;
+        assert_eq!(
+            unsafe { ds_runtime_release_frame(handle, 1, &mut was_leased) },
+            DsStatus::Ok,
+            "ds_runtime_release_frame"
+        );
+        count
+    }
+
+    /// One glyph run's text, read as `read` reads a name.
+    ///
+    /// Separate from `read` because this one takes a runtime handle, which is
+    /// what makes it answer from an arena rather than from a static list.
+    fn run_text(handle: DsRuntime, run: u32) -> String {
+        let needed = unsafe { ds_demo_run_text(handle, run, std::ptr::null_mut(), 0) };
+        if needed <= 1 {
+            return String::new();
+        }
+        let mut buf = vec![0u8; needed];
+        unsafe { ds_demo_run_text(handle, run, buf.as_mut_ptr().cast::<c_char>(), needed) };
+        let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+        String::from_utf8_lossy(&buf[..end]).into_owned()
+    }
+
     fn read(f: unsafe extern "C" fn(u32, *mut c_char, usize) -> usize, index: u32) -> String {
         let needed = unsafe { f(index, std::ptr::null_mut(), 0) };
         if needed <= 1 {
@@ -518,6 +655,144 @@ mod tests {
             names.push(name);
         }
         assert!(names.len() > 1, "one scene cannot show a distinctness rule");
+    }
+
+    /// Every cascade slot names a face, and the key is the shape the two sides
+    /// agree on without either holding a list.
+    ///
+    /// **Kills a key built from the wrong half.** `DemoFonts` names each asset
+    /// by the staged font file's stem and `CanvasText` loads the prefix plus
+    /// this key, so a key that dropped the weight or kept the family's space
+    /// would resolve to no asset — which the Canvas reports as a counted
+    /// refusal and a warning rather than as a failure, so nothing else here
+    /// would go red.
+    #[test]
+    fn every_cascade_slot_names_a_face_and_a_slot_past_the_end_names_none() {
+        let keys = showcase::resources::face_keys();
+        assert!(
+            keys.len() > 1,
+            "one face cannot show that the slots are distinct"
+        );
+
+        for (slot, expected) in keys.iter().enumerate() {
+            let answered = read(ds_demo_face_key, u32::try_from(slot).expect("small"));
+            assert_eq!(&answered, expected, "slot {slot} answered the wrong face");
+            assert!(
+                !answered.contains(' '),
+                "slot {slot} answers `{answered}`, and a space cannot survive the \
+                 asset name it is half of"
+            );
+            let (family, weight) = answered
+                .rsplit_once('-')
+                .unwrap_or_else(|| panic!("slot {slot} answers `{answered}`, with no weight"));
+            assert!(!family.is_empty(), "slot {slot} answers no family");
+            weight
+                .parse::<u16>()
+                .unwrap_or_else(|e| panic!("slot {slot}'s weight `{weight}`: {e}"));
+        }
+
+        let past = u32::try_from(keys.len()).expect("small");
+        assert_eq!(read(ds_demo_face_key, past), "");
+    }
+
+    /// A runtime carrying no scene answers nothing, rather than reading another
+    /// runtime's arena.
+    #[test]
+    fn a_run_text_call_with_no_scene_installed_answers_nothing() {
+        let handle = runtime();
+        assert_eq!(run_text(handle, 0), "");
+    }
+
+    /// The installed scene answers the text behind its glyph runs, and a run
+    /// index past the table answers nothing.
+    ///
+    /// **Kills the reason this entry point exists.** Boundary B carries shaped
+    /// glyph ids and no text, so a `run` resolved against the wrong table — or a
+    /// node lookup that answered the anchor's parent — degrades to an empty
+    /// string, which the Canvas counts as a refusal and draws nothing for. That
+    /// is invisible short of a player run and a photograph.
+    #[test]
+    fn the_installed_scene_answers_the_text_behind_its_glyph_runs() {
+        let handle = runtime();
+        let index = index_of("typography");
+        assert_eq!(
+            ds_demo_build(handle, index, 1080, 2340),
+            DsStatus::Ok,
+            "ds_demo_build"
+        );
+
+        let count = glyph_run_count(handle, 1);
+        assert!(
+            count > 1,
+            "typography stages more than one run; got {count}"
+        );
+
+        let spoken = (0..count)
+            .filter(|run| !run_text(handle, u32::try_from(*run).expect("small")).is_empty())
+            .count();
+        assert!(
+            spoken > 1,
+            "{spoken} of {count} runs answered any text at all, so the arena lookup \
+             reaches at most one node"
+        );
+
+        let past = u32::try_from(count).expect("small") + 100;
+        assert_eq!(run_text(handle, past), "");
+    }
+
+    /// A frame lease refuses the text, and the refusal is silent.
+    ///
+    /// **This is the trap, pinned.** Every call on the demonstration seam goes
+    /// through `on_runtime_committing`, which refuses while a lease is
+    /// outstanding — so a host that builds its scene from the borrowed tables
+    /// and asks for the text in the same breath gets an empty string for every
+    /// run, with no status to read and nothing in the log.
+    /// `DashsceneCanvasBaseline` fetches the text after the lease ends because
+    /// of this, and this test is what stops that moving back.
+    #[test]
+    fn a_run_text_call_under_an_outstanding_lease_answers_nothing() {
+        let handle = runtime();
+        let index = index_of("typography");
+        assert_eq!(
+            ds_demo_build(handle, index, 1080, 2340),
+            DsStatus::Ok,
+            "ds_demo_build"
+        );
+
+        let mut advanced = false;
+        assert_eq!(
+            unsafe { ds_runtime_tick(handle, 1.0 / 60.0, &mut advanced) },
+            DsStatus::Ok,
+            "ds_runtime_tick"
+        );
+
+        // Without the lease first, so the run is known to answer something.
+        assert!(
+            !run_text(handle, 0).is_empty(),
+            "run 0 answers nothing even unleased, so this test would pass over a \
+             broken lookup rather than over the lease"
+        );
+
+        let mut frame = std::mem::MaybeUninit::<DsFrame>::zeroed();
+        assert_eq!(
+            unsafe { ds_runtime_acquire_frame(handle, frame.as_mut_ptr()) },
+            DsStatus::Ok,
+            "ds_runtime_acquire_frame"
+        );
+
+        assert_eq!(
+            run_text(handle, 0),
+            "",
+            "the seam answered under a lease, so the host may fetch the text inside \
+             one and this file's remarks are wrong"
+        );
+
+        let mut was_leased = false;
+        assert_eq!(
+            unsafe { ds_runtime_release_frame(handle, 1, &mut was_leased) },
+            DsStatus::Ok,
+            "ds_runtime_release_frame"
+        );
     }
 
     #[test]

@@ -19,15 +19,16 @@
 // class. Story #1342's second condition says so directly.
 //
 // **What these bind is not the shipped library.** `ds_demo_*` is exported by
-// `unity/demo-producer`, which is `dashscene-ffi` linked as an rlib plus these
-// six entry points, and `just unity-demo` stages it under the shipped library's
+// `unity/demo-producer`, which is `dashscene-ffi` linked as an rlib plus the
+// entry points below, and `just unity-demo` stages it under the shipped library's
 // own file name. That is not a disguise: the player must load ONE library, or
 // `DashsceneRuntime` and `BuildDemoScene` would resolve into two instantiations
 // of a `thread_local!` runtime table and no handle minted by one would resolve
 // in the other. `just demo-exports` asserts that the staged library exports the
 // shipped seventeen unchanged plus a set carrying only the `ds_demo_` prefix.
-// `unity/ffi-check`'s demonstration pass is what holds these six by name, and
-// drives each one.
+// `unity/ffi-check`'s demonstration pass is what holds this set by name, and
+// drives each one. The count is deliberately not written here: it has been
+// wrong in this comment once already, and the gate is what knows it.
 //
 // See `docs/decisions/the-demo-producer-links-the-abi-rather-than-shipping-in-it.md`.
 
@@ -75,6 +76,30 @@ namespace Driftsys.Dashscene
             try
             {
                 return Imports.ds_demo_scene_summary(index, buf, cap);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw Native.SymbolMissing(e);
+            }
+        }
+
+        internal static UIntPtr ds_demo_run_text(ulong runtime, uint run, byte[] buf, UIntPtr cap)
+        {
+            try
+            {
+                return Imports.ds_demo_run_text(runtime, run, buf, cap);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw Native.SymbolMissing(e);
+            }
+        }
+
+        internal static UIntPtr ds_demo_face_key(uint index, byte[] buf, UIntPtr cap)
+        {
+            try
+            {
+                return Imports.ds_demo_face_key(index, buf, cap);
             }
             catch (EntryPointNotFoundException e)
             {
@@ -147,6 +172,22 @@ namespace Driftsys.Dashscene
             internal static extern UIntPtr ds_demo_scene_summary(
                 uint index, byte[] buf, UIntPtr cap);
 
+            /// The source text of one glyph run of the installed scene, written
+            /// as `ds_demo_scene_name` writes a name.
+            ///
+            /// Boundary B carries shaped glyph ids and no text, so this is the
+            /// only route to what a run says — which story #1444's faithful
+            /// Canvas needs, because TextMeshPro typesets from a string.
+            [DllImport(Native.Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern UIntPtr ds_demo_run_text(
+                ulong runtime, uint run, byte[] buf, UIntPtr cap);
+
+            /// The face at one cascade slot, as `<family>-<weight>`. A
+            /// `GlyphRun.Atlas` is that slot.
+            [DllImport(Native.Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern UIntPtr ds_demo_face_key(
+                uint index, byte[] buf, UIntPtr cap);
+
             [DllImport(Native.Lib, CallingConvention = CallingConvention.Cdecl)]
             internal static extern DsStatus ds_demo_build(
                 ulong runtime, uint index, uint width, uint height);
@@ -186,10 +227,20 @@ namespace Driftsys.Dashscene
         public static string Summary(int index) =>
             Read(index, DemoNative.ds_demo_scene_summary);
 
+        /// The face at cascade slot `index`, as `<family>-<weight>`, or the
+        /// empty string past the end of the cascade.
+        ///
+        /// **`GlyphRun.Atlas` is that slot.** The showcase's cascade and its
+        /// atlas set are built from one list in one step, so a run's atlas index
+        /// names the face that shaped it — which boundary B does not carry, an
+        /// `Atlas` being an image, four scalars and a glyph table with no family
+        /// on it.
+        public static string FaceKey(int index) => Read(index, DemoNative.ds_demo_face_key);
+
         /// Sized, then read, then terminated — `DashsceneException.LastMessage`'s
         /// shape, for its reasons: the library reports what it needed rather
         /// than what it wrote, so the terminator is trusted over either count.
-        private static string Read(int index, Func<uint, byte[], UIntPtr, UIntPtr> read)
+        internal static string Read(int index, Func<uint, byte[], UIntPtr, UIntPtr> read)
         {
             if (index < 0)
             {
@@ -274,6 +325,30 @@ namespace Driftsys.Dashscene
         {
             Check(DemoNative.ds_demo_action(Handle(), out var ran), "ds_demo_action");
             return ran != 0;
+        }
+
+        /// The source text of glyph run `run` in the installed scene, or the
+        /// empty string.
+        ///
+        /// **The only route to what a run says.** `GlyphQuad.GlyphId` is the
+        /// OpenType id the shaper produced and `Atlas` maps it to placement
+        /// geometry; no member of `DsFrame` and no member of `DsAtlas` carries a
+        /// codepoint, and the ids cannot be reversed — the showcase's Arabic runs
+        /// are positional forms and ligatures with no `cmap` preimage, in visual
+        /// rather than logical order.
+        ///
+        /// Empty for a run index past the table, for a run whose node carries no
+        /// text, and for a runtime carrying a loaded document rather than a built
+        /// scene: the producer reaches an arena through the scene it installed.
+        ///
+        /// **Read once per run at load, never per frame.** It allocates a buffer
+        /// and a string per call, and rule 4's text objects are built once.
+        public string DemoRunText(int run)
+        {
+            var handle = Handle();
+            return DemoScenes.Read(
+                run, (index, buffer, capacity) =>
+                    DemoNative.ds_demo_run_text(handle, index, buffer, capacity));
         }
     }
 }
