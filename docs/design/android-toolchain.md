@@ -1256,6 +1256,14 @@ one row per reported sample of 240 drawn frames:
 | surfaces   | A, 381 commands | 6  | 33.06-33.20 | 33.118        | 34.75-35.87 | 21708-21743 | 31-33 (31.7)      |
 | surfaces   | B, one per run  | 6  | 33.14-33.21 | 33.155        | 34.27-35.08 | 21708-21743 | 31-33 (32.0)      |
 
+**The `gc` column is identical between the two builds, and that is the expected
+answer rather than a copied cell.** Managed allocation per frame is a property
+of the managed path, which these builds share exactly: they differ only inside
+`OnPerformCulling`, which allocates nothing managed. The two sets are
+independently measured and not equal element by element — build A's sweeps
+report a distinct 8474 B/frame that build B's do not — they only span the same
+range.
+
 **The render-thread term is an em dash on both**, so the threshold below is
 judged on the main-thread term and the CPU column. `typography`'s main-thread
 mean is one 60 Hz frame, which this record already establishes is the pace
@@ -1387,6 +1395,11 @@ than assumed:
     player                                        Main   Render   Canvas.Send   Canvas.Build   GC Alloc
     unity/render-gate, 6000.3.23f1, macOS/Metal    yes     no          no           yes          yes
     demo player on the Pixel 5, BuildOptions.None  yes     no          no            no           no
+    demo player on the Pixel 5, Development        yes     no          no            no          yes
+
+The third row is story #1447's, measured 2026-09-06. It is the row that refutes
+the sufficiency claim below: that player is neither `-batchmode` nor
+`BuildOptions.None`, and `Render Thread` is still a no.
 
 **The instrument must not allocate, and the gate measured that it stopped.**
 `GC Allocated In Frame` is recordable in the render gate, so that player's own
@@ -1431,7 +1444,8 @@ Thread` again on the device by the table above. `Render Thread` and
   What does register on that build and did not before is
   `GC Allocated In Frame`. Issue #1458 carries what is left.
 
-Both remain assumed rather than confirmed.
+Neither is confirmed, and `Render Thread` is now known to be absent on every
+player this repository builds rather than merely unobserved on them.
 
 **The Android reading above was deliberately NOT taken on a development
 player.** Every other Unity figure in this record was taken on a

@@ -60,12 +60,17 @@ public static class DemoBuild
 
     /// Whether to build a development player, read from the environment.
     ///
-    /// **A `BuildOptions.None` player registers only the `Main Thread`
-    /// counter**, which is what `docs/design/android-toolchain.md` measured of
-    /// this player: `Render Thread` needs a player that is neither `-batchmode`
-    /// nor `BuildOptions.None`, and neither host in that table is both. Story
-    /// #1447 reads a term that lives on the render thread, so it needs this one
-    /// (issue #1458).
+    /// **It does NOT make `Render Thread` recordable, and it was built in the
+    /// belief that it would.** `docs/design/android-toolchain.md` stated the
+    /// condition for that counter as a player which is neither `-batchmode` nor
+    /// `BuildOptions.None`; story #1447 built exactly that on 2026-09-06 and
+    /// the counter still does not register — the player reports
+    /// `thread cost counters this player cannot record: Render Thread,
+    /// Canvas.SendWillRenderCanvases`. Issue #1458 carries what is still
+    /// missing. Do not reach for this switch expecting a render-thread figure.
+    ///
+    /// **What it does buy** is `GC Allocated In Frame`, which is an em dash on
+    /// a `BuildOptions.None` Android player and reads on this one.
     ///
     /// **Off by default, and the default is what every other reading was taken
     /// on.** A development player is a different build: its rows are not one
@@ -73,12 +78,45 @@ public static class DemoBuild
     /// why this is a switch rather than a change of the default. A reading taken
     /// with it set says so.
     ///
-    /// An environment variable rather than a `-buildOptions` argument, for the
-    /// reason [`BuildingForAndroid`] gives: the recipe passes `-executeMethod`
-    /// and nothing else, so a switch that has to be observable here is read from
-    /// the environment.
+    /// An environment variable rather than a `-buildOptions` argument, which is
+    /// how [`BuildingForAndroid`] and `DASHSCENE_ANDROID_API` already reach this
+    /// script: the recipes pass a fixed argument list — `-batchmode -quit
+    /// -projectPath -executeMethod -logFile` — and carry everything
+    /// build-specific in the environment beside it, so adding a switch costs no
+    /// change to the argument list and cannot depend on its ordering.
     private static bool BuildingDevelopmentPlayer =>
-        Environment.GetEnvironmentVariable("DASHSCENE_DEV_PLAYER") == "1";
+        DevPlayerSetting == "1";
+
+    /// `DASHSCENE_DEV_PLAYER` as it was set, or the empty string.
+    private static string DevPlayerSetting =>
+        Environment.GetEnvironmentVariable("DASHSCENE_DEV_PLAYER") ?? string.Empty;
+
+    /// Refuses a `DASHSCENE_DEV_PLAYER` that is neither on nor off.
+    ///
+    /// **A misspelt value is silent in the direction that corrupts a
+    /// measurement.** `true`, `TRUE` and a trailing newline all read as "not
+    /// 1", so the build quietly makes a `BuildOptions.None` player and its rows
+    /// are then filed as the development series — the one confusion
+    /// `docs/design/android-toolchain.md` keeps two sets of rows apart to
+    /// prevent. P4's rule applies to a build switch as much as to a document:
+    /// an unrecognised value is a named diagnostic, never a silent fallback.
+    /// `DASHSCENE_ANDROID_API` is refused the same way.
+    ///
+    /// Returns whether the build may proceed.
+    private static bool RefuseUnrecognisedDevPlayer(List<string> failures)
+    {
+        var raw = DevPlayerSetting;
+        if (raw.Length == 0 || raw == "0" || raw == "1")
+        {
+            return true;
+        }
+
+        failures.Add(
+            $"DASHSCENE_DEV_PLAYER is '{raw}', which is neither 1 nor 0. It selects "
+            + "BuildOptions.Development, and a value that is neither would silently "
+            + "build a BuildOptions.None player whose rows are not that series.");
+        return false;
+    }
 
     private const int WindowWidth = 1280;
 
@@ -476,6 +514,15 @@ public static class DemoBuild
 
     private static void BuildPlayer(List<string> failures)
     {
+        // **Before anything is built, and it RETURNS.** The cost of the answer
+        // is a player and the cost of the question is a string comparison, so a
+        // refusal that let the build run would report the problem half an hour
+        // after it could have.
+        if (!RefuseUnrecognisedDevPlayer(failures))
+        {
+            return;
+        }
+
         // Windowed and resizable, unlike the gate's player: a person runs this
         // one and switches documents in it.
         PlayerSettings.productName = ProductName;
@@ -510,6 +557,15 @@ public static class DemoBuild
             extraScriptingDefines = new[] { "DASHSCENE_DEMO_PRODUCER" },
         };
 
+        // **Logged BEFORE the build, not after it.** These are an input, and
+        // the call below can throw — in which case the catch reports the throw
+        // and returns, and a line placed after it would never say which player
+        // was attempted. That is the case where the record matters most: a
+        // reading whose build differed in a field nobody recorded is a reading
+        // of an unknown build. The URP floor above logs its own inputs for the
+        // same reason.
+        Debug.Log($"[demo-build] player options {options.options}");
+
         BuildReport report;
         try
         {
@@ -521,11 +577,6 @@ public static class DemoBuild
             return;
         }
 
-        // **The player kind is logged, because it is the only thing that
-        // separates two otherwise identical builds.** The URP floor above logs
-        // the defaults it replaced for the same reason: a reading whose build
-        // differed in a field nobody recorded is a reading of an unknown build.
-        Debug.Log($"[demo-build] player options {options.options}");
         Debug.Log($"[demo-build] build {report.summary.result}, "
                   + $"{report.summary.totalErrors} error(s)");
         if (report.summary.result != BuildResult.Succeeded)
