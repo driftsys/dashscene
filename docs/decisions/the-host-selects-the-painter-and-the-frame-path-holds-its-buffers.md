@@ -82,8 +82,9 @@ developed on — shows the same picture without the shader knowing.
 **D3, and what it is not.** It is not a product capability. `demo/`,
 `corpus/showcase/` and `goldens/tooling/` are the three workspace members that
 are never published; a product host links the painter it ships with and
-constructs one presenter. The roadmap is explicit that v0.15 does not switch the
-entry tier, and nothing here is a step towards doing so at run time.
+constructs one presenter. The closed-slice record
+[`roadmap-closed.md`](../roadmap-closed.md) is explicit that v0.15 does not
+switch the entry tier, and nothing here is a step towards doing so at run time.
 
 What it is instead is the instrument the rest of the slice is developed against,
 and the reason epic #569 wanted this story early. The swap keeps the arena, the

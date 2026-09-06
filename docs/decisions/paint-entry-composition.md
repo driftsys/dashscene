@@ -64,7 +64,7 @@ format concern, not a boundary-B one). Debt #55 closed with story #4.
 ## Sub-decisions recorded with this choice
 
 - **Strokes are solid-only at v0.3.** Figma allows gradient/image strokes; the
-  v0 corpus does not need them, the v0.3 slice (`docs/roadmap.md`) scopes
+  v0 corpus does not need them, the v0.3 slice (`docs/roadmap-closed.md`) scopes
   "rrect + stroke align" — not stroke fills — and the field widens additively
   later. Until then the importer diagnoses them by name (R6) rather than
   dropping them.

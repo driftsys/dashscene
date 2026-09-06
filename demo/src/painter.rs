@@ -5,7 +5,7 @@
 //! `demo/` is one of the three workspace members that are never published. A
 //! product host links the painter it ships with and constructs that one
 //! presenter; it does not carry both and choose, and nothing in `dashpaint` or
-//! in either painter learns that this module exists. The v0.15 roadmap entry is
+//! in either painter learns that this module exists. The v0.15 roadmap entry (docs/roadmap-closed.md) is
 //! explicit that the slice does not switch the entry tier, and a run-time
 //! switch here is not a step towards one.
 //!

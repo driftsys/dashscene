@@ -40,9 +40,9 @@ size, and the only thing that can differ is codec error.
 **Whether the bands can fail.** Issue #422 measured that the render oracle's
 `blur-falloff` band catches none of the six defects the frames it governs exist
 to catch, because a 12 % area budget cannot be exceeded by a bounded-area
-defect. The roadmap's v0.11-close revision records that this second family of
-bands must be designed against that finding rather than by analogy with the
-first.
+defect. The v0.11-close revision in [`roadmap-closed.md`](../roadmap-closed.md)
+records that this second family of bands must be designed against that finding
+rather than by analogy with the first.
 
 **Whether a distance field may ever be encoded lossily.** The plan says, in one
 sentence, that distance fields never enter a lossy path _and_ that

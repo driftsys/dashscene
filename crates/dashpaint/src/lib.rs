@@ -1,6 +1,6 @@
 //! Paint table (fill/stroke/effect params, token refs, material class) + the painter trait — boundary B (docs/design/architecture.md).
 //!
-//! Vocabulary scope: the v0.3 slice (docs/roadmap.md, drawn from the
+//! Vocabulary scope: the v0.3 slice (docs/roadmap-closed.md, drawn from the
 //! docs/specification/04-figma-vocabulary-profile.md NOW list) — solid fills,
 //! the four gradient kinds, image fills with scale modes, stroke with
 //! align, rounded corners, and clip. The rect-table index is the document

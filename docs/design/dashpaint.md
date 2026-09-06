@@ -14,7 +14,7 @@ input a painter consumes, and the trait every painter implements. Principle P2
 wraps, kerns, or moves anything.
 
 Boundary B is a rect table plus a paint table plus a clip table. The paint
-vocabulary is the v0.3 slice's set (`docs/roadmap.md`'s v0.3, drawn from
+vocabulary is the v0.3 slice's set (`docs/roadmap-closed.md`'s v0.3, drawn from
 `docs/specification/04-figma-vocabulary-profile.md`'s NOW list): solid fills,
 the four gradient kinds, image fills with scale modes, stroke with align,
 per-corner radii, and clip. The crate has no dependencies, including no
