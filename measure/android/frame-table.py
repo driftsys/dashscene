@@ -611,8 +611,11 @@ def read_timestats(path, package):
     dump — a name-only match would take whichever sorts first rather than the
     layer this app is actually presenting through.
     """
-    with open(path, encoding="utf-8", errors="replace") as handle:
-        lines = [line.replace("\r", "") for line in handle.read().splitlines()]
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            lines = [line.replace("\r", "") for line in handle.read().splitlines()]
+    except OSError as error:
+        raise Unreadable(f"cannot read {path}: {error}") from error
     block = []
     blocks = []
     for line in lines:
@@ -688,6 +691,15 @@ def unity_cpu_rows(capture, timestats_paths, clk_tck, package):
     # over both instrument kinds is what survives a stray line from another
     # launch outnumbered by the sweep's real ones; it does not survive a
     # sweep whose own samples are themselves the minority.
+    #
+    # **A genuine tie resolves to nothing, not to a coin flip.**
+    # `Counter.most_common` breaks a tie by insertion order, which is exactly
+    # the "first sample in the sweep" resolution the mode exists to replace —
+    # picking either candidate silently would attribute the row to a process
+    # this join has no actual majority evidence for. Leaving the sweep's pid
+    # unresolved instead makes every one of its rows read `(open)`/`—`, the
+    # same honest degradation this table already uses for a window or a CPU
+    # pair it cannot bracket.
     sweep_pid = {}
     for sweep in set(frame_samples_by_sweep) | set(thread_samples_by_sweep):
         pids = Counter(
@@ -695,8 +707,12 @@ def unity_cpu_rows(capture, timestats_paths, clk_tck, package):
             for sample in frame_samples_by_sweep.get(sweep, [])
             + thread_samples_by_sweep.get(sweep, [])
         )
-        if pids:
-            sweep_pid[sweep] = pids.most_common(1)[0][0]
+        if not pids:
+            continue
+        ranked = pids.most_common()
+        if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
+            continue
+        sweep_pid[sweep] = ranked[0][0]
 
     out = []
     unreadable = []
@@ -880,7 +896,7 @@ def cpu_footnote(clk_tck, out):
 
     One function rather than four copies: the `—` rule below is the difference
     between "the sampler was not running" and "the process was idle", and a rule
-    stated in three places drifts in one of them.
+    stated in four places drifts in one of them.
     """
     print(
         f"CPU is `utime + stime` from `/proc/<pid>/stat` over the interval each "
@@ -1423,9 +1439,13 @@ def main(argv):
                 file=sys.stderr,
             )
             return 2
-        cpu_table, cpu_unreadable = unity_cpu_rows(
-            capture, args.timestats, args.clk_tck, args.package
-        )
+        try:
+            cpu_table, cpu_unreadable = unity_cpu_rows(
+                capture, args.timestats, args.clk_tck, args.package
+            )
+        except Unreadable as error:
+            print(f"frame-table: {error}", file=sys.stderr)
+            return 2
         if not cpu_table and not cpu_unreadable:
             print(
                 f"frame-table: no unity-cpu row over {', '.join(args.timestats)}.",

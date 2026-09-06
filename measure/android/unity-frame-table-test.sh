@@ -279,6 +279,7 @@ fi
 # writing this fixture, not re-run here — so these values being real rather
 # than dashes IS the pin.
 join_log="${fixtures}/unity-cpu-join.log"
+tie_log="${fixtures}/unity-cpu-tie.log"
 join_got="${work}/unity-cpu-join.md"
 if ! python3 "${here}/frame-table.py" \
     --source unity-showcase \
@@ -286,10 +287,15 @@ if ! python3 "${here}/frame-table.py" \
     --describe "the join fixture" \
     --clk-tck "${CLK_TCK}" \
     --package com.driftsys.dashscene.showcase \
-    "${join_log}" \
+    "${join_log}" "${tie_log}" \
     --timestats "${fixtures}/unity-cpu-join-entry-1-sf-timestats.txt" \
                 "${fixtures}/unity-cpu-join-entry-2-sf-timestats.txt" \
                 "${fixtures}/unity-cpu-join-entry-3-sf-timestats.txt" \
+                "${fixtures}/unity-cpu-join-entry-4-sf-timestats.txt" \
+                "${fixtures}/unity-cpu-join-entry-5-sf-timestats.txt" \
+                "${fixtures}/unity-cpu-join-entry-6-sf-timestats.txt" \
+                "${fixtures}/unity-cpu-join-entry-7-sf-timestats.txt" \
+                "${fixtures}/unity-cpu-tie-entry-1-sf-timestats.txt" \
     > "${join_got}"; then
     fail "frame-table.py reported no unity-cpu row over the join fixture."
 fi
@@ -300,21 +306,23 @@ fi
 #   extent      1080x2340   pid 9002's own in-window frame-cost samples
 #   presented   150         the dump's (BLAST) block, not the container's 999
 #   dropped     0           the (BLAST) block's own count
-#   cpu %       7           (2100-2000)/100/(155.0-140.0)*100, pid 9002 only
-#   cpu ms      4.00        9.0 * 7 / 100 * 1000 / 150
+#   cpu %       7           (2100-2000)/100/(155.0-140.0)*100 = 6.667, pid
+#               9002 only, rounded to 7 for display
+#   cpu ms      4.00        9.0 * 6.667 / 100 * 1000 / 150 — from the
+#               UNROUNDED percentage, not the "7" the table prints
 #   drawn       480         pid 9002's two in-window samples (240 each), not
 #               pid 9001's "stale" one (999 frames) landing in the same window
 #
 # Pid 9002 outnumbers pid 9001 three samples to two across this sweep's own
 # frame-cost lines, so `sweep_pid`'s mode has an actual contest to resolve —
-# not a single uncontested candidate. It is also not a contest a "first
-# sample in the sweep" resolution would happen to win the same way: pid
-# 9001's own earliest sample (epoch 145.0, "stale-early") precedes every one
-# of pid 9002's, so only counting occurrences — not chronological order —
-# reaches the right answer. Every one of these cells would read differently
-# (cpu 160, cpu ms 96.00, drawn 0) if resolution picked pid 9001 by either
-# route, or drawn 1479 if the drawn/extent join were not itself scoped to
-# the resolved pid.
+# not a single uncontested candidate. It is also not a contest either a
+# "first" or a "last sample in the sweep" resolution would happen to win the
+# same way: pid 9001 owns both the chronologically first sample (epoch 145.0,
+# "stale-early") AND the chronologically last one (epoch 158.0, "stale"), so
+# only counting occurrences — not position — reaches the right answer. Every
+# one of these cells would read differently (cpu 160, cpu ms 96.00, drawn 0)
+# if resolution picked pid 9001 by any of those routes, or drawn 1479 if the
+# drawn/extent join were not itself scoped to the resolved pid.
 if ! grep -qF '| unity-cpu-join | 1 | 1080x2340 | 9.0 | 150 | 0 | 7 | 4.00 | 480 |' "${join_got}"; then
     fail "entry 1's row in unity-cpu-join.md does not read"
     fail "  \"| 1080x2340 | 9.0 | 150 | 0 | 7 | 4.00 | 480 |\" — the row hand-derived"
@@ -349,6 +357,71 @@ if grep -q '^| unity-cpu-join | 3 | ' "${join_got}"; then
 fi
 if ! grep -qF 'unity-cpu-join-entry-3-sf-timestats.txt' "${join_got}"; then
     fail "unity-cpu-join.md does not name entry 3's dump under Unreadable."
+fi
+
+# 6e. Entry 4's totalFrames is present but not a whole number (the ring cut
+# it mid-digit); it must be Unreadable, never a row that coerced the field.
+if grep -q '^| unity-cpu-join | 4 | ' "${join_got}"; then
+    fail "unity-cpu-join.md holds a row for entry 4, whose totalFrames does"
+    fail "  not parse as a whole number — that must be Unreadable, never a"
+    fail "  row with the field silently coerced."
+fi
+if ! grep -qF 'unity-cpu-join-entry-4-sf-timestats.txt' "${join_got}"; then
+    fail "unity-cpu-join.md does not name entry 4's dump under Unreadable."
+fi
+
+# 6f. Entry 5 is the other half of entry 3's check: totalFrames missing,
+# droppedFrames present. Either field missing alone must be Unreadable.
+if grep -q '^| unity-cpu-join | 5 | ' "${join_got}"; then
+    fail "unity-cpu-join.md holds a row for entry 5, whose dump has no"
+    fail "  totalFrames field — that must be Unreadable, never a row."
+fi
+if ! grep -qF 'unity-cpu-join-entry-5-sf-timestats.txt' "${join_got}"; then
+    fail "unity-cpu-join.md does not name entry 5's dump under Unreadable."
+fi
+
+# 6g. Entry 6's window carries only a start marker (a dropped `log` call);
+# the row must exist with window s reading "(open)" and cpu/cpu-ms dashes —
+# not a duration computed from one boundary, and not folded into Unreadable
+# either, since the dump itself is valid.
+join_entry6="$(grep '^| unity-cpu-join | 6 | ' "${join_got}" || true)"
+if [ -z "${join_entry6}" ]; then
+    fail "unity-cpu-join.md holds no row for entry 6, whose dump is valid —"
+    fail "  a one-sided window must still produce a row."
+elif ! grep -qF '| — | (open) | 400 | 0 | — | — | 0 |' <<<"${join_entry6}"; then
+    fail "entry 6's row in unity-cpu-join.md does not read"
+    fail "  \"| — | (open) | 400 | 0 | — | — | 0 |\" (\"${join_entry6}\"). A window"
+    fail "  with only a start marker must read (open), never a duration."
+fi
+
+# 6h. Entry 7's window is genuinely inverted (end precedes start), not merely
+# equal (entry 2's case). The row must still exist, with window s, cpu and
+# cpu ms all reading dashes rather than a negative duration.
+join_entry7="$(grep '^| unity-cpu-join | 7 | ' "${join_got}" || true)"
+if [ -z "${join_entry7}" ]; then
+    fail "unity-cpu-join.md holds no row for entry 7, whose dump is valid —"
+    fail "  an inverted window must still produce a row."
+elif ! grep -qF '| — | 500 | 0 | — | — | 0 |' <<<"${join_entry7}"; then
+    fail "entry 7's row in unity-cpu-join.md does not read"
+    fail "  \"| — | 500 | 0 | — | — | 0 |\" (\"${join_entry7}\"). An inverted window"
+    fail "  (end before start) must not print a negative duration or a CPU"
+    fail "  figure derived from one."
+fi
+
+# 6i. unity-cpu-tie.log gives its one sweep an exact 1-to-1 pid tie (7001
+# against 7002 across its own frame-cost samples), so `sweep_pid`'s mode has
+# no majority to find. The row must still exist, with the dump's own
+# presented/dropped untouched but extent, window s, cpu and cpu ms all
+# reading (open)/dashes — never a pid picked by insertion order.
+join_tie="$(grep '^| unity-cpu-tie | 1 | ' "${join_got}" || true)"
+if [ -z "${join_tie}" ]; then
+    fail "unity-cpu-join.md holds no row for unity-cpu-tie's entry 1, whose"
+    fail "  dump is valid — an unresolved pid tie must still produce a row."
+elif ! grep -qF '| — | (open) | 600 | 0 | — | — | 0 |' <<<"${join_tie}"; then
+    fail "unity-cpu-tie's row does not read"
+    fail "  \"| — | (open) | 600 | 0 | — | — | 0 |\" (\"${join_tie}\"). A 1-to-1 pid"
+    fail "  tie must resolve to no pid at all, never to whichever pid the"
+    fail "  Counter happened to count first."
 fi
 
 if [ "${failures}" -ne 0 ]; then

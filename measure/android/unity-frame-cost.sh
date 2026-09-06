@@ -120,6 +120,11 @@ restore() {
     "${adb}" shell wm size reset >/dev/null 2>&1 || true
     "${adb}" shell settings put system user_rotation 0 >/dev/null 2>&1 || true
     "${adb}" shell settings put system accelerometer_rotation 1 >/dev/null 2>&1 || true
+    # A sweep enables compositor timestats collection per entry; an early
+    # exit (a failed guard, `set -e`) between that `-enable` and the loop's
+    # own `-disable` would otherwise leave collection on for the rest of the
+    # device's session. Idempotent to call when already disabled.
+    "${adb}" shell dumpsys SurfaceFlinger --timestats -disable >/dev/null 2>&1 || true
 }
 trap restore EXIT
 
@@ -192,8 +197,18 @@ for index in $(seq 1 "${sweeps}"); do
         ds_warn "the process went between the two reads."
         exit 1
     fi
+    # **Six seconds of slack per entry, not just a flat six.** Issue #1457
+    # added several `adb shell` round trips to every entry's loop body — the
+    # window markers, the compositor dump and clear — where the loop used to
+    # spend only `dwell` seconds plus one `keyevent`. Measured on the Pixel 5:
+    # entry C5 alone ran 23.1 s against a nominal 20.1 s dwell (recorded under
+    # "CPU per presented frame" in `docs/design/android-toolchain.md`), and
+    # that 3 s overrun left entry C6 with no sampler reading inside its window
+    # at all, once the flat `+6` this script used before that story ran out.
+    # A per-entry allowance survives one slow entry instead of only a slow
+    # tail.
     ds_cpu_sampler_start "${adb}" "${pid}" \
-        "$(( (total * dwell) + 6 ))" "${DS_CPU_INTERVAL:-0.5}"
+        "$(( (total * (dwell + 6)) + 6 ))" "${DS_CPU_INTERVAL:-0.5}"
 
     # **One compositor window per entry, not one per sweep** (issue #1457): D1
     # of
@@ -228,9 +243,8 @@ for index in $(seq 1 "${sweeps}"); do
         # the marker's own `log` call sat in that gap too, and every frame
         # presented during it — still the OLD entry's content — was counted
         # into the NEW entry's window. The window and the dwell are then the
-        # same seconds, to within that one remaining round trip: the reason
-        # `docs/design/android-toolchain.md`'s "cpu ms per presented frame"
-        # section reads this as a sub-percent-scale bound rather than zero.
+        # same seconds, to within that one remaining round trip — small next
+        # to a dwell of several seconds, but not zero, and not measured here.
         "${adb}" shell dumpsys SurfaceFlinger --timestats -clear >/dev/null 2>&1 || true
         "${adb}" shell input keyevent 93 >/dev/null 2>&1 || true
         if [ "${entry}" -lt "${total}" ]; then
@@ -427,8 +441,14 @@ if [ -e "${timestats_files[0]}" ]; then
     provenance >> "${table}"
     rows="$(grep -c '^| [A-Z] | ' "${table}" || true)"
     unreadable="$(grep -c '^- `' "${table}" || true)"
-    if [ "${rows}" -eq 0 ] && [ "${unreadable}" -eq 0 ]; then
-        ds_warn "unity-cpu.md holds no row, over ${#timestats_files[@]} dump(s)."
+    # **Zero rows is a failure regardless of the unreadable count**, the same
+    # unconditional rule the unity-frames/unity-threads loop above applies —
+    # every dump naming no layer for the package (the wrong `--package`, or a
+    # player that never rendered a frame) is exactly as much "nothing measured"
+    # as an empty table with nothing to say why.
+    if [ "${rows}" -eq 0 ]; then
+        ds_warn "unity-cpu.md holds no row, over ${#timestats_files[@]} dump(s)"
+        ds_warn "and ${unreadable} unreadable."
         exit 1
     fi
     # **Every dump is a row or a reported unreadable one — no third outcome.**

@@ -1,0 +1,5 @@
+         300.000 9101 9101 I dashscene-cpu: 7001 (tie-a) S 0 0 0 0 -1 0 0 0 0 0 100 100 0 0 10 -10 50 0 0 0 0 0 1 1 0 0 0 0 0 1 0 0 0 0 17 7 0 0 0 0 0 0 0 0 0 0 0 0 0
+         300.500 9102 9102 I dashscene-window: entry 1 start pid=7001
+         301.000 7001 7021 I Unity   : [showcase] frame cost — scene tie-a at 1080x2340 over 240 frames — tick 0.10 ms, draw mean 0.10 p50 0.10 p95 0.10 max 0.10 ms (1000.0 fps if unpaced)
+         302.000 7002 7022 I Unity   : [showcase] frame cost — scene tie-b at 1080x2340 over 240 frames — tick 0.10 ms, draw mean 0.10 p50 0.10 p95 0.10 max 0.10 ms (1000.0 fps if unpaced)
+         309.500 9103 9103 I dashscene-window: entry 1 end pid=7001
