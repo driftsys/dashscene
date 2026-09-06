@@ -11,9 +11,9 @@
 //! nothing else.
 //!
 //! **Three questions, and each of them can be wrong on its own.** `Draw` can
-//! bind unconditionally, which costs the same four `Material.Set…` calls per
+//! bind unconditionally, which costs the same five `Material.Set…` calls per
 //! material per frame the story removes and passes any scan that only asks
-//! whether the binding happens. The flag can be raised by three of its four
+//! whether the binding happens. The flag can be raised by four of its five
 //! reasons, which draws a correct picture until the reason that was missed
 //! occurs — a reallocated buffer draws a freed one, a changed anti-aliasing
 //! width draws the previous frame's. And a host loop can tick and then draw
@@ -79,16 +79,16 @@ fn draw_binds_the_heap_exactly_once_and_only_when_pending() {
     assert!(
         squeeze(body).contains("if (HeapBindingPending) { BindHeap(); }"),
         "{PAINTER_PATH}'s `Draw` does not guard its one `BindHeap()` on \
-         `HeapBindingPending`. `BindHeapTo` makes four `Material.Set…` calls \
+         `HeapBindingPending`. `BindHeapTo` makes five `Material.Set…` calls \
          per material per frame, and story #1445 is that those calls happen \
          when the binding goes stale rather than on every frame of a settled \
          scene."
     );
 
-    // **And `BindHeap` clears it.** A flag that is raised by four reasons
+    // **And `BindHeap` clears it.** A flag that is raised by five reasons
     // and cleared by none is true for ever after the first frame, so the guard
     // above is written, correct, and never false — every drawn frame pays the
-    // four `Material.Set…` calls per material that this story removes, and the
+    // five `Material.Set…` calls per material that this story removes, and the
     // picture is right the whole time. Nothing else in CI can see that:
     // `BrgPainter` is `Runtime/Engine/`, which `unity/ffi-check` excludes and
     // no CI job compiles, so `just unity-render`'s settle step was the only
@@ -120,9 +120,10 @@ fn draw_binds_the_heap_exactly_once_and_only_when_pending() {
 
 /// Every reason the binding can go stale raises the flag.
 ///
-/// **Four reasons and not one.** `BindHeap` binds three buffers and the
-/// scalars `(EdgeWidth, SolidBase, GradientBase)`, and the two halves go stale
-/// for different reasons: a buffer is reallocated when its table outgrows it,
+/// **Five reasons and not one.** `BindHeap` binds three buffers, the gradient
+/// strip and the scalars `(EdgeWidth, SolidBase, GradientBase, StripRows)`, and
+/// the halves go stale for different reasons: a buffer is reallocated when its
+/// table outgrows it, the strip texture is re-created when its row count moves,
 /// and the scalars move with no reallocation at all — the anti-aliasing width
 /// on every change of drawable extent, the gradient base whenever the paint
 /// table interns a new solid. A flag raised by reallocation alone draws a
@@ -174,6 +175,58 @@ fn the_pending_flag_is_raised_by_every_reason_the_binding_can_go_stale() {
         (
             "private void ReleaseAtlases()",
             "_heapBindingPending = true;",
+        ),
+        // Story #1449's fifth reason. A `Texture2D` cannot be resized, so a
+        // strip whose row count moved is a NEW texture and every material still
+        // names the previous one — the same failure a reallocated
+        // `GraphicsBuffer` is, reached through a binding that is not a buffer.
+        //
+        // **The CONDITION, not the assignment alone**, which is the strengthening
+        // `Upload`'s own needle above already carries and this one did not: a
+        // review seat deleted the `_stripTexture.height != height` half, leaving
+        // `if (_stripTexture == null)`, and the whole `package-gate` suite stayed
+        // green. A document whose gradient count grows then samples the previous,
+        // too-short texture at a v coordinate computed from the NEW row count —
+        // every gradient's colour wrong, with the flag never raised so the rebind
+        // never happens either.
+        (
+            "private void UploadStrip(FrameLease lease)",
+            "if (_stripTexture == null || _stripTexture.height != height) { if \
+             (_stripTexture != null) { UnityEngine.Object.DestroyImmediate(_stripTexture); }",
+        ),
+        (
+            "private void UploadStrip(FrameLease lease)",
+            "_stripRows = height; _stripUploaded = false; _heapBindingPending = true;",
+        ),
+        // And the strip's own skip, whose "already there" direction freezes the
+        // document's gradients rather than the binding. The decision is
+        // `GradientStripUpload.AlreadyUploaded`'s for `HeapUpload`'s reason —
+        // this file's own subject — so what is pinned here is that
+        // `UploadStrip` asks it rather than carrying a second copy that
+        // `unity/ffi-check` cannot execute.
+        (
+            "private void UploadStrip(FrameLease lease)",
+            "if (GradientStripUpload.AlreadyUploaded( _stripUploaded, lease.DocumentReplaced, \
+             strip.Generation, _stripGeneration)) { return; }",
+        ),
+        // **The ORDER, as one span, and it is the whole of a defect that
+        // shipped once.** The bake must be recorded before the empty-strip
+        // return, not after the byte copy that an empty strip never reaches: a
+        // document with no gradient otherwise records nothing and consumes no
+        // replacement flag, so a later document whose own first gradient lands
+        // on the same generation — the count restarts per document — is treated
+        // as already uploaded and draws the previous document's colours.
+        //
+        // A needle per statement cannot say this. `member_body` plus
+        // `squeeze(…).contains(…)` has no positional constraint between two
+        // needles, so the three above are all satisfied by the broken order —
+        // measured, by reverting `UploadStrip` to it and watching this file and
+        // `paint_heap_binding.rs` stay green. One contiguous span is what
+        // carries the ordering.
+        (
+            "private void UploadStrip(FrameLease lease)",
+            "_stripGeneration = strip.Generation; _stripUploaded = true; if (rows == 0) \
+             { return; }",
         ),
     ] {
         let (start, end) = member_body(&scanned, member);

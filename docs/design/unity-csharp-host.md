@@ -160,22 +160,24 @@ which are process-wide: the last painter to draw supplied the gradients, strokes
 and clip boxes every painter's fragments shaded from, and the painter reported
 that with a constructor warning rather than drawing a wrong picture quietly.
 `BindHeap` now sets them on the materials this painter registered itself — the
-three heap tables and the scalars on the class material and on every glyph
-atlas's material, and `_DsGlyphs` on the atlas materials alone, because the
-shading declares it under `DASHSCENE_CLASS_TEXT` and no other class can reach a
-glyph run. So **a second painter in one process is a supported configuration**,
-and the live-painter counter that warned about one is gone. It runs on every
-frame whose binding has gone stale rather than once, and story #1445 is what
-made "which frames" a question. Four reasons raise
+three heap tables, the baked gradient strip and the scalars on the class
+material and on every glyph atlas's material, and `_DsGlyphs` on the atlas
+materials alone, because the shading declares it under `DASHSCENE_CLASS_TEXT`
+and no other class can reach a glyph run. So **a second painter in one process
+is a supported configuration**, and the live-painter counter that warned about
+one is gone. It runs on every frame whose binding has gone stale rather than
+once, and story #1445 is what made "which frames" a question. Five reasons raise
 `BrgPainter.HeapBindingPending` and `Draw` binds only when it is raised: a heap
 buffer is reallocated when its table outgrows it, `SetAtlases` mints text
 materials long after the constructor so no earlier moment holds the whole set,
-`ReleaseAtlases` drops them again, and the scalars
-`(EdgeWidth, SolidBase, GradientBase)` move with the drawable extent and the
-paint table's layout without reallocating anything. On a settled scene none of
-the four fires and the four `Material.Set…` calls per material do not happen;
-`unity/render-gate`'s settle step reads `HeapBindCount` and fails unless it
-moves on a changed extent and on nothing else.
+`ReleaseAtlases` drops them again, the gradient strip's ROW COUNT moves — a
+`Texture2D` cannot be resized, so a new one leaves every material naming the
+previous one (story #1449) — and the scalars
+`(EdgeWidth, SolidBase, GradientBase, StripRows)` move with the drawable extent
+and the paint table's layout without reallocating anything. On a settled scene
+none of the five fires and the five `Material.Set…` calls per material do not
+happen; `unity/render-gate`'s settle step reads `HeapBindCount` and fails unless
+it moves on a changed extent and on nothing else.
 
 **`_DsGlobals` had to move into `CBUFFER_START(UnityPerMaterial)` and into all
 four `Properties` blocks, and the second half of that is measured rather than
@@ -399,6 +401,50 @@ exists: `unity/package-gate`'s own comment said "a gate over the files alone
 would pass while nothing drew", and it passed while nothing drew. Both sides of
 every assertion there are read out of this repository, and stripping happens at
 build time in someone else's project.
+
+## The shading specialises by the document's kind set (story #1449)
+
+Three of the fragment stage's costs are now paid only by a document that incurs
+them, and the mechanism is a shader keyword where the lean painter's is an
+`override` constant. `ds_runtime_kind_set` reports a two-bit census of the
+tables the last commit produced — bit 0 the document clips, bit 1 it strokes —
+and `BrgPainter.ApplyKindSet` toggles `DS_HAS_CLIPS` and `DS_HAS_STROKES` on
+every material it draws with, **only on a frame whose bits moved**. With
+`DS_HAS_CLIPS` undefined `DsClipCoverage` returns the unclipped answer as a
+literal and its loop, its box loads and its distances are compiled out; with
+`DS_HAS_STROKES` undefined the stroke arm and the stroke table read behind it
+go. The set is read on **every drawn frame and not once per load**, because a
+commit that interns the document's first stroke moves it.
+
+`Text.shader` declares no `DS_HAS_STROKES`: its arm shades a glyph run and
+returns before that branch, so the keyword would remove no code there and R-E6's
+`KeepAll` would compile both halves of it anyway.
+`unity/package-gate/tests/kind_set_keywords.rs` reads the `DS_HAS_*` names out
+of `DashsceneInstance.hlsl` and holds each shader to the pragma its class needs
+and to the absence of the one it does not.
+
+**The third cost is the gradient ramp, and it is not a keyword.**
+`DsGradientColour` used to read eight offsets and up to eight colours out of the
+paint heap and walk them per fragment; it now takes one filtered texel of
+`_DsGradientStrip`, a 256-texel row per gradient row of the heap, baked by
+`dashpaint::gradient_strip` at the commit whose gradient rows changed and copied
+into a `Texture2D(256, rows, RGBA32, linear)` by `BrgPainter.UploadStrip`. The
+strip is **not baked twice**: no C# evaluates a ramp, which is what makes the
+two painters' gradients one function rather than two. Bilinear filtering is the
+whole mechanism — between two texel centres a filtered read is the linear
+interpolation the ramp is already made of — and `unity/ffi-check` re-derives
+`bake_row` from the stops the ABI hands back and compares EVERY row byte for
+byte — four of them on `v03-paint.dsb`, because a baker that wrote gradient 0's
+ramp into every row leaves row 0 correct. `ds_runtime_gradient_strip`'s
+generation is what decides whether to copy, so a scene animating a box position
+copies nothing; a row count that moved mints a new texture, which is the fifth
+reason `HeapBindingPending` is raised.
+
+A fourth saving is unconditional: `DsShade` returns early for a solid fill on a
+sharp box that nothing clips, which is the commonest instance in every scene
+measured for epic #1441. It computes the general path's own arithmetic in the
+same grouping — with no clip range `DsClipCoverage` is exactly 1.0 — and what it
+saves is what a literal zero radius lets the compiler fold.
 
 ## The SDF math is generated, not ported (R-T5)
 

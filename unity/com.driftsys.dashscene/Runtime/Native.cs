@@ -156,6 +156,41 @@ namespace Driftsys.Dashscene
         public long StrideAsLong => (long)Stride.ToUInt64();
     }
 
+    /// The committed gradient strip: one baked 256-texel ramp per gradient row
+    /// of the paint table, and which bake it is.
+    ///
+    /// `Rows.Count` is the gradient count and `Rows.Stride` is 1024 — 256 texels
+    /// of STRAIGHT-ALPHA RGBA8, not premultiplied — so the payload is
+    /// `Count * Stride` bytes, tightly packed, row `i` at `i * Stride`. A
+    /// document with no gradient fill reports a count of 0 and a null pointer,
+    /// with the stride still this build's row size.
+    ///
+    /// **Upload it when `Generation` moves, and on a document replacement.**
+    /// The generation moves only at a commit whose gradient rows actually
+    /// changed, so a scene animating a box position never re-uploads it. It is
+    /// counted within one arena's commit chain and nothing more: a replaced
+    /// document starts again, and its 1 can follow the old document's 1 while
+    /// naming different colours — the same rule `DsFrame.Generation` carries,
+    /// and the reason `FrameLease.DocumentReplaced` is the other trigger.
+    ///
+    /// **Lifetime: the COMMIT, not the load.** The rows are valid until the
+    /// next commit — a tick, a load, or a producer's own commit — so copy them
+    /// before you let one happen. This is where the strip differs from
+    /// `ds_runtime_atlas`, whose sheets survive every commit until the next
+    /// load. A painter reading it while it holds a frame lease is inside that
+    /// window by construction: every call that would commit is refused while a
+    /// lease is outstanding.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct DsGradientStrip
+    {
+        /// The baked rows: `Count` rows of `Stride` bytes, tightly packed.
+        public DsSlice Rows;
+
+        /// Which bake these rows are. See above for what it does and does not
+        /// say.
+        public ulong Generation;
+    }
+
     /// One face, with the atlas its shaped glyphs sample.
     ///
     /// `AtlasPng` and `AtlasMetrics` must both be null or both point at real
@@ -505,6 +540,31 @@ namespace Driftsys.Dashscene
             }
         }
 
+        internal static DsStatus ds_runtime_kind_set(ulong runtime, out uint outBits)
+        {
+            try
+            {
+                return Imports.ds_runtime_kind_set(runtime, out outBits);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
+
+        internal static DsStatus ds_runtime_gradient_strip(
+            ulong runtime, out DsGradientStrip outStrip)
+        {
+            try
+            {
+                return Imports.ds_runtime_gradient_strip(runtime, out outStrip);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
+
         internal static UIntPtr ds_last_error_message(byte[] buf, UIntPtr cap)
         {
             try
@@ -636,6 +696,13 @@ namespace Driftsys.Dashscene
             [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
             internal static extern DsStatus ds_runtime_release_frame(
                 ulong runtime, int drawn, out byte outWasLeased);
+
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_kind_set(ulong runtime, out uint outBits);
+
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_gradient_strip(
+                ulong runtime, out DsGradientStrip outStrip);
 
             /// Returns the bytes the message needs including the terminator, so a
             /// null `buf` or a short one tells you what to allocate.

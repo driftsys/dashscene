@@ -175,6 +175,35 @@ int main(void) {
             ds_runtime_atlas(runtime, 0, NULL) == DS_NULL_ARGUMENT,
         "a null out is a status on both atlas calls, not a crash");
 
+  /* The two story #1449 calls, from C. Both belong to a COMMIT rather than to
+   * a load, so without a document both must say DS_NO_DOCUMENT: an empty kind
+   * set is a real answer for a document that neither clips nor strokes, and
+   * reading it for "no document" would have a host disable both keywords for a
+   * scene it has not loaded yet. */
+  uint32_t bits = 0xDEADBEEFu;
+  check(ds_runtime_kind_set(runtime, &bits) == DS_NO_DOCUMENT,
+        "the kind set without a document reports DS_NO_DOCUMENT");
+  check(bits == 0,
+        "and the out was written before anything could fail, so a caller that "
+        "ignored the status enables no keyword rather than reading its own "
+        "stack");
+
+  DsGradientStrip strip;
+  memset(&strip, 0xCD, sizeof strip);
+  check(ds_runtime_gradient_strip(runtime, &strip) == DS_NO_DOCUMENT,
+        "the gradient strip without a document reports DS_NO_DOCUMENT");
+  check(strip.rows.ptr == NULL && strip.rows.count == 0 &&
+            strip.generation == 0,
+        "a refused strip is EMPTIED, so a caller that ignored the status "
+        "uploads nothing rather than reading 0xCD as a row count");
+  check(strip.rows.stride == 1024,
+        "and it still reports this build's row size — 256 texels of RGBA8 — so "
+        "a host can validate the stride without a successful call");
+
+  check(ds_runtime_kind_set(runtime, NULL) == DS_NULL_ARGUMENT &&
+            ds_runtime_gradient_strip(runtime, NULL) == DS_NULL_ARGUMENT,
+        "a null out is a status on both story #1449 calls, not a crash");
+
   /* Junk must fail as a status. An unwind across this boundary would be
    * undefined behaviour, so "it returned at all" is part of the assertion. */
   const uint8_t junk[32] = {0};

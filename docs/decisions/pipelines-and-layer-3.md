@@ -16,6 +16,19 @@ a device, a pipeline and a target.
 buffer: the quad's corners come from the vertex index and the instance's own
 bounds. A frame uploads the instance rows and nothing else.
 
+**D1 as built (story #1449): one paint pipeline _per document kind set_.** The
+draw call, the vertex count and the absent vertex buffer are unchanged; what is
+no longer one is the pipeline object. `dashpaint::kind_set::KindSet` is a census
+of the committed tables — does this document clip, does it stroke — and the
+painter keeps one pipeline per set, built on first use, selected by two WGSL
+`override` constants that compile out the clip loop and the stroke arm for a
+document that reaches neither. It is **re-selected on every paint**, because the
+tables the census reads grow when a paint or a stroke is interned mid-run.
+Beside this, "one pipeline" was already the paint pipeline alone rather than the
+painter's whole set: story #583 added the composite pipeline and story #733 two
+blur pipelines, both documented under "What is drawn, and what is not" below and
+neither reconciled with this heading at the time.
+
 **D2 — the painter draws offscreen and reads the pixels back.** A surface needs
 a window, and the window is the host's — story #585 puts this painter behind
 v0.14's `Present` seam.
@@ -97,9 +110,10 @@ The trigger's second half — "bindings whose layout is derived rather than
 written" — came close. Drawing gradients needed two more storage buffers in a
 fragment stage with none free, so binding 1 stopped being the solid table and
 became a heap of `vec4f` words holding the solid colours and the gradient rows
-together. The bind group itself did not change shape: still one group, still
-eleven entries written out by hand on each side, still a named test failure at
-`create_render_pipeline` when they disagree.
+together. The bind group itself did not change shape: still one group, eleven
+entries written out by hand on each side at that point, still a named test
+failure at `create_render_pipeline` when they disagree. (Thirteen since story
+#1449, which the fourth revisit below records.)
 
 **D6 revisited a third time (story #584), and unchanged again.** Shadows added a
 region to that same heap and moved binding 4 from both stages to the fragment
@@ -116,6 +130,17 @@ words inside one mean. So it would have bought nothing for the riskiest part of
 that change, which is why the answer is unchanged rather than merely
 unreconsidered. `docs/decisions/the-paint-parameter-heap.md` D7 carries the
 argument and says what holds the heap instead.
+
+**D6 revisited a fourth time (story #1449), and unchanged again.** The gradient
+strip added a texture at binding 11 and a filtering sampler at 12, taking the
+group from eleven entries to **thirteen**, and `Globals` gained `strip_rows`.
+Both sides are still written out by hand in one place each, and the mismatch is
+still a named failure at `create_render_pipeline` — so the trigger's second half
+is no nearer than it was. What is new is the `override` constants, and they cut
+the other way: a generator that reflected declared bindings would say nothing
+about which arms a pipeline was specialised with, and `tests/kind_set.rs` is
+what holds that instead — it paints a clipped scene through the clip-free
+pipeline and reads the pixel the missing clip loop leaves inked.
 
 **D6, against `naga_oil`.** Its value is `#import` and module composition, so
 the SDF math is one source rather than copies. That property already holds:

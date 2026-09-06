@@ -35,22 +35,29 @@ have owned for it. The JNI boundary is between the Java host and
 dependency.
 
 **It is a control plane and, since story #859, a data plane beside it.** Most of
-what follows moves a document, a surface, a clock and a status. Two entry points
-move rows: `ds_runtime_acquire_frame` hands out borrowed views of the committed
-tables and `ds_runtime_release_frame` ends the borrow. That pair is what a host
+what follows moves a document, a surface, a clock and a status. The data plane
+is one lease plus three reads. The lease is `ds_runtime_acquire_frame`, which
+hands out borrowed views of the committed tables, and
+`ds_runtime_release_frame`, which ends the borrow; that pair is what a host
 drawing its own frames calls, and until it existed such a host had nothing to
-call at all.
+call at all. The three reads take no lease and are refused by none, because each
+answers about the front scene or about the load rather than borrowing into a
+table a commit replaces: `ds_runtime_atlas` (story #1123), and
+`ds_runtime_kind_set` and `ds_runtime_gradient_strip` (story #1449). **The reads
+differ from each other in lifetime, and the difference is the trap**: an atlas
+belongs to the load and survives every commit, while a kind set and a strip
+belong to the _commit_ and are answered again by the next one.
 
 ## The entry points
 
-Six groups, and the grouping is the lifecycle. The last two are the data plane:
-the committed tables, and the glyph atlases those tables' runs sample. **What a
-host chooses between is `ds_runtime_draw` and the acquire pair**, not between
-the groups: a host that paints its own frames still creates a runtime, loads a
-document and calls `ds_runtime_tick` every frame. A load commits too, so a frame
-is available before the first tick — but only the tick can produce a _later_
-one, and a host-draws host that skipped it would acquire the same frame for
-ever.
+Seven groups, and the grouping is the lifecycle. The last three are the data
+plane: the committed tables, the glyph atlases those tables' runs sample, and
+the two per-commit values a host shades from. **What a host chooses between is
+`ds_runtime_draw` and the acquire pair**, not between the groups: a host that
+paints its own frames still creates a runtime, loads a document and calls
+`ds_runtime_tick` every frame. A load commits too, so a frame is available
+before the first tick — but only the tick can produce a _later_ one, and a
+host-draws host that skipped it would acquire the same frame for ever.
 
     ds_abi_version                       what this library implements
     ds_last_error_message                the last failure, as text
@@ -78,6 +85,11 @@ ever.
                                          names
     ds_runtime_atlas                     one of them: the sheet, its scalars
                                          and its glyph table
+
+    ds_runtime_kind_set                  which shading arms this commit's
+                                         document reaches, as two bits
+    ds_runtime_gradient_strip            this commit's baked gradient ramps,
+                                         and which bake they are
 
 `ds_runtime_detach_surface` exists because of D4 rather than symmetry. The
 Android host must drop its surface and keep its document when `surfaceDestroyed`
@@ -133,12 +145,12 @@ version — it is what this library implements.
 
 **It moved once, at story #1226**, when `DsRuntime` stopped being a pointer and
 became a generational handle. Ten of the twelve exported entry points changed
-signature for it — twelve was the count then, and the surface has grown three
-times since, by story #859, by story #1124 and by story #1123; `ds_abi_version`
-and `ds_last_error_message` take no runtime and did not. That is the rule in
-this heading working as stated rather than an exception to it — a changed
-signature is exactly what is not free, and it is the only thing that has ever
-moved this number.
+signature for it — twelve was the count then, and the surface has grown four
+times since, by story #859, by story #1124, by story #1123 and by story #1449;
+`ds_abi_version` and `ds_last_error_message` take no runtime and did not. That
+is the rule in this heading working as stated rather than an exception to it — a
+changed signature is exactly what is not free, and it is the only thing that has
+ever moved this number.
 
 `DsStatus` has grown from nine variants to twenty-one without moving it, because
 every addition went on the **tail**: `FontFace` and `Atlas` at #947, then `Map`,

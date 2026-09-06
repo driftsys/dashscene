@@ -3924,3 +3924,185 @@ fn a_negative_declared_size_is_refused() {
         }),
     );
 }
+
+/// A stop list and the gradient over it, as a producer stages one.
+fn gradient_fill(first: Color) -> FillSpec {
+    FillSpec::Gradient {
+        gradient: dashscene_core::Gradient {
+            kind: dashscene_core::GradientKind::Linear,
+            handle_origin: Vec2 { x: 0.0, y: 0.0 },
+            handle_primary: Vec2 { x: 1.0, y: 0.0 },
+            handle_secondary: Vec2 { x: 0.0, y: 1.0 },
+            stops: dashscene_core::StopRange::NONE,
+        },
+        stops: vec![
+            dashscene_core::GradientStop {
+                offset: 0.0,
+                color: first,
+            },
+            dashscene_core::GradientStop {
+                offset: 1.0,
+                color: Color {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 1.0,
+                    a: 1.0,
+                },
+            },
+        ],
+    }
+}
+
+/// The kind set is a census of the tables **this** commit ended with, not of
+/// the document that was loaded (story #1449).
+///
+/// The property the whole per-document specialisation rests on: the tables
+/// grow while a scene runs, so a set taken once would be wrong from the first
+/// stroke or the first clip onward.
+#[test]
+fn a_commit_computes_the_kind_set_from_its_own_tables() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, Some("bg"));
+    txn.set_prop(root, Prop::Width(320.0));
+    txn.set_prop(root, Prop::Height(240.0));
+    txn.set_prop(root, Prop::Fill(RED));
+    let child = txn.add_node(Some(root), Some("child"));
+    txn.set_prop(child, Prop::Width(100.0));
+    txn.set_prop(child, Prop::Height(100.0));
+    txn.set_prop(child, Prop::Fill(RED));
+    txn.commit();
+    assert_eq!(
+        arena.committed().kind_set(),
+        dashscene_core::KindSet::default(),
+        "a solid fill with no stroke and no clip reaches neither arm"
+    );
+
+    // A stroke, interned by a later commit into the table the first one built.
+    let mut txn = arena.open();
+    txn.set_prop(
+        root,
+        Prop::Stroke(Stroke {
+            width: 2.0,
+            align: StrokeAlign::Center,
+            color: RED,
+        }),
+    );
+    txn.commit();
+    assert_eq!(
+        arena.committed().kind_set(),
+        dashscene_core::KindSet {
+            clips: false,
+            strokes: true,
+        },
+        "the stroke this commit interned moves the set"
+    );
+
+    // And a clip, which core resolves into a clip box for the subtree.
+    let mut txn = arena.open();
+    txn.set_prop(root, Prop::Clip(true));
+    txn.commit();
+    assert_eq!(
+        arena.committed().kind_set(),
+        dashscene_core::KindSet {
+            clips: true,
+            strokes: true,
+        },
+        "the clip box this commit resolved moves the other bit"
+    );
+}
+
+/// The strip is re-baked when a gradient row moves, and shared when it does not
+/// (story #1449).
+///
+/// The generation is what a host copying the rows over a C ABI reads to decide
+/// whether to copy them again, so a generation that moved when nothing did
+/// costs a kibibyte per row per frame, and one that did not move when something
+/// did draws last commit's colours.
+#[test]
+fn the_gradient_strip_is_rebaked_only_when_a_gradient_row_moves() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, Some("bg"));
+    txn.set_prop(root, Prop::Width(320.0));
+    txn.set_prop(root, Prop::Height(240.0));
+    txn.set_prop(root, Prop::Fill(RED));
+    txn.commit();
+    assert_eq!(
+        arena.committed().gradient_strip().rows,
+        0,
+        "a document with no gradient bakes no row"
+    );
+    assert_eq!(
+        arena.committed().strip_generation(),
+        0,
+        "and never leaves generation zero"
+    );
+
+    // The first gradient: one row, and the generation moves once.
+    let mut txn = arena.open();
+    txn.set_prop(root, Prop::FillWith(gradient_fill(RED)));
+    txn.commit();
+    let first = arena.committed().strip_generation();
+    assert_eq!(arena.committed().gradient_strip().rows, 1);
+    assert_eq!(first, 1, "the first bake");
+    // Row 0 is the ramp this producer staged, and `bake_row` is what says so.
+    let mut expected = [0u8; dashpaint::gradient_strip::STRIP_ROW_BYTES];
+    dashpaint::gradient_strip::bake_row(arena.committed().paints().all_stops(), &mut expected);
+    assert_eq!(
+        arena.committed().gradient_strip().rgba8,
+        expected.to_vec(),
+        "the committed row is the baker's own output for the committed stops"
+    );
+
+    // A commit that moves a box and nothing else re-bakes nothing — and shares
+    // the **allocation**, not merely an equal copy of it. The address is the
+    // observable: a bake that produced identical bytes into a fresh `Arc` would
+    // satisfy every assertion about the generation and the contents, and would
+    // cost a host copying the rows over the C ABI exactly what the sharing
+    // exists to save. `StripImage` is named through `dashscene_core` here
+    // because that re-export is what makes `gradient_strip()`'s return type
+    // nameable by a consumer of this crate.
+    let before: *const dashscene_core::StripImage = arena.committed().gradient_strip();
+    let mut txn = arena.open();
+    txn.set_prop(root, Prop::X(4.0));
+    txn.commit();
+    assert_eq!(
+        arena.committed().strip_generation(),
+        first,
+        "a geometry-only commit leaves the gradient rows where they were"
+    );
+    assert_eq!(
+        arena.committed().gradient_strip() as *const dashscene_core::StripImage,
+        before,
+        "and hands on the same allocation rather than an equal copy"
+    );
+
+    // A commit that changes a stop's colour re-bakes and moves the generation.
+    let mut txn = arena.open();
+    txn.set_prop(
+        root,
+        Prop::FillWith(gradient_fill(Color {
+            r: 0.0,
+            g: 1.0,
+            b: 0.0,
+            a: 1.0,
+        })),
+    );
+    txn.commit();
+    assert!(
+        arena.committed().strip_generation() > first,
+        "a changed stop is a changed row, so the generation moves; it stayed at {first}"
+    );
+    assert_ne!(
+        arena.committed().gradient_strip().rgba8,
+        expected.to_vec(),
+        "and the rows themselves changed, not only the number beside them"
+    );
+    assert_ne!(
+        arena.committed().gradient_strip() as *const dashscene_core::StripImage,
+        before,
+        "a re-bake is a new allocation, so the sharing above was a decision \
+         rather than the only thing this code can do"
+    );
+}

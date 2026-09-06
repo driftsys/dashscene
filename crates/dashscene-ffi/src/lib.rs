@@ -212,6 +212,7 @@ use dashbuf::map::MappedFile;
 use dashbuf::prefetch::ShownRoot;
 use dashbuf::residency::BlobResidency;
 use dashpaint::Painter;
+use dashpaint::gradient_strip::STRIP_ROW_BYTES;
 use dashscene_core::{Arena, CommittedScene, MappedPayload, Region};
 use dashscene_engine::{TaffySolver, TextResources, TextResourcesError};
 use dashscene_gpu::{Changes, Drawn};
@@ -1679,6 +1680,44 @@ impl DsSlice {
     }
 }
 
+/// The committed gradient strip, as [`ds_runtime_gradient_strip`] hands it out
+/// (story #1449).
+///
+/// A struct rather than two out-parameters because the rows and the generation
+/// are one answer: a host that read the rows without the generation would have
+/// to upload them every frame, and a host that read the generation without the
+/// rows would have nothing to upload. The same shape [`DsAtlas`] has, and for
+/// the same reason.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct DsGradientStrip {
+    /// The baked rows: `count` rows of `stride` bytes, tightly packed. `stride`
+    /// is 1024 — 256 texels of straight-alpha RGBA8 — and is reported for an
+    /// empty strip as well as a populated one, the rule every empty [`DsSlice`]
+    /// in this ABI follows: a host validates its strides against its own
+    /// `sizeof` at the top of a frame, and a zero here would reject every
+    /// document that has no gradient.
+    pub rows: DsSlice,
+    /// Which bake these rows are. See [`ds_runtime_gradient_strip`] for what a
+    /// host may and may not conclude from it.
+    pub generation: u64,
+}
+
+impl DsGradientStrip {
+    /// No rows, no generation, and **still this build's row size** — the shape
+    /// every failing path writes before it returns.
+    const fn empty() -> Self {
+        Self {
+            rows: DsSlice {
+                ptr: std::ptr::null(),
+                count: 0,
+                stride: STRIP_ROW_BYTES,
+            },
+            generation: 0,
+        }
+    }
+}
+
 /// Borrows `rows` as a [`DsSlice`], normalising the empty case to `NULL`.
 fn slice_of<T>(rows: &[T]) -> DsSlice {
     if rows.is_empty() {
@@ -2287,6 +2326,136 @@ pub unsafe extern "C" fn ds_runtime_atlas(
                     distance_range_px: atlas.distance_range_px(),
                     png: slice_of(&atlas.image().bytes),
                     glyphs: slice_of(atlas.glyphs()),
+                }
+            };
+            DsStatus::Ok
+        })
+    })
+}
+
+/// The document's paint kind set, as the two bits `dashpaint::kind_set::KindSet`
+/// carries: bit 0 set when the document clips, bit 1 when it strokes (story
+/// #1449).
+///
+/// **Read it on every drawn frame, not once per load.** The set is a census of
+/// the tables the *last commit* produced, and those tables grow: a commit that
+/// interns the document's first stroke moves bit 1, and a painter still shading
+/// through the variant without a stroke arm draws nothing where that stroke
+/// should be. This is the opposite of [`ds_runtime_atlas`], whose set belongs
+/// to the load — do not copy that call's once-per-load rule onto this one.
+///
+/// A host toggles its shader keywords from these bits and should toggle **only
+/// when they change**: the bits are what moves, not the keyword state.
+///
+/// Bits above the two named are reserved and read as zero today. Mask the two
+/// you know rather than comparing the whole word, so a later bit does not turn
+/// your equality test false.
+///
+/// Requires a document: without one this is [`DsStatus::NoDocument`] and not
+/// `0`, because "no document" and "a document that neither clips nor strokes"
+/// are different answers and only the second is a set.
+///
+/// Takes no lease and is refused by none. It reads the front scene, which a
+/// lease only makes more stable — a lease refuses the commits that would
+/// replace it.
+///
+/// Adding this symbol did not move [`DS_ABI_VERSION`].
+///
+/// # Safety
+///
+/// `out_bits` must be a valid, writable `uint32_t *`. The handle carries no
+/// safety obligation (story #1226).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ds_runtime_kind_set(runtime: DsRuntime, out_bits: *mut u32) -> DsStatus {
+    guard(|| {
+        if out_bits.is_null() {
+            set_last_error("ds_runtime_kind_set: out_bits is null");
+            return DsStatus::NullArgument;
+        }
+        // Written before anything else that can fail, the rule
+        // `ds_runtime_acquire_frame` states: a caller that ignores the status
+        // reads zero rather than its own stack. Zero is also the safe set to
+        // read by accident — it enables no keyword, so a host that ignored the
+        // status would draw without the specialised arms rather than with arms
+        // the document does not reach.
+        unsafe { *out_bits = 0 };
+
+        on_runtime(runtime, "ds_runtime_kind_set", |runtime| {
+            if runtime.scene.is_none() {
+                set_last_error("ds_runtime_kind_set: no document loaded");
+                return DsStatus::NoDocument;
+            }
+            unsafe { *out_bits = runtime.arena.committed().kind_set().bits() };
+            DsStatus::Ok
+        })
+    })
+}
+
+/// The committed gradient strip: one baked 256-texel ramp per gradient row of
+/// the paint table, and which bake it is (story #1449).
+///
+/// `rows.count` is the gradient count and `rows.stride` is 1024 — 256 texels of
+/// straight-alpha RGBA8 — so the payload is `count * stride` bytes, tightly
+/// packed, row `i` at `i * stride`. A document with no gradient fill reports a
+/// count of `0` and a `NULL` pointer, with the stride still this build's row
+/// size, exactly as an empty [`DsSlice`] does everywhere else.
+///
+/// **Upload it when `generation` moves, and on a document replacement.** The
+/// generation moves only at a commit whose gradient rows actually changed, so a
+/// scene animating a box position never re-uploads. It is counted within one
+/// arena's commit chain and nothing more: a replaced document starts again, and
+/// its `1` can follow the old document's `1` while naming different colours —
+/// which is the same rule [`DsFrame::generation`] carries, and the reason
+/// [`DsFrame::document_replaced`] is a host's other trigger.
+///
+/// **The rows belong to the commit, not to the load.** They are valid until the
+/// next commit — a tick, a load, or a producer's own commit — so copy them
+/// before you let one happen. This is where the strip differs from
+/// [`ds_runtime_atlas`], whose sheets survive every commit until the next load.
+///
+/// **On failure the strip is emptied** — a `NULL` pointer, a count of `0`, a
+/// generation of `0`, and the stride still this build's row size — so a caller
+/// that ignores the status holds a strip that describes nothing rather than
+/// uninitialised memory. The one case with no write is a `NULL` `out` itself,
+/// where there is nowhere to write.
+///
+/// Adding this symbol did not move [`DS_ABI_VERSION`].
+///
+/// # Safety
+///
+/// `out` must be a valid, writable `DsGradientStrip *`. The handle carries no
+/// safety obligation (story #1226).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ds_runtime_gradient_strip(
+    runtime: DsRuntime,
+    out: *mut DsGradientStrip,
+) -> DsStatus {
+    guard(|| {
+        if out.is_null() {
+            set_last_error("ds_runtime_gradient_strip: out is null");
+            return DsStatus::NullArgument;
+        }
+        unsafe { *out = DsGradientStrip::empty() };
+
+        on_runtime(runtime, "ds_runtime_gradient_strip", |runtime| {
+            if runtime.scene.is_none() {
+                set_last_error("ds_runtime_gradient_strip: no document loaded");
+                return DsStatus::NoDocument;
+            }
+            let scene = runtime.arena.committed();
+            let strip = scene.gradient_strip();
+            unsafe {
+                *out = DsGradientStrip {
+                    rows: DsSlice {
+                        ptr: if strip.rgba8.is_empty() {
+                            std::ptr::null()
+                        } else {
+                            strip.rgba8.as_ptr().cast()
+                        },
+                        count: strip.rows,
+                        stride: STRIP_ROW_BYTES,
+                    },
+                    generation: scene.strip_generation(),
                 }
             };
             DsStatus::Ok
@@ -4849,6 +5018,255 @@ mod tests {
 
     fn fixture(path: &str) -> Vec<u8> {
         std::fs::read(path).expect("the committed fixture is present")
+    }
+
+    /// A lease refuses neither story #1449 call, and changes nothing about what
+    /// either reports.
+    ///
+    /// **Two claims, and the second is the one that needed a fixture.** Both
+    /// calls document, in three places, that they take no lease and are refused
+    /// by none — routing either through `on_runtime_committing` is a one-word
+    /// change that compiles, and the status assertions below are what catch it.
+    /// But a status alone passes on a call that answers `Ok` with a *default*
+    /// value while a lease is outstanding, which would hand a host that draws
+    /// its own frames an empty ramp for exactly the frames it is drawing. So
+    /// the values are read before the lease and compared against the leased
+    /// reads.
+    ///
+    /// **The fixture is `v03-paint.dsb` because it has gradients**, and the
+    /// assertions below refuse to run without them. The neighbouring
+    /// `the_atlas_calls_are_not_refused_under_a_lease` uses a text document
+    /// whose strip is empty, and its every field would compare zero against
+    /// zero — measured: reporting `generation: 0` under a lease passed there.
+    #[test]
+    fn a_lease_changes_neither_the_kind_set_nor_the_strip() {
+        let runtime = loaded(&fixture(FIXTURE_PAINT));
+
+        let mut before_bits = 0u32;
+        assert_eq!(
+            unsafe { ds_runtime_kind_set(runtime, &mut before_bits) },
+            DsStatus::Ok
+        );
+        let mut before = DsGradientStrip::empty();
+        assert_eq!(
+            unsafe { ds_runtime_gradient_strip(runtime, &mut before) },
+            DsStatus::Ok
+        );
+        // Without these the comparisons below are zero against zero, and a
+        // value the lease flattened to a default would pass every one of them.
+        assert_ne!(
+            before_bits, 0,
+            "this fixture must reach a shading arm, or the kind-set comparison \
+             asserts nothing"
+        );
+        assert_ne!(
+            before.rows.count, 0,
+            "this fixture must carry a gradient, or the strip comparison asserts \
+             nothing"
+        );
+        assert_ne!(
+            before.generation, 0,
+            "and its strip must have been baked, or the generation comparison \
+             asserts nothing"
+        );
+
+        let mut frame = DsFrame::empty();
+        assert_eq!(
+            unsafe { ds_runtime_acquire_frame(runtime, &mut frame) },
+            DsStatus::Ok
+        );
+
+        let mut bits = 0u32;
+        assert_eq!(
+            unsafe { ds_runtime_kind_set(runtime, &mut bits) },
+            DsStatus::Ok,
+            "reading the kind set commits nothing, so a lease does not refuse it"
+        );
+        let mut leased = DsGradientStrip::empty();
+        assert_eq!(
+            unsafe { ds_runtime_gradient_strip(runtime, &mut leased) },
+            DsStatus::Ok,
+            "and neither does reading the gradient strip"
+        );
+
+        // A lease refuses the commits that would replace the front scene, so
+        // these are the same reads of the same scene: every field matches, the
+        // pointer included, since nothing has moved the allocation it names.
+        assert_eq!(bits, before_bits, "a lease does not change the kind set");
+        assert_eq!(
+            (
+                leased.rows.ptr,
+                leased.rows.count,
+                leased.rows.stride,
+                leased.generation
+            ),
+            (
+                before.rows.ptr,
+                before.rows.count,
+                before.rows.stride,
+                before.generation
+            ),
+            "a lease does not change the strip, its stride or its generation"
+        );
+
+        assert_eq!(
+            unsafe { ds_runtime_release_frame(runtime, 0, std::ptr::null_mut()) },
+            DsStatus::Ok
+        );
+        ds_runtime_free(runtime);
+    }
+
+    /// Both story #1449 calls report, on a **loaded** document, exactly what the
+    /// committed scene holds.
+    ///
+    /// `tests/abi.c` exercises the refusal shape of these two — a null out, and
+    /// no document — which is the half C can check without a fixture. That half
+    /// passes with the whole success path replaced by zeroes, measured: writing
+    /// `*out_bits = 0` and `generation: 0` leaves every C check green. This is
+    /// the other half.
+    ///
+    /// **Read against the scene rather than against recorded numbers.** What the
+    /// ABI owes is that it hands out what the commit produced; a fixture's own
+    /// gradient count is the corpus's business and would go stale the day a
+    /// golden is re-captured. The two counters below are what keep that from
+    /// making the test vacuous: a corpus where nothing clips, strokes or
+    /// gradients would satisfy every comparison here with zeroes on both sides,
+    /// so this fails rather than passing quietly.
+    ///
+    /// **This pins the wire copy and not the arithmetic behind it**, and the
+    /// distinction is worth stating rather than leaving a reader to credit it
+    /// with more. Both sides here read the same `CommittedScene`, so a wrong
+    /// `KindSet::of` or a wrong `bake` moves them together and passes. Those
+    /// are pinned one crate down, against hand-written values and against a
+    /// second call to `bake_row`, by
+    /// `a_commit_computes_the_kind_set_from_its_own_tables` and
+    /// `the_gradient_strip_is_rebaked_only_when_a_gradient_row_moves`. What
+    /// only this test can catch is the marshalling: a field left zero, a stride
+    /// that is not a row, a pointer that does not point at the bytes.
+    ///
+    /// **The non-empty strip is exercised by one fixture today** —
+    /// `v03-paint.dsb`, with four gradient rows; every other golden that loads
+    /// has none. That is thin rather than absent, and the counter below is what
+    /// turns it into a loud failure rather than a quiet one if that fixture ever
+    /// loses its gradients.
+    #[test]
+    fn the_kind_set_and_the_strip_cross_the_abi_as_the_scene_holds_them() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../goldens/dsb");
+        let mut loaded_any = 0usize;
+        let mut with_a_kind = 0usize;
+        let mut with_a_gradient = 0usize;
+
+        let mut paths: Vec<_> = std::fs::read_dir(dir)
+            .expect("the golden documents are present")
+            .map(|entry| entry.expect("a readable directory entry").path())
+            .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("dsb"))
+            .collect();
+        // Directory order is not stable across filesystems, and a failure that
+        // names a fixture is only useful if the run that produced it can be
+        // repeated.
+        paths.sort();
+        assert!(!paths.is_empty(), "the golden corpus holds documents");
+
+        for path in paths {
+            let name = path
+                .file_name()
+                .expect("a file")
+                .to_string_lossy()
+                .to_string();
+            let bytes = fixture(path.to_str().expect("a UTF-8 fixture path"));
+            let mut runtime: DsRuntime = 0;
+            assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+            // A fixture this build refuses is some other test's subject. Some
+            // goldens reference image assets, and this loader binds no
+            // payloads, so they refuse here — the counters at the end are what
+            // keep those skips from emptying the test.
+            if unsafe { ds_runtime_load_document(runtime, bytes.as_ptr(), bytes.len()) }
+                != DsStatus::Ok
+            {
+                assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+                continue;
+            }
+            assert_eq!(
+                unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+                DsStatus::Ok,
+                "{name} ticks"
+            );
+            loaded_any += 1;
+
+            // What the commit produced, read from the scene itself.
+            let (bits, rows, generation, texels) = live(runtime, |r| {
+                let scene = r.arena.committed();
+                (
+                    scene.kind_set().bits(),
+                    scene.gradient_strip().rows,
+                    scene.strip_generation(),
+                    scene.gradient_strip().rgba8.clone(),
+                )
+            });
+            if bits != 0 {
+                with_a_kind += 1;
+            }
+            if rows != 0 {
+                with_a_gradient += 1;
+            }
+
+            let mut reported = 0xDEAD_BEEFu32;
+            assert_eq!(
+                unsafe { ds_runtime_kind_set(runtime, &mut reported) },
+                DsStatus::Ok,
+                "{name}: a loaded document has a kind set"
+            );
+            assert_eq!(reported, bits, "{name}: the bits the commit produced");
+
+            let mut strip = DsGradientStrip::empty();
+            assert_eq!(
+                unsafe { ds_runtime_gradient_strip(runtime, &mut strip) },
+                DsStatus::Ok,
+                "{name}: a loaded document has a strip, even an empty one"
+            );
+            assert_eq!(strip.rows.count, rows, "{name}: the row count");
+            assert_eq!(
+                strip.rows.stride,
+                dashpaint::gradient_strip::STRIP_ROW_BYTES,
+                "{name}: the stride is one baked row"
+            );
+            assert_eq!(
+                strip.generation, generation,
+                "{name}: the generation the commit stamped"
+            );
+            if rows == 0 {
+                assert!(
+                    strip.rows.ptr.is_null(),
+                    "{name}: a gradient-free document hands out NULL, not a dangling \
+                     one-past-the-end pointer"
+                );
+            } else {
+                assert!(!strip.rows.ptr.is_null(), "{name}: rows need a pointer");
+                // The bytes themselves, not only their count. SAFETY: the call
+                // above reported `count` rows of `stride` bytes at this pointer,
+                // and no commit has happened since.
+                let handed = unsafe {
+                    std::slice::from_raw_parts(
+                        strip.rows.ptr.cast::<u8>(),
+                        strip.rows.count * strip.rows.stride,
+                    )
+                };
+                assert_eq!(handed, texels, "{name}: the baked texels themselves");
+            }
+            assert_eq!(ds_runtime_free(runtime), DsStatus::Ok, "{name} frees");
+        }
+
+        assert!(loaded_any > 0, "some golden document loads in this build");
+        assert!(
+            with_a_kind > 0,
+            "the corpus must hold a document that clips or strokes, or every bit \
+             compared above is zero on both sides and this test asserts nothing"
+        );
+        assert!(
+            with_a_gradient > 0,
+            "the corpus must hold a document with a gradient, or the row count, \
+             the pointer and the texels above are never exercised"
+        );
     }
 
     /// A runtime with `document` loaded and one tick committed.

@@ -84,6 +84,40 @@ fn draw_groups(
         .expect("the fixture extent is within any device's maximum")
 }
 
+/// [`draw`], onto a renderer the caller **keeps** across calls.
+///
+/// `draw` builds a renderer per scene, which is right for a fixture that asks
+/// about one picture and wrong for one that asks what a second frame does to
+/// state the first frame built.
+fn draw_on(
+    renderer: &mut Renderer,
+    rects: &[RectEntry],
+    paints: &PaintTable,
+    clips: &ClipTable,
+) -> Vec<u8> {
+    let mut painter = GpuPainter::new();
+    painter.paint(
+        rects,
+        paints,
+        &ImageTable::new(),
+        clips,
+        &[],
+        &GlyphRunTable::new(),
+        None,
+    );
+    renderer
+        .render(
+            painter.instances(),
+            paints,
+            &ImageTable::new(),
+            clips,
+            &GlyphRunTable::new(),
+            W,
+            H,
+        )
+        .expect("the fixture extent is within any device's maximum")
+}
+
 /// The pipeline builds and the shader modules validate.
 ///
 /// Creating the renderer compiles `SDF_WGSL` concatenated with the render entry
@@ -1157,6 +1191,203 @@ fn a_stroke_takes_its_colour_from_the_stroke_row() {
 // ---------------------------------------------------------------------------
 // Gradient fills (issue #715)
 // ---------------------------------------------------------------------------
+
+/// The baked strip reproduces the analytic ramp, everywhere across a box, to
+/// within a stated number of code points (story #1449).
+///
+/// **This is the measurement issue #1449 asks for**, and it is the only thing
+/// that covers the strip end to end: no golden image draws a gradient through
+/// this painter, so a strip that baked the wrong colours entirely passes every
+/// one of them — measured, by baking opaque magenta and watching all 184
+/// goldens pass.
+///
+/// The comparison is against `dashpaint::gradient_strip::ramp` evaluated at
+/// each pixel centre's own `t`, not against a recorded image: the ramp is the
+/// definition, and a recorded image would only say the painter had not changed.
+///
+/// # Where the error comes from, and why the bound is what it is
+///
+/// The gradient's frame is the identity over the node box, so a pixel centred
+/// at `x + 0.5` is at `t = (x + 0.5 - box.x) / box.w` — the same `t`
+/// `gradient_linear_t` computes. Three things separate the drawn texel from the
+/// analytic ramp there, and none of them is the ramp itself:
+///
+/// 1. **The bake quantises** each channel to eight bits, so a texel is within
+///    half a code point of the ramp at its own centre.
+/// 2. **The sample lands between two texel centres**, where the bilinear read
+///    returns the interpolation of two already-quantised values rather than the
+///    quantisation of the interpolation — again within half a code point,
+///    because both endpoints are.
+/// 3. **The filter weights are fixed-point** on real hardware rather than the
+///    f32 the arithmetic above assumes.
+///
+/// The row is the box's middle, so coverage is one and alpha is one: the
+/// readback's unpremultiply is exact there and adds nothing to the budget. The
+/// columns either side of the edge are left out for the opposite reason — they
+/// are antialiased, and their coverage is not this test's subject.
+#[test]
+fn the_baked_strip_reproduces_the_analytic_ramp_across_the_box() {
+    let mut paints = PaintTable::new();
+    let sweep = paints.intern_fill(&ramp(dashpaint::GradientKind::Linear));
+    let gradient = paints.push(PaintEntry {
+        fill: sweep,
+        ..PaintEntry::default()
+    });
+    let (bx, by, bw, bh) = (2.0f32, 8.0f32, 60.0f32, 32.0f32);
+    let pixels = draw(
+        &[rect(bx, by, bw, bh, gradient, ClipIndex::UNCLIPPED)],
+        &paints,
+        &ClipTable::new(),
+    );
+
+    let stops = paints.stops(&paints.all_gradients()[0]).to_vec();
+    let row = (by + bh * 0.5) as u32;
+    let mut worst = 0u8;
+    let mut worst_at = (0u32, 0usize);
+    // One column in from each edge: those two are the antialiased ones.
+    for x in (bx as u32 + 1)..(bx + bw) as u32 - 1 {
+        let t = ((x as f32 + 0.5 - bx) / bw).clamp(0.0, 1.0);
+        let want = dashpaint::gradient_strip::ramp(&stops, t);
+        let want =
+            [want.r, want.g, want.b, want.a].map(|v| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
+        let got = texel(&pixels, x, row);
+        for channel in 0..4 {
+            let delta = got[channel].abs_diff(want[channel]);
+            if delta > worst {
+                worst = delta;
+                worst_at = (x, channel);
+            }
+        }
+    }
+    // Half a code point for the bake, half for the interpolation, and the
+    // hardware's own filter precision on top. Two is the bound this holds to;
+    // a strip sampled with a nearest filter, or baked at the texel's left edge
+    // rather than its centre, leaves it.
+    assert!(
+        worst <= 2,
+        "the strip is {worst} code points from the analytic ramp at column {} channel {} \
+         (adapter {:?}); the bound is 2",
+        worst_at.0,
+        worst_at.1,
+        renderer().adapter_info().backend,
+    );
+    println!("the strip is within {worst} code point(s) of the analytic ramp");
+}
+
+/// A yellow-to-cyan ramp: the second gradient row, distinct from [`ramp`]'s in
+/// every channel at the box's middle.
+fn yellow_to_cyan() -> dashpaint::FillSpec {
+    dashpaint::FillSpec::Gradient {
+        gradient: dashpaint::Gradient {
+            kind: dashpaint::GradientKind::Linear,
+            handle_origin: dashpaint::Vec2 { x: 0.0, y: 0.0 },
+            handle_primary: dashpaint::Vec2 { x: 1.0, y: 0.0 },
+            handle_secondary: dashpaint::Vec2 { x: 0.0, y: 1.0 },
+            stops: dashpaint::StopRange::NONE,
+        },
+        stops: vec![
+            dashpaint::GradientStop {
+                offset: 0.0,
+                color: Color {
+                    r: 1.0,
+                    g: 1.0,
+                    b: 0.0,
+                    a: 1.0,
+                },
+            },
+            dashpaint::GradientStop {
+                offset: 1.0,
+                color: Color {
+                    r: 0.0,
+                    g: 1.0,
+                    b: 1.0,
+                    a: 1.0,
+                },
+            },
+        ],
+    }
+}
+
+/// A second frame with a **different** gradient row count re-binds the strip,
+/// on a renderer that has already drawn (story #1449).
+///
+/// **The one path a fresh-renderer fixture cannot reach**, and it has to shrink
+/// rather than grow. The strip texture is reallocated when the row count
+/// changes, which leaves every bind group naming the old view;
+/// `GradientStripTexture::update` reports that so `Frame::upload` rebuilds
+/// them. Two things hide that signal:
+///
+/// - On a renderer's **first** draw the instance and heap buffers are allocated
+///   too, so a rebuild happens anyway for an unrelated reason. Every other
+///   gradient fixture in this file builds its own renderer and draws once.
+/// - A frame that **adds** a gradient also grows the paint heap past its
+///   capacity, which reallocates that buffer and rebuilds the groups for that
+///   reason instead. Measured: a two-frame fixture that went from one gradient
+///   to two passed with the strip's own signal cut.
+///
+/// So this goes the other way. Frame one interns two gradients and frame two
+/// interns one: the heap capacity only ever grows, so nothing else moves, and
+/// the strip is the only reason to rebind. If it is not taken, the fragment
+/// stage samples the **two-row** texture while `globals.strip_rows` says one,
+/// so the single row's v of 0.5 falls exactly between the old rows' centres and
+/// the box draws the average of two ramps.
+#[test]
+fn a_second_frame_with_a_different_gradient_row_count_rebinds_the_strip() {
+    let mut renderer = renderer();
+
+    // Frame one: two gradients, so the strip holds two rows and the paint heap
+    // reaches a capacity frame two cannot exceed.
+    let mut two = PaintTable::new();
+    let first = two.intern_fill(&ramp(dashpaint::GradientKind::Linear));
+    let first_paint = two.push(PaintEntry {
+        fill: first,
+        ..PaintEntry::default()
+    });
+    let second = two.intern_fill(&yellow_to_cyan());
+    let second_paint = two.push(PaintEntry {
+        fill: second,
+        ..PaintEntry::default()
+    });
+    assert_eq!(two.all_gradients().len(), 2, "frame one bakes two rows");
+    draw_on(
+        &mut renderer,
+        &[
+            rect(2.0, 8.0, 28.0, 32.0, first_paint, ClipIndex::UNCLIPPED),
+            rect(34.0, 8.0, 28.0, 32.0, second_paint, ClipIndex::UNCLIPPED),
+        ],
+        &two,
+        &ClipTable::new(),
+    );
+
+    // Frame two: only the first gradient, so the strip shrinks to one row.
+    let mut one = PaintTable::new();
+    let only = one.intern_fill(&ramp(dashpaint::GradientKind::Linear));
+    let only_paint = one.push(PaintEntry {
+        fill: only,
+        ..PaintEntry::default()
+    });
+    assert_eq!(one.all_gradients().len(), 1, "frame two bakes one");
+    let pixels = draw_on(
+        &mut renderer,
+        &[rect(2.0, 8.0, 28.0, 32.0, only_paint, ClipIndex::UNCLIPPED)],
+        &one,
+        &ClipTable::new(),
+    );
+
+    // The box against its own row's ramp at that pixel's own `t` — derived
+    // rather than recorded, so the assertion says *which* gradient drew.
+    let dashpaint::FillSpec::Gradient { stops, .. } = ramp(dashpaint::GradientKind::Linear) else {
+        unreachable!("the fixture is a gradient")
+    };
+    let t = ((16.5 - 2.0) / 28.0f32).clamp(0.0, 1.0);
+    let want = dashpaint::gradient_strip::ramp(&stops, t);
+    let want = [want.r, want.g, want.b, want.a].map(|v| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
+    near(
+        texel(&pixels, 16, 24),
+        want,
+        "the shrunk strip is the one that is bound, not the previous frame's",
+    );
+}
 
 /// A three-stop gradient whose range starts at 0.25 and ends at 0.75, so both
 /// clamped ends and both interior segments are reachable inside one box.

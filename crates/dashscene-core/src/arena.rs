@@ -2875,6 +2875,35 @@ impl Txn<'_> {
         // commit's shared by reference (issue #944).
         let rect_index = rect_of_slot;
         let images = Arc::clone(&arena.images);
+
+        // The kind set and the gradient strip, both derived from the tables
+        // this commit **ends** with — after the compaction above, which can
+        // renumber a gradient row and therefore reorder the strip.
+        let kind_set = crate::committed::KindSet::of(&back_paints, &back_clips);
+        // Re-baked only when the gradient rows moved. The cheap answer first:
+        // `back_paints` starts as a reference to the previous table and is
+        // copied on write only when something is interned, so an equal pointer
+        // means nothing in the table changed at all. Otherwise the gradients and
+        // their stops are compared — tens of floats against the 1 KiB per row a
+        // bake writes.
+        let unchanged = Arc::ptr_eq(&back_paints, &previous.paints)
+            || (back_paints.all_gradients() == previous.paints.all_gradients()
+                && back_paints.all_stops() == previous.paints.all_stops());
+        let (gradient_strip, strip_generation) = if unchanged {
+            (
+                Arc::clone(&previous.gradient_strip),
+                previous.strip_generation,
+            )
+        } else {
+            (
+                Arc::new(dashpaint::gradient_strip::bake(
+                    back_paints.all_gradients(),
+                    back_paints.all_stops(),
+                )),
+                previous.strip_generation + 1,
+            )
+        };
+
         let back_scene = CommittedScene {
             rects,
             paints: back_paints,
@@ -2888,6 +2917,9 @@ impl Txn<'_> {
             rect_index,
             shown_root: arena.shown_root,
             renumbered,
+            kind_set,
+            gradient_strip,
+            strip_generation,
         };
 
         // Publish the buffer and drain the change log.

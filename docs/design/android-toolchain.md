@@ -625,6 +625,69 @@ measurement does settle is the shape of the answer:
   display-class frame budget exists to derive one from; the one-device budget of
   2026-09-04 is not that.
 
+### The per-kind sweep (#1413, story #1449)
+
+What one **shaded** pixel costs, kind by kind, on the Pixel 5 over Vulkan. The
+instrument is `gpu_time.rs`'s shape with a per-kind scene, kept off the branch
+under `driftsys/dashscene-v021-lanes/probe-1449/` as `overdraw.rs` was under
+`probe-1403/`. Every row draws **32 tiles of 250x250 = 2,000,000 shaded pixels**
+at 1280x720, so the fragment stage is entered the same number of times for every
+kind and the difference between rows is what one entry costs. The tiles overlap
+— 2 Mpx does not fit in a 0.92 Mpx target — and overdraw is identical for every
+row, so it cancels. Each row reads one frame back and asserts a floor of inked
+pixels **before** timing anything, so a kind that draws nothing cannot be
+recorded as a fast one.
+
+`Adreno (TM) 620 | backend Vulkan`, 60 frames per row after 10 discarded, `p50`
+in milliseconds and `ns/px` over the 2,000,000 shaded pixels. **Two independent
+runs of each build**, which is what makes these worth quoting at all — the rule
+Q-6 above states. They agree to within 0.3 % on every row, so one run is shown
+and the second is reported as its own line below.
+
+    kind      before p50   before ns/px   after p50   after ns/px   change
+    solid          5.612         2.8059       3.753        1.8763   -33.1 %
+    linear        13.178         6.5891       4.874        2.4371   -63.0 %
+    radial        13.497         6.7484       4.903        2.4514   -63.7 %
+    stroke         5.075         2.5376       5.054        2.5272    -0.4 %
+    glyphs         5.749         2.8746       5.615        2.8074    -2.3 %
+
+    run 2, before   solid 5.606  linear 13.182  radial 13.498  stroke 5.062  glyphs 5.745
+    run 2, after    solid 3.764  linear  4.877  radial  4.903  stroke 5.067  glyphs 5.621
+
+`before` is a build of **a9adba8**, the commit story #1449 branched from;
+`after` is its head. Both were built and pushed before either was run, so no
+device state moved between the two readings.
+
+**The sweep required the gradient fast path, and only it.** The rule
+`docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`
+states is that the kinds above **twice** the solid rate are the ones the fast
+paths must move. Before: linear **2.35x** solid and radial **2.41x** — both
+above it. Stroke at **0.90x** and glyphs at **1.02x** were not, and neither was
+given a fast path. After, the two gradient kinds sit at **1.30x** and **1.31x**.
+
+**The `x solid` ratios of the untouched kinds RISE, and that is the denominator
+moving.** Stroke goes 0.90x to 1.35x and glyphs 1.02x to 1.50x while their
+absolute cost is flat to within 2.3 %. Read the `ns/px` columns, not the ratios,
+for whether a kind got faster; the ratio column answers a different question,
+which is the one the record's rule is phrased in.
+
+**What the solid row's 33 % is, and what this sweep cannot separate.** The solid
+scene reaches two of this story's three mechanisms at once: the plain-fill early
+out, and a kind set of neither-clips-nor-strokes that compiles the clip loop and
+the stroke arm out of its pipeline. The sweep measures them together. The glyph
+row bounds the second: that scene has the same empty kind set and takes no
+plain-fill path, and it moved **2.3 %** — so the specialisation is worth a few
+per cent and the early-out is the rest. That is an inference from two scenes
+with different fragment mixes, not a measurement of either mechanism alone.
+
+**A stroke costs less than a solid fill on this device**, before and after
+(0.90x, then 2.5272 ns/px against the solid's 1.8763 — the ordering inverts only
+because the solid got faster). The band discards most of its quad's fragments
+before the blend, so a stroke enters the fragment stage 2,000,000 times and
+finishes far fewer. That is why the sweep holds the **shaded quad area**
+constant rather than the inked area: quad area is what the fragment stage is
+entered for, and it is the term a fill-rate model is written over.
+
 ### The attach, and what it does and does not say
 
 Recorded because the apparatus takes it and it is the first such figure from

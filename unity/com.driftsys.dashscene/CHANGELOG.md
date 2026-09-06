@@ -8,6 +8,27 @@ the Cargo workspace rather than moving on its own.
 
 ### Added
 
+- **The shading specialises by the document's paint kind set, and gradients are
+  one texture sample** (story #1449). `DashsceneRuntime.KindSet()` wraps
+  `ds_runtime_kind_set` — bit 0 the document clips, bit 1 it strokes — and
+  `BrgPainter.ApplyKindSet` toggles `DS_HAS_CLIPS` and `DS_HAS_STROKES` on the
+  materials it draws with, on every drawn frame and only when the bits moved.
+  With the keyword undefined the clip loop, or the stroke arm and its table
+  read, are compiled out. `Runtime/KindSetKeywords.cs` carries the bits-to-
+  keywords mapping, in `Runtime/` rather than beside the painter because
+  `unity/ffi-check` compiles `Runtime/**` and excludes `Runtime/Engine/**`.
+  `Text.shader` declares no `DS_HAS_STROKES`: its arm returns before that
+  branch, so the keyword would remove no code and R-E6's `KeepAll` would compile
+  both halves of it anyway. `DashsceneRuntime.GradientStrip()` wraps
+  `ds_runtime_gradient_strip`, and `DsGradientColour` now takes one filtered
+  texel of `_DsGradientStrip` — a 256-texel row per gradient row of the paint
+  heap, baked by the library and copied into a
+  `Texture2D(256, rows, RGBA32, linear)` when the strip's generation moves — in
+  place of the walk over eight offsets and up to eight colours it did per
+  fragment. Nothing on the C# side evaluates a ramp. `DsShade` also returns
+  early for a solid fill on a sharp box that nothing clips, computing the
+  general path's own arithmetic in the same grouping.
+
 - **A thread-time instrument, beside the frame-cost line** (story #1443).
   `Runtime/Engine/DashsceneThreadCost.cs` reads five of Unity's own
   `ProfilerRecorder` counters — `Main Thread` and `Render Thread` under

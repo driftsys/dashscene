@@ -79,7 +79,7 @@ namespace Driftsys.Dashscene
         /// The property ids the per-frame binding uses, resolved once.
         ///
         /// **`Material.SetBuffer(string, …)` hashes the name on every call**,
-        /// and [`BindHeap`] makes four of those calls per material per frame
+        /// and [`BindHeap`] makes five of those calls per material per frame
         /// plus one more for each glyph atlas — so a cascade of four faces
         /// paid twenty-four name lookups a frame where the process-wide
         /// binding paid five. R-T4 bounds what a frame may spend, and this is
@@ -110,6 +110,26 @@ namespace Driftsys.Dashscene
             Shader.PropertyToID(PaintMaterialProperties.Cutoff);
         private static readonly int AtlasId =
             Shader.PropertyToID(PaintMaterialProperties.Atlas);
+        private static readonly int GradientStripId =
+            Shader.PropertyToID(PaintMaterialProperties.GradientStrip);
+
+        /// The strip's width in texels, which `dashpaint::gradient_strip`
+        /// fixes.
+        ///
+        /// Not read from the slice: the stride below is what the library
+        /// reports and this is what the texture is created at, and a build
+        /// whose two disagreed would be uploading rows of one width into a
+        /// texture of another. `StripRowBytes` is what holds them together.
+        private const int StripWidth = 256;
+
+        /// One baked row's size in bytes: [`StripWidth`] texels of RGBA8.
+        ///
+        /// **Compared against `DsSlice.Stride` before any byte is read**, which
+        /// is R-E17's rule applied to a slice that does not travel in `DsFrame`
+        /// and so is not covered by `FrameLease.ValidateStrides`. A library
+        /// that baked a wider row would otherwise be read at this width and
+        /// draw every gradient's colours shifted along `t`.
+        private const int StripRowBytes = StripWidth * 4;
 
         /// Bytes of shared, non-per-instance data at the head of every window:
         /// a zero `float4` and the two transforms.
@@ -220,6 +240,52 @@ namespace Driftsys.Dashscene
         /// See [`_uploadedPaintFloats`].
         private int _uploadedGlyphFloats = -1;
 
+        /// The baked gradient strip, one row per gradient row of the paint
+        /// heap.
+        ///
+        /// Held rather than rebuilt: `dashpaint` bakes it on the commit whose
+        /// gradient rows changed, and this painter copies those rows on the
+        /// frame that reports a new generation.
+        private Texture2D _stripTexture;
+
+        /// The bake [`_stripTexture`] holds, and whether it holds one at all.
+        ///
+        /// **A separate bool rather than a sentinel generation.** The
+        /// generation is counted within one arena's commit chain, so a replaced
+        /// document starts again and its 1 can follow the old document's 1 —
+        /// there is no value of it that means "nothing uploaded".
+        private ulong _stripGeneration;
+
+        private bool _stripUploaded;
+
+        /// [`_stripTexture`]'s height, which the shading divides a gradient row
+        /// index by.
+        ///
+        /// **At least one.** A document with no gradient still binds a
+        /// placeholder row, because a shader that declares a texture must have
+        /// one bound, and a zero here would divide by nothing.
+        ///
+        /// **A field rather than a read of `_stripTexture.height`, and the
+        /// reason is the same one the property ids above have.** `Texture.height`
+        /// is an extern property — a native call — and [`Scalars`] is evaluated
+        /// twice on a frame that binds: once in [`UploadHeap`] to compare
+        /// against what was last bound, and once in [`BindHeap`] to bind it.
+        /// The two must also agree, and a value read from the texture between
+        /// them would agree only while nothing had replaced it.
+        private int _stripRows = 1;
+
+        /// The kind-set bits the materials' keywords were last set from, and
+        /// whether they were ever set.
+        ///
+        /// **The bool is not redundant with a sentinel.** Zero is a real set —
+        /// a document that neither clips nor strokes — so a painter that had
+        /// never applied one and one whose document reports zero would be
+        /// indistinguishable, and the first draw after a material was minted
+        /// would leave that material's keywords at their defaults.
+        private uint _kindSet;
+
+        private bool _kindSetApplied;
+
         /// Whether the heap binding no longer describes what the materials
         /// should read.
         ///
@@ -304,6 +370,102 @@ namespace Driftsys.Dashscene
         /// changed drawable extent — a bool could not tell "bound on the two
         /// frames that needed it" from "bound on all sixty".
         public int HeapBindCount { get; private set; }
+
+        /// Which `DS_HAS_*` keywords are enabled on the class material this
+        /// painter draws with, in [`KindSetKeywords.KeywordsFor`]'s bit order.
+        ///
+        /// **Read back from the material, not reported from the field the
+        /// painter set.** What decides which variant a fragment runs is the
+        /// material's own keyword state, and every step between the bits and
+        /// that state can be wrong on its own: a mapping that named the wrong
+        /// keyword, an `ApplyKindSet` that never ran, a `LocalKeyword` the
+        /// shader does not declare. A property answering from `_kindSet` would
+        /// agree with the painter about all three.
+        ///
+        /// **Read by the render gate**, which is where the consequence is
+        /// observed: a document that clips, shaded through the variant with the
+        /// clip loop removed, draws ink outside the region that clips it, and
+        /// `Material.EnableKeyword` on a keyword no shader declares selects
+        /// nothing and reports nothing.
+        ///
+        /// Empty before the first [`Draw`], and empty for a document that
+        /// neither clips nor strokes — which is the fast path rather than a
+        /// failure.
+        public string[] EnabledKindSetKeywords()
+        {
+            if (_material == null)
+            {
+                return Array.Empty<string>();
+            }
+
+            var all = KindSetKeywords.KeywordsFor(KindSetKeywords.Known);
+            var enabled = new string[all.Length];
+            var count = 0;
+            for (var i = 0; i < all.Length; i++)
+            {
+                if (Declares(_material, all[i], out var keyword)
+                    && _material.IsKeywordEnabled(keyword))
+                {
+                    enabled[count++] = all[i];
+                }
+            }
+
+            Array.Resize(ref enabled, count);
+            return enabled;
+        }
+
+        /// How many materials this painter draws with were compared against the
+        /// class material's `DS_HAS_*` set, and how many carry a different one.
+        ///
+        /// **[`EnabledKindSetKeywords`] reads the class material alone, and
+        /// that leaves the text materials unread by anything.** They are minted
+        /// by [`SetAtlases`] long after the constructor, they start at their
+        /// shader's defaults — every keyword undefined — and only
+        /// [`ApplyKindSet`] walking `_textMaterials`, plus the
+        /// `_kindSetApplied = false` that member sets, puts a set on them. Drop
+        /// either and a clipped document's GLYPHS draw through the variant with
+        /// the clip loop removed, inking outside the region that clips them,
+        /// while the class material still reports the right set.
+        ///
+        /// `Compared` counts every material including the class one, so a
+        /// reader can see whether any text material was in scope at all: a run
+        /// that compared one material has not exercised this.
+        public (int Compared, int Disagreeing) KindSetKeywordAgreement()
+        {
+            var expected = EnabledKindSetKeywords();
+            var compared = _material == null ? 0 : 1;
+            var disagreeing = 0;
+
+            var all = KindSetKeywords.KeywordsFor(KindSetKeywords.Known);
+            for (var i = 0; i < _textMaterials.Length; i++)
+            {
+                var material = _textMaterials[i];
+                if (material == null)
+                {
+                    continue;
+                }
+
+                compared++;
+                for (var k = 0; k < all.Length; k++)
+                {
+                    if (!Declares(material, all[k], out var keyword))
+                    {
+                        // A keyword this shader does not declare cannot
+                        // disagree: `Text.shader` declares no `DS_HAS_STROKES`.
+                        continue;
+                    }
+
+                    var on = material.IsKeywordEnabled(keyword);
+                    if (on != (Array.IndexOf(expected, all[k]) >= 0))
+                    {
+                        disagreeing++;
+                        break;
+                    }
+                }
+            }
+
+            return (compared, disagreeing);
+        }
 
         /// What the last [`Draw`] was handed and did not draw.
         public PackDiagnostics Diagnostics => _lastDiagnostics;
@@ -576,6 +738,15 @@ namespace Driftsys.Dashscene
             // `BindHeap` used to cover.
             _heapBindingPending = true;
 
+            // **And the keywords with it.** A material this painter has never
+            // applied a kind set to carries its shader's defaults, which is
+            // every `DS_HAS_*` undefined — so a text material minted here would
+            // shade a clipped document through the variant with the clip loop
+            // removed, drawing glyphs outside the region that clips them.
+            // `ApplyKindSet` toggles only on a change of the bits, and the bits
+            // did not change; the set of materials did.
+            _kindSetApplied = false;
+
             // **Nothing this painter packed earlier is drawn again**, and that
             // closes a real window rather than tidying: `OnPerformCulling` runs
             // when Unity renders, not when `Draw` returns, so a set installed
@@ -715,6 +886,10 @@ namespace Driftsys.Dashscene
             // rule "every change of the material set raises the flag" true of
             // all three.
             _heapBindingPending = true;
+
+            // The keyword state goes with it, for `SetAtlases`'s reason: the
+            // next set of text materials starts at its shaders' defaults.
+            _kindSetApplied = false;
         }
 
         /// Report R-E5 once per pipeline instance, and only from a read that
@@ -888,13 +1063,28 @@ namespace Driftsys.Dashscene
                 }
             }
 
+            // **Before `UploadHeap`, which is what compares the scalars.** The
+            // strip's row count is the fourth component of `_DsGlobals`, so a
+            // strip read afterwards would leave that comparison answering for
+            // the previous frame's height and the shading dividing a row index
+            // by it.
+            UploadStrip(lease);
+
+            // **On every drawn frame, after the acquire.** The kind set is a
+            // census of the tables the commit this lease holds produced, and
+            // those tables grow — a commit that interns the document's first
+            // stroke sets bit 1, and a painter still shading through a variant
+            // with no stroke arm draws that node's fill over its box. The
+            // toggling inside is what is conditional, not the read.
+            ApplyKindSet(lease.Runtime.KindSet());
+
             UploadHeap();
             UploadInstances();
 
             // **After the upload, never before it.** `UploadHeap` is what
             // raises the flag: it reports each table's reallocation and
             // compares the scalars it would bind, so a guard read first
-            // answers for the previous frame. `BindHeapTo` makes four
+            // answers for the previous frame. `BindHeapTo` makes five
             // `Material.Set…` calls per material, and on a settled scene every
             // one of them rebinds what is already bound — which is the cost
             // story #1445 removes.
@@ -1655,13 +1845,226 @@ namespace Driftsys.Dashscene
             // Euclidean distance between the two rows over all four components
             // at once and calls them equal below 1e-5. That is the right
             // comparison here rather than a trap, and the reason rests on what
-            // the row carries: the two bases are row indices, so any change in
-            // one of them moves the distance by at least 1, and the only
-            // continuous component is the anti-aliasing width, which cannot
-            // move a pixel while it moves that distance less than 1e-5. A
-            // fifth continuous component would need this read again.
+            // the row carries: the two bases and the strip's row count are
+            // counts, so any change in one of them moves the distance by at
+            // least 1, and the only continuous component is the anti-aliasing
+            // width, which cannot move a pixel while it moves that distance
+            // less than 1e-5. A second continuous component would need this
+            // read again.
             var scalars = Scalars();
             if (scalars != _boundScalars) { _heapBindingPending = true; }
+        }
+
+        /// Copy the committed gradient strip into the texture the shading
+        /// samples, on the frames that need it.
+        ///
+        /// **The strip is not baked twice.** `dashpaint::gradient_strip` bakes
+        /// one 256-texel ramp per gradient row at the commit whose gradient
+        /// rows changed, and this copies those bytes; the C# does not evaluate
+        /// a ramp anywhere, which is what makes the two painters' gradients the
+        /// same function rather than two implementations of one.
+        ///
+        /// **Three frames need work and no others.** A frame whose generation
+        /// moved copies the rows. A frame whose ROW COUNT moved also mints a
+        /// new texture — `Texture2D` has no resize — and raises
+        /// [`_heapBindingPending`], which is that flag's fifth reason. Every
+        /// other frame does nothing, which is the R-T4 property the generation
+        /// exists for: a scene animating a box position re-uploads nothing.
+        ///
+        /// **A document replacement re-uploads whatever the generation says.**
+        /// The generation is counted within one arena's commit chain, so a
+        /// replaced document starts again and its 1 can follow the previous
+        /// document's 1 while naming different colours.
+        ///
+        /// **`LoadRawTextureData` from the library's own pointer**, with no
+        /// managed copy in between: the rows are valid while this lease is
+        /// outstanding, because every call that would commit is refused until
+        /// it is released.
+        private void UploadStrip(FrameLease lease)
+        {
+            var strip = lease.Runtime.GradientStrip();
+            var rows = (int)strip.Rows.CountAsLong;
+
+            // R-E17's rule, applied to a slice that does not travel in
+            // `DsFrame` and so is not covered by `FrameLease.ValidateStrides`.
+            // Checked even when the count is zero: the header documents the
+            // stride as this build's row size whether or not any row exists, so
+            // an empty strip is the cheapest place to see a library that bakes
+            // a different width.
+            if (strip.Rows.StrideAsLong != StripRowBytes)
+            {
+                throw new DashsceneStrideMismatchException(
+                    PaintMaterialProperties.GradientStrip,
+                    StripRowBytes,
+                    strip.Rows.StrideAsLong);
+            }
+
+            // A document with no gradient still binds a texture: the shading
+            // declares the sampler for every class, and a declared sampler with
+            // nothing bound reads whatever Unity leaves there.
+            var height = rows > 0 ? rows : 1;
+            if (_stripTexture == null || _stripTexture.height != height)
+            {
+                if (_stripTexture != null)
+                {
+                    UnityEngine.Object.DestroyImmediate(_stripTexture);
+                }
+
+                // **Linear, not sRGB.** A stop's components are sRGB-encoded
+                // and this project blends in that space, so the sampler must
+                // hand back the stored code points unconverted — which is
+                // exactly what the stop loop this replaced read out of the
+                // heap. Bilinear and clamped is the mechanism itself: between
+                // two texel centres a filtered read is the linear interpolation
+                // the ramp is already made of.
+                _stripTexture = new Texture2D(
+                    StripWidth, height, TextureFormat.RGBA32, mipChain: false, linear: true)
+                {
+                    name = "Dashscene Gradient Strip",
+                    hideFlags = HideFlags.HideAndDontSave,
+                    filterMode = FilterMode.Bilinear,
+                    wrapMode = TextureWrapMode.Clamp,
+                };
+                _stripRows = height;
+                _stripUploaded = false;
+                _heapBindingPending = true;
+
+                if (rows == 0)
+                {
+                    // **The placeholder is zeroed, and only the placeholder.**
+                    // A `Texture2D`'s contents before its first `Apply` are
+                    // whatever the allocator held, and the copy below is the
+                    // only thing that would define them — which a document with
+                    // no gradient never reaches. No fragment samples this
+                    // texture, because a gradient instance names a gradient row
+                    // and this document has none; the fill is what makes that a
+                    // property of the texture rather than one a reader has to
+                    // reconstruct from the packer. A real strip pays nothing:
+                    // its copy is the next statement.
+                    _stripTexture.LoadRawTextureData(new byte[StripRowBytes]);
+                    _stripTexture.Apply(updateMipmaps: false, makeNoLongerReadable: false);
+                }
+            }
+
+            // **The decision is [`GradientStripUpload.AlreadyUploaded`]'s and
+            // not this member's**, for `HeapUpload.AlreadyUploaded`'s reason:
+            // it is arithmetic over four values, it lives outside
+            // `Runtime/Engine/` so `unity/ffi-check` executes it, and getting
+            // it wrong in the "already there" direction freezes the document's
+            // gradients for the life of the painter.
+            //
+            // **Before the empty-strip return, not after it.** A document with
+            // no gradient is still a commit whose strip this texture describes,
+            // and a frame that returned without recording it would leave the
+            // PREVIOUS document's bake named here. The generation restarts per
+            // document, so a later commit of the new document can report the
+            // same number the old one's cached bake carries: document A ships a
+            // gradient at generation 1, document B replaces it with none — the
+            // row count is unchanged, so no texture is minted, and the
+            // replacement flag is consumed by that frame — and B's own first
+            // gradient then arrives at a generation this painter believes it
+            // has already uploaded. B's gradients would draw A's colours until
+            // something else resized the texture.
+            if (GradientStripUpload.AlreadyUploaded(
+                    _stripUploaded, lease.DocumentReplaced, strip.Generation, _stripGeneration))
+            {
+                return;
+            }
+
+            // Past the skip, this frame owns the texture's contents.
+            _stripGeneration = strip.Generation;
+            _stripUploaded = true;
+
+            if (rows == 0)
+            {
+                return;
+            }
+
+            _stripTexture.LoadRawTextureData(strip.Rows.Ptr, rows * StripRowBytes);
+            _stripTexture.Apply(updateMipmaps: false, makeNoLongerReadable: false);
+        }
+
+        /// Toggle the shading's `DS_HAS_*` keywords to the document's kind set.
+        ///
+        /// **Only when the bits changed.** The bits are what moves; the keyword
+        /// state belongs to the material and stays where it was put. Unity
+        /// rebuilds a material's variant selection on every keyword write, so a
+        /// painter that wrote the same set every frame would pay that on every
+        /// frame of a steady scene — the same cost story #1445 removed from the
+        /// heap binding.
+        ///
+        /// **Masked, not compared whole.** Bits above the two named are
+        /// reserved and read as zero today, and `dashscene.h` asks a caller to
+        /// mask the ones it knows so a later bit does not turn an equality test
+        /// false.
+        ///
+        /// **The mapping is [`KindSetKeywords.KeywordsFor`] and not a second
+        /// one here.** `unity/ffi-check` compiles `Runtime/**` and excludes
+        /// `Runtime/Engine/**`, so a mapping written in this file could be read
+        /// as text by `unity/package-gate` and executed by nothing without a
+        /// Unity editor.
+        private void ApplyKindSet(uint bits)
+        {
+            bits &= KindSetKeywords.Known;
+            if (_kindSetApplied && bits == _kindSet)
+            {
+                return;
+            }
+
+            // `KeywordsFor(Known)` is the whole set by construction, so there
+            // is no second list of every keyword to forget one from.
+            var all = KindSetKeywords.KeywordsFor(KindSetKeywords.Known);
+            var enabled = KindSetKeywords.KeywordsFor(bits);
+
+            SetKeywords(_material, all, enabled);
+            for (var i = 0; i < _textMaterials.Length; i++)
+            {
+                SetKeywords(_textMaterials[i], all, enabled);
+            }
+
+            _kindSet = bits;
+            _kindSetApplied = true;
+        }
+
+        /// Set every keyword in `all` on one material, on where `enabled` names
+        /// it and off where it does not.
+        ///
+        /// **Through `LocalKeyword`, and a keyword the material's shader does
+        /// not declare is skipped.** `Text.shader` declares no `DS_HAS_STROKES`
+        /// — the text arm returns before the stroke branch, so the keyword
+        /// would remove no code there — and `Material.EnableKeyword(string)`
+        /// against a name a shader does not declare falls back to the global
+        /// keyword space, which is process-wide and which issue #1297 is about.
+        private static void SetKeywords(Material material, string[] all, string[] enabled)
+        {
+            for (var i = 0; i < all.Length; i++)
+            {
+                if (Declares(material, all[i], out var keyword))
+                {
+                    material.SetKeyword(keyword, Array.IndexOf(enabled, all[i]) >= 0);
+                }
+            }
+        }
+
+        /// Whether `material`'s shader declares `name`, and the keyword handle
+        /// if it does.
+        ///
+        /// **One place that constructs a `LocalKeyword`, because there are two
+        /// callers and they must agree.** [`SetKeywords`] writes the state and
+        /// [`EnabledKindSetKeywords`] reads it back for the render gate, and a
+        /// reader that resolved a keyword differently from the writer would
+        /// report a set the material does not carry — which is the one thing
+        /// that read-back exists not to do.
+        ///
+        /// A keyword no shader declares is skipped rather than enabled:
+        /// `Material.EnableKeyword(string)` against such a name falls back to
+        /// the GLOBAL keyword space, which is process-wide and which issue
+        /// #1297 is about. `Text.shader` is the case — it declares no
+        /// `DS_HAS_STROKES`, because its arm returns before the stroke branch.
+        private static bool Declares(Material material, string name, out LocalKeyword keyword)
+        {
+            keyword = new LocalKeyword(material.shader, name);
+            return keyword.isValid;
         }
 
         /// The `_DsGlobals` row, in the order the shading reads it.
@@ -1672,7 +2075,7 @@ namespace Driftsys.Dashscene
         private Vector4 Scalars()
         {
             return new Vector4(
-                EdgeWidth, _packer.SolidBase, _packer.GradientBase, 0.0f);
+                EdgeWidth, _packer.SolidBase, _packer.GradientBase, _stripRows);
         }
 
         /// Upload one heap table as `float4` rows.
@@ -1773,9 +2176,11 @@ namespace Driftsys.Dashscene
         /// growth — and [`SetAtlases`] mints text materials long after the
         /// constructor has run, so there is no earlier moment at which the set
         /// of materials is complete. What decides "went stale" is
-        /// [`HeapBindingPending`], raised by the four reasons the binding has:
-        /// a reallocation, a new atlas set, a released one, and a change of the
-        /// scalars.
+        /// [`HeapBindingPending`], raised by the five reasons the binding has:
+        /// a reallocation, a new atlas set, a released one, a change of the
+        /// scalars, and — since story #1449 — a gradient strip whose ROW COUNT
+        /// moved, which mints a new `Texture2D` because a texture cannot be
+        /// resized and leaves every material naming the previous one.
         private void BindHeap()
         {
             var scalars = Scalars();
@@ -1795,13 +2200,19 @@ namespace Driftsys.Dashscene
             }
         }
 
-        /// Bind the three tables every class reads, and the scalars, on one
-        /// material.
+        /// Bind the three tables every class reads, the gradient strip, and the
+        /// scalars, on one material.
+        ///
+        /// **The strip goes here and not beside the glyph rows**, though only a
+        /// gradient fragment samples it: the shading declares the sampler for
+        /// every class, and a material whose shader declares one and whose
+        /// painter bound nothing reads an unbound sampler.
         private void BindHeapTo(Material material, Vector4 scalars)
         {
             material.SetBuffer(PaintsId, _paintBuffer);
             material.SetBuffer(ClipBoxesId, _clipBuffer);
             material.SetBuffer(StrokesId, _strokeBuffer);
+            material.SetTexture(GradientStripId, _stripTexture);
             material.SetVector(ScalarsId, scalars);
         }
 
@@ -1924,6 +2335,17 @@ namespace Driftsys.Dashscene
             {
                 UnityEngine.Object.DestroyImmediate(_mesh);
                 _mesh = null;
+            }
+            // **After the materials that name it**, on the ordering
+            // `the_heap_buffers_are_freed_after_the_materials_that_name_them`
+            // holds for the heap buffers: the only materials naming this
+            // texture are this painter's own, and `DestroyImmediate` is what
+            // makes "destroyed" synchronous.
+            if (_stripTexture != null)
+            {
+                UnityEngine.Object.DestroyImmediate(_stripTexture);
+                _stripTexture = null;
+                _stripUploaded = false;
             }
         }
     }

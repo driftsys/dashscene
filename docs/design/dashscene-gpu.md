@@ -233,6 +233,45 @@ three later features took the form they did:
 - **Text and baked vector fields** (story #582). Both tables are read by the
   **vertex** stage, because the fragment stage has none left
   (`docs/decisions/tables-the-vertex-stage-reads.md`).
+- **The baked gradient strip** (story #1449) went the fourth way: it is a
+  **texture**, at binding 11 with a filtering sampler at 12, so it spends none
+  of the four storage slots the fragment stage has already filled. That is not a
+  workaround for the wall — a ramp indexed by a computed `t` is what a texture
+  sampler is for, and the wall is why it was not a fifth buffer.
+
+**The strip, and why one sample equals the loop it replaced.**
+`dashpaint::gradient_strip` bakes each interned gradient's ramp at 256 texel
+centres into one `Rgba8Unorm` row. `gradient_colour` keeps the parameter
+arithmetic that turns a fragment's position into `t` — that is per instance and
+cannot live on an interned row — and reads the colour with one
+`textureSampleLevel`. Between two texel centres a bilinear read **is** the
+linear interpolation the ramp is already made of, so the strip evaluates the
+same piecewise-linear function rather than approximating it; what differs is
+eight-bit quantisation and a stop that falls between centres, and
+`the_baked_strip_reproduces_the_analytic_ramp_across_the_box` measures the pair
+against the analytic ramp at every column of a box. The format is deliberately
+not the sRGB one: stops are sRGB-encoded and this painter blends in that space.
+The strip is re-baked only when the gradient rows differ from the ones the
+texture holds, and a row-count change reallocates the texture and rebuilds every
+bind group.
+
+**One paint pipeline per document kind set** (story #1449).
+`dashpaint::kind_set::KindSet` is a two-bit census of the committed tables —
+does this document clip, does it stroke — and `Renderer` keeps a
+`HashMap<KindSet, RenderPipeline>` built on first use. Two WGSL `override`
+constants, `HAS_CLIPS` and `HAS_STROKES`, compile out the clip loop and the
+stroke arm for a document that reaches neither; both default to `true`, so a
+pipeline built with no constants is the general one. **The set is re-read on
+every paint**, never once at load, because the tables it counts grow when a
+paint or a stroke is interned mid-run — the opposite of the atlas set, which
+changes only with a load. Two bits and not more: a constant earns its place by
+removing code, and a gradient bit would remove only a branch.
+
+There is also a **plain-fill path** in `fs_main`: a solid colour on a sharp box
+that nothing clips and no coverage mask confines returns before the coverage
+chain, the clip call and the colour chain. It is the general path's own
+arithmetic in the same operand order, so it is bit-identical; what it buys is
+what a literal zero radius lets the compiler fold.
 
 An instance whose kind the shader does not implement draws nothing, and does not
 fall through to a colour: `InstanceKind` carries the sub-kind, so a shader

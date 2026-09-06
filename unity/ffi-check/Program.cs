@@ -310,6 +310,8 @@ Check("every declared entry point resolves in the library", () =>
         "ds_runtime_detach_surface",
         "ds_runtime_draw",
         "ds_runtime_free",
+        "ds_runtime_gradient_strip",
+        "ds_runtime_kind_set",
         "ds_runtime_load_document",
         "ds_runtime_load_document_mapped",
         "ds_runtime_load_document_mapped_range",
@@ -1302,6 +1304,14 @@ Check("every managed entry point a host can call reports the missing symbol", ()
                 new object[] { new byte[] { 1, 2, 3, 4 }, ProbeFaceList() })),
         ("ds_runtime_atlas_count",
             () => Call("ReadAtlases", Type.EmptyTypes, null)),
+        // Story #1449's two, wrapped rather than declared and unreachable: the
+        // Unity painter reads the kind set on every drawn frame and the strip
+        // on every frame whose generation moved, so both are on a host's own
+        // path and both belong here.
+        ("ds_runtime_kind_set",
+            () => Call("KindSet", Type.EmptyTypes, null)),
+        ("ds_runtime_gradient_strip",
+            () => Call("GradientStrip", Type.EmptyTypes, null)),
 #if DASHSCENE_DEMO_PRODUCER
         // The demonstration's seven, driven rather than exempted (story #1342).
         //
@@ -2073,6 +2083,308 @@ Check("a fresh runtime's first tick advances, so a load needs no forced redraw",
     }
 
     Expect(!runtime.Tick(0f), "a marked, static document still reported an advance");
+});
+
+// ------------------------------------------------------- the kind set and the strip
+
+// `dashpaint::gradient_strip::bake_row` and the `ramp` under it, rewritten in
+// C# so the strip the library hands back is compared against the ramp rather
+// than against itself.
+//
+// **A rewrite is the point, not a shortcut.** The claim story #1449 rests on is
+// that one filtered sample equals the stop walk it replaced, and a check that
+// compared the strip against a recorded blob would agree with a baker that had
+// drifted from the shading. This evaluates the same piecewise-linear function
+// from the stops the ABI hands back.
+//
+// The arithmetic is `float` throughout, as the Rust is `f32` throughout: a
+// `double` intermediate rounds a channel differently at a texel where the
+// product sits within half a code point of a boundary.
+static byte Quantise(float v) => (byte)(Math.Clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
+
+static Color Ramp(GradientStop[] stops, float t)
+{
+    var first = stops[0];
+    var last = stops[stops.Length - 1];
+    if (t < first.Offset)
+    {
+        return first.Color;
+    }
+
+    if (t >= last.Offset)
+    {
+        return last.Color;
+    }
+
+    // The first stop past `t`. `t` is below the last stop's offset, so this
+    // terminates, and `above - 1` is a stop whose offset is at or below `t` —
+    // so the segment below has width and a repeated offset is never the
+    // divisor.
+    var above = 0;
+    while (stops[above].Offset <= t)
+    {
+        above++;
+    }
+
+    var lo = stops[above - 1];
+    var hi = stops[above];
+    var u = (t - lo.Offset) / (hi.Offset - lo.Offset);
+    return new Color
+    {
+        R = lo.Color.R + ((hi.Color.R - lo.Color.R) * u),
+        G = lo.Color.G + ((hi.Color.G - lo.Color.G) * u),
+        B = lo.Color.B + ((hi.Color.B - lo.Color.B) * u),
+        A = lo.Color.A + ((hi.Color.A - lo.Color.A) * u),
+    };
+}
+
+static byte[] BakeRow(GradientStop[] stops)
+{
+    var row = new byte[1024];
+    if (stops.Length == 0)
+    {
+        return row;
+    }
+
+    for (var x = 0; x < 256; x++)
+    {
+        // A texel's CENTRE, not its left edge. That is what makes a filtered
+        // read between two centres the linear interpolation the ramp already
+        // is, and what puts the two end texels 1/512 in from t = 0 and t = 1.
+        var colour = Ramp(stops, (x + 0.5f) / 256.0f);
+        row[(x * 4) + 0] = Quantise(colour.R);
+        row[(x * 4) + 1] = Quantise(colour.G);
+        row[(x * 4) + 2] = Quantise(colour.B);
+        row[(x * 4) + 3] = Quantise(colour.A);
+    }
+
+    return row;
+}
+
+// **Story #1449's two calls, and the mapping the Unity painter turns one of
+// them into.** `KindSetKeywords` sits in `Runtime/` rather than beside
+// `BrgPainter.ApplyKindSet` in `Runtime/Engine/` for exactly the reason
+// `HeapUpload` and `CommitPacer` do: this project compiles `Runtime/**` and
+// excludes `Runtime/Engine/**`, so a mapping written there could be read as
+// text by `unity/package-gate` and executed by nothing without a Unity editor.
+
+Check("the kind set is the document's, and a lease does not change it", () =>
+{
+    using var runtime = new DashsceneRuntime();
+    runtime.LoadDocument(File.ReadAllBytes(fixture));
+
+    var bits = runtime.KindSet();
+
+    // **Masked, and the mask is what the header asks a caller to apply.** Bits
+    // above the two named are reserved and read as zero today, so an equality
+    // against a literal would turn false the first time the library sets a
+    // third.
+    Expect(
+        (bits & ~KindSetKeywords.Known) == 0u,
+        $"the kind set reports {bits:x}, which sets a bit above the two this build knows");
+
+    // **The census, checked against the tables it is a census OF.** Every
+    // assertion below holds trivially for a call that always answered 0 — a
+    // subset of the mask, equal to itself under a lease, equal to itself on a
+    // second runtime — so the value is derived here from the frame's own clip
+    // and stroke tables, which reach this host through a different call.
+    // Derived rather than compared against a literal: a re-recorded fixture
+    // moves the answer and must not silently pass.
+    uint expectedBits;
+    using (var lease = runtime.AcquireFrame())
+    {
+        expectedBits = (lease.Frame.ClipBoxes.CountAsLong > 0 ? 1u : 0u)
+            | (lease.Frame.Strokes.CountAsLong > 0 ? 2u : 0u);
+
+        // The set describes the front scene, which a lease only makes more
+        // stable.
+        Expect(
+            runtime.KindSet() == bits,
+            "a lease changed the kind set the same document reports");
+        lease.MarkDrawn();
+    }
+
+    Expect(
+        bits == expectedBits,
+        $"the kind set reports {bits} and this document's tables hold "
+        + $"{(expectedBits & 1u) != 0u} clip box(es) and {(expectedBits & 2u) != 0u} "
+        + "stroke(s). A painter toggles a shader keyword from this word, so a bit that "
+        + "does not follow the tables compiles an arm out of a document that reaches it.");
+
+    // **And the fixture must reach at least one arm**, or every comparison
+    // above holds over a document that specialises nothing and a call that
+    // always answered 0 would pass them all.
+    Expect(
+        bits != 0u,
+        $"{fixture} neither clips nor strokes, so this check cannot tell a kind set from "
+        + "a call that always answers 0");
+
+    // And it is the tables' own census: this fixture's paint entries are what
+    // decides each bit, so the answer is derived here rather than asserted
+    // against a literal that a re-recorded fixture would silently falsify.
+    using var second = new DashsceneRuntime();
+    second.LoadDocumentMapped(fixture, 0u);
+    Expect(
+        second.KindSet() == bits,
+        "two runtimes over the same document reported different kind sets");
+});
+
+Check("the gradient strip is one baked row per gradient, and row 0 is the ramp", () =>
+{
+    using var runtime = new DashsceneRuntime();
+    runtime.LoadDocument(File.ReadAllBytes(fixture));
+
+    using var lease = runtime.AcquireFrame();
+    var strip = runtime.GradientStrip();
+    var gradients = lease.Frame.Gradients.CountAsLong;
+
+    // **The stride, before any byte is read.** This slice does not travel in
+    // `DsFrame`, so `FrameLease.ValidateStrides` does not cover it — R-E17's
+    // rule reaches it here instead.
+    Expect(
+        strip.Rows.StrideAsLong == 1024,
+        $"the strip reports a stride of {strip.Rows.StrideAsLong}, not the 1024 bytes "
+        + "a 256-texel RGBA8 row is");
+    Expect(
+        strip.Rows.CountAsLong == gradients,
+        $"the strip holds {strip.Rows.CountAsLong} rows and the paint table holds "
+        + $"{gradients} gradients. A painter samples row i for gradient i, so a shorter "
+        + "strip reads past it and a longer one moves every v coordinate.");
+
+    // **This fixture must actually carry a gradient**, or every comparison
+    // below holds over an empty set — the shape `unity/ffi-check`'s own
+    // `RefuseAnEmptyCompileSet` closes for its compile set.
+    Expect(gradients > 0, $"{fixture} carries no gradient, so the bytes below are not compared");
+
+    var stopRows = FrameRows.Of<GradientStop>(lease.Frame.GradientStops);
+    var gradientRows = FrameRows.Of<Gradient>(lease.Frame.Gradients);
+
+    // `dashpaint::gradient_strip::bake_row`, re-derived here from the stops the
+    // ABI hands back. **Re-derived rather than compared against a recorded
+    // blob**: the strip is what makes a gradient pixel one sample instead of a
+    // stop walk, and the property that matters is that it IS the ramp — a
+    // recorded blob would agree with a baker that had drifted from the shading.
+    //
+    // **Every row, not row 0.** A painter samples row i for gradient i, so a
+    // baker that wrote gradient 0's ramp into every row, or shifted the index
+    // by one past the first, leaves row 0 correct and every gradient after the
+    // first drawing another one's colours.
+    var wrongRow = -1;
+    var wrongByte = -1;
+    byte wrongHas = 0;
+    byte wrongWants = 0;
+    for (var row = 0; row < gradientRows.Length && wrongRow < 0; row++)
+    {
+        var range = gradientRows[row].Stops;
+        var stops = new GradientStop[range.Count];
+        for (var i = 0; i < stops.Length; i++)
+        {
+            stops[i] = stopRows[(int)range.Offset + i];
+        }
+
+        var expected = BakeRow(stops);
+        var actual = new byte[1024];
+        Marshal.Copy(strip.Rows.Ptr + (row * 1024), actual, 0, 1024);
+        for (var i = 0; i < 1024; i++)
+        {
+            if (expected[i] != actual[i])
+            {
+                wrongRow = row;
+                wrongByte = i;
+                wrongHas = actual[i];
+                wrongWants = expected[i];
+                break;
+            }
+        }
+    }
+
+    Expect(
+        wrongRow < 0,
+        wrongRow < 0
+            ? $"all {gradientRows.Length} row(s) are the ramp"
+            : $"row {wrongRow} differs from the ramp at byte {wrongByte}: the strip has "
+              + $"{wrongHas}, the ramp {wrongWants} (texel {wrongByte / 4}, channel "
+              + $"{wrongByte % 4})");
+
+    // The generation is what a host reads to decide whether to copy again, and
+    // a static document must not move it.
+    var generation = strip.Generation;
+    lease.MarkDrawn();
+    lease.Dispose();
+    runtime.Tick(0.016f);
+    Expect(
+        runtime.GradientStrip().Generation == generation,
+        "a tick over a static document moved the strip's generation, so a painter "
+        + "copies a kibibyte per row on every frame");
+});
+
+Check("the strip is copied again when the bake moves, and not otherwise", () =>
+{
+    // **The skip's two directions cost different things.** Copying when nothing
+    // moved is a kibibyte per row on every frame, which is what the generation
+    // exists to avoid; NOT copying when something did freezes the document's
+    // gradients for the life of the painter, with a correct-looking first frame
+    // and no diagnostic. `BrgPainter.UploadStrip` is `Runtime/Engine/`, which
+    // this project excludes, so the decision itself lives in `Runtime/` and is
+    // executed here — `HeapUpload.AlreadyUploaded`'s arrangement, for the same
+    // reason.
+    Expect(
+        !GradientStripUpload.AlreadyUploaded(false, false, 1ul, 1ul),
+        "a texture nothing has been copied into was reported as already holding the rows");
+    Expect(
+        GradientStripUpload.AlreadyUploaded(true, false, 7ul, 7ul),
+        "an unchanged bake was copied again");
+    Expect(
+        !GradientStripUpload.AlreadyUploaded(true, false, 8ul, 7ul),
+        "a bake that moved was not copied, so the painter draws the previous commit's colours");
+
+    // **A replacement is not redundant with the generation**: the count starts
+    // again per document, so the new document's 1 can follow the old one's 1
+    // while naming different colours.
+    Expect(
+        !GradientStripUpload.AlreadyUploaded(true, true, 1ul, 1ul),
+        "a replaced document reusing the previous one's generation was not copied again");
+
+    // And the comparison is equality rather than an ordering, which is what
+    // makes the line above work: a host asking whether the generation had GROWN
+    // would never copy after a replacement reset it.
+    Expect(
+        !GradientStripUpload.AlreadyUploaded(true, false, 1ul, 9ul),
+        "a generation lower than the last one was treated as already uploaded");
+});
+
+Check("KeywordsFor maps each bit to its own keyword, in bit order", () =>
+{
+    Expect(KindSetKeywords.KeywordsFor(0u).Length == 0, "an unspecialised document names a keyword");
+    Expect(
+        KindSetKeywords.KeywordsFor(1u).SequenceEqual(new[] { KindSetKeywords.Clips }),
+        "bit 0 alone does not name DS_HAS_CLIPS alone");
+    Expect(
+        KindSetKeywords.KeywordsFor(2u).SequenceEqual(new[] { KindSetKeywords.Strokes }),
+        "bit 1 alone does not name DS_HAS_STROKES alone");
+    Expect(
+        KindSetKeywords.KeywordsFor(3u)
+            .SequenceEqual(new[] { KindSetKeywords.Clips, KindSetKeywords.Strokes }),
+        "both bits do not name both keywords in bit order");
+
+    // **The literals, not only the shape.** The names are the contract with
+    // `Runtime/Shaders/DashsceneInstance.hlsl`, and a keyword the shading does
+    // not guard selects nothing and reports nothing;
+    // `unity/package-gate`'s `kind_set_keywords.rs` is what holds these two
+    // spellings against the arms there.
+    Expect(KindSetKeywords.Clips == "DS_HAS_CLIPS", "DS_HAS_CLIPS was renamed");
+    Expect(KindSetKeywords.Strokes == "DS_HAS_STROKES", "DS_HAS_STROKES was renamed");
+
+    // A reserved bit names nothing, which is the masking `dashscene.h` asks
+    // for: a painter that let one through would enable a keyword no shader
+    // declares.
+    Expect(
+        KindSetKeywords.KeywordsFor(0xFFFF_FFFCu).Length == 0,
+        "a word of reserved bits named a keyword");
+    Expect(
+        KindSetKeywords.KeywordsFor(0xFFFF_FFFFu)
+            .SequenceEqual(new[] { KindSetKeywords.Clips, KindSetKeywords.Strokes }),
+        "a word with every bit set named more than the two this build knows");
 });
 
 // ------------------------------------------------------------------- thread cost

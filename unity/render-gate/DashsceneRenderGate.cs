@@ -467,6 +467,17 @@ public sealed class DashsceneRenderGate : MonoBehaviour
     /// The two sheets the order fixture's runs sample.
     private TextAtlasSet _orderAtlases;
 
+    /// `BrgPainter.KindSetKeywordAgreement` taken during the ORDER phase, which
+    /// is the only part of this run with text materials on the painter.
+    ///
+    /// **`Judge` runs before `BeginOrder`**, so a reading taken there compares
+    /// the class material and nothing else — measured: it reported one
+    /// material. Seeded to -1 so a phase that never took it fails rather than
+    /// reporting a comparison that did not happen.
+    private int _orderKindSetCompared = -1;
+
+    private int _orderKindSetDisagreeing = -1;
+
     private void Awake()
     {
         // **The measurement, made by the gate rather than by a person.** Issue
@@ -665,6 +676,19 @@ public sealed class DashsceneRenderGate : MonoBehaviour
                             _orderProbe = new FramePacker();
                             _orderProbe.Pack(
                                 lease.Frame, MaterialClass.UnlitOverlay, _orderAtlases);
+                        }
+
+                        // **After a draw, not after `SetAtlases`.** The
+                        // materials exist from the install, and the keywords
+                        // reach them from `ApplyKindSet` inside `Draw` — so a
+                        // reading taken before this frame would report the
+                        // shader defaults every text material starts at, which
+                        // is exactly the state this is here to catch.
+                        if (_orderKindSetCompared < 0)
+                        {
+                            var agreement = _painter.KindSetKeywordAgreement();
+                            _orderKindSetCompared = agreement.Compared;
+                            _orderKindSetDisagreeing = agreement.Disagreeing;
                         }
                     }
                     else if (_samples == null)
@@ -1317,6 +1341,8 @@ public sealed class DashsceneRenderGate : MonoBehaviour
                 + $"Batcher read is not a verdict where it was taken. First: {_batcherWarnings[0]}");
         }
 
+        JudgeKindSetKeywords();
+
         if (_samples == null || _overlayInstances == 0)
         {
             Fail("no frame was packed, so the gate has nowhere to look for ink.");
@@ -1609,7 +1635,7 @@ public sealed class DashsceneRenderGate : MonoBehaviour
                 + "time(s) over the settle window and the forced redraw that follows it. "
                 + "Nothing the binding carries moved: no table was reallocated, no atlas set "
                 + "changed, and the scalars are the ones the step's first frame bound. Every "
-                + "one of those binds is four Material.Set… calls per material for a binding "
+                + "one of those binds is five Material.Set… calls per material for a binding "
                 + "that was already correct.");
         }
 
@@ -1627,10 +1653,66 @@ public sealed class DashsceneRenderGate : MonoBehaviour
             Fail(
                 $"the drawable extent moved by one pixel and the heap bound "
                 + $"{_heapBindsAfterResize - _heapBindsAfterForcedRedraw} time(s). The "
-                + "anti-aliasing width is one of the three scalars `BindHeap` carries and it "
+                + "anti-aliasing width is one of the four scalars `BindHeap` carries and it "
                 + "is derived from that extent, so a binding that did not refresh here shades "
                 + "the resized document at the previous size's edge width — with no "
                 + "reallocation anywhere to raise the flag for it.");
+        }
+    }
+
+    /// The painter's material carries the keywords this document's kind set
+    /// names, and no others (story #1449).
+    ///
+    /// **Nothing else in CI can see this.** `BrgPainter.ApplyKindSet` is
+    /// `Runtime/Engine/`, which `unity/ffi-check` excludes and no CI job
+    /// compiles; `unity/package-gate` reads it as text; and
+    /// `KindSetKeywords.KeywordsFor` — which `unity/ffi-check` does execute —
+    /// is the mapping alone. Between the mapping and the variant a fragment
+    /// runs there are three steps this is the only reader of: that
+    /// `ApplyKindSet` ran at all, that the shader declares the keyword it was
+    /// handed, and that the material took it. A keyword no shader declares
+    /// selects nothing and reports nothing.
+    ///
+    /// **The expectation is derived from the document, not written here.**
+    /// `v03-paint.dsb` reports both bits today, and a re-recorded fixture that
+    /// reported neither would make a literal expectation pass over a painter
+    /// that enabled nothing. The gate fails a fixture whose set is empty for
+    /// the same reason: with nothing to enable, `ApplyKindSet` never toggling
+    /// would draw exactly the same picture.
+    private void JudgeKindSetKeywords()
+    {
+        if (_painter == null || _runtime == null)
+        {
+            Fail("no painter or runtime survived the plan, so the keyword state is unreadable.");
+            return;
+        }
+
+        var bits = _runtime.KindSet();
+        var expected = KindSetKeywords.KeywordsFor(bits);
+        var actual = _painter.EnabledKindSetKeywords();
+
+        Line($"kind set {bits} — keywords enabled [{string.Join(", ", actual)}], "
+             + $"expected [{string.Join(", ", expected)}]");
+
+        if (expected.Length == 0)
+        {
+            Fail(
+                $"the loaded document reports a kind set of {bits}, so there is no keyword "
+                + "for this check to observe: a painter that never applied one would enable "
+                + "the same nothing. The fixture this gate draws has to reach at least one "
+                + "arm for the check to have teeth.");
+            return;
+        }
+
+        if (!actual.SequenceEqual(expected))
+        {
+            Fail(
+                $"the document reports a kind set of {bits}, whose keywords are "
+                + $"[{string.Join(", ", expected)}], and the painter's class material carries "
+                + $"[{string.Join(", ", actual)}]. Unity selects a variant from the material's "
+                + "own keyword state, so a missing one removes that arm from every fragment — "
+                + "a clipped document drawing ink outside its clip, or a stroke drawing as its "
+                + "node's fill — and an extra one compiles in an arm the document cannot reach.");
         }
     }
 
@@ -2005,8 +2087,52 @@ public sealed class DashsceneRenderGate : MonoBehaviour
     /// legible frame is not evidence of a correct order, so no count of
     /// bright pixels appears here. The undrawn control frame is put through
     /// every probe first and must fail each of them.
+    /// Every material the painter draws with carries the same `DS_HAS_*` set,
+    /// not the class material alone (story #1449).
+    ///
+    /// **Judged here because this is the only phase with text materials on the
+    /// painter.** `Judge` runs before `BeginOrder`, and the plan's own steps
+    /// install no atlas set — measured: a reading taken in `Judge` compared one
+    /// material. The order fixture installs two sheets, so the painter carries
+    /// a class material and two text materials here.
+    ///
+    /// **What it catches that `JudgeKindSetKeywords` cannot.** A text material
+    /// is minted by `SetAtlases` long after the constructor and starts at its
+    /// shader's defaults — every keyword undefined. Only `ApplyKindSet` walking
+    /// `_textMaterials`, and the `_kindSetApplied = false` that `SetAtlases`
+    /// sets so the next `Draw` re-applies, put a set on it. Drop either and a
+    /// clipped document's GLYPHS shade through the variant with the clip loop
+    /// removed — inking outside the region that clips them — while the class
+    /// material still reports the right set.
+    private void JudgeKindSetAcrossMaterials()
+    {
+        Line($"kind set — {_orderKindSetCompared} material(s) compared, "
+             + $"{_orderKindSetDisagreeing} disagreeing");
+
+        if (_orderKindSetCompared < 2)
+        {
+            Fail(
+                $"the order phase compared {_orderKindSetCompared} material(s), so this run "
+                + "cannot tell a painter that applies the kind set to every material from one "
+                + "that applies it to the class material alone. The order fixture's two "
+                + "atlases are what mint the text materials this needs.");
+            return;
+        }
+
+        if (_orderKindSetDisagreeing > 0)
+        {
+            Fail(
+                $"{_orderKindSetDisagreeing} of {_orderKindSetCompared} materials carry a "
+                + "different `DS_HAS_*` set from the class material. Unity selects a variant "
+                + "per material, so a text material left at its shader's defaults draws its "
+                + "glyphs through the variant with the clip loop removed.");
+        }
+    }
+
     private void JudgeOrder()
     {
+        JudgeKindSetAcrossMaterials();
+
         var order = Shot("order");
         var control = Shot("control");
         if (order == null || control == null || _orderProbe == null)

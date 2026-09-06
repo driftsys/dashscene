@@ -82,6 +82,29 @@ namespace Driftsys.Dashscene
             }
         }
 
+        /// The runtime this frame was acquired from.
+        ///
+        /// **For the two calls whose answer belongs to the same commit** —
+        /// `DashsceneRuntime.KindSet` and `DashsceneRuntime.GradientStrip`.
+        /// Neither is part of `DsFrame`, and both describe the commit this
+        /// lease holds: while a lease is outstanding every call that would
+        /// commit is refused, so what they report cannot move under a painter
+        /// that reads them here. Refused once released, for the same reason
+        /// [`Frame`] is — the strip's rows are borrowed from that commit.
+        ///
+        /// `internal`, because a host reaches those two through the runtime it
+        /// already holds; this exists so `BrgPainter.Draw`, which is handed a
+        /// lease and nothing else, does not need a second parameter that every
+        /// caller would have to thread through.
+        internal DashsceneRuntime Runtime
+        {
+            get
+            {
+                ThrowIfReleased();
+                return _runtime;
+            }
+        }
+
         /// The commit this frame is. Compare only within one document.
         public ulong Generation
         {
