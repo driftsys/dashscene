@@ -1220,6 +1220,103 @@ entries and reached the other two rows. Against D1's "met when": `surfaces` and
 script that derives both cadence histograms from a latency dump,
 `latency-cadence.py`, one directory above.
 
+#### The per-command term (2026-09-06)
+
+    status  taken 2026-09-06 on the same Pixel 5, from two APKs built by
+            `just unity-demo-android 6000.3.23f1 build` at `a9adba8` plus
+            story #1447's one edit, profile `demo-release`, Vulkan, rung
+            `RawBuffer`. Story #1447, issue #1406. The dumps, the APKs, the
+            patch and the derivation are under
+            `driftsys/dashscene-v021-lanes/probe-1406/`, outside this
+            repository.
+
+**These are development players, and so are their own series.** Both APKs are
+`BuildOptions.Development` — story #1447's `DASHSCENE_DEV_PLAYER` knob in
+`unity/demo/DemoBuild.cs` — because the term this story reads was expected on
+the render thread. No row here may be set beside this record's
+`BuildOptions.None` rows; the paragraph above measures what that costs.
+
+The two builds differ in `OnPerformCulling`'s emission and nothing else: **one
+draw command per visible instance, as shipped, against one per contiguous
+`_instanceAtlas` run**, the pre-#1401 shape, applied as an uncommitted patch and
+reverted after the build. On `typography` the shipped shape emits 381 commands;
+`unity-csharp-host.md` records the run shape as 11 on this scene, and **nothing
+on the device reports a command count**, so this reading did not re-derive it —
+the player's `drew` line carries instances. That the patch reached the APK was
+checked in the artifact instead: `CommandsInBatch` and `RunEnd` appear in build
+B's IL2CPP `global-metadata.dat` and in neither of build A's.
+
+Thread time, `unity-frame-cost.sh`, three sweeps of 20 s per entry at 1080x2340,
+one row per reported sample of 240 drawn frames:
+
+| entry      | build           | n  | main mean   | mean of means | main p95    | gc B/frame  | cpu % of one core |
+| ---------- | --------------- | -- | ----------- | ------------- | ----------- | ----------- | ----------------- |
+| typography | A, 381 commands | 13 | 16.64-16.67 | 16.659        | 17.67-17.84 | 8470-8599   | 48-61 (57.5)      |
+| typography | B, one per run  | 12 | 16.66-16.67 | 16.664        | 17.70-17.86 | 8470-8599   | 48-63 (58.2)      |
+| surfaces   | A, 381 commands | 6  | 33.06-33.20 | 33.118        | 34.75-35.87 | 21708-21743 | 31-33 (31.7)      |
+| surfaces   | B, one per run  | 6  | 33.14-33.21 | 33.155        | 34.27-35.08 | 21708-21743 | 31-33 (32.0)      |
+
+**The render-thread term is an em dash on both**, so the threshold below is
+judged on the main-thread term and the CPU column. `typography`'s main-thread
+mean is one 60 Hz frame, which this record already establishes is the pace
+rather than the work — so the CPU column is what carries the answer there,
+because process CPU is not clamped by the pacer.
+
+Compositor, `gpu-capture.sh` with `DS_GPU_WINDOW=10`, held on `typography`,
+landscape 2340x1080. Read sequentially — three windows of A then three of B —
+build B was **slower** with 370 fewer commands, 21.37 ms against 21.00, the two
+sets not overlapping. **Interleaving removed it**, which is what separates a
+build effect from a session one:
+
+| arms, interleaved A-B-A-B | n | `frameReady` mean | `averageFPS`        |
+| ------------------------- | - | ----------------- | ------------------- |
+| A, 381 commands           | 5 | 20.6-21.3 (20.96) | 48.96-49.48 (49.31) |
+| B, one per run            | 4 | 20.9-21.1 (20.98) | 48.79-49.46 (49.19) |
+
+Build B's whole range lies inside build A's. Three portrait arms each, at
+1080x2340, put both builds at 16.70 ms and 62.45 fps — the panel's rate, so
+there the cadence bounds the frame rather than measuring it.
+
+**The per-command term is below 1 ms on either thread, and is not resolved by
+any instrument here** — 0.005 ms on the main-thread mean, 0.030 ms on its p95,
+0.02 ms on the interleaved `frameReady` mean, none of them with the sign a
+per-command cost predicts. So the command count is not a term the parity
+criterion must remove, and story #1448 is on R-T4's path rather than on the
+parity path.
+
+Two limits of this reading, stated rather than left to be found. **No band-drop
+count was taken**: `[probe1401] DROP` came from an uncommitted per-frame
+readback of the camera's render target, which is in no build here, and adding it
+would put a GPU readback inside the cost being measured — `droppedFrames` and
+`missedFrames` were 0 in every window of both builds. And **`typography`
+presents at the panel's rate in portrait while it is work-bound at about 21 ms
+in landscape** on this build, which the shaded areas above do not account for
+that way round; the two pictures are on the shelf, and it does not bear on the
+A/B, which is null in both geometries.
+
+#### The Canvas beside the painter, not taken (2026-09-06)
+
+Story #1447 was to take the epic's first CPU number for the Canvas beside the
+painter — one entry held under `-renderer painter` and again under
+`-renderer canvas`, the process sampler read against the compositor's frame
+count. **It could not be taken, and the reason is issue #1469.**
+
+`DashsceneCanvasBaseline.LoadManifest` reads `showcase.json` through
+`File.ReadAllText(Path.Combine(Application.streamingAssetsPath, ...))`, and on
+Android that path is `jar:file:///data/app/<pkg>/base.apk!/assets`, which `File`
+cannot open — the hazard `DashsceneShowcase.ReadStreamingAssetText`'s own
+docstring records, measured on this device on 2026-08-29. Because `Attach` has
+already destroyed `DashsceneShowcase`, a `-renderer` launch draws nothing at
+all: **zero `[showcase] drew` lines in a 20 s launch, for `painter` and `canvas`
+alike**, where the same APK with no `-renderer` draws normally.
+
+The argument itself is delivered: Unity logs `CommandLine:  -renderer painter`,
+and the single-token control `-e unity '-no-frame-cost'` suppresses the
+frame-cost line on the same build. So D1's CPU criterion has no Canvas reading
+on the target device until #1469 is fixed, and issue #1457 — the sampler and the
+compositor over one window — is untouched by this and stays open. The apparatus
+written for the reading is on the shelf under `probe-1406/`.
+
 ### The thread-time line, and the URP floor (2026-09-05)
 
 Story #1443, and D3 of
@@ -1322,18 +1419,30 @@ Thread` again on the device by the table above. `Render Thread` and
 
 - `Canvas.SendWillRenderCanvases` needs a player that draws a Canvas, which is
   story #1444's;
-- `Render Thread` needs a player that is not `-batchmode` **and** is not built
-  with `BuildOptions.None`. The demo player on the device is not `-batchmode`
-  and is `BuildOptions.None`; the render gate is the reverse. Neither is both.
+- `Render Thread` was stated here as needing a player that is not `-batchmode`
+  **and** is not built with `BuildOptions.None`, on the grounds that the demo
+  player was the first and the render gate the second and neither was both.
+  **That condition is not sufficient, measured on 2026-09-06** (story #1447):
+  the Android demo player built with `BuildOptions.Development` is neither
+  `-batchmode` nor `BuildOptions.None`, and the counter still does not register.
+  The player reports it rather than leaving it to be inferred —
+  `[showcase] thread cost counters this player cannot record: Render Thread,
+  Canvas.SendWillRenderCanvases`.
+  What does register on that build and did not before is
+  `GC Allocated In Frame`. Issue #1458 carries what is left.
 
 Both remain assumed rather than confirmed.
 
-**The Android reading was deliberately NOT taken on a development player.**
-Every other Unity figure in this record was taken on a `BuildOptions.None`
-build, and a development player is a different build — its rows would not be one
-series with theirs. The cost is the four em-dash columns above. A reading that
-needs the Canvas or allocation terms on this device is a development build and a
-new series, and must say so.
+**The Android reading above was deliberately NOT taken on a development
+player.** Every other Unity figure in this record was taken on a
+`BuildOptions.None` build, and a development player is a different build — its
+rows would not be one series with theirs. The cost is the four em-dash columns
+above. A reading that needs the Canvas or allocation terms on this device is a
+development build and a new series, and must say so. Story #1447's rows, under
+the presented-rate section's "The per-command term" sub-heading, are that new
+series, and the difference is measured rather than asserted: `surfaces` reads a
+main-thread mean of 33.06-33.20 ms at 31-33 % of one core on the development
+build against 32.76-32.83 ms at 25-27 % here.
 
 #### The URP floor
 

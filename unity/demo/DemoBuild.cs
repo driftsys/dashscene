@@ -58,6 +58,28 @@ public static class DemoBuild
     private static bool BuildingForAndroid =>
         Environment.GetEnvironmentVariable("DASHSCENE_DEMO_TARGET") == "android";
 
+    /// Whether to build a development player, read from the environment.
+    ///
+    /// **A `BuildOptions.None` player registers only the `Main Thread`
+    /// counter**, which is what `docs/design/android-toolchain.md` measured of
+    /// this player: `Render Thread` needs a player that is neither `-batchmode`
+    /// nor `BuildOptions.None`, and neither host in that table is both. Story
+    /// #1447 reads a term that lives on the render thread, so it needs this one
+    /// (issue #1458).
+    ///
+    /// **Off by default, and the default is what every other reading was taken
+    /// on.** A development player is a different build: its rows are not one
+    /// series with the `BuildOptions.None` rows already in that record, which is
+    /// why this is a switch rather than a change of the default. A reading taken
+    /// with it set says so.
+    ///
+    /// An environment variable rather than a `-buildOptions` argument, for the
+    /// reason [`BuildingForAndroid`] gives: the recipe passes `-executeMethod`
+    /// and nothing else, so a switch that has to be observable here is read from
+    /// the environment.
+    private static bool BuildingDevelopmentPlayer =>
+        Environment.GetEnvironmentVariable("DASHSCENE_DEV_PLAYER") == "1";
+
     private const int WindowWidth = 1280;
 
     private const int WindowHeight = 800;
@@ -470,7 +492,9 @@ public static class DemoBuild
             scenes = new[] { ScenePath },
             locationPathName = Path.Combine("Build", ProductName + Extension(target)),
             target = target,
-            options = BuildOptions.None,
+            options = BuildingDevelopmentPlayer
+                ? BuildOptions.Development
+                : BuildOptions.None,
 
             // **What turns the showcase scenes on** (story #1342). The package's
             // `Runtime/DemoProducer.cs` and the sample's scene half are both
@@ -497,6 +521,11 @@ public static class DemoBuild
             return;
         }
 
+        // **The player kind is logged, because it is the only thing that
+        // separates two otherwise identical builds.** The URP floor above logs
+        // the defaults it replaced for the same reason: a reading whose build
+        // differed in a field nobody recorded is a reading of an unknown build.
+        Debug.Log($"[demo-build] player options {options.options}");
         Debug.Log($"[demo-build] build {report.summary.result}, "
                   + $"{report.summary.totalErrors} error(s)");
         if (report.summary.result != BuildResult.Succeeded)

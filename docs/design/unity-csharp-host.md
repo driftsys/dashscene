@@ -619,7 +619,14 @@ frame lease, `BrgPainter.Draw` and the release; Unity runs `OnPerformCulling`
 after `Update` returns, so the emission loop is outside it, and so is the GPU's
 execution of 381 draw commands rather than 11. What the pair bounds is the
 packing and the upload, which the command shape does not change at all. The
-emission loop's own cost, and the GPU's, are unmeasured (issue #1406).
+emission loop's own cost, and the GPU's, were measured on the Pixel 5 on
+2026-09-06 (story #1447, issue #1406), by building this shape against the run
+shape and reading both: neither the main-thread term nor the compositor's
+`frameReady` cadence moved outside the run-to-run spread, so the command count
+is not where that frame goes. `docs/design/android-toolchain.md`, "The
+per-command term", carries the rows and the two limits of the reading — the
+render-thread counter is unrecordable on that player, and the command count
+under the run shape was not re-derived on the device.
 
 ### The six rules, and where each one is held
 
