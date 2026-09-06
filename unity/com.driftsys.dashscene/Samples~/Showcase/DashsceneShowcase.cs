@@ -50,19 +50,22 @@
 // package's own copy exports no `ds_demo_*`. Issue #1352 is the follow-up on
 // the shipped plugin layout, and nothing here stands in for it.
 //
-// **The cascade is read with `File`, so a text document is desktop-only here.**
-// `StreamingAssetDocument.Resolve` is what makes a document loadable inside an
-// Android APK, and it maps — but `LoadDocumentWithText` takes owned bytes, so a
-// document needing a font cascade cannot also be mapped (issue #1332). This
-// sample takes the mapped path where it can and the owned path where text
-// needs it, and on Android the owned path would need `UnityWebRequest` rather
-// than `File`.
+// **The cascade is read through the resolver, so a text document is not
+// desktop-only.** `LoadDocumentWithText` takes owned bytes rather than a
+// mapped range, so a document needing a font cascade cannot itself be mapped
+// (issue #1332) — but `StreamingAssetText.ReadBytes` asks
+// `StreamingAssetDocument.Resolve` for the same container path and byte range
+// the mapped path uses, and reads them into an owned buffer instead of
+// mapping them. Issue #1469 is what this file's own `ReadBytes` used to get
+// wrong: reading `Application.streamingAssetsPath` directly with `File`,
+// which cannot open a path inside an Android APK. This sample takes the
+// mapped path where it can and the owned path, through the same resolver,
+// where text needs it.
 
 using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Text;
 using Driftsys.Dashscene;
 using UnityEngine;
 using Stopwatch = System.Diagnostics.Stopwatch;
@@ -1120,7 +1123,8 @@ namespace Driftsys.Dashscene.Samples
                     if (entry.text)
                     {
                         // The root was refused above, before this runtime existed.
-                        _runtime.LoadDocumentWithText(ReadBytes(entry.path), Cascade());
+                        _runtime.LoadDocumentWithText(
+                            StreamingAssetText.ReadBytes(entry.path), Cascade());
                         _painter.SetAtlases(_runtime.ReadAtlases());
                     }
                     else
@@ -1216,9 +1220,9 @@ namespace Driftsys.Dashscene.Samples
                 {
                     Family = fontFamily,
                     Weight = fontWeight,
-                    FontBytes = ReadBytes(fontPath),
-                    AtlasPng = ReadBytes(atlasPngPath),
-                    AtlasMetrics = ReadBytes(atlasMetricsPath),
+                    FontBytes = StreamingAssetText.ReadBytes(fontPath),
+                    AtlasPng = StreamingAssetText.ReadBytes(atlasPngPath),
+                    AtlasMetrics = StreamingAssetText.ReadBytes(atlasMetricsPath),
                 },
             };
         }
@@ -1245,80 +1249,12 @@ namespace Driftsys.Dashscene.Samples
                  + _runtime.LastDisposeDetail);
         }
 
-        private static byte[] ReadBytes(string relative)
-        {
-            return File.ReadAllBytes(Path.Combine(Application.streamingAssetsPath, relative));
-        }
-
-        /// The text of a `StreamingAssets` file, on whichever platform this is.
-        ///
-        /// **`File` cannot read one on Android**, and the failure is silent in
-        /// the worst way: `Application.streamingAssetsPath` is
-        /// `jar:file:///data/app/<pkg>/base.apk!/assets`, so `File.Exists`
-        /// answers false for a file that is present and the reader concludes it
-        /// was never staged. Measured on a Pixel 5 on 2026-08-29: the player
-        /// reported the manifest missing, `Awake` ended, and the SCENES — which
-        /// need no manifest at all — never loaded either.
-        ///
-        /// **It goes through `StreamingAssetDocument.Resolve`** rather than
-        /// carrying a second answer to the same question. That resolver asks
-        /// the APK's own `AssetManager` where the entry is and hands back a
-        /// container path with a byte range, which is what the mapped document
-        /// loader already uses — so this reads the asset where it is packed,
-        /// and there is one place that knows how an APK stores one.
-        ///
-        /// A manifest is a few hundred bytes, so reading it is not the cost
-        /// `Resolve` exists to avoid for a document; the point here is that it
-        /// is the same LOOKUP.
-        private static string ReadStreamingAssetText(string relative)
-        {
-            var range = StreamingAssetDocument.Resolve(relative);
-            if (range.IsWholeFile)
-            {
-                return File.ReadAllText(range.ContainerPath);
-            }
-
-            using var stream = new FileStream(
-                range.ContainerPath, FileMode.Open, FileAccess.Read);
-            stream.Seek((long)range.Offset, SeekOrigin.Begin);
-            var bytes = new byte[range.Length];
-            var read = 0;
-            // **Looped, because one `Read` is not obliged to fill the buffer.**
-            while (read < bytes.Length)
-            {
-                var got = stream.Read(bytes, read, bytes.Length - read);
-                if (got <= 0)
-                {
-                    break;
-                }
-
-                read += got;
-            }
-
-            // **A short read is refused, not returned.** Breaking out of the
-            // loop and handing back the partial bytes is exactly the outcome
-            // the loop exists to prevent: `JsonUtility` would then report a
-            // malformed manifest where the manifest is fine and the READ was
-            // partial — and a truncation landing after a syntactically complete
-            // prefix parses, silently, with a short document list.
-            if (read != bytes.Length)
-            {
-                throw new IOException(
-                    $"{relative}: read {read} of {bytes.Length} byte(s) from "
-                    + $"{range.ContainerPath} at offset {range.Offset}. The entry is "
-                    + "shorter than the asset manager reported, so the content is "
-                    + "partial rather than malformed.");
-            }
-
-            return Encoding.UTF8.GetString(bytes, 0, read);
-        }
-
         private void LoadManifest()
         {
             string text;
             try
             {
-                text = ReadStreamingAssetText(manifestPath);
+                text = StreamingAssetText.ReadStreamingAssetText(manifestPath);
             }
             catch (Exception e)
             {

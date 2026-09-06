@@ -215,22 +215,95 @@ pub fn first_if_condition(body: &str) -> &str {
     let at = body
         .find("if (")
         .unwrap_or_else(|| panic!("no `if (` in this member's body"));
-    let open = at + 3;
-    let bytes = body.as_bytes();
+    parenthesized(body, at + 3)
+}
+
+/// The parenthesized list opened at `scanned[open_paren]`, parentheses
+/// matched, not including the parentheses themselves.
+///
+/// `scanned` must already have been through [`blank_comments_and_strings`],
+/// for [`member_body`]'s reason: a `(`/`)` inside a comment or a string
+/// literal would move the match.
+///
+/// # Panics
+///
+/// If `scanned.as_bytes()[open_paren]` is not `(`, or its parentheses do not
+/// balance.
+pub fn parenthesized(scanned: &str, open_paren: usize) -> &str {
+    let bytes = scanned.as_bytes();
+    assert_eq!(
+        bytes.get(open_paren),
+        Some(&b'('),
+        "byte {open_paren} is not `(`"
+    );
     let mut depth = 0usize;
-    for (offset, byte) in bytes.iter().enumerate().skip(open) {
+    for (offset, byte) in bytes.iter().enumerate().skip(open_paren) {
         match byte {
             b'(' => depth += 1,
             b')' => {
                 depth -= 1;
                 if depth == 0 {
-                    return &body[open + 1..offset];
+                    return &scanned[open_paren + 1..offset];
                 }
             }
             _ => {}
         }
     }
-    panic!("the first `if`'s condition never closes");
+    panic!("the parenthesized list opened at byte {open_paren} never closes");
+}
+
+/// The argument list of every call to `call` (which must end in `(`) found in
+/// `scanned`, parentheses matched.
+///
+/// `scanned` must already have been through [`blank_comments_and_strings`],
+/// for [`parenthesized`]'s reason: a call name found inside a comment or a
+/// string literal is not a call.
+///
+/// **Every occurrence, not just the first.** A forbidden call made once is as
+/// real a defect as one made three times, and stopping at the first would
+/// leave the others unchecked.
+///
+/// **`call`'s own start must begin an identifier.** Without this, searching
+/// for `"File.ReadAllBytes("` would also match a local variable named
+/// `logFile.ReadAllBytes(...)` — a call on something that is not
+/// `System.IO.File` at all. Only the character immediately before `call` is
+/// checked; nothing here resolves what the receiver actually is, so a
+/// deliberately misleading name (`File2.ReadAllBytes` renamed to end the same
+/// way) is still this scanner's problem, not this guard's.
+///
+/// # Panics
+///
+/// If `call` does not end in `(`, or any matched argument list's parentheses
+/// do not balance.
+pub fn call_arguments<'a>(scanned: &'a str, call: &str) -> Vec<&'a str> {
+    assert!(
+        call.ends_with('('),
+        "`{call}` must end with `(` to name a call"
+    );
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(at) = scanned[from..].find(call) {
+        let start = from + at;
+        let open = start + call.len() - 1;
+        if starts_an_identifier(scanned, start) {
+            out.push(parenthesized(scanned, open));
+        }
+        from = open + 1;
+    }
+    out
+}
+
+/// Whether `scanned[start..]` begins a fresh identifier — the character
+/// immediately before it, if any, is not itself an identifier character.
+///
+/// Shared by [`call_arguments`] (so `"File.ReadAllBytes("` does not match
+/// inside `"logFile.ReadAllBytes("`) and [`assignment_count`] (so a name
+/// does not match as the tail of a longer one).
+fn starts_an_identifier(scanned: &str, start: usize) -> bool {
+    scanned[..start]
+        .chars()
+        .next_back()
+        .is_none_or(|c| !c.is_alphanumeric() && c != '_')
 }
 
 /// The text of one `switch` arm: from its `case` label to the next `case` or
@@ -298,10 +371,7 @@ pub fn assignment_count(scanned: &str, name: &str) -> usize {
         let end = start + name.len();
         from = end;
 
-        let before_ok = scanned[..start]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+        let before_ok = starts_an_identifier(scanned, start);
         let rest = scanned[end..].trim_start();
         let after_ok = !scanned[end..].starts_with(|c: char| c.is_alphanumeric() || c == '_');
 
@@ -431,6 +501,37 @@ mod tests {
         let body = &scanned[start..=end];
         assert!(body.contains("c();"));
         assert!(!body.contains("dead();"), "a later member is outside");
+    }
+
+    #[test]
+    fn call_arguments_matches_every_call_not_only_the_first() {
+        let src = "Read(a, f(x)); mid(); Read(b);\n";
+        let scanned = blank_comments_and_strings(src);
+        let args = call_arguments(&scanned, "Read(");
+        assert_eq!(
+            args,
+            vec!["a, f(x)", "b"],
+            "both calls, nested parens matched"
+        );
+    }
+
+    #[test]
+    fn call_arguments_is_empty_when_the_call_never_appears() {
+        assert_eq!(call_arguments("var x = 1;", "Read("), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn call_arguments_ignores_a_match_that_does_not_begin_an_identifier() {
+        // `logFile.ReadAllBytes(x)` ends in the same text as
+        // `File.ReadAllBytes(y)`, and is not a call on `System.IO.File`.
+        let src = "logFile.ReadAllBytes(x); File.ReadAllBytes(y);\n";
+        assert_eq!(call_arguments(src, "File.ReadAllBytes("), vec!["y"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "never closes")]
+    fn parenthesized_panics_on_an_unbalanced_list() {
+        parenthesized("Read(a, b", 4);
     }
 
     #[test]

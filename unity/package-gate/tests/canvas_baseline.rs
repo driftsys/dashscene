@@ -158,6 +158,190 @@ fn no_sample_this_story_adds_declares_unsafe() {
     );
 }
 
+/// The forbidden-call half of issue #1469's fix, over one file: no
+/// `File.ReadAllText(`/`ReadAllBytes(`/`OpenRead(` call anywhere in `file`
+/// has an argument naming `streamingAssetsPath`.
+///
+/// **A shared helper because the check itself, not only its target, must run
+/// against every file the fix touches** — `DashsceneCanvasBaseline.cs`,
+/// `DashsceneShowcase.cs`, and `StreamingAssetText.cs` itself. A regression
+/// that reintroduced the direct read inside the shared reader, rather than in
+/// either caller, would pass a check scoped to the callers alone.
+fn assert_no_direct_streaming_assets_path_read(file: &str, scanned: &str) {
+    // The capture path's `File.WriteAllBytes`/`File.AppendAllText` write to
+    // `_judgeDirectory`, the caller-provided `-judge <dir>` argument, and are
+    // untouched by this — only a read whose argument NAMES
+    // `streamingAssetsPath` is forbidden.
+    for call in ["File.ReadAllText(", "File.ReadAllBytes(", "File.OpenRead("] {
+        for args in cs_scan::call_arguments(scanned, call) {
+            assert!(
+                !args.contains("streamingAssetsPath"),
+                "{file}: {call}{args}) reads a StreamingAssets path directly with \
+                 `File`, which cannot open a path inside the APK on Android \
+                 (issue #1469)"
+            );
+        }
+    }
+}
+
+/// The replacement half, over one showcase component: each of the three call
+/// sites — the `entry.text` branch, the manifest read, and the font cascade
+/// — routes through the shared `StreamingAssetText` reader.
+///
+/// **The `entry.text` check is scoped to the branch itself, not to the
+/// enclosing method.** `LoadEntry`/`Show` also carries the `else` branch,
+/// which legitimately calls `StreamingAssetDocument.Resolve` directly for the
+/// mapped-document path — a check scoped to the whole method would still pass
+/// a mutation that moved the correct call into that unreachable branch while
+/// the `entry.text` branch called something else entirely. `entry_text_anchor`
+/// names the branch's own condition (`"else if (entry.text)"` /
+/// `"if (entry.text)"`), and `member_body` — written for a member's signature
+/// — works identically for any text immediately followed by the `{...}` block
+/// to scope: an `if`'s condition is not a signature, but the brace-matching it
+/// needs is the same.
+///
+/// **Shared by both showcase components**, because both carried the identical
+/// defect: `DashsceneCanvasBaseline` is what #1469 measured, and
+/// `DashsceneShowcase`'s own byte reader had the same `File`-on-Android defect,
+/// latent only because no showcase entry exercised its font cascade. A scan
+/// that checked one file and not the other would stay green over a
+/// regression that reintroduced the broken read in whichever file it did not
+/// cover.
+fn assert_reads_through_the_shared_resolver(
+    file: &str,
+    scanned: &str,
+    entry_text_anchor: &str,
+    manifest_signature: &str,
+) {
+    let (entry_start, entry_end) = cs_scan::member_body(scanned, entry_text_anchor);
+    assert!(
+        scanned[entry_start..entry_end].contains("StreamingAssetText.ReadBytes(entry.path)"),
+        "{file}: the `entry.text` branch (`{entry_text_anchor}`) no longer reads \
+         through StreamingAssetText"
+    );
+
+    let (manifest_start, manifest_end) = cs_scan::member_body(scanned, manifest_signature);
+    assert!(
+        scanned[manifest_start..manifest_end]
+            .contains("StreamingAssetText.ReadStreamingAssetText("),
+        "{file}: {manifest_signature} no longer reads the manifest through \
+         StreamingAssetText"
+    );
+
+    // Unlike `entry_text_anchor` and `manifest_signature`, `Cascade`'s own
+    // signature is identical in both files, so it is not a parameter.
+    let (cascade_start, cascade_end) =
+        cs_scan::member_body(scanned, "private IReadOnlyList<TextFontFace> Cascade()");
+    let cascade = &scanned[cascade_start..cascade_end];
+    for field in ["FontBytes", "AtlasPng", "AtlasMetrics"] {
+        assert!(
+            cascade.contains(&format!("{field} = StreamingAssetText.ReadBytes(")),
+            "{file}: Cascade's {field} no longer reads through StreamingAssetText: \
+             {cascade}"
+        );
+    }
+}
+
+#[test]
+fn the_baseline_reads_streaming_assets_only_through_the_shared_resolver() {
+    let file = "DashsceneCanvasBaseline.cs";
+    let scanned = cs_scan::blank_comments_and_strings(&showcase(file));
+    assert_no_direct_streaming_assets_path_read(file, &scanned);
+    assert_reads_through_the_shared_resolver(
+        file,
+        &scanned,
+        "else if (entry.text)",
+        "private bool LoadManifest()",
+    );
+}
+
+/// `DashsceneShowcase` carried the identical defect `DashsceneCanvasBaseline`
+/// did, and this commit fixed both — so both are pinned. Without this, a
+/// regression reintroducing the direct `File` read in `DashsceneShowcase.cs`
+/// specifically would pass every check above, since none of them read this
+/// file.
+#[test]
+fn the_showcase_reads_streaming_assets_only_through_the_shared_resolver() {
+    let file = "DashsceneShowcase.cs";
+    let scanned = cs_scan::blank_comments_and_strings(&showcase(file));
+    assert_no_direct_streaming_assets_path_read(file, &scanned);
+    assert_reads_through_the_shared_resolver(
+        file,
+        &scanned,
+        "if (entry.text)",
+        "private void LoadManifest()",
+    );
+}
+
+/// The shared reader itself: no forbidden direct read has been reintroduced
+/// inside it, and it actually reads the range `Resolve` returned rather than
+/// merely mentioning the resolver somewhere in its body.
+///
+/// **Tied to `range`'s own fields, not to the word `Resolve`.** A scan that
+/// only checked for the substring `StreamingAssetDocument.Resolve(` would
+/// still pass a mutation that resolved the range and then discarded it,
+/// reading through the original `Application.streamingAssetsPath` path
+/// instead — measured. Requiring the read calls to name `range.ContainerPath`
+/// / `range.Offset` ties the read to what `Resolve` actually returned, since
+/// `range` has no other origin in this method.
+#[test]
+fn the_shared_reader_resolves_and_reads_the_range_it_resolved() {
+    let shared = cs_scan::blank_comments_and_strings(&showcase("StreamingAssetText.cs"));
+    assert_no_direct_streaming_assets_path_read("StreamingAssetText.cs", &shared);
+
+    let (bytes_start, bytes_end) =
+        cs_scan::member_body(&shared, "internal static byte[] ReadBytes(string relative)");
+    let bytes_body = cs_scan::squeeze(&shared[bytes_start..bytes_end]);
+    assert!(
+        bytes_body.contains("var range = StreamingAssetDocument.Resolve(relative);"),
+        "StreamingAssetText.ReadBytes does not resolve through StreamingAssetDocument: \
+         {bytes_body}"
+    );
+    assert!(
+        bytes_body.contains("File.ReadAllBytes(range.ContainerPath)"),
+        "StreamingAssetText.ReadBytes's whole-file read no longer reads the range \
+         Resolve returned, so resolving and then discarding the result would still \
+         satisfy the check above: {bytes_body}"
+    );
+    assert!(
+        bytes_body.contains("new FileStream( range.ContainerPath, FileMode.Open, FileAccess.Read)")
+            && bytes_body.contains("stream.Seek((long)range.Offset, SeekOrigin.Begin)"),
+        "StreamingAssetText.ReadBytes's windowed (Android) read no longer reads the \
+         range Resolve returned: {bytes_body}"
+    );
+
+    let (text_start, text_end) = cs_scan::member_body(
+        &shared,
+        "internal static string ReadStreamingAssetText(string relative)",
+    );
+    let text_body = &shared[text_start..text_end];
+    assert!(
+        text_body.contains("ReadBytes("),
+        "StreamingAssetText.ReadStreamingAssetText no longer reads through ReadBytes, \
+         so it could diverge from the byte reader's resolver path"
+    );
+    // A manifest saved with a UTF-8 BOM decodes to a leading U+FEFF that
+    // `File.ReadAllText` (what this reader replaced) stripped automatically;
+    // `Encoding.UTF8.GetString` does not, so `JsonUtility` would refuse a
+    // manifest that parsed fine before this reader existed. Checking only
+    // that the method calls `ReadBytes(` (above) would stay green if this
+    // strip were ever deleted.
+    //
+    // **The whole ternary, as one string, not its two halves separately.**
+    // Two independent `contains` checks for `text[0] == '﻿'` and
+    // `text.Substring(1)` both still pass if the branches are swapped —
+    // stripping the byte when the BOM is ABSENT and keeping it when present,
+    // the opposite of the intended behaviour — measured. Squeezed so the
+    // pin does not also pin how the line wraps.
+    let text_squeezed = cs_scan::squeeze(text_body);
+    assert!(
+        text_squeezed
+            .contains("text.Length > 0 && text[0] == '\\uFEFF' ? text.Substring(1) : text;"),
+        "StreamingAssetText.ReadStreamingAssetText no longer strips a leading UTF-8 \
+         BOM, or strips it on the wrong branch: {text_squeezed}"
+    );
+}
+
 /// The `drew` line, in the shape `just unity-demo`'s `cycle` action reads.
 ///
 /// **Read with the comments blanked and the STRINGS kept.** The scanner this

@@ -708,7 +708,8 @@ namespace Driftsys.Dashscene.Samples
                 }
                 else if (entry.text)
                 {
-                    _runtime.LoadDocumentWithText(ReadBytes(entry.path), Cascade());
+                    _runtime.LoadDocumentWithText(
+                        StreamingAssetText.ReadBytes(entry.path), Cascade());
                 }
                 else
                 {
@@ -976,8 +977,7 @@ namespace Driftsys.Dashscene.Samples
         {
             try
             {
-                var text = File.ReadAllText(
-                    Path.Combine(Application.streamingAssetsPath, "showcase.json"));
+                var text = StreamingAssetText.ReadStreamingAssetText("showcase.json");
                 var manifest = JsonUtility.FromJson<ShowcaseManifest>(text);
                 if (manifest?.documents != null)
                 {
@@ -1000,16 +1000,11 @@ namespace Driftsys.Dashscene.Samples
                 {
                     Family = "Inter",
                     Weight = 400,
-                    FontBytes = ReadBytes("cascade/Inter-Regular.otf"),
-                    AtlasPng = ReadBytes("cascade/atlas.png"),
-                    AtlasMetrics = ReadBytes("cascade/atlas.metrics"),
+                    FontBytes = StreamingAssetText.ReadBytes("cascade/Inter-Regular.otf"),
+                    AtlasPng = StreamingAssetText.ReadBytes("cascade/atlas.png"),
+                    AtlasMetrics = StreamingAssetText.ReadBytes("cascade/atlas.metrics"),
                 },
             };
-        }
-
-        private static byte[] ReadBytes(string relative)
-        {
-            return File.ReadAllBytes(Path.Combine(Application.streamingAssetsPath, relative));
         }
 
         private void AnnounceIfEveryEntryHasDrawn()

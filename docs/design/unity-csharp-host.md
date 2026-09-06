@@ -1681,8 +1681,12 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   The manifest read now goes through `StreamingAssetDocument.Resolve`, which
   asks the APK's own `AssetManager` where the entry is.
 
-  **The cascade reads are still `File` and are still broken there**, which is
-  why `just unity-demo-android` stages the three mapped documents and not the
-  text one: `LoadDocumentWithText` takes owned bytes and the font, sheet and
-  metrics beside it are read with `File.ReadAllBytes`. That is issue #1332, and
-  the resolver above is the shape its fix would take.
+  **The cascade reads now go through the same resolver** (issue #1469):
+  `Samples~/Showcase/StreamingAssetText.cs`'s `ReadBytes` resolves the font,
+  sheet and metrics through `StreamingAssetDocument.Resolve`, reading them into
+  an owned buffer rather than mapping them — `LoadDocumentWithText` still takes
+  owned bytes, so a cascade cannot itself be mapped. `just unity-demo-android`
+  still stages the three mapped documents and not the text one, because issue
+  #1332 is a separate gap: the two mapped loaders take no cascade parameter at
+  all, so a host cannot have both a bounded load and text through them, and that
+  overload is still unwritten.

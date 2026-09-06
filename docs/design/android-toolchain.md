@@ -1375,21 +1375,29 @@ painter — one entry held under `-renderer painter` and again under
 `-renderer canvas`, the process sampler read against the compositor's frame
 count. **It could not be taken, and the reason is issue #1469.**
 
-`DashsceneCanvasBaseline.LoadManifest` reads `showcase.json` through
-`File.ReadAllText(Path.Combine(Application.streamingAssetsPath, ...))`, and on
+At the time, `DashsceneCanvasBaseline.LoadManifest` read `showcase.json` through
+`File.ReadAllText(Path.Combine(Application.streamingAssetsPath,
+...))`, and on
 Android that path is `jar:file:///data/app/<pkg>/base.apk!/assets`, which `File`
 cannot open — the hazard `DashsceneShowcase.ReadStreamingAssetText`'s own
-docstring records, measured on this device on 2026-08-29. Because `Attach` has
-already destroyed `DashsceneShowcase`, a `-renderer` launch draws nothing at
-all: **zero `[showcase] drew` lines in a 20 s launch, for `painter` and `canvas`
-alike**, where the same APK with no `-renderer` draws normally.
+docstring recorded, measured on this device on 2026-08-29. Because `Attach` had
+already destroyed `DashsceneShowcase`, a `-renderer` launch drew nothing at all:
+**zero `[showcase] drew` lines in a 20 s launch, for `painter` and `canvas`
+alike**, where the same APK with no `-renderer` drew normally.
 
-The argument itself is delivered: Unity logs `CommandLine:  -renderer painter`,
-and the single-token control `-e unity '-no-frame-cost'` suppresses the
-frame-cost line on the same build. So D1's CPU criterion has no Canvas reading
-on the target device until #1469 is fixed, and issue #1457 — the sampler and the
-compositor over one window — is untouched by this and stays open. The apparatus
-written for the reading is kept under `probe-1406/`.
+The argument itself was delivered: Unity logged
+`CommandLine:  -renderer
+painter`, and the single-token control
+`-e unity '-no-frame-cost'` suppressed the frame-cost line on the same build. So
+D1's CPU criterion had no Canvas reading on the target device until #1469 was
+fixed, and issue #1457 — the sampler and the compositor over one window — was
+untouched by this and stayed open. The apparatus written for the reading is kept
+under `probe-1406/`.
+
+**Fixed by PR #1484.** Both readers are now defined in the shared
+`Samples~/Showcase/StreamingAssetText.cs` and resolve through
+`StreamingAssetDocument.Resolve`; the hazard docstring is now on that class, not
+on the `DashsceneShowcase` member named above.
 
 **This reading is not among story #1447's own "Done when" bullets.** It was
 attempted here because this session held the device and D1's CPU criterion has
