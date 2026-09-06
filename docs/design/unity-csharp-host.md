@@ -165,9 +165,17 @@ atlas's material, and `_DsGlyphs` on the atlas materials alone, because the
 shading declares it under `DASHSCENE_CLASS_TEXT` and no other class can reach a
 glyph run. So **a second painter in one process is a supported configuration**,
 and the live-painter counter that warned about one is gone. It runs on every
-frame rather than once, for two reasons: a heap buffer is reallocated when its
-table outgrows it, and `SetAtlases` mints text materials long after the
-constructor, so no earlier moment holds the whole set.
+frame whose binding has gone stale rather than once, and story #1445 is what
+made "which frames" a question. Four reasons raise
+`BrgPainter.HeapBindingPending` and `Draw` binds only when it is raised: a heap
+buffer is reallocated when its table outgrows it, `SetAtlases` mints text
+materials long after the constructor so no earlier moment holds the whole set,
+`ReleaseAtlases` drops them again, and the scalars
+`(EdgeWidth, SolidBase, GradientBase)` move with the drawable extent and the
+paint table's layout without reallocating anything. On a settled scene none of
+the four fires and the four `Material.Set…` calls per material do not happen;
+`unity/render-gate`'s settle step reads `HeapBindCount` and fails unless it
+moves on a changed extent and on nothing else.
 
 **`_DsGlobals` had to move into `CBUFFER_START(UnityPerMaterial)` and into all
 four `Properties` blocks, and the second half of that is measured rather than
@@ -1237,8 +1245,12 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   and `DsFrame.Dirty`'s rows are read by nothing (`FrameLease` reads its stride
   for R-E17; nothing reads the indices). For the first document
   `just unity-render` draws, `goldens/dsb/v03-paint.dsb`, every commit walks all
-  fourteen of its rect entries, rebuilds all four heap tables and re-uploads
-  their live rows, and sends one instance batch. **On the `RawBuffer` rung** —
+  fourteen of its rect entries, rebuilds all four heap tables and sends one
+  instance batch. **The heap tables' rows no longer go up with it**: since story
+  #1445 `BrgPainter.Upload` skips a table's `SetData` where its live floats and
+  its live length both match the last upload, so a draw that did not move a
+  table sends none of it. The instance buffer is not on that footing, and the
+  rest of this entry is about the instance buffer. **On the `RawBuffer` rung** —
   the only rung any device has ever reported here — that batch is the 64-slot
   floor `InstancesPerBatch` chooses: the shared head plus sixty-four eighty-byte
   slots, 112 + 5120 = **5232 bytes**, of which 112 + 16 × 80 = **1392** carry

@@ -142,6 +142,24 @@ namespace Driftsys.Dashscene.Samples
         private CommitPacer _pacer;
         private readonly DashsceneFrameCost _frameCost = new DashsceneFrameCost();
 
+        /// The thread-time instrument, whose terms are the ones the frame-cost
+        /// line excludes by construction: the culling callback, the render
+        /// thread's encode and a Canvas rebuild. D3 of
+        /// `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`,
+        /// and `Runtime/Engine/DashsceneThreadCost.cs` states the definition
+        /// term by term.
+        ///
+        /// **Both renderers push it**, which is the whole reason this component
+        /// carries it: the Canvas rebuild the instrument watches happens on one
+        /// side and not the other, and a term measured only on the painter's
+        /// side is not a comparison.
+        private readonly DashsceneThreadCost _threadCost =
+            new DashsceneThreadCost(Environment.GetCommandLineArgs());
+
+        /// The one decision this loop makes per frame, shared with every other
+        /// host loop in the package rather than written again here.
+        private readonly SettleLoop _settle = new SettleLoop();
+
         private readonly List<ShowcaseEntry> _entries = new List<ShowcaseEntry>();
         private string[] _sceneNames = Array.Empty<string>();
         private int _index;
@@ -207,10 +225,29 @@ namespace Driftsys.Dashscene.Samples
             // `DashsceneFrameCost.Push` builds a key string per push by design —
             // `entry + "@" + width + "x" + height` — and the instrument is not the
             // renderer under test, so the allocation pin is read in a run that
-            // disarms it. It is the one instrument this component carries;
-            // `DashsceneThreadCost` is story #1443's and is not wired here, which
-            // the pull request records as a gap rather than a choice.
+            // disarms it. The flag disarms the thread-cost push beside it for the
+            // same reason: `DashsceneThreadCost.Push` builds a key the same way,
+            // so a run reading the allocation pin has to be a run with both
+            // instruments quiet.
             _noFrameCost = Array.IndexOf(args, "-no-frame-cost") >= 0;
+
+            // **Said once, at launch, rather than left as an absent line**, the
+            // way `DashsceneShowcase` says it. `DashsceneThreadCost.Push`
+            // returns null while the instrument is disarmed and the call site
+            // below only logs when it is not null, so a run whose thread-cost
+            // lines never appear would otherwise be indistinguishable from a
+            // run too short to close a window — which is the fail-open shape
+            // D3's thread-cost term exists to refuse.
+            if (!_threadCost.Armed)
+            {
+                Debug.LogWarning($"[showcase] thread cost disarmed: {_threadCost.Reason}");
+            }
+            else if (_threadCost.UnrecordedCounters.Length > 0)
+            {
+                Debug.LogWarning(
+                    "[showcase] thread cost counters this player cannot record: "
+                    + _threadCost.UnrecordedCounters);
+            }
             _judgeDirectory = ArgumentAfter(args, "-judge");
             if (_judgeDirectory != null)
             {
@@ -285,17 +322,26 @@ namespace Driftsys.Dashscene.Samples
                 return;
             }
 
+            // The drawable, on every commit rather than every frame — this
+            // sits below the pacer's early return, as `UpdateEdgeWidth` does
+            // and for the same reason. Why it is polled at all is
+            // `SettleLoop.NoteExtent`'s own remark.
+            _settle.NoteExtent(Screen.width, Screen.height);
+
             try
             {
                 var tickStart = Stopwatch.GetTimestamp();
                 var advanced = _runtime.Tick(dt);
                 var tickTicks = Stopwatch.GetTimestamp() - tickStart;
 
-                // The settle decision, written once for both renderers. Task 4's
-                // `SettleLoop` is what this becomes when that story lands; until
-                // then the skip is inline and the two loops must agree, which is
-                // why it is one expression here rather than one per renderer.
-                if (!advanced && _reported)
+                // The settle decision, one class for both renderers and for
+                // every other host loop in the package. It replaces the inline
+                // skip this file landed with: `_reported` stood in for "the
+                // first frame has drawn", and `SettleLoop` answers that from
+                // the extent instead — the first `NoteExtent` above is a change
+                // from the extent it starts at, so the first frame draws
+                // whatever the tick reports.
+                if (!_settle.ShouldDraw(advanced))
                 {
                     _skippedFrames++;
 
@@ -376,6 +422,18 @@ namespace Driftsys.Dashscene.Samples
                 if (cost != null)
                 {
                     Debug.Log($"[showcase] frame cost — {cost.Line()}");
+                }
+
+                // **Directly after the frame-cost push, on drawn frames only.**
+                // Both instruments then cover the same frames, so the two lines
+                // of one run can be read together — which is the whole point of
+                // a term that includes what the other excludes. A recorder's
+                // `LastValue` moves once per Unity frame, so one push here is
+                // one reading. Issue #1465 holds what is still owed beside this.
+                var thread = _threadCost.Push(Label(_index), Screen.width, Screen.height);
+                if (thread != null)
+                {
+                    Debug.Log($"[showcase] thread cost — {thread.Line()}");
                 }
             }
             catch (DashsceneException e)
@@ -1036,6 +1094,7 @@ namespace Driftsys.Dashscene.Samples
             {
                 _batchBuilds.Dispose();
             }
+            _threadCost.Dispose();
             if (_target != null)
             {
                 // Re-enabled before the target it was disabled for goes away: a

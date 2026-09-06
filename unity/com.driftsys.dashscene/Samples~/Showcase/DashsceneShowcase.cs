@@ -187,6 +187,10 @@ namespace Driftsys.Dashscene.Samples
         /// term by term.
         private readonly DashsceneThreadCost _threadCost =
             new DashsceneThreadCost(Environment.GetCommandLineArgs());
+
+        /// The one decision this loop makes per frame, shared with every other
+        /// host loop in the package rather than written again here.
+        private readonly SettleLoop _settle = new SettleLoop();
         private CommitPacer _pacer;
         private int _index;
         private string _status = string.Empty;
@@ -538,7 +542,28 @@ namespace Driftsys.Dashscene.Samples
                 return;
             }
 
+            // **The anti-aliasing width is a forced-redraw reason too**, and
+            // not one `NoteExtent` covers. `UpdateEdgeWidth` derives it from
+            // the camera's orthographic size as well as the screen's height, so
+            // an orthographic-size tween moves it with the extent unchanged —
+            // which the remark above `UpdateEdgeWidth` already names. It is one
+            // of the three scalars the paint heap's binding carries, so before
+            // this loop settled it was rebound on every frame and now it is
+            // rebound only on a frame that draws. A settled host would shade
+            // the new zoom at the old width for as long as the document did not
+            // change.
+            var edgeWidthBefore = _painter.EdgeWidth;
             UpdateEdgeWidth();
+            if (_painter.EdgeWidth != edgeWidthBefore)
+            {
+                _settle.ForceRedraw();
+            }
+
+            // The drawable, on every commit rather than every frame — this
+            // sits below the pacer's early return, as `UpdateEdgeWidth` does
+            // and for the same reason. Why it is polled at all is
+            // `SettleLoop.NoteExtent`'s own remark.
+            _settle.NoteExtent(Screen.width, Screen.height);
 
             try
             {
@@ -550,8 +575,26 @@ namespace Driftsys.Dashscene.Samples
                 // What Unity does after `Update` returns is outside both, and
                 // `DashsceneFrameCost.cs` states exactly which parts those are.
                 var tickStart = Stopwatch.GetTimestamp();
-                _runtime.Tick(dt);
+                var advanced = _runtime.Tick(dt);
                 var tickTicks = Stopwatch.GetTimestamp() - tickStart;
+
+                // **The acquire is skipped only when the tick reports nothing
+                // unshown, and every acquire this loop takes is marked.** Those
+                // two halves are one rule: `Tick` answers `true` until the
+                // committed generation has been marked shown, so a loop that
+                // acquired without marking would report an advance for ever and
+                // never settle — and one that skips the acquire and the mark
+                // together, as this one does, leaves the generation exactly
+                // where the last drawn frame left it.
+                //
+                // **Both instruments are behind this**, and that is what makes
+                // them readable: a frame-cost and a thread-cost line published
+                // over frames the host did not draw would average this
+                // painter's work with the cost of deciding not to do it.
+                if (!_settle.ShouldDraw(advanced))
+                {
+                    return;
+                }
 
                 var first = !_reported;
                 var drawStart = Stopwatch.GetTimestamp();
