@@ -1234,7 +1234,9 @@ script that derives both cadence histograms from a latency dump,
 `BuildOptions.Development` — story #1447's `DASHSCENE_DEV_PLAYER` knob in
 `unity/demo/DemoBuild.cs` — because the term this story reads was expected on
 the render thread. No row here may be set beside this record's
-`BuildOptions.None` rows; the paragraph above measures what that costs.
+`BuildOptions.None` rows; "The Android reading above was deliberately NOT taken
+on a development player", in the thread-time section below, measures what that
+costs.
 
 The two builds differ in `OnPerformCulling`'s emission and nothing else: **one
 draw command per visible instance, as shipped, against one per contiguous
@@ -1282,8 +1284,9 @@ build effect from a session one:
 | B, one per run            | 4 | 20.9-21.1 (20.98) | 48.79-49.46 (49.19) |
 
 Build B's whole range lies inside build A's. Three portrait arms each, at
-1080x2340, put both builds at 16.70 ms and 62.45 fps — the panel's rate, so
-there the cadence bounds the frame rather than measuring it.
+1080x2340, put both builds at a `frameReady` mean of 16.70 ms and `averageFPS`
+of 62.45 for build A against 62.46 for build B — the panel's rate, so there the
+cadence bounds the frame rather than measuring it.
 
 **The per-command term is below 1 ms on either thread, and is not resolved by
 any instrument here** — 0.005 ms on the main-thread mean, 0.030 ms on its p95,
@@ -1299,8 +1302,8 @@ would put a GPU readback inside the cost being measured — `droppedFrames` and
 `missedFrames` were 0 in every window of both builds. And **`typography`
 presents at the panel's rate in portrait while it is work-bound at about 21 ms
 in landscape** on this build, which the shaded areas above do not account for
-that way round; the two pictures are on the shelf, and it does not bear on the
-A/B, which is null in both geometries.
+that way round; the two pictures are kept under `probe-1406/`, and it does not
+bear on the A/B, which is null in both geometries.
 
 #### The Canvas beside the painter, not taken (2026-09-06)
 
@@ -1323,7 +1326,11 @@ and the single-token control `-e unity '-no-frame-cost'` suppresses the
 frame-cost line on the same build. So D1's CPU criterion has no Canvas reading
 on the target device until #1469 is fixed, and issue #1457 — the sampler and the
 compositor over one window — is untouched by this and stays open. The apparatus
-written for the reading is on the shelf under `probe-1406/`.
+written for the reading is kept under `probe-1406/`.
+
+**This reading is not among story #1447's own "Done when" bullets.** It was
+attempted here because this session held the device and D1's CPU criterion has
+no Canvas reading at all; what it produced instead is the defect above.
 
 ### The thread-time line, and the URP floor (2026-09-05)
 
@@ -1421,13 +1428,15 @@ constructs no Canvas, so `Canvas.SendWillRenderCanvases` never registers.
 Building it with `BuildOptions.Development` is what made `GC Allocated In Frame`
 recordable; constructing the instrument after several frames had rendered
 changed nothing, so the two it lacks are absent rather than late. The Android
-player is `BuildOptions.None`, which leaves only `Main Thread`.
+player at `BuildOptions.None` records only `Main Thread`; the same player built
+`BuildOptions.Development` adds `GC Allocated In Frame` and nothing else, which
+is the third row of the table above.
 
 **Two of the five are confirmed by neither player, and D3 asks for all five.**
 `Main Thread`, `Canvas.BuildBatch` and `GC Allocated In Frame` are confirmed on
-an editor by `just unity-render`, whose report carries the line, and
-`Main
-Thread` again on the device by the table above. `Render Thread` and
+an editor by `just unity-render`, whose report carries the line; `Main Thread`
+again on the device by the table above, and `GC Allocated In Frame` on the
+device too since story #1447's development player read it. `Render Thread` and
 `Canvas.SendWillRenderCanvases` are not, and neither host here can confirm them:
 
 - `Canvas.SendWillRenderCanvases` needs a player that draws a Canvas, which is
@@ -1444,8 +1453,12 @@ Thread` again on the device by the table above. `Render Thread` and
   What does register on that build and did not before is
   `GC Allocated In Frame`. Issue #1458 carries what is left.
 
-Neither is confirmed, and `Render Thread` is now known to be absent on every
-player this repository builds rather than merely unobserved on them.
+Neither is confirmed. `Render Thread` is now known to be absent on every player
+**measured here** rather than merely unobserved on them — which is the three
+rows above. It is not a statement about every player this repository can build:
+the switch story #1447 added is target-agnostic, so a macOS development demo
+player is buildable and was never read, and Metal is not the backend any row
+above was taken on. Issue #1458 carries that as an open case.
 
 **The Android reading above was deliberately NOT taken on a development
 player.** Every other Unity figure in this record was taken on a
@@ -1454,9 +1467,9 @@ rows would not be one series with theirs. The cost is the four em-dash columns
 above. A reading that needs the Canvas or allocation terms on this device is a
 development build and a new series, and must say so. Story #1447's rows, under
 the presented-rate section's "The per-command term" sub-heading, are that new
-series, and the difference is measured rather than asserted: `surfaces` reads a
-main-thread mean of 33.06-33.20 ms at 31-33 % of one core on the development
-build against 32.76-32.83 ms at 25-27 % here.
+series, and the difference is measured rather than asserted: that table's
+`surfaces` rows sit above the 32.76-32.83 ms at 25-27 % of one core recorded
+here.
 
 #### The URP floor
 

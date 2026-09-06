@@ -67,10 +67,10 @@ public static class DemoBuild
     /// the counter still does not register — the player reports
     /// `thread cost counters this player cannot record: Render Thread,
     /// Canvas.SendWillRenderCanvases`. Issue #1458 carries what is still
-    /// missing. Do not reach for this switch expecting a render-thread figure.
+    /// missing. Do not use this switch expecting a render-thread figure.
     ///
-    /// **What it does buy** is `GC Allocated In Frame`, which is an em dash on
-    /// a `BuildOptions.None` Android player and reads on this one.
+    /// **What it does provide** is `GC Allocated In Frame`, which is an em dash
+    /// on a `BuildOptions.None` Android player and reads on this one.
     ///
     /// **Off by default, and the default is what every other reading was taken
     /// on.** A development player is a different build: its rows are not one
@@ -98,24 +98,33 @@ public static class DemoBuild
     /// 1", so the build quietly makes a `BuildOptions.None` player and its rows
     /// are then filed as the development series — the one confusion
     /// `docs/design/android-toolchain.md` keeps two sets of rows apart to
-    /// prevent. P4's rule applies to a build switch as much as to a document:
-    /// an unrecognised value is a named diagnostic, never a silent fallback.
-    /// `DASHSCENE_ANDROID_API` is refused the same way.
+    /// prevent. P4's rule — an unrecognised value is a named diagnostic, never a
+    /// silent fallback — is what this applies to a build switch.
     ///
-    /// Returns whether the build may proceed.
-    private static bool RefuseUnrecognisedDevPlayer(List<string> failures)
+    /// **It is stricter than `DASHSCENE_ANDROID_API`'s check, not the same
+    /// one.** That one is `int.TryParse`, which accepts leading and trailing
+    /// whitespace and a sign, so `" 24"` passes there where `" 1"` is refused
+    /// here. Both refuse rather than falling back silently; only this one
+    /// refuses a value that merely LOOKS right.
+    ///
+    /// **The value is rendered rather than interpolated raw.** A trailing
+    /// newline is one of the shapes this exists to catch, and a newline inside
+    /// `Debug.LogError` puts the explanation on a line that does not begin with
+    /// `[demo-build]` — which the recipes' line-anchored `grep` then drops,
+    /// showing the operator the truncated half of the message that says least.
+    private static void RefuseUnrecognisedDevPlayer(List<string> failures)
     {
         var raw = DevPlayerSetting;
         if (raw.Length == 0 || raw == "0" || raw == "1")
         {
-            return true;
+            return;
         }
 
+        var shown = raw.Replace("\r", "\\r").Replace("\n", "\\n");
         failures.Add(
-            $"DASHSCENE_DEV_PLAYER is '{raw}', which is neither 1 nor 0. It selects "
+            $"DASHSCENE_DEV_PLAYER is '{shown}', which is neither 1 nor 0. It selects "
             + "BuildOptions.Development, and a value that is neither would silently "
             + "build a BuildOptions.None player whose rows are not that series.");
-        return false;
     }
 
     private const int WindowWidth = 1280;
@@ -147,6 +156,15 @@ public static class DemoBuild
             EditorApplication.Exit(1);
             return;
         }
+
+        // **First, and in this sequence rather than inside `BuildPlayer`.** It
+        // was in `BuildPlayer` and that was wrong three ways: `BuildScene` had
+        // already written a scene by then, the file's other validators all
+        // report through this sequence, and `BuildPlayer` runs only when
+        // `failures` is empty — so an unrecognised value went UNREPORTED on any
+        // run where something else had already failed, which is the late
+        // discovery this check exists to prevent.
+        RefuseUnrecognisedDevPlayer(failures);
 
         CreatePipeline(failures);
         RefuseAlwaysIncludedShaders(failures);
@@ -514,15 +532,6 @@ public static class DemoBuild
 
     private static void BuildPlayer(List<string> failures)
     {
-        // **Before anything is built, and it RETURNS.** The cost of the answer
-        // is a player and the cost of the question is a string comparison, so a
-        // refusal that let the build run would report the problem half an hour
-        // after it could have.
-        if (!RefuseUnrecognisedDevPlayer(failures))
-        {
-            return;
-        }
-
         // Windowed and resizable, unlike the gate's player: a person runs this
         // one and switches documents in it.
         PlayerSettings.productName = ProductName;
