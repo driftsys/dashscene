@@ -56,7 +56,11 @@
 use std::ops::Range;
 
 use bytemuck::{Pod, Zeroable};
-use dashpaint::{ClipTable, GlyphRunTable, ImageTable, PaintTable, ScaleMode};
+use dashpaint::gradient_strip::{self, STRIP_ROW_BYTES, STRIP_WIDTH, StripImage};
+use dashpaint::kind_set::KindSet;
+use dashpaint::{
+    ClipTable, GlyphRunTable, Gradient, GradientStop, ImageTable, PaintTable, ScaleMode,
+};
 
 use crate::composite;
 use crate::instance::{Instance, InstanceBuffer, InstanceKind, InstanceSpan, Layer};
@@ -94,14 +98,23 @@ struct Globals {
     /// [`gradient_base`](Self::gradient_base) gives, and it coincides with that
     /// one exactly when the frame has neither solids nor gradients.
     shadow_base: u32,
+    /// How many rows the bound gradient strip holds — what turns a gradient row
+    /// index into the strip texture's v coordinate.
+    ///
+    /// **At least one, always.** A frame with no gradient binds a one-row
+    /// placeholder rather than no texture, because a bind group must name a
+    /// texture for every texture binding its layout declares; a zero here would
+    /// be the divisor of a coordinate no fragment computes, which is a
+    /// division by zero nothing needs.
+    strip_rows: u32,
     /// Declared padding to the sixteen-byte multiple a uniform binding needs.
     ///
-    /// Three scalars, never one three-component vector on the WGSL side: such a
-    /// vector aligns to sixteen there, so it would sit at offset 32 and take
-    /// the struct to 48 while this one stayed at 32. That is the mismatch story
+    /// Scalars, never a three-component vector on the WGSL side: such a vector
+    /// aligns to sixteen there, so it would sit at offset 32 and take the
+    /// struct to 48 while this one stayed at 32. That is the mismatch story
     /// #583 met in `GpuComposite`, where wgpu reported "bound with size 16
     /// where the shader expects 32".
-    _pad: [u32; 3],
+    _pad: [u32; 2],
 }
 
 /// One stroke, in the shader's own layout.
@@ -605,7 +618,38 @@ pub struct Renderer {
     _instance: wgpu::Instance,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    pipeline: wgpu::RenderPipeline,
+    /// The paint shader module and the pipeline layout its variants are built
+    /// from, held so that a kind set this document has not reached yet costs
+    /// one pipeline rather than a recompile of the WGSL source.
+    paint_module: wgpu::ShaderModule,
+    paint_pipeline_layout: wgpu::PipelineLayout,
+    /// One paint pipeline per [`KindSet`], built on first use and kept
+    /// (story #1449).
+    ///
+    /// **Re-selected on every paint, never chosen once at load.** The tables
+    /// the set is a census of *grow* when a paint or a stroke is interned
+    /// mid-run, so a document that strokes nothing at frame 0 and strokes
+    /// something at frame 200 gets the pipeline with the stroke arm at frame
+    /// 200. The atlas precedent does not transfer here — an atlas set changes
+    /// only with a load, which is why `ds_runtime_atlas` is a per-load call and
+    /// this is not.
+    ///
+    /// A map rather than a fixed array of four, because two bits today is not a
+    /// promise about two bits tomorrow, and because a document reaches one or
+    /// two sets in its life — building four pipelines to hold three unused ones
+    /// is shader compilation nobody asked for.
+    pipelines: std::collections::HashMap<KindSet, wgpu::RenderPipeline>,
+    /// The set of the pipeline the last paint selected — what
+    /// [`Renderer::pipeline_kind_set`] reports.
+    pipeline_kind_set: KindSet,
+    /// Test-only: the set to select whatever the document's own census says.
+    /// [`Renderer::force_kind_set`] is the whole of it, and says why it exists.
+    forced_kind_set: Option<KindSet>,
+    /// The baked gradient strip on the device, and what it was baked from.
+    strip: GradientStripTexture,
+    /// The sampler the strip is read through: linear and clamped. Built where
+    /// it is, with the reason.
+    strip_sampler: wgpu::Sampler,
     layout: wgpu::BindGroupLayout,
     /// The pipeline that blends a render-target group's layer into the target
     /// around it, and the layout its bind group is built from (story #583).
@@ -1271,6 +1315,31 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // The baked gradient strip and the sampler it is read through
+                // (story #1449). Declared filterable, and that is the whole
+                // mechanism rather than a formality: a bilinear read between
+                // two texel centres is the linear interpolation the ramp is
+                // already made of, so the strip evaluates the same
+                // piecewise-linear function the stop loop did.
+                //
+                // `Rgba8Unorm` is filterable on every adapter, so this asks for
+                // no capability the painter did not already have.
+                wgpu::BindGroupLayoutEntry {
+                    binding: 11,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 12,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1280,40 +1349,19 @@ impl Renderer {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("dashscene-gpu paint"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                // No vertex buffers: the quad's corners come from the vertex
-                // index and the instance's own bounds, so a frame uploads the
-                // instance rows and nothing else. That is what R-T4 bounds the
-                // per-frame cost to.
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    // Premultiplied source-over: the fragment shader multiplies
-                    // colour by alpha, so the source factor is one.
-                    blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        // The general pipeline — every arm compiled in, which is the shading
+        // every frame drew before story #1449. Built here rather than lazily
+        // with the rest so that a descriptor this painter cannot create still
+        // fails when the renderer is built, and because it is the set the
+        // showcase scenes reach: all three clip and stroke.
+        let general = KindSet {
+            clips: true,
+            strokes: true,
+        };
+        let pipelines = std::collections::HashMap::from([(
+            general,
+            build_paint_pipeline(&device, &module, &pipeline_layout, format, general),
+        )]);
 
         // The composite pipeline: its own module, its own layout, its own
         // `@group(0)`. See `shaders/composite.wgsl` for why it is not another
@@ -1562,6 +1610,30 @@ impl Renderer {
             mipmap_filter: wgpu::MipmapFilterMode::Nearest,
             ..Default::default()
         });
+        // The third sampler, and the one thing it is for (story #1449).
+        //
+        // Linear, because a bilinear read along the strip's `t` axis **is** the
+        // ramp between two baked texel centres — the filtering is the
+        // interpolation the stop loop used to do, not a smoothing of it.
+        // Clamped, because that is the ramp's own `TileMode::Clamp` rule: below
+        // the first stop the first colour, above the last the last.
+        //
+        // Not `msdf_sampler`, though both are linear and clamped: that one is
+        // declared over a distance field and this one over a colour, and a
+        // shared sampler would tie two unrelated reads to one decision. The
+        // cost of a second sampler object is one device allocation at
+        // construction.
+        let strip_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("dashscene-gpu gradient strip"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+        let strip = GradientStripTexture::new(&device, &queue);
         let placeholder = device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("dashscene-gpu no atlas"),
@@ -1589,7 +1661,15 @@ impl Renderer {
         // appeared. `ATLAS_EXTENT` is what that budget is and says why.
         let residency = Residency::new(ATLAS_EXTENT.min(max_extent), max_extent);
 
-        let frame = Frame::new(&device, &layout, &sampler, &msdf_sampler, &placeholder);
+        let frame = Frame::new(
+            &device,
+            &layout,
+            &sampler,
+            &msdf_sampler,
+            &placeholder,
+            &strip.view,
+            &strip_sampler,
+        );
         Ok(Self {
             #[cfg(feature = "gpu-timing")]
             // **Both bits, because the implementation writes into the encoder.**
@@ -1608,7 +1688,13 @@ impl Renderer {
             _instance: instance,
             device,
             queue,
-            pipeline,
+            paint_module: module,
+            paint_pipeline_layout: pipeline_layout,
+            pipelines,
+            pipeline_kind_set: general,
+            forced_kind_set: None,
+            strip,
+            strip_sampler,
             layout,
             composite_pipeline,
             composite_layout,
@@ -1637,6 +1723,60 @@ impl Renderer {
     /// beside.
     pub fn adapter_info(&self) -> &wgpu::AdapterInfo {
         &self.adapter_info
+    }
+
+    /// The [`KindSet`] of the paint pipeline the last paint bound (story
+    /// #1449).
+    ///
+    /// The general set until something has been drawn, which is the pipeline
+    /// built at construction.
+    pub fn pipeline_kind_set(&self) -> KindSet {
+        self.pipeline_kind_set
+    }
+
+    /// **Test-only.** Selects `forced` on every later paint, whatever the
+    /// document's own census says; `None` restores the census.
+    ///
+    /// `pub` and `#[doc(hidden)]` because the test that needs it,
+    /// `tests/kind_set.rs`, links this crate the way a consumer does, so a
+    /// `#[cfg(test)]` method would not exist for it. Nothing this crate ships
+    /// calls it.
+    ///
+    /// It exists to make the specialisation **falsifiable**. A test that
+    /// asserts only the cache key observes the key and not what the key
+    /// removed — `KindSet::of` returning a constant would pass it. Painting a
+    /// clipped scene through the clip-free pipeline is what observes the
+    /// compiled-out branch: the clip that is not applied inks a pixel outside
+    /// the box that the selected pipeline leaves clear.
+    #[doc(hidden)]
+    pub fn force_kind_set(&mut self, forced: Option<KindSet>) {
+        self.forced_kind_set = forced;
+    }
+
+    /// Ensures a pipeline for `kinds` exists and makes it the one the next pass
+    /// binds.
+    ///
+    /// Called from `draw` **before** the encoder, because building a pipeline
+    /// needs the device and a render pass holds the encoder.
+    fn select_paint_pipeline(&mut self, kinds: KindSet) {
+        if !self.pipelines.contains_key(&kinds) {
+            let pipeline = build_paint_pipeline(
+                &self.device,
+                &self.paint_module,
+                &self.paint_pipeline_layout,
+                self.format,
+                kinds,
+            );
+            self.pipelines.insert(kinds, pipeline);
+        }
+        self.pipeline_kind_set = kinds;
+    }
+
+    /// The pipeline [`Self::select_paint_pipeline`] chose.
+    fn paint_pipeline(&self) -> &wgpu::RenderPipeline {
+        self.pipelines
+            .get(&self.pipeline_kind_set)
+            .expect("select_paint_pipeline inserts the entry before the pass begins")
     }
 
     /// The largest either dimension of a drawable may be — a texture rendered
@@ -1795,14 +1935,15 @@ impl Renderer {
         // fixture for this one; it differences a scene with a backdrop against
         // the same scene without, rather than asserting an absolute number.
         //
-        // The constants are the two samplers and the placeholder texture with
+        // The constants are the three samplers and the placeholder texture with
         // its view, built once in `new` and never again.
-        const AT_CONSTRUCTION: u64 = 4;
+        const AT_CONSTRUCTION: u64 = 5;
         self.frame.allocations
             + self.offscreen_allocations
             + self.residency.allocations()
             + self.layers.allocations
             + self.blurs.allocations
+            + self.strip.allocations
             + AT_CONSTRUCTION
     }
 
@@ -2049,12 +2190,29 @@ impl Renderer {
         if strokes.is_empty() {
             strokes.push(GpuStroke::default());
         }
+        // The document's kind set, and the pipeline it selects (story #1449).
+        //
+        // Read here rather than at load, because the tables it is a census of
+        // are this frame's: a commit that interns the document's first stroke
+        // moves the set, and the pipeline has to move with it. Before the
+        // encoder, because building a pipeline needs the device and a render
+        // pass holds the encoder.
+        let kinds = self
+            .forced_kind_set
+            .unwrap_or_else(|| KindSet::of(paints, clips));
+        self.select_paint_pipeline(kinds);
+
+        // The gradient strip, re-baked only when this frame's gradient rows
+        // differ from the ones the texture already holds.
+        let strip_moved = self.strip.update(&self.device, &self.queue, paints);
+
         let globals = Globals {
             size: [width as f32, height as f32],
             aa: AA_WIDTH,
             gradient_base: heap.gradient_base,
             shadow_base: heap.shadow_base,
-            _pad: [0; 3],
+            strip_rows: self.strip.rows,
+            _pad: [0; 2],
         };
 
         // Residency, and the rows it resolves into. Before the upload, because
@@ -2070,6 +2228,9 @@ impl Renderer {
             &self.sampler,
             &self.msdf_sampler,
             &self.placeholder,
+            &self.strip.view,
+            &self.strip_sampler,
+            strip_moved,
             &self.residency,
             buffer,
             &heap.words,
@@ -2326,7 +2487,7 @@ impl Renderer {
                     // those two properties rather than the cover that draw
                     // order rests on.
                     composite::Step::Instances(range) => {
-                        pass.set_pipeline(&self.pipeline);
+                        pass.set_pipeline(self.paint_pipeline());
                         for run in overlapping(&runs, range) {
                             if bound != Some(run.atlas) {
                                 pass.set_bind_group(0, self.frame.bind_group(run.atlas), &[]);
@@ -4788,6 +4949,205 @@ struct Frame {
     allocations: u64,
 }
 
+/// One paint pipeline, specialised by `kinds` (story #1449).
+///
+/// The only thing that varies is the fragment stage's override constants —
+/// `KindSet::constants()` names them, and `paint.wgsl` declares them. A name
+/// that matched no declaration would be a pipeline-creation error rather than a
+/// silent default, which is what makes the pair safe to state in two files.
+///
+/// **The vertex stage takes no constants**, and does not need to: both
+/// overrides are declared with a default and neither is read by `vs_main`, so
+/// the stage compiles to the same code for every set.
+fn build_paint_pipeline(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    kinds: KindSet,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("dashscene-gpu paint"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            // No vertex buffers: the quad's corners come from the vertex index
+            // and the instance's own bounds, so a frame uploads the instance
+            // rows and nothing else. That is what R-T4 bounds the per-frame
+            // cost to.
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &kinds.constants(),
+                ..Default::default()
+            },
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                // Premultiplied source-over: the fragment shader multiplies
+                // colour by alpha, so the source factor is one.
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+/// The baked gradient strip on the device, and what it was baked from.
+///
+/// One row per gradient row of the paint heap, [`STRIP_WIDTH`] texels wide,
+/// `Rgba8Unorm` — `dashpaint::gradient_strip` is the baker and states the
+/// sampling error, and `paint.wgsl`'s binding 11 states why the format is the
+/// non-sRGB one.
+struct GradientStripTexture {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    /// The texture's height, which is **at least one** — see
+    /// [`Globals::strip_rows`] for why a frame with no gradient still binds a
+    /// row.
+    rows: u32,
+    /// The gradient rows and their stops the texels were baked from, so a frame
+    /// that changed neither re-bakes nothing.
+    ///
+    /// A comparison rather than a generation stamp, and that is forced by what
+    /// this painter is handed: boundary-B tables, not a commit. A `PaintTable`
+    /// carries no stamp saying which commit produced it — `CommittedScene`'s
+    /// own `strip_generation` exists for the host-draws path, which reads the
+    /// rows out over the C ABI and cannot afford to copy a kibibyte per row per
+    /// frame to find out whether they moved.
+    ///
+    /// The comparison is cheap against what it saves: a gradient is a handful
+    /// of floats carrying at most `MAX_GRADIENT_STOPS` stops, where a bake
+    /// evaluates the ramp 256 times per row.
+    baked_gradients: Vec<Gradient>,
+    baked_stops: Vec<GradientStop>,
+    /// Device objects allocated — see [`Renderer::allocations`]. The texture
+    /// and its view, which move together and only when the row count changes.
+    allocations: u64,
+}
+
+impl GradientStripTexture {
+    /// The strip a renderer starts with: one transparent row, which is what a
+    /// document with no gradient fill binds for its whole life.
+    ///
+    /// The row is **written**, not left to whatever the texture was created
+    /// with. Nothing samples it in a correct frame — no instance names a
+    /// gradient row a document does not have — so a wrong value here would be
+    /// invisible until the day something did, which is the worst shape a
+    /// default can have.
+    fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        let texture = Self::texture(device, 1);
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        Self::write(queue, &texture, 1, &[0u8; STRIP_ROW_BYTES]);
+        Self {
+            texture,
+            view,
+            rows: 1,
+            baked_gradients: Vec::new(),
+            baked_stops: Vec::new(),
+            allocations: 2,
+        }
+    }
+
+    /// Re-bakes and re-uploads when this frame's gradient rows differ from the
+    /// ones the texture holds, and reports whether the texture **moved**.
+    ///
+    /// A caller holding a bind group that names the old view has to rebuild it,
+    /// which is what the return value is for — the same contract
+    /// [`Frame::upload`] has for a reallocated buffer.
+    fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, paints: &PaintTable) -> bool {
+        let gradients = paints.all_gradients();
+        let stops = paints.all_stops();
+        if self.baked_gradients == gradients && self.baked_stops == stops {
+            return false;
+        }
+        let strip = gradient_strip::bake(gradients, stops);
+        self.baked_gradients = gradients.to_vec();
+        self.baked_stops = stops.to_vec();
+
+        // At least one row. A bind group must name a texture for every texture
+        // binding its layout declares, and a document that interned a gradient
+        // and then compacted it away has none to name one with.
+        let rows = strip.rows.max(1) as u32;
+        let moved = rows != self.rows;
+        if moved {
+            self.texture = Self::texture(device, rows);
+            self.view = self
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            self.rows = rows;
+            self.allocations += 2;
+        }
+        Self::write(queue, &self.texture, rows, Self::texels(&strip));
+        moved
+    }
+
+    /// The bytes to upload for `strip`: its own rows, or the one transparent
+    /// row a gradient-free document's placeholder holds.
+    fn texels(strip: &StripImage) -> &[u8] {
+        const BLANK: [u8; STRIP_ROW_BYTES] = [0; STRIP_ROW_BYTES];
+        if strip.rgba8.is_empty() {
+            &BLANK
+        } else {
+            &strip.rgba8
+        }
+    }
+
+    fn texture(device: &wgpu::Device, rows: u32) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("dashscene-gpu gradient strip"),
+            size: wgpu::Extent3d {
+                width: STRIP_WIDTH as u32,
+                height: rows,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            // Never the sRGB form: a stop's components are sRGB-encoded and
+            // this painter blends in that space, so the sampler must hand back
+            // the code points the baker wrote. See binding 11 in `paint.wgsl`.
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        })
+    }
+
+    fn write(queue: &wgpu::Queue, texture: &wgpu::Texture, rows: u32, texels: &[u8]) {
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            texels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(STRIP_ROW_BYTES as u32),
+                rows_per_image: Some(rows),
+            },
+            wgpu::Extent3d {
+                width: STRIP_WIDTH as u32,
+                height: rows,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+}
+
 /// The smallest buffer this painter allocates, in elements. A zero-sized
 /// binding is a validation error rather than an empty draw, so every buffer
 /// holds at least one element even when the frame it was built for has none.
@@ -4797,12 +5157,15 @@ impl Frame {
     /// The [`Frame::bind_groups`] entry that names no atlas.
     const NO_ATLAS: usize = 0;
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
         sampler: &wgpu::Sampler,
         msdf_sampler: &wgpu::Sampler,
         placeholder: &wgpu::TextureView,
+        strip: &wgpu::TextureView,
+        strip_sampler: &wgpu::Sampler,
     ) -> Self {
         let storage = |label: &'static str, size: u64| {
             device.create_buffer(&wgpu::BufferDescriptor {
@@ -4875,7 +5238,16 @@ impl Frame {
             // The eight buffers above.
             allocations: 8,
         };
-        frame.rebind(device, layout, sampler, msdf_sampler, placeholder, &[]);
+        frame.rebind(
+            device,
+            layout,
+            sampler,
+            msdf_sampler,
+            placeholder,
+            strip,
+            strip_sampler,
+            &[],
+        );
         frame
     }
 
@@ -4900,6 +5272,8 @@ impl Frame {
         sampler: &wgpu::Sampler,
         msdf_sampler: &wgpu::Sampler,
         placeholder: &wgpu::TextureView,
+        strip: &wgpu::TextureView,
+        strip_sampler: &wgpu::Sampler,
         atlases: &[&wgpu::TextureView],
     ) {
         self.bind_groups.clear();
@@ -4918,6 +5292,8 @@ impl Frame {
                 view,
                 sampler,
                 msdf_sampler,
+                strip,
+                strip_sampler,
             ));
             self.allocations += 1;
         }
@@ -4951,6 +5327,9 @@ impl Frame {
         sampler: &wgpu::Sampler,
         msdf_sampler: &wgpu::Sampler,
         placeholder: &wgpu::TextureView,
+        strip: &wgpu::TextureView,
+        strip_sampler: &wgpu::Sampler,
+        strip_moved: bool,
         residency: &Residency,
         buffer: &InstanceBuffer,
         heap: &[[f32; 4]],
@@ -5066,11 +5445,30 @@ impl Frame {
         // that then samples nothing has an atlas count of zero too — so the
         // comparison agrees while there is not even a placeholder group to bind.
         // The emptiness is the condition that reads what is actually held.
-        if rebind || self.bind_groups.is_empty() || residency.atlas_count() != self.bound_atlases {
+        //
+        // **A moved gradient strip is a fourth reason**, and it is this
+        // struct's alone: the strip's texture is reallocated when the row count
+        // changes, which leaves every group here naming the old view. It is
+        // deliberately not folded into the returned `rebind` — that value tells
+        // `BlurTargets` a *buffer* moved, and the strip is no buffer of its.
+        if rebind
+            || strip_moved
+            || self.bind_groups.is_empty()
+            || residency.atlas_count() != self.bound_atlases
+        {
             let views: Vec<&wgpu::TextureView> = (0..residency.atlas_count())
                 .map(|index| residency.view(index as u32))
                 .collect();
-            self.rebind(device, layout, sampler, msdf_sampler, placeholder, &views);
+            self.rebind(
+                device,
+                layout,
+                sampler,
+                msdf_sampler,
+                placeholder,
+                strip,
+                strip_sampler,
+                &views,
+            );
         }
         rebind
     }
@@ -5261,6 +5659,8 @@ fn bind(
     atlas: &wgpu::TextureView,
     sampler: &wgpu::Sampler,
     msdf_sampler: &wgpu::Sampler,
+    strip: &wgpu::TextureView,
+    strip_sampler: &wgpu::Sampler,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("dashscene-gpu paint"),
@@ -5309,6 +5709,14 @@ fn bind(
             wgpu::BindGroupEntry {
                 binding: 10,
                 resource: wgpu::BindingResource::Sampler(msdf_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 11,
+                resource: wgpu::BindingResource::TextureView(strip),
+            },
+            wgpu::BindGroupEntry {
+                binding: 12,
+                resource: wgpu::BindingResource::Sampler(strip_sampler),
             },
         ],
     })

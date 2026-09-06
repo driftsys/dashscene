@@ -7,6 +7,8 @@
 //! table. Every rect resolves; an unfilled node references the shared
 //! draws-nothing entry (`PaintEntry::default()`), not a sentinel.
 
+pub use dashpaint::gradient_strip::StripImage;
+pub use dashpaint::kind_set::KindSet;
 pub use dashpaint::{
     Atlas, AtlasGlyph, AtlasIndex, Blur, BlurKind, ClipBox, ClipIndex, ClipRegion, ClipTable,
     ClipView, Color, CornerRadii, EntryParts, Fill, FillSpec, GlyphQuad, GlyphRange, GlyphRun,
@@ -72,6 +74,32 @@ pub struct CommittedScene {
     pub(crate) shown_root: Option<NodeId>,
     /// Whether this commit renumbered the rect table against the previous one.
     pub(crate) renumbered: bool,
+    /// This commit's paint kind set — which of the two specialised shading arms
+    /// the document reaches (story #1449).
+    ///
+    /// Recomputed each commit rather than at load, and that is the whole point:
+    /// the tables it is a census of grow when a paint or a stroke is interned,
+    /// so a set fixed at load is wrong from the first stroke onward.
+    pub(crate) kind_set: KindSet,
+    /// The gradient ramps of this commit's paint table, baked one 256-texel row
+    /// per gradient (story #1449).
+    ///
+    /// Behind an `Arc` and **shared with the previous commit whenever its
+    /// gradient rows did not move**, like the paint and clip tables beside it:
+    /// a scene that animates a box position re-bakes nothing at all.
+    pub(crate) gradient_strip: Arc<StripImage>,
+    /// Which bake [`Self::gradient_strip`] is, counted within this arena's own
+    /// commit chain.
+    ///
+    /// It moves **only** when the rows moved, which is what lets a host that
+    /// copies the strip over a C ABI copy it once rather than once a frame. A
+    /// document with no gradient never leaves zero.
+    ///
+    /// Meaningful only within one chain, exactly as
+    /// [`generation`](Self::generation) is: a fresh arena counts from the start,
+    /// so a host must take a document replacement as its own reason to
+    /// re-upload rather than waiting for this to move.
+    pub(crate) strip_generation: u64,
 }
 
 /// The [`CommittedScene::rect_index`] value for a node this commit resolved no
@@ -93,6 +121,26 @@ impl CommittedScene {
     /// Deduplicated paint table, in first-use DFS order.
     pub fn paints(&self) -> &PaintTable {
         self.paints.as_ref()
+    }
+
+    /// Which of the two specialised shading arms this commit's document reaches
+    /// (story #1449). Computed at every commit — see the field for why.
+    pub fn kind_set(&self) -> KindSet {
+        self.kind_set
+    }
+
+    /// This commit's gradient ramps, baked one 256-texel row per gradient row
+    /// of the paint table (story #1449).
+    ///
+    /// Empty — no rows — for a document with no gradient fill.
+    pub fn gradient_strip(&self) -> &StripImage {
+        self.gradient_strip.as_ref()
+    }
+
+    /// Which bake [`Self::gradient_strip`] is. See the field for what a
+    /// consumer may and may not conclude from it.
+    pub fn strip_generation(&self) -> u64 {
+        self.strip_generation
     }
 
     /// The image assets an image fill resolves against — the fourth table a

@@ -43,7 +43,22 @@ namespace Driftsys.Dashscene
         /// The stroke table.
         public const string Strokes = "_DsStrokes";
 
-        /// `(aa, solid base, gradient base, unused)`.
+        /// The baked gradient strip: one 256-texel ramp per gradient row of the
+        /// paint table, straight-alpha RGBA8.
+        ///
+        /// A texture, so it is bound with `Material.SetTexture` for the reason
+        /// [`Atlas`] states — a sampler has no place in a constant buffer, and
+        /// putting one there makes the shader SRP-Batcher-incompatible.
+        ///
+        /// **On every material this painter draws with, not the class material
+        /// alone.** The text shading declares the sampler too: a material whose
+        /// shader declares one and whose painter bound nothing reads an unbound
+        /// sampler, and `BindHeapTo` is the one path every material goes
+        /// through. No glyph fragment samples it — a run's fill is a solid
+        /// colour in [`Glyphs`] and never a gradient.
+        public const string GradientStrip = "_DsGradientStrip";
+
+        /// `(aa, solid base, gradient base, gradient strip rows)`.
         ///
         /// A `UnityPerMaterial` member rather than a bare uniform, which is
         /// what a per-material constant has to be: the SRP Batcher binds that

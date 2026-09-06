@@ -661,53 +661,24 @@ type Stop = (f32, [f32; 4]);
 /// One stop list and the `t` values probed against it.
 type RampCase = (Vec<Stop>, Vec<f32>);
 
-/// The stop ramp, derived independently of the shader's walk.
+/// One probe's tuple fixtures as [`dashpaint::GradientStop`]s — the shape the
+/// ramp takes.
 ///
-/// The shader keeps the *last* segment `t` has entered, overwriting as it goes.
-/// This finds the *first* stop past `t` and interpolates the segment before it,
-/// with the two clamped ends stated as their own cases. Both reach the same
-/// answer for every ordered stop list, including one with a repeated offset —
-/// which is the point of writing the second one rather than transliterating.
-///
-/// `dashscene-skia` builds every gradient with `TileMode::Clamp`, which is what
-/// the two end cases are.
-///
-/// # The two ends are not symmetric, and that is the ramp's own rule
-///
-/// The lower clamp is **strict** and the upper one is not. Both sides of a
-/// hard stop are reachable at the same `t`, and the ramp is right-continuous:
-/// the colour *at* a repeated offset is the later stop's. So a `t` equal to the
-/// first offset must not short-circuit to the first colour — with the first two
-/// stops repeated, the answer is the second colour, and `<=` here would have
-/// disagreed with the shader at exactly that point.
-///
-/// The upper clamp stays inclusive for the same reason read the other way: at a
-/// `t` equal to the last offset, the last colour is the later of whatever pair
-/// meets there.
-fn reference_ramp(t: f32, stops: &[Stop]) -> [f32; 4] {
-    let (first_offset, first_colour) = stops[0];
-    let (last_offset, last_colour) = stops[stops.len() - 1];
-    if t < first_offset {
-        return first_colour;
-    }
-    if t >= last_offset {
-        return last_colour;
-    }
-    let above = stops
+/// The fixtures are authored as tuples because that is what reads as a table of
+/// numbers, and this is the one place they become the paint type. Story #1449
+/// moved the ramp itself into `dashpaint::gradient_strip::ramp`, so the
+/// independent reference `gradient_ramp` is measured against and the ramp the
+/// gradient strip is baked with are now one function with one statement of the
+/// hard-stop rule — see its own documentation for what those rules are and why
+/// the two ends are not symmetric.
+fn gradient_stops(stops: &[Stop]) -> Vec<dashpaint::GradientStop> {
+    stops
         .iter()
-        .position(|&(offset, _)| offset > t)
-        .expect("t is below the last stop, so some stop is above it");
-    let (lo, lo_colour) = stops[above - 1];
-    let (hi, hi_colour) = stops[above];
-    // `above` is the first stop past `t` and `t` is past `lo`, so this segment
-    // has width — a repeated offset is never the divisor here, which is the
-    // shape difference from the shader's form.
-    let u = (t - lo) / (hi - lo);
-    let mut out = [0.0; 4];
-    for channel in 0..4 {
-        out[channel] = lo_colour[channel] + (hi_colour[channel] - lo_colour[channel]) * u;
-    }
-    out
+        .map(|&(offset, [r, g, b, a])| dashpaint::GradientStop {
+            offset,
+            color: dashpaint::Color { r, g, b, a },
+        })
+        .collect()
 }
 
 /// The eight-slot arrays one probe hands `gradient_ramp`, with everything past
@@ -883,8 +854,8 @@ fn reference_stroke_coverage(d: f32, width: f32, align: f32, aa: f32) -> f32 {
     (overlap / aa).clamp(0.0, 1.0)
 }
 
-/// The stop list one `gradient_ramp` probe carries, as `reference_ramp` reads
-/// it: the first `count` of the eight offsets, paired with their colours.
+/// The stop list one `gradient_ramp` probe carries, as the fixtures author it:
+/// the first `count` of the eight offsets, paired with their colours.
 fn ramp_stops(args: &[Value]) -> Vec<Stop> {
     let offsets = floats(args, 1, MAX_GRADIENT_STOPS);
     let colours = vec4_list(args, 2, MAX_GRADIENT_STOPS);
@@ -943,15 +914,19 @@ fn reference_value(function: &str, args: &[Value]) -> Vec<f64> {
             let stops = ramp_stops(args);
             // A gradient with no stops has no colour to clamp to, and drawing
             // nothing is the one answer that cannot paint a wrong one.
-            // `reference_ramp` has no first colour to return for it, so the
-            // case is stated here rather than inside it.
+            // `dashpaint::gradient_strip::ramp` has no first colour to
+            // return for it and panics, so the case is stated here rather than
+            // inside it — as `bake_row` states it on its own side.
             if stops.is_empty() {
                 return vec![0.0; 4];
             }
-            reference_ramp(scalar(args, 0), &stops)
-                .iter()
-                .map(|&v| v as f64)
-                .collect()
+            let colour = dashpaint::gradient_strip::ramp(&gradient_stops(&stops), scalar(args, 0));
+            vec![
+                colour.r as f64,
+                colour.g as f64,
+                colour.b as f64,
+                colour.a as f64,
+            ]
         }
         "stroke_coverage" => vec![reference_stroke_coverage(
             scalar(args, 0),

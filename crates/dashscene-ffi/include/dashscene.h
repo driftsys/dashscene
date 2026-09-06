@@ -730,6 +730,81 @@ typedef struct DsAtlas {
 } DsAtlas;
 
 /*
+ * The document's paint kind set: bit 0 set when the document clips, bit 1 when
+ * it strokes.
+ *
+ * READ IT ON EVERY DRAWN FRAME, NOT ONCE PER LOAD. The set is a census of the
+ * tables the LAST COMMIT produced, and those tables grow: a commit that interns
+ * the document's first stroke sets bit 1, and a painter still shading through a
+ * variant with no stroke arm draws nothing where that stroke should be. This is
+ * the opposite of ds_runtime_atlas, whose set belongs to the load — do not copy
+ * that call's once-per-load rule onto this one.
+ *
+ * Toggle your shader keywords ONLY WHEN THE BITS CHANGE. The bits are what
+ * moves; the keyword state is yours to keep.
+ *
+ * Bits above the two named are reserved and read as zero today. Mask the two
+ * you know rather than comparing the whole word, so a later bit does not turn
+ * an equality test false.
+ *
+ * Requires a document: without one this is DS_NO_DOCUMENT and not 0, because
+ * "no document" and "a document that neither clips nor strokes" are different
+ * answers and only the second is a set. out_bits is written to 0 before
+ * anything that can fail.
+ *
+ * Takes no lease and is refused by none: it reads the front scene, which a
+ * lease only makes more stable.
+ *
+ * Adding this symbol did not move DS_ABI_VERSION.
+ */
+DsStatus ds_runtime_kind_set(DsRuntime runtime, uint32_t *out_bits);
+
+/*
+ * The committed gradient strip: one baked 256-texel ramp per gradient row of
+ * the paint table, and which bake it is.
+ *
+ * rows.count is the gradient count and rows.stride is 1024 — 256 texels of
+ * STRAIGHT-ALPHA RGBA8, not premultiplied — so the payload is count * stride
+ * bytes, tightly packed, row i at i * stride. Sample it with a FILTERING
+ * sampler clamped at both ends: between two texel centres a bilinear read is
+ * the linear interpolation the ramp is already made of, which is what makes one
+ * sample equal to the stop walk it replaces. The texture format must not apply
+ * an sRGB conversion on read — the components are sRGB-encoded and this
+ * project blends in that space.
+ *
+ * A document with no gradient fill reports a count of 0 and a NULL pointer,
+ * with the stride still this build's row size.
+ *
+ * UPLOAD IT WHEN generation MOVES, AND ON A DOCUMENT REPLACEMENT. The
+ * generation moves only at a commit whose gradient rows actually changed, so a
+ * scene animating a box position never re-uploads. It is counted within one
+ * arena's commit chain and nothing more: a replaced document starts again, and
+ * its 1 can follow the old document's 1 while naming different colours — the
+ * same rule DsFrame.generation carries, and the reason DsFrame.document_replaced
+ * is your other trigger.
+ *
+ * LIFETIME. The rows belong to the COMMIT, not to the load: they are valid
+ * until the next commit — a tick, a load, or a producer's own commit — so copy
+ * them before you let one happen. This is where the strip differs from
+ * ds_runtime_atlas, whose sheets survive every commit until the next load.
+ *
+ * ON FAILURE the strip is emptied — a NULL pointer, a count of 0, a generation
+ * of 0, and the stride still this build's row size — so a caller that ignores
+ * the status holds a strip that describes nothing rather than uninitialised
+ * memory. The one case with no write is a NULL out itself.
+ *
+ * Adding this symbol did not move DS_ABI_VERSION.
+ */
+typedef struct DsGradientStrip {
+  /* The baked rows: count rows of stride bytes, tightly packed. */
+  DsSlice rows;
+  /* Which bake these rows are. See above for what it does and does not say. */
+  uint64_t generation;
+} DsGradientStrip;
+
+DsStatus ds_runtime_gradient_strip(DsRuntime runtime, DsGradientStrip *out);
+
+/*
  * How many glyph atlases the loaded document's runs sample.
  *
  * 0 for a document loaded without faces and for the measure-only cascade —

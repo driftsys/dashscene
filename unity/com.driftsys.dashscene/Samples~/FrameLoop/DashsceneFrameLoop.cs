@@ -281,7 +281,7 @@ namespace Driftsys.Dashscene.Samples
             // the camera's orthographic size as well as the screen's height, so
             // an orthographic-size tween moves it with the extent unchanged —
             // which the remark above `UpdateEdgeWidth` already names. It is one
-            // of the three scalars the paint heap's binding carries, so before
+            // of the four scalars the paint heap's binding carries, so before
             // this loop settled it was rebound on every frame and now it is
             // rebound only on a frame that draws. A settled host would shade
             // the new zoom at the old width for as long as the document did not

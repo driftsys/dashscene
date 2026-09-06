@@ -5,6 +5,29 @@
 // inclusion is what `docs/decisions/shader-library-and-layer-2.md` D1 chose,
 // and it is why nothing below re-derives a distance.
 
+// What this document reaches, as pipeline-overridable constants — the two arms
+// of the shading that exist to be compiled out (story #1449).
+//
+// `dashpaint::kind_set::KindSet::constants()` supplies them, from a census of
+// the committed tables, and `render.rs` caches one pipeline per set and
+// re-selects on every paint. The names are stated there and here and nowhere
+// else: a name that matches no declaration in this file is a pipeline-creation
+// error rather than a silent default, which is what makes the pair safe to
+// state twice.
+//
+// **`true` is the default**, so a pipeline created with no constants at all is
+// the general one — the shading every frame drew before story #1449, and the
+// value every entry point that does not read them keeps.
+//
+// Two, and the bar for a third is that it removes code. `HAS_CLIPS` removes the
+// clip loop, and `HAS_STROKES` removes the stroke band and the table read
+// behind it. A gradient constant was weighed and left out: since the ramp
+// became one texture sample there is no loop behind it, only a branch a
+// document without a gradient never takes, and a variant that removes nothing
+// multiplies the set a painter builds for nothing.
+override HAS_CLIPS: bool = true;
+override HAS_STROKES: bool = true;
+
 // Mirrors `dashscene_gpu::Instance`. The two four-float vectors come first so
 // both sit at a 16-byte offset, and the trailing pad word is what makes the
 // Rust type and this one agree on an 80-byte array stride. The stride was 64
@@ -90,19 +113,24 @@ struct Globals {
     // The first word of the paint heap's shadow region, after the gradients.
     // A frame value for the same reason.
     shadow_base: u32,
-    // Thirty-two bytes, not twenty. A uniform-address-space struct's size
-    // rounds up to a multiple of 16, so the three words below are what the
-    // fifth member costs, and the Rust type declares them too — a struct that
-    // agreed on five members and disagreed on its size would read every value
-    // correctly and still bind at the wrong length.
+    // How many rows the bound gradient strip holds — the divisor that turns a
+    // gradient row index into the texture's v coordinate. **At least one**,
+    // because a frame with no gradient still binds a one-row placeholder and a
+    // zero here would divide by nothing.
+    strip_rows: u32,
+    // Thirty-two bytes, not twenty-four. A uniform-address-space struct's size
+    // rounds up to a multiple of 16, so the two words below are what the sixth
+    // member costs, and the Rust type declares them too — a struct that agreed
+    // on six members and disagreed on its size would read every value correctly
+    // and still bind at the wrong length.
     //
-    // Three scalars rather than one `vec3u`: a three-component vector aligns to
-    // **16**, so it would sit at offset 32 rather than 20 and take this struct
-    // to 48. Story #583 met that exact trap with a `vec3f` in `GpuComposite`,
-    // where wgpu reported "bound with size 16 where the shader expects 32".
+    // Scalars rather than one `vec2u` or `vec3u`: a three-component vector
+    // aligns to **16**, so it would sit at offset 32 rather than 24 and take
+    // this struct to 48. Story #583 met that exact trap with a `vec3f` in
+    // `GpuComposite`, where wgpu reported "bound with size 16 where the shader
+    // expects 32".
     _pad0: u32,
     _pad1: u32,
-    _pad2: u32,
 }
 
 // Mirrors `dashscene_gpu::render::GpuImage` — an image fill's parameters with
@@ -254,6 +282,22 @@ struct Shape {
 // grid. Image fills keep `atlas_sampler`. `render.rs` builds both, and says why
 // the clamp in `msdf_sample` is what makes filtering safe without a gutter.
 @group(0) @binding(10) var msdf_sampler: sampler;
+// The baked gradient strip, and the sampler it is read through (story #1449).
+// One row per gradient row of the paint heap, 256 texels wide, RGBA8 —
+// `dashpaint::gradient_strip` bakes it and says what the sampling error is.
+//
+// **`Rgba8Unorm`, never the sRGB form.** A stop's components are sRGB-encoded
+// and this painter blends in that space
+// (`docs/decisions/blur-blends-in-srgb-encoded-space.md`), so the sampler must
+// hand back the stored code points unconverted — exactly what the stop loop
+// this replaced read out of the heap.
+//
+// A **filtering** sampler, and that is the whole mechanism: between two texel
+// centres a bilinear read is the linear interpolation the ramp is already made
+// of, so the strip is not an approximation of the ramp along `t` but the same
+// piecewise-linear function evaluated by the sampler instead of by a loop.
+@group(0) @binding(11) var gradient_strip: texture_2d<f32>;
+@group(0) @binding(12) var strip_sampler: sampler;
 
 // What the fragment stage needs of an instance, carried through the rasteriser
 // rather than re-read from the instance array.
@@ -522,6 +566,13 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
 // boxes. An empty range is unclipped, so the loop runs zero times and the
 // coverage is one — the property a range has and a sentinel would not.
 fn clip_coverage(offset: u32, count: u32, p: vec2f) -> f32 {
+    // A document that clips nothing has no loop here at all: `HAS_CLIPS` is a
+    // pipeline-overridable constant, so this returns a literal and the whole
+    // body below — the box load, the distance and the `min` — is compiled out.
+    // The unclipped answer either way; what changes is whether the code exists.
+    if !HAS_CLIPS {
+        return 1.0;
+    }
     var cover = 1.0;
     for (var i = 0u; i < count; i = i + 1u) {
         let b = clip_boxes[offset + i];
@@ -643,11 +694,6 @@ fn gradient_colour(row: u32, bounds: vec4f, p: vec2f) -> vec4f {
     let secondary = bounds.xy + frame.xy * bounds.zw;
 
     let kind = u32(frame.z);
-    // Clamped to the heap row's own slot count. The Rust side asserts the same
-    // bound before it writes the row, so this can only differ if the two ever
-    // disagree — and a loop that walked past the row would read the *next*
-    // gradient's handles as stops.
-    let count = min(u32(frame.w), MAX_GRADIENT_STOPS);
 
     var t = 0.0;
     if kind == GRADIENT_RADIAL {
@@ -666,20 +712,26 @@ fn gradient_colour(row: u32, bounds: vec4f, p: vec2f) -> vec4f {
         t = gradient_linear_t(p, origin, primary, secondary);
     }
 
-    // The eight offset slots are two whole words, so they are read
-    // unconditionally; the colours are read only as far as the count, because
-    // that is where the loop can be bounded without a branch per slot.
-    let lo = paints[base + 2u];
-    let hi = paints[base + 3u];
-    let offsets = array<f32, MAX_GRADIENT_STOPS>(
-        lo.x, lo.y, lo.z, lo.w,
-        hi.x, hi.y, hi.z, hi.w,
+    // One sample, in place of the walk over eight offsets and up to eight
+    // colours this used to do per fragment (story #1449). `dashpaint`'s
+    // `bake_row` evaluated `gradient_ramp`'s own rules at 256 positions on the
+    // CPU, so this is the same ramp read back rather than a second one.
+    //
+    // `t` addresses the row's 256 texels directly: the strip is baked at texel
+    // centres and the sampler is filtering, so a `t` between two centres reads
+    // the linear interpolation between them, which is what the ramp is there.
+    // `ClampToEdge` is what makes the two ends the clamped colours, as the
+    // ramp's own `TileMode::Clamp` rule requires.
+    //
+    // The v coordinate is this gradient's own row centre. `globals.strip_rows`
+    // is the texture's height and is never zero — a frame with no gradient
+    // binds a one-row placeholder that no instance names.
+    return textureSampleLevel(
+        gradient_strip,
+        strip_sampler,
+        vec2f(t, (f32(row) + 0.5) / f32(globals.strip_rows)),
+        0.0,
     );
-    var colours: array<vec4f, MAX_GRADIENT_STOPS>;
-    for (var i = 0u; i < count; i = i + 1u) {
-        colours[i] = paints[base + 4u + i];
-    }
-    return gradient_ramp(t, offsets, colours, count);
 }
 
 // One shadow's parameters, as the paint heap carries them.
@@ -804,6 +856,41 @@ fn msdf_sample(rect: vec4f, quad: vec4f, half: vec2f, p: vec2f) -> vec3f {
 fn fs_main(in: VertexOut) -> @location(0) vec4f {
     let kind = in.rows.x;
     let row = in.rows.y;
+
+    // The plain fill: a solid colour on a sharp box that nothing clips and no
+    // coverage mask confines. The commonest instance in every scene measured
+    // for epic #1441, and the one the general path below charges the most for
+    // relative to what it draws — a shadow-row branch it does not take, a
+    // five-way coverage chain, a clip call, and a six-way colour chain.
+    //
+    // **It is the general path's own arithmetic, not an approximation of it.**
+    // With the four conditions above, `clip_coverage` is one and the corner
+    // radii are zero, so this computes the same distance from the same centre
+    // and multiplies in the same order — deliberately `colour.a * cover` bound
+    // first, because floating-point multiplication does not associate and a
+    // different grouping would move the last bit of a channel and the goldens
+    // with it.
+    //
+    // What it saves is what a literal `vec4f(0.0)` lets the compiler fold:
+    // `clamp_radii`'s four divisions and its corner selects all reduce to zero
+    // before the shader runs, which is why the distance is recomputed here
+    // rather than the one below being reused.
+    //
+    // **`in.shape == 0u` is one of the conditions, not an oversight.** A
+    // baked-vector node's silhouette *is* its coverage mask, so its box says
+    // nothing about where it inks, and the masked arm below is what draws it.
+    if kind == KIND_FILL_SOLID && in.shape == 0u && in.rows.w == 0u && all(in.corners == vec4f(0.0)) {
+        let plain_half = in.bounds.zw * 0.5;
+        let plain_d = rounded_box_sdf(in.local - (in.bounds.xy + plain_half), plain_half, vec4f(0.0));
+        let plain_cover = coverage(plain_d, globals.aa) * in.opacity;
+        if plain_cover <= 0.0 {
+            discard;
+        }
+        let plain_colour = paints[row];
+        let plain_a = plain_colour.a * plain_cover;
+        return vec4f(plain_colour.rgb * plain_a, plain_a);
+    }
+
     let half_size = in.bounds.zw * 0.5;
     let centre = in.bounds.xy + half_size;
     let d = rounded_box_sdf(in.local - centre, half_size, in.corners);
@@ -866,7 +953,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
                 in.params2.z,
             );
         }
-    } else if kind == KIND_STROKE {
+    } else if HAS_STROKES && kind == KIND_STROKE {
+        // Compiled out for a document whose paint table interned no stroke.
+        // The set is a census of **that table**, taken at the commit this frame
+        // draws, so no instance can name a stroke row this pipeline has no arm
+        // for. A frame that somehow held one still draws nothing rather than
+        // something wrong: it falls through to the fill coverage here, and the
+        // colour chain below — gated on the same constant — discards it.
         let s = strokes[row];
         shape = stroke_coverage(d, s.width, f32(s.align), globals.aa);
     } else if kind == KIND_SHADOW_DROP {
@@ -935,7 +1028,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4f {
         colour = paints[row];
     } else if kind == KIND_FILL_GRADIENT {
         colour = gradient_colour(row, in.bounds, in.local);
-    } else if kind == KIND_STROKE {
+    } else if HAS_STROKES && kind == KIND_STROKE {
+        // The colour half of the arm the coverage chain above compiles out.
+        // **Both halves, never one**: gating only the coverage would leave this
+        // one reading the stroke table in a pipeline built without it.
         colour = strokes[row].color;
     } else if kind == KIND_TEXT {
         // The run's fill, which the MSDF coverage above modulates. The run's

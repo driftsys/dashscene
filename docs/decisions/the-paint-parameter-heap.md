@@ -173,8 +173,22 @@ out of layer 2's reach, which is the one instrument that checks this math
 against an independent derivation.
 
 `dashpaint::MAX_GRADIENT_STOPS` is 8 and boundary B fixes it, so a fixed-size
-array is a faithful parameter rather than a guess. The offsets are read from the
-heap as two whole words and the colours only as far as the count.
+array is a faithful parameter rather than a guess. The offsets were read from
+the heap as two whole words and the colours only as far as the count.
+
+**Since story #1449 the fragment stage reads neither.** `gradient_colour` takes
+the handles, the frame and the kind from the row's first two words and gets the
+colour from a baked 256-texel strip — one texture sample in place of the walk.
+`gradient_ramp` is still the ramp, still in `sdf.wgsl` and still measured by
+layer 2; what changed is where it is evaluated.
+`dashpaint::gradient_strip::ramp` is now the one CPU statement of it, baked per
+commit, and layer 2's independent reference is that same function, so the
+argument above — that a pointer into the storage buffer would have taken the
+ramp out of layer 2's reach — still holds and is the reason the ramp did not
+move into the painter. **The heap's gradient region and its stride are
+unchanged**: the strip is baked from `dashpaint`'s own tables rather than from
+the heap, so re-laying out the region would have bought nothing and cost every
+consumer that reads its shape.
 
 The interpolation is a plain `mix` of the stored components, which is
 sRGB-encoded space. `docs/decisions/blur-blends-in-srgb-encoded-space.md` makes
@@ -187,9 +201,10 @@ with **no colour space attached**, and its stops are passed as `Color4f` with a
 revisited at five bindings and left the answer at "what would change it is a
 second group, or bindings whose layout is derived rather than written". This
 change is close to the second of those and still does not meet it. The bind
-group layout is still one group of eleven entries written out by hand in one
-place and declared in one place in the shader, and a mismatch between the two is
-still a named test failure at `create_render_pipeline`.
+group layout is still one group written out by hand in one place and declared in
+one place in the shader — eleven entries when this was written, **thirteen since
+story #1449** added the gradient strip's texture and sampler — and a mismatch
+between the two is still a named test failure at `create_render_pipeline`.
 
 What is genuinely new is that the _heap's_ layout is not a WGSL struct at all —
 it is a word array with hand-written offsets — and that is precisely the part a
@@ -209,8 +224,11 @@ stride.
 sixteen when this record was first written, because `gradient_base` took the
 slot the old trailing pad word held and nothing grew. `shadow_base` had no such
 slot to take: five scalars is twenty bytes, and a uniform-address-space struct's
-size rounds up to a multiple of sixteen, so both declarations carry three pad
-words to the same 32. The pads are scalars on the WGSL side and never one
+size rounds up to a multiple of sixteen, so both declarations carried three pad
+words to the same 32. **Story #1449's `strip_rows` took one of those three**, so
+the count is six scalars and two pad words — and the uniform is still thirty-two
+bytes, which is the number that matters and the reason a pad word is declared
+rather than left implicit. The pads are scalars on the WGSL side and never one
 three-component vector, which aligns to sixteen there and would put the struct
 at 48 while the Rust type stayed at 32.
 

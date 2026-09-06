@@ -62,7 +62,14 @@ Shader "Dashscene/Text"
         // `Runtime/Shaders/DashsceneInstance.hlsl` carries the rule, the run
         // that measured it, and why no default here can be an obvious absence.
         // The painter writes the value with `Material.SetVector` every frame.
-        _DsGlobals("Edge width, solid base, gradient base", Vector) = (1, 0, 0, 0)
+        _DsGlobals("Edge width, solid base, gradient base, strip rows", Vector) = (1, 0, 0, 1)
+
+        // The baked gradient strip, per material like the atlas and for
+        // the same reason: a texture cannot be a `UnityPerMaterial`
+        // member, so it is bound with `Material.SetTexture` and declared
+        // here. The painter writes it on every frame whose binding went
+        // stale; the default is never read.
+        _DsGradientStrip("Baked gradient strip (linear)", 2D) = "black" {}
 
         // Declared by a class that never reads it, for the reason above:
         // every `UnityPerMaterial` member is declared by every shader.
@@ -111,6 +118,12 @@ Shader "Dashscene/Text"
             // and a BRG draw whose shader lacks it packs, submits and draws
             // NOTHING, with the reason only in the log.
             #pragma multi_compile _ DOTS_INSTANCING_ON
+            // Story #1449. LOCAL, so it takes no slot in Unity's
+            // process-wide keyword budget: nothing here varies per
+            // anything but a material. Undefined, `DsClipCoverage`'s
+            // loop is compiled out; `BrgPainter.ApplyKindSet` enables it
+            // on a frame whose document reports a clip box.
+            #pragma multi_compile_local _ DS_HAS_CLIPS
             #pragma vertex DsVertexStage
             #pragma fragment DsFragmentStage
 

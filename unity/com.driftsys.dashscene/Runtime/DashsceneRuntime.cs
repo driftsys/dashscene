@@ -281,6 +281,51 @@ namespace Driftsys.Dashscene
             return advanced != 0;
         }
 
+        /// The document's paint kind set: bit 0 set when it clips, bit 1 when
+        /// it strokes.
+        ///
+        /// **Read it on every drawn frame, not once per load.** The set is a
+        /// census of the tables the LAST COMMIT produced, and those tables
+        /// grow: a commit that interns the document's first stroke sets bit 1,
+        /// and a painter still shading through a variant with no stroke arm
+        /// draws nothing where that stroke should be.
+        ///
+        /// Bits above the two named are reserved and read as zero today, so
+        /// mask the ones you know — [`KindSetKeywords.Known`] — rather than
+        /// comparing the whole word, which a later bit would turn false.
+        ///
+        /// Requires a document: without one this reports
+        /// [`DsStatus.NoDocument`] rather than 0, because "no document" and "a
+        /// document that neither clips nor strokes" are different answers and
+        /// only the second is a set.
+        ///
+        /// Takes no lease and is refused by none: it reads the front scene,
+        /// which a lease only makes more stable.
+        public uint KindSet()
+        {
+            Check(Native.ds_runtime_kind_set(Handle(), out var bits), "ds_runtime_kind_set");
+            return bits;
+        }
+
+        /// The committed gradient strip, as borrowed rows and the bake they are.
+        ///
+        /// **The rows belong to the COMMIT.** They are valid until the next
+        /// commit — a tick, a load, or a producer's own commit — so a caller
+        /// copies them before letting one happen. A painter holding a frame
+        /// lease is inside that window by construction: every call that would
+        /// commit is refused while one is outstanding.
+        ///
+        /// Requires a document, for [`KindSet`]'s reason. A document with no
+        /// gradient fill reports a count of 0 and a null pointer, with the
+        /// stride still the library build's row size.
+        public DsGradientStrip GradientStrip()
+        {
+            Check(
+                Native.ds_runtime_gradient_strip(Handle(), out var strip),
+                "ds_runtime_gradient_strip");
+            return strip;
+        }
+
         /// Takes a lease on the committed frame.
         ///
         /// Requires a document. A tick is not required: loading commits, so a

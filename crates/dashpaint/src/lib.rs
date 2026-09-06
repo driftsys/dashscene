@@ -21,7 +21,9 @@
 //! documentation and
 //! `docs/decisions/image-header-parser-lives-in-dashpaint.md`.
 
+pub mod gradient_strip;
 pub mod image_id;
+pub mod kind_set;
 
 use std::fmt;
 use std::sync::Arc;

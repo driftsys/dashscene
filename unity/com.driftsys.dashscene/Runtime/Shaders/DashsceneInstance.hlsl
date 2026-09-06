@@ -104,6 +104,32 @@ StructuredBuffer<float4> _DsPaints;
 StructuredBuffer<float4> _DsClipBoxes;
 StructuredBuffer<float4> _DsStrokes;
 
+// The baked gradient strip, and the sampler it is read through (story #1449).
+// One row per gradient row of the paint heap, 256 texels wide, RGBA8 —
+// `dashpaint::gradient_strip` bakes it, `ds_runtime_gradient_strip` hands the
+// rows out, and `BrgPainter` uploads them into a `Texture2D`.
+//
+// **LINEAR, never sRGB.** A stop's components are sRGB-encoded and this project
+// blends in that space, so the sampler must hand back the stored code points
+// unconverted — exactly what the stop loop this replaced read out of the heap.
+// `BrgPainter` constructs the texture with `linear: true` for that reason and
+// `paint.wgsl` binds `Rgba8Unorm` for the same one.
+//
+// **Bilinear and clamped, and that is the whole mechanism.** Between two texel
+// centres a filtered read is the linear interpolation the ramp is already made
+// of, so this is not an approximation of the ramp along `t` but the same
+// piecewise-linear function evaluated by the sampler instead of by a loop; the
+// clamp at both ends is what makes the two ends the clamped colours, which is
+// the ramp's own `TileMode::Clamp` rule.
+//
+// **Declared by every class, including text.** It costs the text class one `t`
+// register for a texture no glyph fragment samples — a run's fill is a solid
+// colour in `_DsGlyphs` and never a gradient — and it is declared there anyway
+// because `BindHeapTo` is the one path every material goes through, and a
+// material whose shader declares a sampler nothing bound reads an unbound one.
+TEXTURE2D(_DsGradientStrip);
+SAMPLER(sampler_DsGradientStrip);
+
 #ifdef DASHSCENE_CLASS_TEXT
 // One row per glyph run: `(r, g, b, a)` then `(1/atlas width, 1/atlas height,
 // px range, resolved)`. `Runtime/PaintHeap.cs` carries the other copy of the
@@ -216,7 +242,12 @@ CBUFFER_START(UnityPerMaterial)
     float4 _DsShade;
     float4 _DsPivot;
     uint4  _DsPaint;
-    // (aa, solid base, gradient base, unused).
+    // (aa, solid base, gradient base, gradient strip rows).
+    //
+    // The fourth component is the height of the bound `_DsGradientStrip`, which
+    // is the divisor that turns a gradient row index into a v coordinate.
+    // **At least one**, because a frame with no gradient still uploads a
+    // one-row placeholder and a zero here would divide by nothing.
     //
     // `aa` is the width in document units over which an edge ramps — one
     // device pixel, resolved by the painter from the document-to-screen scale,
@@ -287,8 +318,18 @@ CBUFFER_END
 // because agreeing with a shipped painter beats inventing a third behaviour,
 // and #1281 exists so that choice does not harden into the rule by being the
 // thing that shipped.
+//
+// **The body is compiled out for a document that clips nothing**, which is
+// `DS_HAS_CLIPS`. The keyword is toggled per material from
+// `ds_runtime_kind_set` on every drawn frame, and the set is a census of the
+// tables the commit this frame draws produced — so no instance can name a clip
+// range in a variant built without the loop. The unclipped answer either way;
+// what changes is whether the loop, the box loads and the distances exist.
+// `paint.wgsl` removes the same code through an `override` constant, which is
+// what a pipeline-specialising painter has where a Unity one has a keyword.
 float DsClipCoverage(uint offset, uint count, float2 p)
 {
+#if DS_HAS_CLIPS
     float cover = 1.0;
     for (uint i = 0u; i < count; i = i + 1u)
     {
@@ -300,14 +341,21 @@ float DsClipCoverage(uint offset, uint count, float2 p)
         cover = min(cover, coverage(d, _DsGlobals.x));
     }
     return cover;
+#else
+    return 1.0;
+#endif
 }
 
 // One gradient row's colour at document point `p`.
 //
-// Reads the twelve words in the order `paint.wgsl`'s `gradient_colour` writes
-// them, and hands the stops to the generated `gradient_ramp`. The handles are
-// stored normalised to the node's box, which is what makes a gradient row
-// shareable between nodes of different sizes.
+// Reads the first two of the twelve words in the order `paint.wgsl`'s
+// `gradient_colour` writes them, and reads the ramp itself out of the baked
+// strip. The handles are stored normalised to the node's box, which is what
+// makes a gradient row shareable between nodes of different sizes.
+//
+// **The ten stop words are still in the heap and are no longer read here**
+// (story #1449). The row's layout is boundary B's and is what the lean painter
+// packs, so this reads fewer of its words rather than the packer writing fewer.
 float4 DsGradientColour(uint row, float4 bounds, float2 p)
 {
     uint base = (uint)_DsGlobals.z + row * DS_GRADIENT_WORDS;
@@ -318,10 +366,6 @@ float4 DsGradientColour(uint row, float4 bounds, float2 p)
     float2 secondary = bounds.xy + frame.xy * bounds.zw;
 
     uint kind = (uint)frame.z;
-    // Clamped to the row's own slot count, as the lean painter clamps it: a
-    // loop that walked past the row would read the NEXT gradient's handles as
-    // stops. The C# packer asserts the same bound before it writes the row.
-    uint count = min((uint)frame.w, MAX_GRADIENT_STOPS);
 
     float t;
     if (kind == DS_GRADIENT_RADIAL)
@@ -344,16 +388,24 @@ float4 DsGradientColour(uint row, float4 bounds, float2 p)
         t = gradient_linear_t(p, origin, primary, secondary);
     }
 
-    float4 lo = _DsPaints[base + 2u];
-    float4 hi = _DsPaints[base + 3u];
-    float offsets[8] = { lo.x, lo.y, lo.z, lo.w, hi.x, hi.y, hi.z, hi.w };
-    float4 colours[8] = {
-        _DsPaints[base + 4u], _DsPaints[base + 5u],
-        _DsPaints[base + 6u], _DsPaints[base + 7u],
-        _DsPaints[base + 8u], _DsPaints[base + 9u],
-        _DsPaints[base + 10u], _DsPaints[base + 11u],
-    };
-    return gradient_ramp(t, offsets, colours, count);
+    // One sample, in place of the walk over eight offsets and up to eight
+    // colours this used to do per fragment (story #1449). `dashpaint`'s
+    // `bake_row` evaluated `gradient_ramp`'s own rules at 256 positions on the
+    // CPU, so this is the same ramp read back rather than a second one.
+    //
+    // `t` addresses the row's 256 texels directly: the strip is baked at texel
+    // centres and the sampler is filtering, so a `t` between two centres reads
+    // the linear interpolation between them, which is what the ramp is there.
+    //
+    // The v coordinate is this gradient's own row centre. `_DsGlobals.w` is the
+    // strip texture's height and is never zero — a frame with no gradient
+    // uploads a one-row placeholder that no instance names, for the same reason
+    // `paint.wgsl` binds one.
+    return SAMPLE_TEXTURE2D_LOD(
+        _DsGradientStrip,
+        sampler_DsGradientStrip,
+        float2(t, ((float)row + 0.5) / _DsGlobals.w),
+        0);
 }
 
 #ifdef DASHSCENE_CLASS_TEXT
@@ -502,6 +554,46 @@ float4 DsShade(DsVaryings input)
     else
 #endif
     {
+    // The plain fill: a solid colour on a sharp box that nothing clips. The
+    // commonest instance in every scene measured for epic #1441, and the one
+    // the general path below charges the most for relative to what it draws —
+    // a stroke branch it does not take, a gradient branch it does not take, and
+    // a clip call whose loop runs zero times.
+    //
+    // **It is the general path's own arithmetic, not an approximation of it.**
+    // With no clip range `DsClipCoverage` returns exactly 1.0, so the general
+    // path computes `coverage(d, aa) * 1.0 * _DsShade.x` and this computes
+    // `coverage(d, aa) * _DsShade.x` — the same product, since multiplying by
+    // one is exact. The distance is computed from the same centre with the same
+    // half-size, and the alpha is bound in the same order: floating-point
+    // multiplication does not associate, so a different grouping would move the
+    // last bit of a channel and the goldens with it.
+    //
+    // What it saves is what a literal zero radius lets the compiler fold:
+    // `rounded_box_sdf`'s corner select and its radius arithmetic reduce before
+    // the shader runs, which is why the distance is recomputed here rather than
+    // the one below being reused.
+    //
+    // **No baked-vector condition, unlike `paint.wgsl`'s twin.** That shader
+    // tests `in.shape == 0u` because a baked vector's silhouette IS its
+    // coverage mask and its box says nothing about where it inks; this painter
+    // refuses such a node outright — `FramePacker` reports `VectorField` and
+    // emits no instance — so no fragment here can carry one.
+    //
+    // **No `discard`, also unlike that twin.** Returning early is what saves
+    // the work; discarding a zero-coverage fragment as well would change what
+    // the opaque and cutout classes do with it, and those two decide that in
+    // their own fragment stages.
+    if (kind == DS_KIND_FILL_SOLID && paint.w == 0u && all(_DsCorners == 0.0))
+    {
+        float2 plainHalf = quad.zw * 0.5;
+        float plainD = rounded_box_sdf(
+            input.local - (quad.xy + plainHalf), plainHalf, float4(0.0, 0.0, 0.0, 0.0));
+        float plainCover = coverage(plainD, aa) * _DsShade.x;
+        float4 plainColour = _DsPaints[(uint)_DsGlobals.y + row];
+        return float4(plainColour.rgb, plainColour.a * plainCover);
+    }
+
     // **The rounded box, computed only where a rounded box is what is drawn.**
     // `_DsCorners` carries the glyph's rectangle in ATLAS TEXELS on a text
     // instance, so on the text arm above this would evaluate `rounded_box_sdf`
@@ -513,6 +605,29 @@ float4 DsShade(DsVaryings input)
     float2 centre = quad.xy + halfSize;
     float d = rounded_box_sdf(input.local - centre, halfSize, _DsCorners);
 
+    // **Compiled out for a document whose paint table interned no stroke**,
+    // which is `DS_HAS_STROKES`. The set is a census of that table, taken at
+    // the commit this frame draws, so no instance can name a stroke row in a
+    // variant built without the arm.
+    //
+    // **What a frame that somehow held one would draw, and it is NOT what
+    // `paint.wgsl` draws.** Here the instance falls into the fill arm below and
+    // reads `_DsPaints[solid base + row]` — but `row` on a stroke instance
+    // names a row of the STROKE table, so this is another table's row read as a
+    // colour, which is the failure class
+    // `a_kind_this_shader_cannot_draw_is_black_not_another_tables_row` exists
+    // for on the other painter. `paint.wgsl` reaches its final `else` and
+    // discards instead, which
+    // `crates/dashscene-gpu/tests/kind_set.rs::a_stroke_under_a_stroke_free_pipeline_draws_nothing`
+    // pins. The difference is left standing rather than closed: matching it
+    // needs a `kind == DS_KIND_STROKE` compare on the variant this story exists
+    // to make cheap, for a state the kind set makes unreachable, and this
+    // painter has no `force_kind_set` seam to reach it from a test either.
+    //
+    // **Both halves go together, and here they already are one branch**: this
+    // arm carries the stroke table's colour AND its coverage, so gating it gates
+    // the read as well.
+#if DS_HAS_STROKES
     if (kind == DS_KIND_STROKE)
     {
         // Colour first, then `(width, align, 0, 0)` — the order
@@ -525,6 +640,7 @@ float4 DsShade(DsVaryings input)
         shape = stroke_coverage(d, params.x, params.y, aa);
     }
     else
+#endif
     {
         shape = coverage(d, aa);
         if (kind == DS_KIND_FILL_GRADIENT)

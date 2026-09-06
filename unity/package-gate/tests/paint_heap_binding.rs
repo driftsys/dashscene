@@ -53,7 +53,7 @@ const BIND_HEAP: &str = "private void BindHeap()";
 ///
 /// **Read here rather than in `BindHeap`, since story #1445.** The row is
 /// compared in `UploadHeap` against what the last `BindHeap` bound — that
-/// comparison is one of the four reasons the binding is refreshed — and two
+/// comparison is one of the five reasons the binding is refreshed — and two
 /// spellings of the same row would make it a comparison of two constructions
 /// rather than of two values. So the order below is pinned where the row is
 /// built.
@@ -310,6 +310,7 @@ fn each_name_is_bound_to_the_buffer_it_means() {
         "material.SetBuffer(PaintsId, _paintBuffer);",
         "material.SetBuffer(ClipBoxesId, _clipBuffer);",
         "material.SetBuffer(StrokesId, _strokeBuffer);",
+        "material.SetTexture(GradientStripId, _stripTexture);",
         "material.SetVector(ScalarsId, scalars);",
     ] {
         assert!(
@@ -325,10 +326,10 @@ fn each_name_is_bound_to_the_buffer_it_means() {
     let scalars = body(&painter(), SCALARS);
     let squeezed: String = scalars.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        squeezed.contains("EdgeWidth, _packer.SolidBase, _packer.GradientBase, 0.0f"),
+        squeezed.contains("EdgeWidth, _packer.SolidBase, _packer.GradientBase, _stripRows"),
         "{PAINTER}'s `Scalars` does not build `_DsGlobals` as `(aa, solid \
-         base, gradient base, unused)`, which is the order the shading reads \
-         it in."
+         base, gradient base, gradient strip rows)`, which is the order the \
+         shading reads it in."
     );
 
     // **And `BindHeap` binds what `Scalars` built**, rather than a second
@@ -359,6 +360,11 @@ fn each_name_is_bound_to_the_buffer_it_means() {
     for (component, read) in [
         ("y", "_DsPaints[(uint)_DsGlobals.y + row]"),
         ("z", "(uint)_DsGlobals.z + row * DS_GRADIENT_WORDS"),
+        // Story #1449's fourth component: the strip texture's height, which
+        // turns a gradient row index into a v coordinate. A shading that
+        // divided by the gradient base instead would sample the wrong row of a
+        // correctly uploaded strip, on a painter that changed not at all.
+        ("w", "((float)row + 0.5) / _DsGlobals.w"),
     ] {
         assert!(
             shading.contains(read),
@@ -368,6 +374,49 @@ fn each_name_is_bound_to_the_buffer_it_means() {
              when they disagree, not a failure."
         );
     }
+}
+
+/// The strip's v coordinate is the same arithmetic in both shading languages.
+///
+/// **R-T5 single-sources the SDF math and cannot reach this one.** A texture
+/// sample's binding is not portable, so `paint.wgsl`'s `gradient_colour` has no
+/// generated twin and `DsGradientColour` rewrites the mapping by hand — the
+/// same exemption `DsMsdfSample` already states. What is rewritten is a
+/// row-addressing formula, and a half-texel correction or a transposed strip
+/// applied to one painter and not the other makes the two sample different
+/// rows of the same correct bytes, with `unity/ffi-check` — which compares the
+/// baked BYTES — still green.
+///
+/// This does not prove the two mean the same thing. It makes a change to
+/// either fail until the other is edited, which is what nothing did before.
+#[test]
+fn both_painters_address_the_strip_row_the_same_way() {
+    let wgsl = std::fs::read_to_string(
+        package_gate::root().join("crates/dashscene-gpu/src/shaders/paint.wgsl"),
+    )
+    .expect("the lean painter's paint.wgsl");
+
+    const WGSL_V: &str = "(f32(row) + 0.5) / f32(globals.strip_rows)";
+    assert!(
+        wgsl.contains(WGSL_V),
+        "paint.wgsl does not address the strip row as `{WGSL_V}`. The HLSL twin \
+         is written by hand against this formula, so a change here that is not \
+         made there samples a different row on one painter."
+    );
+
+    let shading: String = package_gate::hlsl_sources()
+        .iter()
+        .map(|(_, source)| source.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    const HLSL_V: &str = "((float)row + 0.5) / _DsGlobals.w";
+    assert!(
+        shading.contains(HLSL_V),
+        "the Unity shading does not address the strip row as `{HLSL_V}`, which \
+         is `{WGSL_V}` in the other painter's language. Two painters sampling \
+         different rows of the same strip is a wrong picture on one of them, \
+         not a failure."
+    );
 }
 
 /// The glyph rows go on the text materials and on no other.
