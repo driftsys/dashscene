@@ -83,7 +83,7 @@ has no opinion about, so one this pattern rejects must still be reported —
 `unity_cpu_rows` folding it in with nothing said was a real defect this fixture
 exists to hold shut.
 
-## `unity-cpu-join.log` and `unity-cpu-join-entry-{1,2,3}-sf-timestats.txt`
+## `unity-cpu-join.log` and `unity-cpu-join-entry-{1..7}-sf-timestats.txt`
 
 Not diffed against a golden — these are checked with targeted assertions in
 `unity-frame-table-test.sh` (its own "6." section) instead, because what they
@@ -95,20 +95,29 @@ to inferring identity from a sweep letter produced a byte-identical golden
 against it. `unity-cpu-join.log` gives one sweep tag two pids instead — `9002`
 ("real") and `9001` ("stale"), the shape a failed `logcat -c` (ordinary on
 Android 11+, per `lib.sh`'s `ds_logcat_clear`) would leave in one capture file.
-Pid `9002` carries two frame-cost samples against pid `9001`'s one, so
-`sweep_pid`'s mode vote has an actual contest to resolve rather than a single
-uncontested candidate; pid `9001`'s sample lands inside entry 1's real window
+Pid `9002` carries three frame-cost samples against pid `9001`'s two, so
+`sweep_pid`'s mode vote has an actual contest to resolve — and pid `9001` owns
+both the chronologically first sample and the chronologically last one, so
+neither a "first" nor a "last" resolution would happen to agree with the mode by
+coincidence; pid `9001`'s in-window sample lands inside entry 1's real window
 with an implausible frame count (999) so that it is excluded is observable in
 `drawn frames (player)` rather than assumed.
 
-Its three timestats dumps each isolate one further gap the same review round
-found unpinned: entry 1's carries two candidate layer blocks — a container and a
+Its seven timestats dumps each isolate one further gap a review round found
+unpinned: entry 1's carries two candidate layer blocks — a container and a
 `(BLAST)` child with different `totalFrames` — so the `(BLAST)` preference has
 something to choose between; entry 2's is a plain valid dump paired with a
 degenerate window (`start == end` in the log, a re-read or a device clock step)
 so the `span <= 0` guard has a real row to blank out rather than a window that
-was never bracketed at all; entry 3's omits `droppedFrames` entirely, so the
-strict-parsing requirement has a field to reject rather than default to zero.
+was never bracketed at all; entry 3's omits `droppedFrames` entirely and entry
+5's omits `totalFrames` entirely, so either required field missing alone is
+covered; entry 4's carries a `totalFrames` value that is present but does not
+parse as a whole number, the "ring cut it mid-digit" case distinct from a
+field's outright absence; entry 6's window carries only a `start` marker, so
+`window_span_cell`'s `(open)` branch has a real one-sided window to print rather
+than never firing; entry 7's window is genuinely inverted (`end` before
+`start`), not merely equal, so the `span <= 0` guard is exercised on a negative
+span and not only a zero one.
 
 ## Regenerating the expected tables
 

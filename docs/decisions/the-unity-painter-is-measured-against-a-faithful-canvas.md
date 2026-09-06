@@ -2,7 +2,9 @@
 
     status   **accepted (2026-09-05, owner ruling in session)**. Amended
              2026-09-06 by story #1444, which records under D2 the three rules
-             its implementation reads differently and why. What is
+             its implementation reads differently and why, and by issue #1457,
+             which closes D1's own instrument gap and updates its CPU clause to
+             say so. What is
              accepted is the CRITERION, the rules for building the baseline it
              is read against, and the instruments that read it — D1 to D3 below
              bind the ten stories of epic #1441. How the criterion is met is

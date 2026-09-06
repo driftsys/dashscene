@@ -1506,8 +1506,7 @@ line quoted above.
 a `sed` of its own. `frame-table.py` is the one parser for every instrument line
 this apparatus reads, and the sweep script hands it the captures and gets
 `unity-frames.md` and `unity-threads.md` back — and, since issue #1457 below,
-`unity-cpu.md` as a third. Three consequences worth naming, from story #1443's
-own two:
+`unity-cpu.md` as a third. Three consequences worth naming:
 
 - the captures are now `adb logcat -v epoch`, which is the only format that
   parser reads. Captures taken before this story are in logcat's default
@@ -1541,7 +1540,12 @@ epic #1441.
 sweep rather than one per sweep — a sweep-wide window would give one figure per
 sweep and not per row. Taken on the Pixel 5 (Adreno 620, Vulkan 1.1.0, rung
 `RawBuffer`) at 1080x2340, three sweeps of 20 s per entry, host clock
-`20260906T135313Z`, commit `c2a82f3`. Dumps are under
+`20260906T135313Z`, from the branch of PR #1481. The sweep script stamps its own
+`git rev-parse` into the captures on the shelf — `c2a82f3` there — and that
+commit does not survive the branch's squash. The commits after it fix a
+cross-sweep contamination risk in the host-side pid join, harden
+`frame-table.py`'s parsing, and add fixture coverage; none of them changes code
+the player runs, so the reading stands. Dumps are under
 `driftsys/dashscene-v021-lanes/probe-1457/`, outside this repository.
 
     sweep entry extent      window s presented dropped cpu%  cpu ms/frame drawn(player)
@@ -1564,11 +1568,12 @@ sweep and not per row. Taken on the Pixel 5 (Adreno 620, Vulkan 1.1.0, rung
     C     5     —           23.1     1391      0       43    7.16         0
     C     6     —           20.0     1206      0       —     —            0
 
-Zero dropped frames on every row, and no dump was reported Unreadable. Every
-`presented frames` count scales with its own `window s` at close to 60 Hz —
-1076-1391 frames over 20.0-23.1 s — nowhere near double the ratio any row
-implies, which is what says `-clear` bounded each window rather than
-accumulating across entries.
+Zero dropped frames on every row, and no dump was reported Unreadable. Entry 1's
+rate is consistent at 30.4-30.6 Hz across all three sweeps — half of 60 Hz,
+matching `surfaces`'s already-documented fill-bound pacing above — and every
+other entry sits at 53.5-60.3 Hz. No row is anywhere near double either rate,
+which is what says `-clear` bounded each window rather than accumulating across
+entries.
 
 **C5 ran three seconds long, and C6's CPU cell reads `—` rather than a number.**
 Some `adb shell` round trip inside entry 5's loop body was slow enough to push
