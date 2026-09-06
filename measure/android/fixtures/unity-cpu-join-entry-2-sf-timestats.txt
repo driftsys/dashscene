@@ -1,0 +1,14 @@
+# dumpsys SurfaceFlinger --timestats
+
+A plain, valid dump — one block, no ambiguity. This entry's window in
+unity-cpu-join.log is degenerate (`start` == `end`, a re-read or a device
+clock step), so the row must read "—" for window s, cpu % and cpu ms per
+presented frame, never a zero or a negative number — but `presented`/
+`dropped` still come from this dump untouched, since the span guard is not
+about whether the compositor read the layer.
+
+displayRefreshRate = 60 fps
+uid = 1
+layerName = SurfaceView[com.driftsys.dashscene.showcase/x](BLAST)#1
+totalFrames = 300
+droppedFrames = 1

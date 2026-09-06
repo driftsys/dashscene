@@ -1505,7 +1505,9 @@ line quoted above.
 `measure/android/unity-frame-cost.sh` no longer reshapes the player's lines with
 a `sed` of its own. `frame-table.py` is the one parser for every instrument line
 this apparatus reads, and the sweep script hands it the captures and gets
-`unity-frames.md` and `unity-threads.md` back. Three consequences worth naming:
+`unity-frames.md` and `unity-threads.md` back — and, since issue #1457 below,
+`unity-cpu.md` as a third. Three consequences worth naming, from story #1443's
+own two:
 
 - the captures are now `adb logcat -v epoch`, which is the only format that
   parser reads. Captures taken before this story are in logcat's default
@@ -1523,6 +1525,71 @@ capture cut out of this run, and `just harness-tests` runs it. It found a defect
 on its first run: the first sample of a process took its interval from the
 earliest CPU reading without checking that reading came first, so a sampler
 started after that sample printed a **negative** wall time.
+
+### CPU per presented frame (2026-09-06)
+
+Issue #1457, closing the gap D1 names in
+[`../decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`](../decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md):
+"no instrument reports the first quantity today" is no longer true — the CPU
+sampler's `utime + stime` divided by the **compositor's** frame count over the
+same window is `unity-cpu.md`, a fourth table beside `unity-frames.md` and
+`unity-threads.md`. This is the instrument, not yet the comparison D1 asks for:
+story #1451 is what reads this criterion against the Canvas painter and closes
+epic #1441.
+
+**The window is the entry's dwell**, one compositor clear-and-dump per entry per
+sweep rather than one per sweep — a sweep-wide window would give one figure per
+sweep and not per row. Taken on the Pixel 5 (Adreno 620, Vulkan 1.1.0, rung
+`RawBuffer`) at 1080x2340, three sweeps of 20 s per entry, host clock
+`20260906T135313Z`, commit `c2a82f3`. Dumps are under
+`driftsys/dashscene-v021-lanes/probe-1457/`, outside this repository.
+
+    sweep entry extent      window s presented dropped cpu%  cpu ms/frame drawn(player)
+    A     1     1080x2340   20.1     611       0       25    8.11         240
+    A     2     1080x2340   20.0     1137      0       49    8.68         480
+    A     3     1080x2340   20.1     1207      0       44    7.34         240
+    A     4     —           20.1     1208      0       44    7.29         0
+    A     5     —           20.1     1147      0       44    7.62         0
+    A     6     —           20.1     1170      0       43    7.44         0
+    B     1     1080x2340   20.1     614       0       25    8.06         240
+    B     2     1080x2340   20.1     1205      0       49    8.17         480
+    B     3     1080x2340   20.1     1207      0       43    7.21         240
+    B     4     —           20.0     1206      0       43    7.19         0
+    B     5     —           20.0     1206      0       43    7.10         0
+    B     6     —           20.0     1141      0       43    7.54         0
+    C     1     1080x2340   20.1     615       0       25    8.08         240
+    C     2     1080x2340   20.1     1204      0       49    8.18         480
+    C     3     1080x2340   20.1     1076      0       44    8.13         240
+    C     4     —           20.1     1206      0       44    7.25         0
+    C     5     —           23.1     1391      0       43    7.16         0
+    C     6     —           20.0     1206      0       —     —            0
+
+Zero dropped frames on every row, and no dump was reported Unreadable. Every
+`presented frames` count scales with its own `window s` at close to 60 Hz —
+1076-1391 frames over 20.0-23.1 s — nowhere near double the ratio any row
+implies, which is what says `-clear` bounded each window rather than
+accumulating across entries.
+
+**C5 ran three seconds long, and C6's CPU cell reads `—` rather than a number.**
+Some `adb shell` round trip inside entry 5's loop body was slow enough to push
+that window to 23.1 s instead of the usual ~20.1 — the `presented frames` count
+(1391) scales with it rather than doubling, so `-clear` still bounded the window
+correctly; it was only slow. What that delay cost is entry 6: the CPU sampler's
+own budget (`(total * dwell) + 6` seconds, `unity-frame-cost.sh`) is sized off
+the NOMINAL dwell, and C5's overrun left no sampler reading inside C6's window
+to bracket a percentage from. `cpu_over` reports that honestly as `—` rather
+than one extrapolated past the sampler's actual coverage — the same guard the
+fixture's own entry 3 pins, reached here for the first time by a real device
+rather than by a constructed case.
+
+**Entries 4 through 6 are the gap D1 names, on this device.** Their
+`drawn frames (player)` column reads 0 — no `unity-frames.md` sample closed
+inside that window — while the compositor's own count for the same window is
+1141-1391. `unity-frames.md`'s sample boundary is 240 drawn frames, which for
+these three (slower, paced) entries takes longer than one 20 s dwell to close,
+so the player's own drawn-frame report and the compositor's presented count
+genuinely diverge here — the reason D1 requires the compositor's count rather
+than the player's.
 
 ## Unity's Android lifecycle over the lease (2026-08-29)
 

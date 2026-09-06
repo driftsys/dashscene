@@ -123,16 +123,16 @@ picture — stays out.
   - **CPU, required.** The Unity painter's **process CPU per presented frame**
     shall be lower than the Canvas's, and its **main-thread cost above the
     empty-scene floor** shall be lower than the Canvas's. **No instrument
-    reports the first quantity today**: the sampler is normalised by
-    `measure/android/frame-table.py` over the interval each sample covers, as a
-    percentage of one core, and the compositor's frame count comes from a
-    separate `measure/android/gpu-capture.sh` run with its own window. Story
-    #1443 is what joins them — one window, the sampler and the compositor read
-    across it, the frame count taken from the compositor rather than from the
-    player's own drawn-frame reports, because a layer that presents nothing for
-    part of a window makes drawn and presented differ, which
-    `docs/design/android-toolchain.md` records happening on `typography`. **Met
-    when** `utime + stime` from `/proc/<pid>/stat`, taken by
+    reported the first quantity before issue #1457**: the sampler was normalised
+    by `measure/android/frame-table.py` over the interval each sample covers, as
+    a percentage of one core, and the compositor's frame count came from a
+    separate `measure/android/gpu-capture.sh` run with its own window. Issue
+    #1457's pull request joined them — one window per entry per sweep, the
+    sampler and the compositor read across it, the frame count taken from the
+    compositor rather than from the player's own drawn-frame reports, because a
+    layer that presents nothing for part of a window makes drawn and presented
+    differ, which `docs/design/android-toolchain.md` records happening on
+    `typography`. **Met when** `utime + stime` from `/proc/<pid>/stat`, taken by
     `ds_cpu_sampler_start` in `measure/android/lib.sh` — which
     `measure/android/frame-capture.sh` starts for the lean host and nothing
     starts for the Unity one, so story #1443 wires it into

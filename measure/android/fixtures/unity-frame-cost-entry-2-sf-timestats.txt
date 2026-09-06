@@ -1,0 +1,26 @@
+# dumpsys SurfaceFlinger --timestats
+
+**Hand-constructed, the package's own layer block removed.** No player on
+this device fails to draw, so a real dump never lacks the layer — the case
+`read_timestats` must still cover, per `measure/android/fixtures/README.md`:
+a missing layer reads as unreadable in `unity-cpu.md`, never as a row of
+zeroes. Only the "none" layer other apps' compositor traffic produces is
+left, matching what a real dump carries when the package is not yet drawing.
+
+SurfaceFlinger TimeStats:
+Legacy stats are as follows:
+statsStart = 1705482065
+statsEnd = 1705482075
+totalFrames = 0
+missedFrames = 0
+
+displayRefreshRate = 60 fps
+renderRate = 60 fps
+uid = 10224
+layerName = none
+packageName =
+gameMode = Unsupported
+totalFrames = 0
+droppedFrames = 0
+lateAcquireFrames = 0
+badDesiredPresentFrames = 0

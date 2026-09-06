@@ -1,0 +1,19 @@
+# dumpsys SurfaceFlinger --timestats
+
+Constructed to carry TWO blocks whose layerName both name the package — a
+container layer and its (BLAST) child, the shape gpu-capture.sh's own layer
+discovery already prefers the second of. read_timestats must take the
+(BLAST) block's totalFrames (150) and not the container's (999), whichever
+sorts first in the dump.
+
+displayRefreshRate = 60 fps
+uid = 1
+layerName = SurfaceView[com.driftsys.dashscene.showcase/x]
+totalFrames = 999
+droppedFrames = 9
+
+displayRefreshRate = 60 fps
+uid = 2
+layerName = SurfaceView[com.driftsys.dashscene.showcase/x](BLAST)#1
+totalFrames = 150
+droppedFrames = 0
