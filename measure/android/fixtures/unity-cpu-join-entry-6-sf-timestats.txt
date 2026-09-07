@@ -1,0 +1,13 @@
+# dumpsys SurfaceFlinger --timestats
+
+A plain, valid dump. This entry's window in unity-cpu-join.log carries only
+a `start` marker — the shape a dropped `log` call (every one
+unity-frame-cost.sh makes is `|| true`) leaves. The row must still exist,
+with `window s` reading "(open)" and cpu/cpu ms reading em-dash, never a
+duration computed from one boundary alone.
+
+displayRefreshRate = 60 fps
+uid = 1
+layerName = SurfaceView[com.driftsys.dashscene.showcase/x](BLAST)#1
+totalFrames = 400
+droppedFrames = 0

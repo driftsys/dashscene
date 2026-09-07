@@ -22,10 +22,15 @@
 # whose sweeps drifted across two geometries. That guard has to fire before a
 # table is written at all, so it cannot be a column of one.
 #
-# **Two tables, from one set of captures**: `unity-frames.md` for the frame-cost
-# line and `unity-threads.md` for the thread-time line, which reports what the
-# first excludes by construction (story #1443, D3 of
-# `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`).
+# **Three tables, from one set of captures**: `unity-frames.md` for the
+# frame-cost line, `unity-threads.md` for the thread-time line, which reports
+# what the first excludes by construction (story #1443, D3 of
+# `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`),
+# and `unity-cpu.md` for D1's own criterion — the sampler's CPU divided by the
+# **compositor's** frame count over the same window (issue #1457). That window
+# is the entry's dwell: `dumpsys SurfaceFlinger --timestats` is cleared and
+# dumped once per entry rather than once per sweep, because a sweep-wide window
+# would give one figure per sweep and not per row.
 #
 # **It tabulates and does not average.** Each row is one reported sample of 240
 # drawn frames, exactly as the player emitted it, and the summary reports the
@@ -93,8 +98,11 @@ mkdir -p "${out}"
 # `rows == captured` guard — globs `sweep-*.log`, so a `DS_SWEEPS=5` run
 # followed by a `DS_SWEEPS=3` one would publish sweeps D and E from another
 # device, commit and extent under this run's header. The guard could not see it
-# either: both of its counts come from the same stale files.
-rm -f "${out}"/sweep-*.log
+# either: both of its counts come from the same stale files. The per-entry
+# compositor dumps are the same hazard one level down: a run with fewer
+# entries than the last one would otherwise leave a later entry's dump on
+# disk for `unity-cpu.md`'s own glob to pick up.
+rm -f "${out}"/sweep-*.log "${out}"/*-entry-*-sf-timestats.txt
 device="$("${adb}" shell getprop ro.product.model | tr -d '\r')"
 stamp="$("${adb}" shell date -u +%Y%m%dT%H%M%SZ | tr -d '\r')"
 commit="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
@@ -112,6 +120,11 @@ restore() {
     "${adb}" shell wm size reset >/dev/null 2>&1 || true
     "${adb}" shell settings put system user_rotation 0 >/dev/null 2>&1 || true
     "${adb}" shell settings put system accelerometer_rotation 1 >/dev/null 2>&1 || true
+    # A sweep enables compositor timestats collection per entry; an early
+    # exit (a failed guard, `set -e`) between that `-enable` and the loop's
+    # own `-disable` would otherwise leave collection on for the rest of the
+    # device's session. Idempotent to call when already disabled.
+    "${adb}" shell dumpsys SurfaceFlinger --timestats -disable >/dev/null 2>&1 || true
 }
 trap restore EXIT
 
@@ -184,13 +197,62 @@ for index in $(seq 1 "${sweeps}"); do
         ds_warn "the process went between the two reads."
         exit 1
     fi
+    # **Six seconds of slack per entry, not just a flat six.** Issue #1457
+    # added several `adb shell` round trips to every entry's loop body — the
+    # window markers, the compositor dump and clear — where the loop used to
+    # spend only `dwell` seconds plus one `keyevent`. Measured on the Pixel 5:
+    # entry C5 alone ran 23.1 s against a nominal 20.1 s dwell (recorded under
+    # "CPU per presented frame" in `docs/design/android-toolchain.md`), and
+    # that 3 s overrun left entry C6 with no sampler reading inside its window
+    # at all, once the flat `+6` this script used before that story ran out.
+    # A per-entry allowance survives one slow entry instead of only a slow
+    # tail.
     ds_cpu_sampler_start "${adb}" "${pid}" \
-        "$(( (total * dwell) + 6 ))" "${DS_CPU_INTERVAL:-0.5}"
+        "$(( (total * (dwell + 6)) + 6 ))" "${DS_CPU_INTERVAL:-0.5}"
 
-    for _ in $(seq 1 "${total}"); do
+    # **One compositor window per entry, not one per sweep** (issue #1457): D1
+    # of
+    # `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`
+    # wants the compositor's frame count over the SAME window the sampler read
+    # across, and a window over the whole sweep would give one figure per
+    # sweep rather than per row. `-enable` is sent once, before the first
+    # entry's window opens; `-clear` bounds every window, per entry, the way
+    # `gpu-capture.sh` already relies on it to (`-enable` alone resets nothing
+    # already enabled). A `dashscene-window` line brackets each window the same
+    # way the CPU sampler's own readings are bracketed — through the device's
+    # `log`, so it carries the epoch `-v epoch` stamps rather than a device
+    # `date`, which is whole seconds — and states this sweep's own pid, so a
+    # window is never mistaken for an earlier sweep's the way inferring it
+    # from file order could be (`frame-table.py`'s `WINDOW` comment).
+    "${adb}" shell dumpsys SurfaceFlinger --timestats -enable >/dev/null 2>&1 || true
+    "${adb}" shell dumpsys SurfaceFlinger --timestats -clear >/dev/null 2>&1 || true
+    "${adb}" shell log -t dashscene-window "entry 1 start pid=${pid}" >/dev/null 2>&1 || true
+
+    for entry in $(seq 1 "${total}"); do
         sleep "${dwell}"
+        "${adb}" shell log -t dashscene-window "entry ${entry} end pid=${pid}" \
+            >/dev/null 2>&1 || true
+        "${adb}" shell dumpsys SurfaceFlinger --timestats -dump --maxlayers 8 \
+            > "${out}/${letter}-entry-${entry}-sf-timestats.txt" 2>/dev/null || true
+        # **Cleared, then switched immediately** — the next entry's window
+        # starts empty and the scene change follows as few `adb shell` round
+        # trips later as this apparatus can manage. Sending `keyevent 93`
+        # first and marking the next window's start after it, rather than the
+        # reverse, is what keeps the gap between "the window opened" and "the
+        # entry actually changed" to one round trip instead of two: reversed,
+        # the marker's own `log` call sat in that gap too, and every frame
+        # presented during it — still the OLD entry's content — was counted
+        # into the NEW entry's window. The window and the dwell are then the
+        # same seconds, to within that one remaining round trip — small next
+        # to a dwell of several seconds, but not zero, and not measured here.
+        "${adb}" shell dumpsys SurfaceFlinger --timestats -clear >/dev/null 2>&1 || true
         "${adb}" shell input keyevent 93 >/dev/null 2>&1 || true
+        if [ "${entry}" -lt "${total}" ]; then
+            "${adb}" shell log -t dashscene-window "entry $((entry + 1)) start pid=${pid}" \
+                >/dev/null 2>&1 || true
+        fi
     done
+    "${adb}" shell dumpsys SurfaceFlinger --timestats -disable >/dev/null 2>&1 || true
     sleep 3
     ds_cpu_sampler_stop
     # **`-v epoch`, which is the only format `frame-table.py` reads.** Epoch is
@@ -357,4 +419,51 @@ for kind in unity-frames unity-threads; do
     fi
     ds_note "wrote ${table} — ${rows} row(s) from ${captured} captured line(s)"
 done
+
+# **A fourth table with its own rows, not a column in unity-frames.md**: a
+# frame-cost row cannot be aligned to a compositor window on its own, since the
+# window is per entry per sweep and a sample row is per (pid, scene) — issue
+# #1457.
+timestats_files=("${out}"/*-entry-*-sf-timestats.txt)
+if [ -e "${timestats_files[0]}" ]; then
+    table="${out}/unity-cpu.md"
+    if ! python3 "${here}/frame-table.py" \
+        --source unity-showcase \
+        --table unity-cpu \
+        --describe "${describe}" \
+        --clk-tck "${clk_tck}" \
+        --package "${app}" \
+        "${out}"/sweep-*.log \
+        --timestats "${timestats_files[@]}" > "${table}"; then
+        ds_warn "frame-table.py reported no unity-cpu row over the timestats dumps."
+        exit 1
+    fi
+    provenance >> "${table}"
+    rows="$(grep -c '^| [A-Z] | ' "${table}" || true)"
+    unreadable="$(grep -c '^- `' "${table}" || true)"
+    # **Zero rows is a failure regardless of the unreadable count**, the same
+    # unconditional rule the unity-frames/unity-threads loop above applies —
+    # every dump naming no layer for the package (the wrong `--package`, or a
+    # player that never rendered a frame) is exactly as much "nothing measured"
+    # as an empty table with nothing to say why.
+    if [ "${rows}" -eq 0 ]; then
+        ds_warn "unity-cpu.md holds no row, over ${#timestats_files[@]} dump(s)"
+        ds_warn "and ${unreadable} unreadable."
+        exit 1
+    fi
+    # **Every dump is a row or a reported unreadable one — no third outcome.**
+    # Unlike the frame-cost and thread-cost join above, there is no
+    # de-duplication here: each dump file names exactly one (sweep, entry), so
+    # `rows + unreadable` must equal the dump count exactly rather than only
+    # within a tolerance. A dump this script generated but `frame-table.py`
+    # silently skipped — its name failing the parser's own pattern — would
+    # otherwise vanish from the table with nothing here to notice.
+    missing=$(( ${#timestats_files[@]} - rows - unreadable ))
+    if [ "${missing}" -ne 0 ]; then
+        ds_warn "unity-cpu: ${#timestats_files[@]} dump(s), ${rows} row(s) and"
+        ds_warn "${unreadable} unreadable, leaving ${missing} unaccounted for."
+        exit 1
+    fi
+    ds_note "wrote ${table} — ${rows} row(s) from ${#timestats_files[@]} dump(s)"
+fi
 ds_note "one extent (${all_extents}) and one API (${all_apis}) across every sweep"

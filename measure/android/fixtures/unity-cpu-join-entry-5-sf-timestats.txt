@@ -1,0 +1,11 @@
+# dumpsys SurfaceFlinger --timestats
+
+Constructed with totalFrames missing and droppedFrames present — the other
+half of the required-pair check from entry 3, which has droppedFrames
+missing and totalFrames present. Both fields are required; either missing
+alone must report Unreadable.
+
+displayRefreshRate = 60 fps
+uid = 1
+layerName = SurfaceView[com.driftsys.dashscene.showcase/x](BLAST)#1
+droppedFrames = 0
