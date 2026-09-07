@@ -195,6 +195,25 @@ void Near(float actual, float expected, string what)
     }
 }
 
+/// Whether two sequences hold the same values in the same order.
+///
+/// **General, because the alternative is a message that says `False`.** Every
+/// layout and coalescing check below compares a list of tuples against the list
+/// it must equal, and `Expect(a.SequenceEqual(b), "…")` would report only that
+/// they differ. This one is the comparison; [`Shown`] beside it is what puts
+/// both sides in the failure.
+bool Same<T>(IEnumerable<T> actual, IEnumerable<T> expected)
+    where T : IEquatable<T>
+{
+    return actual.SequenceEqual(expected);
+}
+
+/// A sequence, for a failure message.
+string Shown<T>(IEnumerable<T> values)
+{
+    return string.Join(", ", values);
+}
+
 /// One corpus face: a family, a weight, a font file and a committed sheet.
 TextFontFace Face(string family, ushort weight, string font, string atlas)
 {
@@ -3656,6 +3675,216 @@ Check("a run the packer could not resolve gets a ZEROED heap row", () =>
     }
 });
 
+Check("StreamLayout is FillStaging's layout: a batch head, then five streams", () =>
+{
+    // A batch of eight rows: 28 head words, then five streams of 8 * 4 words,
+    // so a batch needs 188 words and stream `s` of batch `b` starts at
+    // `b * stride + 28 + s * 32`.
+    var ranges = new List<(int First, int Count)>();
+
+    StreamLayout.Ranges(capacity: 8, strideWords: 188, batch: 0, row: 3, rows: 2, into: ranges);
+    Expect(
+        Same(ranges, new[] { (40, 8), (72, 8), (104, 8), (136, 8), (168, 8) }),
+        $"head 28 + stream s * 32 + row 3 * 4, two rows of four words each: {Shown(ranges)}");
+
+    StreamLayout.Ranges(capacity: 8, strideWords: 188, batch: 1, row: 3, rows: 2, into: ranges);
+    Expect(
+        Same(ranges, new[] { (228, 8), (260, 8), (292, 8), (324, 8), (356, 8) }),
+        $"batch 1's rows sit one whole stride further along, not over batch 0's: {Shown(ranges)}");
+
+    // R-E15: under the `ConstantBuffer` rung the stride is rounded up to the
+    // device's alignment, so it is wider than the head and five streams. The
+    // batch offset follows the STRIDE and the stream offsets follow the
+    // capacity, and the two are different numbers.
+    StreamLayout.Ranges(capacity: 8, strideWords: 256, batch: 1, row: 0, rows: 1, into: ranges);
+    Expect(
+        Same(ranges, new[] { (284, 4), (316, 4), (348, 4), (380, 4), (412, 4) }),
+        $"an aligned stride moves the batch and not the streams within it: {Shown(ranges)}");
+
+    var pieces = new List<(int Batch, int Row, int Rows)>();
+
+    StreamLayout.Cut(capacity: 8, first: 7, count: 2, into: pieces);
+    Expect(
+        Same(pieces, new[] { (0, 7, 1), (1, 0, 1) }),
+        $"a span straddling a batch boundary is cut in two: {Shown(pieces)}");
+
+    StreamLayout.Cut(capacity: 8, first: 2, count: 3, into: pieces);
+    Expect(
+        Same(pieces, new[] { (0, 2, 3) }),
+        $"a span inside one batch is one piece: {Shown(pieces)}");
+
+    StreamLayout.Cut(capacity: 8, first: 6, count: 20, into: pieces);
+    Expect(
+        Same(pieces, new[] { (0, 6, 2), (1, 0, 8), (2, 0, 8), (3, 0, 2) }),
+        $"a span crossing three boundaries is four pieces: {Shown(pieces)}");
+
+    StreamLayout.Cut(capacity: 8, first: 5, count: 0, into: pieces);
+    Expect(pieces.Count == 0, $"an empty range cuts into nothing: {Shown(pieces)}");
+
+    // The bound that keeps a piece inside the batch it names. `Cut` is what
+    // divides a range; a caller passing a raw range straight to `Ranges` would
+    // write one batch's rows over the next batch's head.
+    try
+    {
+        StreamLayout.Ranges(capacity: 8, strideWords: 188, batch: 0, row: 6, rows: 4, into: ranges);
+        throw new Exception("rows past the end of a batch were accepted");
+    }
+    catch (ArgumentOutOfRangeException)
+    {
+    }
+});
+
+Check("a ranged upload needs all five of its conditions, and each one alone refuses", () =>
+{
+    // The painter that asks this question is in `Runtime/Engine/`, which this
+    // project does not compile and no CI job runs. So the predicate is stated
+    // where it CAN be executed, and this is the execution: every condition
+    // driven false in turn, which a scan for three clause spellings cannot do —
+    // it passes just as happily when the `&&` between them becomes `||`.
+    Expect(
+        InstanceUpload.CanSendRanges(
+            packWasPartial: true, uploadedBefore: true, uploaded: 7, packed: 8,
+            sameBuffer: true, sameHead: true),
+        "a partial pack, uploaded before, one generation behind, same buffer and head: ranges");
+
+    Expect(
+        !InstanceUpload.CanSendRanges(
+            packWasPartial: false, uploadedBefore: true, uploaded: 7, packed: 8,
+            sameBuffer: true, sameHead: true),
+        "a full pack moved rows no dirty range names, so it cannot be sent as ranges");
+
+    // The clause the packer cannot supply: a painter that has uploaded nothing
+    // has an `uploaded` of 0, and the FIRST commit of a document can carry a
+    // generation of 1 — which satisfies the arithmetic below against a device
+    // that received nothing at all.
+    Expect(
+        !InstanceUpload.CanSendRanges(
+            packWasPartial: true, uploadedBefore: false, uploaded: 0, packed: 1,
+            sameBuffer: true, sameHead: true),
+        "a painter that has uploaded nothing holds no commit for a range to be a delta against");
+
+    Expect(
+        !InstanceUpload.CanSendRanges(
+            packWasPartial: true, uploadedBefore: true, uploaded: 7, packed: 9,
+            sameBuffer: true, sameHead: true),
+        "a skipped generation leaves rows the dirty set does not name");
+    Expect(
+        !InstanceUpload.CanSendRanges(
+            packWasPartial: true, uploadedBefore: true, uploaded: 8, packed: 8,
+            sameBuffer: true, sameHead: true),
+        "the commit the device already holds is not a delta against itself");
+
+    Expect(
+        !InstanceUpload.CanSendRanges(
+            packWasPartial: true, uploadedBefore: true, uploaded: 7, packed: 8,
+            sameBuffer: false, sameHead: true),
+        "a reallocated buffer holds nothing this painter wrote");
+
+    // **The condition that is not the commit's at all.** The document's
+    // object-to-world is the host's, set on its own schedule, and it lives in
+    // each batch's head — which a ranged upload never rewrites. A host that
+    // repositioned the document between two commits the other conditions admit
+    // would otherwise keep drawing at the previous transform.
+    Expect(
+        !InstanceUpload.CanSendRanges(
+            packWasPartial: true, uploadedBefore: true, uploaded: 7, packed: 8,
+            sameBuffer: true, sameHead: false),
+        "the batch heads hold a transform the painter is no longer drawing with");
+
+    // **The rows a ranged upload reports**, derived from the words it counted.
+    // Its only caller is in `Runtime/Engine/`, which nothing compiles and
+    // nothing runs, so without this the arithmetic behind every `Ranges` row
+    // count is executed by no gate at all.
+    Expect(InstanceUpload.RowsIn(0) == 0, "no words carry no rows");
+    Expect(
+        InstanceUpload.RowsIn(StreamLayout.Streams * StreamLayout.WordsPerRow) == 1,
+        "one row is its five streams of four words");
+    Expect(
+        InstanceUpload.RowsIn(7 * StreamLayout.Streams * StreamLayout.WordsPerRow) == 7,
+        "seven rows are seven times that");
+});
+
+Check("a run table a dirty walk cannot follow is refused, both shapes", () =>
+{
+    // **Driven here because no committed document reaches it.** Every fixture
+    // in this repository carries a well-formed run table, so the packer's own
+    // refusal is exercised by nothing — a mutation of it reddens no gate. These
+    // are the tables a corrupt frame would carry.
+    GlyphRun Run(uint rect) => new GlyphRun { Rect = rect };
+
+    Expect(
+        FramePacker.RunsAreWalkable(new GlyphRun[0], rectCount: 4),
+        "a document with no runs is walkable");
+    Expect(
+        FramePacker.RunsAreWalkable(new[] { Run(0), Run(0), Run(2), Run(3) }, rectCount: 4),
+        "anchors that do not descend, all inside the rect table, are walkable — two runs on "
+        + "one rect is a document with two text nodes' worth of runs on one anchor");
+
+    // Shape one: the table is not ordered by anchor. The full walk names this
+    // `CorruptRow` when its cursor has already passed the anchor; a dirty walk
+    // cannot tell it from a clean rect's own run.
+    Expect(
+        !FramePacker.RunsAreWalkable(new[] { Run(0), Run(2), Run(1) }, rectCount: 4),
+        "a run anchored behind the one before it is a table no forward cursor can follow");
+
+    // Shape two: a run anchored past the rect table. The full walk names it
+    // after the loop, which a dirty walk that stops at the last dirty rect
+    // never reaches.
+    Expect(
+        !FramePacker.RunsAreWalkable(new[] { Run(0), Run(4) }, rectCount: 4),
+        "a run anchored past the rect table draws nothing and must not be passed over in "
+        + "silence");
+    Expect(
+        !FramePacker.RunsAreWalkable(new[] { Run(0) }, rectCount: 0),
+        "a document with no rects can carry no anchored run");
+});
+
+Check("coalescing follows dashscene-gpu's dirty_ranges, all four cases", () =>
+{
+    var spans = InstanceSpans.From((0, 2), (2, 3), (5, 1));
+    var into = new List<(int Offset, int Count)>();
+
+    spans.Coalesce(new uint[] { 0, 1, 2 }, into);
+    Expect(
+        Same(into, new[] { (0, 6) }),
+        $"adjacent dirty rects merge into one range: {Shown(into)}");
+
+    spans.Coalesce(new uint[] { 0, 2 }, into);
+    Expect(
+        Same(into, new[] { (0, 2), (5, 1) }),
+        $"a clean rect between two dirty ones splits the range: {Shown(into)}");
+
+    spans.Coalesce(new uint[] { 2, 0, 1 }, into);
+    Expect(
+        Same(into, new[] { (5, 1), (0, 5) }),
+        $"an unsorted set still names every dirty rect's rows, merging less: {Shown(into)}");
+
+    // A refused rect or a layout-only container draws nothing. Its span still
+    // records where the next rect begins, so it must neither emit an empty
+    // range nor break the merge across it.
+    var withEmpty = InstanceSpans.From((0, 2), (2, 0), (2, 1));
+
+    withEmpty.Coalesce(new uint[] { 1 }, into);
+    Expect(into.Count == 0, $"a rect that draws nothing contributes no range: {Shown(into)}");
+
+    withEmpty.Coalesce(new uint[] { 0, 1, 2 }, into);
+    Expect(
+        Same(into, new[] { (0, 3) }),
+        $"and does not break the merge around it: {Shown(into)}");
+
+    // A dirty index that names no span is the two views of one frame
+    // disagreeing about what a rect index is. `FramePacker` refuses the whole
+    // partial path over it; reaching it directly gets the bound.
+    try
+    {
+        spans.Coalesce(new uint[] { 3 }, into);
+        throw new Exception("a dirty index past the span table was accepted");
+    }
+    catch (ArgumentOutOfRangeException)
+    {
+    }
+});
+
 #if DASHSCENE_DEMO_PRODUCER
 Check("every showcase scene names itself, and an index past the end names nothing", () =>
 {
@@ -3745,6 +3974,301 @@ Check("the pulse and the variant switch reach the scene through the seam", () =>
     Expect(lease.Frame.Rects.CountAsLong > 0, "the scene committed no rects after a switch");
     lease.MarkDrawn();
 });
+
+Check("a commit's dirty rects repack into their spans, and every row that moved is in a range", () =>
+{
+    using var runtime = new DashsceneRuntime();
+
+    // Scene 0 is `surfaces`, whose scripted phase drives one signal to either
+    // end of its range: a width that reflows a row and a panel that slides.
+    // Geometry moves and the node set does not, which is the commit shape the
+    // partial path exists for.
+    runtime.BuildDemoScene(0, 1280, 800);
+    runtime.Tick(0.016f);
+    var atlases = runtime.ReadAtlases();
+
+    var packer = new FramePacker();
+    float[] quad;
+    float[] corners;
+    float[] shade;
+    float[] pivot;
+    uint[] paint;
+    int packed;
+
+    using (var first = runtime.AcquireFrame())
+    {
+        packer.Pack(first.Frame, MaterialClass.UnlitOverlay, atlases);
+        Expect(!packer.LastPackWasPartial, "the first pack of a document holds no previous commit");
+        packed = packer.InstanceCount;
+        Expect(packed > 0, "the scene packed no instances, so nothing below compares anything");
+
+        // The rows as they stand on the device after the first commit, so the
+        // check below can ask which of them the second commit moved. Copied
+        // because the packer's arrays are rewritten in place, which is the
+        // whole point of the path under test.
+        quad = packer.Quad.Take(packed * 4).ToArray();
+        corners = packer.Corners.Take(packed * 4).ToArray();
+        shade = packer.Shade.Take(packed * 4).ToArray();
+        pivot = packer.Pivot.Take(packed * 4).ToArray();
+        paint = packer.Paint.Take(packed * 4).ToArray();
+        first.MarkDrawn();
+    }
+
+    runtime.PulseDemoScene(1);
+    Expect(runtime.Tick(0.016f), "the pulse committed nothing, so there is no second commit");
+
+    using (var second = runtime.AcquireFrame())
+    {
+        var frame = second.Frame;
+        Expect(
+            frame.Dirty.CountAsLong > 0,
+            "the commit after a pulse named no dirty rect, so the partial path cannot be reached");
+
+        // Read BEFORE the pack, from the spans the FIRST commit left: how many
+        // rows the dirty rects hold between them. Comparing this against the
+        // coalesced ranges' total is what says the coalescing neither dropped a
+        // span nor counted one twice.
+        var dirty = FrameRows.Of<uint>(frame.Dirty);
+        var spanned = 0;
+        for (var d = 0; d < dirty.Length; d++)
+        {
+            spanned += packer.Spans.Of((int)dirty[d]).Count;
+        }
+
+        packer.Pack(frame, MaterialClass.UnlitOverlay, atlases);
+
+        Expect(
+            packer.LastPackWasPartial,
+            "the commit after a pulse changed no rect's instance count, so it is a partial pack");
+        Expect(
+            packer.InstanceCount == packed,
+            $"a partial pack moves no row: {packed} instances became {packer.InstanceCount}");
+
+        var ranged = 0;
+        foreach (var range in packer.DirtyRanges)
+        {
+            Expect(
+                range.Offset >= 0 && range.Count > 0 && range.Offset + range.Count <= packed,
+                $"the range [{range.Offset}, {range.Offset + range.Count}) is outside the "
+                + $"{packed} rows this frame has");
+            ranged += range.Count;
+        }
+
+        Expect(
+            ranged == spanned,
+            $"the coalesced ranges carry {ranged} rows and the dirty rects' spans hold {spanned}");
+
+        // **The assertion the whole path rests on**, and the one
+        // `dashscene-gpu` makes as a debug assertion for the same reason: a row
+        // that changed and that no range names is a stale instance on the
+        // device — the wrong picture this optimisation can produce, and the one
+        // no golden catches, because every golden is drawn from a full pack.
+        for (var row = 0; row < packed; row++)
+        {
+            var moved = false;
+            for (var w = row * 4; w < row * 4 + 4 && !moved; w++)
+            {
+                moved = quad[w] != packer.Quad[w]
+                        || corners[w] != packer.Corners[w]
+                        || shade[w] != packer.Shade[w]
+                        || pivot[w] != packer.Pivot[w]
+                        || paint[w] != packer.Paint[w];
+            }
+
+            if (!moved)
+            {
+                continue;
+            }
+
+            var covered = false;
+            foreach (var range in packer.DirtyRanges)
+            {
+                covered |= row >= range.Offset && row < range.Offset + range.Count;
+            }
+
+            Expect(
+                covered,
+                $"instance row {row} changed between the two commits and no dirty range names "
+                + $"it, so the device would keep the first commit's row. Ranges: "
+                + $"{Shown(packer.DirtyRanges)}");
+        }
+
+        // And the rows themselves are what a full pack of this very commit
+        // would have written. Not the same question as the one above: that one
+        // asks whether the ranges cover what moved, this one asks whether what
+        // was written into them is right.
+        var whole = new FramePacker();
+        whole.Pack(frame, MaterialClass.UnlitOverlay, atlases);
+        Expect(
+            !whole.LastPackWasPartial && whole.InstanceCount == packer.InstanceCount,
+            $"a fresh packer over the same commit produced {whole.InstanceCount} instances "
+            + $"against the partial pack's {packer.InstanceCount}");
+
+        for (var w = 0; w < packed * 4; w++)
+        {
+            Expect(
+                whole.Quad[w] == packer.Quad[w]
+                && whole.Corners[w] == packer.Corners[w]
+                && whole.Shade[w] == packer.Shade[w]
+                && whole.Pivot[w] == packer.Pivot[w]
+                && whole.Paint[w] == packer.Paint[w],
+                $"word {w} of instance row {w / 4} differs between the partial pack and a full "
+                + "pack of the same commit");
+        }
+
+        for (var row = 0; row < packed; row++)
+        {
+            Expect(
+                whole.InstanceAtlas[row] == packer.InstanceAtlas[row],
+                $"instance row {row} samples atlas {packer.InstanceAtlas[row]} after a partial "
+                + $"pack and {whole.InstanceAtlas[row]} after a full one, so it would draw with "
+                + "the wrong material");
+        }
+
+        // Story #1446's carry-forward, asserted against a full pack of the same
+        // commit rather than against the value it was copied from — which would
+        // pin the assignment and nothing else.
+        Expect(
+            whole.Diagnostics.Equals(packer.Diagnostics),
+            $"a partial pack carries the last full pack's report forward, and a full pack of "
+            + $"this commit reports {whole.Diagnostics.Flags} over "
+            + $"{whole.Diagnostics.AffectedRects} rect(s) against the carried "
+            + $"{packer.Diagnostics.Flags} over {packer.Diagnostics.AffectedRects}");
+
+        second.MarkDrawn();
+    }
+});
+
+Check("a replaced document and a skipped generation are both packed whole", () =>
+{
+    // Two of the packer's five refusals that the drives above do not reach.
+    // Both are cases where the spans are stated over rect indices this commit
+    // does not use, or over a commit the arrays never held.
+    using var runtime = new DashsceneRuntime();
+    runtime.BuildDemoScene(0, 1280, 800);
+    runtime.Tick(0.016f);
+    var atlases = runtime.ReadAtlases();
+
+    var packer = new FramePacker();
+    using (var first = runtime.AcquireFrame())
+    {
+        packer.Pack(first.Frame, MaterialClass.UnlitOverlay, atlases);
+        first.MarkDrawn();
+    }
+
+    // **A skipped generation.** Two pulses and two ticks, one pack: the frame
+    // the packer is handed is two commits past the one its spans describe, and
+    // the dirty set of the second says nothing about the first.
+    runtime.PulseDemoScene(1);
+    Expect(runtime.Tick(0.016f), "the first pulse committed nothing");
+    runtime.PulseDemoScene(2);
+    Expect(runtime.Tick(0.016f), "the second pulse committed nothing");
+
+    using (var skipped = runtime.AcquireFrame())
+    {
+        Expect(
+            skipped.Frame.Dirty.CountAsLong > 0,
+            "the skipped-generation frame names no dirty rect, so the refusal below could be "
+            + "the empty-set clause rather than the generation one");
+        packer.Pack(skipped.Frame, MaterialClass.UnlitOverlay, atlases);
+        Expect(
+            !packer.LastPackWasPartial,
+            "a commit two generations past the one the arrays hold is packed whole: its dirty "
+            + "set is stated against a commit this packer never saw");
+        skipped.MarkDrawn();
+    }
+
+    // **A replaced document.** The rect indices the spans are stated over do
+    // not name what they named, whatever the counts happen to be.
+    runtime.BuildDemoScene(0, 1280, 800);
+    runtime.Tick(0.016f);
+
+    using (var replaced = runtime.AcquireFrame())
+    {
+        Expect(
+            replaced.Frame.DocumentReplacedFlag,
+            "a fresh build did not report a replacement, so the refusal below would be some "
+            + "other clause");
+        packer.Pack(replaced.Frame, MaterialClass.UnlitOverlay, atlases);
+        Expect(
+            !packer.LastPackWasPartial,
+            "a commit that replaced the document is packed whole: the same rect index names a "
+            + "different node on either side of it");
+        replaced.MarkDrawn();
+    }
+});
+
+Check("a commit that changes what the instance buffer holds is packed whole", () =>
+{
+    using var runtime = new DashsceneRuntime();
+
+    // Scene 2 is `layout`, whose scripted phase takes the middle chip out of
+    // the laid-out set and puts it back — a node that comes and goes, which is
+    // the shape no dirty set can describe in place.
+    runtime.BuildDemoScene(2, 1280, 800);
+    runtime.Tick(0.016f);
+    var atlases = runtime.ReadAtlases();
+
+    var packer = new FramePacker();
+    (int Offset, int Count)[] spans;
+
+    using (var first = runtime.AcquireFrame())
+    {
+        packer.Pack(first.Frame, MaterialClass.UnlitOverlay, atlases);
+        spans = Enumerable.Range(0, packer.Spans.RectCount)
+            .Select(rect => (packer.Spans.Of(rect).Offset, packer.Spans.Of(rect).Count))
+            .ToArray();
+        Expect(spans.Length > 0, "the scene committed no rect");
+        first.MarkDrawn();
+    }
+
+    // Phase 1 hides the middle chip; phase 0 put it there.
+    runtime.PulseDemoScene(1);
+    Expect(runtime.Tick(0.016f), "the pulse committed nothing");
+
+    using (var second = runtime.AcquireFrame())
+    {
+        // **Read from a FRESH packer, not from the one under test.** A partial
+        // pack leaves `Spans` holding the previous commit's, so asking the
+        // packer under test what this commit's shape is would answer with the
+        // shape it assumed — and this check would go quiet exactly when the
+        // guard it stands over stops working.
+        var whole = new FramePacker();
+        whole.Pack(second.Frame, MaterialClass.UnlitOverlay, atlases);
+
+        var moved = -1;
+        if (whole.Spans.RectCount != spans.Length)
+        {
+            moved = spans.Length;
+        }
+        else
+        {
+            for (var rect = 0; rect < spans.Length && moved < 0; rect++)
+            {
+                if (whole.Spans.Of(rect).Count != spans[rect].Count)
+                {
+                    moved = rect;
+                }
+            }
+        }
+
+        Expect(
+            moved >= 0,
+            $"the pulse left every one of the {spans.Length} rects packing to the same number of "
+            + "instances, so this check is asserting the whole path over a commit the partial "
+            + "path would have served");
+
+        packer.Pack(second.Frame, MaterialClass.UnlitOverlay, atlases);
+        Expect(
+            !packer.LastPackWasPartial,
+            $"rect {moved} no longer packs to the number of instances its span holds, so no "
+            + "range describes this commit — every row behind that rect has moved as well — "
+            + "and it must be packed whole");
+
+        second.MarkDrawn();
+    }
+});
+
 #endif
 
 // **The verdict, and it must come after EVERY check.** Story #1122 appended the
