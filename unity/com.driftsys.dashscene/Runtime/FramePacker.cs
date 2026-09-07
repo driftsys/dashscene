@@ -14,28 +14,36 @@
 // and reports the rest by name — so the instances it does emit are in the same
 // relative order the other painter puts them in.
 //
-// **Arrays are reused across frames, and that is only half of R-T4.** That rule
-// asks for a CPU frame cost of "dirty-range instance-buffer upload from the rect
+// **Arrays are reused across frames, and the dirty set is followed.** R-T4 asks
+// for a CPU frame cost of "dirty-range instance-buffer upload from the rect
 // table + submission, nothing else". The arrays here grow by doubling and never
-// shrink, so a steady frame allocates nothing — but this packer walks EVERY rect
-// and rebuilds the whole heap on every commit, and `DsFrame.Dirty`'s ROWS are
-// read by nothing — `FrameLease` reads its stride for R-E17, and no consumer
-// reads the indices it carries. **The transfer R-T4 actually bounds is
-// unbounded**; issue #1306 carries it, and issue #708 is the same gap in the
-// lean painter, where the design that would serve both belongs.
+// shrink, so a steady frame allocates nothing, and since story #1446 a commit
+// that keeps every rect's instance count rewrites only the rows its dirty rects
+// name — `Spans` records where each rect's rows sit, `LastPackWasPartial` says
+// which path a pack took, and `DirtyRanges` is what a painter uploads. Issue
+// #708 is the same gap in the lean painter, which packs whole and uploads
+// ranges; this packer does both partially, and its predicate is that painter's.
 //
-// **What the full repack costs, on the document `just unity-render` draws.**
+// **What the full repack cost, on the document `just unity-render` draws.**
 // `goldens/dsb/v03-paint.dsb` carries fourteen rect entries — pinned by
 // `crates/dashc/tests/figma_lowering.rs` — and packs to sixteen instances.
-// Every commit walks all fourteen and rebuilds all four heap tables, and on
-// the `RawBuffer` rung — the only one any device has reported — the painter
-// then sends 5232 bytes of instance buffer for the 1392 that carry this frame's
-// instances. All of it goes up on a commit whose dirty set is empty as much as
-// on any other. `docs/design/unity-csharp-host.md`'s gaps list carries the
+// Before #1446 every commit walked all fourteen and, on the `RawBuffer` rung —
+// the only one any device has reported — the painter then sent 5232 bytes of
+// instance buffer for the 1392 that carry a frame's instances, on a commit
+// whose dirty set was empty as much as on any other. What is still uploaded
+// whole on every commit is the HEAP, and deliberately: a changed paint earns a new
+// interned row rather than rewriting one, so there is no stable slot to
+// rewrite. `docs/design/unity-csharp-host.md`'s gaps list carries the
 // derivation, the two tests behind the fourteen, and what the other rung
 // costs.
+//
+// **What a partial pack does not do is walk every rect.** It visits the dirty
+// ones, in the dirty set's own order, and abandons to the full pack the moment
+// one of them stops fitting where it sat — which is the only way a row behind
+// it could move without the set saying so.
 
 using System;
+using System.Collections.Generic;
 using Driftsys.Dashscene.BoundaryB;
 
 namespace Driftsys.Dashscene
@@ -92,6 +100,37 @@ namespace Driftsys.Dashscene
         internal int Solids { get; }
 
         internal int Gradients { get; }
+    }
+
+    /// One committed frame's tables, read once and walked by either path.
+    ///
+    /// **Read once because reading it twice is how the two paths drift.** The
+    /// full walk and the dirty walk follow the same pointers under the same
+    /// bounds, and a version that derived them separately would let a bound
+    /// change in one walk and not the other — which is a wrong picture on
+    /// exactly the frames the partial path exists for.
+    ///
+    /// The pointers borrow the runtime's own memory and are valid only while the
+    /// lease that produced them is outstanding, which is the whole life of one
+    /// [`FramePacker.Pack`] call.
+    internal unsafe struct Tables
+    {
+        internal int RectCount;
+        internal RectEntry* Rects;
+        internal PaintEntry* Entries;
+        internal ClipRegion* Regions;
+        internal PaintKind* ExtraFills;
+        internal Stroke* Strokes;
+        internal Blur* Blurs;
+        internal GlyphRun* Runs;
+        internal int RunCount;
+        internal GlyphQuad* Quads;
+        internal int QuadCount;
+
+        /// Every table a row can name, with its row count. `EmitRun` reads the
+        /// clip-region and clip-box counts from here rather than from a field
+        /// of its own, so there is one statement of each.
+        internal TableBounds Bounds;
     }
 
     /// Packs one committed frame into the arrays a painter uploads.
@@ -162,8 +201,65 @@ namespace Driftsys.Dashscene
         /// against the previous one is enough.
         private int _lastAffectedRect = -1;
 
+        /// Where the next instance is written.
+        ///
+        /// **`InstanceCount` was this cursor until story #1446**, which is the
+        /// whole of the difference between the two paths: a full pack starts it
+        /// at zero and walks upward, so it ends at the instance count; a partial
+        /// pack sets it to each dirty rect's own span offset and rewrites those
+        /// rows where they already are, leaving the count alone.
+        private int _writeAt;
+
+        /// The generation the arrays currently hold, once one has been packed.
+        ///
+        /// **A dirty set is stated against the commit before it**, so it says
+        /// nothing about a commit these arrays never received.
+        /// `dashscene-gpu`'s `upload_instances` makes the same check with the
+        /// same arithmetic, and for the same reason: a frame that skipped one,
+        /// or that came from a fresh arena whose generations start again, has
+        /// to be packed whole.
+        private ulong _packedGeneration;
+
+        private bool _havePacked;
+
+        private readonly List<(int Offset, int Count)> _dirtyRanges =
+            new List<(int Offset, int Count)>();
+
         /// How many instances the last [`Pack`] produced.
         public int InstanceCount { get; private set; }
+
+        /// Which instance rows each rect packed to on the last full pack.
+        ///
+        /// Read by a painter that uploads ranges rather than the whole array;
+        /// filled by every full pack and left untouched by a partial one, which
+        /// is what makes the two comparable.
+        public InstanceSpans Spans { get; } = new InstanceSpans();
+
+        /// Whether the last [`Pack`] rewrote only the dirty rects' rows.
+        ///
+        /// False on the first pack of a document, on a commit that skipped a
+        /// generation, on one that replaced the document, on one whose dirty set
+        /// is empty, and on any commit where a dirty rect no longer packs to the
+        /// number of instances its span holds.
+        public bool LastPackWasPartial { get; private set; }
+
+        /// The instance ranges the last partial pack rewrote, adjacent rects
+        /// merged.
+        ///
+        /// Empty and meaningless unless [`LastPackWasPartial`]. The list is the
+        /// packer's own and is refilled in place, so a reader must not hold it
+        /// across a [`Pack`].
+        public IReadOnlyList<(int Offset, int Count)> DirtyRanges => _dirtyRanges;
+
+        /// The generation of the commit the arrays hold, or 0 before any pack.
+        ///
+        /// **A consumer needs this to answer a question this class cannot.**
+        /// [`LastPackWasPartial`] says the ARRAYS were updated in place; whether
+        /// a device holds the commit those rows are a delta against is the
+        /// consumer's own bookkeeping, because only the consumer knows whether
+        /// its last upload happened. `dashscene-gpu` keeps the same value under
+        /// the same name, on the upload side, for the same reason.
+        public ulong PackedGeneration => _packedGeneration;
 
         /// `(x, y, w, h)` per instance, four floats each.
         public float[] Quad => _quad;
@@ -219,6 +315,19 @@ namespace Driftsys.Dashscene
         public int[] InstanceAtlas => _instanceAtlas;
 
         /// What the last pack was handed and did not draw.
+        ///
+        /// **A partial pack carries the last full pack's report forward**, and
+        /// that is sound rather than an approximation: a partial pack happens
+        /// only when every dirty rect packs to the same number of instances it
+        /// did before, so no rect that was refused can have started drawing or
+        /// the other way about — a refusal draws nothing, which changes a count.
+        /// A diagnostic that is not a refusal, such as a drop shadow appearing
+        /// on a node that keeps its fill, IS reachable without moving a count,
+        /// and [`TryPackDirty`] abandons to the full pack when it raises one the
+        /// carried report does not already carry. What the carry does lose is
+        /// the other direction: a diagnostic that stops applying is reported
+        /// until the next full pack, which over-reports rather than dropping,
+        /// and `AffectedRects` and `FirstRect` are the full pack's counts.
         public PackDiagnostics Diagnostics { get; private set; }
 
         /// Pack one committed frame.
@@ -260,8 +369,15 @@ namespace Driftsys.Dashscene
             _affectedRects = 0;
             _firstAffectedRect = -1;
             _lastAffectedRect = -1;
-            InstanceCount = 0;
 
+            // **The heap-side tables are rebuilt whole on both paths**, as the
+            // lean painter does — `render.rs`'s `upload` writes the paint heap
+            // in full every frame. A changed paint earns a new interned row
+            // rather than rewriting one, and the solids sit before the gradients
+            // in the one heap array, so a new solid moves `GradientBase` and
+            // every gradient row behind it. There is no stable heap slot to
+            // rewrite. The heap is rows of sixteen bytes; the instance buffer is
+            // what R-T4 bounds, and it alone takes the ranged path.
             PackHeap(frame);
             PackClipBoxes(frame);
             PackStrokes(frame);
@@ -276,30 +392,239 @@ namespace Driftsys.Dashscene
             }
 
             var rectCount = Rows(frame.Rects);
-            var entryCount = Rows(frame.PaintEntries);
-            var regionCount = Rows(frame.ClipRegions);
-            // **Every table a row can name is counted, not just the two that
-            // used to be.** `PackRect` follows five ranges through raw
-            // pointers; a first version bounds-checked two of them and
-            // explained in a comment why it must — which made the other three
-            // out-of-bounds reads of the host process rather than diagnostics.
-            var boxCount = Rows(frame.ClipBoxes);
-            var strokeCount = Rows(frame.Strokes);
-            var blurCount = Rows(frame.Blurs);
-            var extraFillCount = Rows(frame.ExtraFills);
-            var solidCount = Rows(frame.Solids);
-            var gradientCount = Rows(frame.Gradients);
-            var rects = (RectEntry*)frame.Rects.Ptr;
-            var entries = (PaintEntry*)frame.PaintEntries.Ptr;
-            var regions = (ClipRegion*)frame.ClipRegions.Ptr;
-            var extraFills = (PaintKind*)frame.ExtraFills.Ptr;
-            var strokes = (Stroke*)frame.Strokes.Ptr;
-            var blurs = (Blur*)frame.Blurs.Ptr;
+            var tables = Read(frame, rectCount);
 
-            var runs = (GlyphRun*)frame.GlyphRuns.Ptr;
-            var runCount = Rows(frame.GlyphRuns);
-            var quads = (GlyphQuad*)frame.GlyphQuads.Ptr;
-            var quadCount = Rows(frame.GlyphQuads);
+            // Four things have to hold, and none of them is assumed. This
+            // commit follows the one the arrays hold (`_packedGeneration + 1`);
+            // it did not replace the document, which renumbers every rect index
+            // the spans are stated over; it has the same rect count, so a span
+            // table filled for the previous commit still partitions this one;
+            // and it names at least one dirty rect, because a commit that names
+            // none has nothing for this path to write.
+            var partial = _havePacked
+                          && !frame.DocumentReplacedFlag
+                          && frame.Generation == _packedGeneration + 1
+                          && Spans.RectCount == rectCount
+                          && Rows(frame.Dirty) > 0;
+
+            // Everything the passes above raised, which belongs to this commit
+            // on either path and must survive a partial pack that abandons.
+            var beforeWalk = _flags;
+
+            LastPackWasPartial = partial && TryPackDirty(frame, tables, materialClass, atlases);
+            if (!LastPackWasPartial)
+            {
+                // An abandoned partial pack has already walked some dirty rects
+                // and reported over them, so the walk's own accumulators start
+                // again — otherwise a rect it implicated would be counted twice.
+                _flags = beforeWalk;
+                _affectedRects = 0;
+                _firstAffectedRect = -1;
+                _lastAffectedRect = -1;
+                PackAllInstances(tables, materialClass, atlases);
+                Diagnostics = new PackDiagnostics(_flags, _affectedRects, _firstAffectedRect);
+            }
+
+            _packedGeneration = frame.Generation;
+            _havePacked = true;
+        }
+
+        /// The tables one commit's rect walk follows, read once for both paths.
+        ///
+        /// **Every table a row can name is counted, not just the two that used
+        /// to be.** `PackRect` follows five ranges through raw pointers; a first
+        /// version bounds-checked two of them and explained in a comment why it
+        /// must — which made the other three out-of-bounds reads of the host
+        /// process rather than diagnostics.
+        private unsafe Tables Read(DsFrame frame, int rectCount)
+        {
+            return new Tables
+            {
+                RectCount = rectCount,
+                Rects = (RectEntry*)frame.Rects.Ptr,
+                Entries = (PaintEntry*)frame.PaintEntries.Ptr,
+                Regions = (ClipRegion*)frame.ClipRegions.Ptr,
+                ExtraFills = (PaintKind*)frame.ExtraFills.Ptr,
+                Strokes = (Stroke*)frame.Strokes.Ptr,
+                Blurs = (Blur*)frame.Blurs.Ptr,
+                Runs = (GlyphRun*)frame.GlyphRuns.Ptr,
+                RunCount = Rows(frame.GlyphRuns),
+                Quads = (GlyphQuad*)frame.GlyphQuads.Ptr,
+                QuadCount = Rows(frame.GlyphQuads),
+                Bounds = new TableBounds(
+                    Rows(frame.PaintEntries),
+                    Rows(frame.ClipRegions),
+                    Rows(frame.ClipBoxes),
+                    Rows(frame.Strokes),
+                    Rows(frame.Blurs),
+                    Rows(frame.ExtraFills),
+                    Rows(frame.Solids),
+                    Rows(frame.Gradients)),
+            };
+        }
+
+        /// Rewrite every dirty rect's rows where they already sit, or refuse.
+        ///
+        /// Returns whether the arrays now hold this commit. A `false` leaves
+        /// them holding a mixture of the two commits, which is why the only
+        /// caller runs the full pack immediately afterwards: that walk rewrites
+        /// every row from zero, so nothing a refused attempt wrote survives it.
+        ///
+        /// **Refused rather than repaired, in five cases.** A dirty index that
+        /// names no span, or a set that is not ascending — the run cursor below
+        /// depends on the order, and `CommittedScene::dirty` is sorted, so this
+        /// costs a real commit nothing. A run table this walk cannot judge, for
+        /// the reason below. A rect that no longer packs to the number of
+        /// instances its span holds, which is the case the whole predicate
+        /// exists for: a node that gained a stroke, lost its fill, or became a
+        /// refusal moves every row behind it. And a diagnostic this walk raised
+        /// that the carried report does not already carry, because
+        /// [`Diagnostics`] is the last full pack's and P4 asks that no
+        /// out-of-profile construct be dropped in silence.
+        private unsafe bool TryPackDirty(
+            DsFrame frame,
+            in Tables tables,
+            MaterialClass materialClass,
+            TextAtlasSet atlases)
+        {
+            var dirty = FrameRows.Of<uint>(frame.Dirty);
+            var previous = -1L;
+            for (var d = 0; d < dirty.Length; d++)
+            {
+                if (dirty[d] >= (uint)Spans.RectCount || dirty[d] <= previous)
+                {
+                    return false;
+                }
+
+                previous = dirty[d];
+            }
+
+            // The run table is judged whole, before any row is written. See
+            // [`RunsAreWalkable`] for why a dirty walk cannot judge it as it
+            // goes.
+            if (!RunsAreWalkable(FrameRows.Of<GlyphRun>(frame.GlyphRuns), tables.RectCount))
+            {
+                return false;
+            }
+
+            // **A forward cursor over the run table, as the full walk uses.**
+            // Commit orders the runs by anchor, and the dirty set is ascending
+            // by the check above, so one cursor reaches every dirty rect's runs
+            // in one pass. Runs anchored to a CLEAN rect are stepped over
+            // without being emitted: their rows are already in the arrays and
+            // their diagnostics are already in the carried report.
+            var nextRun = 0;
+            for (var d = 0; d < dirty.Length; d++)
+            {
+                var rect = (int)dirty[d];
+                var span = Spans.Of(rect);
+                _writeAt = span.Offset;
+
+                PackRect(
+                    rect,
+                    tables.Rects[rect],
+                    tables.Entries,
+                    tables.Regions,
+                    tables.ExtraFills,
+                    tables.Strokes,
+                    tables.Blurs,
+                    tables.Bounds,
+                    materialClass);
+
+                while (nextRun < tables.RunCount && tables.Runs[nextRun].Rect < (uint)rect)
+                {
+                    nextRun++;
+                }
+
+                while (nextRun < tables.RunCount && tables.Runs[nextRun].Rect == (uint)rect)
+                {
+                    EmitRun(
+                        rect,
+                        tables.Rects[rect],
+                        (uint)nextRun,
+                        tables.Runs[nextRun],
+                        tables.Quads,
+                        tables.QuadCount,
+                        tables.Regions,
+                        tables.Bounds.Regions,
+                        tables.Bounds.ClipBoxes,
+                        atlases);
+                    nextRun++;
+                }
+
+                // **Compared before the cursor moves on**, so that the rect
+                // whose shape changed is the one that abandons rather than the
+                // one after it. A rect that emitted more rows than its span
+                // holds has already written over the next rect's rows; that
+                // costs nothing, because the full pack below rewrites every row
+                // from zero.
+                if (_writeAt - span.Offset != span.Count)
+                {
+                    return false;
+                }
+            }
+
+            if ((_flags & ~Diagnostics.Flags) != PackDiagnostic.None)
+            {
+                return false;
+            }
+
+            Spans.Coalesce(dirty, _dirtyRanges);
+            return true;
+        }
+
+        /// Whether a dirty walk may follow this run table with a forward
+        /// cursor.
+        ///
+        /// **This is P4 rather than tidiness.** The full walk reports
+        /// [`PackDiagnostic.CorruptRow`] for exactly two shapes: a run whose
+        /// anchor is behind the walk's cursor — which is the table not being
+        /// ordered by anchor — and runs left over past the rect table. **A
+        /// dirty walk can see neither.** It visits a subset of rects, so a run
+        /// behind its cursor is indistinguishable from a clean rect's own run,
+        /// and it stops at the last dirty rect, so it never reaches the tail.
+        /// A table failing either shape is refused here and the full pack that
+        /// follows names the diagnostic — one implementation of the rule rather
+        /// than a second one that has to agree with it.
+        ///
+        /// **Public because it is the half of the partial path no fixture can
+        /// reach.** Every committed document this repository holds carries a
+        /// well-formed run table, so a mutation of the refusal reddens nothing;
+        /// `unity/ffi-check` drives this member over tables a producer cannot
+        /// commit.
+        public static bool RunsAreWalkable(ReadOnlySpan<GlyphRun> runs, int rectCount)
+        {
+            var anchor = 0u;
+            for (var r = 0; r < runs.Length; r++)
+            {
+                var at = runs[r].Rect;
+                if (at < anchor || at >= (uint)rectCount)
+                {
+                    return false;
+                }
+
+                anchor = at;
+            }
+
+            return true;
+        }
+
+        /// Walk every rect and write every instance, from row zero.
+        ///
+        /// **What each rect packed to is recorded as it goes**, which is the
+        /// only bookkeeping a full pack does that it did not do before story
+        /// #1446: a span per rect, so the commit after this one can be told
+        /// whether its dirty rects still fit where they sat.
+        private unsafe void PackAllInstances(
+            in Tables tables,
+            MaterialClass materialClass,
+            TextAtlasSet atlases)
+        {
+            InstanceCount = 0;
+            _writeAt = 0;
+            _dirtyRanges.Clear();
+            Spans.Begin(tables.RectCount);
+
             // **A forward cursor, because commit orders the run table by
             // anchor.** `dashscene-gpu`'s packer walks the two tables the same
             // way and for the same reason: a run draws at its anchor rect's
@@ -309,25 +634,19 @@ namespace Driftsys.Dashscene
             // the cursor did not consume is checked below.
             var nextRun = 0;
 
-            for (var i = 0; i < rectCount; i++)
+            for (var i = 0; i < tables.RectCount; i++)
             {
+                var start = _writeAt;
+
                 PackRect(
                     i,
-                    rects[i],
-                    entries,
-                    regions,
-                    extraFills,
-                    strokes,
-                    blurs,
-                    new TableBounds(
-                        entryCount,
-                        regionCount,
-                        boxCount,
-                        strokeCount,
-                        blurCount,
-                        extraFillCount,
-                        solidCount,
-                        gradientCount),
+                    tables.Rects[i],
+                    tables.Entries,
+                    tables.Regions,
+                    tables.ExtraFills,
+                    tables.Strokes,
+                    tables.Blurs,
+                    tables.Bounds,
                     materialClass);
 
                 // Behind the walk rather than at it: a run anchored to a rect
@@ -342,27 +661,33 @@ namespace Driftsys.Dashscene
                 // same shape `RenderTargetGroup` and `GradientStopsTruncated`
                 // report, and what `Describe`'s "no individual rect was
                 // implicated" line exists for.
-                while (nextRun < runCount && runs[nextRun].Rect < (uint)i)
+                while (nextRun < tables.RunCount && tables.Runs[nextRun].Rect < (uint)i)
                 {
                     _flags |= PackDiagnostic.CorruptRow;
                     nextRun++;
                 }
 
-                while (nextRun < runCount && runs[nextRun].Rect == (uint)i)
+                while (nextRun < tables.RunCount && tables.Runs[nextRun].Rect == (uint)i)
                 {
                     EmitRun(
                         i,
-                        rects[i],
+                        tables.Rects[i],
                         (uint)nextRun,
-                        runs[nextRun],
-                        quads,
-                        quadCount,
-                        regions,
-                        regionCount,
-                        boxCount,
+                        tables.Runs[nextRun],
+                        tables.Quads,
+                        tables.QuadCount,
+                        tables.Regions,
+                        tables.Bounds.Regions,
+                        tables.Bounds.ClipBoxes,
                         atlases);
                     nextRun++;
                 }
+
+                // **The rect's own ink AND the runs anchored to it**, which is
+                // what makes a span contiguous: a run draws immediately after
+                // its anchor rect, so the two never interleave with a third
+                // rect's rows.
+                Spans.Set(i, start, _writeAt - start);
             }
 
             // A run anchored past the rect table draws nothing, and it is the
@@ -370,7 +695,7 @@ namespace Driftsys.Dashscene
             // lean painter asserts the same thing by name; this painter reports
             // it, because a committed frame it cannot read is a diagnostic here
             // rather than a broken contract between two crates.
-            if (nextRun < runCount)
+            if (nextRun < tables.RunCount)
             {
                 // **No rect is implicated, so none is named.** The runs left
                 // over are anchored PAST the rect table — that is what makes
@@ -382,7 +707,7 @@ namespace Driftsys.Dashscene
                 _flags |= PackDiagnostic.CorruptRow;
             }
 
-            Diagnostics = new PackDiagnostics(_flags, _affectedRects, _firstAffectedRect);
+            InstanceCount = _writeAt;
         }
 
         private unsafe void PackRect(
@@ -630,7 +955,7 @@ namespace Driftsys.Dashscene
             uint clipCount,
             float outset)
         {
-            var at = InstanceCount;
+            var at = _writeAt;
             Grow(at + 1);
 
             var f = at * Float4;
@@ -669,7 +994,7 @@ namespace Driftsys.Dashscene
             // this instance to a text material.
             _instanceAtlas[at] = -1;
 
-            InstanceCount = at + 1;
+            _writeAt = at + 1;
         }
 
         /// The distance a stroke's band reaches past the node's fill box.
@@ -1027,7 +1352,7 @@ namespace Driftsys.Dashscene
                     continue;
                 }
 
-                var slot = InstanceCount;
+                var slot = _writeAt;
                 Grow(slot + 1);
                 var f = slot * Float4;
 
@@ -1077,7 +1402,7 @@ namespace Driftsys.Dashscene
                 _paint[f + 3] = clipCount;
 
                 _instanceAtlas[slot] = _runAtlas[runRow];
-                InstanceCount = slot + 1;
+                _writeAt = slot + 1;
             }
         }
 

@@ -8,6 +8,29 @@ the Cargo workspace rather than moving on its own.
 
 ### Added
 
+- **A commit's dirty rects are repacked where they sit and uploaded as ranges**
+  (story #1446, R-T4). `FramePacker` records each rect's span of instance rows
+  on every full pack (`Runtime/InstanceSpans.cs`), and a commit that follows the
+  one those spans were taken from — same document, same rect count, a non-empty
+  dirty set, and every dirty rect still packing to the number of instances its
+  span holds — rewrites only those rows. `LastPackWasPartial` says which path a
+  pack took and `DirtyRanges` is the dirty rects' spans with adjacent ones
+  merged, a port of `dashscene-gpu`'s `dirty_ranges`.
+  `BrgPainter.UploadInstances` sends those ranges through
+  `GraphicsBuffer.SetData`'s offset form — five word ranges per batch a range
+  touches, because the buffer is laid out stream-major
+  (`Runtime/StreamLayout.cs`) — and reports what it sent as `LastUpload`, whose
+  `Uploads` and `Words` are counted as the writes happen rather than hand-set.
+  Any other commit is packed and uploaded whole, as before, and so is any frame
+  where the painter did not upload the preceding commit, where the
+  `GraphicsBuffer` was reallocated, or where the host moved `DocumentToWorld` —
+  a ranged upload rewrites instance rows and never a batch head, which is where
+  that transform lives. `InstanceUpload.CanSendRanges` states all five
+  conditions in one Unity-free place, so `unity/ffi-check` drives each of them
+  false in turn. The paint, clip, stroke and glyph heaps are still rebuilt whole
+  on every commit, deliberately: a changed paint earns a new interned row rather
+  than rewriting one, so there is no stable slot to rewrite.
+
 - **The shading specialises by the document's paint kind set, and gradients are
   one texture sample** (story #1449). `DashsceneRuntime.KindSet()` wraps
   `ds_runtime_kind_set` — bit 0 the document clips, bit 1 it strokes — and

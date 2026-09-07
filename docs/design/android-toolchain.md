@@ -1368,6 +1368,89 @@ in landscape** on this build, which the shaded areas above do not account for
 that way round; the two pictures are kept under `probe-1406/`, and it does not
 bear on the A/B, which is null in both geometries.
 
+#### The dirty-range instance upload, and where it starts paying (2026-09-06)
+
+    status  taken 2026-09-06 on the same Pixel 5, from two APKs built by
+            `just unity-demo-android 6000.3.23f1 build` at `b78e679`, profile
+            `demo-release`, Vulkan, rung `RawBuffer`, `BuildOptions.None`.
+            Story #1446, issue #1306. Three interleaved rounds, each one sweep
+            run of the BEFORE APK followed by one of the AFTER APK, two sweeps
+            of 20 s per entry per run.
+
+The two builds differ in the packer and the painter and in nothing else. **A**
+is `origin/main`'s `FramePacker.cs` and `Runtime/Engine/BrgPainter.cs`, which
+repack every rect and send the whole staging array on every commit. **B** is
+`b78e679`, which rewrites a dirty commit's rows in place and uploads them as
+coalesced ranges. Both were built from this worktree, A by writing
+`git show origin/main:<path>` over those two files and removing
+`Runtime/InstanceSpans.cs` and `Runtime/StreamLayout.cs` before the build, and
+restoring afterwards.
+
+**The `commit` line inside each `unity-frames.md` says `b78e679` for BOTH builds
+and is not the APK's provenance.** `unity-frame-cost.sh` records the harness's
+own `git rev-parse`, which was this branch's HEAD for every run; which APK a
+table describes is the directory it sits in. Nothing on the device reports a
+build identity, so this is stated rather than derived.
+
+`draw` is the frame lease, `BrgPainter.Draw`, the mark and the release. **Both
+halves of this story are inside it** — the pack and the upload — and this
+instrument cannot separate them, which matters for reading the typography row
+below. It EXCLUDES the GPU's execution of the batches.
+
+One row per round and build, giving the range across that round's reported
+samples of 240 drawn frames. The instance count is the player's own, read from
+the sweep logs; the batch is what `InstancesPerBatch` doubles to on the
+`RawBuffer` rung, and the bytes are `112 + slots x 80`:
+
+| entry      | instances | batch | whole upload | build | draw mean, r1 / r2 / r3           |
+| ---------- | --------- | ----- | ------------ | ----- | --------------------------------- |
+| layout     | 16-29     | 64    | 5232 B       | A     | 0.14-0.15 / 0.14-0.15 / 0.14-0.16 |
+| layout     | 16-29     | 64    | 5232 B       | B     | 0.15-0.16 / 0.15 / 0.17-0.18      |
+| surfaces   | 56        | 64    | 5232 B       | A     | 0.16-0.17 / 0.16-0.17 / 0.17-0.18 |
+| surfaces   | 56        | 64    | 5232 B       | B     | 0.17-0.18 / 0.17-0.18 / 0.17-0.19 |
+| typography | 381       | 512   | 41072 B      | A     | 0.26-0.28 / 0.28-0.29 / 0.28-0.29 |
+| typography | 381       | 512   | 41072 B      | B     | 0.14-0.15 / 0.14-0.15 / 0.14-0.15 |
+
+`surfaces` p95, the same rounds: A 0.18-0.19 / 0.18-0.21 / 0.19-0.22, B
+0.20-0.23 / 0.19-0.24 / 0.19-0.25. `typography` p95: A 0.33-0.37 / 0.34-0.37 /
+0.35-0.38, B 0.17-0.19 / 0.16-0.20 / 0.17-0.19. `cpu % of one core` is
+indistinguishable between the builds on the two small entries — 42-48 on both —
+and on `typography` it is 50-54 for A against 50-53 for B, which is the same
+band and not a reading of the halved `draw`.
+
+**The change pays on the big document and costs slightly on the small ones, and
+the crossing point is between 56 and 381 instances on this device.** On
+`typography` build B's `draw` is about **half** build A's — 0.14-0.15 ms against
+0.26-0.29 — replicating in all three rounds and far outside the drift. On
+`surfaces` and `layout` B is at or about 0.01 ms above A, also replicating.
+
+The mechanism is the same in both directions. A ranged upload makes at least
+five `GraphicsBuffer.SetData` calls per dirty range, because the buffer is laid
+out stream-major and one contiguous run of rows is five disjoint word ranges,
+plus five more for every batch boundary a range crosses. A whole upload is one
+call whatever its size. So the ranged path trades call count for bytes: at 5232
+bytes the calls cost more than the bytes saved, and at 41072 they cost far less.
+**The partial pack's own saving is in the same term and is not separated here**
+— B also skips the rect walk for every clean rect, which on a 381-instance
+document with many glyph runs is real work, so the typography row is the two
+savings together. Issue #1483 carries narrowing the crossing point and deciding
+whether the painter should take the whole path below it.
+
+**The rounds are interleaved because the absolute values drift.** Build A's own
+`surfaces` `draw mean` moves from 0.16-0.17 in round 1 to 0.17-0.18 in round 3
+across about forty minutes of continuous drawing, which is as large as the
+A-to-B difference on that entry. Read sequentially — three A runs then three B
+runs — that drift would have been read as the build's effect. Within every round
+B is at or above A on `surfaces` and far below it on `typography`, which is the
+comparison that survives. On `surfaces` in round 3 the two ranges overlap (A
+reaches 0.18, B reaches down to 0.17); the sample means still separate the same
+way, and the difference there is at the instrument's 0.01 ms resolution rather
+than clear of it.
+
+**What this does not say.** It does not measure the transfer, which is what R-T4
+bounds and which fell on every entry. It does not measure the GPU, since `draw`
+ends before Unity submits. And it does not separate the pack from the upload.
+
 #### The Canvas beside the painter, not taken (2026-09-06)
 
 Story #1447 was to take the epic's first CPU number for the Canvas beside the

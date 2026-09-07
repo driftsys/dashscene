@@ -18,6 +18,7 @@
 // workers are still reading the borrowed rows when the callback returns.
 
 using System;
+using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
@@ -74,6 +75,11 @@ namespace Driftsys.Dashscene
         /// Five `float4`-sized properties. The same eighty bytes the lean
         /// painter's `Instance` occupies, which is not a coincidence: the
         /// layouts are the same because the pictures are meant to be.
+        ///
+        /// **Stated a second time as words, in `Runtime/StreamLayout.cs`**,
+        /// which is where a gate can execute it — nothing compiles this file.
+        /// The two are held to each other by `unity/package-gate`'s
+        /// `dirty_range_upload`.
         private const int BytesPerInstance = 5 * 16;
 
         /// The property ids the per-frame binding uses, resolved once.
@@ -213,6 +219,60 @@ namespace Driftsys.Dashscene
         private int _instancesPerBatch;
         private int _batchStrideBytes;
 
+        /// The pieces one dirty range cuts into, and the word ranges one piece
+        /// uploads.
+        ///
+        /// **Reused across frames and never returned**, so a partial commit
+        /// allocates nothing — the allocation half of R-T4, which the ranged
+        /// upload would otherwise give back on every frame it saves a transfer
+        /// on. `StreamLayout` writes into them rather than answering with a
+        /// list of its own for the same reason.
+        private readonly List<(int Batch, int Row, int Rows)> _pieces =
+            new List<(int Batch, int Row, int Rows)>();
+
+        private readonly List<(int First, int Count)> _wordRanges =
+            new List<(int First, int Count)>();
+
+        /// How many words and how many calls the last [`UploadInstances`] sent.
+        private int _uploadedWords;
+        private int _uploads;
+
+        /// The generation whose rows the instance buffer holds, once one has
+        /// been uploaded.
+        ///
+        /// **The packer's own bookkeeping is not enough**, and the difference is
+        /// not hypothetical: `Draw` packs, then uploads the strip, applies the
+        /// kind set and uploads the heap, and any of those can throw. A host
+        /// that caught that and drew again would have a packer holding commit N
+        /// and a device holding N-1 — and the next commit's dirty ranges are a
+        /// delta against N, so every row that moved in N would never be sent.
+        /// `dashscene-gpu` keeps this on the upload side for the same reason.
+        private ulong _uploadedGeneration;
+
+        private bool _haveUploaded;
+
+        /// The document-to-world the batch heads in `_staging` were written
+        /// with, once any have been.
+        ///
+        /// **[`DocumentToWorld`] is the host's, not the commit's**, and that is
+        /// what makes this a field rather than an assumption. A ranged upload
+        /// rewrites instance rows and leaves every batch head alone; the head
+        /// is where the two transforms live. So a host that repositioned the
+        /// document and then drew a commit the other conditions admit would
+        /// keep drawing at the previous transform, with nothing reporting it,
+        /// until a growth or a full pack happened to rewrite the heads.
+        ///
+        /// **Compared with Unity's `Matrix4x4` equality, which is
+        /// approximate.** `Vector4`'s `==` is a squared-magnitude test
+        /// against an epsilon, so a transform that differs by less than that
+        /// does NOT force a whole upload. That is the right answer rather than
+        /// a tolerated one: a difference too small for that test is a
+        /// difference too small to move a pixel, and an exact comparison would
+        /// spend a whole upload on the last bit of a float.
+        private Matrix4x4 _stagedToWorld;
+
+        private bool _haveStagedHead;
+
         private uint[] _staging = Array.Empty<uint>();
         private float[] _paintStaging = Array.Empty<float>();
         private float[] _clipStaging = Array.Empty<float>();
@@ -349,6 +409,18 @@ namespace Driftsys.Dashscene
 
         /// How many instances the last [`Draw`] emitted.
         public int InstanceCount { get; private set; }
+
+        /// What the last [`Draw`] sent to the instance buffer.
+        ///
+        /// **`Uploads` and `Words` are counted as the writes happen.** Every
+        /// write goes through [`UploadRows`], which counts both, so a version
+        /// that took the ranged branch and then sent the whole array reports
+        /// the whole array's word count — a reading a gate can fail on rather
+        /// than a claim the painter makes about itself. `Rows` is that count
+        /// divided by the words a row occupies on the ranged path, and the live
+        /// instance count on the whole one, which `InstanceUpload.Rows` states
+        /// and a gate has to read before comparing the two kinds.
+        public InstanceUpload LastUpload { get; private set; }
 
         /// Whether the heap binding is stale and the next [`Draw`] will redo
         /// it.
@@ -1467,34 +1539,134 @@ namespace Driftsys.Dashscene
 
         /// Grow the buffer if this frame needs more room, then upload.
         ///
-        /// **Nothing is allocated on a frame that fits, and that is the
-        /// allocation half of R-T4 rather than the whole of it.** The rule asks
-        /// for a CPU frame cost of "dirty-range instance-buffer upload from the
-        /// rect table + submission. Nothing else"; what goes up below is the
-        /// whole staging array — every batch, including the capacity past the
-        /// live instances — whatever `DsFrame.Dirty` carries, and nothing in
-        /// this package reads that set. Issue #1306 carries it, and
-        /// `docs/design/unity-csharp-host.md`'s gaps list states what the full
-        /// repack costs on the document `just unity-render` draws.
+        /// **Nothing is allocated on a frame that fits, and only the dirty rows
+        /// are sent — which together are R-T4.** The rule asks for a CPU frame
+        /// cost of "dirty-range instance-buffer upload from the rect table +
+        /// submission. Nothing else". Before story #1446 the whole staging array
+        /// was uploaded on every commit, dirty set or not: on the document
+        /// `just unity-render` draws, and on the `RawBuffer` rung, 5232 bytes
+        /// for the 1392 that carry the frame's sixteen instances. A commit that
+        /// keeps every rect's instance count now sends only the rows its dirty
+        /// rects name, and the packer is what decides which those are —
+        /// `FramePacker.LastPackWasPartial` and `DirtyRanges`.
+        ///
+        /// **The full pack keeps sending the whole array**, and that is not an
+        /// oversight: a full pack has moved rows the dirty set does not name —
+        /// a node that gained a stroke pushes every instance behind it along —
+        /// so there is no range that describes it.
         ///
         /// Capacity grows by doubling and never shrinks, and the batches are
         /// added once per growth rather than once per frame — a first version
         /// sized the buffer to the exact instance count, which reallocated the
         /// `GraphicsBuffer` and re-added every batch on any frame where a
         /// single node appeared or left.
+        ///
+        /// **Five conditions gate the ranged path, and only the first is the
+        /// packer's** — [`InstanceUpload.CanSendRanges`] states them and
+        /// `unity/ffi-check` drives every one of them false in turn. Failing
+        /// any costs a whole upload and nothing else: a successful partial pack
+        /// leaves the packer's arrays holding the WHOLE of this commit, clean
+        /// rects included, so `FillStaging()` over them is correct either way.
         private void UploadInstances()
         {
+            _uploadedWords = 0;
+            _uploads = 0;
+
             if (InstanceCount == 0)
             {
                 // The batches stay. A frame with nothing in it draws nothing
                 // because `OnPerformCulling` emits no command, not because the
                 // batches were torn down and will be rebuilt next frame.
+                LastUpload = new InstanceUpload(UploadKind.None, 0, 0, 0);
                 return;
             }
 
+            // **Read before `EnsureCapacity`, which is what can replace it.**
+            var held = _instanceBuffer;
             EnsureCapacity(InstanceCount);
-            FillStaging();
-            _instanceBuffer.SetData(_staging, 0, 0, _staging.Length);
+
+            // **The decision is `InstanceUpload.CanSendRanges`'s, not this
+            // member's.** Nothing compiles or runs this file, so a predicate
+            // written here could only be scanned — and a scan that finds three
+            // clause spellings cannot tell an `&&` from an `||`.
+            // `unity/ffi-check` drives that member's truth table instead.
+            var ranged = InstanceUpload.CanSendRanges(
+                _packer.LastPackWasPartial,
+                _haveUploaded,
+                _uploadedGeneration,
+                _packer.PackedGeneration,
+                ReferenceEquals(held, _instanceBuffer),
+                _haveStagedHead && _stagedToWorld == DocumentToWorld);
+
+            if (!ranged)
+            {
+                FillStaging();
+                UploadRows(0, _staging.Length);
+                LastUpload = new InstanceUpload(
+                    UploadKind.Whole, _uploads, _uploadedWords, InstanceCount);
+                _uploadedGeneration = _packer.PackedGeneration;
+                _haveUploaded = true;
+                return;
+            }
+
+            var strideWords = _batchStrideBytes / 4;
+
+            // **Indexed, not `foreach`.** `DirtyRanges` is declared
+            // `IReadOnlyList<T>`, and iterating a `List<T>` through an
+            // interface boxes its struct enumerator onto the heap — measured at
+            // 40 bytes, every frame, on precisely the path R-T4's allocation
+            // half is about. The two lists below are concrete `List<T>` fields,
+            // whose `foreach` binds the struct enumerator directly.
+            var ranges = _packer.DirtyRanges;
+            for (var r = 0; r < ranges.Count; r++)
+            {
+                var range = ranges[r];
+                StreamLayout.Cut(_instancesPerBatch, range.Offset, range.Count, _pieces);
+                foreach (var piece in _pieces)
+                {
+                    // **One list, written into and then sent.** The words this
+                    // frame writes and the words it uploads are the same
+                    // ranges by construction rather than by two formulas that
+                    // have to agree — a version where they disagreed would put
+                    // correct rows into the staging array and send a different
+                    // slice of it, which no golden catches, because every
+                    // golden is drawn from a full pack.
+                    //
+                    // The head this batch opens with — the two transforms — is
+                    // not rewritten here, and `CanSendRanges`' `sameHead` is
+                    // what makes that safe: the head is the host's transform
+                    // rather than the commit's, so a frame that moved it takes
+                    // the whole path instead.
+                    StreamLayout.Ranges(
+                        _instancesPerBatch, strideWords, piece.Batch, piece.Row, piece.Rows,
+                        _wordRanges);
+                    WriteStreams(
+                        _wordRanges, piece.Batch * _instancesPerBatch + piece.Row, piece.Rows);
+                    foreach (var (first, count) in _wordRanges)
+                    {
+                        UploadRows(first, count);
+                    }
+                }
+            }
+
+            LastUpload = new InstanceUpload(
+                UploadKind.Ranges, _uploads, _uploadedWords,
+                InstanceUpload.RowsIn(_uploadedWords));
+            _uploadedGeneration = _packer.PackedGeneration;
+            _haveUploaded = true;
+        }
+
+        /// Send `count` words of the staging array, starting at `first`.
+        ///
+        /// **The one member that writes the instance buffer**, so that
+        /// [`LastUpload`] is derived from what was sent rather than from what
+        /// the caller meant to send. `unity/package-gate`'s `dirty_range_upload`
+        /// holds it to being the only one.
+        private void UploadRows(int first, int count)
+        {
+            _instanceBuffer.SetData(_staging, first, first, count);
+            _uploadedWords += count;
+            _uploads++;
         }
 
         /// How many instances one batch window holds.
@@ -1658,6 +1830,8 @@ namespace Driftsys.Dashscene
         private void FillStaging()
         {
             var toWorld = DocumentToWorld;
+            _stagedToWorld = toWorld;
+            _haveStagedHead = true;
             // Inverted once, not once per batch. `Matrix4x4.inverse` is a real
             // computation and every batch writes the same value — a document is
             // one sheet.
@@ -1675,16 +1849,32 @@ namespace Driftsys.Dashscene
                 WritePackedMatrix(baseWord + 4, toWorld);
                 WritePackedMatrix(baseWord + 4 + 12, toObject);
 
-                var propsWord = baseWord + HeadBytes / 4;
+                // **The same member the ranged path uses**, over the whole of
+                // this batch rather than a window of it. One statement of where
+                // a stream sits, so the two paths cannot drift apart — and it
+                // is the statement `unity/ffi-check` executes, which the byte
+                // arithmetic that used to be written here was not.
                 var inBatch = InstancesInBatch(b);
-                var first = b * _instancesPerBatch;
-
-                WriteFloats(propsWord + 0 * _instancesPerBatch * 4, _packer.Quad, first, inBatch);
-                WriteFloats(propsWord + 1 * _instancesPerBatch * 4, _packer.Corners, first, inBatch);
-                WriteFloats(propsWord + 2 * _instancesPerBatch * 4, _packer.Shade, first, inBatch);
-                WriteFloats(propsWord + 3 * _instancesPerBatch * 4, _packer.Pivot, first, inBatch);
-                WriteUints(propsWord + 4 * _instancesPerBatch * 4, _packer.Paint, first, inBatch);
+                StreamLayout.Ranges(
+                    _instancesPerBatch, _batchStrideBytes / 4, b, 0, inBatch, _wordRanges);
+                WriteStreams(_wordRanges, b * _instancesPerBatch, inBatch);
             }
+        }
+
+        /// Write `rows` rows, from instance `first` of the packer's arrays, into
+        /// the five word ranges `at` names.
+        ///
+        /// **The one place a stream's identity is stated**: `at[0]` is `Quad`,
+        /// `at[1]` `Corners`, and so on in the order `StreamLayout.Streams`
+        /// counts and `PaintProperties.All` declares. Both upload paths write through
+        /// here, so a stream that moved would move for both.
+        private void WriteStreams(List<(int First, int Count)> at, int first, int rows)
+        {
+            WriteFloats(at[0].First, _packer.Quad, first, rows);
+            WriteFloats(at[1].First, _packer.Corners, first, rows);
+            WriteFloats(at[2].First, _packer.Shade, first, rows);
+            WriteFloats(at[3].First, _packer.Pivot, first, rows);
+            WriteUints(at[4].First, _packer.Paint, first, rows);
         }
 
         private void WriteFloats(int word, float[] source, int firstInstance, int count)
@@ -2152,9 +2342,12 @@ namespace Driftsys.Dashscene
             Array.Copy(source, staging, live);
             // **Only the live rows.** A first version pushed the whole doubled
             // capacity every frame — thousands of stale `float4`s for a
-            // document that had once been large. Issue #1306 records the same
-            // cost for the instance buffer, where the fix is a dirty range
-            // rather than a length.
+            // document that had once been large. The instance buffer had the
+            // same cost and a different fix: story #1446 sends the rows a
+            // commit's dirty rects name rather than a prefix of the array,
+            // because an instance row moves when a rect ahead of it changes
+            // shape and a heap row does not — a changed paint earns a new
+            // interned row instead.
             buffer.SetData(staging, 0, 0, rows * 4);
             uploaded = floats;
             return reallocated;

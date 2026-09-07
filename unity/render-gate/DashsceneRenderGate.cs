@@ -476,6 +476,27 @@ public sealed class DashsceneRenderGate : MonoBehaviour
     /// reporting a comparison that did not happen.
     private int _orderKindSetCompared = -1;
 
+    /// What the first drawn frame sent to the instance buffer, once one has.
+    ///
+    /// **The whole path is the only one this gate can reach**, and that is a
+    /// property of its inputs rather than of the painter: this player loads one
+    /// static `.dsb` and never mutates it, so `LiveScene::advanced` is false
+    /// after the first commit and every frame here re-draws the same
+    /// generation. `FramePacker`'s partial path needs the commit AFTER the one
+    /// its arrays hold.
+    ///
+    /// **What checks the ranged path is not this gate.**
+    /// `unity/ffi-check` drives the PACKER's partial path against a real
+    /// document, and `unity/package-gate` scans the painter's branch structure
+    /// — but `Runtime/Engine/` is compiled by no CI job and executed by
+    /// nothing, so a real `GraphicsBuffer.SetData` at the offsets
+    /// `StreamLayout` computes is run by no gate at all. Issue #1482 carries
+    /// putting a producer in a player so that a partial pack is drawn rather
+    /// than only packed.
+    private InstanceUpload _firstUpload;
+
+    private bool _haveUpload;
+
     private int _orderKindSetDisagreeing = -1;
 
     private void Awake()
@@ -694,6 +715,13 @@ public sealed class DashsceneRenderGate : MonoBehaviour
                     else if (_samples == null)
                     {
                         BuildSamples(lease);
+
+                        // **After the draw, which is what settles it.** Read
+                        // here rather than in `Judge` because the painter is
+                        // rebuilt per step and this is the frame the samples
+                        // are stated over.
+                        _firstUpload = _painter.LastUpload;
+                        _haveUpload = true;
                     }
                 }
             }
@@ -1349,6 +1377,12 @@ public sealed class DashsceneRenderGate : MonoBehaviour
             return;
         }
 
+        // **After the guard above, which is what establishes
+        // `_overlayInstances`.** The row comparison inside is against that
+        // count, so running it first would report the painter and the packer
+        // disagreeing on a frame where neither packed anything.
+        JudgeInstanceUpload();
+
         // 1. THE NEGATIVE CONTROL. The verdict predicate, run first on a frame
         //    the painter did not draw. A run where this passes is a run whose
         //    verdict means nothing, and it has happened in this repository
@@ -1713,6 +1747,69 @@ public sealed class DashsceneRenderGate : MonoBehaviour
                 + "own keyword state, so a missing one removes that arm from every fragment — "
                 + "a clipped document drawing ink outside its clip, or a stroke drawing as its "
                 + "node's fill — and an extra one compiles in an arm the document cannot reach.");
+        }
+    }
+
+    /// The painter reported what it sent, and it sent the whole array for a
+    /// full pack.
+    ///
+    /// Story #1446 made `UploadInstances` report the transfer it performed
+    /// rather than leave it implied. What this gate can judge is the full
+    /// pack's report — see [`_firstUpload`] for why the ranged one is judged
+    /// elsewhere — and that report is worth judging here because it is derived
+    /// from the words that reached `GraphicsBuffer.SetData`: a painter that
+    /// stopped uploading at all, or that uploaded twice, changes this line
+    /// while every golden stays identical, because the batches keep whatever
+    /// the last successful upload left.
+    private void JudgeInstanceUpload()
+    {
+        if (!_haveUpload)
+        {
+            Fail("no drawn frame reported an instance upload, so the painter's own account of "
+                 + "what it sent was never read.");
+            return;
+        }
+
+        Line($"instance upload — {_firstUpload}, over {_overlayInstances} packed instance(s)");
+
+        if (_firstUpload.Kind != UploadKind.Whole)
+        {
+            Fail(
+                $"the first drawn frame reported {_firstUpload.Kind}. This player draws one "
+                + "static document, so every commit it packs is a full pack and every upload "
+                + "is the whole staging array; a ranged upload here means the packer took the "
+                + "partial path over a commit it holds no previous commit for.");
+        }
+
+        if (_firstUpload.Uploads != 1)
+        {
+            Fail(
+                $"a whole upload is one `SetData` call and this one was {_firstUpload.Uploads}. "
+                + "`LastUpload` counts calls rather than intentions, so this is the count the "
+                + "device actually received.");
+        }
+
+        if (_firstUpload.Rows != _overlayInstances)
+        {
+            Fail(
+                $"the painter reported {_firstUpload.Rows} row(s) uploaded and the packer "
+                + $"produced {_overlayInstances} instance(s). On the whole path the two are the "
+                + "same number by construction, so they have gone out of step.");
+        }
+
+        // **`Words` is the reading; `Rows` on this path is not.** A whole
+        // upload sends every batch, so it carries at least the live rows'
+        // words and normally many more — the heads, and the capacity past the
+        // live instances. What this bounds is a truncated transfer, which
+        // `Rows` alone cannot see because the whole path sets it from the
+        // instance count rather than from the counter.
+        var live = _firstUpload.Rows * StreamLayout.Streams * StreamLayout.WordsPerRow;
+        if (_firstUpload.Words < live)
+        {
+            Fail(
+                $"a whole upload sent {_firstUpload.Words} word(s), which is fewer than the "
+                + $"{live} that {_firstUpload.Rows} live instance(s) occupy across their five "
+                + "streams. The rows past the transfer keep whatever the previous frame left.");
         }
     }
 

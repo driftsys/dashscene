@@ -1295,29 +1295,39 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   camera. For a full-screen overlay that is the right answer and costs nothing;
   for a document placed in a 3D scene it is work per camera proportional to the
   whole document.
-- **R-T4's dirty-range upload is not implemented, and this is what the full
-  repack costs.** The painter repacks every rect and re-uploads the whole
-  instance buffer — including capacity past the live instances — on every frame,
-  and `DsFrame.Dirty`'s rows are read by nothing (`FrameLease` reads its stride
-  for R-E17; nothing reads the indices). For the first document
-  `just unity-render` draws, `goldens/dsb/v03-paint.dsb`, every commit walks all
-  fourteen of its rect entries, rebuilds all four heap tables and sends one
-  instance batch. **The heap tables' rows no longer go up with it**: since story
-  #1445 `BrgPainter.Upload` skips a table's `SetData` where its live floats and
-  its live length both match the last upload, so a draw that did not move a
-  table sends none of it. The instance buffer is not on that footing, and the
-  rest of this entry is about the instance buffer. **On the `RawBuffer` rung** —
-  the only rung any device has ever reported here — that batch is the 64-slot
-  floor `InstancesPerBatch` chooses: the shared head plus sixty-four eighty-byte
-  slots, 112 + 5120 = **5232 bytes**, of which 112 + 16 × 80 = **1392** carry
-  the sixteen instances the frame's draw commands read. All of it goes up on a
-  commit whose dirty set is empty, and none of it is derived from that set. The
-  `ConstantBuffer` rung sizes its batch from the device's own window instead, so
-  the same document costs more there: a 16 KB window with 256-byte alignment
-  fits `(16384 - 112) / 80` = 203 slots, and `BatchStrideBytes` rounds
-  `112 + 203 x 80` = 16352 **up** to the alignment — so the stride the buffer is
-  sized from, and the upload sends, is **16384 bytes**. That arithmetic has run
-  on no device, which is why the figure to quote is the `RawBuffer` one.
+- **R-T4's dirty-range upload is implemented, and this is what the full repack
+  cost before it.** Issue #1306 is what carried the gap; story #1446 answered
+  it. Since that story a commit that keeps every rect's instance count rewrites
+  only the rows its dirty rects name and uploads them as coalesced ranges; any
+  other commit is packed and uploaded whole. `FramePacker.Spans` records where
+  each rect's rows sit, `LastPackWasPartial` says which path a pack took,
+  `DirtyRanges` is what the painter uploads, and `BrgPainter.LastUpload` reports
+  the transfer that actually happened — derived from the words that reached
+  `GraphicsBuffer.SetData` rather than hand-set. **The heap tables are still
+  rebuilt and uploaded whole on every commit**, and deliberately: a changed
+  paint earns a new interned row rather than rewriting one, and the solids sit
+  before the gradients in the one heap array, so a new solid moves
+  `GradientBase` and every gradient row behind it — there is no stable heap slot
+  to rewrite. `dashscene-gpu` writes the paint heap in full every frame for the
+  same reason. Since story #1445 `BrgPainter.Upload` also skips a table's
+  `SetData` where its live floats and its live length both match the last
+  upload, so a draw that did not move a table sends none of it.
+
+  **What the whole path costs, which is what every commit cost before.** For the
+  document `just unity-render` draws, `goldens/dsb/v03-paint.dsb`, every commit
+  walks all fourteen of its rect entries and sends one instance batch. **On the
+  `RawBuffer` rung** — the only rung any device has ever reported here — that
+  batch is the 64-slot floor `InstancesPerBatch` chooses: the shared head plus
+  sixty-four eighty-byte slots, 112 + 5120 = **5232 bytes**, of which 112 + 16 ×
+  80 = **1392** carry the sixteen instances the frame's draw commands read.
+  Before #1446 all of it was uploaded on a commit whose dirty set was empty as
+  much as on any other. The `ConstantBuffer` rung sizes its batch from the
+  device's own window instead, so the same document costs more there: a 16 KB
+  window with 256-byte alignment fits `(16384 - 112) / 80` = 203 slots, and
+  `BatchStrideBytes` rounds `112 + 203 x 80` = 16352 **up** to the alignment —
+  so the stride the buffer is sized from, and a whole upload sends, is **16384
+  bytes**. That arithmetic has run on no device, which is why the figure to
+  quote is the `RawBuffer` one.
 
   **The fourteen is two tests, not one.**
   `crates/dashc/tests/figma_lowering.rs`'s
@@ -1325,13 +1335,40 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   compiled from `corpus/figma-fixtures/v03-paint.json`, and
   `the_fixture_emits_the_golden_dsb` in the same file asserts that compiling
   that fixture reproduces `goldens/dsb/v03-paint.dsb` byte for byte. Neither
-  alone says the file the painter loads holds fourteen rects. The arrays are
-  reused, so a steady frame allocates nothing; that is the half of R-T4 about
-  allocation, not the half about transfer. Issue #1306, and issue #708 is the
-  same gap in the lean painter, where the design serving both belongs — packing
-  only the changed rects needs the previous commit's tables held for comparison,
-  because a rect's instance count can change between commits and a dirty rect is
-  therefore not a fixed byte range.
+  alone says the file the painter loads holds fourteen rects.
+
+  **What the ranged path costs on a device is measured, and it depends on the
+  document's size.** On the showcase's `typography` scene — 381 instances, a
+  512-slot batch, a 41072-byte whole upload — it HALVES the `draw` term, 0.14 to
+  0.15 ms against 0.26 to 0.29. On `surfaces` (56 instances) and `layout` (16 to
+  29) it is at or about 0.01 ms ABOVE the whole upload it replaces. Both
+  replicate across three interleaved rounds. The mechanism is one trade: the
+  buffer is stream-major, so a ranged upload is at least five `SetData` calls
+  per dirty range where a whole upload is one call at any size — so the calls
+  cost more than the bytes saved at 5232 bytes and far less at 41072. The
+  crossing point is between 56 and 381 instances on this device.
+  `docs/design/android-toolchain.md`'s "The dirty-range instance upload, and
+  where it starts paying" carries the tables; issue #1483 carries narrowing the
+  crossing point. R-T4 is met throughout — it bounds the transfer, which fell on
+  every entry.
+
+  **What no gate renders is a partial pack**, and that is issue #1482. This
+  player loads one static document and never mutates it, so every frame
+  `just unity-render` draws re-packs the same generation and the partial path
+  cannot be reached there. What covers it instead: `unity/package-gate`'s
+  `dirty_range_upload` scans the painter's branch structure and holds its byte
+  constants to `StreamLayout`'s word constants; `unity/ffi-check` executes the
+  span, coalescing, layout and decision arithmetic and drives the demo producer
+  through two consecutive commits, asserting that the partial pack's arrays
+  equal a full pack of the same commit row by row and that every row that moved
+  lies inside a dirty range; and the showcase on a device runs it end to end
+  while a scene ANIMATES, which is evidence rather than a verdict.
+
+  **Not during a scene change**, and the distinction matters to anyone reading
+  this for how much informal coverage the ranged path already has: switching
+  scenes calls `BuildDemoScene`, which raises `DocumentReplacedFlag` and takes
+  the whole path by construction. What reaches the ranged path is the pulse loop
+  inside one scene.
 - **Five code paths have never been exercised by any gate or any device**, and
   they are worth naming as a class rather than one at a time. Three of them are
   `AddBatches`'s rung split, added by issue #1389: the `window` local and both
