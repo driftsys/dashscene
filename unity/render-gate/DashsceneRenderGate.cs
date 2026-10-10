@@ -957,11 +957,11 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         if (_painter.Rung == BrgRung.InstancedWithoutBrg)
         {
             // R-E19 selects rung 3 where a BatchRendererGroup is unsupported,
-            // and nothing is built for it. Reported here rather than measured
+            // and the painter draws nothing on it (issue #1490). Reported here rather than measured
             // around, because every number below would be the number of a frame
             // that drew nothing.
-            Fail($"the painter reports rung {_painter.Rung}, which draws nothing. Nothing is "
-                 + "built for rung 3, so this run cannot say anything about the picture.");
+            Fail($"the painter reports rung {_painter.Rung}, on which it draws nothing (issue "
+                 + "#1490), so this run cannot say anything about the picture.");
             Finish();
             return false;
         }
@@ -1210,13 +1210,12 @@ public sealed class DashsceneRenderGate : MonoBehaviour
     /// point.
     ///
     /// **This assumes draw order is submission order, and the same run
-    /// measures that assumption** rather than trusting it. Without the sorting
-    /// keys `BatchRendererGroup` groups the commands by material (issue
-    /// #1389); with them, and one instance per command, the draw order is the
-    /// keys' rank — the painter emits its draw commands in rect order and lays
-    /// command 0 farthest, so a higher index is drawn later and on top
-    /// (issue #1402, `docs/decisions/brg-draw-command-order-is-not-guaranteed.md`
-    /// D1). [`JudgeOrder`] checks exactly that on `order.dsb` in the run this
+    /// measures that assumption** rather than trusting it. The overlay class
+    /// draws on the ordered pass since story #1448: one draw per contiguous
+    /// same-material run, in instance order, with no sorting key, so a higher
+    /// index is drawn later and on top (`docs/design/unity-csharp-host.md`,
+    /// "Two draw paths"). [`JudgeOrder`] checks exactly that on `order.dsb`,
+    /// drawn with the same class through the same pass, in the run this
     /// method's verdicts belong to, and fails the run otherwise.
     ///
     /// The wrong verdict this predicate would give under any other order —
@@ -2353,7 +2352,8 @@ public sealed class DashsceneRenderGate : MonoBehaviour
             return;
         }
         // **Two materials, read from the packing and not counted at the
-        // cascade.** R-E22 asks for one probed pixel per registered material,
+        // cascade.** R-E22 asks for one probed pixel per material the painter
+        // draws the document with,
         // and a bold run resolved to the regular sheet would draw the same
         // white `I` from the same glyph slot — the probe cannot tell the
         // sheets apart, so the atlas each run samples is held here.

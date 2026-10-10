@@ -342,6 +342,14 @@ fn every_name_the_painter_binds_is_declared_by_the_shading() {
         })
         .collect::<Vec<_>>()
         .join("\n");
+    // The text of every `#ifdef DASHSCENE_PROCEDURAL` block up to its first
+    // `#else` or `#endif`, comments cut. Only the procedural variant compiles
+    // it, which is what makes a per-draw integer acceptable there and nowhere
+    // else.
+    let procedural: Vec<String> = includes
+        .iter()
+        .flat_map(|(_, source)| procedural_blocks(source))
+        .collect();
     assert!(
         !cbuffer.trim().is_empty(),
         "no .hlsl declares a `CBUFFER_START(UnityPerMaterial)` block. A \
@@ -357,7 +365,8 @@ fn every_name_the_painter_binds_is_declared_by_the_shading() {
         // third disjunct, which `_DsCutoff` satisfied through its `Properties`
         // entry, its `clip()` call and a comment — so deleting its declaration
         // from the CBUFFER, the exact state the fix repaired, passed.
-        let is_buffer = shading.contains(&format!("StructuredBuffer<float4> {name};"));
+        let is_buffer = shading.contains(&format!("StructuredBuffer<float4> {name};"))
+            || shading.contains(&format!("StructuredBuffer<DsInstance> {name};"));
         let is_per_material = cbuffer.contains(&format!(" {name};"));
         // **A texture is neither of the two above and cannot be made into
         // one.** It is not a `StructuredBuffer`, and it cannot be a
@@ -390,11 +399,24 @@ fn every_name_the_painter_binds_is_declared_by_the_shading() {
         // that issue names — so the form is no longer accepted here, and
         // `_DsGlobals` moving into `UnityPerMaterial` is what this arm's
         // removal holds in place.
+        // **A per-draw integer, and only inside the procedural variant.** The
+        // ordered pass sets `_DsFirstInstance` on every draw through a
+        // `MaterialPropertyBlock`, so it is neither per material nor a process
+        // global written by `Shader.SetGlobal*`, which is what issue #1297
+        // removed. It cannot be a `UnityPerMaterial` member either: that buffer
+        // must keep one layout across every variant for the SRP Batcher to
+        // accept the BatchRendererGroup variant. Accepting `int name;`
+        // anywhere would reopen the global-scalar arm, so the declaration must
+        // sit in a block only `DASHSCENE_PROCEDURAL` compiles.
+        let is_per_draw = procedural
+            .iter()
+            .any(|line| line.trim() == format!("int {name};"));
         assert!(
-            is_buffer || is_per_material || is_texture,
+            is_buffer || is_per_material || is_texture || is_per_draw,
             "`{name}` is bound by the painter (Runtime/PaintBindings.cs) and is \
              declared by no shader source as a StructuredBuffer, a \
-             UnityPerMaterial member, or a TEXTURE2D with its SAMPLER. The \
+             UnityPerMaterial member, a TEXTURE2D with its SAMPLER, or an \
+             `int` inside an `#ifdef DASHSCENE_PROCEDURAL` block. The \
              binding then reaches nothing and the shading reads an unbound \
              buffer, an unbound sampler or a default."
         );
@@ -789,4 +811,28 @@ fn every_per_material_member_is_declared_by_every_shader() {
         "no shipped .shader includes DashsceneInstance.hlsl, so this gate \
          checked nothing"
     );
+}
+
+/// The lines of every `#ifdef DASHSCENE_PROCEDURAL` block in `source`, from the
+/// line after the `#ifdef` to the first `#else` or `#endif`, with `//` comments
+/// cut. The shading nests no conditional inside those blocks, so the first
+/// `#else` or `#endif` is the block's own.
+fn procedural_blocks(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut inside = false;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed == "#ifdef DASHSCENE_PROCEDURAL" {
+            inside = true;
+            continue;
+        }
+        if inside && (trimmed.starts_with("#else") || trimmed.starts_with("#endif")) {
+            inside = false;
+            continue;
+        }
+        if inside {
+            out.push(line.split("//").next().unwrap_or("").to_string());
+        }
+    }
+    out
 }

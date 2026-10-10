@@ -1,4 +1,6 @@
-// The engine painter: the committed tables drawn through BatchRendererGroup.
+// The engine painter: the committed tables drawn through BatchRendererGroup,
+// for the two lit classes, and through `OrderedDrawPass`, for the overlay class
+// and text (story #1448).
 //
 // **Everything under `Runtime/Engine/` references UnityEngine**, which is what
 // separates it from the rest of `Runtime/`. R-E10's netstandard2.1 check cannot
@@ -45,9 +47,11 @@ namespace Driftsys.Dashscene
         /// Rung 3 — instanced draws without BatchRendererGroup.
         /// `UnsupportedByUnderlyingGraphicsApi`.
         ///
-        /// **Nothing is built for it.** D3 records rung 3 so the answer is not
-        /// improvised under pressure, and says so; the painter reports this
-        /// rung and draws nothing rather than pretending to be on rung 1.
+        /// **The painter draws nothing on it.** `OrderedDrawPass` does not
+        /// depend on BatchRendererGroup, so it is this rung's mechanism, but
+        /// the painter does not take it here: it reports this rung and draws
+        /// nothing on either path rather than pretending to be on rung 1
+        /// (D3's amendment of story #1448; issue #1490 is the debt).
         /// Descending below rung 1 is D3's trigger to raise the R-T4 conflict.
         InstancedWithoutBrg,
     }
@@ -64,7 +68,13 @@ namespace Driftsys.Dashscene
         }
     }
 
-    /// Draws committed dashscene frames through `BatchRendererGroup`.
+    /// Draws committed dashscene frames.
+    ///
+    /// **Two paths, chosen per instance.** A lit class's nodes are drawn
+    /// through `BatchRendererGroup`; the overlay class's nodes and every glyph
+    /// are drawn by `OrderedDrawPass`, one draw per run in document order —
+    /// [`PathFor`] and [`TextPath`] say which. The group is built for every
+    /// class, and its rung decides whether the painter draws at all.
     ///
     /// One painter draws one document with one material class. Create it after
     /// the runtime and before the first `Draw`; dispose it before the runtime.
@@ -118,6 +128,35 @@ namespace Driftsys.Dashscene
             Shader.PropertyToID(PaintMaterialProperties.Atlas);
         private static readonly int GradientStripId =
             Shader.PropertyToID(PaintMaterialProperties.GradientStrip);
+        private static readonly int InstancesId =
+            Shader.PropertyToID(OrderedDrawProperties.Instances);
+
+        /// The path a glyph takes in every painter, whatever its class.
+        ///
+        /// **Decided in `Runtime/DrawRouting.cs`**, where `unity/ffi-check`
+        /// executes it: text is not a `MaterialClass` and is always blended,
+        /// so it takes the ordered path.
+        public const DrawPath TextPath = DrawRouting.TextPath;
+
+        /// The keyword that selects the procedural variant of the two blended
+        /// shaders: no mesh, the corner from the vertex id, the instance row
+        /// from `_DsInstances`. Declared `multi_compile_local` in both.
+        private const string ProceduralKeyword = "DASHSCENE_PROCEDURAL";
+
+        /// Words one instance occupies in the `_DsInstances` buffer: the five
+        /// streams interleaved, Quad, Corners, Shade, Pivot and Paint, four
+        /// words each — the 80-byte `DsInstance` the shading reads.
+        private const int OrderedRowWords = DrawRouting.OrderedRowWords;
+
+        /// The Unity layer a document draws on, on both paths.
+        ///
+        /// **One constant for the two filters.** The culling callback's
+        /// `BatchFilterSettings.layer` puts every command on it, so a camera
+        /// whose `cullingMask` excludes it draws none of the document;
+        /// `OrderedDrawPass` tests the same mask with the same constant, so a
+        /// camera that culls the document's layer — a stacked overlay camera,
+        /// say — does not draw the ordered runs either.
+        internal const int DocumentLayer = 0;
 
         /// The strip's width in texels, which `dashpaint::gradient_strip`
         /// fixes.
@@ -177,16 +216,18 @@ namespace Driftsys.Dashscene
         /// only when the frame actually carries runs.
         private TextAtlasSet _atlases = TextAtlasSet.Empty;
 
-        /// One texture, one material and one registration per atlas, in atlas
-        /// order.
+        /// One texture and one material per atlas, in atlas order.
         ///
         /// **A material per sheet rather than per class.** A texture is a
         /// per-material binding, so a document naming two faces needs two
-        /// materials over one shader, and the culling callback emits a draw
-        /// command per instance, each one's atlas picking the material.
+        /// materials over one shader, and [`CutRuns`] cuts a run where an
+        /// instance's atlas picks a different one.
+        ///
+        /// **None is registered with the group.** Text takes the ordered path
+        /// in every painter ([`TextPath`]), so no draw command names a text
+        /// material.
         private Texture2D[] _atlasTextures = Array.Empty<Texture2D>();
         private Material[] _textMaterials = Array.Empty<Material>();
-        private BatchMaterialID[] _textMaterialIds = Array.Empty<BatchMaterialID>();
 
         /// Whether [`SetAtlases`] has been called since the last [`Draw`].
         ///
@@ -204,8 +245,10 @@ namespace Driftsys.Dashscene
 
         /// How many draw commands the last [`Draw`] laid out.
         ///
-        /// Computed once per frame, equal to the instance count, and read by
-        /// every camera's culling callback. It has to be exactly what the
+        /// Computed once per frame, equal to the number of instances that take
+        /// the BatchRendererGroup path — every node instance of a lit painter,
+        /// and none of an overlay painter, which registers no batch — and read
+        /// by every camera's culling callback. It has to be exactly what the
         /// emission loop produces: Unity allocates the command array from it
         /// and that loop writes into it.
         private int _commandCount;
@@ -274,6 +317,49 @@ namespace Driftsys.Dashscene
         private bool _haveStagedHead;
 
         private uint[] _staging = Array.Empty<uint>();
+
+        /// The runs the ordered pass draws, cut by [`CutRuns`] on every
+        /// [`Draw`] and read by `OrderedDrawPass` when a camera records.
+        ///
+        /// **Kept between draws**, so a frame the host skips redraws the last
+        /// runs, as the culling callback re-emits the last commands. Reused,
+        /// so a steady document allocates nothing here.
+        private readonly List<OrderedRun> _runs = new List<OrderedRun>();
+
+        /// The runs `DrawRouting.CutRuns` cut, each naming its material by
+        /// key, which [`CutRuns`] turns into [`_runs`]. Reused, for the same
+        /// reason.
+        private readonly List<KeyedRun> _keyedRuns = new List<KeyedRun>();
+
+        /// The block every ordered draw of this painter carries: the
+        /// `_DsInstances` buffer, set when the buffer is created, and the
+        /// first instance, set by the pass before each draw.
+        ///
+        /// **On the block rather than on the materials**, so the instance rows
+        /// are not part of the heap binding and a reallocation of this buffer
+        /// does not move [`HeapBindCount`].
+        private readonly MaterialPropertyBlock _orderedBlock = new MaterialPropertyBlock();
+
+        /// The document-to-world the last [`Draw`] cut its runs under, which
+        /// the pass draws them with. The batch heads carry the same matrix as
+        /// `unity_ObjectToWorld` on the BRG path, so both paths place a quad at
+        /// the same pixels.
+        private Matrix4x4 _orderedSheet = Matrix4x4.identity;
+
+        /// The interleaved instance rows the procedural variant reads, and the
+        /// array they are staged in, [`OrderedRowWords`] words a row.
+        private GraphicsBuffer _orderedBuffer;
+        private uint[] _orderedStaging = Array.Empty<uint>();
+
+        /// What the ordered buffer holds, for the ranged decision — the same
+        /// two readings [`_uploadedGeneration`] and [`_haveUploaded`] are for
+        /// the BRG buffer, and for the same reason.
+        private ulong _uploadedOrderedGeneration;
+        private bool _haveUploadedOrdered;
+
+        /// How many words and how many calls the last [`UploadOrdered`] sent.
+        private int _orderedWords;
+        private int _orderedUploads;
         private float[] _paintStaging = Array.Empty<float>();
         private float[] _clipStaging = Array.Empty<float>();
         private float[] _strokeStaging = Array.Empty<float>();
@@ -410,6 +496,15 @@ namespace Driftsys.Dashscene
         /// How many instances the last [`Draw`] emitted.
         public int InstanceCount { get; private set; }
 
+        /// How many of the last pack's instances take the BatchRendererGroup
+        /// path, counted in [`Draw`] right after [`InstanceCount`] is set.
+        ///
+        /// **Counted over the pack, not over `_batchCount`**, which is what
+        /// the culling callback's short-frame report exists to distrust: a
+        /// `Draw` that threw before `UploadInstances` grew the batches leaves
+        /// them shorter than this frame's pack.
+        private int _brgPathInstances;
+
         /// What the last [`Draw`] sent to the instance buffer.
         ///
         /// **`Uploads` and `Words` are counted as the writes happen.** Every
@@ -542,6 +637,25 @@ namespace Driftsys.Dashscene
         /// What the last [`Draw`] was handed and did not draw.
         public PackDiagnostics Diagnostics => _lastDiagnostics;
 
+        /// The runs `OrderedDrawPass` draws for this painter, in draw order.
+        internal List<OrderedRun> OrderedRuns => _runs;
+
+        /// The block `OrderedDrawPass` draws this painter's runs with.
+        internal MaterialPropertyBlock OrderedBlock => _orderedBlock;
+
+        /// The matrix `OrderedDrawPass` places this painter's sheet with.
+        internal Matrix4x4 OrderedSheet => _orderedSheet;
+
+        /// The path a painter of class `c` draws its node instances on.
+        ///
+        /// **Decided in `Runtime/DrawRouting.cs`**, where `unity/ffi-check`
+        /// executes every arm: the overlay class takes the ordered path, the
+        /// two lit classes BatchRendererGroup, and an unknown class throws.
+        public static DrawPath PathFor(MaterialClass c)
+        {
+            return DrawRouting.PathFor(c);
+        }
+
         /// Document space to world space.
         ///
         /// The document's own units, with y increasing downwards. The identity
@@ -649,8 +763,10 @@ namespace Driftsys.Dashscene
                     break;
                 case BatchBufferTarget.UnsupportedByUnderlyingGraphicsApi:
                     // R-E19: this selects rung 3, not "draw nothing quietly".
-                    // Nothing is built for rung 3, so the painter stops here
-                    // and says which rung it is on — the `Debug.LogWarning`
+                    // The painter draws nothing on rung 3 (issue #1490): the
+                    // ordered pass would not need the group, but the painter
+                    // does not take it here. So the painter stops here and
+                    // says which rung it is on — the `Debug.LogWarning`
                     // below is what says it, and `Draw`'s own remarks rely on
                     // it having been said. Descending below rung 1 is D3's
                     // trigger to raise the R-T4 conflict.
@@ -671,10 +787,10 @@ namespace Driftsys.Dashscene
                     Debug.LogWarning(
                         $"[dashscene] BatchRendererGroup.BufferTarget reports {target} on this "
                         + $"graphics API, so this painter is on rung {Rung} and draws nothing "
-                        + "(docs/decisions/unity-painter-uses-brg.md D3, R-E19). Nothing is "
-                        + "built for that rung: Draw returns without drawing and without "
-                        + "throwing, so every frame is blank. Read BrgPainter.Rung to branch "
-                        + "on this.");
+                        + "(docs/decisions/unity-painter-uses-brg.md D3, R-E19). The painter "
+                        + "draws nothing on that rung, on either draw path (issue #1490): Draw "
+                        + "returns without drawing and without throwing, so every frame is "
+                        + "blank. Read BrgPainter.Rung to branch on this.");
                     // **It binds nothing either.** A rung-3 painter builds no
                     // group and no material, and `Draw` returns above
                     // `BindHeap`, so no buffer this object holds reaches a
@@ -753,17 +869,35 @@ namespace Driftsys.Dashscene
                 {
                     _material.SetFloat(CutoffId, _cutoff);
                 }
+                // **The class material is on one path, never both.** An
+                // overlay material carries the procedural keyword and is drawn
+                // by `OrderedDrawPass`; a lit one is registered with the group
+                // and drawn by the culling callback.
+                if (PathFor(materialClass) == DrawPath.Ordered)
+                {
+                    EnableProcedural(_material);
+                }
                 _mesh = UnitQuad();
                 _brg = new BatchRendererGroup(OnPerformCulling, IntPtr.Zero);
                 _brg.SetGlobalBounds(_globalBounds);
                 _meshId = _brg.RegisterMesh(_mesh);
-                _materialId = _brg.RegisterMaterial(_material);
+                if (PathFor(materialClass) == DrawPath.Brg)
+                {
+                    _materialId = _brg.RegisterMaterial(_material);
+                }
             }
             catch
             {
                 ReleaseUnityObjects();
                 throw;
             }
+
+            // **Registered once everything above was built, and never on rung
+            // 3**, whose arm returns before the group exists: a rung-3 painter
+            // draws nothing on either path. Every painter registers, because
+            // every painter can carry glyph runs ([`TextPath`]); one with no
+            // run is skipped by the pass.
+            OrderedDrawPass.Register(this);
         }
 
         /// Install the document's MSDF sheets, so its glyph runs can be drawn.
@@ -776,7 +910,7 @@ namespace Driftsys.Dashscene
         /// the frame.
         ///
         /// Each sheet becomes one linear, unmipped texture and one material
-        /// over `Dashscene/Text`, registered with the group. Passing `null` or
+        /// over `Dashscene/Text`, drawn by the ordered pass. Passing `null` or
         /// an empty set releases what was installed and returns the painter to
         /// drawing no text.
         ///
@@ -841,10 +975,10 @@ namespace Driftsys.Dashscene
 
             if (_brg == null)
             {
-                // A rung-3 painter constructs no group, so there is nothing to
-                // register a material with. The rung was reported at
-                // construction and `Draw` returns before packing anything, so
-                // this is not a second failure to raise.
+                // A rung-3 painter constructs no group and draws nothing on
+                // either path. The rung was reported at construction and
+                // `Draw` returns before packing anything, so this is not a
+                // second failure to raise.
                 _atlases = TextAtlasSet.Empty;
                 return;
             }
@@ -868,12 +1002,13 @@ namespace Driftsys.Dashscene
 
             // **Built into locals and assigned at the end.** A throw partway
             // through would otherwise leave the painter holding a set whose
-            // later atlases have no material — and the culling callback indexes
-            // that array by an instance's atlas, so it would read past its end
-            // on the first frame carrying such a run.
+            // later atlases have no material.
+            //
+            // **Every text material takes the procedural variant**, and none
+            // is registered with the group: text is on the ordered path in
+            // every painter ([`TextPath`]).
             var textures = new Texture2D[atlases.Count];
             var materials = new Material[atlases.Count];
-            var ids = new BatchMaterialID[atlases.Count];
             try
             {
                 for (var i = 0; i < atlases.Count; i++)
@@ -881,17 +1016,13 @@ namespace Driftsys.Dashscene
                     textures[i] = AtlasTexture.Decode(atlases[i], i);
                     materials[i] = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
                     materials[i].SetTexture(AtlasId, textures[i]);
-                    ids[i] = _brg.RegisterMaterial(materials[i]);
+                    EnableProcedural(materials[i]);
                 }
             }
             catch
             {
                 for (var i = 0; i < atlases.Count; i++)
                 {
-                    if (ids[i] != default)
-                    {
-                        _brg.UnregisterMaterial(ids[i]);
-                    }
                     if (materials[i] != null)
                     {
                         UnityEngine.Object.DestroyImmediate(materials[i]);
@@ -906,14 +1037,13 @@ namespace Driftsys.Dashscene
 
             _atlasTextures = textures;
             _textMaterials = materials;
-            _textMaterialIds = ids;
             _atlases = atlases;
             // Set AFTER the assignments, so a throw above leaves the painter
             // with no set and no claim that one was installed for this frame.
             _atlasesInstalledSinceDraw = true;
         }
 
-        /// Unregister, destroy and forget every text material and sheet.
+        /// Destroy and forget every text material and sheet.
         ///
         /// Called by [`SetAtlases`], by [`Dispose`], and by [`Draw`] when a
         /// frame reports a document this set was not installed for. Three
@@ -921,17 +1051,14 @@ namespace Driftsys.Dashscene
         /// that freed a subset would leak exactly what nobody can reach.
         private void ReleaseAtlases()
         {
-            for (var i = 0; i < _textMaterialIds.Length; i++)
-            {
-                // **Unregistered before the group is disposed, not after.** A
-                // `BatchRendererGroup` disposed with a material registered
-                // leaves Unity holding a handle to an object this painter is
-                // about to destroy.
-                if (_brg != null && _textMaterialIds[i] != default)
-                {
-                    _brg.UnregisterMaterial(_textMaterialIds[i]);
-                }
-            }
+            // **The runs first, before the materials they name are
+            // destroyed.** A run holds a text material by reference, so the
+            // pass would otherwise draw a destroyed material on the next
+            // camera. The next `Draw` cuts them again; a `Draw` that throws
+            // before it does leaves the pass with nothing to draw rather than
+            // with a run naming freed objects.
+            _runs.Clear();
+
             foreach (var material in _textMaterials)
             {
                 if (material != null)
@@ -946,7 +1073,6 @@ namespace Driftsys.Dashscene
                     UnityEngine.Object.DestroyImmediate(texture);
                 }
             }
-            _textMaterialIds = Array.Empty<BatchMaterialID>();
             _textMaterials = Array.Empty<Material>();
             _atlasTextures = Array.Empty<Texture2D>();
             _atlases = TextAtlasSet.Empty;
@@ -1118,6 +1244,8 @@ namespace Driftsys.Dashscene
 
             _packer.Pack(lease.Frame, _materialClass, _atlases);
             InstanceCount = _packer.InstanceCount;
+            _brgPathInstances = DrawRouting.BrgPathInstances(
+                _packer.Paint, 0, InstanceCount, _materialClass);
 
             if (_packer.Diagnostics != _lastDiagnostics)
             {
@@ -1151,7 +1279,23 @@ namespace Driftsys.Dashscene
             ApplyKindSet(lease.Runtime.KindSet());
 
             UploadHeap();
-            UploadInstances();
+
+            // **Each path uploads its own buffer.** A lit painter's nodes are
+            // drawn from the batch windows `UploadInstances` fills; an overlay
+            // painter registers no batch, and the ordered path reads the
+            // interleaved rows `UploadOrdered` sends. A lit painter carrying
+            // glyph runs sends both.
+            if (PathFor(_materialClass) == DrawPath.Brg)
+            {
+                UploadInstances();
+            }
+
+            _orderedSheet = DocumentToWorld;
+            CutRuns();
+            if (PathFor(_materialClass) == DrawPath.Ordered || _runs.Count > 0)
+            {
+                UploadOrdered();
+            }
 
             // **After the upload, never before it.** `UploadHeap` is what
             // raises the flag: it reports each table's reallocation and
@@ -1164,12 +1308,14 @@ namespace Driftsys.Dashscene
 
             // After `UploadInstances`, which is what settles `_batchCount` and
             // `_instancesPerBatch` — the two `InstancesInBatch` is counted
-            // over. One draw command per visible instance (issue #1401), so
-            // the command count is the instance count.
+            // over. One draw command per visible BRG-path instance (issue
+            // #1401), so the command count is the number of instances that
+            // take that path; on an overlay painter `_batchCount` is zero and
+            // so is the count.
             _commandCount = 0;
             for (var b = 0; b < _batchCount; b++)
             {
-                _commandCount += InstancesInBatch(b);
+                _commandCount += BrgInstancesInBatch(b);
             }
 
             // The two counts agree again, so a later short frame is a new
@@ -1200,12 +1346,13 @@ namespace Driftsys.Dashscene
                 return default;
             }
 
-            // How many draw commands: one per visible instance
+            // How many draw commands: one per visible BRG-path instance
             // (issue #1401, D5), counted in `Draw`.
             //
             // **Counted in `Draw` rather than here.** One command per
-            // instance (issue #1401, D5) makes this count the instance
-            // count, which `Draw` already settles across its batches; this
+            // instance (issue #1401, D5) makes this count the number of
+            // instances on this path, which `Draw` already settles across its
+            // batches; this
             // callback runs once per camera per frame, so recomputing it
             // here would repeat that same walk for a value already known.
             // The emission loop below is the walk that has to happen.
@@ -1228,16 +1375,16 @@ namespace Driftsys.Dashscene
             // `BatchRendererGroup` groups draw commands by material before it
             // draws them, which is ordinary renderer behaviour and is not
             // logged. This painter emits its instances in painter's-algorithm
-            // order, and the two SHADERS a text document draws through —
-            // `UnlitOverlay`, the class material, and `Text`, one material per
-            // glyph atlas — declare `ZWrite Off` and `ZTest Always`, so on that
-            // path sequence is the only thing that decides what covers what.
-            // (`Text` is not a `MaterialClass`; the enum's other two values,
-            // `LitOpaque` and `LitCutout`, declare `ZWrite On` and
-            // `ZTest LEqual`. The keys below are set whichever class the
-            // painter was built with, and were measured on `UnlitOverlay`
-            // alone.) Emission order
-            // alone does not survive the grouping: the document's backdrop is
+            // order. **Since story #1448 only the two lit classes reach this
+            // callback**, which declare `ZWrite On` and `ZTest LEqual`; the two
+            // shaders that declare `ZWrite Off` and `ZTest Always` —
+            // `UnlitOverlay` and `Text` — are drawn by `OrderedDrawPass`, one
+            // draw per material run in document order with no key, because on
+            // that path sequence is the only thing that decides what covers
+            // what. The keys below were measured on `UnlitOverlay`, before it
+            // moved, and are still set on every command this callback emits.
+            // Emission order
+            // alone did not survive the grouping: the document's backdrop is
             // the first row the packer writes and sits on the class material,
             // so it joined that material's group and was drawn over the glyphs.
             //
@@ -1254,11 +1401,14 @@ namespace Driftsys.Dashscene
             // typography scene (issue #1389), and under one instance per
             // command the keys' RANK is the draw order**: farthest first, so
             // command 0 draws first and the emission order is the picture —
-            // measured on 2026-09-05 (issue #1402), on one graphics API. `just
-            // unity-render`'s order phase pins the composite on every run;
-            // negating the step below drew the backdrop last in a hand-run
-            // arm, which the gate itself does not run, and the flag-off arm
-            // composites in order on that fixture, which the order record
+            // measured on 2026-09-05 (issue #1402), on one graphics API, while
+            // the overlay class still drew through this path. **No gate pins
+            // the keys' order since story #1448**: `just unity-render`'s order
+            // phase draws its fixture with the overlay class, which now takes
+            // the ordered pass and carries no key, and no gate draws a lit
+            // document whose order decides the composite. Negating the step
+            // below drew the backdrop last in a hand-run arm, and the flag-off
+            // arm composites in order on that fixture, which the order record
             // lists as owed.
             // `docs/decisions/brg-draw-command-order-is-not-guaranteed.md`
             // holds the claim and its limits and
@@ -1357,7 +1507,7 @@ namespace Driftsys.Dashscene
                 filterSettings = new BatchFilterSettings
                 {
                     renderingLayerMask = 0xffffffff,
-                    layer = 0,
+                    layer = DocumentLayer,
                     motionMode = MotionVectorGenerationMode.Camera,
                     shadowCastingMode = ShadowCastingMode.Off,
                     receiveShadows = false,
@@ -1394,6 +1544,18 @@ namespace Driftsys.Dashscene
                 // reconciled after the loop.
                 for (var at = first; at < limit && command < commandCount;)
                 {
+                    // **An instance on the ordered path is not this
+                    // callback's** (story #1448): a glyph in a lit painter is
+                    // drawn in a run by `OrderedDrawPass`, and a command here
+                    // would draw it a second time. `BrgInstancesInBatch`
+                    // counts by the same predicate, so `commandCount` is the
+                    // number of instances this loop does not skip.
+                    if (PathOf(at) != DrawPath.Brg)
+                    {
+                        at++;
+                        continue;
+                    }
+
                     // **One visible instance per command — issue #1401.**
                     // Unity's sorted-transparent path was measured dropping
                     // a contiguous subset of draw commands for single
@@ -1426,7 +1588,9 @@ namespace Driftsys.Dashscene
                         visibleOffset = (uint)visible,
                         visibleCount = (uint)run,
                         batchID = _batches[b],
-                        materialID = MaterialOf(at),
+                        // The class material: every instance that reaches this
+                        // line is a node of a lit painter.
+                        materialID = _materialId,
                         meshID = _meshId,
                         submeshIndex = 0,
                         splitVisibilityMask = 0xff,
@@ -1480,11 +1644,20 @@ namespace Driftsys.Dashscene
             // frame's instances are all dropped — the total loss, reported by
             // nothing — and true whenever a smaller document follows a larger
             // one, where the loop ran to its own end and cut nothing.
-            if (visible < InstanceCount && !_reportedShortFrame)
+            //
+            // **Against the instances on this path, counted from this frame's
+            // pack** (story #1448). A glyph is skipped by the loop above, so
+            // on a lit painter with text `visible` never reaches
+            // `InstanceCount`, and comparing the two would warn on every such
+            // frame. Read from [`_brgPathInstances`], which `Draw` counts
+            // beside `InstanceCount`, so this callback does not walk every
+            // instance once per camera.
+            var brgInstances = _brgPathInstances;
+            if (visible < brgInstances && !_reportedShortFrame)
             {
                 _reportedShortFrame = true;
                 Debug.LogWarning(
-                    $"[dashscene] the painter emitted {visible} of {InstanceCount} instance(s) in "
+                    $"[dashscene] the painter emitted {visible} of {brgInstances} instance(s) in "
                     + $"{command} draw command(s), against {commandCount} counted, so this frame "
                     + "is cut short. Draw did not complete between settling the instance count "
                     + "and settling the command count; the picture is incomplete until a Draw "
@@ -1494,28 +1667,203 @@ namespace Driftsys.Dashscene
             return default;
         }
 
-        /// The material instance `at` draws with.
-        ///
-        /// A glyph draws with its atlas's text material and everything else
-        /// with the class material. **Bounded rather than trusted**: the packer
-        /// only writes an atlas it resolved against the set this painter was
-        /// given, so an index past the material array means the two went out of
-        /// step — and following it would read a `BatchMaterialID` out of a
-        /// managed array's end.
-        ///
-        /// The fallback is the class material, and what that draws is **not
-        /// predictable**: a `DS_KIND_TEXT` instance shaded by a node shader
-        /// takes the final `else` of `DsShade`, which reads `_DsCorners` as
-        /// corner radii where a glyph instance holds atlas texels, and indexes
-        /// the paint heap with a glyph-run row. The point of the bound is that
-        /// it is a wrong picture rather than an out-of-range managed read; it
-        /// is not that the wrong picture is a tidy one.
-        private BatchMaterialID MaterialOf(int at)
+        /// The path instance `at` takes: `DrawRouting.PathOf` over this
+        /// frame's pack and this painter's class.
+        private DrawPath PathOf(int at)
         {
-            var atlas = _packer.InstanceAtlas[at];
-            return atlas >= 0 && atlas < _textMaterialIds.Length
-                ? _textMaterialIds[atlas]
-                : _materialId;
+            return DrawRouting.PathOf(_packer.Paint, at, _materialClass);
+        }
+
+        /// How many of batch `b`'s instances take the BatchRendererGroup path.
+        ///
+        /// **The emission loop's own predicate**, [`PathOf`], so the cached
+        /// command count is exactly what that loop emits.
+        private int BrgInstancesInBatch(int b)
+        {
+            var first = b * _instancesPerBatch;
+            return DrawRouting.BrgPathInstances(
+                _packer.Paint, first, first + InstancesInBatch(b), _materialClass);
+        }
+
+        /// Cut this frame's instances into the runs the ordered pass draws, and
+        /// name each run's material.
+        ///
+        /// **The cut is `DrawRouting.CutRuns`'s**, executed by
+        /// `unity/ffi-check`: runs in instance order, contiguous, ended where
+        /// the material key changes, never sorted. What is left here is the
+        /// engine half — the material each key names — in the order the runs
+        /// were cut.
+        private void CutRuns()
+        {
+            DrawRouting.CutRuns(
+                _packer.Paint,
+                _packer.InstanceAtlas,
+                InstanceCount,
+                _textMaterials.Length,
+                _materialClass,
+                _keyedRuns);
+
+            _runs.Clear();
+            for (var r = 0; r < _keyedRuns.Count; r++)
+            {
+                var run = _keyedRuns[r];
+                var material = run.Key == DrawRouting.ClassMaterial
+                    ? _material
+                    : _textMaterials[run.Key];
+                _runs.Add(new OrderedRun(material, run.Offset, run.Count));
+            }
+        }
+
+        /// Upload the interleaved rows the ordered path reads: the whole of
+        /// this frame's instances on a full pack, only the dirty ranges on a
+        /// partial one.
+        ///
+        /// **Its own member, not [`UploadInstances`]**, because the two buffers
+        /// have different layouts. `StreamLayout` places a row inside a batch
+        /// window that opens with a head; this buffer has no batch and no head,
+        /// one row of [`OrderedRowWords`] words per instance, so a dirty range
+        /// of rows is the words `[Offset * 20, (Offset + Count) * 20)` and
+        /// nothing else.
+        ///
+        /// **The ranged decision is [`InstanceUpload.CanSendRanges`]'s**, with
+        /// this buffer's own readings. `sameHead` is true because there is no
+        /// head: the sheet matrix is the pass's draw matrix and is read on
+        /// every frame.
+        ///
+        /// **On an overlay painter this is the upload [`LastUpload`]
+        /// reports**, so the render gate reads the transfer that painter
+        /// actually makes. A lit painter reports its batch upload there.
+        private void UploadOrdered()
+        {
+            _orderedWords = 0;
+            _orderedUploads = 0;
+
+            InstanceUpload upload;
+            if (InstanceCount == 0)
+            {
+                upload = new InstanceUpload(UploadKind.None, 0, 0, 0);
+            }
+            else
+            {
+                // **Read before `EnsureOrderedCapacity`, which is what can
+                // replace it.** A new buffer holds nothing, so it takes the
+                // whole path.
+                var held = _orderedBuffer;
+                EnsureOrderedCapacity(InstanceCount);
+
+                var ranged = InstanceUpload.CanSendRanges(
+                    _packer.LastPackWasPartial,
+                    _haveUploadedOrdered,
+                    _uploadedOrderedGeneration,
+                    _packer.PackedGeneration,
+                    ReferenceEquals(held, _orderedBuffer),
+                    true);
+
+                if (!ranged)
+                {
+                    Interleave(0, InstanceCount);
+                    SendOrdered(0, InstanceCount);
+                    upload = new InstanceUpload(
+                        UploadKind.Whole, _orderedUploads, _orderedWords, InstanceCount);
+                }
+                else
+                {
+                    // Indexed, for `UploadInstances`'s reason: `foreach` over
+                    // an `IReadOnlyList<T>` boxes the enumerator every frame.
+                    var ranges = _packer.DirtyRanges;
+                    for (var r = 0; r < ranges.Count; r++)
+                    {
+                        var range = ranges[r];
+                        Interleave(range.Offset, range.Count);
+                        SendOrdered(range.Offset, range.Count);
+                    }
+                    upload = new InstanceUpload(
+                        UploadKind.Ranges, _orderedUploads, _orderedWords,
+                        InstanceUpload.RowsIn(_orderedWords));
+                }
+
+                _uploadedOrderedGeneration = _packer.PackedGeneration;
+                _haveUploadedOrdered = true;
+            }
+
+            if (PathFor(_materialClass) == DrawPath.Ordered)
+            {
+                LastUpload = upload;
+            }
+        }
+
+        /// Make room for `wanted` rows in the ordered buffer, reallocating only
+        /// if it is short.
+        ///
+        /// The arithmetic is [`DrawRouting.OrderedCapacity`]'s.
+        /// **The block names the new buffer at once**, so no draw reads a
+        /// disposed one; the buffer is on the block rather than on the
+        /// materials, so this moves no heap binding.
+        private void EnsureOrderedCapacity(int wanted)
+        {
+            var capacity = DrawRouting.OrderedCapacity(_orderedBuffer?.count ?? 0, wanted);
+            if (capacity == 0)
+            {
+                return;
+            }
+
+            _orderedBuffer?.Dispose();
+            _orderedBuffer = new GraphicsBuffer(
+                GraphicsBuffer.Target.Structured, capacity, OrderedRowWords * 4);
+            _orderedStaging = new uint[capacity * OrderedRowWords];
+            _orderedBlock.SetBuffer(InstancesId, _orderedBuffer);
+        }
+
+        /// Write rows `[first, first + count)` of the packer's five streams into
+        /// the ordered staging array, one interleaved row per instance, in
+        /// [`DrawRouting.InterleaveRows`]'s order.
+        private void Interleave(int first, int count)
+        {
+            DrawRouting.InterleaveRows(
+                _packer.Quad,
+                _packer.Corners,
+                _packer.Shade,
+                _packer.Pivot,
+                _packer.Paint,
+                _orderedStaging,
+                first,
+                count);
+        }
+
+        /// Send rows `[first, first + count)` of the ordered staging array.
+        ///
+        /// **The one member that writes the ordered buffer**, so the upload
+        /// [`UploadOrdered`] reports is derived from what was sent, as
+        /// [`UploadRows`] is for the batch buffer. `SetData`'s offsets and
+        /// count are in elements of the managed array — words — whatever the
+        /// buffer's stride.
+        private void SendOrdered(int first, int count)
+        {
+            _orderedBuffer.SetData(_orderedStaging, first * OrderedRowWords, first * OrderedRowWords, count * OrderedRowWords);
+            _orderedWords += count * OrderedRowWords;
+            _orderedUploads++;
+        }
+
+        /// Select the procedural variant on `material`, through a LOCAL
+        /// keyword.
+        ///
+        /// **Refused when the shader does not declare it.** `SetKeyword` on an
+        /// invalid `LocalKeyword` does nothing, and the material would then be
+        /// drawn without a mesh through the mesh variant — every vertex at the
+        /// origin, a blank picture with nothing reporting why.
+        ///
+        /// **Through [`Declares`]**, the one place a `LocalKeyword` is
+        /// constructed.
+        private static void EnableProcedural(Material material)
+        {
+            if (!Declares(material, ProceduralKeyword, out var keyword))
+            {
+                throw new DashscenePainterException(
+                    $"the shader '{material.shader.name}' does not declare {ProceduralKeyword}, "
+                    + "which the ordered draw path selects. The two blended shaders in this "
+                    + "package declare it with multi_compile_local.");
+            }
+            material.SetKeyword(keyword, true);
         }
 
         /// How many instances batch `b` holds, of the ones being drawn.
@@ -2239,12 +2587,13 @@ namespace Driftsys.Dashscene
         /// Whether `material`'s shader declares `name`, and the keyword handle
         /// if it does.
         ///
-        /// **One place that constructs a `LocalKeyword`, because there are two
-        /// callers and they must agree.** [`SetKeywords`] writes the state and
+        /// **One place that constructs a `LocalKeyword`, because its callers
+        /// must agree.** [`SetKeywords`] writes the state and
         /// [`EnabledKindSetKeywords`] reads it back for the render gate, and a
         /// reader that resolved a keyword differently from the writer would
         /// report a set the material does not carry — which is the one thing
-        /// that read-back exists not to do.
+        /// that read-back exists not to do. [`EnableProcedural`] is the third
+        /// caller.
         ///
         /// A keyword no shader declares is skipped rather than enabled:
         /// `Material.EnableKeyword(string)` against such a name falls back to
@@ -2476,15 +2825,23 @@ namespace Driftsys.Dashscene
                 return;
             }
             _disposed = true;
+
+            // **First, so no camera records a run of this painter's once its
+            // materials start to go.**
+            OrderedDrawPass.Unregister(this);
+
             // The R-E5 latch is identity only, but it is a strong reference to
             // a pipeline this painter does not own; releasing it here keeps a
             // disposed painter from being that instance's last root.
             _batcherReportedFor = null;
 
             RemoveBatches();
-            // **Before the group goes**, so every material this painter
-            // registered is unregistered while the group that holds it still
-            // exists.
+            // **The runs and the text materials first.** No text material is
+            // registered with the group (text takes the ordered path), so this
+            // order is not about the group: `ReleaseAtlases` drops the runs
+            // that name the text materials and destroys them, and
+            // `ReleaseUnityObjects` then disposes the group and destroys the
+            // class material — both before the buffers below are freed.
             ReleaseAtlases();
             ReleaseUnityObjects();
 
@@ -2498,6 +2855,8 @@ namespace Driftsys.Dashscene
             // above have destroyed every one of them before the buffers go.
             _instanceBuffer?.Dispose();
             _instanceBuffer = null;
+            _orderedBuffer?.Dispose();
+            _orderedBuffer = null;
             _paintBuffer?.Dispose();
             _paintBuffer = null;
             _clipBuffer?.Dispose();

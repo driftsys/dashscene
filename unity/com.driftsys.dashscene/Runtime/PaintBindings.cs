@@ -102,4 +102,27 @@ namespace Driftsys.Dashscene
         /// accepts for the rest.
         public const string Atlas = "_DsAtlas";
     }
+
+    /// The two names the `DASHSCENE_PROCEDURAL` variant reads, which the
+    /// ordered pass binds for the two blended classes (story #1448).
+    ///
+    /// **Not per material, which is why they are not in
+    /// [`PaintMaterialProperties`].** [`FirstInstance`] changes on every draw
+    /// and is set through a `MaterialPropertyBlock`; [`Instances`] holds the
+    /// rows of every instance the pass draws.
+    public static class OrderedDrawProperties
+    {
+        /// One 80-byte row per instance: `FramePacker`'s five streams, Quad,
+        /// Corners, Shade, Pivot and Paint, interleaved in that order. The
+        /// shading reads it as `StructuredBuffer<DsInstance>`.
+        public const string Instances = "_DsInstances";
+
+        /// The row of the draw's first instance in [`Instances`]. An `int` in
+        /// the shading, so it is set with `MaterialPropertyBlock.SetInteger`,
+        /// the typed, non-deprecated setter. `SetInt` is the deprecated float
+        /// path; story #1448 measured that it does NOT change the picture on
+        /// Metal with editor 6000.3.23f1, so only the package-gate scans pin
+        /// the choice.
+        public const string FirstInstance = "_DsFirstInstance";
+    }
 }

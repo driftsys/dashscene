@@ -5,6 +5,13 @@
 // whatever the engine drew before it. Coverage IS the alpha here, which is what
 // lets a rounded corner, a stroke and a clip edge all be anti-aliased; the two
 // lit classes below it cannot express partial coverage that way and say so.
+//
+// **Drawn on the ordered pass since story #1448**, through the
+// `DASHSCENE_PROCEDURAL` variant: one `DrawProcedural` per contiguous
+// same-material run, in document order, with no sorting key —
+// `docs/design/unity-csharp-host.md`, "Two draw paths". The
+// `DOTS_INSTANCING_ON` variant is still built and is the BatchRendererGroup
+// path's.
 Shader "Dashscene/UnlitOverlay"
 {
     Properties
@@ -12,7 +19,9 @@ Shader "Dashscene/UnlitOverlay"
         // Declared so a tool can enumerate the per-instance surface, and so
         // `unity/package-gate` can hold this shader and the C# packer to one
         // list of names. The values are never read from here: every one of
-        // them is overridden per instance from the BatchRendererGroup buffer.
+        // them is overridden per instance — from the `_DsInstances` row under
+        // `DASHSCENE_PROCEDURAL`, the variant the ordered pass draws, and from
+        // the BatchRendererGroup buffer under `DOTS_INSTANCING_ON`.
         _DsQuad("Node box (x, y, w, h)", Vector) = (0, 0, 0, 0)
         _DsCorners("Corner radii (tl, tr, br, bl)", Vector) = (0, 0, 0, 0)
         _DsShade("Opacity, outset, rotation", Vector) = (1, 0, 0, 0)
@@ -81,6 +90,13 @@ Shader "Dashscene/UnlitOverlay"
             // code there and R-E6's `KeepAll` would compile both halves
             // of it anyway.
             #pragma multi_compile_local _ DS_HAS_STROKES
+            // Story #1448. The variant the ordered pass draws with
+            // `DrawProcedural`: no mesh, the corner from the vertex id, the
+            // instance row from `_DsInstances`. LOCAL, like `DS_HAS_CLIPS`
+            // above, so it takes no slot in the process-wide keyword budget.
+            // `DashsceneInstance.hlsl` lets it win over DOTS_INSTANCING_ON
+            // when both are set, a combination compiled and never drawn.
+            #pragma multi_compile_local _ DASHSCENE_PROCEDURAL
             #pragma vertex DsVertexStage
             #pragma fragment DsFragmentStage
 

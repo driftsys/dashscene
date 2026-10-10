@@ -11,8 +11,8 @@
 //
 // **One material per atlas, not one per class.** A sheet is a texture and a
 // texture is a per-material binding, so a document naming two faces mints two
-// materials over this one shader and the painter emits one draw command per
-// instance.
+// materials over this one shader, and the ordered pass draws each contiguous
+// run of glyphs on one sheet with one `DrawProcedural`.
 //
 // It sits in `Runtime/Resources/Dashscene/` with the three class shaders and is
 // loaded the same way, for the reason issue #1313 measured: a player build
@@ -27,11 +27,13 @@
 // sheet no depth test orders, whichever class its nodes took — text drawn after
 // a lit-opaque node is not occluded by it.
 //
-// **Within the transparent queue the order is the painter's, through the
-// sorting keys.** `BatchRendererGroup` groups draw commands by material
-// (issue #1389); with `HasSortingPosition` and one instance per command the
-// keys' rank is the draw order, measured on one graphics API (issue #1402) —
-// `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` D1.
+// **The order is document order, on the ordered pass** (story #1448). Text
+// takes that pass in every painter: one `DrawProcedural` per contiguous
+// same-material run, in instance order, with no sorting key, after URP's
+// transparent queue — `docs/design/unity-csharp-host.md`, "Two draw paths".
+// Until that story the painter emitted one BatchRendererGroup command per
+// glyph and ordered them with sorting keys, which
+// `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` records.
 Shader "Dashscene/Text"
 {
     Properties
@@ -39,8 +41,10 @@ Shader "Dashscene/Text"
         // The five per-instance names, declared for the reason the other three
         // shaders declare them: so a tool can enumerate the surface and so
         // `unity/package-gate` can hold this shader and the C# packer to one
-        // list. Every one is overridden per instance from the
-        // BatchRendererGroup buffer.
+        // list. Every one is overridden per instance: from the
+        // `_DsInstances` row under `DASHSCENE_PROCEDURAL`, the variant the
+        // ordered pass draws text with, and from the BatchRendererGroup buffer
+        // under `DOTS_INSTANCING_ON`, the variant the pragma also builds.
         //
         // **Two of them mean something different here**, and neither is a
         // reinterpretation this shader invented: `_DsCorners` carries the
@@ -124,6 +128,13 @@ Shader "Dashscene/Text"
             // loop is compiled out; `BrgPainter.ApplyKindSet` enables it
             // on a frame whose document reports a clip box.
             #pragma multi_compile_local _ DS_HAS_CLIPS
+            // Story #1448. The variant the ordered pass draws with
+            // `DrawProcedural`: no mesh, the corner from the vertex id, the
+            // instance row from `_DsInstances`. LOCAL, like `DS_HAS_CLIPS`
+            // above, so it takes no slot in the process-wide keyword budget.
+            // `DashsceneInstance.hlsl` lets it win over DOTS_INSTANCING_ON
+            // when both are set, a combination compiled and never drawn.
+            #pragma multi_compile_local _ DASHSCENE_PROCEDURAL
             #pragma vertex DsVertexStage
             #pragma fragment DsFragmentStage
 

@@ -43,6 +43,10 @@ use package_gate::{other_bound_names, package_cs_files};
 /// The class in `Runtime/PaintBindings.cs` that names what a material carries.
 const CLASS: &str = "PaintMaterialProperties";
 
+/// The class in `Runtime/PaintBindings.cs` that names what the ordered pass
+/// binds per draw (story #1448).
+const ORDERED_CLASS: &str = "OrderedDrawProperties";
+
 const BINDINGS: &str = "Runtime/PaintBindings.cs";
 const PAINTER: &str = "Runtime/Engine/BrgPainter.cs";
 
@@ -93,14 +97,28 @@ fn body(source: &str, signature: &str) -> String {
     source[start..=end].to_string()
 }
 
-/// Every `public const string` member of `Runtime/PaintBindings.cs`, as
-/// (member, literal).
+/// Every `public const string` member of [`CLASS`] in
+/// `Runtime/PaintBindings.cs`, as (member, literal).
+fn bound_names() -> Vec<(String, String)> {
+    class_names(CLASS)
+}
+
+/// Every `public const string` member of `class` in
+/// `Runtime/PaintBindings.cs`, as (member, literal).
+///
+/// **One class, not the whole file.** Story #1448 adds [`ORDERED_CLASS`]
+/// beside [`CLASS`]: a per-draw `MaterialPropertyBlock` value and the ordered
+/// pass's instance buffer, neither of which is part of the heap `BindHeapTo`
+/// binds per material. Each class has its own binding scan, and
+/// `paint_bindings_declares_exactly_the_scanned_classes` holds the file to
+/// those two. The class's span runs from its declaration to the next
+/// `public static class`, or to the end of the file.
 ///
 /// Read from the raw source because the literal is what the blanking removes.
 /// A comment carrying the pattern would add a member, not drop one, and an
 /// added member fails the assertions it is put through rather than passing
 /// them — which is the direction a parse that can be wrong has to fail in.
-fn bound_names() -> Vec<(String, String)> {
+fn class_names(class: &str) -> Vec<(String, String)> {
     let raw = package_cs_files();
     let source = &raw
         .iter()
@@ -108,8 +126,18 @@ fn bound_names() -> Vec<(String, String)> {
         .unwrap_or_else(|| panic!("the package no longer ships {BINDINGS}"))
         .1;
 
+    let open = format!("public static class {class}");
+    let start = source
+        .find(&open)
+        .unwrap_or_else(|| panic!("{BINDINGS} no longer declares `{open}`"));
+    let span = &source[start..];
+    let span = match span[open.len()..].find("public static class ") {
+        Some(next) => &span[..open.len() + next],
+        None => span,
+    };
+
     let mut out = Vec::new();
-    let mut rest = source.as_str();
+    let mut rest = span;
     while let Some(at) = rest.find("public const string ") {
         rest = &rest[at + "public const string ".len()..];
         let Some(eq) = rest.find(" = \"") else { break };
@@ -122,15 +150,17 @@ fn bound_names() -> Vec<(String, String)> {
 
     // **The parse is held against the gate's own reader**, so a member it
     // failed to see is a failure here rather than a name silently exempted
-    // from every assertion below.
+    // from every assertion below. The reader is given the class's span, under
+    // the file's own path, so both read the same text.
     let mut parsed: Vec<String> = out.iter().map(|(_, literal)| literal.clone()).collect();
     parsed.sort();
     parsed.dedup();
+    assert!(!parsed.is_empty(), "{BINDINGS}: `{open}` names nothing");
     assert_eq!(
         parsed,
-        other_bound_names(&raw),
-        "the members parsed out of {BINDINGS} are not the `_Ds…` literals \
-         `package_gate::other_bound_names` reads from the same file"
+        other_bound_names(&[(BINDINGS.to_string(), span.to_string())]),
+        "the members parsed out of {BINDINGS}'s `{class}` are not the `_Ds…` \
+         literals `package_gate::other_bound_names` reads from the same text"
     );
     out
 }
@@ -484,6 +514,7 @@ fn the_heap_buffers_are_freed_after_the_materials_that_name_them() {
     // cannot see.
     for buffer in [
         "_instanceBuffer",
+        "_orderedBuffer",
         "_paintBuffer",
         "_clipBuffer",
         "_strokeBuffer",
@@ -501,4 +532,123 @@ fn the_heap_buffers_are_freed_after_the_materials_that_name_them() {
              covering it."
         );
     }
+}
+
+/// `Runtime/PaintBindings.cs` declares exactly the two classes this file
+/// scans, and every `_Ds…` literal in it belongs to one of them.
+///
+/// **What makes the per-class reads above whole-file coverage again.** Each
+/// binding scan reads one class's span, so a third class, or a literal outside
+/// both, would be a name no scan holds to a setter.
+#[test]
+fn paint_bindings_declares_exactly_the_scanned_classes() {
+    let raw = package_cs_files();
+    let source = &raw
+        .iter()
+        .find(|(path, _)| path.ends_with(BINDINGS))
+        .unwrap_or_else(|| panic!("the package no longer ships {BINDINGS}"))
+        .1;
+    let scanned = blank_comments_and_strings(source);
+
+    let mut classes: Vec<String> = Vec::new();
+    let mut rest = scanned.as_str();
+    while let Some(at) = rest.find("public static class ") {
+        rest = &rest[at + "public static class ".len()..];
+        let end = rest
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len());
+        classes.push(rest[..end].to_string());
+    }
+    classes.sort();
+    let mut expected = vec![CLASS.to_string(), ORDERED_CLASS.to_string()];
+    expected.sort();
+    assert_eq!(
+        classes, expected,
+        "{BINDINGS} declares a set of `public static class`es other than the \
+         two this file has a binding scan for."
+    );
+
+    let mut literals: Vec<String> = class_names(CLASS)
+        .into_iter()
+        .chain(class_names(ORDERED_CLASS))
+        .map(|(_, literal)| literal)
+        .collect();
+    literals.sort();
+    literals.dedup();
+    assert_eq!(
+        literals,
+        other_bound_names(&raw),
+        "{BINDINGS} carries a `_Ds…` literal outside the two scanned classes."
+    );
+}
+
+/// Every name the ordered pass reads is resolved once to a static property id,
+/// and that id reaches the setter the name needs.
+///
+/// **The setter is named per member**, because the two are bound differently:
+/// the instance rows are a buffer on the painter's `MaterialPropertyBlock`, and
+/// the first instance is an integer set before each draw with `SetInteger`,
+/// the typed, non-deprecated setter. `SetInt`, the deprecated float path, was
+/// measured NOT to change the picture on Metal with editor 6000.3.23f1 (story
+/// #1448's mutation run), so this scan is what pins the choice.
+#[test]
+fn every_ordered_draw_name_reaches_its_setter_through_a_static_property_id() {
+    let names = class_names(ORDERED_CLASS);
+    let files = runtime();
+
+    for (member, literal) in &names {
+        let field = format!("{member}Id");
+        let setter = match member.as_str() {
+            "Instances" => format!("SetBuffer({field}, "),
+            "FirstInstance" => format!("SetInteger({field}, "),
+            other => panic!(
+                "{BINDINGS}'s `{ORDERED_CLASS}.{other}` has no expected setter \
+                 here. Name the call that binds `{literal}` in this table."
+            ),
+        };
+
+        let declaration = format!(
+            "private static readonly int {field} = Shader.PropertyToID({ORDERED_CLASS}.{member});"
+        );
+        let declaring: Vec<&(String, String)> = files
+            .iter()
+            .filter(|(_, source)| {
+                let squeezed: String = source.split_whitespace().collect::<Vec<_>>().join(" ");
+                squeezed.contains(&declaration)
+            })
+            .collect();
+        assert_eq!(
+            declaring.len(),
+            1,
+            "`{declaration}` is declared in {} file(s) of the package, not one.",
+            declaring.len()
+        );
+
+        let resolutions: usize = files
+            .iter()
+            .map(|(_, source)| {
+                source
+                    .matches(&format!("PropertyToID({ORDERED_CLASS}.{member})"))
+                    .count()
+            })
+            .sum();
+        assert_eq!(
+            resolutions, 1,
+            "the package resolves `{ORDERED_CLASS}.{member}` {resolutions} time(s), not once."
+        );
+
+        let (path, source) = declaring[0];
+        assert!(
+            source.contains(&setter),
+            "{path} declares `{field}` and never calls `{setter}…)`, so \
+             `{literal}` is not bound and the procedural variant reads an \
+             unbound value."
+        );
+    }
+    assert_eq!(
+        names.len(),
+        2,
+        "{BINDINGS}'s `{ORDERED_CLASS}` should name exactly the instance rows \
+         and the first instance."
+    );
 }

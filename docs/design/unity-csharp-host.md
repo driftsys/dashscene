@@ -94,8 +94,14 @@ documentation-only, and all of it **executed** by `unity/ffi-check`: against a
 real committed frame, and against synthetic frames built from pinned managed
 arrays, which is what lets a single property be varied at a time.
 `Runtime/Engine/BrgPainter.cs` holds the `BatchRendererGroup` lifetime, the
-buffer upload and the culling callback, and decides nothing about what is drawn.
-A file that could be written without the engine and is not is a defect against
+buffer uploads, the culling callback and the material each ordered run names,
+and `Runtime/Engine/OrderedDrawPass.cs` the pass that draws those runs; neither
+decides anything about what is drawn. Which path each instance takes and where
+the ordered runs are cut is `Runtime/DrawRouting.cs`, which also holds the
+ordered buffer's capacity arithmetic and its row interleave (`OrderedCapacity`,
+`InterleaveRows`, `OrderedRowWords`), and when the pass subscribes to the camera
+callback is `Runtime/PainterRegistry.cs`, both executed by `unity/ffi-check`. A
+file that could be written without the engine and is not is a defect against
 that rule.
 
 **The exclusion is itself asserted**, in `unity/package-gate`: the `Exclude` in
@@ -118,9 +124,11 @@ asserts it compiled, which is a developer's gate and not CI's.
 ## The painter, and where each rule it obeys comes from
 
 `BrgPainter` is one `BatchRendererGroup`, one mesh, one material for the class
-it was built with plus one per glyph atlas, and five `GraphicsBuffer`s. Per
-frame it packs the lease's tables, writes one staging buffer and issues draw
-commands from the culling callback.
+it was built with plus one per glyph atlas, five `GraphicsBuffer`s, and a sixth
+that only the ordered path reads. Per frame it packs the lease's tables and
+uploads them; the lit classes' nodes are drawn by the culling callback, and the
+overlay class's nodes and every glyph run by `OrderedDrawPass` — "Two draw
+paths" below.
 
 **The instance layout is the lean painter's in size and in what it carries, and
 that is the point.** Five `float4`-sized per-instance properties — the node's
@@ -159,14 +167,14 @@ share one** (issue #1297). `_DsPaints`, `_DsClipBoxes`, `_DsStrokes`,
 which are process-wide: the last painter to draw supplied the gradients, strokes
 and clip boxes every painter's fragments shaded from, and the painter reported
 that with a constructor warning rather than drawing a wrong picture quietly.
-`BindHeap` now sets them on the materials this painter registered itself — the
-three heap tables, the baked gradient strip and the scalars on the class
-material and on every glyph atlas's material, and `_DsGlyphs` on the atlas
-materials alone, because the shading declares it under `DASHSCENE_CLASS_TEXT`
-and no other class can reach a glyph run. So **a second painter in one process
-is a supported configuration**, and the live-painter counter that warned about
-one is gone. It runs on every frame whose binding has gone stale rather than
-once, and story #1445 is what made "which frames" a question. Five reasons raise
+`BindHeap` now sets them on the materials this painter owns — the three heap
+tables, the baked gradient strip and the scalars on the class material and on
+every glyph atlas's material, and `_DsGlyphs` on the atlas materials alone,
+because the shading declares it under `DASHSCENE_CLASS_TEXT` and no other class
+can reach a glyph run. So **a second painter in one process is a supported
+configuration**, and the live-painter counter that warned about one is gone. It
+runs on every frame whose binding has gone stale rather than once, and story
+#1445 is what made "which frames" a question. Five reasons raise
 `BrgPainter.HeapBindingPending` and `Draw` binds only when it is raised: a heap
 buffer is reallocated when its table outgrows it, `SetAtlases` mints text
 materials long after the constructor so no earlier moment holds the whole set,
@@ -248,17 +256,20 @@ refuses to construct anything when `SystemInfo.graphicsDeviceType` is `Null`,
 because a `-nographics` process reports `UnsupportedByUnderlyingGraphicsApi` and
 that is not a verdict — it is the hazard D4 names and story #1125 measured.
 `RawBuffer` and `ConstantBuffer` are rung 1;
-`UnsupportedByUnderlyingGraphicsApi` selects **rung 3**, and since nothing is
-built for rung 3 the painter records the rung on its `Rung` property and draws
-nothing rather than pretending to be on rung 1. **It warns there as well as
-recording the rung** (issue #1326): `Rung` is availability rather than a report,
-so a host that never reads it would otherwise get a blank screen and a clean
-console. R-E6's default produces a blank frame too, and Unity itself names that
-one on every frame, so rung 3 was the blank frame a host could not tell apart
-from a defect in its own document. The `Samples~/FrameLoop` component reads
-`Rung` and escalates to an error on top of that. `Unknown` is documented as a
-value Unity never returns, so D4's table assigns it none: the painter names it
-and constructs no group.
+`UnsupportedByUnderlyingGraphicsApi` selects **rung 3**, and there the painter
+records the rung on its `Rung` property and draws nothing, on either path,
+rather than pretending to be on rung 1. The ordered path does not need
+BatchRendererGroup and is still not used on rung 3:
+[../decisions/unity-painter-uses-brg.md](../decisions/unity-painter-uses-brg.md)
+D3's amendment, and issue #1490. **It warns there as well as recording the
+rung** (issue #1326): `Rung` is availability rather than a report, so a host
+that never reads it would otherwise get a blank screen and a clean console.
+R-E6's default produces a blank frame too, and Unity itself names that one on
+every frame, so rung 3 was the blank frame a host could not tell apart from a
+defect in its own document. The `Samples~/FrameLoop` component reads `Rung` and
+escalates to an error on top of that. `Unknown` is documented as a value Unity
+never returns, so D4's table assigns it none: the painter names it and
+constructs no group.
 
 **R-E5 is read from `Draw`, not from the constructor** (issue #1317). URP
 assigns `GraphicsSettings.useScriptableRenderPipelineBatching` inside its own
@@ -342,6 +353,115 @@ rather than drawing them away — a corner radius, a clip, a stroke, a per-node
 opacity below one, and a fill whose colour or any gradient stop is not fully
 opaque; the cutout class discards below a threshold, so the silhouette survives
 and the edge is hard.
+
+## Two draw paths (story #1448)
+
+**Which instances take which path.** `BrgPainter.PathFor` answers it for a
+material class: `LitOpaque` and `LitCutout` take `DrawPath.Brg`, and
+`UnlitOverlay` takes `DrawPath.Ordered`. `BrgPainter.TextPath` is
+`DrawPath.Ordered`, so every glyph run takes the ordered path in every painter.
+A glyph is recognised by its paint kind tag, not by its atlas index, which is -1
+for a node. Why the blended classes left BatchRendererGroup is
+[../decisions/unity-painter-uses-brg.md](../decisions/unity-painter-uses-brg.md)
+D1's amendment; this section describes how each path is built.
+
+**The BatchRendererGroup path** draws a lit painter's nodes: one draw command
+per visible instance, each carrying `BatchDrawCommandFlags.HasSortingPosition`
+and one sorting key, and every command naming the painter's class material.
+[../decisions/brg-draw-command-order-is-not-guaranteed.md](../decisions/brg-draw-command-order-is-not-guaranteed.md)
+D1 and D5 are the constraints, and
+[../technotes/batch-renderer-group.md](../technotes/batch-renderer-group.md) §5d
+carries the measurement behind the one-instance shape. An overlay painter
+uploads no batch, so its culling callback emits nothing, and no text material is
+registered with the group.
+
+**The ordered path draws runs, in instance order.** On every `Draw`,
+`DrawRouting.CutRuns` cuts the instances that take the ordered path into runs: a
+run is contiguous in instance index and ends where the resolved material key
+changes — the class material for an overlay node, the atlas's material for a
+glyph — and the painter names each run's material by its key. An instance on the
+BatchRendererGroup path resolves to no material on this path, so it ends a run,
+and a lit painter's glyph runs are cut around the nodes between them. Runs are
+never sorted. `OrderedDrawPass` draws each run with one
+`RasterCommandBuffer.DrawProcedural` of six vertices and the run's instance
+count, through the matrix `DocumentToWorld` held at `Draw`. Painters are drawn
+in the order they registered, and each painter's runs in the order they were
+cut.
+
+**The package injects the pass; a host adds nothing.** `OrderedDrawPass` is a
+`ScriptableRenderPass` at `RenderPassEvent.AfterRenderingTransparents`. **That
+is a behaviour change, not an equivalent of the transparent queue**: until story
+#1448 the overlay class's BatchRendererGroup commands were sorted by distance
+among the scene's own transparent objects in URP's transparent pass, and now
+every overlay node and every glyph run, which test no depth, paints over every
+transparent object the scene drew, at any distance — particles nearer the camera
+than the document included. The painter calls `OrderedDrawPass.Register` at the
+end of its constructor, and the first registration subscribes to
+`RenderPipelineManager.beginCameraRendering`. For a `Game` or `SceneView` camera
+whose culling mask includes `BrgPainter.DocumentLayer`, the layer
+BatchRendererGroup's filter uses, and while some painter has a run, the handler
+calls `EnqueuePass` on the camera's URP renderer. `Dispose` unregisters the
+painter, and the last unregistration unsubscribes; `PainterRegistry` gives both
+answers. At `RuntimeInitializeLoadType.SubsystemRegistration` the pass
+unsubscribes and forgets every painter, so Enter Play Mode without a domain
+reload does not keep drawing a previous session's undisposed painter. **There is
+no `ScriptableRendererFeature`**, because a feature takes effect only once it is
+added to the host's renderer asset, and the package cannot make that change for
+its host. That is the class of defect issue #1313 was, a package that does not
+draw as installed (the section below), and `just unity-render` exists to catch
+it.
+
+**The instance rows are interleaved, and uploaded by range.** The ordered path
+reads `_DsInstances`, a structured buffer of one eighty-byte row per instance
+(`OrderedRowWords` words), bound on the painter's `MaterialPropertyBlock` rather
+than on its materials. `UploadOrdered` sends every row on a full pack and only
+`FramePacker.DirtyRanges` on a partial one, under the same
+`InstanceUpload.CanSendRanges` decision the batch upload takes. The buffer has
+no batch head, so a dirty range is one `SetData` call, where the stream-major
+batch buffer takes at least five. On an overlay painter `LastUpload` reports
+this upload.
+
+**The shading takes a procedural variant.** `UnlitOverlay.shader` and
+`Text.shader` declare `#pragma multi_compile_local _ DASHSCENE_PROCEDURAL`, and
+the painter enables that keyword through a `LocalKeyword` on the overlay class
+material and on every text material. Under it `DashsceneInstance.hlsl` binds no
+mesh: the quad corner comes from `SV_VertexID`, and the row is
+`_DsInstances[_DsFirstInstance + SV_InstanceID]`. Where `DOTS_INSTANCING_ON` is
+also defined, `DASHSCENE_PROCEDURAL` wins. The pass sets `_DsFirstInstance` to
+each run's first row with `MaterialPropertyBlock.SetInteger`. The deprecated
+`SetInt` was measured not to change the picture on Metal with editor
+6000.3.23f1, in story #1448's mutation run, so only `unity/package-gate`'s scans
+pin that choice.
+
+**What the gates hold.** `just unity-editor` compiles the procedural variant,
+alone and with `DOTS_INSTANCING_ON`, for every shader that declares it.
+`just unity-render`'s order phase draws its overlay fixture through the ordered
+pass, and iterating the runs in reverse turned five of its seven probes wrong in
+story #1448's mutation run on Metal. `unity/ffi-check` executes the routing, the
+run cut, the ordered buffer's capacity and row interleave, and the registry's
+subscription answers, and fails when the runs are reversed or a run's start is
+misplaced. `unity/package-gate`'s `single_instance_commands.rs` and
+`ordered_draw_path.rs` pin by reading the source that the painter and the pass
+delegate to those, and pin the injection and the upload.
+
+**What this does not do.**
+
+- **URP Compatibility Mode draws no overlay node and no text.** The pass
+  implements only `RecordRenderGraph`, so with the render graph disabled it
+  records nothing. This is read from the code; no run has measured it.
+- **Rung 3 is unchanged**: the painter draws nothing there on either path (issue
+  #1490).
+- **GLES 3.x need not support the procedural variant's vertex read.** The
+  variant reads `_DsInstances`, a `StructuredBuffer`, in the vertex stage, where
+  every per-instance read of the blended classes was in the fragment stage until
+  story #1448. OpenGL ES 3.1 and 3.2 guarantee no shader storage block in the
+  vertex stage, which is why BatchRendererGroup's GLES rung uses a constant
+  buffer, and the painter accepts that rung with no capability check. On a GLES
+  device that exposes none, the overlay class and text could draw nothing while
+  the painter reports success; no gate here runs GLES. Issue #1492 is the debt.
+- **The ranged branch of `UploadOrdered` runs in no gate.** `just unity-render`
+  draws one static document, so every frame takes the whole branch. This is the
+  gap issue #1482 names for the batch upload, on a second buffer.
 
 ## Where the package's shaders live, and why (issue #1313)
 
@@ -608,37 +728,23 @@ not, and the missing background is reported by name. That is the intended
 reading of "text is always blended whichever class the nodes take", and it is
 the one place a class's refusal applies to half a node.
 
-And `Dashscene/Text` sits in the **transparent** queue, as the overlay class
-does. Against the overlay class that changes nothing about the QUEUE — both sit
-in one queue and one pass — and within that pass the sorting keys draw the
-picture in submission order, which is issue #1402 and the paragraph below.
-Against `LitOpaque` (geometry) or `LitCutout` (alpha test) it does: a render
-pipeline sorts by queue before it sorts by anything a draw command carries, so
-every glyph is submitted after every node fill whatever order the document put
-them in. A later node that overlaps a text node covers its glyphs in both
-reference painters and does not here. This is not fixed by the single-instance
-command shape, which preserves order only inside one pass, and it is a property
-of drawing blended text beside opaque geometry rather than of this painter.
+And `Dashscene/Text` draws on the ordered pass in every painter, after the
+transparent queue ("Two draw paths" above). Against the overlay class that
+changes nothing: both draw on that pass, in document order. Against `LitOpaque`
+(geometry) or `LitCutout` (alpha test) it does: their nodes draw through
+BatchRendererGroup in their own queue, before the pass, so every glyph is drawn
+after every node fill whatever order the document put them in. A later node that
+overlaps a text node covers its glyphs in both reference painters and does not
+here. Before story #1448 the text shader's transparent queue had the same
+effect. It is a property of drawing blended text beside opaque geometry rather
+than of this painter.
 
-**The culling callback emits one draw command per visible instance**, each
-carrying `BatchDrawCommandFlags.HasSortingPosition` and one sorting key, so the
-command count is the instance count and R-E20's 256 is met without splitting
-anything. Until issue #1401 it emitted one command per contiguous run of
-instances sharing a material, split at 256: Unity's sorted-transparent path was
-measured dropping a contiguous subset of commands for single frames under that
-shape, rendering the affected region as bare backdrop with nothing logged.
-[../decisions/brg-draw-command-order-is-not-guaranteed.md](../decisions/brg-draw-command-order-is-not-guaranteed.md)
-D5 is the constraint and
-[../technotes/batch-renderer-group.md](../technotes/batch-renderer-group.md) §5d
-carries the tables. **The emission order is the order the picture is drawn in,
-through the keys**: without them BRG groups the commands by material, which is
-what issue #1389 found, and under this shape the keys were measured on
-2026-09-05 to reproduce the emission order — farthest-first by rank, the
-backdrop drawn last over everything when the step is negated (issue #1402).
-`just unity-render`'s order phase pins the composite on every run, the keys'
-part in it was hand-run;
-[../decisions/brg-draw-command-order-is-not-guaranteed.md](../decisions/brg-draw-command-order-is-not-guaranteed.md)
-D1 carries the claim and its limits.
+**Until story #1448 glyph runs drew through BatchRendererGroup**, one draw
+command per visible instance with one sorting key each, which is the shape "Two
+draw paths" above now describes for the lit classes alone. The figures below
+were taken on that shape, on the overlay painter the showcase builds, which
+draws on the ordered pass since. Its reading after the change is owed on issue
+#1488.
 
 **What that shape costs against R-T4, and what the figure does not cover.** On
 the showcase typography scene the command count rose from 11 to 381 per view,
@@ -968,10 +1074,16 @@ also builds and runs a player.
 Unity builds a shader's variants lazily, so `ShaderUtil.GetShaderMessages` after
 an import reports on whatever the editor happened to need — which does not
 include `DOTS_INSTANCING_ON`, the one variant a BatchRendererGroup actually
-draws with. The gate calls `ShaderData.Pass.CompileVariant` with that keyword
-for Vulkan and GLES3x on Android and Metal on macOS, and refuses a `Success`
-that produced no bytes, because the API reports success for a variant it
-declined to build as well as for one it built.
+draws with, or `DASHSCENE_PROCEDURAL`, the one the ordered pass draws with. The
+gate calls `ShaderData.Pass.CompileVariant` with `DOTS_INSTANCING_ON`, and for
+every shader whose `#pragma` lines declare `DASHSCENE_PROCEDURAL` also with that
+keyword alone and with both, for Vulkan and GLES3x on Android and Metal on
+macOS, and refuses a `Success` that produced no bytes, because the API reports
+success for a variant it declined to build as well as for one it built. It also
+fails unless the declaring shaders are exactly `Text.shader` and
+`UnlitOverlay.shader`, and unless each of the two procedural keyword sets yields
+bytes for each of them, so a declaration scan that matched nothing, or a keyword
+set dropped from the compile list, cannot pass having compiled nothing.
 
 `unity/ffi-check` is the one story #1121 added. Before it, nothing compiled a C#
 P/Invoke against `crates/dashscene-ffi/include/dashscene.h` — issue #1266 item
@@ -1262,15 +1374,15 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
 
 ## Known gaps, named
 
-- **Draw order is submission order through the sorting keys, measured on one
-  graphics API; the composite is pinned by the gate that runs on it.** A
+- **Draw order is document order on the ordered path and the sorting keys' rank
+  on the BatchRendererGroup path; only the first is pinned by a gate.** A
   document is drawn back to front, so order is the property that decides the
-  picture. Without the keys `BatchRendererGroup` groups commands by material and
-  the painter drew every surface and no glyph on every platform (issue #1389);
-  with the keys and one instance per command the draw order is the keys' rank,
-  farthest first, and negating the step drew the backdrop last, over everything
-  (issue #1402, 2026-09-05, Metal).
-  `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` D1 carries the
+  picture. The overlay class and text draw their runs in document order, and
+  `just unity-render`'s order phase pins that composite ("Two draw paths"
+  above). A lit painter's nodes draw in the keys' rank, measured on one graphics
+  API while the overlay class still took that path (issue #1402, 2026-09-05,
+  Metal), and no gate draws a lit document whose order decides the composite.
+  `docs/decisions/brg-draw-command-order-is-not-guaranteed.md` D1 carries that
   claim, `docs/technotes/batch-renderer-group.md` §5b the four arms.
 
   `unity/render-gate`'s stronger per-instance assertion excludes a node's centre
@@ -1291,10 +1403,11 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   position, which issue #1389's sorting keys are built from, so the command
   stream is camera-dependent — and uses none of the culling planes. Not
   `lodParameters.cameraPosition`, which the painter's own comment rejects by
-  name and which appears nowhere in it. It emits every instance for every
-  camera. For a full-screen overlay that is the right answer and costs nothing;
-  for a document placed in a 3D scene it is work per camera proportional to the
-  whole document.
+  name and which appears nowhere in it. It emits every instance on its path for
+  every camera, and the ordered pass draws every run for every camera it is
+  enqueued on. For a full-screen overlay that is the right answer and costs
+  nothing; for a document placed in a 3D scene it is work per camera
+  proportional to the whole document.
 - **R-T4's dirty-range upload is implemented, and this is what the full repack
   cost before it.** Issue #1306 is what carried the gap; story #1446 answered
   it. Since that story a commit that keeps every rect's instance count rewrites
@@ -1327,7 +1440,10 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   `BatchStrideBytes` rounds `112 + 203 x 80` = 16352 **up** to the alignment —
   so the stride the buffer is sized from, and a whole upload sends, is **16384
   bytes**. That arithmetic has run on no device, which is why the figure to
-  quote is the `RawBuffer` one.
+  quote is the `RawBuffer` one. Since story #1448 these figures hold for the
+  gate's two cutout steps alone: its overlay steps draw on the ordered path, and
+  the gate reported that path's whole upload of the same document as one call of
+  16 rows and 320 words, which is 1280 bytes.
 
   **The fourteen is two tests, not one.**
   `crates/dashc/tests/figma_lowering.rs`'s

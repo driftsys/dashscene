@@ -262,8 +262,12 @@ documentation-only diff most jobs skip. Read the individual jobs.
                       dependency, compiles it, reads
                       `PlayerSettings.GetApiCompatibilityLevel` back rather
                       than assuming it, and compiles every pass with
-                      `DOTS_INSTANCING_ON` for Vulkan and GLES3x on Android and
-                      Metal on macOS. **The evidence differs by stage**: a
+                      `DOTS_INSTANCING_ON` — and, for every shader whose
+                      `#pragma` lines declare `DASHSCENE_PROCEDURAL`, with that
+                      keyword alone and with both (story #1448), failing
+                      unless those shaders are exactly Text and UnlitOverlay
+                      and each set yields bytes — for Vulkan
+                      and GLES3x on Android and Metal on macOS. **The evidence differs by stage**: a
                       vertex stage yields shader bytes on all three, a fragment
                       stage on Metal only — `CompileVariant` returns none for a
                       fragment on the other two even for URP's own unlit
@@ -334,7 +338,8 @@ documentation-only diff most jobs skip. Read the individual jobs.
                       `unity/render-gate/order.dsb`, where an order phase reads
                       seven composite pixels — three of them, one per material,
                       to R-E22's tolerance — each first refused on the undrawn
-                      frame; issue #828's suite is what judges the colour
+                      frame. Since story #1448 that fixture draws through the
+                      ordered render-graph pass, not BatchRendererGroup; issue #828's suite is what judges the colour
                       elsewhere.
                       Needs a Unity editor, so it is outside `check` and
                       outside CI. Costs tens of minutes: the project is rebuilt

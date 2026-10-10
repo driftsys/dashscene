@@ -7,8 +7,13 @@
              is carried as an assumption the owner is confirming with Unity
              directly, and the other escapes to a fallback this record already
              named. Both are stated under "What was carried" below.
+             **D1 reversed for the two blended classes on 2026-10-10**
+             (story #1448): `UnlitOverlay` and text draw through an ordered
+             render-graph pass, and D1's lit half stands. D3's rungs 2 and 3
+             are amended by the same story.
     date     2026-07-13; ratified 2026-08-18; D2's target moved from
-             Unity 6.5 to Unity 6.3 LTS on 2026-08-20 (owner's ruling)
+             Unity 6.5 to Unity 6.3 LTS on 2026-08-20 (owner's ruling); D1 and
+             D3 amended 2026-10-10 (story #1448)
     source   docs/technotes/rendering-and-painters.md §10
     scope    the Unity C# package under unity/, and dashpaint-abi, which is the
              C representation of boundary B the package's declarations are held
@@ -42,6 +47,48 @@ painter's data model the same shape as the lean native painter, "instance buffer
 directly. It is also the natural endpoint of the Burst and `Unity.Collections`
 choice already made for the C# projection — the `NativeArray` the Burst jobs
 fill **is** the BRG instance buffer.
+
+**Amended 2026-10-10 (story #1448): D1 is reversed for the two blended classes,
+and its lit half stands.** `UnlitOverlay` nodes and every glyph run no longer
+draw through BatchRendererGroup. They draw through an ordered render-graph pass:
+one `DrawProcedural` per contiguous run of instances that share a material, in
+document order. `LitOpaque` and `LitCutout` stay on BatchRendererGroup, as D1
+chose. Both paths draw from the same packed eighty-byte instance rows, and both
+upload only a commit's dirty ranges where `InstanceUpload.CanSendRanges` allows
+it, so the data model and the R-T4 mapping this clause buys hold for both.
+[`../design/unity-csharp-host.md`](../design/unity-csharp-host.md), "Two draw
+paths", describes how each path is built, and records the behaviours that
+changed with the path: the pass records after URP's transparent pass, so an
+overlay node or a glyph that was sorted by distance among the scene's
+transparent objects now paints over all of them; URP Compatibility Mode draws
+neither; and the procedural variant reads a `StructuredBuffer` in the vertex
+stage, which OpenGL ES 3.x need not support (issue #1492).
+
+**The reason is draw order.** The two blended classes write no depth and test
+none, so the order of their draws is the picture. BatchRendererGroup groups draw
+commands by material. The shape this package ships on it, one command per
+visible instance with one sorting key each, exists because of issue #1401's
+dropped-band defect
+([`brg-draw-command-order-is-not-guaranteed.md`](brg-draw-command-order-is-not-guaranteed.md)
+D5). Those keys order the draws only as far as they were measured; Unity
+documents no guarantee (D1 of the same record). On the ordered pass the document
+order is the draw order, and there are no sorting keys.
+
+**The cost of one command per instance is not the reason.** Issue #1448's
+comment of 2026-09-06 records the Pixel 5 reading of story #1447 (issue #1406),
+which compared one draw command per visible instance with one per contiguous
+same-material run on `typography`. Its conclusion, quoted:
+
+> the per-command term is not at or above 1 ms on either thread: the command
+> count is not a term the parity criterion must remove, and this story is on
+> R-T4's path rather than on the parity path.
+
+"The threshold above is judged on the main-thread term and the CPU column": the
+render-thread term was not readable on that player (issue #1458). The same
+comment states the limit of the reading: "#1401's dropped-band defect is the
+reason the shipped shape exists, and the ordering work here stands on its own;
+what the reading settles is only that the cost of the command count is not the
+justification."
 
 **D2 — the target is Unity 6.3 LTS (`6000.3.x`).** This is the version the
 painter is to be built against. **No painter has run on it and no painter
@@ -95,12 +142,12 @@ first.
 
 **D3 — the fallback ladder, and the failure mode each rung answers.**
 
-| rung  | taken when                 | what it is                                                               |
-| ----- | -------------------------- | ------------------------------------------------------------------------ |
-| 1     | the design                 | BRG, per D1                                                              |
-| 2     | **lit-BRG proves costly**  | the by-material-class hybrid: unlit-overlay via BRG, lit via GameObjects |
-| 3     | **BRG is unsupported**     | instanced draws without BRG                                              |
-| floor | rung 3 is also unavailable | GameObject-per-node, which D1 exists to reject                           |
+| rung  | taken when                 | what it is                                                                                                                |
+| ----- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 1     | the design                 | BRG, per D1                                                                                                               |
+| 2     | **lit-BRG proves costly**  | the by-material-class hybrid: unlit-overlay and text on the ordered pass (via BRG until story #1448), lit via GameObjects |
+| 3     | **BRG is unsupported**     | instanced draws without BRG                                                                                               |
+| floor | rung 3 is also unavailable | GameObject-per-node, which D1 exists to reject                                                                            |
 
 **Descending the ladder costs R-T4, and that is a specification rule rather than
 a preference.** `../specification/03-target-hardware-rules.md` R-T4 is "CPU
@@ -116,10 +163,14 @@ rung 1 proves unavailable, and a rung below 1 being taken is the trigger to
 raise the conflict rather than to proceed quietly — the specification is not
 amended here and nothing in this record amends it.
 
-**Rung 2 does not answer rung 3's failure, and this record previously implied it
-did.** The hybrid's cheap half is still BRG, so if BRG is unavailable the hybrid
-is unavailable with it. The two failure modes are separate and were conflated by
-a single sentence naming one fallback.
+**Rung 2 did not answer rung 3's failure when this record was ratified, and the
+record previously implied it did.** The hybrid's cheap half was BRG then, so if
+BRG was unavailable the hybrid was unavailable with it. The two failure modes
+are separate and were conflated by a single sentence naming one fallback. Since
+story #1448 the hybrid's cheap half is the ordered pass, which does not need
+BRG; the two rungs still answer different failures, and the painter takes
+neither: it has no GameObject path for lit nodes, and on rung 3 it draws nothing
+(D3's amendment below, issue #1490).
 
 Rung 3 preserves what D1 is actually buying — the instance-buffer data model and
 therefore the R-T4 mapping — without BRG's batch and culling machinery.
@@ -130,8 +181,19 @@ therefore the R-T4 mapping — without BRG's batch and culling machinery.
 while it was installed, **and in `6000.3.22f1`, re-read on 2026-08-21** after D2
 moved the target there — the editor's own `UnityEngine.CoreModule.dll` string
 heap and the `M:` entries of the `UnityEngine.CoreModule.xml` beside it agree.
-**Nothing is built for rung 3.** It is recorded so that the answer is not
-improvised under pressure if the support question comes back badly.
+**Nothing was built for rung 3 when this record was ratified.** It is recorded
+so that the answer is not improvised under pressure if the support question
+comes back badly.
+
+**Amended 2026-10-10 (story #1448): the mechanism exists, and rung 3's behaviour
+is unchanged.** The ordered pass D1's amendment describes issues
+`DrawProcedural` from a render-graph pass and does not depend on
+BatchRendererGroup, so it is the "instanced draws without BRG" this rung names.
+The story does not use it on this rung: a painter on rung 3 still warns and
+draws nothing on either path, and `just unity-render` still fails a run whose
+painter reports rung 3. Letting a painter whose instances all take the ordered
+path draw on a rung-3 device is filed as debt, issue #1490. No gate on the
+development machine reaches rung 3.
 
 **D4 — support is read from Unity, not inferred.**
 `UnityEngine.Rendering.BatchRendererGroup.BufferTarget` is a static property

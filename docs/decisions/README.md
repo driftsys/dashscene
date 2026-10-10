@@ -655,7 +655,11 @@ their parent rather than apart from it:
   ladder rather than against the two conditions the record set for itself, both
   of which are carried; D3 is the ladder and D4 is the read that selects between
   its rungs. The minimum Unity version is `07-embedding-and-distribution.md`
-  R-E1, settled by story #1125's spike.
+  R-E1, settled by story #1125's spike. **Amended 2026-10-10 (story #1448)**: D1
+  is reversed for the two blended classes, for draw order and not for cost —
+  `UnlitOverlay` and text draw in document order through an ordered render-graph
+  pass, and the lit classes stay on BatchRendererGroup. That pass is rung 3's
+  mechanism, and rung 3 still draws nothing (issue #1490).
 - [brg-draw-command-order-is-not-guaranteed.md](brg-draw-command-order-is-not-guaranteed.md)
   — **accepted** (2026-08-31, issue #1389): `BatchRendererGroup` groups draw
   commands by material, which is why the Unity painter drew every surface and no
@@ -666,7 +670,10 @@ their parent rather than apart from it:
   dropping commands from single frames when one named more. **Amended 2026-09-05
   (issue #1402)**: under D5's shape the keys' rank is measured to be the draw
   order, farthest first, on one graphics API — D1 and D2 revised, and
-  `just unity-render`'s order phase pins the composite on every run.
+  `just unity-render`'s order phase pins the composite on every run. **Amended
+  2026-10-10 (story #1448)**: scope, D1, D4 and D5 narrowed to the two lit
+  classes; the overlay class and text draw on an ordered pass with no sorting
+  keys, and the order phase now judges that pass.
 - [the-gpu-frame-on-the-target-device-is-budgeted.md](the-gpu-frame-on-the-target-device-is-budgeted.md)
   — **accepted** (2026-09-04, owner ruling): the `surfaces` scene shall present
   at the display mode's refresh rate at the native drawable on the target

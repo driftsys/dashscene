@@ -56,11 +56,12 @@ gradient stops — for every kind, so a plain fill and a gradient cost more on t
 painter today, and a rounded rect, a stroke or a blur has no cheap Canvas
 primitive at all. Overdraw is the same on both sides today: both draw every
 element blended, back to front, with no depth test. Draw submission favours the
-Canvas, which batches by material where the painter emits one draw command per
-visible instance. CPU under animation favours the painter and CPU at rest
-favours the Canvas, because the painter's host does the same work whether or not
-anything changed and a Canvas at rest rebuilds nothing. Text is SDF on both
-sides, and the engine floor is shared.
+Canvas, which batches by material where the painter emitted one draw command per
+visible instance. Since story #1448 the overlay class and text draw one per
+contiguous same-material run. CPU under animation favours the painter and CPU at
+rest favours the Canvas, because the painter's host does the same work whether
+or not anything changed and a Canvas at rest rebuilds nothing. Text is SDF on
+both sides, and the engine floor is shared.
 
 Four rulings followed, each an answer to a question put in session, the fourth
 later the same day. **The baseline is a faithful Canvas** — the same scenes as a
