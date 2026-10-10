@@ -123,7 +123,8 @@ The ones used on almost every turn:
     just build       assemble + full check — the thorough local gate. Run
                      before pushing and before opening a PR. CI runs the same
                      pieces job by job, so a new gate needs its own CI step
-    just lint        clippy -D warnings, fmt --check, doc-links, prim, deno fmt
+    just lint        clippy -D warnings, gpu-timing-lint, wasm-lint, fmt --check,
+                     doc-links, prim, deno fmt
     just fmt         reformat everything in place
     just check       regression tier + lint + audit + secrets + wasm-painter
                      + wasm-host + c-abi + harness-tests
@@ -190,8 +191,8 @@ them.
    a stale shared target directory that makes unrelated tests fail.
 
 End the session at each stage boundary — spec written, plan written, pull
-request opened, branch merged. The next session starts from the `docs/wip/`
-file, written from the tree, not from the conversation.
+request opened, branch merged. The spec and plan boundaries hand off through the
+`docs/wip/` file, written from the tree, not from the conversation.
 
 **Test strategy** — which tier to run when, what the corpus and the golden
 images are for, when the calibration tables must be re-derived, and when a

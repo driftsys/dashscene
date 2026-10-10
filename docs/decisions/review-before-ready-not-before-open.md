@@ -2,7 +2,7 @@
 
     status   accepted
     date     2026-07-13, revised 2026-08-01, revised 2026-08-12,
-             revised 2026-08-16
+             revised 2026-08-16, revised 2026-10-10
     scope    process — applies to every pull request against this repository.
              The 2026-08-16 revision widened it from story PRs alone,
              because two of its steps now read differently when the pull
@@ -513,13 +513,12 @@ aggregate means nothing red ran rather than that everything ran
 
 ## Consequences
 
-- `/code-review` runs against this repository's pull requests instead of
-  declining them.
-- Review findings can be posted as inline PR comments, anchored to the lines
-  they concern, instead of only as prose in the description.
+- `/review <PR#>` runs the review against this repository's pull requests
+  instead of declining them.
+- The review posts nothing to the pull request and writes its ledger to a local
+  file. What is visible on the PR is the findings checklist, with a disposition
+  against every finding.
 - The review target is the pushed diff CI has already run against.
-- The review pass is visible in the PR's timeline rather than only inside an
-  agent session.
 - Between opening the PR and completing the review, an open PR carries an
   unreviewed diff. This is the #123 window, reopened deliberately. What bounds
   it is that the PR is opened and reviewed in the same session, and that the

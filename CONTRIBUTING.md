@@ -110,7 +110,7 @@ off to `git std bootstrap`, which wires up repo-local git hooks.
    conditions, and a finding judged incorrect is a third outcome that is neither
    fixed nor filed. The conditions are in
    [`docs/decisions/review-before-ready-not-before-open.md`](docs/decisions/review-before-ready-not-before-open.md),
-   which is where they are settled; `AGENTS.md` carries a working copy for
+   which is where they are settled; `AGENTS.md` points to that record for
    contributors with commit access. They are not restated here, because the
    first version of this paragraph paraphrased them and dropped one. Applying
    the `debt` label and a milestone needs triage permission, so filing is the

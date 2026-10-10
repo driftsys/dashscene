@@ -73,9 +73,9 @@ Do not save every review for the pull request. After each behaviour change, run
 old. `/review` owns its rules; seat B, the bug sweep, does not run in it. Its
 two seats run by judgement, and when neither applies there is no quick pass:
 
-- **Prose against code — whenever the change alters behaviour that
-  `docs/design/`, a `shall` in `docs/specification/`, a record in
-  `docs/decisions/`, a rustdoc or a comment describes.** This is the pass that
+- **Prose against code — whenever the change alters behaviour that any prose
+  describes, including `docs/design/`, a `shall` in `docs/specification/`, a
+  record in `docs/decisions/`, a rustdoc or a comment.** This is the pass that
   earns its cost.
 - **Tests — whenever the change adds or alters behaviour a test should pin.**
   The cheapest moment to find a vacuous test is before anything is built on it.
@@ -86,8 +86,9 @@ worktree, and only committed work survives that.
 **This does not replace the pull-request review** in **shipping-a-change**, and
 it does not satisfy the per-task gate: a plan run task by task through
 `superpowers:subagent-driven-development` still needs each task's reviewer
-verdict before the next task starts, under the global `per-task-review-gate`
-rule.
+verdict before the next task starts, under the maintainer's user-level
+`per-task-review-gate` rule. That rule and the `/review` command live in the
+maintainer's `~/.claude` configuration, not in this repository.
 
 ## Never
 
