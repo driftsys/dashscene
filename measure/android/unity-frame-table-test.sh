@@ -424,6 +424,52 @@ elif ! grep -qF '| — | (open) | 600 | 0 | — | — | 0 |' <<<"${join_tie}"; t
     fail "  Counter happened to count first."
 fi
 
+# 7. unity-cpu-edge.log and its three dumps, run on their own with a package
+# that is not the default. Each expected cell below is derived by hand in
+# fixtures/README.md. What each check pins:
+#
+#   7a  the pid vote counts thread-cost samples: the two pids tie on frame-cost
+#       samples, and only pid 6002's thread-cost sample breaks the tie
+#   7a  the first of two `entry 1 start` markers is kept (window s 10.0, not 8.0)
+#   7a  a sample at exactly the window's end counts and one at exactly its
+#       start does not (drawn 240, not 111 or 351)
+#   7a  the (BLAST) block is taken by name when it comes first (200, not 888)
+#   7a  `--package` reaches the parser (no row at all with the default package)
+#   7b  zero presented frames reads `—`, never a division by zero
+#   7c  rows sort by the entry as a number: 1, 2, 10, though the dumps are
+#       passed in the shell's glob order, which puts entry 10 before entry 2
+edge_got="${work}/unity-cpu-edge.md"
+if ! python3 "${here}/frame-table.py" \
+    --source unity-showcase \
+    --table unity-cpu \
+    --describe "the edge fixture" \
+    --clk-tck "${CLK_TCK}" \
+    --package com.example.edge \
+    "${fixtures}/unity-cpu-edge.log" \
+    --timestats "${fixtures}/unity-cpu-edge-entry-1-sf-timestats.txt" \
+                "${fixtures}/unity-cpu-edge-entry-10-sf-timestats.txt" \
+                "${fixtures}/unity-cpu-edge-entry-2-sf-timestats.txt" \
+    > "${edge_got}"; then
+    fail "frame-table.py failed over the edge fixture. Its own message is above."
+fi
+if ! grep -qF '| unity-cpu-edge | 1 | 1080x2340 | 10.0 | 200 | 0 | 10 | 5.00 | 240 |' "${edge_got}"; then
+    fail "entry 1's row in unity-cpu-edge.md does not read"
+    fail "  \"| 1080x2340 | 10.0 | 200 | 0 | 10 | 5.00 | 240 |\". Got:"
+    fail "  $(grep '^| unity-cpu-edge | 1 | ' "${edge_got}" || echo '(no row)')"
+fi
+if ! grep -qF '| unity-cpu-edge | 2 | — | 10.0 | 0 | 0 | 10 | — | 0 |' "${edge_got}"; then
+    fail "entry 2's row in unity-cpu-edge.md does not read"
+    fail "  \"| — | 10.0 | 0 | 0 | 10 | — | 0 |\": zero presented frames must"
+    fail "  print — for cpu ms per presented frame. Got:"
+    fail "  $(grep '^| unity-cpu-edge | 2 | ' "${edge_got}" || echo '(no row)')"
+fi
+edge_order="$(grep '^| unity-cpu-edge | ' "${edge_got}" | awk -F'|' '{ print $3 }' \
+    | tr -d ' ' | tr '\n' ' ' || true)"
+if [ "${edge_order}" != "1 2 10 " ]; then
+    fail "unity-cpu-edge.md's rows are in entry order \"${edge_order}\", not"
+    fail "  \"1 2 10 \". Rows must sort by the entry as a number."
+fi
+
 if [ "${failures}" -ne 0 ]; then
     echo "unity-frame-table-test: ${failures} check(s) failed" >&2
     exit 1

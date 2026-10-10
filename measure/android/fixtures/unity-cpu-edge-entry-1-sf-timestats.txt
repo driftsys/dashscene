@@ -1,0 +1,20 @@
+# dumpsys SurfaceFlinger --timestats
+
+Constructed. Two blocks name the package `com.example.edge`, with the (BLAST)
+child FIRST and the container second — the reverse of
+unity-cpu-join-entry-1-sf-timestats.txt — so read_timestats must take 200
+from the (BLAST) block by its name, not by its position. The package is not
+the default one, so this dump is found only when `--package` reaches the
+parser.
+
+displayRefreshRate = 60 fps
+uid = 2
+layerName = SurfaceView[com.example.edge/x](BLAST)#1
+totalFrames = 200
+droppedFrames = 0
+
+displayRefreshRate = 60 fps
+uid = 1
+layerName = SurfaceView[com.example.edge/x]
+totalFrames = 888
+droppedFrames = 7

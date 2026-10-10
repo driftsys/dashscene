@@ -119,6 +119,31 @@ than never firing; entry 7's window is genuinely inverted (`end` before
 `start`), not merely equal, so the `span <= 0` guard is exercised on a negative
 span and not only a zero one.
 
+## `unity-cpu-edge.log` and `unity-cpu-edge-entry-{1,2,10}-sf-timestats.txt`
+
+Constructed, and checked by section 7 of `unity-frame-table-test.sh`, run with
+`--package com.example.edge` so that the dumps are found only when `--package`
+reaches the parser. Each one pins a rule no other fixture separates:
+
+- pids `6001` and `6002` have two frame-cost samples each, and only `6002` has a
+  thread-cost sample, so `sweep_pid` resolves to `6002` only when it counts
+  thread-cost samples;
+- entry 1 has two `start` markers, at 400.0 and 402.0, so keeping the first one
+  gives `window s` 10.0 and keeping the last gives 8.0;
+- pid `6002` reports a 111-frame sample at exactly the window's start (400.0)
+  and a 240-frame sample at exactly its end (410.0), so `drawn frames (player)`
+  is 240 only when the window is `(start, end]`;
+- entry 1's dump has the `(BLAST)` block first and the container (888) second,
+  the reverse of `unity-cpu-join-entry-1-sf-timestats.txt`;
+- entry 2's dump has `totalFrames = 0` under a real window and a real CPU
+  figure, so `cpu ms per presented frame` reads `—` and does not divide by zero;
+- entries 2 and 10 are passed in glob order, which puts 10 before 2, so the rows
+  come out 1, 2, 10 only when they sort by the entry as a number.
+
+The CPU readings rise 100 jiffies every 10 s, which is 10 % of one core at
+`--clk-tck 100`, so entry 1's `cpu ms per presented frame` is
+`10.0 × 10 / 100 × 1000 / 200 = 5.00`.
+
 ## Regenerating the expected tables
 
 Only after reading the diff — a golden regenerated from a broken parser pins the
