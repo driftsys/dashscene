@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Exercises `frame-table.py`'s three Unity tables against a committed capture.
+# Exercises `frame-table.py`'s three Unity tables against a committed capture
+# and constructed fixtures.
 # Needs no device, no editor, no SDK and no NDK.
 #
 # **The Unity showcase player's lines were read by a `sed` inside
@@ -13,8 +14,8 @@
 # **A committed capture, and a committed table.** The fixture is real logcat
 # from the run recorded in `docs/design/android-toolchain.md`, cut down to a few
 # lines of each kind, two CPU records, one corrupted line per kind, one
-# duplicated record, one constructed line and three `dashscene-window` entry
-# boundaries (issue #1457) — so this holds the parser to a capture, not to a
+# duplicated record, one constructed line and six `dashscene-window` markers
+# for three entries (issue #1457) — so this holds the parser to a capture, not to a
 # format string. `measure/android/fixtures/README.md` says what each of those
 # is for. The three expected tables beside it are diffed byte for byte.
 #
@@ -72,7 +73,8 @@ for kind in unity-frames unity-threads; do
 done
 
 # `unity-cpu` takes its own invocation rather than the loop above: its rows
-# join the capture to three per-entry compositor dumps `--timestats` names,
+# join the capture to the per-entry compositor dumps `--timestats` names (three,
+# and one wrongly named),
 # which the other two tables never read.
 TIMESTATS=(
     "${fixtures}/unity-frame-cost-entry-1-sf-timestats.txt"
@@ -194,8 +196,9 @@ fi
 cpu_rows="$(grep -c "${ROW}" "${cpu}" || true)"
 if [ "${cpu_rows}" -ne 2 ]; then
     fail "unity-cpu.md holds ${cpu_rows} row(s), not 2. The fixture carries three"
-    fail "  per-entry dumps and one names no layer for the package, so a third"
-    fail "  row here is that dump read as a zero rather than as unreadable."
+    fail "  per-entry dumps and a wrongly named one, and one of the three names"
+    fail "  no layer for the package, so a third row here is that dump read"
+    fail "  as a zero rather than as unreadable."
 fi
 
 # 3b. Entry 2 is reported under Unreadable, not folded into a row.
@@ -474,4 +477,4 @@ if [ "${failures}" -ne 0 ]; then
     echo "unity-frame-table-test: ${failures} check(s) failed" >&2
     exit 1
 fi
-echo "unity-frame-table-test: all three tables match, and the corrupted line is reported"
+echo "unity-frame-table-test: the three Unity tables match their goldens, and every targeted check passed"

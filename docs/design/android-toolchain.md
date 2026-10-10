@@ -1683,12 +1683,21 @@ started after that sample printed a **negative** wall time.
 
 Issue #1457, closing the gap D1 names in
 [`../decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`](../decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md):
-"no instrument reports the first quantity today" is no longer true — the CPU
+before it, no instrument reported process CPU per presented frame. The CPU
 sampler's `utime + stime` divided by the **compositor's** frame count over the
-same window is `unity-cpu.md`, a fourth table beside `unity-frames.md` and
-`unity-threads.md`. This is the instrument, not yet the comparison D1 asks for:
-story #1451 is what reads this criterion against the Canvas painter and closes
-epic #1441.
+same window is now `unity-cpu.md`, a third table beside `unity-frames.md` and
+`unity-threads.md`. "The same window" is approximate in two ways. The CPU figure
+is taken over the sampler's pair of readings that brackets the window
+(`cpu_over`), not over the window's own seconds, and
+`cpu ms per presented
+frame` is that percentage times `window s`; on the
+captures below the two differ by about 1 %. The compositor window runs from a
+`-clear` to a `-dump`, and is longer than the marker window by about three
+`adb shell` round trips: it opens before `keyevent 93` and the start marker, so
+its first frames still show the previous entry, and it closes at the `-dump`
+after the end marker. That difference is not measured. This is the instrument,
+not yet the comparison D1 asks for: story #1451 is what reads this criterion
+against the Canvas painter and closes epic #1441.
 
 **The window is the entry's dwell**, one compositor clear-and-dump per entry per
 sweep rather than one per sweep — a sweep-wide window would give one figure per
@@ -1696,11 +1705,16 @@ sweep and not per row. Taken on the Pixel 5 (Adreno 620, Vulkan 1.1.0, rung
 `RawBuffer`) at 1080x2340, three sweeps of 20 s per entry, host clock
 `20260906T135313Z`, from the branch of PR #1481. The sweep script stamps its own
 `git rev-parse` into the captures on the shelf — `c2a82f3` there — and that
-commit does not survive the branch's squash. The commits after it fix a
-cross-sweep contamination risk in the host-side pid join, harden
-`frame-table.py`'s parsing, and add fixture coverage; none of them changes code
-the player runs, so the reading stands. Dumps are under
-`driftsys/dashscene-v021-lanes/probe-1457/`, outside this repository.
+commit does not survive the branch's squash. The script the table was taken with
+is not the script as built. Later commits changed the CPU sampler's budget from
+`(total * dwell) + 6` seconds to `(total * (dwell + 6)) + 6`, and moved each
+entry's start marker to after `keyevent 93`. The captures' markers already carry
+`pid=`, which the script at `c2a82f3` does not write, so the run used
+uncommitted edits that `git rev-parse` does not record, and which of the later
+edits it already had is not recorded either. None of these changes code the
+player runs, but the budget and the marker position change what the script
+measures, and the table has not been taken again with the script as built. Dumps
+are under `driftsys/dashscene-v021-lanes/probe-1457/`, outside this repository.
 
     sweep entry extent      window s presented dropped cpu%  cpu ms/frame drawn(player)
     A     1     1080x2340   20.1     611       0       25    8.11         240
@@ -1734,21 +1748,27 @@ Some `adb shell` round trip inside entry 5's loop body was slow enough to push
 that window to 23.1 s instead of the usual ~20.1 — the `presented frames` count
 (1391) scales with it rather than doubling, so `-clear` still bounded the window
 correctly; it was only slow. What that delay cost is entry 6: the CPU sampler's
-own budget (`(total * dwell) + 6` seconds, `unity-frame-cost.sh`) is sized off
-the NOMINAL dwell, and C5's overrun left no sampler reading inside C6's window
-to bracket a percentage from. `cpu_over` reports that honestly as `—` rather
-than one extrapolated past the sampler's actual coverage — the same guard the
-fixture's own entry 3 pins, reached here for the first time by a real device
+own budget (`(total * dwell) + 6` seconds in the script this run used) was sized
+off the NOMINAL dwell, and C5's overrun left no sampler reading inside C6's
+window to bracket a percentage from. `cpu_over` reports that honestly as `—`
+rather than one extrapolated past the sampler's actual coverage — the same guard
+the fixture's own entry 3 pins, reached here for the first time by a real device
 rather than by a constructed case.
 
 **Entries 4 through 6 are the gap D1 names, on this device.** Their
 `drawn frames (player)` column reads 0 — no `unity-frames.md` sample closed
 inside that window — while the compositor's own count for the same window is
-1141-1391. `unity-frames.md`'s sample boundary is 240 drawn frames, which for
-these three (slower, paced) entries takes longer than one 20 s dwell to close,
-so the player's own drawn-frame report and the compositor's presented count
-genuinely diverge here — the reason D1 requires the compositor's count rather
-than the player's.
+1141-1391. The player draws a frame only when the runtime's tick advanced or a
+redraw is pending (`SettleLoop.ShouldDraw`, called in `DashsceneShowcase.cs`
+before the draw), so once one of these entries settles the player stops drawing,
+no 240-frame sample closes, and the compositor still presents at about 60 Hz.
+The player's own drawn-frame report and the compositor's presented count diverge
+here — the reason D1 requires the compositor's count rather than the player's.
+
+`drawn frames (player)` is not a count of frames drawn inside the window. It
+sums the frame-cost samples whose report falls inside the window, each with all
+of its frames, so a 240-frame sample that closes in the window counts 240 even
+when most of those frames were drawn before the window opened.
 
 ## Unity's Android lifecycle over the lease (2026-08-29)
 

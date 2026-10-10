@@ -57,7 +57,7 @@ unity/com.driftsys.dashscene/**/*.meta
 # and no manifest in the tree is excluded.
 docs/archive/
 
-# The two expected tables under `measure/android/fixtures/` are `frame-table.py`
+# The three expected tables under `measure/android/fixtures/` are `frame-table.py`
 # output, diffed byte for byte by `measure/android/unity-frame-table-test.sh`.
 # The generator emits unwrapped prose and unaligned table cells; prim wraps and
 # aligns both, so the pre-commit hook rewrites the committed golden and the next
@@ -65,7 +65,7 @@ docs/archive/
 # wrote. Measured on the pull request that added them.
 #
 # **A glob rather than the directory**, so `fixtures/README.md` — which is prose
-# a person maintains — stays formatted, and so a third expected table added
+# a person maintains — stays formatted, and so a further expected table added
 # later is covered without editing this file. The capture beside them is not
 # Markdown and prim skips it anyway.
 measure/android/fixtures/*.expected.md
