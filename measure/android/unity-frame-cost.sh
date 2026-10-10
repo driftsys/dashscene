@@ -237,14 +237,13 @@ for index in $(seq 1 "${sweeps}"); do
         # **Cleared, then switched immediately** — the next entry's window
         # starts empty and the scene change follows as few `adb shell` round
         # trips later as this apparatus can manage. Sending `keyevent 93`
-        # first and marking the next window's start after it, rather than the
-        # reverse, is what keeps the gap between "the window opened" and "the
-        # entry actually changed" to one round trip instead of two: reversed,
-        # the marker's own `log` call sat in that gap too, and every frame
-        # presented during it — still the OLD entry's content — was counted
-        # into the NEW entry's window. The window and the dwell are then the
-        # same seconds, to within that one remaining round trip — small next
-        # to a dwell of several seconds, but not zero, and not measured here.
+        # before the next start marker, rather than after it, keeps the gap
+        # between the `-clear` and the scene change to one round trip: frames
+        # presented in that gap still show the OLD entry and are counted into
+        # the NEW entry's window. The compositor window (`-clear` to `-dump`)
+        # is still longer than the marker window by about three round trips:
+        # `keyevent 93` and the start marker's `log` after the `-clear`, and
+        # the `-dump` after the end marker's `log`. Not measured here.
         "${adb}" shell dumpsys SurfaceFlinger --timestats -clear >/dev/null 2>&1 || true
         "${adb}" shell input keyevent 93 >/dev/null 2>&1 || true
         if [ "${entry}" -lt "${total}" ]; then
@@ -333,9 +332,11 @@ provenance() {
     echo "    rung      ${rung}"
     echo "    sweeps    ${sweeps}, ${dwell} s per entry"
     echo
-    echo "The raw captures are \`sweep-<letter>.log\` beside this file. Every row"
-    echo "above is one line out of them, reshaped by \`frame-table.py\` and not"
-    echo "recomputed."
+    echo "The raw captures are \`sweep-<letter>.log\` and the per-entry compositor"
+    echo "dumps \`<letter>-entry-<n>-sf-timestats.txt\` beside this file."
+    echo "\`frame-table.py\` builds every table above from them: the CPU columns"
+    echo "are computed from the sampler's readings, and the other columns are"
+    echo "copied from the player's lines or the compositor dumps."
 }
 
 clk_tck="$("${adb}" shell getconf CLK_TCK | tr -d '\r')"
@@ -420,7 +421,7 @@ for kind in unity-frames unity-threads; do
     ds_note "wrote ${table} — ${rows} row(s) from ${captured} captured line(s)"
 done
 
-# **A fourth table with its own rows, not a column in unity-frames.md**: a
+# **A third table with its own rows, not a column in unity-frames.md**: a
 # frame-cost row cannot be aligned to a compositor window on its own, since the
 # window is per entry per sweep and a sample row is per (pid, scene) — issue
 # #1457.
@@ -464,6 +465,19 @@ if [ -e "${timestats_files[0]}" ]; then
         ds_warn "${unreadable} unreadable, leaving ${missing} unaccounted for."
         exit 1
     fi
+    # **A table of dashes is not a measurement.** Rows exist whenever the
+    # dumps parse, so a run where the sampler bracketed no window still has
+    # rows, each with `—` for `cpu ms per presented frame` (the eighth column).
+    numeric="$(grep '^| [A-Z] | ' "${table}" \
+        | awk -F'|' '$9 ~ /[0-9]/' | wc -l | tr -d ' ')"
+    if [ "${numeric}" -eq 0 ]; then
+        ds_warn "unity-cpu.md holds ${rows} row(s) and none has a cpu ms per"
+        ds_warn "presented frame: the CPU sampler bracketed no window. See ${table}."
+        exit 1
+    fi
     ds_note "wrote ${table} — ${rows} row(s) from ${#timestats_files[@]} dump(s)"
+else
+    ds_warn "no per-entry compositor dump in ${out}, so unity-cpu.md was not"
+    ds_warn "written and CPU per presented frame was not measured."
 fi
 ds_note "one extent (${all_extents}) and one API (${all_apis}) across every sweep"
