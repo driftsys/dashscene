@@ -1263,7 +1263,7 @@ def emit_unity_cpu(table, source, describe, clk_tck, unreadable, out):
 
     `cpu ms per presented frame` is `window s × cpu % / 100 × 1000 /
     presented`, where `cpu %` comes from `cpu_over` over the sampler's
-    bracketing pair of readings, not from a `utime + stime` difference taken
+    readings at or before the window's start and at or before its end, not from a `utime + stime` difference taken
     at the window's two markers. The pair's span and the window's seconds
     differ; `docs/design/android-toolchain.md` gives the difference on the
     probe-1457 captures.
@@ -1324,8 +1324,8 @@ def emit_unity_cpu(table, source, describe, clk_tck, unreadable, out):
         "`cpu ms per presented frame` is `window s × cpu % / 100 × 1000 / "
         "presented frames`, computed from the unrounded `window s` and "
         "`cpu %`, so the rounded columns reproduce it only approximately. "
-        "`cpu %` here is over the sampler's pair of readings that brackets "
-        "the window, not over the window's own seconds. `drawn frames "
+        "`cpu %` here is over the sampler's readings at or before the "
+        "window's start and at or before its end, not over the window's own seconds. `drawn frames "
         "(player)` sums the frame-cost samples whose report falls inside the "
         "window, each with all of its frames, so it is not the number of "
         "frames drawn inside the window. `(open)` in `window s` here means "

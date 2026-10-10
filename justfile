@@ -4669,7 +4669,8 @@ unity-android-negative name="all" action="run" unity_version="6000.3.23f1" timeo
 # loops. It was 47 s over six scripts on 2026-08-24. The eighth,
 # `unity-frame-table-test.sh`, is story #1443's and runs the parser over a
 # committed capture and constructed fixtures, so the 98 s is not re-measured for
-# it.
+# it. Nor is it for the ninth, `unity-frame-cost-test.sh` (issue #1457), which
+# drives the sweep script through a stub `adb` with `sleep` stubbed out.
 # `.github/workflows/ci.yml` carries the same figure and **is out of date**: it
 # still reads 47 s, because that file belonged to another lane for the whole of
 # this work. Issue #1378 is the one-line correction, and this note is here

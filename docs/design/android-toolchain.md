@@ -1687,19 +1687,19 @@ before it, no instrument reported process CPU per presented frame. The CPU
 sampler's `utime + stime` divided by the **compositor's** frame count over the
 same window is now `unity-cpu.md`, the third table `unity-frame-cost.sh` writes,
 beside `unity-frames.md` and `unity-threads.md`. "The same window" is
-approximate in two ways. The CPU figure is taken over the sampler's pair of
-readings that brackets the window (`cpu_over`), not over the window's own
-seconds, and `cpu ms per presented frame` is that percentage times `window s`.
-On 16 of the 17 rows below that have a CPU figure, the pair's span is within 2.5
-% of the window's seconds. C5 is the exception: its last sampler reading is 3.1
-s before its end marker, so its CPU figure is over a 20.2 s pair inside a 23.1 s
-window. The compositor window runs from a `-clear` to a `-dump`, and is longer
-than the marker window by about three `adb shell` round trips: it opens before
-`keyevent 93` and the start marker, so its first frames still show the previous
-entry, and it closes at the `-dump` after the end marker. That difference is not
-measured. This is the instrument, not yet the comparison D1 asks for: story
-#1451 is what reads this criterion against the Canvas painter and closes epic
-#1441.
+approximate in two ways. The CPU figure is taken over the sampler's readings at
+or before the window's start and at or before its end (`cpu_over`), not over the
+window's own seconds, and `cpu ms per presented frame` is that percentage times
+`window s`. On 16 of the 17 rows below that have a CPU figure, the pair's span
+is within 2.5 % of the window's seconds. C5 is the exception: its last sampler
+reading is 3.1 s before its end marker, so its CPU figure is over a 20.2 s pair
+inside a 23.1 s window. The compositor window runs from a `-clear` to a `-dump`,
+and is longer than the marker window by about three `adb shell` round trips: it
+opens before `keyevent 93` and the start marker, so its first frames still show
+the previous entry, and it closes at the `-dump` after the end marker. That
+difference is not measured. This is the instrument, not yet the comparison D1
+asks for: story #1451 is what reads this criterion against the Canvas painter
+and closes epic #1441.
 
 **The window covers the entry's dwell**, one compositor clear-and-dump per entry
 per sweep rather than one per sweep, and is longer than the dwell by the round
