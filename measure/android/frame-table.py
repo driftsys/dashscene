@@ -692,7 +692,7 @@ def unity_cpu_rows(capture, timestats_paths, clk_tck, package):
     # launch outnumbered by the sweep's real ones; it does not survive a
     # sweep whose own samples are themselves the minority.
     #
-    # **A genuine tie resolves to nothing, not to a coin flip.**
+    # **A genuine tie resolves to no pid, not to an arbitrary one.**
     # `Counter.most_common` breaks a tie by insertion order, which is exactly
     # the "first sample in the sweep" resolution the mode exists to replace —
     # picking either candidate silently would attribute the row to a process
@@ -872,6 +872,15 @@ SOURCES = {
         "itself. Name the device beside this table when it is recorded."
     ),
 }
+
+
+UNITY_CPU_SOURCE = (
+    "Device result, from the Unity showcase player — "
+    "`measure/android/unity-frame-cost.sh`, one row per compositor window and "
+    "nothing averaged across sweeps. The engine floor is in every figure here, "
+    "so the renderer's share is the difference from the empty entry's row and "
+    "not the row itself. Name the device beside this table when it is recorded."
+)
 
 
 def extent_cell(extents):
@@ -1241,14 +1250,25 @@ def emit_unity_cpu(table, source, describe, clk_tck, unreadable, out):
 
     D1 of
     `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`
-    divides the sampler's `utime + stime` by the **compositor's** frame count
-    over the same window, not the player's own drawn-frame count — a layer
-    that presents nothing for part of a window makes drawn and presented
-    differ, which `docs/design/android-toolchain.md` records happening on
-    `typography`. `presented frames` and `dropped` are the compositor's own
-    count for the package's layer; `drawn frames (player)` is
-    `unity-frames.md`'s frame-cost samples whose epoch falls inside this same
-    window, so that gap is visible on the row rather than assumed away.
+    divides the sampler's `utime + stime` by the **compositor's** frame count,
+    not the player's own drawn-frame count — a layer that presents nothing for
+    part of a window makes drawn and presented differ, which
+    `docs/design/android-toolchain.md` records happening on `typography`.
+    `presented frames` and `dropped` are the compositor's own count for the
+    package's layer.
+
+    `cpu ms per presented frame` is `window s × cpu % / 100 × 1000 /
+    presented`, where `cpu %` comes from `cpu_over` over the sampler's
+    bracketing pair of readings, not from a `utime + stime` difference taken
+    at the window's two markers. On the probe-1457 captures the two differ by
+    about 1 %.
+
+    `drawn frames (player)` sums the frame counts of the resolved pid's
+    frame-cost samples whose report epoch is in `(start, end]`. Each sample
+    counts whole: a 240-frame sample that closes inside the window adds 240
+    even when most of its frames were drawn before the window opened, and a
+    sample still open at the window's end adds nothing. It is not a count of
+    the frames drawn inside the window.
     """
     print(
         f"# Unity CPU per presented frame — {describe}"
@@ -1257,13 +1277,19 @@ def emit_unity_cpu(table, source, describe, clk_tck, unreadable, out):
         file=out,
     )
     print(file=out)
-    print(SOURCES[source], file=out)
+    # Not `SOURCES[source]` for the Unity player: that lead-in says "one row
+    # per reported sample", which is the other two Unity tables and not this
+    # one.
+    print(UNITY_CPU_SOURCE if source == "unity-showcase" else SOURCES[source], file=out)
     print(file=out)
     print(
         "One row per compositor window: `dumpsys SurfaceFlinger --timestats` "
-        "cleared and dumped once per entry, over the same seconds as that "
-        "entry's dwell — a window over the whole sweep would give one figure "
-        "per sweep rather than per row. `presented frames` and `dropped` are "
+        "cleared and dumped once per entry — a window over the whole sweep "
+        "would give one figure per sweep rather than per row. The compositor "
+        "window is longer than `window s` by about three `adb shell` round "
+        "trips: it opens at the `-clear` before the scene change and the "
+        "start marker, and closes at the `-dump` after the end marker. "
+        "`presented frames` and `dropped` are "
         "read from the package's own layer in that dump; a dump whose layer "
         "cannot be found is reported under Unreadable below rather than as a "
         "row of zeroes.",
@@ -1291,13 +1317,19 @@ def emit_unity_cpu(table, source, describe, clk_tck, unreadable, out):
     cpu_footnote(clk_tck, out)
     print(
         "`cpu ms per presented frame` is `window s × cpu % / 100 × 1000 / "
-        "presented frames` — from the three columns beside it on the same "
-        "row, never recomputed from a different pair. `(open)` in `window s` "
-        "here means one of this entry's two `dashscene-window` markers is "
-        "missing — every `log` call `unity-frame-cost.sh` makes to write one "
-        "is `|| true`, so a dropped write reads as an incomplete window rather "
-        "than aborting the sweep — which is a different cause from the one "
-        "the CPU footnote above states for its own `(open)`.",
+        "presented frames`, computed from the unrounded `window s` and "
+        "`cpu %`, so the rounded columns reproduce it only approximately. "
+        "`cpu %` here is over the sampler's pair of readings that brackets "
+        "the window, not over the window's own seconds. `drawn frames "
+        "(player)` sums the frame-cost samples whose report falls inside the "
+        "window, each with all of its frames, so it is not the number of "
+        "frames drawn inside the window. `(open)` in `window s` here means "
+        "no start marker or no end marker was matched for this entry: either "
+        "one of the two `dashscene-window` markers was never written (every "
+        "`log` call `unity-frame-cost.sh` makes to write one is `|| true`), "
+        "or the sweep's pid could not be resolved from its own samples, so "
+        "no marker is matched. Both differ from the cause the CPU footnote "
+        "above states for its own `(open)`.",
         file=out,
     )
     unity_cpu_unreadable_report(unreadable, out)
@@ -1306,9 +1338,10 @@ def emit_unity_cpu(table, source, describe, clk_tck, unreadable, out):
 def window_span_cell(row):
     """The `window s` cell.
 
-    `(open)` where the window has only one boundary — a `dashscene-window`
-    marker `unity-frame-cost.sh` never wrote, since every `log` call it makes
-    to write one is `|| true`. `—` where both boundaries exist but the
+    `(open)` where the window lacks a boundary — a `dashscene-window` marker
+    `unity-frame-cost.sh` never wrote, since every `log` call it makes to write
+    one is `|| true`, or a sweep whose pid `unity_cpu_rows` could not resolve,
+    so that no marker is matched at all. `—` where both boundaries exist but the
     interval they describe is not positive — a re-read that kept a stale
     epoch, or a device clock step between the two `adb shell log` round
     trips — which `unity_cpu_rows` already turned into a `None` span rather
