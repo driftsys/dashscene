@@ -29,7 +29,7 @@ dashbuf.workspace = true
 dashpaint.workspace = true
 dashscene-validator.workspace = true
 # Pure-Rust MSDF generator for the Figma VECTOR field bake (story B1,
-# docs/wip/2026-07-19-B1-vector-msdf-design.md). Pinned exactly: the
+# docs/archive/2026-07-19-B1-vector-msdf-design.md). Pinned exactly: the
 # generated field is welded per-texel to a committed pinned-msdfgen
 # reference (tests/vector_field_weld.rs), so an fdsm bump must arrive as a
 # deliberate, re-welded change (the same posture as the glyph atlas tool

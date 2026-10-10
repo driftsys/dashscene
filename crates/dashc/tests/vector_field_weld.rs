@@ -1,4 +1,4 @@
-//! The msdfgen weld (story B1, docs/wip/2026-07-19-B1-vector-msdf-design.md).
+//! The msdfgen weld (story B1, docs/archive/2026-07-19-B1-vector-msdf-design.md).
 //!
 //! The Figma import path runs `dashc.wasm`, so the C++ `msdfgen` /
 //! `msdf-atlas-gen` (the offline glyph-atlas tool) can never ride it — the

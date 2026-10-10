@@ -42,17 +42,18 @@ documentation-only diff most jobs skip. Read the individual jobs.
 
 ## Commands
 
-    just build      assemble + full check (this is what CI runs)
-    just test        sanity tier — ~5 s. Between edits, and before every
-                      commit.
+    just build        assemble + full check. CI runs its pieces job by job,
+                      so a new gate needs its own CI step
+    just test         sanity tier — seconds; `.config/nextest.toml` defines
+                      it. Between edits, and before every commit.
     just test-regression  regression tier — every test but the
                       calibration re-derivations. What `build` and the CI
                       `test` job run; the pre-push hook does not.
     just calibrate    calibration tier — 10 tests, ~54 s. Re-derives the
                       committed asset tables; see the schedule below.
     just test-all     every tier in one run.
-    just lint         clippy -D warnings, cargo fmt --check, doc-links, prim,
-                      deno fmt --check
+    just lint         clippy -D warnings, gpu-timing-lint, wasm-lint,
+                      cargo fmt --check, doc-links, prim, deno fmt --check
     just doc-links    the intra-doc-link gate on the HOST triple. Its own
                       recipe because CI's `clippy` job runs exactly it — until
                       issue #1108 no CI job ran it at all. The wasm32 and
@@ -71,14 +72,15 @@ documentation-only diff most jobs skip. Read the individual jobs.
     just fmt          reformat everything in place
     just check        regression tier + lint + audit + secrets + the two wasm
                       gates + c-abi, which compiles the committed header from C
-                      and checks the two halves agree (needs a C toolchain)
+                      and checks the two halves agree (needs a C toolchain;
+                      CI runs it in the android-build job) + harness-tests
     just unity-abi    two gates over the UPM package, plus the `dotnet format`
                       pass CI runs before them. That pass was CI-only until
                       story #1122, when a local `just unity-ffi` passed and CI
                       failed on whitespace — a clean local build reported
                       nothing, because the check is a separate command rather
-                      than a build analyzer. Its C# declarations of
-                      boundary B against
+                      than a build analyzer. It checks the package's C#
+                      declarations of boundary B against
                       the Rust build of `dashpaint-abi`. Compiles the package's
                       own `BoundaryB.cs` and compares every type on the surface,
                       member by member, matched by name. **Needs no Unity
@@ -484,7 +486,9 @@ documentation-only diff most jobs skip. Read the individual jobs.
                       Needs no device: both scripts package from the
                       cross-built .so and committed inputs. Needs the SDK
                       build-tools, a JDK and zip, none of which bootstrap
-                      installs. Runs last in CI's android-build job. Takes the
+                      installs. CI's android-build job runs it after
+                      `harness-tests`, `android` and `c-abi`, and before
+                      `android-lint`. Takes the
                       same profile parameter as `android`, and cross-compiles
                       **once** for both halves — a warm no-op `just android` was
                       measured at 10.2 s, so letting each half call it added
@@ -510,7 +514,8 @@ documentation-only diff most jobs skip. Read the individual jobs.
                       to shell. Needs `--features gpu-timing`, which is off
                       everywhere else because it adds two feature bits to the
                       device request the shipped painter does not ask for;
-                      `just lint` compiles it so it cannot rot. Offscreen, so the figure
+                      `just gpu-timing-lint`, inside `just lint` and CI's
+                      `clippy` job, compiles it so it cannot rot. Offscreen, so the figure
                       excludes the acquire and present that dominate a windowed
                       frame
     just android-measure  the whole measurement apparatus into one evidence
@@ -579,9 +584,9 @@ be measured before it merges (`docs/decisions/test-tiers.md`).
 **When to run which test tier** (`docs/decisions/test-tiers.md`). The suite runs
 as three tiers, so "tests pass" is no longer a claim about all of it:
 
-- **While editing, and before every commit** — `just test`. Seven seconds, and
-  everything except the four slower binaries the regression tier adds. There is
-  no reason to skip it.
+- **While editing, and before every commit** — `just test`, seconds. Its
+  `sanity` profile in `.config/nextest.toml` defines what it leaves out. There
+  is no reason to skip it.
 - **Before pushing, and before opening a PR** — `just build`, which runs the
   regression tier. **The `pre-push` hook no longer runs it.** `just verify`,
   which the hook runs, is bounded at seconds: commit-message lint, `lint`,
@@ -617,3 +622,20 @@ as three tiers, so "tests pass" is no longer a claim about all of it:
   grows, so the count is read there rather than written here. Read the individual jobs to see which tiers executed
   (`docs/decisions/test-tiers.md`).
 
+## Gate traps
+
+- **`just prim` checks zero files inside `.claude/worktrees/`**, because
+  `.primignore` lists `.claude/`; `lint`, `check` and the pre-commit hook are
+  fail-open there. Put worktrees outside `.claude/`.
+- **`just check` stops at its first failed dependency**, and the gates after it
+  never ran. Read the exit status, not the test Summary line.
+- **`just build` compiles no `cfg(target_os = "android")` code.** After editing
+  such code or `demo-android/`, run `just android`.
+- **Never edit files while a gate runs**: the gate compiles the working tree.
+- **A `NotFound` test failure can be a stale binary** from a removed worktree in
+  the shared target directory; `cargo clean -p <crate>` clears it.
+- **Run `pgrep -fl cargo` before diagnosing a build failure**: a concurrent
+  build may hold the target directory.
+- **A new `ds_*` symbol the Unity package calls needs `just unity-plugins`.**
+  `unity-ffi` loads the library it just built, so it cannot see a missing
+  rebuild, and `unity/ffi-check` excludes `Runtime/Engine/**`.

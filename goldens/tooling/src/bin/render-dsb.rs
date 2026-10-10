@@ -1,7 +1,7 @@
 //! `render-dsb <in.dsb> <out.png> [--profile raw|hifi|lofi]` — load a committed
 //! `.dsb` and render it through the v0 Skia reference painter to a PNG. A thin
 //! wrapper over [`goldens::render::render_dsb`]; the live entry point is
-//! `just render` (story Sf-1, docs/wip/2026-07-18-render-dsb-design.md).
+//! `just render` (story Sf-1, docs/archive/2026-07-18-render-dsb-design.md).
 //!
 //! `--profile` is the Gfx QA profile preview (story #435): the document's
 //! assets are packed under that quality profile in memory, the derived bank is

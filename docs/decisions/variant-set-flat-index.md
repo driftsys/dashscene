@@ -10,7 +10,7 @@
 `docs/archive/2026-07-14-design-1-seed.md` §5 pins the shape of the variant
 table itself: "sparse per-variant overrides, never duplicate trees." What it
 does not pin is how a variant is _selected_, or which props a variant is allowed
-to override. `docs/wip/2026-07-13-reactive-bindings-spec.md` (a later,
+to override. `docs/archive/2026-07-13-reactive-bindings-spec.md` (a later,
 not-yet-built consumer) flags both as open: "#20's API shape (flat variant index
 versus axis-keyed selection) is still undecided," and "#20 ... gains a second
 consumer [`bind_variant`]. Its undecided API shape should be settled with
