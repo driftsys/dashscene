@@ -468,14 +468,15 @@ if [ -e "${timestats_files[0]}" ]; then
     fi
     # **A table of dashes is not a measurement.** Rows exist whenever the
     # dumps parse, so a run can have rows and no numeric `cpu ms per presented
-    # frame` (the eighth column). `frame-table.py`'s footnote under the table
-    # names every cause of a `—` there. `unity-frame-cost-test.sh` drives this
+    # frame` (the eighth column). `cpu_ms_cell` prints `—` whenever one of
+    # its inputs is missing: `cpu %`, `window s`, or a positive presented
+    # count. `unity-frame-cost-test.sh` drives this
     # check through a stub adb.
     numeric="$(grep '^| [A-Z] | ' "${table}" \
         | awk -F'|' '$9 ~ /[0-9]/' | wc -l | tr -d ' ')"
     if [ "${numeric}" -eq 0 ]; then
         ds_warn "unity-cpu.md holds ${rows} row(s) and none has a numeric cpu ms per presented frame."
-        ds_warn "The footnote under the table names the causes of a —: ${table}"
+        ds_warn "Each row shows which of cpu %, window s or presented frames is missing: ${table}"
         exit 1
     fi
     ds_note "wrote ${table} — ${rows} row(s) from ${#timestats_files[@]} dump(s)"
