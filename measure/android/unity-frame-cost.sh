@@ -28,9 +28,10 @@
 # `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`),
 # and `unity-cpu.md` for D1's own criterion — the sampler's CPU divided by the
 # **compositor's** frame count over the same window (issue #1457). That window
-# is the entry's dwell: `dumpsys SurfaceFlinger --timestats` is cleared and
-# dumped once per entry rather than once per sweep, because a sweep-wide window
-# would give one figure per sweep and not per row.
+# covers the entry's dwell, and is longer than it by about three `adb shell`
+# round trips (see the `-clear` below): `dumpsys SurfaceFlinger --timestats` is
+# cleared and dumped once per entry rather than once per sweep, because a
+# sweep-wide window would give one figure per sweep and not per row.
 #
 # **It tabulates and does not average.** Each row is one reported sample of 240
 # drawn frames, exactly as the player emitted it, and the summary reports the
@@ -334,9 +335,8 @@ provenance() {
     echo
     echo "The raw captures are \`sweep-<letter>.log\` and the per-entry compositor"
     echo "dumps \`<letter>-entry-<n>-sf-timestats.txt\` beside this file."
-    echo "\`frame-table.py\` builds every table above from them: the CPU columns"
-    echo "are computed from the sampler's readings, and the other columns are"
-    echo "copied from the player's lines or the compositor dumps."
+    echo "\`frame-table.py\` builds every table above from them, and the footnotes"
+    echo "under each table say how its derived columns are computed."
 }
 
 clk_tck="$("${adb}" shell getconf CLK_TCK | tr -d '\r')"
@@ -421,7 +421,8 @@ for kind in unity-frames unity-threads; do
     ds_note "wrote ${table} — ${rows} row(s) from ${captured} captured line(s)"
 done
 
-# **A third table with its own rows, not a column in unity-frames.md**: a
+# **The third table this script writes, with its own rows, not a column in
+# unity-frames.md**: a
 # frame-cost row cannot be aligned to a compositor window on its own, since the
 # window is per entry per sweep and a sample row is per (pid, scene) — issue
 # #1457.
@@ -466,18 +467,17 @@ if [ -e "${timestats_files[0]}" ]; then
         exit 1
     fi
     # **A table of dashes is not a measurement.** Rows exist whenever the
-    # dumps parse, so a run where the sampler bracketed no window still has
-    # rows, each with `—` for `cpu ms per presented frame` (the eighth column).
+    # dumps parse, so a run can have rows and no numeric `cpu ms per presented
+    # frame` (the eighth column). `frame-table.py`'s footnote under the table
+    # names every cause of a `—` there. `unity-frame-cost-test.sh` drives this
+    # check through a stub adb.
     numeric="$(grep '^| [A-Z] | ' "${table}" \
         | awk -F'|' '$9 ~ /[0-9]/' | wc -l | tr -d ' ')"
     if [ "${numeric}" -eq 0 ]; then
-        ds_warn "unity-cpu.md holds ${rows} row(s) and none has a cpu ms per"
-        ds_warn "presented frame: the CPU sampler bracketed no window. See ${table}."
+        ds_warn "unity-cpu.md holds ${rows} row(s) and none has a numeric cpu ms per presented frame."
+        ds_warn "The footnote under the table names the causes of a —: ${table}"
         exit 1
     fi
     ds_note "wrote ${table} — ${rows} row(s) from ${#timestats_files[@]} dump(s)"
-else
-    ds_warn "no per-entry compositor dump in ${out}, so unity-cpu.md was not"
-    ds_warn "written and CPU per presented frame was not measured."
 fi
 ds_note "one extent (${all_extents}) and one API (${all_apis}) across every sweep"

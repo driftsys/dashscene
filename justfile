@@ -4702,6 +4702,9 @@ harness-tests:
     # reshaped by a `sed` inside `unity-frame-cost.sh` that no gate could reach:
     # that script needs a device with a Unity player installed on it.
     ./measure/android/unity-frame-table-test.sh
+    # And the sweep script's own refusal of a unity-cpu.md with no numeric
+    # cpu ms per presented frame, driven through a stub adb (issue #1457).
+    ./measure/android/unity-frame-cost-test.sh
     ./measure/android/attach-outcome-test.sh
     # And the wiring between those two decisions, which neither of them
     # reaches: `attach-timing-test.sh` drives the script itself against a stub
