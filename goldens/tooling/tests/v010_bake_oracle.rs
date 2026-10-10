@@ -1,5 +1,5 @@
 //! Story B1 (#340) — the bake oracle (B1.5,
-//! docs/wip/2026-07-19-B1-vector-msdf-design.md): the vector-fidelity gate.
+//! docs/archive/2026-07-19-B1-vector-msdf-design.md): the vector-fidelity gate.
 //!
 //! The generator's own weld test (`crates/dashc/tests/vector_field_weld.rs`)
 //! proves `fdsm`'s field equals pinned `msdfgen` output — us-vs-msdfgen. This
@@ -372,7 +372,7 @@ fn star_path() -> String {
 }
 
 /// The representative census vocabulary (extends the fixture shapes,
-/// docs/wip/2026-07-19-B1-vector-msdf-design.md): a star, a filled arrow, a
+/// docs/archive/2026-07-19-B1-vector-msdf-design.md): a star, a filled arrow, a
 /// cubic-Bézier organic blob, an EVENODD square-with-a-hole, and a stroke-like
 /// thin bar. Every one must bake within tolerance at or before the ceiling.
 fn census_shapes() -> Vec<(&'static str, String, WindingRule)> {

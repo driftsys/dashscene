@@ -144,10 +144,12 @@ debt ticket is regularly closed from a story branch. The sequence is:
   the second copy.
 
   Moving a file out of `docs/wip/` also invalidates every record that cited it
-  there, and durable records do cite it: nineteen in `docs/decisions/` carry a
-  `docs/wip/` path, and one has pointed at nothing since 2026-07-29 without
-  anything noticing (issue #914). The commit that archives a capture re-points
-  the citations it breaks — `grep -rln "docs/wip/<file>" docs/` finds them.
+  there, and durable records do cite it; one pointed at nothing from 2026-07-29
+  without anything noticing (issue #914). The commit that archives a capture
+  re-points the citations it breaks — `grep -rln "docs/wip/<file>" docs/` finds
+  them. The decision records that carry any `docs/wip/` path are listed by:
+
+      git grep -l 'docs/wip/' -- docs/decisions
 
   All of it binds what the branch adds, and nothing else. Phrased as
   "`docs/wip/` must be empty" the rule would block every pull request opened
@@ -159,10 +161,10 @@ debt ticket is regularly closed from a story branch. The sequence is:
 
 - **Open the PR.** Do not pass `--draft`.
 
-- **Run the review and CI at the same time.** `/code-review` against the PR
-  while the build runs. Neither needs the other's answer, so running them in
-  series adds the shorter one to the wall clock for nothing. The merge gate is
-  unchanged: both must be complete.
+- **Run the review and CI at the same time.** `/review <PR#>` against the PR
+  while the build runs — a PR number, never a git range. Neither needs the
+  other's answer, so running them in series adds the shorter one to the wall
+  clock for nothing. The merge gate is unchanged: both must be complete.
 
 - **Capture every finding** as a checklist in the PR description, and record
   against each one which of the three things happened to it: **fixed**,
@@ -257,11 +259,13 @@ debt ticket is regularly closed from a story branch. The sequence is:
   --json milestone` is
   the whole derivation.
 
-- **Review what the review changed.** Every change to the diff's **content**
-  made after the review pass gets a pass of its own — over what changed, not a
-  second full pass. The rebase and squash that `AGENTS.md` requires before
-  merging change no content and need none, which is what this record already
-  says of a rebase under "Consequences".
+- **Review what the review changed, and stop at two passes.** Pass 1 reviews the
+  whole pull request; pass 2 reviews only the fix diff, every change to the
+  diff's **content** made after pass 1. Two passes is the cap. A fix diff
+  committed after pass 2 gets one quick pass before merge, unless the pull
+  request is docs-only, and no further pass. The rebase and squash that
+  `AGENTS.md` requires before merging change no content and need none, which is
+  what this record already says of a rebase under "Consequences".
 
   This widened on 2026-08-16 from "when a critical finding changes the
   implementation". Under the replaced rule a minor finding became a ticket and

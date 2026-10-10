@@ -1680,7 +1680,7 @@ pub struct Blur {
 }
 
 /// A resolved baked-vector coverage mask (story B1,
-/// `docs/wip/2026-07-19-B1-vector-msdf-design.md`) — the runtime form of a
+/// `docs/archive/2026-07-19-B1-vector-msdf-design.md`) — the runtime form of a
 /// Figma VECTOR node's shape. A paint entry carrying `Some(VectorField)`
 /// samples this multi-channel signed-distance field as a coverage mask and
 /// composes it with the entry's ordinary `fill` (solid or gradient), so the

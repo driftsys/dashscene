@@ -1,5 +1,5 @@
 //! Story #166 acceptance: the reactive layer — signals, bindings,
-//! transforms, and the per-frame flush (docs/wip/2026-07-13-reactive-bindings-spec.md;
+//! transforms, and the per-frame flush (docs/archive/2026-07-13-reactive-bindings-spec.md;
 //! docs/archive/2026-07-14-scope-decisions.md §23, cases A1–A4).
 //!
 //! The four cases span the axes that matter: scalar versus discrete

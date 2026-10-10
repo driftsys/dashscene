@@ -60,12 +60,12 @@ Option 1:
 Issue #118's own scope, as handed off, was only the v0.2 flex vocabulary on
 `Node` plus `Scene::build_with(arena, solver)`. A 2026-07-13 issue comment
 ("SCOPE §23") re-scoped it: `build` must also settle how `NodeId` survives the
-build, because issue #166's reactive-bindings design
-(`docs/wip/2026-07-13-reactive-bindings-spec.md` at the time; not yet gardened
-as its own record) resolves a bound node's identity by declaring the binding on
-the node and resolving it to a `PropKey` inside `build`, so a producer never
-handles a `NodeId` at all — but only if `build`'s return type is something #166
-can extend without reshaping `build`'s signature a second time.
+build, because issue #166's reactive-bindings design (then `docs/wip/`, now
+`docs/archive/2026-07-13-reactive-bindings-spec.md`; not yet gardened as its own
+record) resolves a bound node's identity by declaring the binding on the node
+and resolving it to a `PropKey` inside `build`, so a producer never handles a
+`NodeId` at all — but only if `build`'s return type is something #166 can extend
+without reshaping `build`'s signature a second time.
 
 `dashscene_core::NodeId` was already private outside `dashlang::add()`'s
 internal use before #118, and stays that way: `add()` already holds the concrete

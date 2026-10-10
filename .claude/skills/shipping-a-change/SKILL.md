@@ -14,11 +14,6 @@ a story branch. Both say so where they do.
 
 ## Branch workflow
 
-repository, whatever the branch carries. Two rules below read differently when
-the PR **closes a `debt` issue**, which is not the same as being on a `debt`
-branch: a debt ticket is regularly closed from a story branch. Both say so where
-they do:
-
 - **Garden what this branch added to `docs/wip/` first** — before the
   `just build` below, so that build covers the prose just written, and before
   the PR, so the durable records sit inside the reviewed diff. Prose asserting
@@ -39,8 +34,11 @@ they do:
   two.** It has gone stale both ways: through an archiving that never touched
   it, and through an edit that updated one of its two copies of the count and
   left the other. The same commit re-points the records that cited the file at
-  its old path — nineteen records in `docs/decisions/` carry a `docs/wip/`
-  citation, and one has pointed at nothing since 2026-07-29 (issue #914).
+  its old path; `git grep -l 'docs/wip/' -- docs/decisions` lists the decision
+  records that carry one.
+
+  **Grep every present-tense claim about the tree** — a symbol, a file, a recipe
+  — before a gardened record states it.
 
   All of it binds **what the branch adds**, not the directory — `docs/wip/` is a
   standing shelf and is not expected to be empty.
@@ -49,36 +47,17 @@ they do:
   ready for review", which is the opposite of why the PR was opened: reviewers
   are not requested, and `/code-review` stops without reviewing when the PR is a
   draft (`docs/decisions/review-before-ready-not-before-open.md`).
-- Run `/code-review` on the PR (`--comment` posts the findings as inline PR
-  comments) **while CI runs, not after it**. Neither answer depends on the
-  other, so waiting for green before starting the review only adds the shorter
-  of the two to the wall clock. The merge gate is unchanged: both must be
-  complete. Capture every finding as a checklist in the PR description — never
-  drop a finding silently.
+- Run `/review` on the PR number (never a git range) **while CI runs, not after
+  it**. Neither answer depends on the other, so waiting for green before
+  starting the review only adds the shorter of the two to the wall clock. The
+  merge gate is unchanged: both must be complete. Capture every finding as a
+  checklist in the PR description — never drop a finding silently.
 - **Fix findings in the pull request that found them.** File one as `debt` only
-  in these two cases:
-
-  - **The fix cannot be made here** — blocked on target hardware, on a
-    dependency this workspace does not have, on a v1 consumer, or on a ruling
-    only the repository owner can give. Name the blocker in the issue, and add
-    `owner-input` when the blocker is a ruling. Severity and cost do not enter:
-    a blocked critical finding is filed like any other, or its PR could never
-    merge.
-  - **Not critical, over half a day, and it names no correctness defect.** When
-    the PR closes a `debt` issue, file only a **nice-to-have** — a finding that
-    names no defect at all. Working a debt ticket does not file debt for a
-    defect, however small.
-
-  A finding you judge **incorrect** is rejected on the checklist with the
-  reasoning beside it. Everything else is fixed here, and nothing is dropped
-  silently. Record fixed / rejected / filed against each checklist item; a
-  ticked box alone does not say which.
-
-  "Critical" and "over half a day" are left to judgement on purpose — defining
-  them generated four rounds of contradictions. "Nice-to-have" is defined,
-  because it is narrower than `superpowers:requesting-code-review`'s
-  `#### Minor (Nice to Have)`, whose Minor covers small real defects that are
-  fixed here. Full rule and the measurement behind it:
+  when its fix is blocked, or when it is not critical, over half a day and names
+  no correctness defect; on a PR that closes a `debt` issue, file only a
+  nice-to-have, a finding that names no defect at all. Reject an incorrect
+  finding on the checklist with the reasoning beside it. The rule, its terms and
+  its measurement are owned by
   `docs/decisions/review-before-ready-not-before-open.md`.
 - **Give a debt ticket the design it asks for, not a stopgap.** When a missing
   dependency or a named blocker stops that, record it on the ticket and leave
@@ -94,13 +73,8 @@ they do:
   `gh issue list --label debt --state open
   --limit 300 --json milestone`
   rather than assuming that population is still empty.
-- **Review what the review changed** — every change made after the review pass
-  gets a pass of its own, over what changed rather than a second full pass. It
-  is written under more time pressure than the original and lands after the pass
-  that would have caught it. Widened on 2026-08-16 from "when a critical finding
-  changes the implementation": now that most findings are fixed in the PR rather
-  than filed, they are most of what lands late. The rebase and squash before
-  merging change no content and need no pass.
+- **Review what the review changed**, within the two-pass cap that
+  `docs/decisions/review-before-ready-not-before-open.md` states.
 - The findings checklist is what says the PR is not ready to merge: an absent or
   unticked checklist means the review is still running. **The review half is not
   enforced mechanically**: the direct mechanism is a required approving review,
@@ -377,32 +351,13 @@ they do:
   goes back, since re-adding it bare restores GitHub's defaults — fix through an
   ordinary PR, and re-add it.
 
-## The review, in shape
+## The review
 
-The bullets above mandate a review and a findings checklist. What the review
-consists of:
-
-1. **A multi-seat pass, the seats dispatched in parallel and each given only the
-   work product** — a two-sentence description, the requirements, `BASE`/`HEAD`
-   and the rule-file paths. Never your session, never your reasoning, never the
-   pull-request body. Handing a seat your own account of the work makes that
-   account part of what gets reviewed, which is what stops the cycle
-   terminating. The seats cover requirements and repository rules, whether each
-   test would fail if the behaviour were wrong, and whether every statement of
-   the changed behaviour matches the code.
-2. **An independent bug sweep**, run from a fresh context so it inherits nothing.
-3. **One refutation per finding**, scored for confidence that the finding is
-   real. Findings that do not survive are recorded as dropped with the
-   reasoning — never silently discarded.
-4. **One consolidated ledger**, one line per finding, in the pull-request body.
-   Keep it terse: a round-by-round narrative becomes the next round's subject.
-
-Then fix, and run **one** further pass scoped to the fix diff only — not the
-whole pull request. Two passes is the cap. It is a judgement about diminishing
-returns, not a claim that nothing remains, so report it that way.
-
-Dispositions: critical findings and major findings that are not heavy are fixed
-here. Everything else is filed as `debt` with a milestone under the rules above.
+`/review <PR#>` owns the review: its seats, its two passes, which findings it
+refutes, and its ledger, which it writes under `~/.claude/review-ledgers/`. The
+pull-request body carries only the findings checklist, one terse line and one
+disposition per finding: a round-by-round narrative becomes the next round's
+subject.
 
 ## Clean up the worktree
 
