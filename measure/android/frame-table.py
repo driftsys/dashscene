@@ -465,8 +465,10 @@ def read(paths):
                 # A re-read (`-T 1` re-printing the newest buffered record)
                 # repeats the same edge with the same epoch, so the first
                 # occurrence is kept rather than de-duplicated by a separate
-                # set — a second, different epoch for the same edge cannot
-                # happen without two entries sharing a number.
+                # set. `unity-frame-cost.sh` writes each marker once, so a
+                # second, different epoch for the same edge is not expected;
+                # if one occurs (`unity-cpu-edge.log` builds it), the first is
+                # kept for `start` and for `end`.
                 capture.windows.setdefault((window_pid, entry), {}).setdefault(edge, epoch)
     for readings in cpu.values():
         readings.sort()
@@ -659,12 +661,14 @@ def read_timestats(path, package):
 def unity_cpu_rows(capture, timestats_paths, clk_tck, package):
     """One row per compositor window: (sweep, entry), joined to the sampler.
 
-    **The window is the entry's dwell, per sweep** (issue #1457) — a
+    **The window covers the entry's dwell, per sweep** (issue #1457), and
+    is longer than it by about three `adb shell` round trips — a
     sweep-wide timestats window would give one figure per sweep rather than
     per row, so `unity-frame-cost.sh` clears and dumps once per entry instead.
     A frame-cost row cannot be aligned to a compositor window on its own,
-    which is why this is a fourth table with its own rows rather than a
-    column joined onto `unity-frames.md`.
+    which is why `unity-cpu` is a table of its own rather than a column
+    joined onto `unity-frames.md`: the fourth `--table` this parser prints,
+    after `lean`, `unity-frames` and `unity-threads`.
 
     Returns `(rows, unreadable)`; `unreadable` holds `(path, reason)` for a
     dump `read_timestats` could not find the package's layer in, or whose name
@@ -1260,8 +1264,9 @@ def emit_unity_cpu(table, source, describe, clk_tck, unreadable, out):
     `cpu ms per presented frame` is `window s × cpu % / 100 × 1000 /
     presented`, where `cpu %` comes from `cpu_over` over the sampler's
     bracketing pair of readings, not from a `utime + stime` difference taken
-    at the window's two markers. On the probe-1457 captures the two differ by
-    about 1 %.
+    at the window's two markers. The pair's span and the window's seconds
+    differ; `docs/design/android-toolchain.md` gives the difference on the
+    probe-1457 captures.
 
     `drawn frames (player)` sums the frame counts of the resolved pid's
     frame-cost samples whose report epoch is in `(start, end]`. Each sample
@@ -1437,7 +1442,7 @@ def main(argv):
     # **Which instrument's table, with no widening of one to hold all three.**
     # A Unity `draw` printed under a `submit` heading would label a quantity
     # with a word that already names a different one, which is the rename
-    # `demo-android/src/timing.rs` records. `unity-cpu` is a fourth choice not
+    # `demo-android/src/timing.rs` records. `unity-cpu` is a fourth `--table` choice not
     # in `MARKERS`: its rows are a join over dump files and window lines, not
     # one more instrument marker.
     parser.add_argument(
