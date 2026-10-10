@@ -156,10 +156,22 @@ TEXTURE2D(_DsAtlas);
 SAMPLER(sampler_DsAtlas);
 #endif
 
+// **Under `DASHSCENE_PROCEDURAL` no mesh is bound.** The ordered pass draws
+// with `DrawProcedural`, six vertices per instance, so the corner comes from the
+// vertex id and the instance from the instance id, and `DsProceduralCorner`
+// below rebuilds the unit quad `BrgPainter.UnitQuad` would have supplied.
+// `UNITY_VERTEX_INPUT_INSTANCE_ID` is left out on that variant: it declares its
+// own `SV_InstanceID` input when `DOTS_INSTANCING_ON` is also set, and two
+// inputs with one semantic do not compile.
 struct DsAttributes
 {
+#ifdef DASHSCENE_PROCEDURAL
+    uint vertexID   : SV_VertexID;
+    uint instanceID : SV_InstanceID;
+#else
     float4 positionOS : POSITION;
     UNITY_VERTEX_INPUT_INSTANCE_ID
+#endif
 };
 
 struct DsVaryings
@@ -180,7 +192,14 @@ struct DsVaryings
     // file passed `local` — so every rotated clipped node was cut along the
     // wrong rectangle, and the two painters could not agree on such a document.
     float2 placed     : TEXCOORD1;
+#ifdef DASHSCENE_PROCEDURAL
+    // The instance id, relative to the draw's first instance, carried to the
+    // fragment so `DsShade` can load the same row the vertex stage loaded.
+    // Not interpolated: every vertex of a quad carries the same value.
+    nointerpolation uint instance : TEXCOORD2;
+#else
     UNITY_VERTEX_INPUT_INSTANCE_ID
+#endif
 };
 
 // The material's own constant buffer.
@@ -276,7 +295,12 @@ CBUFFER_START(UnityPerMaterial)
     float  _DsCutoff;
 CBUFFER_END
 
-#ifdef UNITY_DOTS_INSTANCING_ENABLED
+// **`DASHSCENE_PROCEDURAL` wins when both keywords are set.** The two blended
+// shaders declare both, so Unity compiles the combination, and nothing draws
+// with it: a BatchRendererGroup draw never enables the procedural keyword and
+// the ordered pass never enables `DOTS_INSTANCING_ON`. Without this guard the
+// combination would define each of the five names twice.
+#if defined(UNITY_DOTS_INSTANCING_ENABLED) && !defined(DASHSCENE_PROCEDURAL)
     UNITY_DOTS_INSTANCING_START(MaterialPropertyMetadata)
         // The node's box in document space: (x, y, w, h).
         UNITY_DOTS_INSTANCED_PROP(float4, _DsQuad)
@@ -298,6 +322,62 @@ CBUFFER_END
     #define _DsShade   UNITY_ACCESS_DOTS_INSTANCED_PROP(float4, _DsShade)
     #define _DsPivot   UNITY_ACCESS_DOTS_INSTANCED_PROP(float4, _DsPivot)
     #define _DsPaint   UNITY_ACCESS_DOTS_INSTANCED_PROP(uint4, _DsPaint)
+#endif
+
+#ifdef DASHSCENE_PROCEDURAL
+// One instance's five per-instance values, in the order of `FramePacker`'s five
+// streams: Quad, Corners, Shade, Pivot, Paint. Eighty bytes, one row per
+// instance, which is the stride the painter binds `_DsInstances` with.
+struct DsInstance
+{
+    float4 Quad;
+    float4 Corners;
+    float4 Shade;
+    float4 Pivot;
+    uint4  Paint;
+};
+
+// The rows of every instance the ordered pass draws, and the first row of the
+// current draw. `_DsFirstInstance` is set per draw through a
+// `MaterialPropertyBlock` with `SetInteger`, so it is an `int`, and it is
+// declared outside `UnityPerMaterial`: that buffer must have one layout across
+// every variant for the SRP Batcher to accept the BatchRendererGroup variant.
+//
+// **Read in the vertex stage, which OpenGL ES 3.x need not support.** GLES
+// 3.1 and 3.2 guarantee no shader storage block in the vertex stage, which is
+// why BatchRendererGroup's GLES rung uses a constant buffer, and the painter
+// checks no such capability. Issue #1492 is the debt;
+// `docs/design/unity-csharp-host.md`, "Two draw paths", states the limit.
+StructuredBuffer<DsInstance> _DsInstances;
+int _DsFirstInstance;
+
+// The row `DsLoad` read, which the five names below read from. Static, so it is
+// private to one invocation of one stage.
+static DsInstance ds_Instance;
+
+// Load the row for `instanceId`, relative to the draw's first instance, into
+// the five names the shading reads. Each stage calls it once before reading
+// any of them, which is what `UNITY_SETUP_INSTANCE_ID` does on the DOTS path.
+void DsLoad(uint instanceId)
+{
+    ds_Instance = _DsInstances[(uint)_DsFirstInstance + instanceId];
+}
+
+#define _DsQuad    ds_Instance.Quad
+#define _DsCorners ds_Instance.Corners
+#define _DsShade   ds_Instance.Shade
+#define _DsPivot   ds_Instance.Pivot
+#define _DsPaint   ds_Instance.Paint
+
+// The unit-quad corner for vertex `vertexId` of six. The two triangles are
+// `BrgPainter.UnitQuad`'s index list `0, 1, 2, 0, 2, 3` over its vertices
+// (0, 0), (1, 0), (1, 1), (0, 1), so the winding and the [0, 1] range match the
+// mesh the BatchRendererGroup variant draws.
+float2 DsProceduralCorner(uint vertexId)
+{
+    uint q = vertexId < 3u ? vertexId : (vertexId == 3u ? 0u : vertexId - 2u);
+    return float2((q == 1u || q == 2u) ? 1.0 : 0.0, q >= 2u ? 1.0 : 0.0);
+}
 #endif
 
 // Coverage of the clip region `[offset, offset + count)` at document point `p`.
@@ -454,9 +534,15 @@ float3 DsMsdfSample(float4 rect, float4 quad, float2 half_texel, float2 p)
 
 DsVaryings DsVertex(DsAttributes input)
 {
+#ifdef DASHSCENE_PROCEDURAL
+    DsLoad(input.instanceID);
+    DsVaryings output = (DsVaryings)0;
+    output.instance = input.instanceID;
+#else
     UNITY_SETUP_INSTANCE_ID(input);
     DsVaryings output = (DsVaryings)0;
     UNITY_TRANSFER_INSTANCE_ID(input, output);
+#endif
 
     float4 quad = _DsQuad;
     float4 shade = _DsShade;
@@ -476,7 +562,11 @@ DsVaryings DsVertex(DsAttributes input)
     // coverage straight to nothing instead of ramping. `paint.wgsl` grows by
     // `globals.aa + instance_outset(inst)` for exactly this reason and says so.
     float margin = outset + _DsGlobals.x;
+#ifdef DASHSCENE_PROCEDURAL
+    float2 corner = DsProceduralCorner(input.vertexID);
+#else
     float2 corner = input.positionOS.xy;
+#endif
     float2 local = quad.xy - margin.xx + corner * (quad.zw + 2.0 * margin.xx);
 
     // Rotation about the document-space pivot. `local` keeps the UNROTATED
@@ -506,7 +596,11 @@ DsVaryings DsVertex(DsAttributes input)
 // paint's own alpha.
 float4 DsShade(DsVaryings input)
 {
+#ifdef DASHSCENE_PROCEDURAL
+    DsLoad(input.instance);
+#else
     UNITY_SETUP_INSTANCE_ID(input);
+#endif
 
     float4 quad = _DsQuad;
     uint4 paint = _DsPaint;

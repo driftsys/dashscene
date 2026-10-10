@@ -3885,6 +3885,296 @@ Check("coalescing follows dashscene-gpu's dirty_ranges, all four cases", () =>
     }
 });
 
+// ------------------------------------------------------- the two draw paths
+//
+// **Executed here because they decide the picture** (story #1448). Which
+// instance takes which path, and the runs the ordered pass draws in their
+// order, were decided inside `Runtime/Engine/` and pinned by text scans alone,
+// where reversing every run or misplacing a run's start survived every gate.
+// `Runtime/DrawRouting.cs` and `Runtime/PainterRegistry.cs` carry those
+// decisions without the engine, so they run here.
+
+/// A packer `Paint` stream: four words per instance, the kind tag first.
+///
+/// **The other three words carry the opposite tag**, so a reading that took
+/// the kind from any word but the first would route every instance wrongly.
+uint[] PaintOf(params PaintKindTag[] kinds)
+{
+    var paint = new uint[kinds.Length * 4];
+    for (var i = 0; i < kinds.Length; i++)
+    {
+        var other = kinds[i] == PaintKindTag.Text ? PaintKindTag.FillSolid : PaintKindTag.Text;
+        paint[i * 4] = (uint)kinds[i];
+        paint[i * 4 + 1] = (uint)other;
+        paint[i * 4 + 2] = (uint)other;
+        paint[i * 4 + 3] = (uint)other;
+    }
+    return paint;
+}
+
+/// The runs `DrawRouting.CutRuns` cuts, as comparable tuples.
+List<(int Key, int Offset, int Count)> RunsOf(
+    PaintKindTag[] kinds, int[] atlas, int count, int textMaterials, MaterialClass c)
+{
+    // Seeded with a run no input produces, so a cut that stopped clearing
+    // what it was handed shows here.
+    var into = new List<KeyedRun> { new KeyedRun(99, 99, 99) };
+    DrawRouting.CutRuns(PaintOf(kinds), atlas, count, textMaterials, c, into);
+    return into.Select(r => (r.Key, r.Offset, r.Count)).ToList();
+}
+
+const PaintKindTag N = PaintKindTag.FillSolid;
+const PaintKindTag G = PaintKindTag.Text;
+const int Cls = DrawRouting.ClassMaterial;
+
+Check("each class takes the path its record names, and a glyph takes the ordered one", () =>
+{
+    Expect(DrawRouting.PathFor(MaterialClass.UnlitOverlay) == DrawPath.Ordered,
+        "the overlay class no longer takes the ordered path");
+    Expect(DrawRouting.PathFor(MaterialClass.LitOpaque) == DrawPath.Brg,
+        "the opaque lit class no longer takes the BatchRendererGroup path");
+    Expect(DrawRouting.PathFor(MaterialClass.LitCutout) == DrawPath.Brg,
+        "the cutout lit class no longer takes the BatchRendererGroup path");
+    Expect(DrawRouting.TextPath == DrawPath.Ordered, "text no longer takes the ordered path");
+
+    // **An unknown class throws** rather than being routed by a default
+    // nobody chose.
+    try
+    {
+        DrawRouting.PathFor((MaterialClass)99);
+        throw new Exception("an unknown material class was given a draw path");
+    }
+    catch (ArgumentOutOfRangeException)
+    {
+    }
+
+    // **By the kind tag of the instance's FIRST Paint word.** A node of a lit
+    // painter is BRG, a glyph of the same painter ordered.
+    var paint = PaintOf(N, G, PaintKindTag.FillGradient, PaintKindTag.Stroke);
+    Expect(DrawRouting.PathOf(paint, 0, MaterialClass.LitOpaque) == DrawPath.Brg,
+        "a lit painter's solid fill does not take the BRG path");
+    Expect(DrawRouting.PathOf(paint, 1, MaterialClass.LitOpaque) == DrawPath.Ordered,
+        "a lit painter's glyph does not take the ordered path");
+    Expect(DrawRouting.PathOf(paint, 2, MaterialClass.LitCutout) == DrawPath.Brg,
+        "a lit painter's gradient fill does not take the BRG path");
+    Expect(DrawRouting.PathOf(paint, 3, MaterialClass.LitCutout) == DrawPath.Brg,
+        "a lit painter's stroke does not take the BRG path");
+    for (var at = 0; at < 4; at++)
+    {
+        Expect(DrawRouting.PathOf(paint, at, MaterialClass.UnlitOverlay) == DrawPath.Ordered,
+            $"an overlay painter's instance {at} does not take the ordered path");
+    }
+});
+
+Check("the BRG-path count is the culling callback's predicate over the range", () =>
+{
+    var paint = PaintOf(N, G, G, N, N);
+    Expect(DrawRouting.BrgPathInstances(paint, 0, 5, MaterialClass.LitOpaque) == 3,
+        "a lit painter's three nodes are not its three BRG-path instances");
+    Expect(DrawRouting.BrgPathInstances(paint, 1, 3, MaterialClass.LitOpaque) == 0,
+        "a range of glyphs counts a BRG-path instance");
+    Expect(DrawRouting.BrgPathInstances(paint, 2, 4, MaterialClass.LitCutout) == 1,
+        "the range [2, 4) does not hold exactly one node");
+    Expect(DrawRouting.BrgPathInstances(paint, 0, 5, MaterialClass.UnlitOverlay) == 0,
+        "an overlay painter counts a BRG-path instance");
+});
+
+Check("the ordered runs follow instance order and are cut at every material change", () =>
+{
+    // An overlay painter with three text materials: two nodes, a glyph run on
+    // atlas 0, one on atlas 1, a node, and a glyph whose atlas 7 is past the
+    // material array — which resolves to the class material, so it joins the
+    // node before it: the resolved material decides the cut, not the atlas.
+    var kinds = new[] { N, N, G, G, G, G, N, G };
+    var atlas = new[] { -1, -1, 0, 0, 1, 1, -1, 7 };
+    var runs = RunsOf(kinds, atlas, 8, 3, MaterialClass.UnlitOverlay);
+    var expected = new[] { (Cls, 0, 2), (0, 2, 2), (1, 4, 2), (Cls, 6, 2) };
+    Expect(Same(runs, expected), $"overlay runs: got {Shown(runs)}, expected {Shown(expected)}");
+
+    // Alternating materials: a cut at every instance.
+    var alternating = RunsOf(new[] { G, N, G, N }, new[] { 0, -1, 0, -1 }, 4, 1, MaterialClass.UnlitOverlay);
+    var each = new[] { (0, 0, 1), (Cls, 1, 1), (0, 2, 1), (Cls, 3, 1) };
+    Expect(Same(alternating, each),
+        $"alternating materials: got {Shown(alternating)}, expected {Shown(each)}");
+
+    // **Only the first `count` instances.** The packer's arrays are longer
+    // than the frame they hold.
+    var prefix = RunsOf(kinds, atlas, 3, 3, MaterialClass.UnlitOverlay);
+    var two = new[] { (Cls, 0, 2), (0, 2, 1) };
+    Expect(Same(prefix, two), $"a three-instance frame: got {Shown(prefix)}, expected {Shown(two)}");
+
+    var none = RunsOf(kinds, atlas, 0, 3, MaterialClass.UnlitOverlay);
+    Expect(none.Count == 0, $"an empty frame cut runs: {Shown(none)}");
+});
+
+Check("a lit painter's glyph runs are cut around its nodes, and its nodes cut none", () =>
+{
+    // Nodes take BatchRendererGroup, so each one ends a glyph run. The second
+    // run starts at instance 5, after the two nodes — a run's start that
+    // stayed behind when a node ended nothing would name instance 3.
+    var kinds = new[] { N, G, G, N, N, G, G, N };
+    var atlas = new[] { -1, 0, 0, -1, -1, 0, 1, -1 };
+    var lit = RunsOf(kinds, atlas, 8, 2, MaterialClass.LitOpaque);
+    var expected = new[] { (0, 1, 2), (0, 5, 1), (1, 6, 1) };
+    Expect(Same(lit, expected), $"lit runs: got {Shown(lit)}, expected {Shown(expected)}");
+    var cutout = RunsOf(kinds, atlas, 8, 2, MaterialClass.LitCutout);
+    Expect(Same(cutout, expected), $"cutout runs: got {Shown(cutout)}, expected {Shown(expected)}");
+
+    // **A lit glyph whose atlas fell out of step draws on neither path**: it
+    // would map to the lit class material, which has no procedural variant.
+    var stray = RunsOf(new[] { G, G }, new[] { 0, 5 }, 2, 1, MaterialClass.LitOpaque);
+    var one = new[] { (0, 0, 1) };
+    Expect(Same(stray, one), $"a stray lit glyph: got {Shown(stray)}, expected {Shown(one)}");
+    Expect(
+        DrawRouting.OrderedKeyOf(PaintOf(G), new[] { -1 }, 0, 1, MaterialClass.LitOpaque)
+            == DrawRouting.NotOrdered,
+        "a lit glyph with no atlas resolves to a material on the ordered path");
+});
+
+Check("a lit painter's node never takes a text material, whatever atlas it carries", () =>
+{
+    // **The path guard decides before the atlas is read.** Every node the
+    // packer writes has atlas -1, so only a fixture that gives a node a valid
+    // atlas can tell a guard that is there from one that is not.
+    Expect(
+        DrawRouting.OrderedKeyOf(PaintOf(N), new[] { 0 }, 0, 2, MaterialClass.LitOpaque)
+            == DrawRouting.NotOrdered,
+        "a lit painter's node with atlas 0 resolves to a material on the ordered path");
+    Expect(
+        DrawRouting.OrderedKeyOf(PaintOf(N), new[] { 1 }, 0, 2, MaterialClass.LitCutout)
+            == DrawRouting.NotOrdered,
+        "a lit cutout painter's node with atlas 1 resolves to a material on the ordered path");
+    // **An overlay painter's node takes the class material whatever its atlas
+    // says**: only a glyph reads the atlas.
+    Expect(
+        DrawRouting.OrderedKeyOf(PaintOf(N), new[] { 0 }, 0, 2, MaterialClass.UnlitOverlay) == Cls,
+        "an overlay painter's node with atlas 0 resolves to a text material");
+    var runs = RunsOf(new[] { N, G, N }, new[] { 0, 0, 1 }, 3, 2, MaterialClass.LitOpaque);
+    var expected = new[] { (0, 1, 1) };
+    Expect(Same(runs, expected),
+        $"a lit painter's nodes with atlases: got {Shown(runs)}, expected {Shown(expected)}");
+});
+
+Check("an atlas exactly at the material count is the class material, not an index", () =>
+{
+    // Two text materials: indices 0 and 1 are materials, 2 is one past the end.
+    var paint = PaintOf(G);
+    Expect(DrawRouting.OrderedKeyOf(paint, new[] { 1 }, 0, 2, MaterialClass.UnlitOverlay) == 1,
+        "the last text material's atlas does not resolve to itself");
+    Expect(DrawRouting.OrderedKeyOf(paint, new[] { 2 }, 0, 2, MaterialClass.UnlitOverlay) == Cls,
+        "an atlas equal to the material count resolves to an index past the array");
+    Expect(DrawRouting.OrderedKeyOf(paint, new[] { 2 }, 0, 2, MaterialClass.LitOpaque)
+            == DrawRouting.NotOrdered,
+        "a lit glyph with an atlas equal to the material count is drawn");
+    var runs = RunsOf(new[] { G, G }, new[] { 1, 2 }, 2, 2, MaterialClass.UnlitOverlay);
+    var expected = new[] { (1, 0, 1), (Cls, 1, 1) };
+    Expect(Same(runs, expected), $"at the bound: got {Shown(runs)}, expected {Shown(expected)}");
+});
+
+Check("the ordered buffer grows only when it is short, by doubling from the larger of its capacity and 64", () =>
+{
+    // 0 means keep the buffer. A missing buffer (capacity 0) is always allocated.
+    var cases = new[]
+    {
+        (Current: 0, Wanted: 0, Expect: 64),
+        (Current: 0, Wanted: 1, Expect: 64),
+        (Current: 0, Wanted: 64, Expect: 64),
+        (Current: 0, Wanted: 65, Expect: 128),
+        (Current: 64, Wanted: 0, Expect: 0),
+        (Current: 64, Wanted: 64, Expect: 0),
+        (Current: 64, Wanted: 65, Expect: 128),
+        (Current: 64, Wanted: 128, Expect: 128),
+        (Current: 64, Wanted: 129, Expect: 256),
+        (Current: 128, Wanted: 100, Expect: 0),
+        (Current: 100, Wanted: 100, Expect: 0),
+        (Current: 100, Wanted: 101, Expect: 200),
+    };
+    foreach (var c in cases)
+    {
+        var got = DrawRouting.OrderedCapacity(c.Current, c.Wanted);
+        Expect(got == c.Expect,
+            $"OrderedCapacity({c.Current}, {c.Wanted}) = {got}, expected {c.Expect}");
+    }
+});
+
+Check("an ordered row is the five streams' bits in DsInstance order, for the rows asked for", () =>
+{
+    Expect(DrawRouting.OrderedRowWords == 20, "a row is not twenty words");
+
+    // Three instances, every word distinct, floats that a value cast would
+    // truncate.
+    float[] Stream(int stream)
+    {
+        var a = new float[12];
+        for (var i = 0; i < 12; i++)
+        {
+            a[i] = 1000f * stream + i + 0.5f;
+        }
+        return a;
+    }
+
+    var paint = new uint[12];
+    for (var i = 0; i < 12; i++)
+    {
+        paint[i] = 0x80000000u + (uint)i;
+    }
+    float[][] f = { Stream(1), Stream(2), Stream(3), Stream(4) };
+
+    var staging = new uint[3 * 20];
+    Array.Fill(staging, 0xDEADBEEFu);
+    DrawRouting.InterleaveRows(f[0], f[1], f[2], f[3], paint, staging, 1, 2);
+
+    for (var k = 0; k < 20; k++)
+    {
+        Expect(staging[k] == 0xDEADBEEFu, $"row 0 was written at word {k} though only rows 1 and 2 were asked for");
+    }
+    for (var i = 1; i < 3; i++)
+    {
+        for (var s = 0; s < 5; s++)
+        {
+            for (var k = 0; k < 4; k++)
+            {
+                var want = s < 4
+                    ? unchecked((uint)BitConverter.SingleToInt32Bits(f[s][i * 4 + k]))
+                    : paint[i * 4 + k];
+                var got = staging[i * 20 + s * 4 + k];
+                Expect(got == want,
+                    $"row {i} stream {s} word {k}: got 0x{got:X8}, expected 0x{want:X8}");
+            }
+        }
+    }
+});
+
+Check("the painter registry subscribes on the first painter and unsubscribes on the last", () =>
+{
+    var registry = new PainterRegistry<object>();
+    var a = new object();
+    var b = new object();
+
+    Expect(registry.Add(a), "the first painter does not subscribe the pass");
+    Expect(!registry.Add(b),
+        "a second painter subscribes the pass again, so every run would be drawn twice");
+    Expect(!registry.Add(a), "registering a painter twice subscribes the pass again");
+    Expect(!registry.Add(null), "a null painter subscribes the pass");
+    Expect(registry.Count == 2 && ReferenceEquals(registry[0], a) && ReferenceEquals(registry[1], b),
+        $"the registry does not hold each painter once, in registration order: {registry.Count}");
+
+    Expect(!registry.Remove(b),
+        "removing one of two painters unsubscribes the pass, so the other stops drawing");
+    Expect(!registry.Remove(b), "removing a painter that is not registered unsubscribes the pass");
+    Expect(registry.Remove(a), "removing the last painter does not unsubscribe the pass");
+    Expect(registry.Count == 0, "the registry is not empty after the last painter left");
+    Expect(!registry.Remove(a),
+        "removing a painter from an empty registry unsubscribes the pass a second time");
+    Expect(!new PainterRegistry<object>().Remove(a),
+        "removing a painter that was never registered from a fresh registry unsubscribes the pass");
+
+    Expect(registry.Add(b), "the first painter after the last left does not subscribe again");
+    registry.Clear();
+    Expect(registry.Count == 0, "a reset leaves a painter registered");
+    Expect(registry.Add(a), "the first painter after a reset does not subscribe");
+});
+
 #if DASHSCENE_DEMO_PRODUCER
 Check("every showcase scene names itself, and an index past the end names nothing", () =>
 {

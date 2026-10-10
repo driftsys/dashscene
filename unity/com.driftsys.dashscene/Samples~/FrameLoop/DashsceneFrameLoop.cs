@@ -166,7 +166,8 @@ namespace Driftsys.Dashscene.Samples
 
             if (_painter.Rung == BrgRung.InstancedWithoutBrg)
             {
-                // **R-E19's rung, and nothing is built for it.** The
+                // **R-E19's rung, and the painter draws nothing on it** (issue
+                // #1490). The
                 // constructor selects it where `BatchRendererGroup` is
                 // unsupported and returns without building a group, so `Draw`
                 // returns before it binds anything and every frame is blank,

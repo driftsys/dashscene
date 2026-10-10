@@ -57,6 +57,11 @@ What is here:
   binding names, the packing of the committed tables into instances, and what
   was skipped. Engine-independent, so it compiles under netstandard2.1 like
   everything else at this level.
+- `Runtime/DrawRouting.cs`, `PainterRegistry.cs` — which draw path each instance
+  takes, the runs the ordered path draws and their material keys, the ordered
+  buffer's capacity and its interleaved rows, and when the ordered pass
+  subscribes. Engine-independent, and `unity/ffi-check` executes them;
+  `BrgPainter` composes them and keeps only the engine calls.
 - `Runtime/Plugins/` — the native libraries the host loads, one per platform
   that ships: `macOS/libdashscene_ffi.dylib` and `Android/libdashscene_ffi.so`,
   both arm64. Each carries a committed `.meta` declaring its platform and CPU,
@@ -71,6 +76,15 @@ What is here:
   Unity reference assemblies, so R-E10's netstandard check cannot compile any of
   it and a Unity editor checks it instead
   ([r-e10-is-checked-in-two-halves](../../docs/decisions/r-e10-is-checked-in-two-halves.md)).
+- `Runtime/Engine/OrderedDrawPass.cs` — the render-graph pass that draws the
+  overlay class and text in document order. The package enqueues it on game and
+  scene cameras itself, so a host adds no renderer feature. It implements only
+  the render-graph path, so a project in URP Compatibility Mode draws no overlay
+  node and no text; this is read from the code, not measured
+  ([Two draw paths](../../docs/design/unity-csharp-host.md#two-draw-paths-story-1448)).
+  Its shading reads a `StructuredBuffer` in the vertex stage, which OpenGL ES
+  3.x need not support, and the painter checks no such capability, so a GLES
+  device may draw no overlay node and no text (issue #1492).
 - `Runtime/Resources/Dashscene/` — the `.shader` files: one per material class,
   and the text shader beside them, which is not a class. **They sit in a
   `Resources` folder because a player build strips a shader that no scene and no

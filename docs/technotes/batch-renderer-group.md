@@ -38,6 +38,12 @@ a buffer and describes it; Unity draws it.
 
 ## 2. How the painter uses it
 
+**Since story #1448 this section describes the two lit classes only.** The
+overlay class and every glyph run draw on an ordered render-graph pass instead,
+and `docs/design/unity-csharp-host.md`, "Two draw paths", describes it. What
+follows is the BatchRendererGroup path, and the text paragraph is how that path
+drew text before the change.
+
 `BrgPainter` packs a committed dashscene frame into flat arrays — one row per
 node — and uploads them to its instance buffer. In `OnPerformCulling` it walks
 those rows in order and emits **one draw command per instance**, each carrying
@@ -53,11 +59,11 @@ per command is the shape its own GPU Resident Drawer feeds the path (§3), and
 the only one measured free of the defect. R-E20's 256 is satisfied without a
 split at all, because one is never more than 256.
 
-Text is what makes more than one material necessary. A glyph is sampled from a
+Text was what made more than one material necessary. A glyph is sampled from a
 font atlas, an atlas is a texture, and a texture is bound to a material — so a
 document naming three typefaces needs three text materials over one shader,
 alongside the class material that draws every non-text node. The material
-therefore changes along the command list for a real document: a stretch of class
+therefore changed along the command list for a real document: a stretch of class
 commands, then a stretch of text commands, and so on.
 
 ## 3. The contract — what BRG does and does not promise
@@ -128,9 +134,11 @@ that was measured to take the commands out of material grouping without ordering
 the picture; under D5's one instance per command it was measured on 2026-09-05
 to order the picture — the draw order is the keys' rank, farthest first, and
 negating the step drew the backdrop last, over everything. The emission order is
-load-bearing because the keys encode it; `just unity-render`'s order phase pins
-the composite on every run, and the keys' part in it is what the hand-run arms
-of §5b measured.
+load-bearing because the keys encode it. `just unity-render`'s order phase
+pinned that composite on every run until story #1448 moved the overlay class,
+and with it that fixture, to an ordered render-graph pass that carries no key;
+since then no gate judges the keys' order, and the keys' part was only ever what
+the hand-run arms of §5b measured.
 
 The consequence, isolated in a player build on macOS/Metal — the symptom, no
 text at all, reproduces on Android/Vulkan, and §5e's flag-off arm isolates it

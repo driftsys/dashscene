@@ -185,11 +185,14 @@ namespace Driftsys.Dashscene
         ///
         /// **A painter cannot draw a text instance with the material it draws
         /// fills with**: a sheet is a per-material texture, so a document
-        /// naming two sheets needs two text materials and one draw command
-        /// per instance. This is what a painter reads to pick each
-        /// single-instance command's material, and it is why an instance
-        /// carries the atlas rather than a material index — nothing here
-        /// knows what a material is.
+        /// naming two sheets needs two text materials. This is what a painter
+        /// reads to pick a glyph's material — `DrawRouting.OrderedKeyOf` maps it
+        /// to a material key and `DrawRouting.CutRuns` cuts a run of the
+        /// ordered draws where that key changes — and it
+        /// is why an instance carries the atlas rather than a material index:
+        /// nothing here knows what a material is. It does not say whether an
+        /// instance is a glyph, because -1 is also what a glyph whose run
+        /// resolved no atlas would carry; the Paint kind tag says that.
         private int[] _instanceAtlas = new int[64];
 
         private PackDiagnostic _flags;

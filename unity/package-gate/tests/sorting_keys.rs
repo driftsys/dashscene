@@ -29,9 +29,11 @@
 //! thing keeping these shut.
 //!
 //! **What this does NOT assert, deliberately.** Not that the keys order the
-//! picture — that is measured, on one graphics API, by `just unity-render`'s
-//! order phase (`docs/decisions/brg-draw-command-order-is-not-guaranteed.md`
-//! D1, issue #1402), which needs an editor and runs on no CI runner. These
+//! picture — that was measured, on one graphics API, by `just unity-render`'s
+//! order phase while the overlay class drew through BatchRendererGroup
+//! (`docs/decisions/brg-draw-command-order-is-not-guaranteed.md` D1, issue
+//! #1402). Since story #1448 that phase draws its fixture through the ordered
+//! pass, with no key, and no gate judges the keys' order. These
 //! assert that the painter still STATES an order, which is the property that
 //! separates the defect from its repair and the one a pull request can hold.
 //! Text is weak: it says the fields are still written where the design says
@@ -420,21 +422,41 @@ fn a_short_frame_is_bounded_and_named() {
          writes past both `drawCommands` and `instanceSortingPositions`."
     );
 
+    // **Against the BRG-path instances, since story #1448.** A glyph takes
+    // the ordered path and is skipped by the emission loop, so on a lit
+    // painter with text `visible` never reaches `InstanceCount`, and the old
+    // test warned on every such frame. The count is taken from this frame's
+    // pack, as `InstanceCount` is: `Draw` counts it on the line after it sets
+    // `InstanceCount`, before anything that can throw, and assigns it nowhere
+    // else, so a torn `Draw` leaves the two agreeing. The callback reads the
+    // cached value rather than walking every instance once per camera.
+    let (ds, de) = member_body(&source, "public void Draw(FrameLease lease)");
+    let draw = squeeze(&source[ds..=de]);
+    let counted = "InstanceCount = _packer.InstanceCount; _brgPathInstances = \
+                   DrawRouting.BrgPathInstances( _packer.Paint, 0, InstanceCount, _materialClass);";
     assert!(
-        body.contains("if (visible < InstanceCount && !_reportedShortFrame)"),
-        "{PAINTER} no longer reports a short frame on the instances left \
-         behind. `command < commandCount` is the wrong test in both \
+        draw.contains(counted),
+        "{PAINTER}'s Draw no longer counts this frame's BRG-path instances \
+         right after it sets `InstanceCount`: `{counted}`."
+    );
+    let assigned = assignment_count(&source, "_brgPathInstances");
+    assert_eq!(
+        assigned, 1,
+        "{PAINTER} assigns `_brgPathInstances` {assigned} time(s), not once in \
+         `Draw`. A second writer could leave it describing a different frame \
+         than `InstanceCount`."
+    );
+    assert!(
+        body.contains("var brgInstances = _brgPathInstances;")
+            && body.contains("if (visible < brgInstances && !_reportedShortFrame)"),
+        "{PAINTER} no longer reports a short frame on the BRG-path instances \
+         left behind. `command < commandCount` is the wrong test in both \
          directions: silent when the cached count is zero and every instance \
          is dropped, and false-positive whenever a smaller document follows a \
          larger one. P4: a drop is a named diagnostic, never silent."
     );
     let message = warning_after(&body, "_reportedShortFrame = true;");
-    for part in [
-        "{visible}",
-        "{InstanceCount}",
-        "{command}",
-        "{commandCount}",
-    ] {
+    for part in ["{visible}", "{brgInstances}", "{command}", "{commandCount}"] {
         assert!(
             message.contains(part),
             "{PAINTER}'s short-frame warning no longer carries `{part}` INSIDE \

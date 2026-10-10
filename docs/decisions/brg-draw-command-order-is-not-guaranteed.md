@@ -3,15 +3,20 @@
     status   **accepted (2026-08-31, issue #1389); amended 2026-09-03 (issue
              #1401) with D5; amended 2026-09-05 (issue #1402): D1 and D2
              revised on the single-instance measurement, the fixture and the
-             gate exist**. What is accepted is the CONSTRAINT — D1–D5 below
-             bind downstream work now. What is not settled is the mechanism
-             inside Unity, which nothing reads; its observable behaviour is
-             measured and pinned, and "What is still owed" names what is not.
-    date     2026-08-31
+             gate exist; amended 2026-10-10 (story #1448): scope, D1, D4 and D5
+             narrowed to the two lit classes**. What is accepted is the
+             CONSTRAINT — D1–D5 below bind downstream work now. What is not
+             settled is the mechanism inside Unity, which nothing reads; its
+             observable behaviour is measured and pinned, and "What is still
+             owed" names what is not.
+    date     2026-08-31; amended 2026-09-03, 2026-09-05 and 2026-10-10
     source   issue #1389; docs/technotes/batch-renderer-group.md §4 and §5b.
              D5 is issue #1401, §5d and §5e
-    scope    unity/com.driftsys.dashscene/Runtime/Engine/BrgPainter.cs, and any
-             painter that draws a dashscene document with more than one material
+    scope    the nodes of a `LitOpaque` or `LitCutout` painter, the only
+             instances unity/com.driftsys.dashscene/Runtime/Engine/BrgPainter.cs
+             still draws through BatchRendererGroup since story #1448. The
+             overlay class and every glyph run draw on the ordered pass, which
+             has no sorting keys
     related  docs/decisions/unity-painter-uses-brg.md (D1 chooses BRG and buys
              the lean painter's data model, which is not the same as buying its
              submission order)
@@ -26,9 +31,11 @@ decides what covers what.
 
 **`Text` is not a `MaterialClass`.** That enum has three values —
 `UnlitOverlay`, `LitOpaque` and `LitCutout` (`PaintHeap.cs`) — and the latter
-two declare `ZWrite On` and `ZTest LEqual`. This record is about the overlay
-path, which is the class the bulk of a UI takes and the one every measurement
-here was made on.
+two declare `ZWrite On` and `ZTest LEqual`. Until story #1448 this record was
+about the overlay path, which is the class the bulk of a UI takes and the one
+every measurement here was made on. That path now draws on the ordered pass, so
+the record binds the two lit classes, and its measurements are what was observed
+on the overlay class while it still drew through BatchRendererGroup.
 
 `BatchRendererGroup` does not promise to draw commands in the order they were
 emitted, and it groups by material. That is ordinary renderer behaviour and it
@@ -43,6 +50,20 @@ painter's order through them.
 
 ## Decision
 
+**Amended 2026-10-10 (story #1448): D1, D4 and D5 bind only the two lit
+classes.** `UnlitOverlay` nodes and every glyph run, in every painter, now draw
+through an ordered render-graph pass, one draw per contiguous same-material run
+in document order. On that pass the document order is the draw order, and no
+draw carries a sorting key. The reason is draw order, not the cost of one
+command per instance, and
+[`unity-painter-uses-brg.md`](unity-painter-uses-brg.md) D1's amendment states
+it with the reading that rules the cost out.
+[`../design/unity-csharp-host.md`](../design/unity-csharp-host.md), "Two draw
+paths", describes the pass. **Every command the painter still emits names its
+one class material**, so on this path BatchRendererGroup has no second material
+to group commands by, which is the condition issue #1389 found. The keys and
+D5's shape are kept unchanged for the lit classes.
+
 **D1 — the painter sets `HasSortingPosition` and writes one key per command, and
 under D5's shape the keys are measured to order the picture.**
 
@@ -54,13 +75,15 @@ lays command 0 farthest, and the emission order is what reaches the screen.
 Measured 2026-09-05 on the fixture this record asked for, in a macOS/Metal
 player build: seven composite probes read the painter's order, negating the step
 drew the backdrop last, over everything, and
-`docs/technotes/batch-renderer-group.md` §5b carries the four arms. **The
-composite is pinned; the keys' part in it is measured, not pinned**:
-`just unity-render`'s order phase runs those probes on every pass and fails the
-run on any other composite — which on this fixture the flag-off arm also
-produces — and the negated-step and tied-key arms that discriminate the keys
-were hand-run from the evidence shelf, not by the gate. One graphics API, as
-every claim that gate makes.
+`docs/technotes/batch-renderer-group.md` §5b carries the four arms. **Until
+story #1448 the composite was pinned and the keys' part in it was measured, not
+pinned**: `just unity-render`'s order phase ran those probes on every pass and
+failed the run on any other composite — which on this fixture the flag-off arm
+also produces — and the negated-step and tied-key arms that discriminate the
+keys were hand-run from the evidence shelf, not by the gate. One graphics API,
+as every claim that gate makes. **Since that story the fixture draws through the
+ordered pass**, because it is an overlay document with text: the gate pins that
+pass's order, and no gate judges the draw order the keys produce.
 
 The three multi-instance measurements of 2026-08-31 once said the keys did not
 order the picture — two of them cleanly, the third only weakly. They were taken
@@ -111,7 +134,9 @@ camera.** Command `c` sits `(commandCount - 1 - c)` steps on the far side of the
 document from the viewer, which puts it at
 `distance + (commandCount - 1 - c) *
 step` from the camera: falling in `c`, at
-any span, with command 0 farthest.
+any span, with command 0 farthest. Since story #1448 `commandCount` counts only
+the instances that take the BatchRendererGroup path, which are a lit painter's
+nodes.
 
 This is a repair of an earlier form that walked the keys TOWARD the camera,
 where distance is `|distance - c * step|` and the rank folds back once the span
@@ -132,7 +157,9 @@ at any span. It is a model of two lines rather than a run of the painter, for
 the reason every gate over this file is: nothing in CI compiles it.
 
 **D5 — a draw command that carries `HasSortingPosition` names exactly one
-visible instance.**
+visible instance.** Since story #1448 that is every command a lit painter emits
+for its nodes. The ordered pass's draws carry no sorting position, and each one
+names a whole run.
 
 Unity's sorted-transparent path was measured dropping a contiguous subset of
 draw commands for a single frame when a flagged command carried more than one
@@ -174,10 +201,12 @@ precision floor at a command count of that order.
 
 ## What this costs, and what is still owed
 
-The painter draws its text, and the order it draws it in is the emission order,
-through the keys, measured on one graphics API; the composite is pinned by a
-gate that runs on that API, and the keys' part in it by arms hand-run from the
-evidence shelf. What is still owed, and what this record does not decide:
+Until story #1448 the painter drew its text in the emission order, through the
+keys, measured on one graphics API; the composite was pinned by a gate that runs
+on that API, and the keys' part in it by arms hand-run from the evidence shelf.
+Since that story text draws on the ordered pass, and what follows is owed for
+the lit classes' nodes, the only commands that still carry keys. What is still
+owed, and what this record does not decide:
 
 - **A mutation arm the gate runs.** Issue #1402 asked for the negated-step
   mutation in the gate; it was run by hand from

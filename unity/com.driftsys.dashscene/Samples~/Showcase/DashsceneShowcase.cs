@@ -398,12 +398,12 @@ namespace Driftsys.Dashscene.Samples
 
             if (_painter.Rung == BrgRung.InstancedWithoutBrg)
             {
-                // Nothing is built for that rung, so every frame would be blank
-                // with no exception and no log — the one failure that is silent
-                // on screen and in the console both.
+                // The painter draws nothing on that rung (issue #1490), so every
+                // frame would be blank with no exception and no log — the one
+                // failure that is silent on screen and in the console both.
                 Fail($"the painter is on rung {_painter.Rung}: BatchRendererGroup is "
-                     + "unsupported on this graphics API and nothing is built for it "
-                     + "(docs/decisions/unity-painter-uses-brg.md D3).");
+                     + "unsupported on this graphics API and the painter draws nothing on "
+                     + "that rung (docs/decisions/unity-painter-uses-brg.md D3, issue #1490).");
                 return;
             }
 

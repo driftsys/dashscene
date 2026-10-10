@@ -32,6 +32,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using UnityEditor;
 using UnityEditor.Build;
@@ -42,6 +43,31 @@ public static class DashsceneEditorCompat
 {
     private const string RuntimeAssembly = "Driftsys.Dashscene.Runtime.dll";
     private const string PackageName = "com.driftsys.dashscene";
+
+    /// The keyword the two blended classes' ordered draws select (story
+    /// #1448). Question 3 compiles it for every shader that declares it.
+    private const string ProceduralKeyword = "DASHSCENE_PROCEDURAL";
+
+    /// The shader files that must declare `ProceduralKeyword`, by file name:
+    /// the two blended classes, which draw on the ordered path.
+    ///
+    /// **Compared, not only counted.** The declaration is detected from each
+    /// shader's own `#pragma` lines, and a detection that matched nothing would
+    /// otherwise compile no procedural variant and report success.
+    private static readonly string[] ProceduralShaders = { "Text.shader", "UnlitOverlay.shader" };
+
+    /// The keyword sets that must each yield compiled bytes for every shader
+    /// declaring `ProceduralKeyword`, spelled as the compile loop joins them:
+    /// the keyword alone, and with `DOTS_INSTANCING_ON`, which Unity also
+    /// builds for a player because both pragmas are declared.
+    ///
+    /// **Stated apart from the list the loop compiles**, so a set deleted
+    /// from that list is a set this one still requires, and the gate fails.
+    private static readonly string[] RequiredProceduralSets =
+    {
+        "DASHSCENE_PROCEDURAL",
+        "DOTS_INSTANCING_ON + DASHSCENE_PROCEDURAL",
+    };
 
     /// The two programmable stages a BatchRendererGroup pass carries.
     private static readonly UnityEditor.Rendering.ShaderType[] Stages =
@@ -217,6 +243,8 @@ public static class DashsceneEditorCompat
         }
 
         var variantsCompiled = 0;
+        var proceduralShaders = 0;
+        var declaringShaders = new List<string>();
         foreach (var path in shaderPaths)
         {
             // The importer path, which is what `AssetDatabase` resolves —
@@ -239,6 +267,37 @@ public static class DashsceneEditorCompat
                     $"{path}({message.line}): {message.message} {message.messageDetails}");
             }
 
+            // **The procedural variant too, for the shaders that declare
+            // it** — story #1448. The ordered pass draws the two blended
+            // classes with `DrawProcedural` and the `DASHSCENE_PROCEDURAL`
+            // keyword, which is the same lazy-compile trap as
+            // `DOTS_INSTANCING_ON` above: an import builds neither, so without
+            // this no gate compiles the code path those draws use. The
+            // combination with `DOTS_INSTANCING_ON` is compiled as well,
+            // because the two pragmas make Unity build it for a player and
+            // the shading has to decide which keyword wins there.
+            //
+            // Whether a shader declares the keyword is read from its own
+            // `#pragma` lines and compared with `ProceduralShaders`, so a shader
+            // that gains the pragma is compiled here and fails the gate until
+            // this file names it.
+            var declaresProcedural = Array.Exists(
+                File.ReadAllLines(path),
+                line => line.TrimStart().StartsWith("#pragma", StringComparison.Ordinal)
+                    && line.Contains(ProceduralKeyword));
+            var keywordSets = new List<string[]> { new[] { "DOTS_INSTANCING_ON" } };
+            if (declaresProcedural)
+            {
+                declaringShaders.Add(Path.GetFileName(path));
+                keywordSets.Add(new[] { ProceduralKeyword });
+                keywordSets.Add(new[] { "DOTS_INSTANCING_ON", ProceduralKeyword });
+            }
+            var proceduralVariants = 0;
+
+            // Compiled variants per procedural keyword set, keyed by the set's
+            // keywords joined, so a set that is never compiled reads as zero.
+            var proceduralBySet = new Dictionary<string, int>();
+
             var data = ShaderUtil.GetShaderData(shader);
             for (var s = 0; s < data.SubshaderCount; s++)
             {
@@ -246,61 +305,123 @@ public static class DashsceneEditorCompat
                 for (var p = 0; p < subshader.PassCount; p++)
                 {
                     var pass = subshader.GetPass(p);
-                    foreach (var (platform, target) in platforms)
+                    foreach (var keywords in keywordSets)
                     {
-                        foreach (var stage in Stages)
+                        foreach (var (platform, target) in platforms)
                         {
-                            var info = pass.CompileVariant(
-                                stage,
-                                new[] { "DOTS_INSTANCING_ON" },
-                                platform,
-                                target);
-
-                            // Every message the compiler produced, whatever
-                            // the verdict. A variant that reports success and
-                            // produces nothing usually says why in a warning,
-                            // and a gate that read `Messages` only on failure
-                            // would drop exactly that.
-                            var detail = info.Messages == null || info.Messages.Length == 0
-                                ? "(no message)"
-                                : string.Join(
-                                    "; ",
-                                    Array.ConvertAll(
-                                        info.Messages,
-                                        m => $"[{m.severity}] {m.message} {m.messageDetails}"));
-
-                            if (!info.Success)
+                            foreach (var stage in Stages)
                             {
-                                failures.Add(
-                                    $"{path} pass {p} {stage} did not compile for {platform} "
-                                    + $"with DOTS_INSTANCING_ON: {detail}");
-                                continue;
-                            }
+                                var info = pass.CompileVariant(
+                                    stage,
+                                    keywords,
+                                    platform,
+                                    target);
 
-                            // **A success with no bytes is not a compile.** The
-                            // API reports `Success` for a variant it declined
-                            // to build as well as for one it built, and a gate
-                            // that read the flag alone would pass over an
-                            // unsupported platform having produced nothing.
-                            var calibrated = controlProducesBytes.TryGetValue(
-                                $"{platform}/{stage}", out var controlBytes) && controlBytes;
-                            if (info.ShaderData == null || info.ShaderData.Length == 0)
-                            {
-                                if (calibrated)
+                                // Every message the compiler produced, whatever
+                                // the verdict. A variant that reports success and
+                                // produces nothing usually says why in a warning,
+                                // and a gate that read `Messages` only on failure
+                                // would drop exactly that.
+                                var detail = info.Messages == null || info.Messages.Length == 0
+                                    ? "(no message)"
+                                    : string.Join(
+                                        "; ",
+                                        Array.ConvertAll(
+                                            info.Messages,
+                                            m => $"[{m.severity}] {m.message} {m.messageDetails}"));
+
+                                if (!info.Success)
                                 {
                                     failures.Add(
-                                        $"{path} pass {p} {stage} reported success for {platform} "
-                                        + $"and produced no shader data, where URP's own unlit "
-                                        + $"shader does produce it: {detail}");
+                                        $"{path} pass {p} {stage} did not compile for {platform} "
+                                        + $"with {string.Join(" + ", keywords)}: {detail}");
+                                    continue;
                                 }
-                                continue;
-                            }
 
-                            variantsCompiled++;
+                                // **A success with no bytes is not a compile.** The
+                                // API reports `Success` for a variant it declined
+                                // to build as well as for one it built, and a gate
+                                // that read the flag alone would pass over an
+                                // unsupported platform having produced nothing.
+                                var calibrated = controlProducesBytes.TryGetValue(
+                                    $"{platform}/{stage}", out var controlBytes) && controlBytes;
+                                if (info.ShaderData == null || info.ShaderData.Length == 0)
+                                {
+                                    if (calibrated)
+                                    {
+                                        failures.Add(
+                                            $"{path} pass {p} {stage} reported success for {platform} "
+                                            + $"and produced no shader data, where URP's own unlit "
+                                            + $"shader does produce it: {detail}");
+                                    }
+                                    continue;
+                                }
+
+                                if (Array.IndexOf(keywords, ProceduralKeyword) >= 0)
+                                {
+                                    proceduralVariants++;
+                                    var set = string.Join(" + ", keywords);
+                                    proceduralBySet[set] =
+                                        (proceduralBySet.TryGetValue(set, out var seen) ? seen : 0) + 1;
+                                }
+                                else
+                                {
+                                    variantsCompiled++;
+                                }
+                            }
                         }
                     }
                 }
             }
+
+            // The non-empty rule for the procedural variant, per shader: a
+            // shader that declares the keyword and yielded no compiled
+            // procedural variant has been checked by nothing here.
+            if (declaresProcedural)
+            {
+                if (proceduralVariants == 0)
+                {
+                    failures.Add(
+                        $"{path} declares {ProceduralKeyword} and no variant compiled with it, "
+                        + "so the ordered draws' code path is checked by nothing here.");
+                }
+                else
+                {
+                    Debug.Log(
+                        $"[unity-editor] {path}: {proceduralVariants} shader variant(s) "
+                        + $"compiled with {ProceduralKeyword}.");
+                }
+
+                // **Each set, not their total.** A set dropped from the list
+                // above is compiled by nothing and would leave the total
+                // non-zero while the combination Unity builds for a player
+                // went unchecked.
+                foreach (var set in RequiredProceduralSets)
+                {
+                    if (!proceduralBySet.TryGetValue(set, out var compiled) || compiled == 0)
+                    {
+                        failures.Add(
+                            $"{path} declares {ProceduralKeyword} and no variant compiled with "
+                            + $"{set}, so that keyword set is checked by nothing here.");
+                    }
+                }
+                proceduralShaders++;
+            }
+        }
+
+        // **The declaring shaders are the expected two, by name.** The
+        // per-shader rules above hold over the shaders the pragma scan found,
+        // so a scan that found none would compile no procedural variant and
+        // fail nothing.
+        declaringShaders.Sort(StringComparer.Ordinal);
+        if (!declaringShaders.SequenceEqual(ProceduralShaders))
+        {
+            failures.Add(
+                $"the shaders declaring {ProceduralKeyword} are "
+                + $"[{string.Join(", ", declaringShaders)}], not "
+                + $"[{string.Join(", ", ProceduralShaders)}], so the procedural variant of "
+                + "a blended class is compiled by nothing here, or a shader that never draws "
+                + "procedurally doubles its variants.");
         }
 
         // The same non-empty rule one level down: a shader whose passes were
@@ -350,6 +471,7 @@ public static class DashsceneEditorCompat
                 ? $"[unity-editor] OK: the package compiled under {level}, "
                   + $"{shaderPaths.Length} shader(s) imported clean, {variantsCompiled} "
                   + "shader variant(s) compiled with DOTS_INSTANCING_ON, "
+                  + $"{proceduralShaders} shader(s) compiled with {ProceduralKeyword}, "
                   + $"{pluginsChecked} native plugin(s) carry D3's platform data, and "
                   + $"{symbolRuntime}."
                 : $"[unity-editor] FAILED with {failures.Count} problem(s).");

@@ -288,6 +288,28 @@ the Cargo workspace rather than moving on its own.
 
 ### Changed
 
+- **The overlay class and text draw in document order through a render-graph
+  pass** (story #1448). `UnlitOverlay` nodes and every glyph run, in every
+  painter, are drawn by `OrderedDrawPass`: one `DrawProcedural` per contiguous
+  run of instances that share a material, in instance order, with no sorting
+  key. `LitOpaque` and `LitCutout` nodes stay on `BatchRendererGroup`, and text
+  materials are no longer registered with it. The package enqueues the pass
+  itself, from `RenderPipelineManager.beginCameraRendering`, on game and scene
+  cameras whose culling mask includes the document's layer, so a host adds no
+  renderer feature. `UnlitOverlay.shader` and `Text.shader` gain a
+  `DASHSCENE_PROCEDURAL` variant that reads each instance row from
+  `_DsInstances`, a buffer uploaded by dirty range. The runtime assembly now
+  references `Unity.RenderPipelines.Core.Runtime` and
+  `Unity.RenderPipelines.Universal.Runtime`. The pass implements only the render
+  graph path, so URP Compatibility Mode draws no overlay node and no text; this
+  is read from the code, not measured. Two more consequences: an overlay node or
+  a glyph now paints over every transparent object the scene draws, at any
+  distance, where it used to be sorted among them; and the procedural variant
+  reads a `StructuredBuffer` in the vertex stage, which OpenGL ES 3.x need not
+  support, with no capability check (issue #1492). The reason for the change is
+  draw order, and `docs/decisions/unity-painter-uses-brg.md` D1 records it;
+  `docs/design/unity-csharp-host.md`, "Two draw paths", describes the pass.
+
 - **`PaintGlobals` is gone; its five names are now members of
   `PaintMaterialProperties`.** Nothing the painter binds is process-wide any
   more, so the class that named the global buffers has no subject. A host
