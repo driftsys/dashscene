@@ -5847,7 +5847,7 @@ deno-capture: wasm
 # refused import, or whatever warnings (e.g. skipped-node `figma.unsupported`
 # under partial-emit) rode along on a successful one — the harness the
 # full-real-file-import epic re-runs every wave to re-derive the frontier
-# (docs/wip/2026-07-18-epic-full-real-file-import.md). Reads FIGMA_TOKEN from
+# (docs/archive/2026-07-18-epic-full-real-file-import.md). Reads FIGMA_TOKEN from
 # the macOS keychain (`security add-generic-password -a "$USER" -s figma-pat
 # -w <token>`); the token is read, never printed — only its length. `root` is
 # optional: with none, the importer lists the file's declarable roots instead
@@ -5955,7 +5955,7 @@ reprobe key root="": wasm
 # Live render: import a Figma file to a .dsb, render it through the v0 Skia
 # reference painter, and write a PNG to /tmp for review — the "renders through
 # Skia" half of the full-real-file-import exit criterion (story Sf-1,
-# docs/wip/2026-07-18-render-dsb-design.md). Depends on `wasm` (the importer
+# docs/archive/2026-07-18-render-dsb-design.md). Depends on `wasm` (the importer
 # loads dashc_wasm.wasm). Reads FIGMA_TOKEN from the macOS keychain
 # (`security add-generic-password -a "$USER" -s figma-pat -w <token>`); the
 # token is read, never printed — only its length. `root` is optional. Public

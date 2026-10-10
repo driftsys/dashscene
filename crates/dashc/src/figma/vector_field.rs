@@ -1,5 +1,5 @@
 //! Pure-Rust MSDF vector-field generator (story B1,
-//! docs/wip/2026-07-19-B1-vector-msdf-design.md).
+//! docs/archive/2026-07-19-B1-vector-msdf-design.md).
 //!
 //! Input: a Figma VECTOR path — SVG path data in the census vocabulary
 //! (`M`/`L`/`C`/`Z`), one winding rule (NONZERO/EVENODD), possibly

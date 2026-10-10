@@ -120,11 +120,13 @@ gates over it — enumerated in the **project-gates** skill).
 The ones used on almost every turn:
 
     just test        sanity tier, seconds. Between edits and before every commit
-    just build       assemble + full check — the thorough local gate, and what
-                     CI runs. Run before pushing and before opening a PR
+    just build       assemble + full check — the thorough local gate. Run
+                     before pushing and before opening a PR. CI runs the same
+                     pieces job by job, so a new gate needs its own CI step
     just lint        clippy -D warnings, fmt --check, doc-links, prim, deno fmt
     just fmt         reformat everything in place
-    just check       regression tier + lint + audit + secrets + wasm + c-abi
+    just check       regression tier + lint + audit + secrets + wasm-painter
+                     + wasm-host + c-abi + harness-tests
     just install     ./bootstrap — hooks, git-std, cargo-nextest, jq, prim
 
 `just --list` enumerates the rest. **What each gate actually covers, which tier
@@ -142,9 +144,10 @@ stage is duplicated here, because a rule stated in two places drifts in one of
 them.
 
 1. **Specify.** Agree what the change must do before designing how.
-   `superpowers:brainstorming`. The spec is written to `docs/wip/`. _Guard
-   rail:_ implementation does not begin while the requirement is only a sentence
-   in a conversation.
+   `superpowers:brainstorming`. The spec is written to `docs/wip/`, with its
+   alternatives considered and its trace links (`Satisfies:`, related ids).
+   _Guard rail:_ implementation does not begin while the requirement is only a
+   sentence in a conversation.
 
 2. **Plan.** Turn the spec into ordered steps, each independently verifiable.
    `superpowers:writing-plans`. The plan is written to `docs/wip/`. _Guard
@@ -176,16 +179,19 @@ them.
 
 7. **Ship.** `just build` green; open the pull request ready, never draft; run
    the full review; record a disposition against every finding; merge through
-   the queue. **shipping-a-change**. _Guard rail:_ the review is a multi-seat
-   pass — requirements and rules, tests, prose-against-code — plus an
-   independent bug sweep, then one refutation per finding, consolidated into a
-   single ledger. Fix critical findings and any major finding that is not heavy;
-   file the rest as `debt` with a milestone. Never drop a finding silently.
+   the queue. **shipping-a-change**. _Guard rail:_ the review is `/review` on
+   the PR number, and a finding is fixed in the pull request that found it
+   unless `docs/decisions/review-before-ready-not-before-open.md` allows filing
+   it. Never drop a finding silently.
 
 8. **Clean up.** Remove the worktree once the branch has landed.
    **shipping-a-change**. _Guard rail:_ re-verify a worktree at the moment you
    delete it, not when you listed it, and remember a removed worktree can leave
    a stale shared target directory that makes unrelated tests fail.
+
+End the session at each stage boundary — spec written, plan written, pull
+request opened, branch merged. The next session starts from the `docs/wip/`
+file, written from the tree, not from the conversation.
 
 **Test strategy** — which tier to run when, what the corpus and the golden
 images are for, when the calibration tables must be re-derived, and when a

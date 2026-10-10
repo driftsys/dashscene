@@ -987,7 +987,7 @@ table LoopTrack {
 }
 
 // Story B1 — baked vector shapes
-// (docs/wip/2026-07-19-B1-vector-msdf-design.md). A Figma VECTOR node lowers
+// (docs/archive/2026-07-19-B1-vector-msdf-design.md). A Figma VECTOR node lowers
 // into a baked multi-channel signed distance field carried as a coverage mask
 // on its paint entry: the document keeps the field as resolution-independent
 // intent (like the glyph atlas), never a rasterized result (P1). The painter

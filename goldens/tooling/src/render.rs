@@ -1,6 +1,6 @@
 //! Load a committed `.dsb` and render it through the v0 Skia reference painter —
 //! the public render entry point behind `just render` and the `render-dsb`
-//! binary (story Sf-1, docs/wip/2026-07-18-render-dsb-design.md).
+//! binary (story Sf-1, docs/archive/2026-07-18-render-dsb-design.md).
 //!
 //! This mirrors the test-only `render_fixture` in `tests/render_oracle.rs` (the
 //! E7 design-source oracle) with one deliberate difference: it takes emitted

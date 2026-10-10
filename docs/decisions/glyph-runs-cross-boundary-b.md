@@ -151,7 +151,7 @@ are debt candidates.
 
 Recorded 2026-07-28, resolving the "later producer story" the consequence above
 deferred. The design and its measured feasibility work are in
-`docs/wip/2026-07-27-glyph-runs-from-commit-SPIKE.md`; this section is the
+`docs/archive/2026-07-27-glyph-runs-from-commit-SPIKE.md`; this section is the
 decision that spike was run to inform.
 
 **`dashscene-core`'s commit becomes the producer of the glyph-run table.** Runs

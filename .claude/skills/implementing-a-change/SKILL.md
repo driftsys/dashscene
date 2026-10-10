@@ -69,23 +69,25 @@ the corpus: the **project-gates** skill.
 ## Review each behaviour change as it lands
 
 Do not save every review for the pull request. After each behaviour change, run
-a light pass over **that change alone**, while it is still one edit old.
+`/review`'s quick pass over **that change alone**, while it is still one edit
+old. `/review` owns its rules; seat B, the bug sweep, does not run in it. Its
+two seats run by judgement, and when neither applies there is no quick pass:
 
-- **Bugs — always.** A single-change diff wants fewer, higher-confidence
-  findings, so run the bug sweep at a moderate effort level rather than the
-  broadest one.
-- **Prose against code — whenever the change alters behaviour any document,
-  record, rustdoc or comment describes.** This is the pass that earns its cost.
+- **Prose against code — whenever the change alters behaviour that
+  `docs/design/`, a `shall` in `docs/specification/`, a record in
+  `docs/decisions/`, a rustdoc or a comment describes.** This is the pass that
+  earns its cost.
 - **Tests — whenever the change adds or alters behaviour a test should pin.**
   The cheapest moment to find a vacuous test is before anything is built on it.
 
-Findings here are advisory and unscored: fix what is real, discard what is not,
-and continue. **No refuter and no ledger at this stage**, and this pass gets no
-pass of its own over its own fixes — treating each quick pass as a review round
-is how twenty of them become twenty rounds.
+**Commit before dispatching any review subagent.** A seat once stashed the
+worktree, and only committed work survives that.
 
-**This does not replace the pull-request review.** A branch that had ten quick
-passes still gets the full pass in **shipping-a-change**.
+**This does not replace the pull-request review** in **shipping-a-change**, and
+it does not satisfy the per-task gate: a plan run task by task through
+`superpowers:subagent-driven-development` still needs each task's reviewer
+verdict before the next task starts, under the global `per-task-review-gate`
+rule.
 
 ## Never
 

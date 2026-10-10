@@ -1,5 +1,5 @@
 //! The reactive layer: signals, bindings, transforms, and the
-//! per-frame flush (issue #166; docs/wip/2026-07-13-reactive-bindings-spec.md,
+//! per-frame flush (issue #166; docs/archive/2026-07-13-reactive-bindings-spec.md,
 //! decisions D1–D4 and D8; docs/archive/2026-07-14-scope-decisions.md §23).
 //!
 //! A producer declares **signals** on a [`Scene`], **binds** signal
