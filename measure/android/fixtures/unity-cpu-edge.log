@@ -7,6 +7,7 @@
          409.000 5101 5101 I dashscene-cpu: 6002 (edge) S 0 0 0 0 -1 0 0 0 0 0 1050 1050 0 0 10 -10 50 0 0 0 0 0 1 1 0 0 0 0 0 1 0 0 0 0 17 7 0 0 0 0 0 0 0 0 0 0 0 0 0
          410.000 6002 6022 I Unity   : [showcase] frame cost — scene at-end at 1080x2340 over 240 frames — tick 0.10 ms, draw mean 0.10 p50 0.10 p95 0.10 max 0.10 ms (1000.0 fps if unpaced)
          410.000 5102 5102 I dashscene-window: entry 1 end pid=6002
+         411.000 5102 5102 I dashscene-window: entry 1 end pid=6002
          412.000 6002 6022 I Unity   : [showcase] thread cost — scene edge at 1080x2340 over 240 frames — main mean 1.00 p50 1.00 p95 1.00 max 1.00 ms, render mean — p50 — p95 — max — ms, canvas — ms, gc — B/frame
          419.000 5101 5101 I dashscene-cpu: 6002 (edge) S 0 0 0 0 -1 0 0 0 0 0 1100 1100 0 0 10 -10 50 0 0 0 0 0 1 1 0 0 0 0 0 1 0 0 0 0 17 7 0 0 0 0 0 0 0 0 0 0 0 0 0
          420.000 5102 5102 I dashscene-window: entry 2 start pid=6002

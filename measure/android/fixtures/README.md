@@ -128,8 +128,9 @@ reaches the parser. Each one pins a rule no other fixture separates:
 - pids `6001` and `6002` have two frame-cost samples each, and only `6002` has a
   thread-cost sample, so `sweep_pid` resolves to `6002` only when it counts
   thread-cost samples;
-- entry 1 has two `start` markers, at 400.0 and 402.0, so keeping the first one
-  gives `window s` 10.0 and keeping the last gives 8.0;
+- entry 1 has two `start` markers, at 400.0 and 402.0, and two `end` markers, at
+  410.0 and 411.0, so keeping the first of each gives `window s` 10.0, and
+  keeping the last `start` gives 8.0 and the last `end` gives 11.0;
 - pid `6002` reports a 111-frame sample at exactly the window's start (400.0)
   and a 240-frame sample at exactly its end (410.0), so `drawn frames (player)`
   is 240 only when the window is `(start, end]`;

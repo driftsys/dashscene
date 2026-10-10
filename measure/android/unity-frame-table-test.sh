@@ -433,7 +433,8 @@ fi
 #
 #   7a  the pid vote counts thread-cost samples: the two pids tie on frame-cost
 #       samples, and only pid 6002's thread-cost sample breaks the tie
-#   7a  the first of two `entry 1 start` markers is kept (window s 10.0, not 8.0)
+#   7a  the first of two `entry 1 start` markers is kept (window s 10.0, not 8.0),
+#       and the first of two `entry 1 end` markers (10.0, not 11.0)
 #   7a  a sample at exactly the window's end counts and one at exactly its
 #       start does not (drawn 240, not 111 or 351)
 #   7a  the (BLAST) block is taken by name when it comes first (200, not 888)
