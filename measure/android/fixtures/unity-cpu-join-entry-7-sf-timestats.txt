@@ -1,0 +1,14 @@
+# dumpsys SurfaceFlinger --timestats
+
+A plain, valid dump. This entry's window in unity-cpu-join.log is genuinely
+inverted — its `end` marker's epoch precedes its `start` marker's, not
+merely equal to it (entry 2's case) — a device clock step between the two
+`adb shell log` round trips. The row must still exist, with window s, cpu
+and cpu ms all reading em-dash rather than a negative duration or a number
+derived from one.
+
+displayRefreshRate = 60 fps
+uid = 1
+layerName = SurfaceView[com.driftsys.dashscene.showcase/x](BLAST)#1
+totalFrames = 500
+droppedFrames = 0

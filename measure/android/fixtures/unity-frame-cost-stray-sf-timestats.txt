@@ -1,0 +1,25 @@
+# dumpsys SurfaceFlinger --timestats
+
+**Named wrong on purpose.** No `-entry-<n>-` infix, so `TIMESTATS_NAME` does
+not match it — a leftover file from a differently-shaped run, or a caller
+mismatch, landing in the same directory as the real per-entry dumps. It must
+be reported under `unity-cpu.md`'s own Unreadable heading rather than
+vanishing from both the table and that heading with nothing said.
+
+SurfaceFlinger TimeStats:
+Legacy stats are as follows:
+statsStart = 1705482085
+statsEnd = 1705482095
+totalFrames = 0
+missedFrames = 0
+
+displayRefreshRate = 60 fps
+renderRate = 60 fps
+uid = 10224
+layerName = none
+packageName =
+gameMode = Unsupported
+totalFrames = 0
+droppedFrames = 0
+lateAcquireFrames = 0
+badDesiredPresentFrames = 0

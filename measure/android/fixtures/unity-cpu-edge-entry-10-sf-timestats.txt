@@ -1,0 +1,11 @@
+# dumpsys SurfaceFlinger --timestats
+
+Constructed. A plain valid dump for entry 10, so that its row must sort after
+entry 2's by the entry number and not by the file name or the order of the
+arguments.
+
+displayRefreshRate = 60 fps
+uid = 1
+layerName = SurfaceView[com.example.edge/x](BLAST)#1
+totalFrames = 300
+droppedFrames = 0

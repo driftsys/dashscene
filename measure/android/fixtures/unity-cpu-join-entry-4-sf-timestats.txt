@@ -1,0 +1,12 @@
+# dumpsys SurfaceFlinger --timestats
+
+Constructed with a totalFrames value that is present but not a whole
+number — the shape a dump the ring cut mid-digit would have, distinct from
+entry 5's field-entirely-absent case. read_timestats must report this dump
+Unreadable rather than silently coerce the field.
+
+displayRefreshRate = 60 fps
+uid = 1
+layerName = SurfaceView[com.driftsys.dashscene.showcase/x](BLAST)#1
+totalFrames = 3x0
+droppedFrames = 0

@@ -1,0 +1,11 @@
+# dumpsys SurfaceFlinger --timestats
+
+Constructed. A valid layer block that presented nothing: totalFrames = 0.
+The window and the CPU figure are both real, so `cpu ms per presented frame`
+must read "—" rather than divide by zero.
+
+displayRefreshRate = 60 fps
+uid = 1
+layerName = SurfaceView[com.example.edge/x](BLAST)#1
+totalFrames = 0
+droppedFrames = 0

@@ -4667,8 +4667,10 @@ unity-android-negative name="all" action="run" unity_version="6000.3.23f1" timeo
 # seconds of it and the eight added since are the rest, nearly all of it the
 # deliberate waiting the stub-driven tests do inside their script's own poll
 # loops. It was 47 s over six scripts on 2026-08-24. The eighth,
-# `unity-frame-table-test.sh`, is story #1443's and runs two parser passes over
-# a committed capture, so the 98 s is not re-measured for it.
+# `unity-frame-table-test.sh`, is story #1443's and runs the parser over a
+# committed capture and constructed fixtures, so the 98 s is not re-measured for
+# it. Nor is it for the ninth, `unity-frame-cost-test.sh` (issue #1457), which
+# drives the sweep script through a stub `adb` with `sleep` stubbed out.
 # `.github/workflows/ci.yml` carries the same figure and **is out of date**: it
 # still reads 47 s, because that file belonged to another lane for the whole of
 # this work. Issue #1378 is the one-line correction, and this note is here
@@ -4697,10 +4699,13 @@ harness-tests:
     # by which time the marker has been written. Synthetic markers are the only
     # way to reach them.
     ./measure/android/frame-table-test.py
-    # And the same parser's two Unity tables (story #1443), whose lines were
+    # And the same parser's three Unity tables (story #1443), whose lines were
     # reshaped by a `sed` inside `unity-frame-cost.sh` that no gate could reach:
     # that script needs a device with a Unity player installed on it.
     ./measure/android/unity-frame-table-test.sh
+    # And the sweep script's own refusal of a unity-cpu.md with no numeric
+    # cpu ms per presented frame, driven through a stub adb (issue #1457).
+    ./measure/android/unity-frame-cost-test.sh
     ./measure/android/attach-outcome-test.sh
     # And the wiring between those two decisions, which neither of them
     # reaches: `attach-timing-test.sh` drives the script itself against a stub

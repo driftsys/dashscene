@@ -1,0 +1,13 @@
+# dumpsys SurfaceFlinger --timestats
+
+A plain, valid dump. This sweep's own frame-cost samples are an exact 1-to-1
+tie between two pids (7001 and 7002) — no majority exists for
+`sweep_pid`'s mode to find. The row must still exist, reading "(open)" for
+window s and em-dash for cpu/cpu ms/extent, never a pid picked by whichever
+one happened to come first in the count.
+
+displayRefreshRate = 60 fps
+uid = 1
+layerName = SurfaceView[com.driftsys.dashscene.showcase/x](BLAST)#1
+totalFrames = 600
+droppedFrames = 0
