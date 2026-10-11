@@ -276,7 +276,9 @@ namespace Driftsys.Dashscene.Samples
                      + ArgumentAfter(args, "-pulse") + "'.");
                 return;
             }
-            if (Array.IndexOf(args, "-pulse") >= 0 && _judgeDirectory != null)
+            // `-judge` with no directory after it is refused too: it asked for a
+            // judged run, and `_judgeDirectory` alone cannot say so.
+            if (Array.IndexOf(args, "-pulse") >= 0 && Array.IndexOf(args, "-judge") >= 0)
             {
                 Fail("-pulse and -judge do not combine: a judged entry is photographed "
                      + "after JudgeFrames, which is sized against the 2.5 s pulse.");

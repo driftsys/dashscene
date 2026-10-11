@@ -605,13 +605,17 @@ fn the_pulse_period_is_the_argument_and_zero_never_pulses() {
     let judge = awake
         .find("_judgeDirectory = ArgumentAfter(args, \"-judge\");")
         .unwrap_or_else(|| panic!("`Awake` reads `-judge`: {awake}"));
-    let pulse = awake
-        .find("var pulse = PulseFromArguments(args);")
-        .unwrap_or_else(|| panic!("`Awake` reads the period: {awake}"));
+    let first_fail = awake
+        .find("Fail(")
+        .unwrap_or_else(|| panic!("`Awake` can fail: {awake}"));
     assert!(
-        judge < pulse,
-        "`-judge` is read before the period is checked, so a refused period \
-         quits a judged run: {awake}"
+        judge < first_fail,
+        "`-judge` is read before the first `Fail` in `Awake`, so every refusal \
+         there quits a judged run: {awake}"
+    );
+    assert!(
+        awake.contains("var pulse = PulseFromArguments(args);"),
+        "`Awake` reads the period: {awake}"
     );
     assert!(
         awake.contains("if (pulse == null) { Fail("),
@@ -619,9 +623,11 @@ fn the_pulse_period_is_the_argument_and_zero_never_pulses() {
     );
     assert!(
         awake.contains(
-            "if (Array.IndexOf(args, \"-pulse\") >= 0 && _judgeDirectory != null) { Fail("
+            "if (Array.IndexOf(args, \"-pulse\") >= 0 \
+             && Array.IndexOf(args, \"-judge\") >= 0) { Fail("
         ),
-        "`-pulse` beside `-judge` fails the run: {awake}"
+        "`-pulse` beside `-judge` fails the run, a `-judge` with no directory \
+         after it included: {awake}"
     );
     assert_eq!(
         cs_scan::assignment_count(&awake, "_pulseSeconds"),

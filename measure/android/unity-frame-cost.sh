@@ -22,7 +22,8 @@
 # whose sweeps drifted across two geometries. That guard has to fire before a
 # table is written at all, so it cannot be a column of one.
 #
-# **Three tables, from one set of captures**: `unity-frames.md` for the
+# **Three tables, from one set of captures** — one, for a run held at rest (see
+# `at_rest` below): `unity-frames.md` for the
 # frame-cost line, `unity-threads.md` for the thread-time line, which reports
 # what the first excludes by construction (story #1443, D3 of
 # `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`),
@@ -31,7 +32,9 @@
 # covers the entry's dwell, and is longer than it by about three `adb shell`
 # round trips (see the `-clear` below): `dumpsys SurfaceFlinger --timestats` is
 # cleared and dumped once per entry rather than once per sweep, because a
-# sweep-wide window would give one figure per sweep and not per row.
+# sweep-wide window would give one figure per sweep and not per row. Held at
+# rest (`-pulse 0`), the player closes no frame-cost or thread-cost line, so
+# only `unity-cpu.md` is written.
 #
 # **It tabulates and does not average.** Each row is one reported sample of 240
 # drawn frames, exactly as the player emitted it, and the summary reports the
@@ -74,7 +77,7 @@ out="${2:-target/android-measure/unity-frame-cost}"
 # about 14 s — 300 needs about 17.5 s, so a 14 s dwell would publish a
 # frame-cost table beside an empty thread-time one. The guard below refuses a
 # run that closes no thread window rather than publishing the pair with one
-# half missing.
+# half missing; a run held at rest publishes neither half (see `at_rest`).
 sweeps="${DS_SWEEPS:-3}"
 dwell="${DS_DWELL:-20}"
 
@@ -154,7 +157,7 @@ check_readback() {
             if (got == "off") exit !(want + 0 == 0)
             if (got !~ /^every [0-9.eE+-]+ s$/) exit 1
             split(got, part, " "); d = part[2] - want; if (d < 0) d = -d
-            exit !(want + 0 > 0 && d <= 1e-6 * want)
+            exit !(d <= 1e-6 * want)
         }'; then
             ds_warn "sweep $2: asked for -pulse ${want_pulse}, and the player's"
             ds_warn "readback says '${got}'; see $1"
@@ -240,10 +243,12 @@ for index in $(seq 1 "${sweeps}"); do
     # **A `[dashscene]` error ends the wait.** The player reports a refused
     # argument, or any other failure in `Awake`, that way and then writes no
     # census at all, so waiting the whole minute would only delay the report.
+    # `DS_CENSUS_WAIT` shortens the minute for `unity-frame-cost-test.sh`.
+    census_wait="${DS_CENSUS_WAIT:-60}"
     error_line=' E [^ ]+ *: \[dashscene\]'
     total=0
     started=${SECONDS}
-    while [ "$((SECONDS - started))" -lt 60 ]; do
+    while [ "$((SECONDS - started))" -lt "${census_wait}" ]; do
         current="$("${adb}" logcat -d 2>/dev/null || true)"
         total="$(sed -n 's/.*\[showcase\] entries: \([0-9]*\).*/\1/p' <<<"${current}" | tail -1)"
         [ -n "${total}" ] && break
@@ -356,24 +361,24 @@ for index in $(seq 1 "${sweeps}"); do
     check_readback "${log}" "${letter}"
 
     lines="$(grep -cF "[showcase] frame cost" "${log}" || true)"
+    ds_note "sweep ${letter}: ${lines} sample(s) over ${total} entries"
+    if [ "${lines}" -eq 0 ] && [ "${at_rest}" -eq 0 ]; then
+        ds_warn "sweep ${letter} reported no frame cost at all; see ${log}"
+        exit 1
+    fi
     # **Every sample of a sweep at one extent, refused rather than noted.** The
     # rotation lever is fragile by construction and has already drifted once —
     # `docs/archive/2026-08-29-v021-unity-device-measurements/unity-frame-cost-default-api/`
     # in this repository is a run where sweep A landed at 2340x1080 and sweeps B
     # and C at 1080x2340, with nothing but the extent column saying so. Printing
-    # the extents and continuing is what that run did; this refuses.
+    # the extents and continuing is what that run did; this refuses. A sweep
+    # that is not held at rest has a sample by now, so it has an extent.
     extents="$( (grep -F "[showcase] frame cost" "${log}" || true) \
         | sed -E 's/^.* at ([0-9]+x[0-9]+) over .*$/\1/' | sort -u | tr '\n' ' ')"
     ds_note "sweep ${letter}: extent(s) ${extents}"
-    if [ "$(wc -w <<<"${extents}")" -gt 1 ] \
-        || { [ "${at_rest}" -eq 0 ] && [ "$(wc -w <<<"${extents}")" -ne 1 ]; }; then
+    if [ "$(wc -w <<<"${extents}")" -gt 1 ]; then
         ds_warn "sweep ${letter} drifted across extents: ${extents}"
         ds_warn "rows taken at two geometries are not one series (issue #1236)."
-        exit 1
-    fi
-    ds_note "sweep ${letter}: ${lines} sample(s) over ${total} entries"
-    if [ "${lines}" -eq 0 ] && [ "${at_rest}" -eq 0 ]; then
-        ds_warn "sweep ${letter} reported no frame cost at all; see ${log}"
         exit 1
     fi
 done
@@ -385,8 +390,7 @@ done
 # publish at all.
 all_extents="$( (grep -hF "[showcase] frame cost" "${out}"/sweep-*.log || true) \
     | sed -E 's/^.* at ([0-9]+x[0-9]+) over .*$/\1/' | sort -u | tr '\n' ' ')"
-if [ "$(wc -w <<<"${all_extents}")" -gt 1 ] \
-    || { [ "${at_rest}" -eq 0 ] && [ "$(wc -w <<<"${all_extents}")" -ne 1 ]; }; then
+if [ "$(wc -w <<<"${all_extents}")" -gt 1 ]; then
     ds_warn "the sweeps did not agree on an extent: ${all_extents}"
     exit 1
 fi
@@ -583,4 +587,8 @@ if [ -e "${timestats_files[0]}" ]; then
     fi
     ds_note "wrote ${table} — ${rows} row(s) from ${#timestats_files[@]} dump(s)"
 fi
-ds_note "one extent (${all_extents}) and one API (${all_apis}) across every sweep"
+if [ -n "${all_extents}" ]; then
+    ds_note "one extent (${all_extents}) and one API (${all_apis}) across every sweep"
+else
+    ds_note "held at rest: no extent reported, and one API (${all_apis}) across every sweep"
+fi

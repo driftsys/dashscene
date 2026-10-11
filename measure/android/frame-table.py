@@ -62,7 +62,7 @@ table that reported a Unity line under `paint`/`submit` headings would be
 labelling a quantity with another instrument's word. `lean` is the default and
 is what `frame-capture.sh` asks for; `unity-frames`, `unity-threads` and
 `unity-cpu` are the three `unity-frame-cost.sh` writes from one set of
-captures — the last needs `--timestats` as well, since its rows join the
+captures (only the last, for a run held at rest) — the last needs `--timestats` as well, since its rows join the
 captures to files `frame-table.py` does not read as logcat.
 
 ## Unreadable lines
@@ -1345,8 +1345,10 @@ def emit_unity_cpu(table, source, describe, clk_tck, unreadable, out):
         "no start marker or no end marker was matched for this entry: either "
         "one of the two `dashscene-window` markers was never written (every "
         "`log` call `unity-frame-cost.sh` makes to write one is `|| true`), "
-        "or the sweep's pid could not be resolved from its own samples, so "
-        "no marker is matched. Both differ from the cause the CPU footnote "
+        "or the sweep's pid could not be resolved — from its own samples, or, "
+        "for a sweep with none (one held at rest), from its window markers, "
+        "which resolve it only when they state one pid — so no marker is "
+        "matched. Both differ from the cause the CPU footnote "
         "above states for its own `(open)`.",
         file=out,
     )
