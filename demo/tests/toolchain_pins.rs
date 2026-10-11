@@ -14,9 +14,11 @@
 //!
 //! The comparison must exist in one place too. `bootstrap` and the CI job both
 //! call `scripts/prim-version-at-least`, so they cannot disagree about a
-//! version, and the tests below execute that script rather than read it. What
-//! the tests cannot execute — the download and install steps, which need the
-//! network — is asserted on the text of the lines that do it.
+//! version, and the tests below execute that script rather than read it. The
+//! callers — the download and install steps, which need the network — are
+//! checked only structurally: that they call the shared scripts and check the
+//! downloaded binary before installing it. Whether each caller stops on a
+//! failed check is not pinned here (issue #1498).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

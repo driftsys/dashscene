@@ -22,7 +22,7 @@ JQ_VERSION="${JQ_VERSION:-1.8.2}"
 # job installs the latest release and reads this same line through
 # `scripts/prim-min-version` to check it, so the minimum exists only here. Bare
 # X.Y.Z, without the tag's `v`. To get the latest prim on a machine whose prim
-# already meets this, run `PRIM_MIN_VERSION=<that version> ./bootstrap`.
+# already meets this, run `PRIM_MIN_VERSION=<latest version> ./bootstrap`.
 PRIM_MIN_VERSION="${PRIM_MIN_VERSION:-0.9.1}"
 # The one version comparison, shared with the CI `prim` job.
 PRIM_AT_LEAST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/prim-version-at-least"

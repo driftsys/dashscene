@@ -504,9 +504,9 @@ jobs:
   #
   # Reproducibility was never available for this job in any case — the same
   # commit audits differently tomorrow, which is the point of auditing. The
-  # `prim` job above is unpinned too, but for a different reason: its input is
-  # this repository, and it follows a minimum version by decision
-  # (`docs/decisions/house-style.md`).
+  # `prim` job above is unpinned too, but for a different reason: it follows a
+  # minimum version by decision (`docs/decisions/house-style.md`), although its
+  # input is this repository.
   audit:
     name: audit
     runs-on: ubuntu-latest
