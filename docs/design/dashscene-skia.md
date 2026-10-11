@@ -37,8 +37,12 @@ All in `crates/dashscene-skia/src/lib.rs`:
         fn paint(&mut self, rects: &[RectEntry], paints: &PaintTable,
                  images: &ImageTable, clips: &ClipTable,
                  groups: &[GroupComposite], glyphs: &GlyphRunTable,
-                 dirty: Option<&[u32]>);
+                 pieces: &[Piece], dirty: Option<&[u32]>);
     }
+
+`pieces` (story #1450) is ignored: this painter draws every rect whole. The
+occlusion pass removes only pixels a later opaque core paints over, so whole
+rects give the same picture, and fill rate is not this CPU painter's concern.
 
 - `new(width, height)` allocates a CPU raster surface (N32 premultiplied) of the
   given pixel size. Panics if `width` or `height` is not positive.

@@ -340,6 +340,7 @@ fn each_name_is_bound_to_the_buffer_it_means() {
         "material.SetBuffer(PaintsId, _paintBuffer);",
         "material.SetBuffer(ClipBoxesId, _clipBuffer);",
         "material.SetBuffer(StrokesId, _strokeBuffer);",
+        "material.SetBuffer(ExtentsId, _extentBuffer);",
         "material.SetTexture(GradientStripId, _stripTexture);",
         "material.SetVector(ScalarsId, scalars);",
     ] {
@@ -518,6 +519,7 @@ fn the_heap_buffers_are_freed_after_the_materials_that_name_them() {
         "_paintBuffer",
         "_clipBuffer",
         "_strokeBuffer",
+        "_extentBuffer",
         "_glyphBuffer",
     ] {
         let freed = dispose

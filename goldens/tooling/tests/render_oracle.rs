@@ -790,6 +790,7 @@ fn render_fixture(name: &str, fixture_json: &str) -> Vec<u8> {
         scene.clips(),
         scene.groups(),
         scene.glyphs(),
+        scene.pieces(),
         None,
     );
     painter.png_bytes()

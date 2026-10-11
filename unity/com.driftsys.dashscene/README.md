@@ -84,7 +84,9 @@ What is here:
   ([Two draw paths](../../docs/design/unity-csharp-host.md#two-draw-paths-story-1448)).
   Its shading reads a `StructuredBuffer` in the vertex stage, which OpenGL ES
   3.x need not support, and the painter checks no such capability, so a GLES
-  device may draw no overlay node and no text (issue #1492).
+  device may draw no overlay node and no text (issue #1492). Every class also
+  reads `_DsExtents`, the occlusion pieces' quads, in the vertex stage (story
+  #1450), so on such a device the lit classes may draw nothing too.
 - `Runtime/Resources/Dashscene/` — the `.shader` files: one per material class,
   and the text shader beside them, which is not a class. **They sit in a
   `Resources` folder because a player build strips a shader that no scene and no
@@ -143,8 +145,8 @@ executes too, against `dashpaint-abi`; `package-compat` is the one that only
 compiles.) It looks up every declared entry point (.NET binds a `DllImport`
 lazily, so one nothing calls would otherwise be checked by nothing), performs
 R-E16's version handshake, produces each status from a real call rather than
-reading the header, and compares all nineteen of a frame's `DsSlice::stride`
-values against this package's row sizes, which is R-E17.
+reading the header, and compares every one of a frame's `DsSlice::stride` values
+against this package's row sizes, which is R-E17.
 
 It also builds more libraries beside it, each exporting less than this package
 calls, and drives the package against each in its own `AssemblyLoadContext`.

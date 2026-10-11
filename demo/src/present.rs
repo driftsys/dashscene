@@ -149,6 +149,7 @@ impl Present for SkiaPresenter {
             scene.clips(),
             scene.groups(),
             scene.glyphs(),
+            scene.pieces(),
             None,
         );
         self.painter.read_premul_into(&mut self.frame);
@@ -321,6 +322,7 @@ mod tests {
             scene.clips(),
             scene.groups(),
             scene.glyphs(),
+            scene.pieces(),
             None,
         );
 

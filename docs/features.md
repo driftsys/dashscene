@@ -295,7 +295,8 @@ and the motion tables in `crates/dashbuf/schema/dashbuf.fbs`.
 ## 5. Runtime performance
 
 Checked against `crates/dashscene-core/src/arena.rs`,
-`crates/dashlang/src/reactive.rs`, `crates/dashscene-engine/src/lib.rs`.
+`crates/dashlang/src/reactive.rs`, `crates/dashscene-engine/src/lib.rs`,
+`crates/dashscene-core/src/occlusion.rs`.
 
 - [x] **Everything shared is computed once** — layout and text placement run a
       single time per change, for every renderer, so two renderers cannot
@@ -316,6 +317,19 @@ Checked against `crates/dashscene-core/src/arena.rs`,
       only the one being shown, so a browser — which has no bytes it did not
       download — can skip a screen's images only when no other screen uses any.
       See section 6.
+- [ ] **Pixels hidden under an opaque element are not drawn** — **part built.**
+      Since story #1450 the runtime works out, at each change and once for every
+      renderer, which part of each element a later opaque element covers, and
+      both the built-in GPU renderer and the Unity renderer draw only the parts
+      still visible. Counted without a device, that removes about 12 %, 9 % and
+      45 % of the area the built-in GPU renderer's element quads shade on the
+      three showcase scenes (`crates/dashscene-gpu/tests/shaded_area.rs`).
+      Whether the pass shortens the frame on a device has not been measured, on
+      either renderer; issue #1488 tracks that reading. An element is always
+      drawn whole when its shadow, blur, or stroke centred on or outside its
+      edge reaches past that edge, when it has a vector shape, and when it is
+      rotated. An opaque element also never cuts an element beneath it when a
+      backdrop-blur element lies between the two.
 - [ ] **Tuned against the target device** — **the first measurements were taken
       on 2026-08-17** (a Pixel 5; `docs/design/android-toolchain.md`), and the
       tuning they would justify is v1. D3a's Vulkan measurement (#885), the
@@ -582,31 +596,31 @@ Checked against `crates/dashpaint/src/lib.rs`, `crates/dashscene-skia/src/`,
 - [ ] **Unity renderer** — **part built, and less than that phrase suggests.**
       What exists is the _type_ contract: story #600 pinned the boundary-B value
       types as FFI-representable — 26 of them then, 27 since story #1239 added
-      `CornerRadii`, 28 since story #859 added `GroupComposite` — and
-      `dashpaint-abi` exports a layout, a round-trip function and a member table
-      for each, enough to prove a C# struct matches the Rust one and nothing
-      more. **The committed tables cross since story #859**:
-      `ds_runtime_acquire_frame` hands out nineteen arrays under a lease that
-      refuses any call that would commit, and `ds_runtime_release_frame` ends
-      it. Seventeen carry a gated boundary-B row type; the other two are
-      primitives — the dirty set of `u32` rect indices, and the image payload
-      bytes an `ImageEntry` indexes. The glyph **atlases** do not cross in the
-      frame, and since story #1123 they cross beside it: an `Atlas` is not a
-      table of rows but a sheet with a glyph list hanging off it, and it belongs
-      to the load rather than to the commit, so `ds_runtime_atlas` hands it out
-      keyed by a `GlyphRun`'s atlas index — the sheet, four scalars and the
-      `AtlasGlyph` rows together. Boundary B itself has two consumers, both Rust
-      painters; the **C#** projection of it gained its first at story #1239, a
-      check rather than a painter, and its second at story #1121 — `FrameLease`,
-      which takes the `sizeof` of boundary B's row types in shipped `Runtime/`
-      code and compares each against the stride the library reports. `unity/`
-      declares those types in C# and `unity/abi-check` compiles those
-      declarations and compares them against the Rust build on any pull request
-      whose diff is not documentation-only, without a Unity editor — every
-      member's name, offset and size, not only each type's total. What it does
-      not check is that a member's C# type means what the Rust one means: a
-      `uint` declared as `float` has the right size at the right offset. It
-      draws no pixel.
+      `CornerRadii`, 28 since story #859 added `GroupComposite`, 29 since story
+      #1450 added `Piece` — and `dashpaint-abi` exports a layout, a round-trip
+      function and a member table for each, enough to prove a C# struct matches
+      the Rust one and nothing more. **The committed tables cross since story
+      #859**: `ds_runtime_acquire_frame` hands out the committed tables' arrays
+      under a lease that refuses any call that would commit, and
+      `ds_runtime_release_frame` ends it. Every array but two carries a gated
+      boundary-B row type; the other two are primitives — the dirty set of `u32`
+      rect indices, and the image payload bytes an `ImageEntry` indexes. The
+      glyph **atlases** do not cross in the frame, and since story #1123 they
+      cross beside it: an `Atlas` is not a table of rows but a sheet with a
+      glyph list hanging off it, and it belongs to the load rather than to the
+      commit, so `ds_runtime_atlas` hands it out keyed by a `GlyphRun`'s atlas
+      index — the sheet, four scalars and the `AtlasGlyph` rows together.
+      Boundary B itself has two consumers, both Rust painters; the **C#**
+      projection of it gained its first at story #1239, a check rather than a
+      painter, and its second at story #1121 — `FrameLease`, which takes the
+      `sizeof` of boundary B's row types in shipped `Runtime/` code and compares
+      each against the stride the library reports. `unity/` declares those types
+      in C# and `unity/abi-check` compiles those declarations and compares them
+      against the Rust build on any pull request whose diff is not
+      documentation-only, without a Unity editor — every member's name, offset
+      and size, not only each type's total. What it does not check is that a
+      member's C# type means what the Rust one means: a `uint` declared as
+      `float` has the right size at the right offset. It draws no pixel.
 
       **The C# host is built since story #1121** and it draws no pixel either.
       The package binds every C ABI entry point, negotiates

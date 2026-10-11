@@ -16,6 +16,11 @@
 //!   `CompileVariant` for the keyword no gate in this repository builds the
 //!   code path the ordered draws use. That is the trap
 //!   `DashsceneEditorCompat.cs` records for `DOTS_INSTANCING_ON`.
+//!
+//! Story #1450 adds two facts the variant shares with the mesh path: `DsVertex`
+//! decodes an occlusion piece and selects each quad edge the same way whichever
+//! path supplied the corner, and `DsProceduralCorner` returns exactly the
+//! corners `BrgPainter.UnitQuad` holds, in its index order.
 
 use std::collections::BTreeSet;
 
@@ -164,6 +169,146 @@ fn the_editor_gate_compiles_the_procedural_variant() {
             gate.contains(needle),
             "{GATE} does not contain `{needle}` outside its comments and \
              strings: {why}."
+        );
+    }
+}
+
+const HLSL: &str = "unity/com.driftsys.dashscene/Runtime/Shaders/DashsceneInstance.hlsl";
+
+/// The squeezed body of the HLSL function whose signature is `signature`,
+/// from the signature to its closing brace at column zero.
+fn hlsl_function(path: &str, signature: &str) -> String {
+    let raw = read(path);
+    assert!(
+        !raw.contains("/*"),
+        "{path} has a block comment; this scan drops line comments only"
+    );
+    let code = raw
+        .lines()
+        .map(|line| line.split("//").next().unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let start = code
+        .find(signature)
+        .unwrap_or_else(|| panic!("{path} no longer declares `{signature}`"));
+    let end = start
+        + code[start..]
+            .find("\n}")
+            .unwrap_or_else(|| panic!("{path}'s `{signature}` never closes"));
+    package_gate::cs_scan::squeeze(&code[start..end])
+}
+
+/// `DsVertex` decodes an occlusion piece and places its quad by selection,
+/// on both draw paths (story #1450).
+///
+/// **The decode is `row * 16 + grow bits`, with row 0 meaning the whole box**,
+/// so the extent table is indexed by `row - 1`: dropping the `- 1u` reads the
+/// next piece's edges and still compiles. **The corner is selected, not
+/// interpolated**: two pieces of one rect meet where one's `hi` is the other's
+/// `lo`, and `lo + corner * (hi - lo)` reproduces `hi` only up to rounding. The
+/// corner source is the mesh on the BatchRendererGroup path and
+/// `DsProceduralCorner` on the `DASHSCENE_PROCEDURAL` path, and the selection
+/// after it is shared. `just unity-render`'s seam and edge probes draw the
+/// result on Metal; this text pins it for every API that gate does not run.
+#[test]
+fn ds_vertex_decodes_a_piece_and_selects_its_corners_on_both_paths() {
+    let body = hlsl_function(HLSL, "DsVaryings DsVertex(DsAttributes input)");
+    for needle in [
+        "uint piece = (uint)shade.w;",
+        "float4 edges = _DsExtents[piece / DS_EXTENT_INDEX_SCALE - 1u];",
+        "uint grow = piece % DS_EXTENT_INDEX_SCALE;",
+        "(grow & DS_GROW_LEFT) != 0u ? edges.x - margin : edges.x,",
+        "(grow & DS_GROW_TOP) != 0u ? edges.y - margin : edges.y);",
+        "(grow & DS_GROW_RIGHT) != 0u ? edges.z + margin : edges.z,",
+        "(grow & DS_GROW_BOTTOM) != 0u ? edges.w + margin : edges.w);",
+        "#ifdef DASHSCENE_PROCEDURAL float2 corner = DsProceduralCorner(input.vertexID); \
+         #else float2 corner = input.positionOS.xy; #endif \
+         float2 local = float2(corner.x > 0.5 ? hi.x : lo.x, corner.y > 0.5 ? hi.y : lo.y);",
+    ] {
+        assert!(
+            body.contains(needle),
+            "{HLSL}'s DsVertex no longer contains `{needle}` in code."
+        );
+    }
+}
+
+/// `BrgPainter.UnitQuad` and `DsProceduralCorner` hand `DsVertex` the same
+/// corners, each exactly 0 or 1 on each axis.
+///
+/// **`DsVertex` selects an edge with `corner > 0.5`**, so a corner has to be
+/// exactly 0 or 1: a quad centred on the origin (-0.5 .. 0.5) would select
+/// `lo` for every corner and collapse every quad to a point. The procedural
+/// variant rebuilds the mesh from the vertex id, so its six corners must be
+/// the mesh's vertices taken in the mesh's index order, or the two paths
+/// wind and place their quads differently.
+#[test]
+fn the_unit_quad_and_the_procedural_corner_agree_on_exact_corners() {
+    const PAINTER: &str = "unity/com.driftsys.dashscene/Runtime/Engine/BrgPainter.cs";
+    let painter = package_gate::cs_scan::blank_comments_and_strings(&read(PAINTER));
+    let (s, e) = package_gate::cs_scan::member_body(&painter, "private static Mesh UnitQuad()");
+    let body = package_gate::cs_scan::squeeze(&painter[s..=e]);
+
+    let vertices: Vec<(f32, f32)> = body
+        .split("new Vector3(")
+        .skip(1)
+        .map(|rest| {
+            let args: Vec<f32> = rest[..rest.find(')').unwrap()]
+                .split(',')
+                .map(|a| {
+                    a.trim()
+                        .trim_end_matches('f')
+                        .parse::<f32>()
+                        .unwrap_or_else(|_| {
+                            panic!("{PAINTER}'s UnitQuad vertex `{a}` is not a literal")
+                        })
+                })
+                .collect();
+            (args[0], args[1])
+        })
+        .collect();
+    assert_eq!(
+        vertices,
+        [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)],
+        "{PAINTER}'s UnitQuad is no longer the four exact corners of [0, 1] x [0, 1] \
+         in this order."
+    );
+    let triangles: Vec<usize> = {
+        let at = body
+            .find("triangles = new[] {")
+            .unwrap_or_else(|| panic!("{PAINTER}'s UnitQuad sets no triangle list"));
+        let rest = &body[at + "triangles = new[] {".len()..];
+        rest[..rest.find('}').unwrap()]
+            .split(',')
+            .map(|i| i.trim().parse().unwrap())
+            .collect()
+    };
+    assert_eq!(triangles, [0, 1, 2, 0, 2, 3]);
+
+    // The HLSL function, pinned as text and mirrored here: the mirror is only
+    // as good as the pin, so a change to either fails one of the two asserts.
+    let corner = hlsl_function(HLSL, "float2 DsProceduralCorner(uint vertexId)");
+    assert_eq!(
+        corner,
+        "float2 DsProceduralCorner(uint vertexId) { \
+         uint q = vertexId < 3u ? vertexId : (vertexId == 3u ? 0u : vertexId - 2u); \
+         return float2((q == 1u || q == 2u) ? 1.0 : 0.0, q >= 2u ? 1.0 : 0.0);",
+        "{HLSL}'s DsProceduralCorner changed; this mirror must change with it."
+    );
+    for vertex_id in 0u32..6 {
+        let q = if vertex_id < 3 {
+            vertex_id
+        } else if vertex_id == 3 {
+            0
+        } else {
+            vertex_id - 2
+        };
+        let procedural = (
+            if q == 1 || q == 2 { 1.0 } else { 0.0 },
+            if q >= 2 { 1.0 } else { 0.0 },
+        );
+        assert_eq!(
+            procedural, vertices[triangles[vertex_id as usize]],
+            "vertex {vertex_id}: DsProceduralCorner and the mesh disagree"
         );
     }
 }

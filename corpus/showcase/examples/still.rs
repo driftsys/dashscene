@@ -71,6 +71,7 @@ fn main() {
         committed.clips(),
         committed.groups(),
         committed.glyphs(),
+        committed.pieces(),
         None,
     );
     std::fs::write(&out, painter.png_bytes()).unwrap_or_else(|error| {

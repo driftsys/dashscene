@@ -124,7 +124,7 @@ asserts it compiled, which is a developer's gate and not CI's.
 ## The painter, and where each rule it obeys comes from
 
 `BrgPainter` is one `BatchRendererGroup`, one mesh, one material for the class
-it was built with plus one per glyph atlas, five `GraphicsBuffer`s, and a sixth
+it was built with plus one per glyph atlas, six `GraphicsBuffer`s, and a seventh
 that only the ordered path reads. Per frame it packs the lease's tables and
 uploads them; the lit classes' nodes are drawn by the culling callback, and the
 overlay class's nodes and every glyph run by `OrderedDrawPass` — "Two draw
@@ -132,13 +132,65 @@ paths" below.
 
 **The instance layout is the lean painter's in size and in what it carries, and
 that is the point.** Five `float4`-sized per-instance properties — the node's
-box, its corner radii, `(opacity, outset, rotation)`, the rotation pivot, and
-`(kind, row, clip offset, clip count)` — eighty bytes, the same eighty
-`dashscene_gpu::Instance` occupies. **The member order is not the same and the
-member set is not identical**: that struct also carries `shape`, `layer` and a
-pad word this painter emits nothing for, and puts `kind`/`row` at offset 32
-rather than in the last word. What matches is the stride and the meaning of
+box, its corner radii, `(opacity, outset, rotation, extent)`, the rotation
+pivot, and `(kind, row, clip offset, clip count)` — eighty bytes, the same
+eighty `dashscene_gpu::Instance` occupies. **The member order is not the same
+and the member set is not identical**: that struct also carries `shape` and
+`layer`, which this painter emits nothing for, and puts `kind`/`row` at offset
+32 rather than in the last word. What matches is the stride and the meaning of
 every field both carry.
+
+**An occlusion piece is the same instance with an extent word (story #1450).**
+Each commit cuts every rect into the pieces no later opaque core covers
+(`DsFrame.Pieces`), and `FramePacker` emits a rect's fill, stacked fills and
+stroke once per piece, every instance on the rect's whole box. `_DsShade.w` is 0
+for a piece that is the whole box and otherwise `row * 16 + grow bits`: row
+`row - 1` of a per-frame `_DsExtents` buffer holds the piece's
+`(left, top, right, bottom)`, and the four bits name the edges that lie on the
+box, decided on the CPU by exact `==` against `X + W` and `Y + H` rounded to
+`float`. `DsVertex` places the quad from those edges and grows only the named
+ones by the margin, so two pieces of one rect meet without overlapping and a
+translucent rect does not blend twice along a cut; the fragment stage still
+shades against `_DsQuad`, so the SDF, the gradient and the anti-aliased edge are
+the box's. A rect with no piece emits nothing, and glyph runs are never cut. The
+word is the lean painter's `Instance::extent` written as an exact float, and
+`unity/package-gate` holds the four bit values and the index scale across
+`PaintHeap.cs`, the shading and `crates/dashscene-gpu/src/instance.rs`. The
+extent table is rebuilt whole on every pack, like the heap, and uploaded and
+bound like `_DsClipBoxes`; it is the first table the vertex stage reads besides
+the instance properties. **Both draw paths read the word.** The
+`BatchRendererGroup` streams and the ordered path's interleaved `_DsInstances`
+rows (`DrawRouting.InterleaveRows`) both copy `_DsShade` as four whole lanes,
+and `DsVertex` takes its corner from the mesh on the first and from
+`DsProceduralCorner` on the second, then selects each edge the same way, so a
+cut `UnlitOverlay` rect draws its pieces through `OrderedDrawPass` exactly as a
+cut lit rect does through the culling callback. Because the extent table is a
+vertex-stage `StructuredBuffer` on both paths, the OpenGL ES 3.x concern that
+issue #1492 records for the ordered path now applies to the lit classes too.
+Spans stay keyed by rect, so a partial pack still abandons on a dirty rect's
+instance count rather than its piece count, and it also refuses when any rect's
+extent rows start at a different row than in the previous pack: a dirty rect
+that gains a cut piece renumbers the rows of every rect behind it, and those
+rects are not in the dirty set. `unity/ffi-check` drives both over synthetic
+frames. The pass judges cores without knowing the material class, so on the
+`LitOpaque` class a rounded, clipped or stroked opaque core — which that class
+refuses with `CoverageNotExpressible` — still cuts the rects beneath it. Packed
+as pieces, that frame would show the clear colour inside the refused core's
+interior, so on that class a frame with any rect that has a corner radius, a
+clip, a stroke or an opacity below 1 packs every rect whole, which is the
+picture before story #1450. Such a rect still reports `CoverageNotExpressible`,
+or `VectorField` or `CorruptRow` when the packer refuses it earlier for a shape
+or a corrupt range. The translucent-fill refusal does not trip the fallback,
+because a rect whose base fill is translucent is never a core. `unity/ffi-check`
+drives the fallback with a core with one rounded corner (each corner in turn), a
+clipped core, a stroked core and a core at an opacity below 1.
+`just unity-render`'s order phase draws a translucent veil cut by an opaque plug
+and reads the cut seam against the same veil away from it, which sees a cut edge
+that grew, and reads the pixel just outside the veil's side edge beside the plug
+against the same column higher up, which sees a box edge that did not grow;
+together they are what sees the vertex stage honour the grow bits. Every host
+that sets `BrgPainter.EdgeWidth` hands the same value to
+`DashsceneRuntime.SetAaBand`, which is the band the pass shrinks each core by.
 
 The paint heap **is** packed word for word as `paint.wgsl` reads it: a gradient
 row is twelve `float4`s in `gradient_colour`'s own order, a clip box is two, and
@@ -167,7 +219,7 @@ share one** (issue #1297). `_DsPaints`, `_DsClipBoxes`, `_DsStrokes`,
 which are process-wide: the last painter to draw supplied the gradients, strokes
 and clip boxes every painter's fragments shaded from, and the painter reported
 that with a constructor warning rather than drawing a wrong picture quietly.
-`BindHeap` now sets them on the materials this painter owns — the three heap
+`BindHeap` now sets them on the materials this painter owns — the four heap
 tables, the baked gradient strip and the scalars on the class material and on
 every glyph atlas's material, and `_DsGlyphs` on the atlas materials alone,
 because the shading declares it under `DASHSCENE_CLASS_TEXT` and no other class
@@ -183,7 +235,7 @@ materials long after the constructor so no earlier moment holds the whole set,
 previous one (story #1449) — and the scalars
 `(EdgeWidth, SolidBase, GradientBase, StripRows)` move with the drawable extent
 and the paint table's layout without reallocating anything. On a settled scene
-none of the five fires and the five `Material.Set…` calls per material do not
+none of the five fires and the six `Material.Set…` calls per material do not
 happen; `unity/render-gate`'s settle step reads `HeapBindCount` and fails unless
 it moves on a changed extent and on nothing else.
 
@@ -459,6 +511,10 @@ delegate to those, and pin the injection and the upload.
   buffer, and the painter accepts that rung with no capability check. On a GLES
   device that exposes none, the overlay class and text could draw nothing while
   the painter reports success; no gate here runs GLES. Issue #1492 is the debt.
+  Since story #1450 the lit classes read one too: `_DsExtents`, the occlusion
+  pieces' quads, is a vertex-stage `StructuredBuffer` declared for every class,
+  so on such a device a `LitOpaque` or `LitCutout` node may draw nothing as
+  well.
 - **The ranged branch of `UploadOrdered` runs in no gate.** `just unity-render`
   draws one static document, so every frame takes the whole branch. This is the
   gap issue #1482 names for the batch upload, on a second buffer.
@@ -941,7 +997,7 @@ propagated for the same reason, and its detail is kept alongside the free's
 rather than overwritten, because it is the usual cause of a `FrameLeased` free.
 
 **The stride table is derived from `frame_of`, not from the member names.** Two
-of the nineteen arrays do not hold the type their name suggests: `extra_fills`
+of the frame's arrays do not hold the type their name suggests: `extra_fills`
 holds `PaintKind` and `shapes` holds `VectorField`. Most of the rest are what
 they look like — `strokes` holds `Stroke`, `shadows` holds `Shadow`, `blurs`
 holds `Blur` — with two carrying primitives rather than boundary-B rows, `dirty`
@@ -989,13 +1045,13 @@ rather than one with a sentinel length**, so the routing is a branch on
 **The split between `Runtime/` and the sample is drawn at what a gate can
 execute.** `DocumentRange` and the loader over it are in `Runtime/`, where
 `unity/ffi-check` builds a container holding the fixture at a deliberately
-unaligned offset, loads it against the real library, and compares **all nineteen
-slice counts** against the same document loaded from its own path. That
-comparison is what proves the two `ulong` slots cross correctly; an earlier form
-asserted only that the frame had rows, which any range that happens to parse
-satisfies. The JNI query that asks the APK where the entry is needs
-`UnityEngine`, so `StreamingAssetDocument` sits in `Runtime/Engine/`, the half
-`just unity-editor` compiles.
+unaligned offset, loads it against the real library, and compares **every slice
+count** against the same document loaded from its own path. That comparison is
+what proves the two `ulong` slots cross correctly; an earlier form asserted only
+that the frame had rows, which any range that happens to parse satisfies. The
+JNI query that asks the APK where the entry is needs `UnityEngine`, so
+`StreamingAssetDocument` sits in `Runtime/Engine/`, the half `just unity-editor`
+compiles.
 
 **It was in `Samples~/FrameLoop` when story #1124 wrote it**, because
 `Runtime/Engine/` did not exist and no gate here could compile a `UnityEngine`
@@ -1136,6 +1192,13 @@ declaration up in the loaded library, so a rename fails now rather than in the
 story that first calls one. A lookup proves the name and not the signature; the
 behavioural checks prove the signatures of what they exercise.
 
+`ds_runtime_set_aa_band` (story #1450) is wrapped as
+`DashsceneRuntime.SetAaBand`, and every host in the package and the render gate
+calls it beside each `BrgPainter.EdgeWidth` assignment, before the tick.
+`unity/ffi-check` drives it through the wrapper against a library that lacks it,
+like every other wrapped entry point, and checks that a changed band moves
+`DsFrame.Pieces` on the next tick.
+
 **And the lazy bind is provoked rather than argued about.** `just unity-ffi`
 compiles `unity/ffi-check/older-library.c` several ways and hands each build to
 its own copy of the package assembly in its own `AssemblyLoadContext`. A
@@ -1237,10 +1300,10 @@ C# would be a second definition that drifts from the one `demo-android` draws.
 shipped library and defines `DASHSCENE_DEMO_PRODUCER` for the player build.
 `docs/decisions/the-demo-producer-links-the-abi-rather-than-shipping-in-it.md`
 carries why it is a separate crate rather than a feature of the shipped one, and
-`just demo-exports` is what holds it to being the shipped seventeen plus a set
-carrying only the `ds_demo_` prefix. **That recipe pins the prefix, not the
-cardinality**: `unity/ffi-check`'s demonstration pass is what names the seven
-and drives each one.
+`just demo-exports` is what holds it to being the shipped library's exports plus
+a set carrying only the `ds_demo_` prefix. **That recipe pins the prefix, not
+the cardinality**: `unity/ffi-check`'s demonstration pass is what names the
+seven and drives each one.
 
 **The camera is framed per entry class, and it was not at first.** A scene is
 built for the drawable in physical pixels, as the three Rust hosts build it, so
@@ -1432,18 +1495,22 @@ byte-identical files, and 1119 of the 4805 `*.cs.meta` files in the editor's own
   `RawBuffer` rung** — the only rung any device has ever reported here — that
   batch is the 64-slot floor `InstancesPerBatch` chooses: the shared head plus
   sixty-four eighty-byte slots, 112 + 5120 = **5232 bytes**, of which 112 + 16 ×
-  80 = **1392** carry the sixteen instances the frame's draw commands read.
-  Before #1446 all of it was uploaded on a commit whose dirty set was empty as
-  much as on any other. The `ConstantBuffer` rung sizes its batch from the
-  device's own window instead, so the same document costs more there: a 16 KB
-  window with 256-byte alignment fits `(16384 - 112) / 80` = 203 slots, and
-  `BatchStrideBytes` rounds `112 + 203 x 80` = 16352 **up** to the alignment —
-  so the stride the buffer is sized from, and a whole upload sends, is **16384
-  bytes**. That arithmetic has run on no device, which is why the figure to
-  quote is the `RawBuffer` one. Since story #1448 these figures hold for the
-  gate's two cutout steps alone: its overlay steps draw on the ordered path, and
-  the gate reported that path's whole upload of the same document as one call of
-  16 rows and 320 words, which is 1280 bytes.
+  80 = **1392** carried the sixteen instances the frame's draw commands read
+  until story #1450. Since that story each rect is drawn once per occlusion
+  piece and the document packs to 42 instances (`just unity-render`'s
+  "instances:" line), so 112 + 42 × 80 = **3472** of the same 5232 bytes carry
+  them; 42 still fits the 64-slot floor. Before #1446 all of it was uploaded on
+  a commit whose dirty set was empty as much as on any other. The
+  `ConstantBuffer` rung sizes its batch from the device's own window instead, so
+  the same document costs more there: a 16 KB window with 256-byte alignment
+  fits `(16384 - 112) / 80` = 203 slots, and `BatchStrideBytes` rounds
+  `112 + 203 x 80` = 16352 **up** to the alignment — so the stride the buffer is
+  sized from, and a whole upload sends, is **16384 bytes**. That arithmetic has
+  run on no device, which is why the figure to quote is the `RawBuffer` one.
+  Since story #1448 these figures hold for the gate's two cutout steps alone:
+  its overlay steps draw on the ordered path, and the gate reports that path's
+  whole upload of the same document as one call of 42 rows and 840 words, which
+  is 3360 bytes.
 
   **The fourteen is two tests, not one.**
   `crates/dashc/tests/figma_lowering.rs`'s

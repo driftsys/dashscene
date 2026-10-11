@@ -207,6 +207,7 @@ pub fn checker_asset(dark: Color) -> ImageAsset {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     ImageAsset {

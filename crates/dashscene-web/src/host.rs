@@ -560,6 +560,7 @@ impl Host {
             scene.clips(),
             scene.groups(),
             scene.glyphs(),
+            scene.pieces(),
             Some(changes.rects),
         );
         // A frame between `release_surface` and `adopt`. The loop schedules

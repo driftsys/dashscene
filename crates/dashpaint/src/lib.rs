@@ -150,6 +150,44 @@ pub struct RectEntry {
     pub rotation_anchor: Vec2,
 }
 
+/// One visible sub-rectangle of a [`RectEntry`]: the part of that rect's box
+/// that no later opaque core covers (story #1450,
+/// docs/specification/03-target-hardware-rules.md R-T2).
+///
+/// `dashscene-core`'s occlusion pass (`dashscene_core::occlusion`) cuts each
+/// rect into these at commit. A painter draws a piece as a quad between its
+/// four edges and still shades it against the box of the rect that `rect`
+/// names, so the signed distance and the anti-aliased edge are the rect's own:
+/// a piece changes which pixels are shaded, never what colour they receive.
+///
+/// **Edges, not an origin and a size.** Every edge is a copy, bit for bit, of
+/// an edge of the rect's box or of a core's interior; the pass never computes
+/// one. So two pieces that meet share their edge exactly, and an edge on the
+/// box boundary equals the box's own edge exactly — `left == x`,
+/// `right == x + w` evaluated in `f32` — which is what lets a painter test
+/// "this edge lies on the box edge" with `==`. A stored width would re-derive
+/// the far edge and could land one unit in the last place away from it.
+///
+/// `#[repr(C)]` because it is a boundary-B row like [`RectEntry`]: 20 bytes,
+/// 4-aligned, no padding.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Piece {
+    /// The index of the rect this piece belongs to, in the rect table.
+    pub rect: u32,
+    /// The quad's left edge, in the same absolute space as [`RectEntry`].
+    /// Every edge lies inside that rect's box.
+    pub left: f32,
+    /// The quad's top edge.
+    pub top: f32,
+    /// The quad's right edge, greater than `left` for a cut piece and at
+    /// least `left` for a whole box, which has no area when its rect has none.
+    pub right: f32,
+    /// The quad's bottom edge, greater than `top` for a cut piece and at
+    /// least `top` for a whole box, which has no area when its rect has none.
+    pub bottom: f32,
+}
+
 /// A 2D point or vector, in the coordinate space its context names.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -3660,6 +3698,20 @@ pub trait Painter {
     /// composited into a group's layer nor clipped to a region — a named
     /// limitation, story #44, a debt candidate).
     ///
+    /// `pieces` is the occlusion pass's output (story #1450,
+    /// docs/specification/03-target-hardware-rules.md R-T2): every rect's
+    /// visible sub-rectangles, in rect order, after every later opaque core's
+    /// interior is subtracted. A painter that honours it draws each piece as a
+    /// quad between the piece's edges while shading against the whole box of
+    /// [`Piece::rect`], so a piece changes which pixels are shaded and never
+    /// what colour they receive. A rect with no piece in a non-empty slice is
+    /// covered by later opaque ink and draws nothing. **An empty slice means
+    /// every rect is one whole piece** — hand-built tables, and a caller with
+    /// no committed scene. Ignoring the slice and drawing whole rects is always
+    /// correct, because the pixels a piece leaves out are the ones a later
+    /// opaque core paints over; it is a fill-rate saving, not a picture
+    /// change. Glyph runs are never cut.
+    ///
     /// `dirty` is the rect indices whose entry changed since the commit
     /// that produced the previous `rects` — **advisory**. `None` means
     /// the caller has no dirty information (hand-built tables, or a first
@@ -3737,6 +3789,7 @@ pub trait Painter {
         clips: &ClipTable,
         groups: &[GroupComposite],
         glyphs: &GlyphRunTable,
+        pieces: &[Piece],
         dirty: Option<&[u32]>,
     );
 }

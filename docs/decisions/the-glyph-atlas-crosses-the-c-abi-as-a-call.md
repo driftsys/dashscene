@@ -17,8 +17,10 @@
 ## Context
 
 Story #859 gave a host that draws its own frames the committed tables:
-`ds_runtime_acquire_frame` hands out nineteen arrays, two of which are the glyph
-runs and their quads. A quad is a glyph id and a pen position, and nothing else.
+`ds_runtime_acquire_frame` handed out nineteen arrays when this record was
+written (story #1450 later added a twentieth, the occlusion pieces), two of
+which are the glyph runs and their quads. A quad is a glyph id and a pen
+position, and nothing else.
 
 The **sheet those quads sample did not cross**, and neither did the per-glyph
 placement that turns a quad into geometry: `atlas_px`, the rectangle in the

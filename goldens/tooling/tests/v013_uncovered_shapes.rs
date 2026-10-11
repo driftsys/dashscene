@@ -113,6 +113,7 @@ fn render(arena: &Arena, glyphs: &GlyphRunTable) -> Vec<u8> {
         scene.clips(),
         scene.groups(),
         glyphs,
+        scene.pieces(),
         None,
     );
     painter.png_bytes()
@@ -839,6 +840,7 @@ fn text_outside_the_group_layer_moves_far_more_than_the_golden_can_absorb() {
         scene.clips(),
         &[],
         scene.glyphs(),
+        scene.pieces(),
         None,
     );
     let differing = diff_vs(

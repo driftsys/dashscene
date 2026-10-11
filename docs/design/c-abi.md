@@ -75,6 +75,8 @@ host-draws host that skipped it would acquire the same frame for ever.
     ds_runtime_attach_surface            a platform handle becomes a target
     ds_runtime_detach_surface            drop the target, keep the document
     ds_runtime_resize                    the target's extent changed
+    ds_runtime_set_aa_band               how far inside an opaque core the
+                                         occlusion cut stops
     ds_runtime_tick                      advance the scene by dt
     ds_runtime_draw                      paint the committed frame
 
@@ -100,6 +102,18 @@ bearing since 2026-08-18: `../decisions/host-integration-in-three-layers.md` D1
 now states layer 0 in two forms. This ABI served only the runtime-draws one
 until story #859 added the data plane the other needs; it now serves both, and
 `ds_runtime_detach_surface` belongs to the first of them.
+
+`ds_runtime_set_aa_band` (story #1450) sets the width, in document units, of the
+host painter's anti-aliased edge, which the commit's occlusion pass shrinks
+every opaque core by before it cuts the rects beneath it into `DsFrame::pieces`.
+**The band belongs to the runtime, not to the document**: every load replaces
+the arena, so the runtime holds the band and applies it to each new arena before
+that load's first commit. A host sets it once, with or without a document
+loaded. It takes effect at the next tick, which commits for a band change even
+on a settled scene (`LiveScene::tick` compares the arena's band with the one the
+last commit used). Every value is clamped rather than refused — negative to 0,
+infinite to `f32::MAX`, NaN to the default 1.0 — so the call answers `DS_OK` on
+any runtime it can reach.
 
 ## A loader per shape of input, and why they are not one
 
@@ -140,17 +154,27 @@ showing a different artboard loads again.
 
 ## Versioning: a new symbol is free, a changed signature is not
 
-`ds_abi_version` returns `DS_ABI_VERSION`, which is **2**. It is not the crate's
+`ds_abi_version` returns `DS_ABI_VERSION`, which is **3**. It is not the crate's
 version — it is what this library implements.
 
-**It moved once, at story #1226**, when `DsRuntime` stopped being a pointer and
+**It moved first at story #1226**, when `DsRuntime` stopped being a pointer and
 became a generational handle. Ten of the twelve exported entry points changed
-signature for it — twelve was the count then, and the surface has grown four
-times since, by story #859, by story #1124, by story #1123 and by story #1449;
-`ds_abi_version` and `ds_last_error_message` take no runtime and did not. That
-is the rule in this heading working as stated rather than an exception to it — a
-changed signature is exactly what is not free, and it is the only thing that has
-ever moved this number.
+signature for it — twelve was the count then, and the surface has grown five
+times since, by story #859, by story #1124, by story #1123, by story #1449 and
+by story #1450; `ds_abi_version` and `ds_last_error_message` take no runtime and
+did not. That is the rule in this heading working as stated rather than an
+exception to it — a changed signature is exactly what is not free.
+
+**It moved to 3 at story #1450**, when `DsFrame` gained `pieces`: every rect cut
+into the sub-rectangles no later opaque core covers, which a host that draws its
+own frames packs where it packed whole rects. A member appended to `DsFrame` is
+a changed signature in effect. `ds_runtime_acquire_frame` writes the whole
+struct through the host's pointer, so a host built against the shorter struct
+would be written past — the cost story #1123 avoided for the atlases by making
+them a call. The pieces could not take that route: they belong to the commit,
+and a host reads them on every frame with the rest of the tables. The band that
+decides how far inside a core the cut stops arrived beside them as a new symbol,
+`ds_runtime_set_aa_band`, which alone would have been free.
 
 `DsStatus` has grown from nine variants to twenty-one without moving it, because
 every addition went on the **tail**: `FontFace` and `Atlas` at #947, then `Map`,
@@ -175,8 +199,8 @@ host that draws its own frames, and the obvious shape was three more `DsSlice`
 members on `DsFrame` — which changes that struct's layout, so a host built
 against an older header would allocate the smaller struct and be written past.
 `ds_runtime_atlas_count` and `ds_runtime_atlas` beside it cost nothing:
-`DS_ABI_VERSION` is still 2, and `DS_NO_SUCH_ATLAS` went on the tail of
-`DsStatus` where nothing could reach it before the call existed.
+`DS_ABI_VERSION` stayed 2, and `DS_NO_SUCH_ATLAS` went on the tail of `DsStatus`
+where nothing could reach it before the call existed.
 `../decisions/the-glyph-atlas-crosses-the-c-abi-as-a-call.md` D1 carries the
 other two reasons, which are about the atlas belonging to the load rather than
 to the commit.
@@ -374,11 +398,13 @@ make the counts unnecessary.
   loaders now clear it, and the panic boundary section above states what each
   window holds.
 - ~~No data plane~~ — **closed (story #859, 2026-08-20)**.
-  `ds_runtime_acquire_frame` hands out nineteen arrays under a lease that
-  refuses any call that would commit. Seventeen carry a gated boundary-B row
-  type; the other two are primitives — the dirty set of `u32` rect indices and
-  the image payload bytes an `ImageEntry` indexes. Its own gap is narrower and
-  is named in the section below.
+  `ds_runtime_acquire_frame` hands out the committed tables' arrays under a
+  lease that refuses any call that would commit. Every array but two carries a
+  gated boundary-B row type, and
+  `every_gated_row_type_either_crosses_or_says_why_not` pins which; the other
+  two are primitives — the dirty set of `u32` rect indices and the image payload
+  bytes an `ImageEntry` indexes. Its own gap is narrower and is named in the
+  section below.
 - ~~The glyph atlases do not cross~~ — **closed (story #1123, 2026-08-23)**.
   They cross on their own call rather than in the frame, because an atlas set is
   installed by a load and is not part of a commit — so a host reads it once per

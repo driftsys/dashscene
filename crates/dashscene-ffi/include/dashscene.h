@@ -11,7 +11,10 @@
  *
  * VERSIONING. ds_abi_version() returns DS_ABI_VERSION, which is not the crate's
  * semantic version. Adding a symbol, or a DsStatus variant at the tail, does not
- * move it; changing a signature or renumbering a variant does. So does moving an
+ * move it; changing a signature or renumbering a variant does. So does adding a
+ * member to a struct a call writes through your pointer, because the call then
+ * writes more bytes than a host built against the shorter struct allocated:
+ * DsFrame.pieces is the case, and it moved the version to 3. So does moving an
  * existing condition onto a different discriminant, even when the variant it
  * moves to is itself new and appended: a host that knew the old value stops
  * recognising the condition, which is a break the first two clauses do not
@@ -32,7 +35,7 @@
 extern "C" {
 #endif
 
-#define DS_ABI_VERSION 2u
+#define DS_ABI_VERSION 3u
 
 /*
  * Why a call did not succeed.
@@ -431,6 +434,36 @@ DsStatus ds_runtime_detach_surface(DsRuntime runtime, bool *out_had_surface);
 DsStatus ds_runtime_resize(DsRuntime runtime, uint32_t width, uint32_t height);
 
 /*
+ * Sets the anti-aliasing band, in document units: how far inside an opaque
+ * core's box the painter's anti-aliased edge reaches. The occlusion pass shrinks
+ * every core by its largest corner radius plus this band before it cuts the
+ * rects beneath it into DsFrame.pieces. Pass the width of your painter's
+ * anti-aliased edge in document units — one device pixel at your scale. The
+ * default is 1.0.
+ *
+ * A band set too small leaves part of a core's anti-aliased edge over a hole
+ * in the rect beneath it, which shows as a ring of background inside that edge.
+ * A band set too large only draws more of the rect beneath than needed.
+ *
+ * EVERY VALUE IS ACCEPTED AND CLAMPED, never refused: a negative band is stored
+ * as 0, an infinite one as FLT_MAX, and NaN as the default 1.0. So this answers
+ * DS_OK for any float on a runtime it can reach.
+ *
+ * Needs no document, and survives every load: the runtime holds the band and
+ * applies it to each document it loads, so a host can set it once, before or
+ * after loading.
+ *
+ * Takes effect at the next ds_runtime_tick, which commits for a band change
+ * even on a scene where nothing else moved, and whose DsFrame.dirty then names
+ * every rect whose pieces changed. Not refused under a frame lease: it commits
+ * nothing itself, and the tick that applies it is refused while the lease is
+ * outstanding.
+ *
+ * Adding this symbol did not move DS_ABI_VERSION.
+ */
+DsStatus ds_runtime_set_aa_band(DsRuntime runtime, float band);
+
+/*
  * Advances the scene by dt seconds. out_advanced, if non-NULL, receives whether
  * the generation moved — which is what says a frame is worth drawing.
  *
@@ -514,6 +547,7 @@ typedef struct DsSlice {
  *   RectEntry.clip     -> clip_regions, whose rows are ranges into clip_boxes
  *   ImageFill.image    -> image_entries, whose offset/len index image_payload
  *   GlyphRun.glyphs    -> glyph_quads
+ *   Piece.rect         -> rects
  *   groups             -> rect ranges that composite offscreen, and their alpha
  *
  * The row types are boundary B's, declared in crates/dashpaint and held to a C
@@ -578,6 +612,27 @@ typedef struct DsFrame {
 
   DsSlice glyph_runs;
   DsSlice glyph_quads;
+
+  /* Piece: every rect cut into the sub-rectangles no later opaque core covers,
+   * in rect order. A piece's rect field indexes rects; its left, top, right and
+   * bottom are the edges of the quad to draw, always inside that rect's box.
+   * Draw the quad and shade it against the rect's own box, so the signed
+   * distance and the anti-aliased edge do not change.
+   *
+   * Every edge is a copy of the box's edge (x, y, x + w, y + h, computed in
+   * float) or of a core interior's edge, never recomputed. So an edge on the box
+   * boundary compares equal to the box's edge with ==, and two pieces that meet
+   * share their edge exactly: no gap and no overlap between them.
+   *
+   * A rect can have NO piece: a later core that covers it entirely leaves
+   * nothing visible to draw. A rect whose piece list grows past the occlusion
+   * pass's limit after any one cut keeps one piece equal to its whole box, even
+   * when a later cut would bring the count back under that limit. How far
+   * inside a core's box the cut stops is set by ds_runtime_set_aa_band.
+   *
+   * Appended last, which moved DS_ABI_VERSION to 3: a member added here changes
+   * the bytes ds_runtime_acquire_frame writes into your DsFrame. */
+  DsSlice pieces;
 } DsFrame;
 
 /*

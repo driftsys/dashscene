@@ -367,6 +367,7 @@ impl Painter for RecordingPainter {
         clips: &ClipTable,
         groups: &[GroupComposite],
         _glyphs: &GlyphRunTable,
+        _pieces: &[dashpaint::Piece],
         _dirty: Option<&[u32]>,
     ) {
         for rect in rects {
@@ -432,6 +433,7 @@ fn painter_receives_rects_in_slice_order_with_resolved_colors() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
 
@@ -453,6 +455,7 @@ fn painter_resolves_each_rects_clip_region() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
 
@@ -485,6 +488,7 @@ fn painter_trait_is_object_safe() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
 
@@ -876,6 +880,7 @@ impl Painter for DirtyRecordingPainter {
         _clips: &ClipTable,
         _groups: &[GroupComposite],
         _glyphs: &GlyphRunTable,
+        _pieces: &[dashpaint::Piece],
         dirty: Option<&[u32]>,
     ) {
         self.seen_dirty = dirty.map(<[u32]>::to_vec);
@@ -909,6 +914,7 @@ fn the_dirty_set_crosses_boundary_b() {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         Some(&[0]),
     );
     assert_eq!(painter.seen_dirty.as_deref(), Some(&[0u32][..]));
@@ -922,6 +928,7 @@ fn the_dirty_set_crosses_boundary_b() {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     assert_eq!(painter.seen_dirty, None);
@@ -974,6 +981,7 @@ fn group_opacity_crosses_as_per_rect_alpha_and_a_group_slice() {
         &ClipTable::new(),
         &groups,
         &GlyphRunTable::new(),
+        &[],
         None,
     );
 
@@ -1043,6 +1051,7 @@ impl Painter for BarrierRecordingPainter {
         _clips: &ClipTable,
         _groups: &[GroupComposite],
         _glyphs: &GlyphRunTable,
+        _pieces: &[dashpaint::Piece],
         _dirty: Option<&[u32]>,
     ) {
         for (index, rect) in rects.iter().enumerate() {
@@ -1096,6 +1105,7 @@ fn a_backdrop_sampling_rect_crosses_boundary_b_as_an_ordering_barrier() {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
 
@@ -2347,6 +2357,7 @@ fn a_painter_declares_which_formats_it_can_use() {
             _clips: &ClipTable,
             _groups: &[GroupComposite],
             _glyphs: &GlyphRunTable,
+            _pieces: &[dashpaint::Piece],
             _dirty: Option<&[u32]>,
         ) {
         }
@@ -2367,6 +2378,7 @@ fn a_painter_declares_which_formats_it_can_use() {
             _clips: &ClipTable,
             _groups: &[GroupComposite],
             _glyphs: &GlyphRunTable,
+            _pieces: &[dashpaint::Piece],
             _dirty: Option<&[u32]>,
         ) {
         }

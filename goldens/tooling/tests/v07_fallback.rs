@@ -164,6 +164,7 @@ fn mixed_script_fallback_matches_its_golden() {
         scene.clips(),
         scene.groups(),
         glyphs,
+        scene.pieces(),
         None,
     );
 
@@ -302,6 +303,7 @@ fn render_rgba(
         scene.clips(),
         scene.groups(),
         table,
+        scene.pieces(),
         None,
     );
     painter.rgba_bytes()

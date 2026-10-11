@@ -285,6 +285,12 @@ namespace Driftsys.Dashscene
 
         public DsSlice GlyphRuns;
         public DsSlice GlyphQuads;
+
+        /// `Piece`: every rect cut into the sub-rectangles no later opaque core
+        /// covers, in rect order. A piece's `Rect` indexes `Rects`. A rect can
+        /// have no piece, when a later core covers it entirely. Appended last,
+        /// which moved `DS_ABI_VERSION` to 3 (story #1450).
+        public DsSlice Pieces;
     }
 
     /// The `extern "C"` surface: one import per entry point, and one forwarder
@@ -327,7 +333,12 @@ namespace Driftsys.Dashscene
         ///
         /// `DashsceneRuntime` compares this against `ds_abi_version()` before
         /// any other call, which is R-E16.
-        internal const uint AbiVersion = 2;
+        ///
+        /// 3 since story #1450 appended `DsFrame.Pieces`: a member added to a
+        /// struct the library writes through this package's pointer changes
+        /// the bytes it writes, so it moves the version as a changed signature
+        /// does.
+        internal const uint AbiVersion = 3;
 
         // ------------------------------------------------------------ forwarders
         //
@@ -540,6 +551,18 @@ namespace Driftsys.Dashscene
             }
         }
 
+        internal static DsStatus ds_runtime_set_aa_band(ulong runtime, float band)
+        {
+            try
+            {
+                return Imports.ds_runtime_set_aa_band(runtime, band);
+            }
+            catch (EntryPointNotFoundException e)
+            {
+                throw SymbolMissing(e);
+            }
+        }
+
         internal static DsStatus ds_runtime_kind_set(ulong runtime, out uint outBits)
         {
             try
@@ -696,6 +719,12 @@ namespace Driftsys.Dashscene
             [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
             internal static extern DsStatus ds_runtime_release_frame(
                 ulong runtime, int drawn, out byte outWasLeased);
+
+            /// The anti-aliasing band, in document units, the occlusion pass
+            /// shrinks every opaque core by. Every value is clamped rather than
+            /// refused, and the runtime keeps it across loads (story #1450).
+            [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+            internal static extern DsStatus ds_runtime_set_aa_band(ulong runtime, float band);
 
             [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
             internal static extern DsStatus ds_runtime_kind_set(ulong runtime, out uint outBits);

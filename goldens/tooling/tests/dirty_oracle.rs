@@ -37,6 +37,7 @@ fn paint(painter: &mut SkiaPainter, arena: &Arena) {
         scene.clips(),
         scene.groups(),
         &GlyphRunTable::new(),
+        scene.pieces(),
         Some(scene.dirty()),
     );
 }
@@ -276,6 +277,7 @@ fn the_oracle_can_fail() {
         scene.clips(),
         scene.groups(),
         &GlyphRunTable::new(),
+        scene.pieces(),
         Some(scene.dirty()),
     );
     retained.paint(
@@ -285,6 +287,7 @@ fn the_oracle_can_fail() {
         scene.clips(),
         scene.groups(),
         &GlyphRunTable::new(),
+        scene.pieces(),
         Some(&[]),
     );
 
@@ -356,6 +359,7 @@ fn the_oracle_can_fail_on_a_recolor() {
         scene.clips(),
         scene.groups(),
         &GlyphRunTable::new(),
+        scene.pieces(),
         Some(scene.dirty()),
     );
     retained.paint(
@@ -365,6 +369,7 @@ fn the_oracle_can_fail_on_a_recolor() {
         scene.clips(),
         scene.groups(),
         &GlyphRunTable::new(),
+        scene.pieces(),
         Some(&[]),
     );
 

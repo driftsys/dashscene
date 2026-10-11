@@ -231,6 +231,85 @@ fn the_shading_includes_the_generated_file_and_redefines_nothing_in_it() {
     }
 }
 
+/// The occlusion piece word's grow bits and index scale agree across the three
+/// places that state them (story #1450).
+///
+/// `_DsShade.w` is `row * 16 + bits`, written by `Runtime/FramePacker.cs` from
+/// `PaintHeap.cs`'s `Grow*` and `ExtentIndexScale`, and decoded by
+/// `DashsceneInstance.hlsl`'s `DsVertex` through `DS_GROW_*` and
+/// `DS_EXTENT_INDEX_SCALE`. The lean painter's `Instance::GROW_*` in
+/// `crates/dashscene-gpu/src/instance.rs` is the third copy, and the two
+/// painters are stated over one word or over nothing. **A swapped pair is
+/// silent everywhere else**: a packer writing the right bit as 2 and a shader
+/// reading 2 as the top edge grows a cut edge into the next piece of the same
+/// rect, which blends twice only where that rect is translucent. The render
+/// gate's order phase draws one such rect (the translucent veil an opaque plug
+/// cuts, in `unity/render-gate/order.json`) and reads its cut seams, but only
+/// on the one graphics API it measures; this test holds the numbers equal with
+/// no editor.
+#[test]
+fn the_piece_grow_bits_agree_across_the_three_places_that_state_them() {
+    let root = package_gate::root();
+    let rust = fs::read_to_string(root.join("crates/dashscene-gpu/src/instance.rs"))
+        .expect("the lean painter's instance.rs");
+    let hlsl = fs::read_to_string(
+        root.join(package_gate::PACKAGE_PATH)
+            .join("Runtime/Shaders/DashsceneInstance.hlsl"),
+    )
+    .expect("the Unity shading");
+    let cs_files = package_gate::package_cs_files();
+    let (_, heap) = cs_files
+        .iter()
+        .find(|(path, _)| path.ends_with("Runtime/PaintHeap.cs"))
+        .expect("Runtime/PaintHeap.cs");
+
+    // `pub const NAME: u32 = <n>;` in the Rust source.
+    let rust_const = |name: &str| -> Option<i64> {
+        let needle = format!("pub const {name}: u32 = ");
+        let at = rust.find(&needle)? + needle.len();
+        let rest = &rust[at..];
+        let end = rest.find(|c: char| !c.is_ascii_digit())?;
+        rest[..end].parse().ok()
+    };
+
+    for (rust_name, cs_name, hlsl_name) in [
+        ("GROW_LEFT", "GrowLeft", "DS_GROW_LEFT"),
+        ("GROW_TOP", "GrowTop", "DS_GROW_TOP"),
+        ("GROW_RIGHT", "GrowRight", "DS_GROW_RIGHT"),
+        ("GROW_BOTTOM", "GrowBottom", "DS_GROW_BOTTOM"),
+    ] {
+        let lean = rust_const(rust_name)
+            .unwrap_or_else(|| panic!("instance.rs declares Instance::{rust_name}"));
+        let cs = package_gate::cs_const_int(heap, cs_name)
+            .unwrap_or_else(|| panic!("PaintHeap.cs declares {cs_name}"));
+        let shading = package_gate::hlsl_define_u32(&hlsl, hlsl_name)
+            .unwrap_or_else(|| panic!("the shading defines {hlsl_name}"));
+        assert!(
+            lean == cs && cs == shading,
+            "the grow bit is {lean} in instance.rs's {rust_name}, {cs} in \
+             PaintHeap.cs's {cs_name} and {shading} in the shading's {hlsl_name}. \
+             The packer and the vertex stage would name different edges."
+        );
+    }
+
+    // The index sits above the four bits: `<< 4` in the lean painter, `* 16`
+    // here. Held to `GROW_ALL + 1` rather than to a literal 16, so the
+    // relation is what is pinned.
+    let all = rust_const("GROW_ALL").expect("instance.rs declares Instance::GROW_ALL");
+    let cs_all =
+        package_gate::cs_const_int(heap, "GrowAll").expect("PaintHeap.cs declares GrowAll");
+    let cs_scale = package_gate::cs_const_int(heap, "ExtentIndexScale")
+        .expect("PaintHeap.cs declares ExtentIndexScale");
+    let hlsl_scale = package_gate::hlsl_define_u32(&hlsl, "DS_EXTENT_INDEX_SCALE")
+        .expect("the shading defines DS_EXTENT_INDEX_SCALE");
+    assert!(
+        cs_all == all && cs_scale == all + 1 && hlsl_scale == cs_scale,
+        "GROW_ALL is {all} in instance.rs and {cs_all} in PaintHeap.cs; the index \
+         scale is {cs_scale} in PaintHeap.cs and {hlsl_scale} in the shading. The \
+         word's index must sit directly above its {all} grow bits on both sides."
+    );
+}
+
 /// The heap layout constants agree across all three places that state them.
 ///
 /// `paint.wgsl` declares `GRADIENT_WORDS`, the C# packer declares

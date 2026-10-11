@@ -78,6 +78,7 @@ fn render_and_compare(arena: &Arena, name: &str) {
         scene.clips(),
         scene.groups(),
         &GlyphRunTable::new(),
+        scene.pieces(),
         None,
     );
     goldens::assert_matches_golden(name, &painter.png_bytes());

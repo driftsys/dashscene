@@ -127,6 +127,7 @@ fn the_clip_scene_matches_its_golden() {
         scene.clips(),
         scene.groups(),
         &GlyphRunTable::new(),
+        scene.pieces(),
         Some(scene.dirty()),
     );
     let bytes = painter.rgba_bytes();

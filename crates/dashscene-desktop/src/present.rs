@@ -439,6 +439,7 @@ impl Present for GpuPresenter {
             scene.clips(),
             scene.groups(),
             scene.glyphs(),
+            scene.pieces(),
             Some(changes.rects),
         );
         self.renderer

@@ -1352,6 +1352,13 @@ namespace Driftsys.Dashscene.Samples
                 // painter keeps its own default there.
                 _painter.EdgeWidth = camera.orthographicSize * 2f / camera.pixelHeight;
             }
+
+            // The occlusion pass's band is the painter's edge width (story
+            // #1450), handed over on every call and before the tick, so a
+            // replaced runtime — which starts at the default band — takes it
+            // before its first commit is drawn. The same value a second time
+            // commits nothing.
+            _runtime.SetAaBand(_painter.EdgeWidth);
         }
 
         /// The one line a run reads: every manifest entry reached the painter.

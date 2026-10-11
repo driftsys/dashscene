@@ -452,7 +452,7 @@ nothing could move it from outside.
 **R-E17** — the host shall compare each `DsSlice::stride` against the `sizeof`
 of its own row declaration before reading any row of that array, and shall
 refuse to read the array when they differ. **Met** by story #1121:
-`FrameLease.ValidateStrides` compares all nineteen before the lease is handed
+`FrameLease.ValidateStrides` compares every array's before the lease is handed
 out, and a mismatch releases the lease and throws
 `DashsceneStrideMismatchException` rather than reading a row. _Check:_ mutate a
 row type's size and assert the host refuses rather than drawing.

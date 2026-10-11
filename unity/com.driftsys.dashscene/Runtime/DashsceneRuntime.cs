@@ -281,6 +281,27 @@ namespace Driftsys.Dashscene
             return advanced != 0;
         }
 
+        /// Sets the anti-aliasing band, in document units, that the occlusion
+        /// pass shrinks every opaque core by before it cuts the rects beneath
+        /// it into the frame's `Pieces` (story #1450).
+        ///
+        /// **Pass the painter's own edge width**, `BrgPainter.EdgeWidth`: one
+        /// device pixel in document units. A core is then cut out only where
+        /// its ink is fully opaque, so the anti-aliased fringe of its edge still
+        /// has the rect beneath it to blend over. Call it wherever the host
+        /// sets `EdgeWidth`, before the next [`Tick`]. The default is 1.0.
+        ///
+        /// Takes effect at the next [`Tick`], which commits for a changed band
+        /// even on an otherwise idle scene; a band equal to the one the last
+        /// commit used commits nothing. The band belongs to the runtime rather
+        /// than to the document, so it survives every load. Every value is
+        /// accepted: the library clamps a negative band to 0 and reads NaN as
+        /// the default.
+        public void SetAaBand(float band)
+        {
+            Check(Native.ds_runtime_set_aa_band(Handle(), band), "ds_runtime_set_aa_band");
+        }
+
         /// The document's paint kind set: bit 0 set when it clips, bit 1 when
         /// it strokes.
         ///

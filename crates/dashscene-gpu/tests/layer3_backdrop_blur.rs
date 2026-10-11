@@ -110,6 +110,7 @@ fn draw_groups(
         clips,
         groups,
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     renderer()
@@ -665,6 +666,7 @@ fn a_masked_backdrop_follows_the_fields_outline_rather_than_its_box() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let pixels = renderer()
@@ -804,6 +806,7 @@ fn a_refused_backdrop_does_not_renumber_the_one_behind_it() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let mut renderer = renderer();
@@ -944,6 +947,7 @@ fn a_refused_coverage_field_leaves_the_backdrop_untouched() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let mut renderer = renderer();
@@ -1076,6 +1080,7 @@ fn a_refused_backdrops_blur_row_is_still_checked_against_its_table() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let mut renderer = renderer();
@@ -1295,6 +1300,7 @@ fn a_degenerate_coverage_field_draws_nothing() {
             &clips,
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         let pixels = renderer
@@ -1468,6 +1474,7 @@ fn a_frame_whose_only_backdrop_is_refused_allocates_nothing() {
             &clips,
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         renderer
@@ -1642,6 +1649,7 @@ fn an_alternating_refusal_does_not_rebuild_the_frame_wide_targets() {
             &clips,
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         renderer
@@ -1772,6 +1780,7 @@ fn a_refused_backdrop_does_not_leave_the_previous_frame_on_the_target() {
             &clips,
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         let pixels = renderer
@@ -1907,6 +1916,7 @@ fn a_frame_with_a_backdrop_allocates_and_a_steady_one_does_not() {
             &clips,
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         renderer
@@ -2180,6 +2190,7 @@ fn replacing_the_document_rebuilds_the_blur_bindings() {
             &clips,
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         renderer
@@ -2318,6 +2329,7 @@ fn a_field_that_draws_nothing_makes_no_atlas_resident() {
             &clips,
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         renderer
@@ -2451,6 +2463,7 @@ fn an_admitted_payload_is_counted_once_however_many_frames_draw_it() {
             &clips,
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         renderer

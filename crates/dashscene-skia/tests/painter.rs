@@ -58,6 +58,7 @@ fn paints_a_core_committed_scene_with_exact_pixels() {
         scene.clips(),
         &[],
         &GlyphRunTable::new(),
+        scene.pieces(),
         None,
     );
 
@@ -98,6 +99,7 @@ fn an_unfilled_node_draws_nothing() {
         scene.clips(),
         &[],
         &GlyphRunTable::new(),
+        scene.pieces(),
         None,
     );
 
@@ -129,6 +131,7 @@ fn encodes_png() {
         scene.clips(),
         &[],
         &GlyphRunTable::new(),
+        scene.pieces(),
         None,
     );
 
@@ -275,6 +278,7 @@ fn render(rects: &[RectEntry], paints: &PaintTable, images: &ImageTable, size: i
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     painter.rgba_bytes()
@@ -521,6 +525,7 @@ fn stroked_square(align: StrokeAlign) -> Vec<u8> {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     painter.rgba_bytes()
@@ -605,6 +610,7 @@ fn quadrant_asset() -> ImageAsset {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     ImageAsset {
@@ -647,6 +653,7 @@ fn image_scene(
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     painter.rgba_bytes()
@@ -807,6 +814,7 @@ fn clipped_square(boxes: &[ClipBox]) -> Vec<u8> {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     painter.rgba_bytes()
@@ -935,6 +943,7 @@ fn a_clip_region_does_not_leak_into_the_next_rect() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let rgba = painter.rgba_bytes();
@@ -975,6 +984,7 @@ fn a_diamond_gradient_with_too_many_stops_panics_by_name() {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
 }
@@ -1034,6 +1044,7 @@ fn render_frames(mode: DirtyMode, frames: &[Frame]) -> Vec<u8> {
             &ClipTable::new(),
             &[],
             &GlyphRunTable::new(),
+            &[],
             dirty.as_deref(),
         );
     }
@@ -1283,6 +1294,7 @@ fn solid_atlas_png(n: i32) -> Vec<u8> {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     painter.png_bytes()
@@ -1373,6 +1385,7 @@ fn a_glyph_quad_fills_its_box_with_the_text_color() {
         &ClipTable::new(),
         &[],
         &glyphs,
+        &[],
         None,
     );
     let rgba = painter.rgba_bytes();
@@ -1418,6 +1431,7 @@ fn a_glyph_absent_from_the_atlas_draws_nothing() {
         &ClipTable::new(),
         &[],
         &glyphs,
+        &[],
         None,
     );
     let rgba = painter.rgba_bytes();
@@ -1447,6 +1461,7 @@ fn render_with_groups(
         &ClipTable::new(),
         groups,
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     painter.rgba_bytes()
@@ -1556,6 +1571,7 @@ fn a_glyph_runs_free_path_opacity_dims_the_text() {
             &ClipTable::new(),
             &[],
             &glyphs,
+            &[],
             None,
         );
         // Count near-fully-opaque inked pixels. The unpremultiplied red
@@ -1624,6 +1640,7 @@ fn a_glyph_run_is_clipped_to_the_region_its_anchor_rect_carries() {
         &clips,
         &[],
         &glyphs,
+        &[],
         None,
     );
     let rgba = painter.rgba_bytes();
@@ -1670,6 +1687,7 @@ fn a_run_whose_anchor_is_unclipped_draws_in_full() {
         &ClipTable::new(),
         &[],
         &glyphs,
+        &[],
         None,
     );
     let rgba = painter.rgba_bytes();
@@ -1731,6 +1749,7 @@ fn a_clipped_runs_region_does_not_leak_onto_the_next_run() {
         &clips,
         &[],
         &glyphs,
+        &[],
         None,
     );
     let rgba = painter.rgba_bytes();
@@ -1774,6 +1793,7 @@ fn a_run_anchored_past_the_rect_table_is_named_rather_than_drawn_unclipped() {
         &ClipTable::new(),
         &[],
         &glyphs,
+        &[],
         None,
     );
 }
@@ -1818,6 +1838,7 @@ fn a_drop_shadow_inks_behind_and_outside_the_node() {
         scene.clips(),
         &[],
         &GlyphRunTable::new(),
+        scene.pieces(),
         None,
     );
     let rgba = painter.rgba_bytes();
@@ -1885,6 +1906,7 @@ fn an_inner_shadow_darkens_the_edge_not_the_center() {
         scene.clips(),
         &[],
         &GlyphRunTable::new(),
+        scene.pieces(),
         None,
     );
     let rgba = painter.rgba_bytes();
@@ -1942,6 +1964,7 @@ fn one_shadow(
         scene.clips(),
         &[],
         &GlyphRunTable::new(),
+        scene.pieces(),
         None,
     );
     painter.rgba_bytes()
@@ -2482,6 +2505,7 @@ fn render_group_frames(mode: DirtyMode, frames: &[GroupFrame]) -> (Vec<Vec<u8>>,
             &ClipTable::new(),
             &frame.groups,
             &glyphs,
+            &[],
             frame.dirty.as_deref(),
         );
         surfaces.push(painter.rgba_bytes());
@@ -3036,6 +3060,7 @@ fn render_clipped(
         clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     painter.rgba_bytes()

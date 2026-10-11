@@ -387,6 +387,7 @@ pub fn render_dsb(dsb: &[u8]) -> Vec<u8> {
         scene.clips(),
         scene.groups(),
         scene.glyphs(),
+        scene.pieces(),
         None,
     );
     painter.png_bytes()

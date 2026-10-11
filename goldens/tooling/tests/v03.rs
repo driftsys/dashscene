@@ -166,6 +166,7 @@ fn the_v03_paint_vocabulary_matches_its_golden() {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
 

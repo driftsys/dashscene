@@ -214,6 +214,7 @@ fn main() {
             scene.clips(),
             scene.groups(),
             scene.glyphs(),
+            scene.pieces(),
             None,
         );
         let skia_png = skia.png_bytes();
@@ -241,6 +242,7 @@ fn main() {
             scene.clips(),
             scene.groups(),
             scene.glyphs(),
+            scene.pieces(),
             None,
         );
         let gpu_rgba = renderer

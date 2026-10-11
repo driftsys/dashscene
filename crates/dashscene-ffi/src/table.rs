@@ -71,6 +71,13 @@ pub(crate) struct Runtime {
     /// reports it, so a host reading it every frame sees each replacement
     /// exactly once.
     pub(crate) document_replaced: bool,
+    /// The anti-aliasing band the host set with `ds_runtime_set_aa_band`,
+    /// after the arena's clamp; 1.0 until a host sets one.
+    ///
+    /// **Held here as well as on [`Self::arena`]**, because every load replaces
+    /// the arena and a fresh one starts at the default. `drop_document` applies
+    /// this value to each new arena before the load commits.
+    pub(crate) aa_band: f32,
     /// The atlas set the loaded document's runs sample, in the cascade's
     /// font-slot order — what `ds_runtime_atlas` hands out.
     ///
@@ -134,6 +141,7 @@ impl Runtime {
             painter: GpuPainter::new(),
             frame_leased: false,
             document_replaced: false,
+            aa_band: Arena::DEFAULT_AA_BAND,
             atlases: Arc::new(Vec::new()),
             #[cfg(feature = "demo-seam")]
             document_generation: 0,

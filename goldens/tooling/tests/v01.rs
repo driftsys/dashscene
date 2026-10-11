@@ -51,6 +51,7 @@ fn the_walking_skeleton_scene_matches_its_golden() {
         scene.clips(),
         scene.groups(),
         &GlyphRunTable::new(),
+        scene.pieces(),
         None,
     );
 

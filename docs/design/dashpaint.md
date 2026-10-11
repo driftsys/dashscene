@@ -296,10 +296,14 @@ All types and the trait live in `crates/dashpaint/src/lib.rs`:
 - `Painter` — the one trait every paint backend implements:
   `fn paint(&mut self, rects, paints: &PaintTable, images: &ImageTable,
   clips: &ClipTable, groups: &[GroupComposite], glyphs: &GlyphRunTable,
-  dirty: Option<&[u32]>)`
+  pieces: &[Piece], dirty: Option<&[u32]>)`
   (an empty image table is valid input for image-less scenes; a fresh
   `ClipTable` for a scene that clips nothing; an empty `groups` slice for a
-  scene with no render-target opacity).
+  scene with no render-target opacity; an empty `pieces` slice for every rect
+  drawn whole). `pieces` is `CommittedScene::pieces` (story #1450): a painter
+  may draw each piece's quad instead of the whole rect, shading against the
+  rect's box, or ignore the slice — `dashscene-skia` ignores it, and the picture
+  is the same either way.
 
 Each table also exposes its rows as one flat array — `PaintTable::all_entries`
 and its `all_*` siblings, `ClipTable::all_regions` and `all_boxes`,
@@ -352,8 +356,9 @@ Painter>`
 must work — backend selection is whole-scene, R3). Slice order defines stacking
 — a later entry composites over an earlier one, since DFS order encodes document
 stacking. The composited result is the contract; iteration order is the
-implementation's choice (the lean painter draws opaque cores front-to-back,
-`docs/specification/03-target-hardware-rules.md`'s R-T2) — with the one
+implementation's choice (`docs/specification/03-target-hardware-rules.md`'s R-T2
+licenses drawing opaque cores front-to-back; the lean painter takes that rule's
+other form and shades only each rect's occlusion `pieces`) — with the one
 exception "Backdrop sampling" below states. An out-of-range paint index is a
 broken contract between crates; `PaintTable::resolve` centralizes the panic for
 that case, so no painter invents its own failure path (a silent skip would be

@@ -617,6 +617,7 @@ fn the_solved_flex_fixtures_render_through_the_skia_painter() {
             scene.clips(),
             scene.groups(),
             &GlyphRunTable::new(),
+            scene.pieces(),
             None,
         );
         assert_eq!(&painter.png_bytes()[1..4], b"PNG");

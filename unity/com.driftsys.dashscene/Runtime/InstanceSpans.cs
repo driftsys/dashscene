@@ -16,10 +16,10 @@ namespace Driftsys.Dashscene
     /// **A rect is not a row.** It packs to a fill, to stacked fills and a
     /// stroke, to a glyph per drawn quad of every run anchored to it, or to
     /// nothing at all when the packer refuses it — `FramePacker`'s own header
-    /// counts fourteen rects to sixteen instances on the document
-    /// `just unity-render` draws. So a dirty rect index names a SPAN, and a
-    /// commit that leaves every dirty rect's span count where it was can be
-    /// applied in place.
+    /// counts fourteen rects to 42 instances on the document
+    /// `just unity-render` draws, once each rect is drawn per occlusion
+    /// piece. So a dirty rect index names a SPAN, and a commit that leaves
+    /// every dirty rect's span count where it was can be applied in place.
     ///
     /// The shape `dashscene-gpu`'s `InstanceSpan` and `dirty_ranges` already
     /// have, ported rather than reinvented so the two painters agree on which

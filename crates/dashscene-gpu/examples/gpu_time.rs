@@ -241,7 +241,16 @@ fn main() {
 
         for frame in 0..warmup + frames {
             let mut painter = GpuPainter::new();
-            painter.paint(&rects, &paints, &images, &clips, &groups, &glyphs, None);
+            painter.paint(
+                &rects,
+                &paints,
+                &images,
+                &clips,
+                &groups,
+                &glyphs,
+                &[],
+                None,
+            );
             let drawn = renderer.render(
                 painter.instances(),
                 &paints,

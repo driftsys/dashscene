@@ -31,8 +31,9 @@ carries their values to the fragment stage.**
     vertex    instances(0), strokes(4), glyph runs(8), shapes(9)   4 of 4
     fragment  solids(1), clips(2), strokes(4), images(5)           4 of 4
 
-Story #584 changed the vertex row: the stroke table left that stage, which now
-reads three of four. See D4.
+Story #584 changed the vertex row: the stroke table left that stage, which then
+read three of four. Story #1450 took the free slot, so it reads four of four
+again. See D4.
 
 **D2 — the test that decides whether a table may take this route is whether
 every value a fragment needs of it is constant across the instance.** A glyph
@@ -67,6 +68,18 @@ So this route **can** be taken once more. What has not changed is D2's test, and
 the reason a free slot is not an invitation: a value that fits on the instance
 costs no binding at all, and the free slot exists because story #584 preferred
 that.
+
+**Story #1450 took it.** The occlusion pieces' quads are a table of `vec4f` rows
+that only the vertex stage reads: it places a cut quad from the row, and the
+fragment stage shades against `bounds` either way. That passes D2's test. It did
+not fit on the instance — four floats against one spare word — so the word
+carries an index into the table instead (`instance-buffer-contract.md` D10):
+
+    vertex    instances(0), glyph runs(8), shapes(9), extents(13)  4 of 4
+    fragment  paints(1), clips(2), strokes(4), images(5)           4 of 4
+
+Both stages are now full again, and D4 holds as first written: the next table
+changes the structure, whichever stage would read it.
 
 **D5 — the MSDF atlas is sampled through a second, filtering sampler.** Image
 fills keep the nearest sampler

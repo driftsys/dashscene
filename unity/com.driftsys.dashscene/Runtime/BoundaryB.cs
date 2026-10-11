@@ -75,6 +75,18 @@ namespace Driftsys.Dashscene.BoundaryB
         public Vec2 RotationAnchor;
     }
 
+    /// One visible sub-rectangle of a `RectEntry` (story #1450): `Rect` is the
+    /// rect's index, and `Left`, `Top`, `Right`, `Bottom` are the edges of the
+    /// quad to draw, always inside that rect's box. Shade it against the rect's
+    /// own box, not this one. Every edge is a copy of the box's edge
+    /// (`X`, `Y`, `X + W`, `Y + H` in `float`) or of a core's, so `==` against
+    /// the box edge is exact.
+    public struct Piece
+    {
+        public uint Rect;
+        public float Left, Top, Right, Bottom;
+    }
+
     public struct GlyphQuad { public uint GlyphId; public float X, Y; }
 
     public struct GlyphRange { public uint Offset, Count; }

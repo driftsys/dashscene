@@ -199,6 +199,7 @@ fn render(bytes: &[u8], payloads: &[&[u8]]) -> Vec<u8> {
         scene.clips(),
         scene.groups(),
         &GlyphRunTable::new(),
+        scene.pieces(),
         None,
     );
     painter.rgba_bytes()

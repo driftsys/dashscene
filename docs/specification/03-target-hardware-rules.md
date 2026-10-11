@@ -21,6 +21,41 @@ Tiling GPUs, GLES 3.2.
           share the same GLES driver, parity upgrades to "same
           math, one compiler."
 
+**R-T2's intent, and the second mechanism that meets it (story #1450).** R-T2's
+intent is that a pixel covered by a later opaque rect is never shaded. Two
+mechanisms satisfy it, and a painter may take either or both: the depth-tested
+opaque core the rule names, and an occlusion pass over the resolved rect table
+before packing, which emits only the visible pieces of each rect and needs no
+depth buffer
+(`docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`
+D4). The depth-tested form was measured on the Pixel 5 on 2026-09-05 and did not
+shorten the frame (story #1412). Story #1450 built the pass form on the shared
+side: it made each commit cut every rect into the pieces no later opaque core
+covers (`crates/dashscene-core/src/occlusion.rs`), and it added
+`DsFrame::pieces` to carry them to a host painter. The lean painter and the
+Unity painter shade only those pieces, with one exception: on the Unity
+painter's `LitOpaque` material class, a frame with a node that class refuses for
+its coverage (a corner radius, a clip, a stroke or an opacity below 1) is packed
+with every rect whole.
+
+The reading without a device is `crates/dashscene-gpu/tests/shaded_area.rs`: the
+area the lean painter's packed quads shade at 2340x1080, with every rect drawn
+whole (before) and with the pieces (after), in megapixels:
+
+    scene        before   after    removed   derivation's bound
+    surfaces     6.1083   5.3653   0.7430    1.364
+    typography   3.2100   2.9323   0.2777    0.450
+    layout       5.4616   2.9980   2.4636    2.841
+
+The bound is a derivation made with no device before the pass existed
+(`dashscene-v021-lanes/probe-1412/`, outside this repository). The measured
+reduction is below it on every scene because the derivation inset each opaque
+core by one pixel and applied no corner radius and no clip, while the pass
+insets each core by its largest corner radius plus the host's anti-aliasing band
+and intersects the result with the inset interiors of the core's clip boxes. The
+frame time on the device was not read with the pass in place; that reading is
+owed, and issue #1488 tracks it.
+
 Texture policy: GPU-native compressed formats for product assets (ASTC/ETC2
 family; single-channel SDF atlases in EAC-R11 — BC formats are desktop-only,
 absent on mobile GPUs). KTX2/Basis as the distribution format: UASTC for

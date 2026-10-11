@@ -562,6 +562,40 @@ fn the_ordered_row_is_ds_instance_in_field_order() {
          `_DsFirstInstance` to the instance id in code."
     );
 
+    // **Each name reads its own field, whole** (story #1450). `DsVertex` and
+    // `DsShade` read the row through these five names, and the occlusion piece
+    // word is `_DsShade.w`: a `#define` that names the wrong field, or rebuilds
+    // `Shade` with a constant fourth lane, compiles and keeps every row width,
+    // and every piece of an overlay rect would then draw as its whole box.
+    for field in &fields {
+        let name = format!("_Ds{field}");
+        let defines: Vec<&str> = code
+            .lines()
+            .map(str::trim)
+            .filter(|line| {
+                line.starts_with("#define ")
+                    && line.split_whitespace().nth(1) == Some(name.as_str())
+            })
+            .collect();
+        assert_eq!(
+            defines.len(),
+            1,
+            "{HLSL}'s procedural span defines `{name}` {} time(s), not once.",
+            defines.len()
+        );
+        let replacement = defines[0]
+            .split_whitespace()
+            .skip(2)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert_eq!(
+            replacement,
+            format!("ds_Instance.{field}"),
+            "{HLSL}'s procedural `{name}` is not the row's own `{field}` field, \
+             read whole."
+        );
+    }
+
     // **Each stage loads the row of its own instance id**: the vertex stage
     // from the attribute, the fragment stage from the varying the vertex stage
     // wrote. `DsLoad(0)` would read row 0 for every instance.

@@ -14,8 +14,8 @@ pub use dashpaint::{
     ClipView, Color, CornerRadii, EntryParts, Fill, FillSpec, GlyphQuad, GlyphRange, GlyphRun,
     GlyphRunTable, Gradient, GradientKind, GradientStop, GradientView, GroupComposite, ImageAsset,
     ImageFill, ImageFormat, ImageTable, Mat23, PaintEntry, PaintIndex, PaintKind, PaintTable,
-    PaintTag, RectEntry, Region, ScaleMode, Shadow, ShadowKind, StopRange, Stroke, StrokeAlign,
-    Vec2, VectorField,
+    PaintTag, Piece, RectEntry, Region, ScaleMode, Shadow, ShadowKind, StopRange, Stroke,
+    StrokeAlign, Vec2, VectorField,
 };
 
 use std::sync::Arc;
@@ -24,8 +24,8 @@ use crate::arena::NodeId;
 
 /// One committed buffer: the resolved rect table, the deduplicated
 /// paint table, the resolved clip table, the generation stamp, the
-/// dirty set, and the NodeId↔rect-index correspondence for the commit
-/// that produced it.
+/// dirty set, the occlusion pieces of every rect, and the NodeId↔rect-index
+/// correspondence for the commit that produced it.
 ///
 /// The paint and clip tables, and the two NodeId↔index maps, are behind
 /// `Arc`. An incremental commit builds the back buffer as a copy of the
@@ -100,6 +100,18 @@ pub struct CommittedScene {
     /// so a host must take a document replacement as its own reason to
     /// re-upload rather than waiting for this to move.
     pub(crate) strip_generation: u64,
+    /// Every rect cut into the pieces no later opaque core covers, in rect
+    /// order (`crate::occlusion::pieces`, story #1450).
+    ///
+    /// Behind an `Arc` and **shared with the previous commit** when nothing
+    /// the pass reads changed: a commit with an empty dirty set, the same
+    /// [`aa_band`](Self::aa_band) and no renumbering. Any other commit
+    /// recomputes it, and dirties every rect whose pieces changed.
+    pub(crate) pieces: Arc<Vec<Piece>>,
+    /// The anti-aliasing band, in document units, the pieces were cut with
+    /// (`Arena::set_aa_band`). A commit whose band differs from this one
+    /// recomputes the pieces even when nothing else changed.
+    pub(crate) aa_band: f32,
 }
 
 /// The [`CommittedScene::rect_index`] value for a node this commit resolved no
@@ -198,8 +210,12 @@ impl CommittedScene {
         self.generation
     }
 
-    /// Sorted rect indices whose entry differs from the previous
-    /// commit (or did not exist in it).
+    /// Sorted, deduplicated rect indices that a painter must refresh: every
+    /// rect whose entry differs from the previous commit (or did not exist in
+    /// it), every rect a group forming, dissolving or changing alpha covers,
+    /// every text anchor whose glyph runs changed, and every rect whose
+    /// [`pieces`](Self::pieces) changed — a core that moves changes the
+    /// pieces of the rects beneath it while their entries stay the same.
     pub fn dirty(&self) -> &[u32] {
         &self.dirty
     }
@@ -249,5 +265,31 @@ impl CommittedScene {
     /// than this commit produced.
     pub fn renumbered(&self) -> bool {
         self.renumbered
+    }
+
+    /// The visible pieces of every rect, in rect order: each rect's box minus
+    /// the interior of every later opaque core (`crate::occlusion`, story
+    /// #1450). [`Piece::rect`] is an index into [`rects`](Self::rects).
+    ///
+    /// A rect with no later core over it has one piece, its own box. A rect a
+    /// later core covers completely has **no** piece, and a painter draws
+    /// nothing for it. A rect whose ink reaches past its box, a rotated rect,
+    /// and a rect whose piece list grows past
+    /// [`MAX_PIECES_PER_RECT`](crate::occlusion::MAX_PIECES_PER_RECT) after any
+    /// one cut (even when a later cut would bring the count back under it)
+    /// keep their whole box as one piece.
+    pub fn pieces(&self) -> &[Piece] {
+        &self.pieces
+    }
+
+    /// The anti-aliasing band, in document units, this commit's
+    /// [`pieces`](Self::pieces) were cut with (`Arena::set_aa_band`).
+    ///
+    /// A band staged on the arena that differs from this one has not been
+    /// applied yet, which is how `dashlang::LiveScene::tick` tells that an
+    /// otherwise idle frame must still commit. 0.0 on the empty scene an arena
+    /// holds before its first commit.
+    pub fn aa_band(&self) -> f32 {
+        self.aa_band
     }
 }

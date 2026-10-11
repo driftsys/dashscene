@@ -57,11 +57,11 @@ directly:
 - [c-abi.md](c-abi.md) — `dashscene-ffi` as built: the entry points and the
   lifecycle they form, why there is a loader per shape of input, the versioning
   rule that has kept `DS_ABI_VERSION` unmoved across every status variant added
-  since, and moved it to 2 exactly once, for story #1226's ten changed
-  signatures — and the gap in it that `SurfaceLost` exposed — what a caller must
-  guarantee, and the gaps. It was a control plane and not a data plane until
-  story #859 added one (v0.19 story #840, amended 2026-08-20); the lease that
-  data plane crosses under is
+  since, and moved it twice: to 2 for story #1226's ten changed signatures, and
+  to 3 for story #1450's `DsFrame::pieces` — and the gap in it that
+  `SurfaceLost` exposed — what a caller must guarantee, and the gaps. It was a
+  control plane and not a data plane until story #859 added one (v0.19 story
+  #840, amended 2026-08-20); the lease that data plane crosses under is
   [../decisions/the-frame-crosses-under-a-lease.md](../decisions/the-frame-crosses-under-a-lease.md).
 - [android-toolchain.md](android-toolchain.md) — the `aarch64-linux-android`
   target, the discovered NDK and the API floor, the `android-build` job, and the

@@ -110,6 +110,7 @@ fn draw(images: ImageTable, index: u32) -> Vec<u8> {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     renderer

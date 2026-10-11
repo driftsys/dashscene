@@ -183,6 +183,7 @@ fn measure(
         committed.clips(),
         committed.groups(),
         committed.glyphs(),
+        committed.pieces(),
         None,
     );
     let skia = skia_painter.rgba_bytes();
@@ -195,6 +196,7 @@ fn measure(
         committed.clips(),
         committed.groups(),
         committed.glyphs(),
+        committed.pieces(),
         None,
     );
     // Checked rather than left to `render`, which **panics** on an empty frame

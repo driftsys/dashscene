@@ -1031,9 +1031,31 @@ pub struct Arena {
     /// (`docs/decisions/masks-and-group-opacity.md`, story #44 M5). Drained
     /// each commit.
     visible_toggled: Vec<NodeId>,
+    /// The host's anti-aliasing band, in document units: how far inside a
+    /// core's box (past its corner radius) a painter's anti-aliased edge can
+    /// reach. Every core's interior is shrunk by it before it occludes
+    /// anything ([`crate::occlusion::cores`], story #1450). Set through
+    /// [`Arena::set_aa_band`]; read by the next commit.
+    aa_band: AaBand,
+}
+
+/// [`Arena::aa_band`]'s storage. A newtype only so that its default is one
+/// document unit, which a derived `Default` on [`Arena`] cannot express.
+#[derive(Debug, Clone, Copy)]
+struct AaBand(f32);
+
+impl Default for AaBand {
+    fn default() -> Self {
+        Self(Arena::DEFAULT_AA_BAND)
+    }
 }
 
 impl Arena {
+    /// The anti-aliasing band a new arena starts with, in document units: one
+    /// device pixel for a painter that draws one device pixel per document
+    /// unit ([`Arena::set_aa_band`]).
+    pub const DEFAULT_AA_BAND: f32 = 1.0;
+
     pub fn new() -> Self {
         Self::default()
     }
@@ -1049,6 +1071,37 @@ impl Arena {
     /// Generation 0 and empty before the first commit.
     pub fn committed(&self) -> &CommittedScene {
         &self.buffers[self.front]
+    }
+
+    /// Set the anti-aliasing band the occlusion pass shrinks every opaque
+    /// core by, in document units. Takes effect at the next commit, which
+    /// recomputes every rect's pieces when the band differs from the one the
+    /// previous commit used.
+    ///
+    /// The band is the width, in document units, of the anti-aliased edge the
+    /// host's painter draws: one device pixel at the host's scale. The default
+    /// is 1.0, which is correct for a painter that draws one device pixel per
+    /// document unit. A band that is too small leaves part of a core's
+    /// anti-aliased edge inside its interior, and the rect beneath shows
+    /// through as a ring of background inside that edge.
+    ///
+    /// The value is clamped to a finite width of at least zero: a negative
+    /// band is stored as 0.0, because it would grow the interior past the box
+    /// and into the anti-aliased edge; an infinite band is stored as
+    /// [`f32::MAX`], which leaves no core any interior; and NaN is stored as
+    /// the default 1.0, because NaN carries no width to clamp.
+    pub fn set_aa_band(&mut self, band: f32) {
+        self.aa_band = AaBand(if band.is_nan() {
+            Self::DEFAULT_AA_BAND
+        } else {
+            band.clamp(0.0, f32::MAX)
+        });
+    }
+
+    /// The anti-aliasing band the next commit uses: what
+    /// [`set_aa_band`](Self::set_aa_band) stored after clamping, or 1.0.
+    pub fn aa_band(&self) -> f32 {
+        self.aa_band.0
     }
 
     /// The node's authored name, if any (a diagnostics aid).
@@ -2187,12 +2240,21 @@ impl Txn<'_> {
     ///   reference until a genuinely new entry (or a structural change)
     ///   forces a copy.
     ///
-    /// Because interned indices are stable, a rect is dirty exactly when
-    /// its entry bits (the bits a painter uploads, R-T4) differ from the
-    /// previous commit at the same index — a fill change earns a new paint
-    /// index, a clip-box change earns a new clip index, and either shows
-    /// up in the bit compare. Fully deterministic given a deterministic
-    /// solver (R7).
+    /// Because interned indices are stable, a rect's own change shows up as
+    /// a difference in its entry bits (the bits a painter uploads, R-T4)
+    /// against the previous commit at the same index — a fill change earns a
+    /// new paint index, a clip-box change earns a new clip index, and either
+    /// shows up in the bit compare. The dirty set adds the rects whose picture
+    /// changed without their entry: those under a group that formed,
+    /// dissolved or changed alpha, text anchors whose glyph runs changed, and
+    /// rects whose occlusion pieces changed (story #1450). Fully
+    /// deterministic given a deterministic solver (R7).
+    ///
+    /// The occlusion pass (`crate::occlusion`) cuts each rect into the pieces
+    /// no later opaque core covers, once the rest of the dirty set is known.
+    /// It runs when that set is non-empty, the table was renumbered, or
+    /// [`Arena::set_aa_band`] changed the band; otherwise the previous
+    /// commit's pieces are shared by reference.
     ///
     /// Every change log the arena keeps is drained here, with one exception:
     /// [`Arena::layout_dirty`] is drained only when the solver says it
@@ -2805,9 +2867,10 @@ impl Txn<'_> {
 
         // Dirty is a bit compare against the previous commit at each index
         // (what a painter refreshes), computed once the rect entries —
-        // opacity included, and any renumbering done — are final. A
-        // shifted tail after a structural change reports dirty, as
-        // intended.
+        // opacity included, and any renumbering done — are final, then
+        // widened below by the groups, the glyph runs and the occlusion
+        // pieces, none of which live in the entry bits. A shifted tail after
+        // a structural change reports dirty, as intended.
         let mut dirty_set: FxHashSet<u32> = FxHashSet::default();
         if renumbered {
             // **A bit compare says nothing across a renumbering.** Index 3 named
@@ -2857,6 +2920,53 @@ impl Txn<'_> {
             if anchor < rects.len() as u32 {
                 dirty_set.insert(anchor);
             }
+        }
+        // Occlusion (story #1450, `crate::occlusion`): each rect cut into the
+        // pieces no later opaque core covers. Every input the pass reads — a
+        // rect's entry, the paint and clip entries it names, the groups — is
+        // covered by the dirty set above, so a commit with nothing dirty, the
+        // same band and no renumbering has the previous commit's pieces, and
+        // shares them by reference rather than recomputing them.
+        //
+        // `renumbered` is implied by a non-empty dirty set today: a renumbering
+        // dirties every rect above, and a shown root always has at least its
+        // own rect, so no reachable commit separates the two terms and no test
+        // can pin `renumbered` on its own. It stays because the previous pieces
+        // name rect indices of the previous table, and a commit that renumbered
+        // must never hand those on, whatever the dirty set holds.
+        let aa_band = arena.aa_band.0;
+        let recompute = !dirty_set.is_empty() || renumbered || aa_band != previous.aa_band;
+        let pieces = if recompute {
+            let cores =
+                crate::occlusion::cores(&rects, &back_paints, &back_clips, &groups, aa_band);
+            let barriers = crate::occlusion::barriers(&rects, &back_paints);
+            Arc::new(crate::occlusion::pieces(
+                &rects,
+                &cores,
+                &barriers,
+                |index| {
+                    crate::occlusion::occludable(
+                        back_paints.resolve(rects[index].paint),
+                        &back_paints,
+                    )
+                },
+            ))
+        } else {
+            Arc::clone(&previous.pieces)
+        };
+        // A core that moves, appears or vanishes changes the pieces of the
+        // rects beneath it, and their own entry bits cannot show that: every
+        // rect whose pieces changed is dirty too. Indices past this commit's
+        // table are dropped — they can only come from a previous, longer table
+        // across a renumbering, which has already dirtied every rect it has.
+        if !Arc::ptr_eq(&pieces, &previous.pieces) {
+            let mut changed = Vec::new();
+            crate::occlusion::changed_rects(&previous.pieces, &pieces, &mut changed);
+            dirty_set.extend(
+                changed
+                    .into_iter()
+                    .filter(|&rect| rect < rects.len() as u32),
+            );
         }
         let mut dirty: Vec<u32> = dirty_set.into_iter().collect();
         dirty.sort_unstable();
@@ -2920,6 +3030,8 @@ impl Txn<'_> {
             kind_set,
             gradient_strip,
             strip_generation,
+            pieces,
+            aa_band,
         };
 
         // Publish the buffer and drain the change log.

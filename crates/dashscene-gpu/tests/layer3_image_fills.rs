@@ -96,6 +96,7 @@ fn draw_fill(asset: ImageAsset, fill: ImageFill, x: f32, y: f32, w: f32, h: f32)
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     renderer()
@@ -244,6 +245,7 @@ fn two_payloads_in_one_atlas_each_draw_their_own_texels() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let mut renderer = renderer();
@@ -466,6 +468,7 @@ fn a_png_payload_is_decoded_and_drawn() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let pixels = renderer()
@@ -567,6 +570,7 @@ fn a_table_row_the_frame_does_not_draw_is_not_made_resident() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let mut renderer = renderer();
@@ -702,6 +706,7 @@ fn a_replaced_document_does_not_draw_the_previous_documents_image() {
             &ClipTable::new(),
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         renderer
@@ -799,6 +804,7 @@ fn a_replaced_document_does_not_draw_a_previous_dedicated_texture() {
             &ClipTable::new(),
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         renderer
@@ -883,6 +889,7 @@ fn a_replaced_document_that_samples_nothing_still_binds() {
             &ClipTable::new(),
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         renderer
@@ -994,6 +1001,7 @@ fn a_resident_png_is_decoded_once_and_not_once_a_frame() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
 
@@ -1066,6 +1074,7 @@ fn the_allocation_count_includes_the_atlas_residency_created() {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let mut solid_renderer = renderer();
@@ -1103,6 +1112,7 @@ fn the_allocation_count_includes_the_atlas_residency_created() {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let mut image_renderer = renderer();
@@ -1202,6 +1212,7 @@ fn an_image_with_no_bytes_draws_nothing() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let pixels = renderer()
@@ -1295,6 +1306,7 @@ fn a_jpeg_image_fill_is_refused_by_name_rather_than_panicking() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
 

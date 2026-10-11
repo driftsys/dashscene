@@ -7,7 +7,9 @@
              again by story #164 — the paint/clip interners are now
              retained across commits, so the dirty diff is a plain
              entry-bit compare with no resolved-color clause (as-built
-             definition in docs/design/dashscene-core-arena.md)
+             definition in docs/design/dashscene-core-arena.md); widened
+             by story #1450 — a rect whose occlusion pieces changed is
+             dirty too
     scope    dashscene-core committed output; reconciliation due in story #4
 
 ## Context
@@ -64,7 +66,10 @@ Option 1, with these pinned details:
   move. **Story #164 retained the interners**, which stabilizes the indices and
   removes the resolved-color clause: an entry-bit compare is now sufficient
   because a changed fill earns a new paint index. The op-touched rejection still
-  holds for the _published_ dirty array, which stays a per-index diff.
+  holds for the _published_ dirty array, which stays a per-index diff. **Story
+  #1450 widened it**: the commit also dirties every rect whose occlusion pieces
+  changed, because a core that moves changes the pieces of the rects beneath it
+  while their entries stay the same.
 - Generation increments on every commit, including no-change commits — the stamp
   says a commit happened, the dirty set says what changed.
 

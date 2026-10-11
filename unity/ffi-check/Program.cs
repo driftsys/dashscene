@@ -338,6 +338,7 @@ Check("every declared entry point resolves in the library", () =>
         "ds_runtime_new",
         "ds_runtime_release_frame",
         "ds_runtime_resize",
+        "ds_runtime_set_aa_band",
         "ds_runtime_tick",
     };
 
@@ -763,7 +764,7 @@ Check("a document at an OFFSET inside a container loads (story #1124)", () =>
         // **Against the whole-file load, not against zero.** "Some rects
         // arrived" is satisfied by any range that happens to parse — a shifted
         // but still-parseable window, or a dropped `shownRoot`. Comparing all
-        // nineteen slice counts against the same document loaded from its own
+        // the slice counts against the same document loaded from its own
         // path is what says the range named THIS document and showed the same
         // root.
         var viaRange = SliceCounts(r => r.LoadDocumentMapped(range, 0));
@@ -1331,6 +1332,11 @@ Check("every managed entry point a host can call reports the missing symbol", ()
             () => Call("KindSet", Type.EmptyTypes, null)),
         ("ds_runtime_gradient_strip",
             () => Call("GradientStrip", Type.EmptyTypes, null)),
+        // Story #1450's band setter, wrapped by the sub-task that made the
+        // Unity hosts call it: every host sets it beside `BrgPainter.EdgeWidth`,
+        // so it is on a host's own path like the two above.
+        ("ds_runtime_set_aa_band",
+            () => Call("SetAaBand", new[] { typeof(float) }, new object[] { 1.0f })),
 #if DASHSCENE_DEMO_PRODUCER
         // The demonstration's seven, driven rather than exempted (story #1342).
         //
@@ -1418,6 +1424,16 @@ Check("every managed entry point a host can call reports the missing symbol", ()
         "ds_runtime_draw",
         "ds_runtime_resize",
     };
+
+    // **No symbol is named twice.** The union below cannot see a symbol left
+    // in `noWrapper` after its wrapper landed and it was added to `driven`:
+    // that is how story #1450's band setter would have kept a stale "no
+    // managed API" entry with every check green.
+    var named = driven.Select(d => d.Symbol).Concat(elsewhere).Concat(noWrapper).ToList();
+    var twice = named.GroupBy(n => n).Where(g => g.Count() > 1).Select(g => g.Key).ToList();
+    Expect(
+        twice.Count == 0,
+        $"named in more than one of driven, elsewhere and noWrapper: [{string.Join(", ", twice)}]");
 
     var covered = new SortedSet<string>(driven.Select(d => d.Symbol), StringComparer.Ordinal);
     covered.UnionWith(elsewhere);
@@ -1688,6 +1704,7 @@ Check("a real document loads, and its frame's strides all match (R-E17)", () =>
     {
         "Rects", "PaintEntries", "Strokes", "Solids", "Gradients", "GradientStops",
         "ImageFills", "ClipRegions", "ClipBoxes", "ImageEntries", "ImagePayload",
+        "Pieces",
     };
     var actualPopulated = new SortedSet<string>(
         typeof(DsFrame).GetFields(BindingFlags.Public | BindingFlags.Instance)
@@ -1714,7 +1731,7 @@ Check("a MUTATED row size makes the host refuse EVERY array (R-E17)", () =>
         "rects", "groups", "dirty", "paint_entries", "extra_fills", "strokes",
         "shapes", "solids", "gradients", "gradient_stops", "image_fills",
         "shadows", "blurs", "clip_regions", "clip_boxes", "image_entries",
-        "image_payload", "glyph_runs", "glyph_quads",
+        "image_payload", "glyph_runs", "glyph_quads", "pieces",
     };
 
     var field = typeof(FrameLease).GetField("RowSizes", BindingFlags.NonPublic | BindingFlags.Static)
@@ -1757,6 +1774,117 @@ Check("a MUTATED row size makes the host refuse EVERY array (R-E17)", () =>
             rows[i] = original;
         }
     }
+});
+
+Check("the pieces slice names its rects and lies inside them, and the band reaches it (story #1450)", () =>
+{
+    // **Not "every drawn rect has at least one piece".** A rect a later opaque
+    // core covers entirely has none, by design, so that claim is false on a
+    // correct library. What holds for every piece is below: it names a rect
+    // this frame has, it has area when its rect has area, it lies inside that
+    // rect's box, and the pieces arrive in rect order.
+    using var runtime = new DashsceneRuntime();
+    runtime.LoadDocument(File.ReadAllBytes(fixture));
+
+    Piece[] PiecesOf(DsFrame frame)
+    {
+        Expect(
+            frame.Pieces.StrideAsLong == Marshal.SizeOf<Piece>(),
+            $"the pieces stride is {frame.Pieces.StrideAsLong}, this package's row is "
+            + $"{Marshal.SizeOf<Piece>()}");
+        var count = (int)frame.Pieces.CountAsLong;
+        var rects = (int)frame.Rects.CountAsLong;
+        var copy = new Piece[count];
+        unsafe
+        {
+            var pieces = (Piece*)frame.Pieces.Ptr;
+            var boxes = (RectEntry*)frame.Rects.Ptr;
+            for (var i = 0; i < count; i++)
+            {
+                var p = pieces[i];
+                copy[i] = p;
+                Expect(p.Rect < rects, $"piece {i} names rect {p.Rect} of {rects}");
+                var box = boxes[p.Rect];
+                // A cut piece always has area, because the pass emits only
+                // strips of positive width and height. A rect with no area is
+                // never cut, and its one piece is its own zero-area box.
+                Expect(
+                    !(box.W > 0 && box.H > 0) || (p.Right > p.Left && p.Bottom > p.Top),
+                    $"piece {i} has no area: ({p.Left}, {p.Top}) to ({p.Right}, {p.Bottom})");
+                // **Exact, with no tolerance.** Every piece edge is a copy of
+                // the box's edge or of a core interior's, never recomputed, and the
+                // box's right and bottom edges are `X + W` and `Y + H` rounded
+                // to `float` — the locals below force that rounding. A piece
+                // edge one unit in the last place outside the box fails here.
+                float right = box.X + box.W;
+                float bottom = box.Y + box.H;
+                Expect(
+                    p.Left >= box.X && p.Top >= box.Y && p.Right <= right && p.Bottom <= bottom,
+                    $"piece {i} ({p.Left}, {p.Top}, {p.Right}, {p.Bottom}) lies outside rect "
+                    + $"{p.Rect}'s box ({box.X}, {box.Y}, {right}, {bottom})");
+                Expect(
+                    i == 0 || pieces[i - 1].Rect <= p.Rect,
+                    $"piece {i} names rect {p.Rect} after a piece of rect {pieces[i - 1].Rect}");
+            }
+        }
+        return copy;
+    }
+
+    // **Settled first**, as the Rust twin's `settled_paint` does: each frame
+    // is drawn and the runtime ticked until a tick commits nothing, so the
+    // tick after the band change below commits for the band alone and the
+    // exact dirty-set check cannot read a first tick's own changes.
+    var settled = false;
+    for (var t = 0; t < 8 && !settled; t++)
+    {
+        using (var lease = runtime.AcquireFrame())
+        {
+            lease.MarkDrawn();
+        }
+        settled = !runtime.Tick(0.016f);
+    }
+    Expect(settled, "the fixture did not settle within eight ticks");
+
+    Piece[] before;
+    using (var lease = runtime.AcquireFrame())
+    {
+        before = PiecesOf(lease.Frame);
+        Expect(before.Length > 0, "the fixture committed no piece");
+        lease.MarkDrawn();
+    }
+
+    // The band, through the managed wrapper a host calls. 6.0 moves a cut on
+    // this fixture, which the inequality below checks rather than assumes, and
+    // the tick commits for it although nothing else in the scene moved.
+    runtime.SetAaBand(6.0f);
+    Expect(
+        runtime.Tick(0.016f),
+        "the tick after a band change on a settled scene committed nothing, so the band "
+        + "cannot reach the pieces");
+
+    using (var lease = runtime.AcquireFrame())
+    {
+        var after = PiecesOf(lease.Frame);
+        Expect(
+            !after.SequenceEqual(before),
+            "a 6-unit band left every piece where the default band put it");
+        // Nothing but the band changed, so the dirty set is exactly the rects
+        // whose pieces differ, derived here rect by rect from the two cuts.
+        var rectCount = (int)lease.Frame.Rects.CountAsLong;
+        var expected = Enumerable.Range(0, rectCount)
+            .Where(r => !before.Where(p => p.Rect == r).SequenceEqual(after.Where(p => p.Rect == r)))
+            .Select(r => (uint)r)
+            .ToArray();
+        var dirty = FrameRows.Of<uint>(lease.Frame.Dirty).ToArray();
+        Expect(
+            expected.Length > 0 && dirty.SequenceEqual(expected),
+            $"the band moved the pieces of rects [{string.Join(", ", expected)}] and the commit "
+            + $"dirtied [{string.Join(", ", dirty)}]; a host repacks exactly the dirty rects");
+    }
+
+    Expect(
+        InvokeRaw("ds_runtime_set_aa_band", 0UL, 1.0f) == DsStatus.NullArgument,
+        "handle 0 is refused like every other call's");
 });
 
 Check("a second acquire is refused with FrameLeased", () =>
@@ -2800,8 +2928,9 @@ Check("the packer turns a real frame into instances (D5)", () =>
 Check("the packer's growth preserves the instances already written", () =>
 {
     // **A synthetic frame, because the fixture is too small to grow anything.**
-    // `v03-paint.dsb` packs 16 instances and the packer's arrays start at 64,
-    // so two packs of it never reach the growth path — a first version of this
+    // `v03-paint.dsb` packs 42 instances (16 with every rect whole), and the
+    // packer's arrays start at 64, so two packs of it never reach the growth
+    // path — a first version of this
     // check said it exercised the reuse and did not. This builds a frame with
     // enough rects to force two doublings, which is the only shape in which a
     // growth that discarded already-written instances is visible.
@@ -3041,6 +3170,670 @@ Check("the opaque material class refuses each thing it cannot express (P4)", () 
                 Expect(
                     opaque.Diagnostics.IsClean,
                     $"the opaque class reported a diagnostic for {name}, which it drew");
+            }
+        }
+    }
+    finally
+    {
+        foreach (var handle in pinned)
+        {
+            handle.Free();
+        }
+    }
+});
+
+// ------------------------------------------------------------ occlusion pieces
+
+// **Synthetic frames, because the questions are about the packer and not the
+// pass.** `dashscene-core`'s own tests decide which pieces a document is cut
+// into; what is asked here is what the packer does with a piece table it is
+// handed: one set of instances per piece on the rect's box, the extent row and
+// grow bits `crates/dashscene-gpu/src/pack.rs`'s `piece_extent` would write,
+// and a partial pack that refuses when an extent index moved under a clean
+// rect. No test can make a real document produce the last shape.
+Check("a cut rect packs its ink once per piece, on its box, with the lean painter's extent word (story #1450)", () =>
+{
+    var pinned = new List<GCHandle>();
+    DsSlice Slice<T>(T[] rows) where T : struct
+    {
+        var handle = GCHandle.Alloc(rows, GCHandleType.Pinned);
+        pinned.Add(handle);
+        return new DsSlice
+        {
+            Ptr = rows.Length == 0 ? IntPtr.Zero : handle.AddrOfPinnedObject(),
+            Count = (UIntPtr)(ulong)rows.Length,
+            Stride = (UIntPtr)(ulong)Marshal.SizeOf<T>(),
+        };
+    }
+
+    try
+    {
+        // Rect 0 is cut around rect 2's interior into four pieces; rect 1 is
+        // covered whole and has none; rect 2 is one whole piece. Rect 0's
+        // origin and size are not exactly representable sums, so its far
+        // edges are `X + W` and `Y + H` rounded to `float` — the value the
+        // pass copied into the pieces and the one the packer must compare
+        // against with `==`.
+        var box = new RectEntry { X = 0.1f, Y = 0.2f, W = 100.3f, H = 50.7f, Paint = 0, Opacity = 0.5f };
+        var right = (float)(box.X + box.W);
+        var bottom = (float)(box.Y + box.H);
+        var rects = new[]
+        {
+            box,
+            new RectEntry { X = 40, Y = 15, W = 10, H = 5, Paint = 1, Opacity = 1.0f },
+            new RectEntry { X = 30, Y = 10, W = 40, H = 20, Paint = 1, Opacity = 1.0f },
+        };
+        var pieces = new[]
+        {
+            new Piece { Rect = 0, Left = box.X, Top = box.Y, Right = right, Bottom = 11 },
+            new Piece { Rect = 0, Left = box.X, Top = 11, Right = 31, Bottom = 29 },
+            new Piece { Rect = 0, Left = 69, Top = 11, Right = right, Bottom = 29 },
+            new Piece { Rect = 0, Left = box.X, Top = 29, Right = right, Bottom = bottom },
+            new Piece { Rect = 2, Left = 30, Top = 10, Right = 70, Bottom = 30 },
+        };
+        // The lean painter's bits: left 1, top 2, right 4, bottom 8, set where
+        // the piece edge IS the box edge.
+        var masks = new[] { 1 | 2 | 4, 1, 4, 1 | 4 | 8 };
+
+        // Rect 0 carries a fill and an Inside stroke, so each piece is two
+        // instances, in the order the whole rect emits them.
+        var entries = new[]
+        {
+            new PaintEntry
+            {
+                Fill = new PaintKind { Tag = PaintTag.Solid, Index = 0 },
+                Stroke = new StrokeRange { Offset = 0, Count = 1 },
+            },
+            new PaintEntry { Fill = new PaintKind { Tag = PaintTag.Solid, Index = 1 } },
+        };
+        var strokes = new[] { new Stroke { Width = 2, Align = StrokeAlign.Inside, Color = new Driftsys.Dashscene.BoundaryB.Color { A = 1 } } };
+        var regions = new[] { new ClipRegion { Offset = 0, Count = 0 } };
+        var solids = new[]
+        {
+            new Driftsys.Dashscene.BoundaryB.Color { R = 1, A = 1 },
+            new Driftsys.Dashscene.BoundaryB.Color { G = 1, A = 1 },
+        };
+
+        DsFrame Frame(Piece[] cut) => new DsFrame
+        {
+            Rects = Slice(rects),
+            PaintEntries = Slice(entries),
+            Strokes = Slice(strokes),
+            ClipRegions = Slice(regions),
+            Solids = Slice(solids),
+            Pieces = Slice(cut),
+        };
+
+        var packer = new FramePacker();
+        packer.Pack(Frame(pieces), MaterialClass.UnlitOverlay);
+
+        Expect(
+            packer.InstanceCount == 9,
+            $"four pieces of a filled, stroked rect, a covered rect and a whole one pack to "
+            + $"{packer.InstanceCount} instances, not 4 x 2 + 0 + 1");
+        Expect(
+            packer.Spans.Of(0).Count == 8 && packer.Spans.Of(1).Count == 0 && packer.Spans.Of(2).Count == 1,
+            $"the spans are keyed by rect and hold every piece's instances: "
+            + $"{packer.Spans.Of(0).Count}, {packer.Spans.Of(1).Count}, {packer.Spans.Of(2).Count}");
+        Expect(
+            packer.Diagnostics.IsClean,
+            $"a covered rect draws nothing and that is not a drop: {packer.Diagnostics.Flags}");
+
+        for (var p = 0; p < 4; p++)
+        {
+            var word = (p + 1) * PaintHeap.ExtentIndexScale + masks[p];
+            for (var k = 0; k < 2; k++)
+            {
+                var f = ((p * 2) + k) * 4;
+                Expect(
+                    packer.Quad[f] == box.X && packer.Quad[f + 1] == box.Y
+                    && packer.Quad[f + 2] == box.W && packer.Quad[f + 3] == box.H,
+                    $"piece {p}'s instance {k} carries the quad ({packer.Quad[f]}, "
+                    + $"{packer.Quad[f + 1]}, {packer.Quad[f + 2]}, {packer.Quad[f + 3]}); the SDF, "
+                    + "the gradient and the image coordinates stay on the box");
+                Expect(
+                    packer.Shade[f + 3] == word,
+                    $"piece {p}'s instance {k} carries the extent word {packer.Shade[f + 3]}, not "
+                    + $"row {p + 1} with grow bits {masks[p]} ({word})");
+                Expect(
+                    packer.Paint[f] == (uint)(k == 0 ? PaintKindTag.FillSolid : PaintKindTag.Stroke),
+                    $"piece {p}'s instance {k} is kind {packer.Paint[f]}; each piece emits the fill "
+                    + "then the stroke, the order the whole rect emits them in");
+            }
+
+            var e = p * 4;
+            var cut = pieces[p];
+            Expect(
+                packer.Extents[e] == cut.Left && packer.Extents[e + 1] == cut.Top
+                && packer.Extents[e + 2] == cut.Right && packer.Extents[e + 3] == cut.Bottom,
+                $"extent row {p} is ({packer.Extents[e]}, {packer.Extents[e + 1]}, "
+                + $"{packer.Extents[e + 2]}, {packer.Extents[e + 3]}), not piece {p}'s edges");
+        }
+
+        Expect(
+            packer.Shade[(8 * 4) + 3] == 0.0f,
+            $"rect 2's one piece is its whole box and takes no extent row, yet carries "
+            + $"{packer.Shade[(8 * 4) + 3]}");
+        Expect(
+            packer.ExtentFloats == 16,
+            $"four cut pieces fill {packer.ExtentFloats} extent floats, not 16");
+
+        // **An empty piece table draws every rect whole**, because empty means
+        // every rect is one whole piece, with no extent at all: the frame a
+        // library before story #1450 hands over.
+        var whole = new FramePacker();
+        whole.Pack(Frame(new Piece[0]), MaterialClass.UnlitOverlay);
+        Expect(
+            whole.InstanceCount == 4 && whole.ExtentFloats == 0,
+            $"with no piece table the three rects pack to {whole.InstanceCount} instances and "
+            + $"{whole.ExtentFloats} extent floats, not 2 + 1 + 1 and 0");
+        for (var i = 0; i < whole.InstanceCount; i++)
+        {
+            Expect(whole.Shade[(i * 4) + 3] == 0.0f, $"whole instance {i} names an extent row");
+        }
+
+        // **A piece table out of rect order is refused, not followed**: the
+        // walk below cannot place a piece behind its cursor, so the frame is
+        // drawn whole — the same picture, every hidden pixel shaded — and the
+        // refusal is named.
+        var refused = new FramePacker();
+        refused.Pack(Frame(new[] { pieces[4], pieces[0] }), MaterialClass.UnlitOverlay);
+        Expect(
+            refused.InstanceCount == 4 && refused.ExtentFloats == 0
+            && (refused.Diagnostics.Flags & PackDiagnostic.CorruptRow) != 0,
+            $"a piece table out of rect order packed {refused.InstanceCount} instances and "
+            + $"{refused.ExtentFloats} extent floats, reporting {refused.Diagnostics.Flags}");
+    }
+    finally
+    {
+        foreach (var handle in pinned)
+        {
+            handle.Free();
+        }
+    }
+});
+
+Check("a dirty rect that gains a cut piece renumbers the extents behind it, and is packed whole (story #1450)", () =>
+{
+    // **The hazard the lean painter found.** Every instance count below stays
+    // one per rect, so the span test alone would take the partial path; but
+    // rect 0 gaining a cut piece moves rect 1's extent row from 1 to 2, and
+    // rect 1 is not in the dirty set — a partial pack would leave its
+    // instance naming row 1, which is now rect 0's piece.
+    var pinned = new List<GCHandle>();
+    DsSlice Slice<T>(T[] rows) where T : struct
+    {
+        var handle = GCHandle.Alloc(rows, GCHandleType.Pinned);
+        pinned.Add(handle);
+        return new DsSlice
+        {
+            Ptr = rows.Length == 0 ? IntPtr.Zero : handle.AddrOfPinnedObject(),
+            Count = (UIntPtr)(ulong)rows.Length,
+            Stride = (UIntPtr)(ulong)Marshal.SizeOf<T>(),
+        };
+    }
+
+    try
+    {
+        var rects = new[]
+        {
+            new RectEntry { X = 0, Y = 0, W = 10, H = 10, Opacity = 0.5f },
+            new RectEntry { X = 20, Y = 0, W = 10, H = 10, Opacity = 0.5f },
+            new RectEntry { X = 25, Y = 0, W = 10, H = 10, Opacity = 1.0f },
+        };
+        var entries = new[] { new PaintEntry { Fill = new PaintKind { Tag = PaintTag.Solid, Index = 0 } } };
+        var regions = new[] { new ClipRegion { Offset = 0, Count = 0 } };
+        var solids = new[] { new Driftsys.Dashscene.BoundaryB.Color { R = 1, A = 1 } };
+        var dirty = new[] { 0u };
+
+        // Rect 1 is cut on its right by rect 2 in every frame: left, top and
+        // bottom lie on its box, so its grow bits are 1 | 2 | 8.
+        var rect1 = new Piece { Rect = 1, Left = 20, Top = 0, Right = 25, Bottom = 10 };
+        var rect2 = new Piece { Rect = 2, Left = 25, Top = 0, Right = 35, Bottom = 10 };
+        Piece Rect0(float right) => new Piece { Rect = 0, Left = 0, Top = 0, Right = right, Bottom = 10 };
+
+        DsFrame Frame(ulong generation, Piece[] pieces) => new DsFrame
+        {
+            Generation = generation,
+            Rects = Slice(rects),
+            Dirty = generation == 1 ? default : Slice(dirty),
+            PaintEntries = Slice(entries),
+            ClipRegions = Slice(regions),
+            Solids = Slice(solids),
+            // Empty and with its stride, because a partial pack reads the run
+            // table through `FrameRows.Of`, which refuses a stride it does not
+            // expect — as a real frame's empty table never has.
+            GlyphRuns = Slice(new GlyphRun[0]),
+            Pieces = Slice(pieces),
+        };
+
+        var packer = new FramePacker();
+        packer.Pack(Frame(1, new[] { Rect0(10), rect1, rect2 }), MaterialClass.UnlitOverlay);
+        Expect(
+            packer.InstanceCount == 3 && packer.Shade[(1 * 4) + 3] == 1 * 16 + 11,
+            $"the first frame packs {packer.InstanceCount} instances and rect 1 carries "
+            + $"{packer.Shade[(1 * 4) + 3]}, not 3 and row 1 with bits 11 (27)");
+
+        // Rect 0 dirty and newly cut: row 1 is now rect 0's, rect 1's is row 2.
+        var gained = Frame(2, new[] { Rect0(5), rect1, rect2 });
+        packer.Pack(gained, MaterialClass.UnlitOverlay);
+        Expect(
+            !packer.LastPackWasPartial,
+            "a dirty rect gained an extent row, which moved a clean rect's row, and the pack "
+            + "took the partial path anyway");
+        Expect(
+            packer.Shade[(0 * 4) + 3] == 1 * 16 + 11 && packer.Shade[(1 * 4) + 3] == 2 * 16 + 11,
+            $"after rect 0 gained a cut piece, rect 0 carries {packer.Shade[3]} and rect 1 "
+            + $"carries {packer.Shade[(1 * 4) + 3]}, not 27 and 43 — rect 1 names rect 0's row");
+        Expect(
+            packer.Extents[4] == rect1.Left && packer.Extents[6] == rect1.Right,
+            $"extent row 2 is ({packer.Extents[4]} .. {packer.Extents[6]}), not rect 1's piece");
+
+        // **And the guard is not the whole path switched off.** Rect 0's cut
+        // moves and keeps its one row, so no row behind it moves and the
+        // partial path is the right one — and what it writes is what a full
+        // pack of the same commit writes.
+        var moved = Frame(3, new[] { Rect0(6), rect1, rect2 });
+        packer.Pack(moved, MaterialClass.UnlitOverlay);
+        Expect(
+            packer.LastPackWasPartial,
+            "a dirty rect whose cut moved without changing its extent row count was packed "
+            + "whole; the extent guard refuses more than the rows that moved");
+        Expect(
+            packer.Extents[2] == 6.0f,
+            $"extent row 1's right edge is {packer.Extents[2]} after a partial pack, not the "
+            + "moved cut's 6: the extent table is rebuilt whole on both paths");
+        var full = new FramePacker();
+        full.Pack(moved, MaterialClass.UnlitOverlay);
+        for (var w = 0; w < packer.InstanceCount * 4; w++)
+        {
+            Expect(
+                full.Quad[w] == packer.Quad[w] && full.Shade[w] == packer.Shade[w],
+                $"word {w} differs between the partial pack and a full pack of the same commit");
+        }
+    }
+    finally
+    {
+        foreach (var handle in pinned)
+        {
+            handle.Free();
+        }
+    }
+});
+
+Check("on the opaque class a refused core does not leave a hole: the frame packs whole (story #1450)", () =>
+{
+    // **The opaque class cannot draw a rounded, clipped or stroked node**, so
+    // it refuses one with `CoverageNotExpressible`. The occlusion pass does
+    // not know the class, and still counts a rounded opaque rect as a core
+    // that cuts the rects beneath it. Packed as pieces, the backdrop would
+    // leave the refused core's interior undrawn, which is a hole the overlay
+    // class never shows. So on this class a frame with any refused node packs
+    // every rect whole, which is the picture before story #1450.
+    var pinned = new List<GCHandle>();
+    DsSlice Slice<T>(T[] rows) where T : struct
+    {
+        var handle = GCHandle.Alloc(rows, GCHandleType.Pinned);
+        pinned.Add(handle);
+        return new DsSlice
+        {
+            Ptr = rows.Length == 0 ? IntPtr.Zero : handle.AddrOfPinnedObject(),
+            Count = (UIntPtr)(ulong)rows.Length,
+            Stride = (UIntPtr)(ulong)Marshal.SizeOf<T>(),
+        };
+    }
+
+    try
+    {
+        // Rect 0 is a square opaque backdrop the opaque class can draw; rect 1
+        // is an opaque core with rounded corners, which it cannot. The pieces
+        // are what the pass hands over: rect 0 cut around rect 1's interior,
+        // and rect 1 whole.
+        var rects = new[]
+        {
+            new RectEntry { X = 0, Y = 0, W = 100, H = 100, Paint = 0, Opacity = 1.0f },
+            new RectEntry { X = 20, Y = 20, W = 40, H = 40, Paint = 1, Opacity = 1.0f },
+        };
+        var entries = new[]
+        {
+            new PaintEntry { Fill = new PaintKind { Tag = PaintTag.Solid, Index = 0 } },
+            new PaintEntry
+            {
+                Fill = new PaintKind { Tag = PaintTag.Solid, Index = 0 },
+                Corners = new CornerRadii { TopLeft = 4, TopRight = 4, BottomRight = 4, BottomLeft = 4 },
+            },
+        };
+        var pieces = new[]
+        {
+            new Piece { Rect = 0, Left = 0, Top = 0, Right = 100, Bottom = 25 },
+            new Piece { Rect = 0, Left = 0, Top = 55, Right = 100, Bottom = 100 },
+            new Piece { Rect = 0, Left = 0, Top = 25, Right = 25, Bottom = 55 },
+            new Piece { Rect = 0, Left = 55, Top = 25, Right = 100, Bottom = 55 },
+            new Piece { Rect = 1, Left = 20, Top = 20, Right = 60, Bottom = 60 },
+        };
+        var frame = new DsFrame
+        {
+            Rects = Slice(rects),
+            PaintEntries = Slice(entries),
+            ClipRegions = Slice(new[] { new ClipRegion { Offset = 0, Count = 0 } }),
+            Solids = Slice(new[] { new Driftsys.Dashscene.BoundaryB.Color { R = 1, A = 1 } }),
+            Pieces = Slice(pieces),
+        };
+
+        // The control: the overlay class draws the core, so it keeps the cut.
+        var overlay = new FramePacker();
+        overlay.Pack(frame, MaterialClass.UnlitOverlay);
+        Expect(
+            overlay.Spans.Of(0).Count == 4 && overlay.ExtentFloats == 16,
+            $"the overlay class packed rect 0 as {overlay.Spans.Of(0).Count} instances and "
+            + $"{overlay.ExtentFloats} extent floats, not its 4 pieces");
+
+        var opaque = new FramePacker();
+        opaque.Pack(frame, MaterialClass.LitOpaque);
+        Expect(
+            (opaque.Diagnostics.Flags & PackDiagnostic.CoverageNotExpressible) != 0
+            && opaque.Spans.Of(1).Count == 0,
+            $"the opaque class drew the rounded core or did not name the refusal: "
+            + $"{opaque.Spans.Of(1).Count} instances, {opaque.Diagnostics.Flags}");
+        Expect(
+            opaque.Spans.Of(0).Count == 1 && opaque.ExtentFloats == 0 && opaque.Shade[3] == 0.0f,
+            $"the opaque class packed the backdrop as {opaque.Spans.Of(0).Count} instances, "
+            + $"{opaque.ExtentFloats} extent floats and word {opaque.Shade[3]}; with the core "
+            + "refused, a cut backdrop leaves a hole where the core's interior is");
+
+        // **Each of the refusal's terms, one at a time, each beside a control.**
+        // A core with one rounded corner, a clipped core, a stroked core and a
+        // core at an opacity below 1 are each refused for their coverage, and
+        // each must pack the frame whole; the same frame with that one term
+        // removed keeps its cut. The region table is laid out so that a term
+        // read from the wrong row is caught: rect 1's paint index is 1 and
+        // names region 1, which has no clip box, while the clipped core names
+        // region 2, which has one.
+        var strokes = new[] { new Stroke { Width = 2, Align = StrokeAlign.Inside, Color = new Driftsys.Dashscene.BoundaryB.Color { A = 1 } } };
+        var clipBoxes = new[] { new ClipBox { X = 0, Y = 0, W = 100, H = 100 } };
+        var regions = new[]
+        {
+            new ClipRegion { Offset = 0, Count = 0 },
+            new ClipRegion { Offset = 0, Count = 0 },
+            new ClipRegion { Offset = 0, Count = 1 },
+        };
+        var solids = new[]
+        {
+            new Driftsys.Dashscene.BoundaryB.Color { R = 1, A = 1 },
+            new Driftsys.Dashscene.BoundaryB.Color { R = 1, A = 0.5f },
+        };
+        var squareEntry = new PaintEntry { Fill = new PaintKind { Tag = PaintTag.Solid, Index = 0 } };
+        var strokedEntry = new PaintEntry
+        {
+            Fill = new PaintKind { Tag = PaintTag.Solid, Index = 0 },
+            Stroke = new StrokeRange { Offset = 0, Count = 1 },
+        };
+        PaintEntry Rounded(CornerRadii corners) => new PaintEntry
+        {
+            Fill = new PaintKind { Tag = PaintTag.Solid, Index = 0 },
+            Corners = corners,
+        };
+        var core = new RectEntry { X = 20, Y = 20, W = 40, H = 40, Paint = 1, Clip = 0, Opacity = 1.0f };
+        // The largest float below 1: an opacity threshold anywhere below it
+        // would let this core through.
+        var belowOne = BitConverter.Int32BitsToSingle(BitConverter.SingleToInt32Bits(1.0f) - 1);
+
+        FramePacker PackOpaque(RectEntry[] rs, PaintEntry coreEntry, Piece[] ps)
+        {
+            var f = frame;
+            f.Rects = Slice(rs);
+            f.PaintEntries = Slice(new[] { entries[0], coreEntry });
+            f.ClipRegions = Slice(regions);
+            f.ClipBoxes = Slice(clipBoxes);
+            f.Strokes = Slice(strokes);
+            f.Solids = Slice(solids);
+            f.Pieces = Slice(ps);
+            var packer = new FramePacker();
+            packer.Pack(f, MaterialClass.LitOpaque);
+            return packer;
+        }
+
+        var terms = new (string Name, RectEntry Core, PaintEntry Entry, RectEntry ControlCore, PaintEntry ControlEntry)[]
+        {
+            ("a core with a rounded top-left corner", core, Rounded(new CornerRadii { TopLeft = 4 }), core, squareEntry),
+            ("a core with a rounded top-right corner", core, Rounded(new CornerRadii { TopRight = 4 }), core, squareEntry),
+            ("a core with a rounded bottom-right corner", core, Rounded(new CornerRadii { BottomRight = 4 }), core, squareEntry),
+            ("a core with a rounded bottom-left corner", core, Rounded(new CornerRadii { BottomLeft = 4 }), core, squareEntry),
+            ("a clipped core", new RectEntry { X = 20, Y = 20, W = 40, H = 40, Paint = 1, Clip = 2, Opacity = 1.0f }, squareEntry, core, squareEntry),
+            ("a stroked core", core, strokedEntry, core, squareEntry),
+            ("a core at the largest opacity below 1", new RectEntry { X = 20, Y = 20, W = 40, H = 40, Paint = 1, Clip = 0, Opacity = belowOne }, squareEntry, core, squareEntry),
+        };
+        foreach (var (name, termCore, entry, controlCore, controlEntry) in terms)
+        {
+            var term = PackOpaque(new[] { rects[0], termCore }, entry, pieces);
+            Expect(
+                (term.Diagnostics.Flags & PackDiagnostic.CoverageNotExpressible) != 0
+                && term.Spans.Of(1).Count == 0,
+                $"the opaque class drew {name} or did not name the refusal: "
+                + $"{term.Spans.Of(1).Count} instances, {term.Diagnostics.Flags}");
+            Expect(
+                term.Spans.Of(0).Count == 1 && term.ExtentFloats == 0,
+                $"with {name} refused the opaque class packed the backdrop as "
+                + $"{term.Spans.Of(0).Count} instances and {term.ExtentFloats} extent floats, "
+                + "not whole");
+
+            var control = PackOpaque(new[] { rects[0], controlCore }, controlEntry, pieces);
+            Expect(
+                control.Spans.Of(0).Count == 4 && control.ExtentFloats == 16 && control.Diagnostics.IsClean,
+                $"the control for {name}, with that term removed, packed the backdrop as "
+                + $"{control.Spans.Of(0).Count} instances and {control.ExtentFloats} extent floats "
+                + $"({control.Diagnostics.Flags}), not its 4 pieces");
+        }
+
+        // **A translucent fill does not trip the fallback.** The opaque class
+        // refuses that fill too, but a rect whose base fill is translucent is
+        // never a core, so the rects beneath it keep their cut.
+        var translucentFill = new PaintEntry { Fill = new PaintKind { Tag = PaintTag.Solid, Index = 1 } };
+        var fillRefused = PackOpaque(new[] { rects[0], core }, translucentFill, pieces);
+        Expect(
+            fillRefused.Spans.Of(1).Count == 0
+            && fillRefused.Spans.Of(0).Count == 4 && fillRefused.ExtentFloats == 16,
+            $"with a translucent-filled square rect on top the opaque class packed it as "
+            + $"{fillRefused.Spans.Of(1).Count} instances and the backdrop as "
+            + $"{fillRefused.Spans.Of(0).Count} instances and {fillRefused.ExtentFloats} extent "
+            + "floats; the translucent-fill refusal must not pack the frame whole");
+
+        // **A row with an out-of-range paint or clip index is skipped** by the
+        // fallback's scan and reported by the walk, so it neither trips the
+        // fallback nor stops the scan.
+        var corrupt = PackOpaque(
+            new[]
+            {
+                rects[0],
+                core,
+                new RectEntry { X = 70, Y = 70, W = 10, H = 10, Paint = 99, Clip = 0, Opacity = 1.0f },
+                new RectEntry { X = 80, Y = 80, W = 10, H = 10, Paint = 0, Clip = 99, Opacity = 1.0f },
+            },
+            squareEntry,
+            pieces.Concat(new[]
+            {
+                new Piece { Rect = 2, Left = 70, Top = 70, Right = 80, Bottom = 80 },
+                new Piece { Rect = 3, Left = 80, Top = 80, Right = 90, Bottom = 90 },
+            }).ToArray());
+        Expect(
+            corrupt.Spans.Of(0).Count == 4 && corrupt.ExtentFloats == 16
+            && (corrupt.Diagnostics.Flags & PackDiagnostic.CorruptRow) != 0,
+            $"with two corrupt rows the opaque class packed the backdrop as "
+            + $"{corrupt.Spans.Of(0).Count} instances and {corrupt.ExtentFloats} extent floats, "
+            + $"reporting {corrupt.Diagnostics.Flags}; a corrupt row must not trip the fallback");
+    }
+    finally
+    {
+        foreach (var handle in pinned)
+        {
+            handle.Free();
+        }
+    }
+});
+
+Check("a piece past the rect table is refused, and a change between whole and cut packs whole (story #1450)", () =>
+{
+    var pinned = new List<GCHandle>();
+    DsSlice Slice<T>(T[] rows) where T : struct
+    {
+        var handle = GCHandle.Alloc(rows, GCHandleType.Pinned);
+        pinned.Add(handle);
+        return new DsSlice
+        {
+            Ptr = rows.Length == 0 ? IntPtr.Zero : handle.AddrOfPinnedObject(),
+            Count = (UIntPtr)(ulong)rows.Length,
+            Stride = (UIntPtr)(ulong)Marshal.SizeOf<T>(),
+        };
+    }
+
+    try
+    {
+        var rects = new[]
+        {
+            new RectEntry { X = 0, Y = 0, W = 10, H = 10, Opacity = 0.5f },
+            new RectEntry { X = 20, Y = 0, W = 10, H = 10, Opacity = 0.5f },
+        };
+        var entries = new[] { new PaintEntry { Fill = new PaintKind { Tag = PaintTag.Solid, Index = 0 } } };
+        var regions = new[] { new ClipRegion { Offset = 0, Count = 0 } };
+        var solids = new[] { new Driftsys.Dashscene.BoundaryB.Color { R = 1, A = 1 } };
+        var dirty = new[] { 0u };
+
+        DsFrame Frame(ulong generation, Piece[] pieces) => new DsFrame
+        {
+            Generation = generation,
+            Rects = Slice(rects),
+            Dirty = generation == 1 ? default : Slice(dirty),
+            PaintEntries = Slice(entries),
+            ClipRegions = Slice(regions),
+            Solids = Slice(solids),
+            GlyphRuns = Slice(new GlyphRun[0]),
+            Pieces = Slice(pieces),
+        };
+
+        var whole0 = new Piece { Rect = 0, Left = 0, Top = 0, Right = 10, Bottom = 10 };
+
+        // **A piece naming a rect the table does not hold** is refused like
+        // one out of order: the frame packs whole and names the refusal.
+        var past = new FramePacker();
+        past.Pack(Frame(1, new[] { whole0, new Piece { Rect = 2, Left = 0, Top = 0, Right = 1, Bottom = 1 } }),
+                  MaterialClass.UnlitOverlay);
+        Expect(
+            past.InstanceCount == 2 && past.ExtentFloats == 0
+            && (past.Diagnostics.Flags & PackDiagnostic.CorruptRow) != 0,
+            $"a piece naming rect 2 of a 2-rect table packed {past.InstanceCount} instances and "
+            + $"{past.ExtentFloats} extent floats, reporting {past.Diagnostics.Flags}");
+
+        // **From cut to whole, with no extent start moving.** Only the LAST
+        // rect is cut, so every rect's first extent row is 0 in both packs and
+        // the start comparison alone cannot see the change. Rect 1 is clean in
+        // the second commit, so a partial pack would leave its two instances
+        // naming extent rows 1 and 2, which the whole pack no longer has.
+        var cut = new[]
+        {
+            whole0,
+            new Piece { Rect = 1, Left = 20, Top = 0, Right = 25, Bottom = 10 },
+            new Piece { Rect = 1, Left = 27, Top = 0, Right = 30, Bottom = 10 },
+        };
+        var packer = new FramePacker();
+        packer.Pack(Frame(1, cut), MaterialClass.UnlitOverlay);
+        Expect(
+            packer.InstanceCount == 3 && packer.ExtentFloats == 8,
+            $"the cut frame packed {packer.InstanceCount} instances and {packer.ExtentFloats} "
+            + "extent floats, not 3 and 8");
+        packer.Pack(Frame(2, new Piece[0]), MaterialClass.UnlitOverlay);
+        Expect(
+            !packer.LastPackWasPartial,
+            "the frame went from cut to whole and the pack took the partial path");
+        Expect(
+            packer.InstanceCount == 2 && packer.Shade[3] == 0.0f && packer.Shade[(1 * 4) + 3] == 0.0f,
+            $"after the frame went whole the packer holds {packer.InstanceCount} instances with "
+            + $"words {packer.Shade[3]} and {packer.Shade[(1 * 4) + 3]}, not 2 instances naming "
+            + "no extent row");
+    }
+    finally
+    {
+        foreach (var handle in pinned)
+        {
+            handle.Free();
+        }
+    }
+});
+
+Check("a covered rect's glyph run still packs (story #1450)", () =>
+{
+    // The Unity counterpart of `dashscene-gpu`'s
+    // `a_covered_rects_glyph_run_still_packs`. A rect with no piece emits no
+    // ink of its own, but a glyph run is never cut, so the run anchored to it
+    // still packs, exactly as it packs when the rect is whole.
+    using var runtime = new DashsceneRuntime();
+    runtime.LoadDocumentWithText(File.ReadAllBytes(textFixture), new[] { InterFace() });
+    var atlases = runtime.ReadAtlases();
+    using var lease = runtime.AcquireFrame();
+
+    var pinned = new List<GCHandle>();
+    try
+    {
+        var frame = lease.Frame;
+        var rectCount = (int)frame.Rects.CountAsLong;
+        Expect(frame.GlyphRuns.CountAsLong > 0, "the text fixture anchors no run");
+        uint covered;
+        Piece[] pieces;
+        unsafe
+        {
+            covered = ((GlyphRun*)frame.GlyphRuns.Ptr)[0].Rect;
+            var boxes = (RectEntry*)frame.Rects.Ptr;
+            pieces = Enumerable.Range(0, rectCount)
+                .Where(r => r != covered)
+                .Select(r => new Piece
+                {
+                    Rect = (uint)r,
+                    Left = boxes[r].X,
+                    Top = boxes[r].Y,
+                    Right = (float)(boxes[r].X + boxes[r].W),
+                    Bottom = (float)(boxes[r].Y + boxes[r].H),
+                })
+                .ToArray();
+        }
+        var handle = GCHandle.Alloc(pieces, GCHandleType.Pinned);
+        pinned.Add(handle);
+
+        var wholePacker = new FramePacker();
+        wholePacker.Pack(frame, MaterialClass.UnlitOverlay, atlases);
+        var wholeSpan = wholePacker.Spans.Of((int)covered);
+        var glyphs = new List<int>();
+        for (var i = wholeSpan.Offset; i < wholeSpan.Offset + wholeSpan.Count; i++)
+        {
+            if (wholePacker.Paint[i * 4] == (uint)PaintKindTag.Text)
+            {
+                glyphs.Add(i);
+            }
+        }
+        Expect(glyphs.Count > 0, $"rect {covered} packs no glyph whole, so this asserts nothing");
+
+        var cutFrame = frame;
+        cutFrame.Pieces = new DsSlice
+        {
+            Ptr = handle.AddrOfPinnedObject(),
+            Count = (UIntPtr)(ulong)pieces.Length,
+            Stride = (UIntPtr)(ulong)Marshal.SizeOf<Piece>(),
+        };
+        var cutPacker = new FramePacker();
+        cutPacker.Pack(cutFrame, MaterialClass.UnlitOverlay, atlases);
+        var cutSpan = cutPacker.Spans.Of((int)covered);
+        Expect(
+            cutSpan.Count == glyphs.Count,
+            $"the covered rect {covered} packs {cutSpan.Count} instances, not its "
+            + $"{glyphs.Count} glyphs and no ink of its own");
+        for (var k = 0; k < glyphs.Count && k < cutSpan.Count; k++)
+        {
+            for (var w = 0; w < 4; w++)
+            {
+                var a = (glyphs[k] * 4) + w;
+                var b = ((cutSpan.Offset + k) * 4) + w;
+                Expect(
+                    wholePacker.Quad[a] == cutPacker.Quad[b] && wholePacker.Paint[a] == cutPacker.Paint[b]
+                    && wholePacker.Corners[a] == cutPacker.Corners[b],
+                    $"glyph {k} of the covered rect packs differently when the rect has no piece");
             }
         }
     }

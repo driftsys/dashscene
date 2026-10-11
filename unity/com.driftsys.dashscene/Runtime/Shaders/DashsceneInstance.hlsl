@@ -96,6 +96,17 @@
 #define DS_STROKE_WORDS    2u
 #define DS_GLYPH_WORDS     2u
 
+// The grow bits of `_DsShade.w` (story #1450): which edges of an occlusion
+// piece's quad the vertex stage grows by the margin. `Runtime/PaintHeap.cs`'s
+// `GrowLeft` .. `GrowBottom` and `dashscene-gpu`'s `Instance::GROW_*` carry the
+// same four values, and `unity/package-gate` holds the three together.
+// `DS_EXTENT_INDEX_SCALE` is what the word multiplies the extent row by.
+#define DS_GROW_LEFT           1u
+#define DS_GROW_TOP            2u
+#define DS_GROW_RIGHT          4u
+#define DS_GROW_BOTTOM         8u
+#define DS_EXTENT_INDEX_SCALE 16u
+
 // The paint heap: solid colours and gradient rows in one buffer, at the two
 // bases `_DsGlobals` carries. One buffer rather than two because the lean
 // painter uses one, and because a `StructuredBuffer` costs a `t` register
@@ -103,6 +114,14 @@
 StructuredBuffer<float4> _DsPaints;
 StructuredBuffer<float4> _DsClipBoxes;
 StructuredBuffer<float4> _DsStrokes;
+
+// The occlusion pieces' quads, `(left, top, right, bottom)` in document space
+// (story #1450). **Vertex only**: the vertex stage places a cut quad from its
+// row, and the fragment stage shades against `_DsQuad` either way, so it never
+// reads this. Declared for every class, outside the instancing `#if`s, because
+// every draw path places its quad in `DsVertex`. `paint.wgsl`'s `extents` is
+// the same table in the lean painter.
+StructuredBuffer<float4> _DsExtents;
 
 // The baked gradient strip, and the sampler it is read through (story #1449).
 // One row per gradient row of the paint heap, 256 texels wide, RGBA8 —
@@ -307,9 +326,10 @@ CBUFFER_END
         // Corner radii: (top_left, top_right, bottom_right, bottom_left), the
         // order `dashpaint::CornerRadii` and `rounded_box_sdf` both use.
         UNITY_DOTS_INSTANCED_PROP(float4, _DsCorners)
-        // (opacity, outset, rotation, unused). `outset` is how far past the box
+        // (opacity, outset, rotation, extent). `outset` is how far past the box
         // this instance's ink reaches, which the vertex stage grows the quad
-        // by; only its lower bound is a correctness property.
+        // by; only its lower bound is a correctness property. `extent` is the
+        // occlusion piece the quad is cut to, 0 for the whole box (story #1450).
         UNITY_DOTS_INSTANCED_PROP(float4, _DsShade)
         // (pivot.x, pivot.y, unused, unused) in document space.
         UNITY_DOTS_INSTANCED_PROP(float4, _DsPivot)
@@ -562,12 +582,52 @@ DsVaryings DsVertex(DsAttributes input)
     // coverage straight to nothing instead of ramping. `paint.wgsl` grows by
     // `globals.aa + instance_outset(inst)` for exactly this reason and says so.
     float margin = outset + _DsGlobals.x;
+    float2 lo = quad.xy - margin.xx;
+    float2 hi = quad.xy + quad.zw + margin.xx;
+
+    // An occlusion piece (story #1450): the quad is the piece's own edges, and
+    // only the edges that lie on the box grow by the margin. A cut edge is
+    // where another piece of the same rect begins, so growing it would overlap
+    // that piece and a translucent rect would blend twice there. The two
+    // pieces carry that edge as the same `float`, so their quads meet exactly.
+    // The packer set the bits by comparing each piece edge with the box's on
+    // the CPU; nothing here recomputes `x + w`, which a backend may reassociate.
+    //
+    // **`quad` itself is unchanged**, and so is `output.local`'s frame: every
+    // SDF, gradient and image coordinate is still the box's, so a piece shades
+    // exactly the pixels of its quad with the colour the whole rect gives them.
+    // `paint.wgsl`'s `vs_main` is the same block in the lean painter.
+    //
+    // The word is `row * 16 + bits`, a whole number below 2^24 carried in a
+    // float stream, so the conversion to `uint` is exact. 0 is the whole box.
+    uint piece = (uint)shade.w;
+    if (piece != 0u)
+    {
+        float4 edges = _DsExtents[piece / DS_EXTENT_INDEX_SCALE - 1u];
+        uint grow = piece % DS_EXTENT_INDEX_SCALE;
+        lo = float2(
+            (grow & DS_GROW_LEFT) != 0u ? edges.x - margin : edges.x,
+            (grow & DS_GROW_TOP) != 0u ? edges.y - margin : edges.y);
+        hi = float2(
+            (grow & DS_GROW_RIGHT) != 0u ? edges.z + margin : edges.z,
+            (grow & DS_GROW_BOTTOM) != 0u ? edges.w + margin : edges.w);
+    }
+
+    // **Selected, not interpolated.** The mesh is the unit quad, so a corner
+    // is 0 or 1 on each axis, and `lo + corner * (hi - lo)` at 1 is `hi` only up
+    // to rounding. Two pieces of one rect meet where one's `hi` is the other's
+    // `lo`, so each corner takes the edge value itself, as `paint.wgsl`'s
+    // `select` does — the two quads then share the edge bit for bit.
+    //
+    // The corner comes from the mesh on the BatchRendererGroup path and from
+    // `DsProceduralCorner` on the `DASHSCENE_PROCEDURAL` path; both are exactly
+    // 0 or 1 on each axis, so the selection below is the same on both.
 #ifdef DASHSCENE_PROCEDURAL
     float2 corner = DsProceduralCorner(input.vertexID);
 #else
     float2 corner = input.positionOS.xy;
 #endif
-    float2 local = quad.xy - margin.xx + corner * (quad.zw + 2.0 * margin.xx);
+    float2 local = float2(corner.x > 0.5 ? hi.x : lo.x, corner.y > 0.5 ? hi.y : lo.y);
 
     // Rotation about the document-space pivot. `local` keeps the UNROTATED
     // point, so every SDF below evaluates in the node's own frame; only the
