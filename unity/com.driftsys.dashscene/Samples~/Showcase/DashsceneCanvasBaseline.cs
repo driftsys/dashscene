@@ -215,6 +215,12 @@ namespace Driftsys.Dashscene.Samples
             // file header says what a deferred destroy would let through.
             DestroyImmediate(GetComponent<DashsceneShowcase>());
 
+            // **Read before the first `Fail` this method can reach.** `Fail`
+            // quits only while `_judgeDirectory` is set, so a refusal ahead of
+            // this read would leave a judged run up, drawing nothing, forever.
+            // The run's own directory is made below, once the arguments pass.
+            _judgeDirectory = ArgumentAfter(args, "-judge");
+
             _camera = Camera.main;
             if (_camera == null)
             {
@@ -257,9 +263,12 @@ namespace Driftsys.Dashscene.Samples
             // `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`
             // reads every scene at rest and during a transition, and a dump
             // spanning both describes neither. At the fixed 2.5 s period the
-            // spring settles in about 1.5 s, so every `--latency` dump of about
-            // two seconds holds both. `0` never pulses, which is at rest; a
-            // period shorter than the settle keeps a spring in flight.
+            // spring settles in about 1.5 s, and a `--latency` dump is 127
+            // rows, about 2 s at 60 fps and longer at lower rates, so every
+            // dump holds both. `0` never pulses, which is at rest; a period
+            // shorter than the settle keeps a spring in flight. The readback is
+            // round-trip formatted (`R`), so a small non-zero period never
+            // prints as `0`.
             var pulse = PulseFromArguments(args);
             if (pulse == null)
             {
@@ -267,7 +276,7 @@ namespace Driftsys.Dashscene.Samples
                      + ArgumentAfter(args, "-pulse") + "'.");
                 return;
             }
-            if (Array.IndexOf(args, "-pulse") >= 0 && Array.IndexOf(args, "-judge") >= 0)
+            if (Array.IndexOf(args, "-pulse") >= 0 && _judgeDirectory != null)
             {
                 Fail("-pulse and -judge do not combine: a judged entry is photographed "
                      + "after JudgeFrames, which is sized against the 2.5 s pulse.");
@@ -276,10 +285,9 @@ namespace Driftsys.Dashscene.Samples
             _pulseSeconds = pulse.Value;
             Debug.Log($"[showcase] pulse: "
                       + (_pulseSeconds > 0.0f
-                          ? "every " + _pulseSeconds.ToString("0.###", CultureInfo.InvariantCulture) + " s"
+                          ? "every " + _pulseSeconds.ToString("R", CultureInfo.InvariantCulture) + " s"
                           : "off"));
 
-            _judgeDirectory = ArgumentAfter(args, "-judge");
             if (_judgeDirectory != null)
             {
                 // Rule 8's own pin. `Canvas.BuildBatch` is the marker a uGUI
@@ -1091,9 +1099,10 @@ namespace Driftsys.Dashscene.Samples
         }
 
         /// The pulse period `-pulse <seconds>` names: [`PulseSeconds`] when the
-        /// flag is absent, the value when it is a number at or above zero, and
-        /// null when it is anything else, which `Awake` refuses rather than
-        /// reading as the default.
+        /// flag is absent, the value when it is a finite number at or above
+        /// zero, and null when it is anything else, which `Awake` refuses rather
+        /// than reading as the default. `Infinity` parses, and would never pulse
+        /// while the readback claimed a period.
         public static float? PulseFromArguments(string[] args)
         {
             if (Array.IndexOf(args, "-pulse") < 0)
@@ -1103,9 +1112,9 @@ namespace Driftsys.Dashscene.Samples
 
             var value = ArgumentAfter(args, "-pulse");
             return value != null
-                   && float.TryParse(
-                       value, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)
-                   && seconds >= 0.0f ? seconds : (float?)null;
+                   && float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture,
+                       out var seconds)
+                   && seconds >= 0.0f && !float.IsInfinity(seconds) ? seconds : (float?)null;
         }
 
         private static string ArgumentAfter(string[] args, string flag)
