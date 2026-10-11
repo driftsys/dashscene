@@ -8,6 +8,20 @@ the Cargo workspace rather than moving on its own.
 
 ### Added
 
+- **`-pulse <seconds>` sets the Canvas baseline's scripted pulse period** (issue
+  #1488, for story #1451). `DashsceneCanvasBaseline` pulsed every 2.5 s with no
+  switch, and the spring settles in about 1.5 s, so every compositor dump of
+  about two seconds held a scene both at rest and in a transition, which D1 of
+  `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`
+  says describes neither. `0` never pulses, so the scene stays at rest; a period
+  shorter than the settle keeps a spring in flight. Without the flag the period
+  stays 2.5 s. The flag is read only under `-renderer`, where this component
+  drives; the showcase on its own keeps 2.5 s. A negative or unparsable value,
+  or `-pulse` beside `-judge`, fails the run. The player logs
+  `[showcase] pulse: off` or `[showcase] pulse: every <s> s`.
+  `measure/android/unity-frame-cost.sh` passes `DS_UNITY_ARGS` to the player as
+  one quoted `-e unity` extra.
+
 - **The painter draws each rect's occlusion pieces rather than its whole box**
   (story #1450). `FramePacker` emits a rect's fill, stacked fills and stroke
   once per row of `DsFrame.Pieces`, every instance on the rect's box, and writes

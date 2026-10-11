@@ -533,3 +533,68 @@ fn every_project_that_compiles_the_samples_resolves_ugui() {
         );
     }
 }
+
+/// `-pulse <seconds>` holds a scene in one state for a whole reading.
+///
+/// D1 of `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`
+/// reads every scene **at rest** and **during a transition**, and says a dump
+/// spanning both states describes neither. A fixed 2.5 s pulse whose spring
+/// settles in about 1.5 s puts both states inside every `--latency` dump, so
+/// the period is the player's argument: `0` never pulses, which is at rest, and
+/// a period shorter than the settle keeps a spring in flight.
+///
+/// **The period the loop compares against is the argument's, never the
+/// constant.** A loop still reading `PulseSeconds` would ignore `-pulse` and
+/// print a readback line claiming otherwise.
+#[test]
+fn the_pulse_period_is_the_argument_and_zero_never_pulses() {
+    let scanned = cs_scan::blank_comments_and_strings(&showcase("DashsceneCanvasBaseline.cs"));
+    let (start, end) = cs_scan::member_body(&scanned, "private void PulseIfShowingAScene()");
+    let body = cs_scan::squeeze(&scanned[start..end]);
+
+    assert!(
+        body.contains("if (_pulseSeconds <= 0.0f) { return; }"),
+        "a period of zero returns before any pulse: {body}"
+    );
+    assert!(
+        body.contains("if (_sincePulse < _pulseSeconds)")
+            && body.contains("_sincePulse -= _pulseSeconds;"),
+        "the loop waits for the argument's period: {body}"
+    );
+    assert!(
+        !body.contains("PulseSeconds)") && !body.contains("-= PulseSeconds"),
+        "the loop no longer reads the constant: {body}"
+    );
+
+    let code = cs_scan::blank_comments_only(&showcase("DashsceneCanvasBaseline.cs"));
+    let (start, end) = cs_scan::member_body(
+        &code,
+        "public static float? PulseFromArguments(string[] args)",
+    );
+    let parse = cs_scan::squeeze(&code[start..end]);
+    assert!(
+        parse.contains("ArgumentAfter(args, \"-pulse\")"),
+        "the period is read from `-pulse`: {parse}"
+    );
+    assert!(
+        parse.contains("return PulseSeconds;"),
+        "no `-pulse` keeps the 2.5 s the demonstration and `-judge` rely on: {parse}"
+    );
+    assert!(
+        parse.contains("seconds >= 0.0f ? seconds : (float?)null"),
+        "a negative or unparsable period is refused rather than read as the \
+         default: {parse}"
+    );
+
+    let (start, end) = cs_scan::member_body(&code, "private void Awake()");
+    let awake = cs_scan::squeeze(&code[start..end]);
+    assert!(
+        awake.contains("var pulse = PulseFromArguments(args);"),
+        "`Awake` reads the period: {awake}"
+    );
+    assert!(
+        awake.contains("Debug.Log($\"[showcase] pulse: "),
+        "the player says which period it took, so a reading can show the \
+         argument arrived: {awake}"
+    );
+}

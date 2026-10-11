@@ -45,6 +45,7 @@ case "$*" in
     "shell getprop ro.product.model") echo "Stub" ;;
     "shell date -u +%Y%m%dT%H%M%SZ") echo "20260101T000000Z" ;;
     "shell cmd package resolve-activity --brief "*) echo "com.driftsys.dashscene.showcase/.Main" ;;
+    "shell am start "*) echo "$*" >> "${STUB_STARTS}" ;;
     "shell pidof "*) echo "23903" ;;
     "shell getconf CLK_TCK") echo "100" ;;
     "logcat -d") echo "I Unity   : [showcase] entries: 3" ;;
@@ -60,12 +61,14 @@ chmod +x "${work}/bin/adb" "${work}/bin/sleep"
 cp "${fixtures}/unity-frame-cost-entry-1-sf-timestats.txt" "${work}/control-dump.txt"
 sed 's/^totalFrames = 163$/totalFrames = 0/' "${work}/control-dump.txt" > "${work}/zero-dump.txt"
 
-# run <case> -> exit status; output in ${work}/<case>.out and .err
+# run <case> -> exit status; output in ${work}/<case>.out and .err, and every
+# `am start` the script sent in ${work}/<case>.starts
 run() {
     (
         cd "${work}" &&
             PATH="${work}/bin:${PATH}" ADB="${work}/bin/adb" \
             STUB_CAPTURE="${work}/capture.log" STUB_DUMP="${work}/$1-dump.txt" \
+            STUB_STARTS="${work}/$1.starts" \
             DS_SWEEPS=1 DS_DWELL=0 \
             "${here}/unity-frame-cost.sh" com.driftsys.dashscene.showcase "${work}/out-$1" \
             > "${work}/$1.out" 2> "${work}/$1.err"
@@ -94,6 +97,26 @@ fi
 if ! grep -q '^| A | 1 | .* | [0-9][0-9]* | — | [0-9]* |$' "${work}/out-zero/unity-cpu.md" 2>/dev/null; then
     fail "the zero-presented run's entry 1 row does not have a numeric cpu % beside"
     fail "  a — cpu ms, so a guard reading the cpu % column would also pass."
+fi
+
+# **The player's own arguments reach the launch as ONE extra.** `adb shell`
+# joins its argv with spaces and the device's shell splits the line again, so
+# a value with a space in it is delivered only if it carries its own quotes —
+# `-e unity -renderer canvas` would hand `am` a bare `canvas` as a package
+# filter, and the player would see `-renderer` alone and draw the painter.
+if grep -q -- '-e unity' "${work}/control.starts" 2>/dev/null; then
+    fail "the control run passed the player arguments it was never given:"
+    sed 's/^/    /' "${work}/control.starts" >&2
+fi
+cp "${work}/control-dump.txt" "${work}/args-dump.txt"
+DS_UNITY_ARGS='-renderer canvas -pulse 0' run args
+status=$?
+if [ "${status}" -ne 0 ]; then
+    fail "the run with DS_UNITY_ARGS exited ${status}, not 0. Its stderr:"
+    sed 's/^/    /' "${work}/args.err" >&2
+elif ! grep -qF -- "-e unity '-renderer canvas -pulse 0'" "${work}/args.starts"; then
+    fail "DS_UNITY_ARGS did not reach the launch as one quoted extra. It sent:"
+    sed 's/^/    /' "${work}/args.starts" >&2
 fi
 
 if [ "${failures}" -ne 0 ]; then

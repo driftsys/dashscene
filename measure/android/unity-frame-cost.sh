@@ -88,6 +88,26 @@ dwell="${DS_DWELL:-20}"
 # drifted.
 size="${DS_WM_SIZE:-2340x1080}"
 
+# The player's own arguments, e.g. `-renderer canvas -pulse 0`: which renderer
+# draws and whether the scripted pulse runs (D1 of
+# `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`
+# reads each scene at rest and during a transition, on the painter, the Canvas
+# and the floor). Empty launches the player with none, as before.
+#
+# **Sent as ONE extra wrapped in its own single quotes.** `adb shell` joins its
+# argv with spaces and the device's shell splits the line again, so an
+# unquoted `-e unity -renderer canvas` hands `am` a bare `canvas` as a package
+# filter, and the player sees `-renderer` alone and draws the painter. The
+# player's own readback lines (`[showcase] renderer:`, `[showcase] pulse:`) are
+# what says the value arrived; this script does not check them.
+unity_args="${DS_UNITY_ARGS:-}"
+case "${unity_args}" in
+    *"'"*)
+        ds_warn "DS_UNITY_ARGS may not contain a single quote: ${unity_args}"
+        exit 1
+        ;;
+esac
+
 if ! ds_has_device "${adb}"; then
     ds_warn_no_device
     exit 1
@@ -129,7 +149,7 @@ restore() {
 }
 trap restore EXIT
 
-ds_note "device ${device}, commit ${commit}, ${sweeps} sweep(s) of ${dwell}s per entry"
+ds_note "device ${device}, commit ${commit}, ${sweeps} sweep(s) of ${dwell}s per entry, player arguments '${unity_args}'"
 "${adb}" shell wm size "${size}" >/dev/null 2>&1 || true
 "${adb}" shell settings put system accelerometer_rotation 0 >/dev/null 2>&1 || true
 
@@ -140,7 +160,12 @@ for index in $(seq 1 "${sweeps}"); do
 
     "${adb}" shell am force-stop "${app}" >/dev/null 2>&1 || true
     ds_logcat_clear "${adb}"
-    "${adb}" shell am start -n "${activity}" >/dev/null 2>&1 || true
+    if [ -n "${unity_args}" ]; then
+        "${adb}" shell am start -n "${activity}" -e unity "'${unity_args}'" \
+            >/dev/null 2>&1 || true
+    else
+        "${adb}" shell am start -n "${activity}" >/dev/null 2>&1 || true
+    fi
     # **Rotated AFTER the launch**, because `user_rotation` applies only while
     # an app that permits rotation is in front — the drift `frame-capture.sh`
     # records, where a force-stop between scenes returned to the portrait-locked
