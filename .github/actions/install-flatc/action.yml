@@ -33,7 +33,7 @@ description: >-
 # but a table keyed on it can.
 #
 # The checksum is committed rather than read from the release, following the
-# gitleaks and prim installs in the workflow: a checksum fetched from the server
+# gitleaks install in the workflow: a checksum fetched from the server
 # that serves the artifact proves the transfer was not corrupted and nothing
 # more, where a committed one also has to match a byte this repository already
 # agreed to. GitHub's releases API does expose a per-asset `digest`, and it is

@@ -204,8 +204,9 @@ doc-links:
 # prim passes rumdl no source path, so the rules that would need one are inert.
 # markdownlint checked no such thing either, so nothing is lost.
 #
-# Both read only this repository, so prim is PINNED, in `bootstrap` and in the
-# `prim` CI job. See the `audit` job for the opposite case.
+# prim is not pinned: `bootstrap` and the `prim` CI job require the minimum
+# version `PRIM_MIN_VERSION` declared in `bootstrap`
+# (docs/decisions/house-style.md).
 # The Markdown/JSON/YAML/TOML gate, in the two verbs it takes.
 prim:
     prim fmt --check .

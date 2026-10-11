@@ -13,8 +13,8 @@ project from source.
   `apt-get install flatbuffers-compiler`).
 - [`just`](https://github.com/casey/just) for the recipes, and
   [`prim`](https://github.com/driftsys/prim) for the Markdown, JSON, YAML and
-  TOML gate. prim is installed automatically by `./bootstrap`, at the version
-  the CI `prim` job pins.
+  TOML gate. `./bootstrap` installs the latest prim when the installed one is
+  older than `PRIM_MIN_VERSION`, the minimum the CI `prim` job also checks.
 - [`cargo-nextest`](https://nexte.st) — runs the test tiers (`just test`,
   `just test-regression`, `just calibrate`, `just test-all`); installed
   automatically by `./bootstrap`.
