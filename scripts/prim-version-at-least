@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Usage: prim-version-at-least <have> <min>
+#
+# Exits 0 when version <have> is at or above version <min>, 1 when it is below,
+# and 2 when either argument is not a version. `bootstrap` and the CI `prim` job
+# both call this script, so the two cannot disagree about a version.
+#
+# A leading `v` and any `-...` or `+...` suffix are removed before the
+# comparison, so `v0.9.1`, `0.9.1-rc1` and `0.9.1+abc` all compare as 0.9.1.
+# What remains must be one to three dot-separated numbers; a missing field is 0.
+# Each field is compared as a base-10 integer, so 0.10.0 is above 0.9.1, which a
+# text comparison gets wrong.
+#
+# Tested by executing it: `demo/tests/toolchain_pins.rs`.
+set -euo pipefail
+
+# Prints the normalised form of $1, or fails when it is not a version.
+normalise() {
+  local v="${1#v}"
+  v="${v%%[-+]*}"
+  [[ "${v}" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || return 1
+  printf '%s\n' "${v}"
+}
+
+if [ "$#" -ne 2 ]; then
+  echo "usage: prim-version-at-least <have> <min>" >&2
+  exit 2
+fi
+have="$(normalise "$1")" || { echo "prim-version-at-least: not a version: '$1'" >&2; exit 2; }
+want="$(normalise "$2")" || { echo "prim-version-at-least: not a version: '$2'" >&2; exit 2; }
+
+IFS=. read -ra h <<<"${have}"
+IFS=. read -ra w <<<"${want}"
+for i in 0 1 2; do
+  a=$((10#${h[i]:-0}))
+  b=$((10#${w[i]:-0}))
+  if ((a > b)); then exit 0; fi
+  if ((a < b)); then exit 1; fi
+done
+exit 0

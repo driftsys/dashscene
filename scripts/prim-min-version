@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Usage: prim-min-version [bootstrap]
+#
+# Prints the default of `PRIM_MIN_VERSION` declared in `bootstrap` (this
+# repository's, unless another file is named), and fails when the declaration
+# is missing or empty. The CI `prim` job reads the minimum through this script,
+# so the minimum is written only in `bootstrap`.
+#
+# Reads the file as text rather than sourcing it: sourcing `bootstrap` would run
+# its installers.
+#
+# Tested by executing it: `demo/tests/toolchain_pins.rs`.
+set -euo pipefail
+
+file="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/bootstrap}"
+min="$(sed -n 's/^PRIM_MIN_VERSION="${PRIM_MIN_VERSION:-\([^}]*\)}"$/\1/p' "${file}" | head -n1)"
+if [ -z "${min}" ]; then
+  echo "prim-min-version: no PRIM_MIN_VERSION default in ${file}" >&2
+  exit 1
+fi
+printf '%s\n' "${min}"

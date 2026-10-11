@@ -19,9 +19,13 @@ INSTALL_DIR="${GIT_STD_INSTALL_DIR:-$HOME/.local/bin}"
 JQ_VERSION="${JQ_VERSION:-1.8.2}"
 # A minimum, not a pin: any installed prim at or above this version is
 # accepted, and an older one is replaced with the latest release. The CI `prim`
-# job installs the latest release and reads this same line to check it, so the
-# minimum exists only here. Bare X.Y.Z, without the tag's `v`.
+# job installs the latest release and reads this same line through
+# `scripts/prim-min-version` to check it, so the minimum exists only here. Bare
+# X.Y.Z, without the tag's `v`. To get the latest prim on a machine whose prim
+# already meets this, run `PRIM_MIN_VERSION=<that version> ./bootstrap`.
 PRIM_MIN_VERSION="${PRIM_MIN_VERSION:-0.9.1}"
+# The one version comparison, shared with the CI `prim` job.
+PRIM_AT_LEAST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/prim-version-at-least"
 
 log() { printf '[bootstrap] %s\n' "$*" >&2; }
 die() {
@@ -242,40 +246,34 @@ install_jq() {
 # than the minimum is replaced rather than accepted. A presence check would have
 # left every machine that already had a prim — including the one this was
 # written on, which had 0.2.3 — permanently below the minimum.
-# True when version $1 is at or above version $2. Both are bare X.Y.Z. Compared
-# field by field as integers, because macOS `sort` has no `-V` on every release.
-version_at_least() {
-  local -a have want
-  local i
-  IFS=. read -ra have <<<"$1"
-  IFS=. read -ra want <<<"$2"
-  for i in 0 1 2; do
-    if ((${have[i]:-0} > ${want[i]:-0})); then return 0; fi
-    if ((${have[i]:-0} < ${want[i]:-0})); then return 1; fi
-  done
-  return 0
-}
-
 install_prim() {
   local have installed
   if have="$(command -v prim 2>/dev/null)" && [ -n "${have}" ]; then
     # `prim --version` prints `prim 0.9.1`.
     installed="$(prim --version 2>/dev/null | awk '{print $2}')"
-    if [ -n "${installed}" ] && version_at_least "${installed}" "${PRIM_MIN_VERSION}"; then
+    if "${PRIM_AT_LEAST}" "${installed}" "${PRIM_MIN_VERSION}" 2>/dev/null; then
       log "prim ${installed} already installed (minimum ${PRIM_MIN_VERSION}): ${have}"
       return
     fi
     log "prim at ${have} is ${installed:-unknown}, below the minimum ${PRIM_MIN_VERSION} — installing the latest release"
   fi
 
-  local target archive url tmp sha_expected sha_actual
+  local target archive url tmp sha_expected sha_actual tag
   target="$(detect_platform)"
   archive="prim-${target}.tar.gz"
-  # The release assets carry no version in their names, so `latest/download`
-  # resolves both the tarball and its `.sha256` to the newest release.
-  url="https://github.com/driftsys/prim/releases/latest/download/${archive}"
+  # The latest release's tag, resolved once from the `releases/latest`
+  # redirect, so the tarball and its `.sha256` come from the same release even
+  # when a new one is published between the two downloads.
+  tag="$(curl --fail --silent --show-error --location --output /dev/null \
+    --write-out '%{url_effective}' https://github.com/driftsys/prim/releases/latest)"
+  tag="${tag##*/}"
+  case "${tag}" in
+    v[0-9]*) ;;
+    *) die "could not resolve the latest prim release: '${tag}'" ;;
+  esac
+  url="https://github.com/driftsys/prim/releases/download/${tag}/${archive}"
 
-  log "downloading the latest prim (${target})"
+  log "downloading prim ${tag} (${target})"
   tmp="$(mktemp -d)"
   trap 'rm -rf "${tmp}"' RETURN
 
@@ -294,14 +292,14 @@ install_prim() {
 
   # Extract in the temporary directory and move the finished binary into place,
   # so a transfer that fails partway cannot leave a truncated prim that the
-  # guard above would then treat as installed.
-  mkdir -p "${INSTALL_DIR}"
+  # guard above would then treat as installed. The version is checked before
+  # the move, so a release below the minimum does not replace a working prim.
   tar -xzf "${tmp}/${archive}" -C "${tmp}"
-  install -m 0755 "${tmp}/prim" "${INSTALL_DIR}/prim"
-
-  installed="$("${INSTALL_DIR}/prim" --version 2>/dev/null | awk '{print $2}')"
-  version_at_least "${installed}" "${PRIM_MIN_VERSION}" \
+  installed="$("${tmp}/prim" --version 2>/dev/null | awk '{print $2}')"
+  "${PRIM_AT_LEAST}" "${installed}" "${PRIM_MIN_VERSION}" \
     || die "the latest prim release is ${installed:-unknown}, below the minimum ${PRIM_MIN_VERSION}"
+  mkdir -p "${INSTALL_DIR}"
+  install -m 0755 "${tmp}/prim" "${INSTALL_DIR}/prim"
   log "installed prim ${installed} to ${INSTALL_DIR}/prim"
   case ":${PATH}:" in
     *":${INSTALL_DIR}:"*) ;;
@@ -314,7 +312,7 @@ install_prim() {
   # so when that version is below the minimum, rather than report a clean install.
   local resolved
   resolved="$(prim --version 2>/dev/null | awk '{print $2}')"
-  if [ -z "${resolved}" ] || ! version_at_least "${resolved}" "${PRIM_MIN_VERSION}"; then
+  if ! "${PRIM_AT_LEAST}" "${resolved}" "${PRIM_MIN_VERSION}" 2>/dev/null; then
     log "note: 'prim' still resolves to $(command -v prim) at ${resolved:-unknown}"
     log "      ${INSTALL_DIR} must come first on PATH to meet the minimum ${PRIM_MIN_VERSION}"
   fi

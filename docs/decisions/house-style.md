@@ -126,21 +126,33 @@ gate that checked nothing (driftsys/prim#98). Nothing here depended on either
 behaviour, because every gate points at `.` — keep it that way.
 
 **prim has a minimum version, not a pin** (changed 2026-10-11). `bootstrap`
-declares `PRIM_MIN_VERSION`, accepts any installed prim at or above it, and
-installs the latest release when the installed one is older. The CI `prim` job
-installs the latest release and fails if it is below the same minimum, which it
-reads from `bootstrap`, so the minimum exists in one place —
-`demo/tests/toolchain_pins.rs` asserts both. `bootstrap` checks the installed
-version rather than mere presence, and says so when another prim earlier on PATH
-is below the minimum. The cost is accepted: prim decides how every Markdown file
-in the tree is wrapped, so a new prim release that changes a wrap decision turns
-CI's `prim` job red with no commit in this repository, and the fix is then a
-reformat commit or a raised minimum.
+declares `PRIM_MIN_VERSION` and accepts any installed prim at or above it.
+Otherwise it installs the latest release, and checks the downloaded binary
+before it replaces the installed one. The CI `prim` job installs the latest
+release and fails if it is below the same minimum, which it reads from
+`bootstrap` through `scripts/prim-min-version`. Both compare versions with
+`scripts/prim-version-at-least`. `demo/tests/toolchain_pins.rs` executes the two
+scripts and checks the install lines that call them.
 
-**The compiler is the larger instance of the same rule**, pinned on 2026-08-21
-in `rust-toolchain.toml`. Rust 1.98.0 added two clippy lints that fire on 52
+This departs from two rules the rest of this record follows. It drops the
+version pin, so a prim release that changes a wrap decision turns CI's `prim`
+job red with no commit in this repository. And it drops the committed checksum
+that the gitleaks and flatc installs carry: CI checks the tarball against the
+release's own `.sha256`, which proves only that the transfer was not corrupted.
+
+The pre-commit hook reformats Markdown with the local prim, and `bootstrap` does
+not upgrade a prim that already meets the minimum. So when a prim release
+changes a wrap decision, a reformat commit alone is not stable: a developer with
+the older prim reverts it on their next commit. The stable fix is to raise
+`PRIM_MIN_VERSION` to that release and reformat in the same pull request. To get
+the latest prim locally, run `PRIM_MIN_VERSION=<latest version> ./bootstrap`.
+
+**The compiler is pinned**, on 2026-08-21 in `rust-toolchain.toml`, by the rule
+that prim departs from: pin a tool whose input is only this repository, and
+track one that reads a live upstream feed (the `audit` job in
+`.github/workflows/ci.yml`). Rust 1.98.0 added two clippy lints that fire on 52
 pre-existing sites, `clippy` runs with `-D warnings`, and `main` went red on
-code nobody had touched — the same shape as a prim version rewrapping the tree,
+code nobody had touched — the same shape as a prim release rewrapping the tree,
 and on every open branch at once. It is one copy rather than two: the file
 outranks the `rustup default` that `dtolnay/rust-toolchain@stable` sets, so no
 workflow names a version and none passes `components:` or `targets:` any more.
@@ -249,10 +261,9 @@ Alternatives considered, and why each was rejected. **Verify a signature**:
 flatbuffers publishes none — no `.sig`, no `.asc`, no `SHA256SUMS`, and no SLSA
 attestation, all measured against v25.12.19. **Read GitHub's per-asset `digest`
 field**: it is served by the host that serves the asset, so it proves the
-transfer was not corrupted and nothing more — the same argument the `prim`
-install already makes for committing its sum rather than fetching one. It is
-recorded because it looks like an option and is not. **Vendor flatc**: declined
-for the reason
+transfer was not corrupted and nothing more, where a committed sum also has to
+match bytes the repository already agreed to. It is recorded because it looks
+like an option and is not. **Vendor flatc**: declined for the reason
 [atlas-gen-external-pinned-binary.md](atlas-gen-external-pinned-binary.md) gives
 for rejecting its own Option 3 — vendoring a **build tool** makes every
 workspace build pay a C++ toolchain cost and complicates contributor setup. Note

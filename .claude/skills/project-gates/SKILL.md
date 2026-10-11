@@ -572,9 +572,9 @@ documentation-only diff most jobs skip. Read the individual jobs.
                       thing to add. Bootstrap reports its absence instead
 
 Full recipe set: `justfile`. Conventions behind all of it — publish order,
-`.git-std.toml` versioning, CI job breakdown, what prim covers and why it is
-pinned — are in `docs/decisions/house-style.md`, sourced from driftsys/git-std,
-driftsys/upskill, driftsys/markspec.
+`.git-std.toml` versioning, CI job breakdown, what prim covers and why it has
+a minimum version — are in `docs/decisions/house-style.md`, sourced from
+driftsys/git-std, driftsys/upskill, driftsys/markspec.
 
 ## Choosing a tier, and forcing CI's expensive path
 
