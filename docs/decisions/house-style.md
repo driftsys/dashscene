@@ -125,15 +125,17 @@ to 0.2.4 the two verbs disagreed: `prim fmt <path>` rewrote an ignored file, and
 gate that checked nothing (driftsys/prim#98). Nothing here depended on either
 behaviour, because every gate points at `.` — keep it that way.
 
-**prim is pinned**, in `bootstrap` and in the CI `prim` job, and the two must
-move together — asserted by `demo/tests/toolchain_pins.rs`, because two copies
-of one fact is the drift this repository keeps hitting. The rule this follows is
-the one `cargo audit` is the exception to: pin what reads only this repository,
-track what reads a live upstream feed. prim decides how every Markdown file in
-the tree is wrapped, so a version that changed a wrap decision would put the
-whole tree out of format under a developer who ran no command. `bootstrap`
-therefore checks the installed version rather than mere presence, and says so
-when another prim earlier on PATH still wins.
+**prim has a minimum version, not a pin** (changed 2026-10-11). `bootstrap`
+declares `PRIM_MIN_VERSION`, accepts any installed prim at or above it, and
+installs the latest release when the installed one is older. The CI `prim` job
+installs the latest release and fails if it is below the same minimum, which it
+reads from `bootstrap`, so the minimum exists in one place —
+`demo/tests/toolchain_pins.rs` asserts both. `bootstrap` checks the installed
+version rather than mere presence, and says so when another prim earlier on PATH
+is below the minimum. The cost is accepted: prim decides how every Markdown file
+in the tree is wrapped, so a new prim release that changes a wrap decision turns
+CI's `prim` job red with no commit in this repository, and the fix is then a
+reformat commit or a raised minimum.
 
 **The compiler is the larger instance of the same rule**, pinned on 2026-08-21
 in `rust-toolchain.toml`. Rust 1.98.0 added two clippy lints that fire on 52

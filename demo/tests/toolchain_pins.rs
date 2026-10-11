@@ -1,78 +1,71 @@
-//! **A pinned tool version is written in two files, and both must say the same
-//! thing.**
+//! **prim has a minimum version, written once, in `bootstrap`.**
 //!
-//! prim decides how every Markdown file in the tree is wrapped, so it is pinned
-//! rather than tracked (`docs/decisions/house-style.md`, and the `audit` job in
-//! `.github/workflows/ci.yml` for the case that must not be). The pin lives in
-//! two places by necessity: `bootstrap` installs it on a developer's machine,
-//! and the CI `prim` job installs it on a runner, and neither can read the
-//! other.
+//! prim decides how every Markdown file in the tree is wrapped
+//! (`docs/decisions/house-style.md`). This repository requires a minimum prim
+//! rather than one exact version: `bootstrap` accepts any installed prim at or
+//! above `PRIM_MIN_VERSION` and installs the latest release when the installed
+//! one is older, and the CI `prim` job installs the latest release and fails if
+//! it is older than the same minimum.
 //!
-//! If only one moves, CI formats the tree with one version while every fresh
-//! clone installs another — a CI-only red on a diff that changed nothing, which
-//! is the exact failure the pin exists to prevent. `registry_consistency.rs`
-//! exists for this same two-copies-drift class; this is the same idea applied to
-//! a tool version rather than a crate list.
-//!
-//! The two are spelled differently on purpose and that is half the risk:
-//! `bootstrap` carries the tag whole (`v0.2.4`), CI carries the bare version
-//! (`0.2.4`) because it builds the URL as `v${v}`. This test compares them after
-//! normalising the leading `v`, so the shapes may differ and the versions may
-//! not.
+//! The minimum must exist in one place only. A second copy in the workflow is
+//! the two-copies drift this repository keeps hitting (`registry_consistency.rs`
+//! guards the same class for a crate list), so the CI job reads the value out of
+//! `bootstrap` instead of carrying its own.
 
 use std::path::{Path, PathBuf};
 
 #[test]
-fn bootstrap_and_ci_pin_the_same_prim() {
-    let root = workspace_root();
-    let bootstrap = read(root.join("bootstrap"));
-    let workflow = read(root.join(".github/workflows/ci.yml"));
+fn bootstrap_declares_a_prim_minimum() {
+    let bootstrap = read(workspace_root().join("bootstrap"));
+    let min = value_after(&bootstrap, "PRIM_MIN_VERSION=\"${PRIM_MIN_VERSION:-")
+        .expect("bootstrap declares PRIM_MIN_VERSION with a default");
 
-    let from_bootstrap = value_after(&bootstrap, "PRIM_VERSION=\"${PRIM_VERSION:-")
-        .expect("bootstrap declares PRIM_VERSION with a default");
-    let from_ci = value_after(&workflow, "v=").expect("the prim job declares v=<version>");
-
-    assert_eq!(
-        from_bootstrap.trim_start_matches('v'),
-        from_ci.trim_start_matches('v'),
-        "bootstrap pins prim {from_bootstrap} and the CI prim job pins {from_ci}; \
-         they install the formatter that decides this tree's Markdown, so they must agree"
+    let parts: Vec<&str> = min.split('.').collect();
+    assert!(
+        parts.len() == 3
+            && parts
+                .iter()
+                .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())),
+        "PRIM_MIN_VERSION is a bare X.Y.Z version, without a leading v: {min}"
     );
 }
 
-/// The checksum the CI job verifies belongs to the version it pins.
+/// The CI install step takes the minimum from `bootstrap`, verifies the
+/// download against the release's checksum, and compares versions.
 ///
-/// Not a second copy of the version — a third thing that must move with it. A
-/// bump that edits `v=` and leaves the `sha=` behind fails the install with a
-/// checksum mismatch rather than a version message, so this names the coupling
-/// where a reader will look for it. Asserted structurally: both are present, on
-/// their own lines, in the one step that installs prim.
+/// Asserted on the text of the one step that installs prim, because the step is
+/// shell inside YAML and cannot be called from here. Each needle is a distinct
+/// failure if it goes missing: a second copy of the minimum, an unchecked
+/// download, or a version that is never compared.
 #[test]
-fn the_ci_prim_install_carries_a_version_and_a_checksum() {
+fn the_ci_prim_install_reads_the_minimum_from_bootstrap() {
     let workflow = read(workspace_root().join(".github/workflows/ci.yml"));
     let step = section(&workflow, "name: install prim", "\n      - uses:");
+    assert!(!step.is_empty(), "ci.yml has a step named `install prim`");
 
     assert!(
-        step.lines().any(|l| l.trim().starts_with("v=")),
-        "the install step pins a version"
-    );
-    let sha = step
-        .lines()
-        .find_map(|l| l.trim().strip_prefix("sha="))
-        .expect("the install step carries a checksum");
-    assert_eq!(
-        sha.len(),
-        64,
-        "a sha256 is 64 hex characters, and this one is {}: {sha}",
-        sha.len()
+        !step.lines().any(|l| l.trim().starts_with("v=")),
+        "the install step carries no version of its own"
     );
     assert!(
-        sha.chars().all(|c| c.is_ascii_hexdigit()),
-        "the checksum is hex: {sha}"
+        step.contains("PRIM_MIN_VERSION") && step.contains("bootstrap"),
+        "the install step reads PRIM_MIN_VERSION from bootstrap"
+    );
+    assert!(
+        step.contains("releases/latest/download/"),
+        "the install step downloads the latest release"
+    );
+    assert!(
+        step.contains("sha256sum -c --strict"),
+        "the install step verifies the download against its checksum"
+    );
+    assert!(
+        step.contains("sort -V"),
+        "the install step compares the installed version with the minimum"
     );
 }
 
-/// The first single-quoted or bare value following `needle`, to end of line.
+/// The first value following `needle`, up to a quote, newline, space or brace.
 fn value_after(text: &str, needle: &str) -> Option<String> {
     let at = text.find(needle)?;
     let rest = &text[at + needle.len()..];

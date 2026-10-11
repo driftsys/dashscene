@@ -421,13 +421,12 @@ jobs:
   # Installed from the release tarball rather than `cargo install prim-cli`,
   # which compiles from source and would add minutes to every run.
   #
-  # The checksum is written here rather than fetched from the release beside the
-  # tarball, following the `secrets` job's gitleaks install. A checksum fetched
-  # from the same server as the artifact proves the transfer was not corrupted
-  # and nothing more; one committed here also has to match a byte the repository
-  # already agreed to. `bootstrap` fetches the `.sha256` instead, because there
-  # it sits beside two installs that already do and a per-platform table would be
-  # four checksums to carry.
+  # The repository requires a minimum prim, not one version: this job installs
+  # the latest release and fails if it is older than `PRIM_MIN_VERSION`, which
+  # it reads from `bootstrap` so the minimum exists in one place. The checksum is
+  # the release's own `.sha256`, fetched beside the tarball, as `bootstrap` does.
+  # That proves the transfer was not corrupted and nothing more; a committed
+  # checksum would pin one version, which is what this job no longer does.
   prim:
     name: prim
     runs-on: ubuntu-latest
@@ -435,15 +434,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: install prim
         run: |
-          v=0.9.1
-          sha=ce6831ecea65191caa6b97c8884297742d93da902ccf3025ec682d0f30f2eceb
-          curl -sSL --fail -o prim.tgz \
-            "https://github.com/driftsys/prim/releases/download/v${v}/prim-x86_64-unknown-linux-musl.tar.gz"
+          min="$(sed -n 's/^PRIM_MIN_VERSION="${PRIM_MIN_VERSION:-\(.*\)}"$/\1/p' bootstrap)"
+          [ -n "${min}" ] || { echo "PRIM_MIN_VERSION not found in bootstrap" >&2; exit 1; }
+          base=https://github.com/driftsys/prim/releases/latest/download/prim-x86_64-unknown-linux-musl.tar.gz
+          curl -sSL --fail -o prim.tgz "${base}"
+          sha="$(curl -sSL --fail "${base}.sha256" | cut -d' ' -f1)"
           # --strict, as the flatc install uses for the reason issue #922
           # measured: without it a malformed checksum line is a warning and the
-          # exit code stays 0. Safe by accident here today, since the line is
-          # generated one field at a time; the flag makes it safe by
-          # construction.
+          # exit code stays 0.
           echo "${sha}  prim.tgz" | sha256sum -c --strict -
           # Extracted whole into a scratch directory, then installed — rather
           # than naming the member the way the gitleaks step above does. prim's
@@ -455,7 +453,10 @@ jobs:
           tar -xzf prim.tgz -C prim-unpack
           install -m 0755 prim-unpack/prim /usr/local/bin/prim
           rm -rf prim.tgz prim-unpack
-          prim --version
+          have="$(prim --version | awk '{print $2}')"
+          lowest="$(printf '%s\n%s\n' "${min}" "${have}" | sort -V | head -n1)"
+          [ "${lowest}" = "${min}" ] || { echo "prim ${have} is below the minimum ${min}" >&2; exit 1; }
+          echo "prim ${have} (minimum ${min})"
       - uses: extractions/setup-just@v4
       - run: just prim
 
