@@ -2427,6 +2427,7 @@ fn the_fixture_compiles_loads_and_renders() {
         scene.clips(),
         scene.groups(),
         &GlyphRunTable::new(),
+        scene.pieces(),
         None,
     );
     let png = painter.png_bytes();

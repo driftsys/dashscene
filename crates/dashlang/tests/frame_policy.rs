@@ -182,3 +182,50 @@ fn a_rebuilt_scene_starts_with_the_gate_open() {
         "a rebuilt scene has shown nothing, whatever the scene it replaced had shown"
     );
 }
+
+/// An anti-aliasing band set on a settled scene is applied by the next tick,
+/// which commits once for it, and the tick after that is idle again (story
+/// #1450). `Arena::set_aa_band` moves no signal and starts no track, so
+/// without the tick comparing the arena's band with the committed one the
+/// band would wait for something else to move.
+#[test]
+fn a_band_change_on_a_settled_scene_commits_once_then_idles() {
+    // An opaque core over a filled background, so the band moves a cut and the
+    // commit has something to recompute.
+    let mut arena = Arena::new();
+    let mut scene = Scene::new();
+    scene.roots([node("background")
+        .mode(LayoutMode::None)
+        .size(100.0, 100.0)
+        .fill(dashlang::rgba(0.2, 0.2, 0.2, 1.0))
+        .child(
+            node("core")
+                .mode(LayoutMode::None)
+                .at(10.0, 10.0)
+                .size(20.0, 20.0)
+                .fill(dashlang::rgba(0.9, 0.1, 0.1, 1.0)),
+        )]);
+    let mut live = scene.build_live(&mut arena, Box::new(TaffySolver::new()));
+    let settled = live.tick(0.016, &mut arena);
+    assert_eq!(
+        live.tick(0.016, &mut arena),
+        settled,
+        "the scene is settled before the band changes"
+    );
+    let before = arena.committed().pieces().to_vec();
+
+    arena.set_aa_band(4.0);
+    let applied = live.tick(0.016, &mut arena);
+    assert_eq!(applied, settled + 1, "the band change commits once");
+    assert_eq!(arena.committed().aa_band(), 4.0);
+    assert_ne!(
+        arena.committed().pieces(),
+        before.as_slice(),
+        "the commit cut the background with the new band"
+    );
+    assert_eq!(
+        live.tick(0.016, &mut arena),
+        applied,
+        "once applied, the band is not staged any more and the scene idles"
+    );
+}

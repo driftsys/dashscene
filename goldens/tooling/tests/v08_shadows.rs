@@ -97,6 +97,7 @@ fn render(arena: &Arena, painter: &mut SkiaPainter) -> Vec<u8> {
         scene.clips(),
         scene.groups(),
         &GlyphRunTable::new(),
+        scene.pieces(),
         Some(scene.dirty()),
     );
     painter.rgba_bytes()

@@ -55,18 +55,18 @@ fn the_order_fixture_is_what_its_source_compiles_to() {
     );
 }
 
-/// The source carries the five nodes, in the paint order the gate's probes
+/// The source carries the six nodes, in the paint order the gate's probes
 /// are written against, with the colours those probes discriminate on.
 ///
 /// **Held here as well as in the gate**, because the gate reads the packed
 /// instances back and a document that drifted would move its probes with it —
 /// a fixture whose veil became opaque would leave every probe satisfied by a
-/// different order, and a veil whose left edge moved off x = 420 would put the
+/// different order, and a veil whose left edge moved off x = 420.25 would put the
 /// gate's classifier and probe points on the wrong pixels. The gate's C# is
 /// compiled by no CI job; this is, so the boxes and the glyph strings the
 /// C# hard-codes against are pinned here too.
 #[test]
-fn the_order_fixture_keeps_its_five_nodes_and_their_colours() {
+fn the_order_fixture_keeps_its_six_nodes_and_their_colours() {
     let json: serde_json::Value =
         serde_json::from_slice(&read(SOURCE, SOURCE_HINT)).expect("order.json parses");
     let root = &json["document"]["children"][0]["children"][0];
@@ -90,9 +90,10 @@ fn the_order_fixture_keeps_its_five_nodes_and_their_colours() {
         .collect();
     assert_eq!(
         names,
-        ["fill", "regular", "veil", "bold"],
+        ["fill", "regular", "veil", "bold", "plug"],
         "the paint order is the probe order: an opaque fill, black glyphs over \
-         it, a half-alpha veil over both, white bold glyphs over the veil"
+         it, a half-alpha veil over both, white bold glyphs over the veil, and \
+         an opaque plug over the veil that cuts it into occlusion pieces"
     );
 
     fn colour(node: &serde_json::Value) -> (f64, f64, f64, f64) {
@@ -128,6 +129,11 @@ fn the_order_fixture_keeps_its_five_nodes_and_their_colours() {
         (1.0, 1.0, 1.0, 1.0),
         "bold glyphs: white"
     );
+    assert_eq!(
+        colour(&children[4]),
+        (0.0, 1.0, 0.0, 1.0),
+        "plug: pure green, opaque, so the occlusion pass cuts the veil beneath it"
+    );
     fn bbox(node: &serde_json::Value) -> (f64, f64, f64, f64) {
         let b = &node["absoluteBoundingBox"];
         (
@@ -138,7 +144,7 @@ fn the_order_fixture_keeps_its_five_nodes_and_their_colours() {
         )
     }
     // The gate classifies the fill by this box, splits the two runs at
-    // x = 690, judges the veil's left edge at x = 420, and reads its four fixed
+    // x = 690, judges the veil's left edge at x = 420.25, and reads its four fixed
     // probes at (80, 600), (180, 400), (800, 400) and (560, 400) — every one of
     // them written against these boxes.
     assert_eq!(
@@ -153,13 +159,24 @@ fn the_order_fixture_keeps_its_five_nodes_and_their_colours() {
     );
     assert_eq!(
         bbox(&children[2]),
-        (420.0, 60.0, 480.0, 440.0),
-        "veil: its left edge at x = 420 is what the gate splits the regular glyphs on"
+        (420.25, 60.0, 479.75, 440.0),
+        "veil: its left edge at x = 420.25 is what the gate splits the regular glyphs on, and \
+         it and the right edge at x = 900 each put a pixel centre of the render gate's \
+         camera inside the edge's anti-aliasing ramp, which the edge-ramp check needs"
     );
     assert_eq!(
         bbox(&children[3]),
         (700.0, 150.0, 80.0, 146.0),
         "bold run: right of x = 690, over the veil"
+    );
+    // Story #1450's seam probe: the plug lies inside the veil, clear of every
+    // probe above, so the veil is cut into pieces whose horizontal seam at the
+    // plug's top (y = 420 plus the band) runs left across plain backdrop, where
+    // the gate reads it at x = 720.
+    assert_eq!(
+        bbox(&children[4]),
+        (820.0, 420.0, 60.0, 60.0),
+        "plug: inside the veil, right of x = 800 and below the bold run"
     );
     assert_eq!(
         children[1]["characters"], "IIIIIIIIIIII",

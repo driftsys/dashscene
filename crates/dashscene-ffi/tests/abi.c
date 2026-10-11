@@ -28,7 +28,7 @@ static int failures = 0;
 /* Every array of a frame, named on the C side.
  *
  * Written out rather than walked, because the point is that a C caller sees the
- * same nineteen members this build declares: if the header gained or lost one,
+ * same members this build declares: if the header gained or lost one,
  * this stops compiling. Whether the two declarations AGREE IN ORDER is checked
  * on the Rust side, by `the_header_declares_the_frame_exactly_as_this_build_
  * lays_it_out` — a C compiler cannot see a permutation of same-typed members,
@@ -60,7 +60,7 @@ static int frame_is_empty(const DsFrame *f) {
       f->gradient_stops, f->image_fills,  f->shadows,
       f->blurs,         f->clip_regions,  f->clip_boxes,
       f->image_entries, f->image_payload, f->glyph_runs,
-      f->glyph_quads,
+      f->glyph_quads,   f->pieces,
   };
   if (f->generation != 0 || f->document_replaced) {
     return 0;
@@ -107,6 +107,16 @@ int main(void) {
   check(ds_runtime_resize(runtime, 640, 480) == DS_NO_SURFACE,
         "resizing without a surface reports DS_NO_SURFACE");
 
+  /* The anti-aliasing band takes a float and needs no document. Every value is
+   * clamped rather than refused, so NaN answers DS_OK; a handle that names no
+   * runtime is refused like every other call's. */
+  check(ds_runtime_set_aa_band(runtime, 2.0f) == DS_OK,
+        "setting the anti-aliasing band needs no document");
+  check(ds_runtime_set_aa_band(runtime, 0.0f / 0.0f) == DS_OK,
+        "a NaN band is clamped to the default, not refused");
+  check(ds_runtime_set_aa_band(0, 1.0f) == DS_NULL_ARGUMENT,
+        "setting the band on handle 0 reports DS_NULL_ARGUMENT");
+
   /* The draw call exists and is reachable from C — the symbol layer 0 needs to
    * put a pixel on screen. Without a document it must say so rather than draw
    * nothing and report success. */
@@ -135,8 +145,8 @@ int main(void) {
         "releasing without a lease succeeds");
   check(!was_leased, "and reports that there was none");
 
-  /* Nothing follows glyph_quads. An exact bound rather than `>=`, which would
-   * pass over a twentieth member added to the header alone.
+  /* Nothing follows pieces. An exact bound rather than `>=`, which would pass
+   * over a member added after it to the header alone.
    *
    * This is header-against-header and cannot be otherwise: a C caller has no
    * view of the Rust layout. What ties the two is the Rust-side test
@@ -144,8 +154,8 @@ int main(void) {
    * checks this file's declarations and `offset_of!` against one list. Said
    * here because the check it replaced — `sizeof frame.rects.stride ==
    * sizeof(size_t)` — looked like a cross-check and was not. */
-  check(sizeof frame == offsetof(DsFrame, glyph_quads) + sizeof(DsSlice),
-        "glyph_quads is the last member of DsFrame, with nothing after it");
+  check(sizeof frame == offsetof(DsFrame, pieces) + sizeof(DsSlice),
+        "pieces is the last member of DsFrame, with nothing after it");
 
   /* The text seam, from C. The atlas set belongs to the LOAD, so without a
    * document both calls must say DS_NO_DOCUMENT rather than answer zero: "no

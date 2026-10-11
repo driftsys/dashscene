@@ -29,10 +29,11 @@ override HAS_CLIPS: bool = true;
 override HAS_STROKES: bool = true;
 
 // Mirrors `dashscene_gpu::Instance`. The two four-float vectors come first so
-// both sit at a 16-byte offset, and the trailing pad word is what makes the
-// Rust type and this one agree on an 80-byte array stride. The stride was 64
-// until story #832 added the rotation; `outset` occupied the pad word before
-// story #584 gave it a meaning.
+// both sit at a 16-byte offset, and the trailing `extent` word is what makes
+// the Rust type and this one agree on an 80-byte array stride. The stride was
+// 64 until story #832 added the rotation; `outset` occupied the trailing pad
+// word before story #584 gave it a meaning, and `extent` took the pad word
+// story #832 left (story #1450).
 struct Instance {
     bounds: vec4f,
     corners: vec4f,
@@ -56,11 +57,16 @@ struct Instance {
     // against its own `half_uv`.
     rotation_pivot: vec2f,
     rotation: f32,
-    // Padding to an 80-byte stride, which `array<Instance>` rounds to anyway
-    // because `bounds` aligns this struct to 16. The Rust type declares the
-    // same word, so both sides agree on where element `n` begins. The next
-    // vertex-side scalar goes here, as `outset` did before story #584.
-    _pad: f32,
+    // The occlusion piece this quad is cut to (story #1450): `index << 4 |
+    // grow_mask`, zero for the whole box. `index` names `extents[index - 1]`;
+    // the mask's bits are left, top, right and bottom, from bit 0, and a set
+    // bit grows that quad edge by the margin. See `vs_main`.
+    //
+    // The last word of an 80-byte stride, which `array<Instance>` rounds to
+    // anyway because `bounds` aligns this struct to 16. It was declared padding
+    // until that story, so both sides already agreed on where element `n`
+    // begins.
+    extent: u32,
 }
 
 // `InstanceKind`, as one discriminant. There is no separate tag to read
@@ -298,6 +304,12 @@ struct Shape {
 // piecewise-linear function evaluated by the sampler instead of by a loop.
 @group(0) @binding(11) var gradient_strip: texture_2d<f32>;
 @group(0) @binding(12) var strip_sampler: sampler;
+// The occlusion pieces' quads, `[left, top, right, bottom]` in document space
+// (story #1450). **Vertex only**, like story #582's two tables: the vertex
+// stage places a cut quad from its row, and the fragment stage shades against
+// `bounds` either way, so it never reads this. The vertex stage's fourth
+// storage buffer of the four `wgpu::Limits::downlevel_defaults` allows.
+@group(0) @binding(13) var<storage, read> extents: array<vec4f>;
 
 // What the fragment stage needs of an instance, carried through the rasteriser
 // rather than re-read from the instance array.
@@ -404,7 +416,8 @@ struct VertexOut {
 // `wgpu::Limits::downlevel_defaults` allows — so this stage could not have read
 // a shadow row at all. `pack::shadow_ink_reach` and `pack::stroke_outset`
 // resolve both instead, and this stage no longer reads the stroke table, which
-// takes it to three storage buffers of four.
+// took it to three storage buffers of four, until story #1450's extents took
+// the fourth.
 //
 // Only the *lower* bound of this number is a correctness property, and the
 // tests pin only that: a quad too small clips the ink, while a quad too large
@@ -517,8 +530,34 @@ fn vs_main(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u
     // antialiasing — and the margin is harmless there because `msdf_sample`
     // clamps every sample back inside the payload.
     let margin = globals.aa + instance_outset(inst);
-    let lo = quad.xy - vec2f(margin);
-    let hi = quad.xy + quad.zw + vec2f(margin);
+    var lo = quad.xy - vec2f(margin);
+    var hi = quad.xy + quad.zw + vec2f(margin);
+    // An occlusion piece (story #1450): the quad is the piece's own edges,
+    // and only the edges that lie on the box grow by the margin. A cut edge is
+    // where another piece of the same rect begins, so growing it would overlap
+    // that piece and a translucent rect would blend twice there. The two
+    // pieces carry that edge as the same `f32` value, so their quads meet
+    // exactly. The packer set the bits by comparing the piece's edges with
+    // the box's on the CPU; nothing here recomputes `x + w`.
+    //
+    // `quad` itself is unchanged, and so is `out.bounds` below: every SDF,
+    // gradient and image coordinate is still the box's, so a piece shades
+    // exactly the pixels of its quad with the colour the whole rect gives
+    // them. A masked instance and a glyph are never cut, so `quad` here is the
+    // box whenever the word is non-zero.
+    let piece = inst.extent >> 4u;
+    if piece != 0u {
+        let edges = extents[piece - 1u];
+        let grow = inst.extent & 15u;
+        lo = vec2f(
+            select(edges.x, edges.x - margin, (grow & 1u) != 0u),
+            select(edges.y, edges.y - margin, (grow & 2u) != 0u),
+        );
+        hi = vec2f(
+            select(edges.z, edges.z + margin, (grow & 4u) != 0u),
+            select(edges.w, edges.w + margin, (grow & 8u) != 0u),
+        );
+    }
     // Two triangles, as a triangle strip of four vertices.
     let corner = vec2f(
         select(lo.x, hi.x, (vertex & 1u) == 1u),

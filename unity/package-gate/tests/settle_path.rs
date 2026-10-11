@@ -238,9 +238,10 @@ fn the_pending_flag_is_raised_by_every_reason_the_binding_can_go_stale() {
         );
     }
 
-    // **Every call site, not one of them.** `UploadHeap` uploads four tables
-    // and any one of them can be the one that grows, so a `|=` on three of the
-    // four call sites draws a freed buffer the first time the fourth table
+    // **Every call site, not one of them.** `UploadHeap` uploads five tables
+    // — four since story #1449, and the occlusion extents since story #1450 —
+    // and any one of them can be the one that grows, so a `|=` on four of the
+    // five call sites draws a freed buffer the first time the fifth table
     // outgrows its own.
     let (start, end) = member_body(&scanned, "private void UploadHeap()");
     let upload_heap = squeeze(&scanned[start..=end]);
@@ -254,9 +255,9 @@ fn the_pending_flag_is_raised_by_every_reason_the_binding_can_go_stale() {
         .matches("_heapBindingPending |= Upload(")
         .count();
     assert_eq!(
-        calls, 4,
+        calls, 5,
         "{PAINTER_PATH}'s `UploadHeap` makes {calls} `Upload(…)` call(s), not \
-         the four heap tables. The count below is stated over that set."
+         the five heap tables. The count below is stated over that set."
     );
     assert_eq!(
         raising, calls,

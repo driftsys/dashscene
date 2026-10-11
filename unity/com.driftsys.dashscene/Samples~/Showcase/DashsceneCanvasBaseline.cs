@@ -943,10 +943,20 @@ namespace Driftsys.Dashscene.Samples
 
         private void UpdateEdgeWidth()
         {
-            if (_painter != null && _camera.orthographic && _camera.pixelHeight > 0)
+            if (_painter == null)
+            {
+                return;
+            }
+
+            if (_camera.orthographic && _camera.pixelHeight > 0)
             {
                 _painter.EdgeWidth = _camera.orthographicSize * 2.0f / _camera.pixelHeight;
             }
+
+            // The occlusion pass's band is the painter's edge width (story
+            // #1450), handed over before the first tick. The Canvas renderer
+            // draws whole rects and sets no band.
+            _runtime.SetAaBand(_painter.EdgeWidth);
         }
 
         private bool ReadSceneTable()

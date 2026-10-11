@@ -197,6 +197,7 @@ fn latin_and_arabic_both_draw_through_the_lean_painter() {
         scene.clips(),
         scene.groups(),
         scene.glyphs(),
+        scene.pieces(),
         None,
     );
 
@@ -303,6 +304,7 @@ fn a_second_frame_re_decodes_no_atlas_and_allocates_nothing() {
         scene.clips(),
         scene.groups(),
         scene.glyphs(),
+        scene.pieces(),
         None,
     );
 
@@ -404,6 +406,7 @@ fn the_renderer_resolves_each_run_against_the_atlas_that_run_names() {
         scene.clips(),
         scene.groups(),
         table,
+        scene.pieces(),
         None,
     );
 

@@ -95,9 +95,9 @@ namespace Driftsys.Dashscene
         /// The property ids the per-frame binding uses, resolved once.
         ///
         /// **`Material.SetBuffer(string, …)` hashes the name on every call**,
-        /// and [`BindHeap`] makes five of those calls per material per frame
+        /// and [`BindHeap`] makes six of those calls per material per frame
         /// plus one more for each glyph atlas — so a cascade of four faces
-        /// paid twenty-four name lookups a frame where the process-wide
+        /// would pay twenty-eight name lookups a frame where the process-wide
         /// binding paid five. R-T4 bounds what a frame may spend, and this is
         /// the same `Shader.PropertyToID` the metadata builders below already
         /// use.
@@ -118,6 +118,8 @@ namespace Driftsys.Dashscene
             Shader.PropertyToID(PaintMaterialProperties.ClipBoxes);
         private static readonly int StrokesId =
             Shader.PropertyToID(PaintMaterialProperties.Strokes);
+        private static readonly int ExtentsId =
+            Shader.PropertyToID(PaintMaterialProperties.Extents);
         private static readonly int ScalarsId =
             Shader.PropertyToID(PaintMaterialProperties.Scalars);
         private static readonly int GlyphsId =
@@ -204,6 +206,7 @@ namespace Driftsys.Dashscene
         private GraphicsBuffer _paintBuffer;
         private GraphicsBuffer _clipBuffer;
         private GraphicsBuffer _strokeBuffer;
+        private GraphicsBuffer _extentBuffer;
         private GraphicsBuffer _glyphBuffer;
 
         /// The document's MSDF sheets, or [`TextAtlasSet.Empty`] until a host
@@ -363,14 +366,15 @@ namespace Driftsys.Dashscene
         private float[] _paintStaging = Array.Empty<float>();
         private float[] _clipStaging = Array.Empty<float>();
         private float[] _strokeStaging = Array.Empty<float>();
+        private float[] _extentStaging = Array.Empty<float>();
         private float[] _glyphStaging = Array.Empty<float>();
 
         /// How many live floats each heap table's last upload carried, or -1
         /// where the buffer behind it was (re)created and holds nothing this
         /// painter wrote.
         ///
-        /// **One field per table rather than four slots of an `int[]`**, and
-        /// named after the staging arrays above them. Four `int`s addressed by
+        /// **One field per table rather than five slots of an `int[]`**, and
+        /// named after the staging arrays above them. Five `int`s addressed by
         /// position are transposed by any edit that reorders or adds an
         /// `Upload` call, and every slot has the same type, so nothing would
         /// report it — the paint table's count would silently answer for the
@@ -382,6 +386,9 @@ namespace Driftsys.Dashscene
 
         /// See [`_uploadedPaintFloats`].
         private int _uploadedStrokeFloats = -1;
+
+        /// See [`_uploadedPaintFloats`].
+        private int _uploadedExtentFloats = -1;
 
         /// See [`_uploadedPaintFloats`].
         private int _uploadedGlyphFloats = -1;
@@ -1300,7 +1307,7 @@ namespace Driftsys.Dashscene
             // **After the upload, never before it.** `UploadHeap` is what
             // raises the flag: it reports each table's reallocation and
             // compares the scalars it would bind, so a guard read first
-            // answers for the previous frame. `BindHeapTo` makes five
+            // answers for the previous frame. `BindHeapTo` makes six
             // `Material.Set…` calls per material, and on a settled scene every
             // one of them rebinds what is already bound — which is the cost
             // story #1445 removes.
@@ -2349,14 +2356,14 @@ namespace Driftsys.Dashscene
             };
         }
 
-        /// Upload the four heap tables, and decide whether the binding they
+        /// Upload the five heap tables, and decide whether the binding they
         /// are read through still holds.
         ///
         /// **Every call site takes the reallocation, not one of them.** Any of
-        /// the four tables can be the one that grows, and a growth disposes the
-        /// `GraphicsBuffer` the materials name — so a `|=` on three of them
+        /// the five tables can be the one that grows, and a growth disposes the
+        /// `GraphicsBuffer` the materials name — so a `|=` on four of them
         /// leaves every material naming freed native memory the first time the
-        /// fourth outgrows its own.
+        /// fifth outgrows its own.
         private void UploadHeap()
         {
             _heapBindingPending |= Upload(
@@ -2368,12 +2375,19 @@ namespace Driftsys.Dashscene
             _heapBindingPending |= Upload(
                 ref _strokeBuffer, ref _strokeStaging, ref _uploadedStrokeFloats,
                 _packer.Strokes, _packer.StrokeFloats);
+            // The occlusion pieces' quads (story #1450). Rebuilt by every pack
+            // and sent only when it changed, like the three tables above; a
+            // frame with no cut piece still gets the one-row buffer `Upload`
+            // keeps, so the binding never names nothing.
+            _heapBindingPending |= Upload(
+                ref _extentBuffer, ref _extentStaging, ref _uploadedExtentFloats,
+                _packer.Extents, _packer.ExtentFloats);
             _heapBindingPending |= Upload(
                 ref _glyphBuffer, ref _glyphStaging, ref _uploadedGlyphFloats,
                 _packer.Glyphs, _packer.GlyphFloats);
 
             // **The other half of what the binding carries.** `BindHeap` binds
-            // three buffers and one `Vector4`, and the `Vector4` moves with no
+            // four buffers and one `Vector4`, and the `Vector4` moves with no
             // reallocation at all: `EdgeWidth` on every change of drawable
             // extent, `SolidBase` and `GradientBase` whenever the paint table's
             // layout changes. Compared here rather than in `BindHeap` because
@@ -2632,7 +2646,7 @@ namespace Driftsys.Dashscene
         ///
         /// **Returns whether it (re)created the buffer**, which the caller
         /// needs and this member cannot record: it is `static` over a
-        /// `ref GraphicsBuffer` — the four tables are four fields — so it can
+        /// `ref GraphicsBuffer` — the five tables are five fields — so it can
         /// set no instance field of its own.
         ///
         /// **An unchanged table is not sent again**, and the decision is
@@ -2640,7 +2654,7 @@ namespace Driftsys.Dashscene
         /// arithmetic over two arrays, it lives outside `Runtime/Engine/` so
         /// `unity/ffi-check` executes it, and getting it wrong in the "already
         /// there" direction freezes a table's contents for the life of the
-        /// painter. Most commits move one table and leave three, and on a
+        /// painter. Most commits move one table and leave four, and on a
         /// settled scene they move none. What the skip assumes is that a
         /// `GraphicsBuffer` keeps its contents between frames while nothing
         /// here disposes it; a graphics device that dropped them under a
@@ -2742,7 +2756,7 @@ namespace Driftsys.Dashscene
             }
         }
 
-        /// Bind the three tables every class reads, the gradient strip, and the
+        /// Bind the four tables every class reads, the gradient strip, and the
         /// scalars, on one material.
         ///
         /// **The strip goes here and not beside the glyph rows**, though only a
@@ -2754,6 +2768,7 @@ namespace Driftsys.Dashscene
             material.SetBuffer(PaintsId, _paintBuffer);
             material.SetBuffer(ClipBoxesId, _clipBuffer);
             material.SetBuffer(StrokesId, _strokeBuffer);
+            material.SetBuffer(ExtentsId, _extentBuffer);
             material.SetTexture(GradientStripId, _stripTexture);
             material.SetVector(ScalarsId, scalars);
         }
@@ -2863,6 +2878,8 @@ namespace Driftsys.Dashscene
             _clipBuffer = null;
             _strokeBuffer?.Dispose();
             _strokeBuffer = null;
+            _extentBuffer?.Dispose();
+            _extentBuffer = null;
             _glyphBuffer?.Dispose();
             _glyphBuffer = null;
         }

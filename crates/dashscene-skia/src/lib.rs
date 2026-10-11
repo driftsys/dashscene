@@ -21,7 +21,7 @@ use std::sync::Arc;
 use dashpaint::{
     Atlas, BlurKind, ClipTable, CornerRadii, Fill, GlyphRun, GlyphRunTable, Gradient, GradientKind,
     GradientView, GroupComposite, ImageTable, MAX_GRADIENT_STOPS, PaintKind, PaintTable, Painter,
-    RectEntry, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, VectorField,
+    Piece, RectEntry, ScaleMode, Shadow, ShadowKind, Stroke, StrokeAlign, VectorField,
 };
 use skia_safe::{
     AlphaType, BlendMode, BlurStyle, Canvas, ClipOp, Color4f, ColorType, Data, EncodedImageFormat,
@@ -364,6 +364,11 @@ impl Painter for SkiaPainter {
         true
     }
 
+    /// Draws every rect whole and ignores `pieces` (story #1450). The
+    /// occlusion pass only removes pixels that a later opaque core paints
+    /// over, so whole rects give the same picture; the pieces exist to save
+    /// GPU fill rate on the lean and Unity painters, which this CPU reference
+    /// painter does not measure.
     fn paint(
         &mut self,
         rects: &[RectEntry],
@@ -372,6 +377,7 @@ impl Painter for SkiaPainter {
         clips: &ClipTable,
         groups: &[GroupComposite],
         glyphs: &GlyphRunTable,
+        _pieces: &[Piece],
         dirty: Option<&[u32]>,
     ) {
         // Refresh the simulated instance buffer, then draw from it. A full
@@ -2319,6 +2325,7 @@ mod tests {
             &ClipTable::new(),
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         painter.png_bytes()
@@ -2377,6 +2384,7 @@ mod tests {
             &ClipTable::new(),
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
 
@@ -2461,6 +2469,7 @@ mod tests {
             &ClipTable::new(),
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         let pixels = painter.rgba_bytes();
@@ -2636,6 +2645,7 @@ mod tests {
             &ClipTable::new(),
             &[],
             glyphs,
+            &[],
             None,
         );
         let pixels = painter.rgba_bytes();
@@ -2794,6 +2804,7 @@ mod tests {
                 &ClipTable::new(),
                 &[],
                 &GlyphRunTable::new(),
+                &[],
                 None,
             );
         }
@@ -2814,6 +2825,7 @@ mod tests {
             &ClipTable::new(),
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         assert_eq!(
@@ -2887,6 +2899,7 @@ mod tests {
                 &ClipTable::new(),
                 &[],
                 &GlyphRunTable::new(),
+                &[],
                 None,
             );
         }
@@ -2912,6 +2925,7 @@ mod tests {
             &ClipTable::new(),
             &[],
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         assert_eq!(
@@ -3068,6 +3082,7 @@ mod tests {
                     &ClipTable::new(),
                     &[],
                     &GlyphRunTable::new(),
+                    &[],
                     None,
                 );
 

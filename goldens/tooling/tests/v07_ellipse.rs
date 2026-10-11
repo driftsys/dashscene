@@ -135,6 +135,7 @@ fn render(json: &str) -> Vec<u8> {
         scene.clips(),
         scene.groups(),
         &GlyphRunTable::new(),
+        scene.pieces(),
         None,
     );
     painter.png_bytes()

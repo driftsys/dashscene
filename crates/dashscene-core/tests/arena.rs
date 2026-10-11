@@ -1714,10 +1714,13 @@ fn toggling_a_clip_off_dirties_the_descendants_it_clipped() {
 
     let scene = arena.committed();
     assert!(scene.clips().resolve(scene.rects()[1].clip).is_unclipped());
+    // The child is an opaque core over the frame (story #1450). Clipped, its
+    // interior covered the frame's middle; unclipped, it covers the whole
+    // frame, so the frame's pieces changed although its entry did not.
     assert_eq!(
         scene.dirty(),
-        [1],
-        "only the rect that stopped being clipped"
+        [0, 1],
+        "the rect that stopped being clipped, and the frame whose pieces it changed"
     );
 }
 
@@ -4105,4 +4108,262 @@ fn the_gradient_strip_is_rebaked_only_when_a_gradient_row_moves() {
         "a re-bake is a new allocation, so the sharing above was a decision \
          rather than the only thing this code can do"
     );
+}
+
+// ---- Occlusion at commit (story #1450) ----
+//
+// The commit cuts each rect into the pieces no later opaque core covers
+// (`dashscene_core::occlusion`) and holds them on the scene. A core that moves
+// changes the pieces of the rects beneath it while their own entries stay the
+// same, so the commit dirties those rects too.
+
+const HALF_BLUE: Color = Color {
+    r: 0.0,
+    g: 0.0,
+    b: 1.0,
+    a: 0.5,
+};
+
+/// A translucent 100x100 root (rect 0) with one opaque 20x20 child (rect 1)
+/// at (10, 10). The child is the only core.
+fn root_under_one_core(arena: &mut Arena) -> dashscene_core::NodeId {
+    let mut txn = arena.open();
+    let root = txn.add_node(None, Some("under"));
+    txn.set_prop(root, Prop::Width(100.0));
+    txn.set_prop(root, Prop::Height(100.0));
+    txn.set_prop(root, Prop::Fill(HALF_BLUE));
+    let core = txn.add_node(Some(root), Some("core"));
+    txn.set_prop(core, Prop::X(10.0));
+    txn.set_prop(core, Prop::Y(10.0));
+    txn.set_prop(core, Prop::Width(20.0));
+    txn.set_prop(core, Prop::Height(20.0));
+    txn.set_prop(core, Prop::Fill(RED));
+    txn.commit();
+    core
+}
+
+/// The pieces of rect `rect`, as `(x, y, w, h)`. Every value in these tests
+/// is exact in `f32`, so the width and height derived from the edges are too.
+fn pieces_of(arena: &Arena, rect: u32) -> Vec<(f32, f32, f32, f32)> {
+    arena
+        .committed()
+        .pieces()
+        .iter()
+        .filter(|p| p.rect == rect)
+        .map(|p| (p.left, p.top, p.right - p.left, p.bottom - p.top))
+        .collect()
+}
+
+/// The four strips a 100x100 box at the origin leaves around a hole.
+fn strips_around(x: f32, y: f32, w: f32, h: f32) -> Vec<(f32, f32, f32, f32)> {
+    vec![
+        (0.0, 0.0, 100.0, y),
+        (0.0, y + h, 100.0, 100.0 - y - h),
+        (0.0, y, x, h),
+        (x + w, y, 100.0 - x - w, h),
+    ]
+}
+
+#[test]
+fn a_core_moved_by_set_prop_dirties_the_rect_beneath_it() {
+    let mut arena = Arena::new();
+    let core = root_under_one_core(&mut arena);
+    // The core's interior is its box shrunk by the default 1.0 band.
+    assert_eq!(pieces_of(&arena, 0), strips_around(11.0, 11.0, 18.0, 18.0));
+    assert_eq!(pieces_of(&arena, 1), vec![(10.0, 10.0, 20.0, 20.0)]);
+    let root_entry = arena.committed().rects()[0];
+
+    let mut txn = arena.open();
+    txn.set_prop(core, Prop::X(50.0));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert_eq!(
+        scene.rects()[0],
+        root_entry,
+        "the root's own entry did not change"
+    );
+    assert_eq!(pieces_of(&arena, 0), strips_around(51.0, 11.0, 18.0, 18.0));
+    assert_eq!(
+        scene.dirty(),
+        &[0, 1],
+        "the root is dirty because its pieces changed, the core because its entry did"
+    );
+}
+
+#[test]
+fn a_band_change_alone_recomputes_the_pieces() {
+    let mut arena = Arena::new();
+    root_under_one_core(&mut arena);
+    assert_eq!(
+        arena.aa_band(),
+        1.0,
+        "the default band is one document unit"
+    );
+
+    arena.set_aa_band(2.0);
+    arena.open().commit();
+
+    assert_eq!(pieces_of(&arena, 0), strips_around(12.0, 12.0, 16.0, 16.0));
+    assert_eq!(
+        arena.committed().dirty(),
+        &[0],
+        "only the rect whose pieces changed is dirty; no entry changed"
+    );
+}
+
+#[test]
+fn a_commit_with_nothing_dirty_reuses_the_previous_pieces() {
+    let mut arena = Arena::new();
+    root_under_one_core(&mut arena);
+    let before = arena.committed().pieces().as_ptr() as usize;
+    assert_eq!(arena.committed().pieces().len(), 5);
+
+    arena.open().commit();
+
+    let scene = arena.committed();
+    assert!(scene.dirty().is_empty());
+    assert_eq!(
+        scene.pieces().as_ptr() as usize,
+        before,
+        "the previous commit's pieces are shared, not recomputed"
+    );
+}
+
+#[test]
+fn the_band_is_clamped_to_a_finite_non_negative_width() {
+    let mut arena = Arena::new();
+    arena.set_aa_band(-3.0);
+    assert_eq!(arena.aa_band(), 0.0, "a negative band is clamped to zero");
+    arena.set_aa_band(f32::INFINITY);
+    assert_eq!(
+        arena.aa_band(),
+        f32::MAX,
+        "an infinite band is clamped to the largest finite one"
+    );
+    arena.set_aa_band(f32::NAN);
+    assert_eq!(arena.aa_band(), 1.0, "NaN falls back to the default");
+
+    // A negative band would grow the core's interior past its box and into
+    // its anti-aliased edge; clamped to zero the interior is the box itself.
+    arena.set_aa_band(-3.0);
+    root_under_one_core(&mut arena);
+    assert_eq!(pieces_of(&arena, 0), strips_around(10.0, 10.0, 20.0, 20.0));
+}
+
+#[test]
+fn a_renumbering_commit_dirties_no_rect_past_its_own_table() {
+    // The first root's subtree cuts its rect 0 into pieces at rects 0..2; the
+    // second root is one rect. Showing the second root renumbers the table,
+    // and the previous pieces name rects this commit no longer has.
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let first = txn.add_node(None, Some("first"));
+    txn.set_prop(first, Prop::Width(100.0));
+    txn.set_prop(first, Prop::Height(100.0));
+    txn.set_prop(first, Prop::Fill(HALF_BLUE));
+    for x in [10.0, 50.0] {
+        let core = txn.add_node(Some(first), None);
+        txn.set_prop(core, Prop::X(x));
+        txn.set_prop(core, Prop::Y(10.0));
+        txn.set_prop(core, Prop::Width(20.0));
+        txn.set_prop(core, Prop::Height(20.0));
+        txn.set_prop(core, Prop::Fill(RED));
+    }
+    let second = txn.add_node(None, Some("second"));
+    txn.set_prop(second, Prop::Width(10.0));
+    txn.set_prop(second, Prop::Height(10.0));
+    txn.set_prop(second, Prop::Fill(RED));
+    txn.show_root(Some(first));
+    txn.commit();
+    assert_eq!(arena.committed().rects().len(), 3);
+    assert!(arena.committed().pieces().len() > 3, "rect 0 is cut");
+
+    let mut txn = arena.open();
+    txn.show_root(Some(second));
+    txn.commit();
+
+    let scene = arena.committed();
+    assert!(scene.renumbered());
+    assert_eq!(scene.rects().len(), 1);
+    assert_eq!(
+        scene.dirty(),
+        &[0],
+        "every rect of this table, and no other index"
+    );
+}
+
+/// The commit passes `occlusion::barriers` to the pass: a core that lies past
+/// a backdrop-blurred rect never cuts a rect before that rect, because the
+/// blur samples the composited pixels beneath it before the core is drawn.
+#[test]
+fn the_commit_never_cuts_a_rect_across_a_backdrop_blur() {
+    let mut arena = Arena::new();
+    let mut txn = arena.open();
+    let root = txn.add_node(None, Some("under"));
+    txn.set_prop(root, Prop::Width(100.0));
+    txn.set_prop(root, Prop::Height(100.0));
+    txn.set_prop(root, Prop::Fill(HALF_BLUE));
+    let glass = txn.add_node(Some(root), Some("glass"));
+    txn.set_prop(glass, Prop::X(50.0));
+    txn.set_prop(glass, Prop::Y(50.0));
+    txn.set_prop(glass, Prop::Width(40.0));
+    txn.set_prop(glass, Prop::Height(40.0));
+    txn.set_prop(glass, Prop::Fill(HALF_BLUE));
+    txn.set_prop(
+        glass,
+        Prop::Blurs(vec![dashscene_core::Blur {
+            kind: dashscene_core::BlurKind::Backdrop,
+            radius: 4.0,
+        }]),
+    );
+    let core = txn.add_node(Some(root), Some("core"));
+    txn.set_prop(core, Prop::X(10.0));
+    txn.set_prop(core, Prop::Y(10.0));
+    txn.set_prop(core, Prop::Width(20.0));
+    txn.set_prop(core, Prop::Height(20.0));
+    txn.set_prop(core, Prop::Fill(RED));
+    txn.commit();
+
+    assert_eq!(
+        pieces_of(&arena, 0),
+        vec![(0.0, 0.0, 100.0, 100.0)],
+        "the core lies past the backdrop blur, so the root stays whole"
+    );
+}
+
+/// The commit passes `occlusion::occludable` to the pass: a rect whose stroke
+/// reaches past its box stays one whole piece under a later core, because a
+/// piece is a sub-rectangle of the box and would drop the stroke outside it.
+#[test]
+fn the_commit_keeps_an_outside_or_centre_stroked_rect_whole() {
+    for align in [StrokeAlign::Outside, StrokeAlign::Center] {
+        let mut arena = Arena::new();
+        let mut txn = arena.open();
+        let root = txn.add_node(None, Some("under"));
+        txn.set_prop(root, Prop::Width(100.0));
+        txn.set_prop(root, Prop::Height(100.0));
+        txn.set_prop(root, Prop::Fill(HALF_BLUE));
+        txn.set_prop(
+            root,
+            Prop::Stroke(Stroke {
+                width: 2.0,
+                align,
+                color: RED,
+            }),
+        );
+        let core = txn.add_node(Some(root), Some("core"));
+        txn.set_prop(core, Prop::X(10.0));
+        txn.set_prop(core, Prop::Y(10.0));
+        txn.set_prop(core, Prop::Width(20.0));
+        txn.set_prop(core, Prop::Height(20.0));
+        txn.set_prop(core, Prop::Fill(RED));
+        txn.commit();
+
+        assert_eq!(
+            pieces_of(&arena, 0),
+            vec![(0.0, 0.0, 100.0, 100.0)],
+            "{align:?}: the stroked root stays whole under the core"
+        );
+    }
 }

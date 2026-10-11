@@ -175,7 +175,7 @@ fn draw_runs(runs: &[(GlyphRun, Vec<GlyphQuad>)]) -> (Vec<u8>, usize) {
     let clips = ClipTable::new();
     let images = ImageTable::new();
     let mut painter = GpuPainter::new();
-    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, None);
+    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, &[], None);
     let mut renderer = renderer();
     let pixels = renderer
         .render(painter.instances(), &paints, &images, &clips, &glyphs, W, H)
@@ -433,7 +433,7 @@ fn draw_masked_node() -> Vec<u8> {
     let clips = ClipTable::new();
     let glyphs = GlyphRunTable::new();
     let mut painter = GpuPainter::new();
-    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, None);
+    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, &[], None);
     renderer()
         .render(painter.instances(), &paints, &images, &clips, &glyphs, W, H)
         .expect("the fixture extent is within any device's maximum")
@@ -617,7 +617,7 @@ fn a_glyph_atlas_and_an_image_row_of_the_same_shape_do_not_collide() {
 
     let clips = ClipTable::new();
     let mut painter = GpuPainter::new();
-    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, None);
+    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, &[], None);
     let pixels = renderer()
         .render(painter.instances(), &paints, &images, &clips, &glyphs, W, H)
         .expect("the fixture extent is within any device's maximum");
@@ -709,7 +709,7 @@ fn draw_masked_gradient_node() -> Vec<u8> {
     let clips = ClipTable::new();
     let glyphs = GlyphRunTable::new();
     let mut painter = GpuPainter::new();
-    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, None);
+    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, &[], None);
     renderer()
         .render(painter.instances(), &paints, &images, &clips, &glyphs, W, H)
         .expect("the fixture extent is within any device's maximum")
@@ -883,7 +883,7 @@ fn a_refused_glyph_atlas_draws_nothing_and_names_itself() {
     let clips = ClipTable::new();
     let images = ImageTable::new();
     let mut painter = GpuPainter::new();
-    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, None);
+    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, &[], None);
     let mut renderer = renderer();
     let pixels = renderer
         .render(painter.instances(), &paints, &images, &clips, &glyphs, W, H)
@@ -1013,7 +1013,7 @@ fn a_refused_coverage_field_draws_no_masked_fill() {
     let clips = ClipTable::new();
     let glyphs = GlyphRunTable::new();
     let mut painter = GpuPainter::new();
-    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, None);
+    painter.paint(&rects, &paints, &images, &clips, &[], &glyphs, &[], None);
     let mut renderer = renderer();
     let pixels = renderer
         .render(painter.instances(), &paints, &images, &clips, &glyphs, W, H)
@@ -1208,7 +1208,7 @@ fn a_refused_glyph_run_splits_the_frame_rather_than_drawing_its_quads() {
     let mut renderer = renderer();
     let mut draw = |glyphs: &GlyphRunTable| {
         let mut painter = GpuPainter::new();
-        painter.paint(&rects, &paints, &images, &clips, &[], glyphs, None);
+        painter.paint(&rects, &paints, &images, &clips, &[], glyphs, &[], None);
         let pixels = renderer
             .render(painter.instances(), &paints, &images, &clips, glyphs, W, H)
             .expect("the fixture extent is within any device's maximum");

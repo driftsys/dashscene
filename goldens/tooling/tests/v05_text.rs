@@ -183,6 +183,7 @@ fn render(arena: &Arena, glyphs: &GlyphRunTable) -> Vec<u8> {
         scene.clips(),
         scene.groups(),
         glyphs,
+        scene.pieces(),
         None,
     );
     painter.png_bytes()

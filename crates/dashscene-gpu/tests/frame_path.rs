@@ -32,7 +32,7 @@
 
 use dashpaint::{
     ClipIndex, ClipTable, Color, EntryParts, GlyphRunTable, ImageTable, PaintEntry, PaintIndex,
-    PaintTable, Painter, RectEntry, Stroke, StrokeAlign, Vec2,
+    PaintTable, Painter, Piece, RectEntry, Stroke, StrokeAlign, Vec2,
 };
 use dashscene_gpu::{Changes, GpuPainter, InstanceUpload, Renderer};
 
@@ -134,6 +134,18 @@ fn draw(
     paints: &PaintTable,
     changes: Option<Changes<'_>>,
 ) -> Vec<u8> {
+    draw_pieces(painter, renderer, rects, paints, &[], changes)
+}
+
+/// [`draw`], with occlusion pieces.
+fn draw_pieces(
+    painter: &mut GpuPainter,
+    renderer: &mut Renderer,
+    rects: &[RectEntry],
+    paints: &PaintTable,
+    pieces: &[Piece],
+    changes: Option<Changes<'_>>,
+) -> Vec<u8> {
     let clips = ClipTable::new();
     painter.paint(
         rects,
@@ -142,6 +154,7 @@ fn draw(
         &clips,
         &[],
         &GlyphRunTable::new(),
+        pieces,
         changes.map(|changes| changes.rects),
     );
     renderer
@@ -261,6 +274,78 @@ fn a_frame_whose_spans_moved_is_written_whole() {
         renderer.last_instance_upload(),
         InstanceUpload::Whole { rows: 4 },
         "the spans moved, so no dirty index names the range it used to"
+    );
+}
+
+/// A frame whose extent table renumbered is written whole, even though its
+/// spans did not move (story #1450).
+///
+/// An instance names its occlusion piece by a position in one extent table
+/// that every rect shares. Here the dirty rect 0 goes from one whole piece to
+/// one cut piece — one instance either way, so no span moves — and that pushes
+/// the cut piece of rect 2, which is not dirty, from extent row 1 to row 2.
+/// Applying rect 0's range alone would leave rect 2's row naming rect 0's
+/// quad. The debug assertion in the partial path catches that, so without the
+/// guard this test panics there; with it, the frame is written whole and draws
+/// what a fresh renderer draws.
+#[test]
+fn a_frame_whose_extent_table_renumbered_is_written_whole() {
+    let mut painter = GpuPainter::new();
+    let mut renderer = renderer();
+    let (rects, paints) = scene(1, 28.0);
+    let whole = |index: usize| {
+        let rect = rects[index];
+        Piece {
+            rect: index as u32,
+            left: rect.x,
+            top: rect.y,
+            right: rect.x + rect.w,
+            bottom: rect.y + rect.h,
+        }
+    };
+    let cut_two = Piece {
+        right: 25.0,
+        ..whole(2)
+    };
+    let before = [whole(0), whole(1), cut_two];
+    let after = [
+        Piece {
+            right: 14.0,
+            ..whole(0)
+        },
+        whole(1),
+        cut_two,
+    ];
+
+    draw_pieces(
+        &mut painter,
+        &mut renderer,
+        &rects,
+        &paints,
+        &before,
+        since(&[], 1),
+    );
+    let shown = draw_pieces(
+        &mut painter,
+        &mut renderer,
+        &rects,
+        &paints,
+        &after,
+        since(&[0], 2),
+    );
+    assert_eq!(
+        renderer.last_instance_upload(),
+        InstanceUpload::Whole { rows: 4 },
+        "rect 2's extent row moved without rect 2 being dirty"
+    );
+
+    let mut fresh = GpuPainter::new();
+    let mut clean = self::renderer();
+    let expected = draw_pieces(&mut fresh, &mut clean, &rects, &paints, &after, None);
+    assert_eq!(
+        first_difference(&shown, &expected),
+        None,
+        "the window kept a row naming the extent row it named before"
     );
 }
 
@@ -424,6 +509,7 @@ fn a_steady_state_frame_allocates_nothing() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     renderer

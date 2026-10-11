@@ -656,9 +656,9 @@ pub struct Renderer {
     ///
     /// A second pipeline rather than another [`InstanceKind`], and that is the
     /// general answer for anything this painter has to *sample a rendered
-    /// target* for. The paint pipeline binds seven storage buffers across two
+    /// target* for. The paint pipeline binds eight storage buffers across two
     /// stages that allow four each — four and four, with nothing spare — so a
-    /// composite folded into it would need an eighth binding that does not
+    /// composite folded into it would need a ninth binding that does not
     /// exist. A pipeline owns its own bind group layout, so this one costs the
     /// paint pipeline nothing at all. Story #733's backdrop blur took the same
     /// route, in two more pipelines of its own — and it reuses this one for a
@@ -1212,19 +1212,21 @@ impl Renderer {
 
         // Visibility is per binding, and it is a correctness constraint rather
         // than a tidiness one: `wgpu::Limits::downlevel_defaults` allows four
-        // storage buffers **per shader stage**, and this pipeline binds seven.
-        // Declaring each where it is actually read is what makes seven fit:
+        // storage buffers **per shader stage**, and this pipeline binds eight.
+        // Declaring each where it is actually read is what makes eight fit:
         //
-        //     vertex    instances(0), glyph runs(8), shapes(9)
+        //     vertex    instances(0), glyph runs(8), shapes(9), extents(13)
         //     fragment  paints(1), clips(2), strokes(4), images(5)
         //
-        // Three and four. The fragment stage reads no instance array at all;
-        // `VertexOut` in `shaders/paint.wgsl` carries the values it needs
+        // Four and four: neither stage has a free storage slot. Story #1450's
+        // extents took the vertex stage's last one. The fragment stage reads
+        // no instance array at all; `VertexOut` in `shaders/paint.wgsl`
+        // carries the values it needs
         // across, and story #581 is why. The vertex stage read the stroke rows
         // too until story #584 took the quad's outset off that row and onto
-        // `Instance::outset`, which is the one spare slot on either side —
-        // `docs/decisions/tables-the-vertex-stage-reads.md` D4 says why a free
-        // slot is not an invitation.
+        // `Instance::outset`, which freed the vertex slot story #1450's
+        // extents later took — `docs/decisions/tables-the-vertex-stage-reads.md`
+        // D4 says why a free slot is not an invitation.
         //
         // Story #582's two tables took the same route deliberately. A glyph
         // run's parameters and a coverage mask's are five and eleven floats
@@ -1264,13 +1266,20 @@ impl Renderer {
                 // quad's outset from the row — until a shadow needed the same
                 // growth from a table that stage cannot bind at all. The packer
                 // resolves both onto [`Instance::outset`] now, so the vertex
-                // stage reads three storage buffers of the four
-                // `downlevel_defaults` allows rather than four.
+                // stage read three storage buffers of the four
+                // `downlevel_defaults` allows, until story #1450's extents
+                // (binding 13) took the fourth.
                 storage(4, wgpu::ShaderStages::FRAGMENT),
                 storage(5, wgpu::ShaderStages::FRAGMENT),
                 // Story #582's two tables, vertex only — see the comment above.
                 storage(8, wgpu::ShaderStages::VERTEX),
                 storage(9, wgpu::ShaderStages::VERTEX),
+                // The occlusion pieces' quads (story #1450), vertex only: the
+                // vertex stage places a cut quad from its row, and the fragment
+                // stage never needs it, because it shades against `bounds`.
+                // This is the vertex stage's fourth storage buffer of the four
+                // `downlevel_defaults` allows.
+                storage(13, wgpu::ShaderStages::VERTEX),
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
@@ -4898,6 +4907,8 @@ struct Frame {
     images: wgpu::Buffer,
     glyph_runs: wgpu::Buffer,
     shapes: wgpu::Buffer,
+    /// The occlusion pieces' quads, [`InstanceBuffer::extents`].
+    extents: wgpu::Buffer,
     /// One bind group per atlas, plus [`Frame::NO_ATLAS`] at the front for a
     /// frame that samples none.
     ///
@@ -4928,6 +4939,7 @@ struct Frame {
     image_capacity: usize,
     glyph_run_capacity: usize,
     shape_capacity: usize,
+    extent_capacity: usize,
     /// How many draw calls the frame most recently drawn took.
     last_runs: usize,
     /// What the instance buffer on the device currently holds, and the spans
@@ -4936,6 +4948,9 @@ struct Frame {
     /// has, and every frame would have to send everything.
     uploaded: Vec<Instance>,
     spans: Vec<InstanceSpan>,
+    /// The [`InstanceBuffer::extent_starts`] those rows were packed against,
+    /// compared for the same reason the spans are.
+    extent_starts: Vec<u32>,
     /// The globals currently on the device, so a frame whose extent and heap
     /// layout are both unchanged writes nothing.
     uploaded_globals: Globals,
@@ -5203,6 +5218,10 @@ impl Frame {
             "coverage masks",
             (size_of::<GpuShape>() * MINIMUM_CAPACITY) as u64,
         );
+        let extents = storage(
+            "piece extents",
+            (size_of::<[f32; 4]>() * MINIMUM_CAPACITY) as u64,
+        );
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globals"),
             size: size_of::<Globals>() as u64,
@@ -5218,6 +5237,7 @@ impl Frame {
             images,
             glyph_runs,
             shapes,
+            extents,
             bind_groups: Vec::new(),
             bound_atlases: 0,
             instance_capacity: MINIMUM_CAPACITY,
@@ -5227,16 +5247,18 @@ impl Frame {
             image_capacity: MINIMUM_CAPACITY,
             glyph_run_capacity: MINIMUM_CAPACITY,
             shape_capacity: MINIMUM_CAPACITY,
+            extent_capacity: MINIMUM_CAPACITY,
             last_runs: 0,
             uploaded: Vec::new(),
             spans: Vec::new(),
+            extent_starts: Vec::new(),
             // Zero on both axes, which no drawable is, so the first frame always
             // writes it.
             uploaded_globals: Globals::default(),
             uploaded_generation: None,
             last_upload: InstanceUpload::Whole { rows: 0 },
-            // The eight buffers above.
-            allocations: 8,
+            // The nine buffers above.
+            allocations: 9,
         };
         frame.rebind(
             device,
@@ -5289,6 +5311,7 @@ impl Frame {
                 &self.images,
                 &self.glyph_runs,
                 &self.shapes,
+                &self.extents,
                 view,
                 sampler,
                 msdf_sampler,
@@ -5431,6 +5454,26 @@ impl Frame {
         }
         queue.write_buffer(&self.shapes, 0, bytemuck::cast_slice(gpu_shapes));
 
+        // The piece extents, written whole like the tables above: the table is
+        // one row per cut piece, which is small, and a row's index moves when
+        // an earlier rect gains or loses a piece. A frame with no cut piece
+        // still writes one dead row, which no instance names — an extent word
+        // of zero reads no row.
+        let dead_extent = [[0.0f32; 4]];
+        let extents = or_dead(buffer.extents(), &dead_extent);
+        if extents.len() > self.extent_capacity {
+            self.extent_capacity = grown(extents.len());
+            self.extents = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("piece extents"),
+                size: (size_of::<[f32; 4]>() * self.extent_capacity) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.allocations += 1;
+            rebind = true;
+        }
+        queue.write_buffer(&self.extents, 0, bytemuck::cast_slice(extents));
+
         if globals != self.uploaded_globals {
             queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
             self.uploaded_globals = globals;
@@ -5492,7 +5535,10 @@ impl Frame {
     /// stack the packer was in when it reached it. A rect the set leaves out can
     /// still have moved for a reason the set does not carry — a group opening
     /// over its range changes its instances' `layer` without touching its entry
-    /// — and every such change moves a span, so comparing spans catches it.
+    /// — and every such change moves a span, so comparing spans catches it. One
+    /// change moves no span: a dirty rect that gains or loses a cut occlusion
+    /// piece renumbers the extent index of every later rect's pieces (story
+    /// #1450), so [`InstanceBuffer::extent_starts`] is compared beside them.
     ///
     /// **The set names rects this buffer has.** A dirty index past the span
     /// table means the two disagree about what a rect index is.
@@ -5512,6 +5558,7 @@ impl Frame {
     ) -> bool {
         let rows = buffer.instances();
         let spans = buffer.spans();
+        let extent_starts = buffer.extent_starts();
 
         let mut rebind = false;
         if rows.len() > self.instance_capacity {
@@ -5546,6 +5593,11 @@ impl Frame {
                     // another module.
                     && self.uploaded.len() == rows.len()
                     && self.spans == spans
+                    // An extent index is a position in a table every rect
+                    // shares (story #1450). A dirty rect that gains or loses a
+                    // cut piece renumbers every later rect's pieces without
+                    // moving a span, and those later rects are not in the set.
+                    && self.extent_starts == extent_starts
                     && changes
                         .rects
                         .iter()
@@ -5559,6 +5611,8 @@ impl Frame {
                 self.uploaded.extend_from_slice(rows);
                 self.spans.clear();
                 self.spans.extend_from_slice(spans);
+                self.extent_starts.clear();
+                self.extent_starts.extend_from_slice(extent_starts);
                 self.uploaded_generation = changes.map(|changes| changes.generation);
                 self.last_upload = InstanceUpload::Whole { rows: rows.len() };
                 return rebind;
@@ -5656,6 +5710,7 @@ fn bind(
     images: &wgpu::Buffer,
     glyph_runs: &wgpu::Buffer,
     shapes: &wgpu::Buffer,
+    extents: &wgpu::Buffer,
     atlas: &wgpu::TextureView,
     sampler: &wgpu::Sampler,
     msdf_sampler: &wgpu::Sampler,
@@ -5717,6 +5772,10 @@ fn bind(
             wgpu::BindGroupEntry {
                 binding: 12,
                 resource: wgpu::BindingResource::Sampler(strip_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 13,
+                resource: extents.as_entire_binding(),
             },
         ],
     })

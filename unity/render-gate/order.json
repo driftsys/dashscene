@@ -158,9 +158,9 @@
                 "strokes": [],
                 "strokeWeight": 1,
                 "absoluteBoundingBox": {
-                  "x": 420,
+                  "x": 420.25,
                   "y": 60,
-                  "width": 480,
+                  "width": 479.75,
                   "height": 440
                 },
                 "constraints": {
@@ -228,6 +228,39 @@
                 },
                 "effects": [],
                 "interactions": []
+              },
+              {
+                "id": "1:7",
+                "name": "plug",
+                "type": "FRAME",
+                "scrollBehavior": "SCROLLS",
+                "blendMode": "PASS_THROUGH",
+                "clipsContent": false,
+                "fills": [
+                  {
+                    "blendMode": "NORMAL",
+                    "type": "SOLID",
+                    "color": {
+                      "r": 0.0,
+                      "g": 1.0,
+                      "b": 0.0,
+                      "a": 1.0
+                    }
+                  }
+                ],
+                "strokes": [],
+                "strokeWeight": 1,
+                "absoluteBoundingBox": {
+                  "x": 820,
+                  "y": 420,
+                  "width": 60,
+                  "height": 60
+                },
+                "constraints": {
+                  "vertical": "TOP",
+                  "horizontal": "LEFT"
+                },
+                "children": []
               }
             ]
           }

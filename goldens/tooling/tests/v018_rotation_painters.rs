@@ -63,6 +63,7 @@ fn skia_pixels(rects: &[RectEntry], paints: &PaintTable) -> Vec<u8> {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     painter.rgba_bytes()
@@ -77,6 +78,7 @@ fn gpu_pixels(rects: &[RectEntry], paints: &PaintTable) -> Vec<u8> {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     Renderer::new()

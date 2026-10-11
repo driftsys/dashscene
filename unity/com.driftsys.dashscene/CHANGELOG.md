@@ -8,6 +8,31 @@ the Cargo workspace rather than moving on its own.
 
 ### Added
 
+- **The painter draws each rect's occlusion pieces rather than its whole box**
+  (story #1450). `FramePacker` emits a rect's fill, stacked fills and stroke
+  once per row of `DsFrame.Pieces`, every instance on the rect's box, and writes
+  `_DsShade.w` as 0 for a whole box or `row * 16 + grow bits` for a cut piece,
+  whose edges sit in a new per-frame `_DsExtents` buffer
+  (`FramePacker.Extents`). `DashsceneInstance.hlsl`'s vertex stage places a cut
+  quad from that row and grows only the edges that lie on the box, so the pieces
+  of one rect neither overlap nor leave a gap. Both draw paths carry the word:
+  the `BatchRendererGroup` streams and the ordered pass's `_DsInstances` rows,
+  so an `UnlitOverlay` rect is cut as a lit one is. `_DsExtents` is read in the
+  vertex stage on both paths, so the OpenGL ES 3.x concern issue #1492 records
+  now covers the lit classes too. A rect a later opaque core covers entirely
+  draws nothing. A partial pack also refuses a commit in which any rect's extent
+  rows moved. On the `LitOpaque` class a frame with any rect that has a corner
+  radius, a clip, a stroke or an opacity below 1 (the rects that class refuses
+  with `CoverageNotExpressible` when nothing refuses them first) packs every
+  rect whole, so a refused opaque core leaves no hole in the rects beneath it. A
+  translucent fill, which that class also refuses, does not trip it: such a rect
+  is never a core. The grow bits are `PaintHeap.GrowLeft` .. `GrowBottom`, the
+  lean painter's values.
+- **`DashsceneRuntime.SetAaBand(float)`** hands the occlusion pass the painter's
+  edge width, the band it shrinks every opaque core by. The `FrameLoop` and
+  `Showcase` samples call it with `BrgPainter.EdgeWidth` wherever they set that,
+  before the tick; a host of its own does the same.
+
 - **A commit's dirty rects are repacked where they sit and uploaded as ranges**
   (story #1446, R-T4). `FramePacker` records each rect's span of instance rows
   on every full pack (`Runtime/InstanceSpans.cs`), and a commit that follows the
@@ -310,6 +335,13 @@ the Cargo workspace rather than moving on its own.
   draw order, and `docs/decisions/unity-painter-uses-brg.md` D1 records it;
   `docs/design/unity-csharp-host.md`, "Two draw paths", describes the pass.
 
+- **`DS_ABI_VERSION` is 3, and this package refuses a library built for 2**
+  (story #1450). `DsFrame` gained `Pieces`, every rect cut into the
+  sub-rectangles no later opaque core covers, and `FrameLease` validates its
+  stride against `Piece` in `Runtime/BoundaryB.cs` like every other array. The
+  package also declares `ds_runtime_set_aa_band`, which sets how far inside an
+  opaque core the cut stops, and wraps it as `DashsceneRuntime.SetAaBand`. The
+  libraries under `Runtime/Plugins/` are rebuilt at ABI 3.
 - **`PaintGlobals` is gone; its five names are now members of
   `PaintMaterialProperties`.** Nothing the painter binds is process-wide any
   more, so the class that named the global buffers has no subject. A host

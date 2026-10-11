@@ -37,10 +37,10 @@ use dashpaint::{
     Atlas, AtlasGlyph, AtlasIndex, Blur, BlurKind, ClipBox, ClipIndex, ClipTable, Color,
     CornerRadii, EntryParts, FillSpec, GlyphQuad, GlyphRange, GlyphRun, GlyphRunTable, Gradient,
     GradientKind, GradientStop, GroupComposite, ImageAsset, ImageFill, ImageFormat, ImageTable,
-    Mat23, PaintEntry, PaintIndex, PaintTable, Painter, RectEntry, ScaleMode, Shadow, ShadowKind,
-    StopRange, Stroke, StrokeAlign, Vec2, VectorField,
+    Mat23, PaintEntry, PaintIndex, PaintTable, Painter, Piece, RectEntry, ScaleMode, Shadow,
+    ShadowKind, StopRange, Stroke, StrokeAlign, Vec2, VectorField,
 };
-use dashscene_gpu::{GpuPainter, InstanceKind};
+use dashscene_gpu::{GpuPainter, Instance, InstanceKind};
 
 /// A 7x5 PNG, the same fixture `dashpaint`'s own tests use. An image asset
 /// needs real bytes since issue #716, because the table reads the extent out of
@@ -63,6 +63,11 @@ impl Scene {
     /// actually arrives on, and a packer reachable only by a test would not be
     /// the one a host drives.
     fn pack(&self) -> GpuPainter {
+        self.pack_with(&[])
+    }
+
+    /// [`Scene::pack`], with the occlusion pieces a commit would hand over.
+    fn pack_with(&self, pieces: &[Piece]) -> GpuPainter {
         let mut painter = GpuPainter::new();
         painter.paint(
             &self.rects,
@@ -71,6 +76,7 @@ impl Scene {
             &self.clips,
             &self.groups,
             &self.glyphs,
+            pieces,
             None,
         );
         painter
@@ -1187,6 +1193,7 @@ fn repacking_the_same_frame_produces_the_same_buffer() {
             &scene.clips,
             &scene.groups,
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         dumps.push(painter.instances().dump());
@@ -1231,7 +1238,6 @@ fn the_vocabulary_fixture_is_distinguishable_in_every_instance() {
 /// does not put this type behind.
 #[test]
 fn the_instance_is_eighty_bytes_in_declaration_order() {
-    use dashscene_gpu::Instance;
     use std::mem::offset_of;
 
     assert_eq!(size_of::<Instance>(), 80);
@@ -1239,7 +1245,8 @@ fn the_instance_is_eighty_bytes_in_declaration_order() {
     // Twelve 4-byte scalars and two four-float vectors: the members account for
     // every byte, so nothing is padding rustc chose. Story #832 added three of
     // those scalars — the angle and its two pivot components — plus the
-    // declared pad word that takes the type to the shader's array stride.
+    // declared pad word that takes the type to the shader's array stride, which
+    // story #1450 turned into the `extent` word.
     assert_eq!(2 * 16 + 12 * 4, size_of::<Instance>());
 
     let measured = [
@@ -1255,7 +1262,7 @@ fn the_instance_is_eighty_bytes_in_declaration_order() {
         ("outset", offset_of!(Instance, outset), 60),
         ("rotation_pivot", offset_of!(Instance, rotation_pivot), 64),
         ("rotation", offset_of!(Instance, rotation), 72),
-        ("_pad", offset_of!(Instance, _pad), 76),
+        ("extent", offset_of!(Instance, extent), 76),
     ];
     for (name, at, expected) in measured {
         assert_eq!(
@@ -1867,24 +1874,20 @@ fn an_unrotated_rect_packs_no_rotation() {
         [8.0, 4.0],
         "the pivot is still resolved, so a later rotation needs no second path",
     );
-    assert_eq!(instances[0]._pad, 0.0, "the pad word is written, not left");
+    assert_eq!(
+        instances[0].extent, 0,
+        "the extent word is written, not left"
+    );
 }
 
-/// No instance the packer produces carries a non-zero pad word.
-///
-/// The pad exists because story #832's rotation needs twelve of the sixteen
-/// bytes the shader's array stride rounds up to. `sub-word-members-widen-rather-
-/// than-pad.md` rejects a public `_pad` on a boundary-B row because it
-/// participates in `PartialEq`, so two otherwise-equal instances could compare
-/// unequal for differing in a member that means nothing. `Instance` is not a
-/// boundary-B row, but the hazard is the same one, and this closes it by
-/// construction: if every instance the packer writes carries `0.0`, no two can
-/// differ there.
+/// A frame packed with no occlusion pieces carries an extent word of zero on
+/// every instance, so it draws every quad around its whole box — exactly the
+/// rows this packer wrote before story #1450 gave the word a meaning.
 ///
 /// Over the whole vocabulary fixture, so a construction site added later
 /// without the field is caught here rather than by a picture.
 #[test]
-fn a_packed_instance_never_carries_a_non_zero_pad() {
+fn a_frame_packed_with_no_pieces_cuts_no_quad() {
     let painter = vocabulary().pack();
     let instances = painter.instances().instances();
     assert!(
@@ -1893,9 +1896,366 @@ fn a_packed_instance_never_carries_a_non_zero_pad() {
     );
     for (i, instance) in instances.iter().enumerate() {
         assert_eq!(
-            instance._pad, 0.0,
-            "instance {i} (kind {}) carries a non-zero pad word",
+            instance.extent, 0,
+            "instance {i} (kind {}) carries a non-zero extent word",
             instance.kind,
         );
     }
+    assert!(painter.instances().extents().is_empty());
+}
+
+/// One whole piece per rect is the same frame as no pieces at all, row for
+/// row: a piece whose four edges lie on its box's edges is packed as extent
+/// zero and adds no extent row.
+///
+/// The right and bottom edges are `x + w` and `y + h` evaluated in `f32`,
+/// which is how the occlusion pass writes them, and the packer's grow bits
+/// compare against the same expression. Over the vocabulary fixture, whose
+/// rects sit at fractional coordinates, so an edge the packer re-derived
+/// differently would fail the comparison on some rect.
+#[test]
+fn one_whole_piece_per_rect_packs_what_no_pieces_pack() {
+    let scene = vocabulary();
+    let whole: Vec<Piece> = scene
+        .rects
+        .iter()
+        .enumerate()
+        .map(|(index, rect)| Piece {
+            rect: index as u32,
+            left: rect.x,
+            top: rect.y,
+            right: rect.x + rect.w,
+            bottom: rect.y + rect.h,
+        })
+        .collect();
+    assert_eq!(
+        scene.pack_with(&whole).instances(),
+        scene.pack().instances(),
+        "a whole piece packs a different row from no piece",
+    );
+}
+
+/// A rect cut into pieces packs its fill, its stacked fill and its inside
+/// stroke once per piece, in that order within each piece, every instance
+/// still stated over the whole box. Each piece's quad is one extent row, and
+/// its grow bits are set exactly on the edges that lie on the box.
+///
+/// The box sits at fractional coordinates so that its far edges, `x + w` and
+/// `y + h`, are not integers, and the cut edges are not on the box, so a grow
+/// bit decided by anything but the edge comparison sets a wrong bit.
+#[test]
+fn a_cut_rect_packs_its_ink_once_per_piece() {
+    let mut paints = PaintTable::new();
+    let fill = paints.intern_fill(&FillSpec::Solid {
+        color: color(0.2, 0.4, 0.9, 0.5),
+    });
+    let extra = paints.intern_fill(&FillSpec::Solid {
+        color: color(0.9, 0.1, 0.1, 0.25),
+    });
+    let cut = paints.push_with(
+        PaintEntry {
+            fill,
+            ..PaintEntry::default()
+        },
+        EntryParts {
+            extra_fills: &[extra],
+            stroke: Some(Stroke {
+                width: 1.5,
+                align: StrokeAlign::Inside,
+                color: color(0.0, 0.0, 0.0, 1.0),
+            }),
+            ..EntryParts::default()
+        },
+    );
+    let solid = paints.push_solid(color(0.1, 0.8, 0.2, 1.0));
+    let (x, y, w, h) = (10.5_f32, 4.25_f32, 30.0_f32, 20.0_f32);
+    let scene = Scene {
+        rects: vec![
+            rect(x, y, w, h, cut, ClipIndex::UNCLIPPED, 1.0),
+            rect(2.0, 3.0, 4.0, 5.0, solid, ClipIndex::UNCLIPPED, 1.0),
+        ],
+        paints,
+        images: ImageTable::new(),
+        clips: ClipTable::new(),
+        groups: Vec::new(),
+        glyphs: GlyphRunTable::new(),
+    };
+    let (right, bottom) = (x + w, y + h);
+    let pieces = [
+        // The strip above a core, the strip to its left, the strip below it.
+        Piece {
+            rect: 0,
+            left: x,
+            top: y,
+            right,
+            bottom: 9.0,
+        },
+        Piece {
+            rect: 0,
+            left: x,
+            top: 9.0,
+            right: 15.0,
+            bottom: 20.0,
+        },
+        Piece {
+            rect: 0,
+            left: x,
+            top: 20.0,
+            right,
+            bottom,
+        },
+        Piece {
+            rect: 1,
+            left: 2.0,
+            top: 3.0,
+            right: 6.0,
+            bottom: 8.0,
+        },
+    ];
+    let painter = scene.pack_with(&pieces);
+    let buffer = painter.instances();
+
+    assert_eq!(
+        buffer.extents(),
+        &[
+            [x, y, right, 9.0],
+            [x, 9.0, 15.0, 20.0],
+            [x, 20.0, right, bottom],
+        ],
+        "one extent row per cut piece, and none for the whole piece of rect 1",
+    );
+
+    let cut_rows = buffer.rect_instances(0);
+    let kinds: Vec<InstanceKind> = cut_rows
+        .iter()
+        .map(|instance| InstanceKind::from_u32(instance.kind))
+        .collect();
+    let per_piece = [
+        InstanceKind::FillSolid,
+        InstanceKind::FillSolid,
+        InstanceKind::Stroke,
+    ];
+    assert_eq!(
+        kinds,
+        per_piece.repeat(3),
+        "fill, stacked fill, stroke, per piece"
+    );
+
+    let masks = [
+        Instance::GROW_LEFT | Instance::GROW_TOP | Instance::GROW_RIGHT,
+        Instance::GROW_LEFT,
+        Instance::GROW_LEFT | Instance::GROW_RIGHT | Instance::GROW_BOTTOM,
+    ];
+    for (i, instance) in cut_rows.iter().enumerate() {
+        let piece = i / per_piece.len();
+        assert_eq!(
+            instance.extent_row(),
+            Some(piece),
+            "instance {i} names the extent row of piece {piece}",
+        );
+        assert_eq!(
+            instance.grow_mask(),
+            masks[piece],
+            "instance {i}: piece {piece}'s grow bits",
+        );
+        assert_eq!(
+            instance.bounds,
+            [x, y, w, h],
+            "instance {i} is shaded against the whole box",
+        );
+    }
+
+    let whole = buffer.rect_instances(1);
+    assert_eq!(whole.len(), 1);
+    assert_eq!(whole[0].extent, 0, "a whole piece cuts nothing");
+}
+
+/// The backdrop, the drop shadow, the inner shadow and a masked fill are
+/// emitted once over the whole box (extent word zero), whatever the pieces
+/// say; only the plain fill is emitted once per piece. The shared occlusion
+/// pass never cuts such a rect, so these pieces are written in the test: they pin
+/// the packer's own rule, which the module documentation states.
+#[test]
+fn a_cut_rect_emits_its_backdrop_shadows_and_masked_fill_once_over_the_box() {
+    let mut paints = PaintTable::new();
+    let fill = paints.intern_fill(&FillSpec::Solid {
+        color: color(0.2, 0.4, 0.9, 0.5),
+    });
+    let shadowed = paints.push_with(
+        PaintEntry {
+            fill,
+            ..PaintEntry::default()
+        },
+        EntryParts {
+            shadows: &[
+                shadow(ShadowKind::Drop, 4.0),
+                shadow(ShadowKind::Inner, 2.0),
+            ],
+            blurs: &[Blur {
+                kind: BlurKind::Backdrop,
+                radius: 8.0,
+            }],
+            ..EntryParts::default()
+        },
+    );
+    let masked = paints.push_with(
+        PaintEntry {
+            fill,
+            ..PaintEntry::default()
+        },
+        EntryParts {
+            shape: Some(field(3.0)),
+            ..EntryParts::default()
+        },
+    );
+    let scene = Scene {
+        rects: vec![
+            rect(0.0, 0.0, 40.0, 20.0, shadowed, ClipIndex::UNCLIPPED, 1.0),
+            rect(0.0, 30.0, 40.0, 20.0, masked, ClipIndex::UNCLIPPED, 1.0),
+        ],
+        paints,
+        images: ImageTable::new(),
+        clips: ClipTable::new(),
+        groups: Vec::new(),
+        glyphs: GlyphRunTable::new(),
+    };
+    let halves = |rect: u32, top: f32| {
+        [
+            Piece {
+                rect,
+                left: 0.0,
+                top,
+                right: 20.0,
+                bottom: top + 20.0,
+            },
+            Piece {
+                rect,
+                left: 30.0,
+                top,
+                right: 40.0,
+                bottom: top + 20.0,
+            },
+        ]
+    };
+    let pieces: Vec<Piece> = halves(0, 0.0).into_iter().chain(halves(1, 30.0)).collect();
+    let painter = scene.pack_with(&pieces);
+    let buffer = painter.instances();
+
+    let rows = |rect: u32| -> Vec<(InstanceKind, u32)> {
+        buffer
+            .rect_instances(rect)
+            .iter()
+            .map(|instance| (InstanceKind::from_u32(instance.kind), instance.extent))
+            .collect()
+    };
+    let cut = rows(0);
+    assert_eq!(
+        cut.iter().map(|&(kind, _)| kind).collect::<Vec<_>>(),
+        vec![
+            InstanceKind::Backdrop,
+            InstanceKind::ShadowDrop,
+            InstanceKind::FillSolid,
+            InstanceKind::FillSolid,
+            InstanceKind::ShadowInner,
+        ],
+        "the backdrop, the drop shadow and the inner shadow once; the fill once per piece",
+    );
+    for (i, &(kind, extent)) in cut.iter().enumerate() {
+        assert_eq!(
+            extent == 0,
+            kind != InstanceKind::FillSolid,
+            "instance {i} ({kind:?}): only the fill is cut to a piece",
+        );
+    }
+    assert_eq!(
+        rows(1),
+        vec![(InstanceKind::FillSolid, 0)],
+        "the masked fill is one instance over the whole box",
+    );
+}
+
+/// A rect with no piece in a non-empty slice packs nothing: a later opaque
+/// core covers its whole box. The rects on either side still pack, and the
+/// span table still has a (zero-length) span for it.
+#[test]
+fn a_rect_with_no_piece_packs_nothing() {
+    let mut paints = PaintTable::new();
+    let solid = paints.push_solid(color(0.1, 0.8, 0.2, 0.5));
+    let scene = Scene {
+        rects: vec![
+            rect(1.0, 1.0, 4.0, 4.0, solid, ClipIndex::UNCLIPPED, 1.0),
+            rect(2.0, 2.0, 4.0, 4.0, solid, ClipIndex::UNCLIPPED, 1.0),
+            rect(3.0, 3.0, 4.0, 4.0, solid, ClipIndex::UNCLIPPED, 1.0),
+        ],
+        paints,
+        images: ImageTable::new(),
+        clips: ClipTable::new(),
+        groups: Vec::new(),
+        glyphs: GlyphRunTable::new(),
+    };
+    let pieces = [
+        Piece {
+            rect: 0,
+            left: 1.0,
+            top: 1.0,
+            right: 5.0,
+            bottom: 5.0,
+        },
+        Piece {
+            rect: 2,
+            left: 3.0,
+            top: 3.0,
+            right: 7.0,
+            bottom: 7.0,
+        },
+    ];
+    let painter = scene.pack_with(&pieces);
+    let buffer = painter.instances();
+    assert_eq!(buffer.spans().len(), 3);
+    assert_eq!(buffer.rect_instances(0).len(), 1);
+    assert_eq!(
+        buffer.rect_instances(1).len(),
+        0,
+        "a covered rect draws nothing"
+    );
+    assert_eq!(buffer.rect_instances(2).len(), 1);
+}
+
+/// A glyph run anchored to a rect with no piece still packs: the run is never
+/// cut, and the rect's own ink is what the core covers. The run's instances are
+/// the ones the frame with no pieces packs for that rect, and they are all the
+/// rect's span holds.
+#[test]
+fn a_covered_rects_glyph_run_still_packs() {
+    let scene = text();
+    let covered = 2_u32;
+    let pieces: Vec<Piece> = scene
+        .rects
+        .iter()
+        .enumerate()
+        .filter(|&(index, _)| index as u32 != covered)
+        .map(|(index, rect)| Piece {
+            rect: index as u32,
+            left: rect.x,
+            top: rect.y,
+            right: rect.x + rect.w,
+            bottom: rect.y + rect.h,
+        })
+        .collect();
+
+    let whole = scene.pack();
+    let glyphs: Vec<Instance> = whole
+        .instances()
+        .rect_instances(covered)
+        .iter()
+        .filter(|instance| instance.kind == InstanceKind::Text.as_u32())
+        .copied()
+        .collect();
+    assert!(
+        !glyphs.is_empty() && glyphs.len() < whole.instances().rect_instances(covered).len(),
+        "rect {covered} must draw ink of its own and anchor a run, or this asserts nothing",
+    );
+
+    let cut = scene.pack_with(&pieces);
+    assert_eq!(cut.instances().rect_instances(covered), glyphs.as_slice());
 }

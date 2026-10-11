@@ -26,11 +26,14 @@
 //
 // **What the full repack cost, on the document `just unity-render` draws.**
 // `goldens/dsb/v03-paint.dsb` carries fourteen rect entries — pinned by
-// `crates/dashc/tests/figma_lowering.rs` — and packs to sixteen instances.
-// Before #1446 every commit walked all fourteen and, on the `RawBuffer` rung —
-// the only one any device has reported — the painter then sent 5232 bytes of
-// instance buffer for the 1392 that carry a frame's instances, on a commit
-// whose dirty set was empty as much as on any other. What is still uploaded
+// `crates/dashc/tests/figma_lowering.rs` — and packed to sixteen instances
+// until story #1450 cut its rects into occlusion pieces; it packs to 42 since,
+// the count `just unity-render`'s "instances:" line prints. Before #1446 every
+// commit walked all fourteen and, on the `RawBuffer` rung — the only one any
+// device has reported — the painter then sent 5232 bytes of instance buffer,
+// on a commit whose dirty set was empty as much as on any other. Of those, the
+// 1392 bytes (112 + 16 x 80) carried the sixteen instances then, and the 3472
+// bytes (112 + 42 x 80) carry the 42 now. What is still uploaded
 // whole on every commit is the HEAP, and deliberately: a changed paint earns a new
 // interned row rather than rewriting one, so there is no stable slot to
 // rewrite. `docs/design/unity-csharp-host.md`'s gaps list carries the
@@ -41,6 +44,18 @@
 // ones, in the dirty set's own order, and abandons to the full pack the moment
 // one of them stops fitting where it sat — which is the only way a row behind
 // it could move without the set saying so.
+//
+// **A rect is drawn once per occlusion piece** (story #1450). The commit cuts
+// every rect into the sub-rectangles no later opaque core covers, and this
+// packer emits the rect's fill, stacked fills and stroke once per piece, every
+// instance on the rect's whole box, with `_DsShade.w` naming the piece's quad
+// in a shared extent table and the edges the vertex stage may grow. A rect
+// with no piece emits nothing. The lean painter's `pack.rs` does the same, and
+// the word is its `Instance::extent` written as a float. Glyph runs are never
+// cut. The spans stay keyed by rect, so a span holds all of a rect's pieces;
+// the partial path still abandons on an instance count, never on a piece
+// count, because the spans are keyed by rect and a rect's pieces share its
+// span, and it refuses when any rect's extent rows moved.
 
 using System;
 using System.Collections.Generic;
@@ -195,6 +210,43 @@ namespace Driftsys.Dashscene
         /// resolved no atlas would carry; the Paint kind tag says that.
         private int[] _instanceAtlas = new int[64];
 
+        /// The occlusion pieces' quads, `(left, top, right, bottom)` in
+        /// document space, one `float4` per piece that is not its rect's whole
+        /// box (story #1450). `_DsExtents` in the shading.
+        ///
+        /// **Rebuilt whole on every pack, on both paths**, like the heap: it is
+        /// one table every rect shares, so a rect's rows sit at a position that
+        /// every rect before it decides. [`PackPieces`] fills it.
+        private float[] _extents = new float[Float4 * 64];
+
+        /// The `_DsShade.w` word of each row of `frame.Pieces`: `index * 16 +
+        /// grow mask`, or 0 for a piece that is its rect's whole box.
+        private float[] _pieceWords = new float[64];
+
+        /// Where each rect's pieces start in `frame.Pieces`, with one entry
+        /// past the last rect, so rect `r`'s pieces are `[_pieceStarts[r],
+        /// _pieceStarts[r + 1])`.
+        private int[] _pieceStarts = new int[64];
+
+        /// The extent row each rect's first cut piece takes, this pack and the
+        /// one the arrays held before it.
+        ///
+        /// **The second is what makes a partial pack safe over pieces.** An
+        /// extent index is a position in a table every rect shares, so a dirty
+        /// rect that gains or loses a cut piece moves every later rect's
+        /// extent rows — and those later rects are not in the dirty set, so
+        /// their instance rows would keep naming the rows they named before.
+        /// `dashscene-gpu`'s `upload_instances` compares its `extent_starts`
+        /// for the same reason and writes whole when they moved.
+        private int[] _extentStarts = new int[64];
+        private int[] _packedExtentStarts = new int[64];
+
+        /// Whether this pack draws every rect as one whole piece: the frame
+        /// carries no piece table, or one this packer refused. And the same
+        /// for the pack the arrays held before it.
+        private bool _piecesWhole = true;
+        private bool _packedPiecesWhole = true;
+
         private PackDiagnostic _flags;
         private int _affectedRects;
         private int _firstAffectedRect = -1;
@@ -242,8 +294,10 @@ namespace Driftsys.Dashscene
         ///
         /// False on the first pack of a document, on a commit that skipped a
         /// generation, on one that replaced the document, on one whose dirty set
-        /// is empty, and on any commit where a dirty rect no longer packs to the
-        /// number of instances its span holds.
+        /// is empty, on one where any rect's occlusion extent rows start at a
+        /// different row than before (story #1450), and on any commit where a
+        /// dirty rect no longer packs to the number of instances its span
+        /// holds.
         public bool LastPackWasPartial { get; private set; }
 
         /// The instance ranges the last partial pack rewrote, adjacent rects
@@ -270,7 +324,14 @@ namespace Driftsys.Dashscene
         /// `(top_left, top_right, bottom_right, bottom_left)` per instance.
         public float[] Corners => _corners;
 
-        /// `(opacity, outset, rotation, 0)` per instance.
+        /// `(opacity, outset, rotation, extent)` per instance.
+        ///
+        /// `extent` is 0 when the quad is the instance's whole box, and
+        /// otherwise `index * 16 + grow mask` (story #1450): row `index - 1` of
+        /// [`Extents`] is the occlusion piece the quad is cut to, and the mask's
+        /// [`PaintHeap.GrowLeft`] to [`PaintHeap.GrowBottom`] bits name the
+        /// edges the vertex stage grows by the margin. A whole number below
+        /// 2^24, so a `float` carries it exactly.
         public float[] Shade => _shade;
 
         /// `(pivot.x, pivot.y, 0, 0)` per instance, in document space.
@@ -309,6 +370,16 @@ namespace Driftsys.Dashscene
 
         /// How many floats of [`Glyphs`] the last pack filled.
         public int GlyphFloats { get; private set; }
+
+        /// The occlusion pieces' quads, one `(left, top, right, bottom)`
+        /// `float4` per piece that is not its rect's whole box, in the order
+        /// the pieces arrive. What `_DsExtents` holds.
+        public float[] Extents => _extents;
+
+        /// How many floats of [`Extents`] the last pack filled. Zero on a frame
+        /// whose every piece is a whole box, which the painter still uploads
+        /// and binds as a one-row buffer, as it does every other table.
+        public int ExtentFloats { get; private set; }
 
         /// The atlas each instance samples, or -1 for one that is not a glyph.
         ///
@@ -397,18 +468,25 @@ namespace Driftsys.Dashscene
             var rectCount = Rows(frame.Rects);
             var tables = Read(frame, rectCount);
 
-            // Four things have to hold, and none of them is assumed. This
+            // Whole on both paths, like the heap above, and before the walk,
+            // which reads the words it writes.
+            PackPieces(frame, tables, materialClass);
+
+            // Five things have to hold, and none of them is assumed. This
             // commit follows the one the arrays hold (`_packedGeneration + 1`);
             // it did not replace the document, which renumbers every rect index
             // the spans are stated over; it has the same rect count, so a span
             // table filled for the previous commit still partitions this one;
-            // and it names at least one dirty rect, because a commit that names
-            // none has nothing for this path to write.
+            // it names at least one dirty rect, because a commit that names
+            // none has nothing for this path to write; and no rect's extent
+            // rows moved, because a clean rect's instances name its rows by
+            // position (story #1450).
             var partial = _havePacked
                           && !frame.DocumentReplacedFlag
                           && frame.Generation == _packedGeneration + 1
                           && Spans.RectCount == rectCount
-                          && Rows(frame.Dirty) > 0;
+                          && Rows(frame.Dirty) > 0
+                          && ExtentRowsKept(rectCount);
 
             // Everything the passes above raised, which belongs to this commit
             // on either path and must survive a partial pack that abandons.
@@ -430,6 +508,239 @@ namespace Driftsys.Dashscene
 
             _packedGeneration = frame.Generation;
             _havePacked = true;
+
+            // What the next commit's extent rows are compared against. Equal
+            // to this pack's on either path: a partial pack is taken only when
+            // they did not move.
+            EnsureInts(ref _packedExtentStarts, rectCount);
+            Array.Copy(_extentStarts, _packedExtentStarts, rectCount);
+            _packedPiecesWhole = _piecesWhole;
+        }
+
+        /// Whether every rect's extent rows start where they started in the
+        /// pack the arrays hold.
+        ///
+        /// **Every rect, not only the dirty ones**, because the rows a
+        /// dirty rect gains or loses move the rows of every rect behind it,
+        /// and the instances of a clean rect behind it are not rewritten by a
+        /// partial pack. Equal starts for every rect, with the clean rects'
+        /// pieces unchanged — the commit dirties every rect whose pieces
+        /// changed — mean every clean rect's words still name its own rows.
+        /// `dashscene-gpu`'s `upload_instances` compares `extent_starts` the
+        /// same way.
+        private bool ExtentRowsKept(int rectCount)
+        {
+            if (_piecesWhole != _packedPiecesWhole)
+            {
+                return false;
+            }
+
+            for (var r = 0; r < rectCount; r++)
+            {
+                if (_extentStarts[r] != _packedExtentStarts[r])
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        /// Read the commit's occlusion pieces into the words each instance
+        /// carries and the extent table the shading reads (story #1450).
+        ///
+        /// A piece is one visible sub-rectangle of a rect, after every later
+        /// opaque core's interior is subtracted (`dashscene_core::occlusion`).
+        /// For each one this decides its grow bits — an exact `==` between each
+        /// piece edge and the rect's box edge, the comparison
+        /// `crates/dashscene-gpu/src/pack.rs`'s `piece_extent` makes — and, for
+        /// a piece that is not the whole box, appends its edges to [`Extents`]
+        /// and writes `row * 16 + bits` as its word. A whole box is the word 0.
+        ///
+        /// **Exact, and that is sound only because no edge is computed.** The
+        /// pass copies each piece edge from the box or from a core's interior
+        /// and never recomputes one, and the box's far edges here are `X + W`
+        /// and `Y + H` rounded to `float`, the same expressions the pass
+        /// evaluated. So an edge on the box compares equal bit for bit, and a
+        /// cut edge does not.
+        ///
+        /// **Every rect is drawn whole** when the frame carries no piece table
+        /// — the frame a library before story #1450 hands over, because an
+        /// empty piece table means every rect is one whole piece — and when
+        /// this packer refuses the table: a piece naming a rect behind the
+        /// previous piece's or past the rect table, which the walk cannot
+        /// place and reports as
+        /// [`PackDiagnostic.CorruptRow`], or more pieces than a word can name
+        /// exactly. And on [`MaterialClass.LitOpaque`] whenever
+        /// [`AnyCoverageRefused`] finds a rect with a corner radius, a clip, a
+        /// stroke or an opacity below 1: see there.
+        /// Whole rects are the right picture in every case: what a piece leaves
+        /// out is under a later opaque core, so drawing it costs fill rate and
+        /// changes no pixel.
+        private unsafe void PackPieces(DsFrame frame, in Tables tables, MaterialClass materialClass)
+        {
+            var rectCount = tables.RectCount;
+            EnsureInts(ref _pieceStarts, rectCount + 1);
+            EnsureInts(ref _extentStarts, rectCount);
+            ExtentFloats = 0;
+
+            var count = Rows(frame.Pieces);
+            // `MaxExtentRows` is 2^20 - 1. No document in this repository
+            // reaches it: the pass cuts a rect into at most
+            // `dashscene_core::occlusion::MAX_PIECES_PER_RECT` (32) pieces, so
+            // a frame needs more than 32767 rects to pass it. No check drives
+            // it for that reason.
+            _piecesWhole = count == 0
+                           || count > PaintHeap.MaxExtentRows
+                           || (materialClass == MaterialClass.LitOpaque && AnyCoverageRefused(tables));
+            var pieces = _piecesWhole ? default : FrameRows.Of<Piece>(frame.Pieces);
+
+            // The order and range, judged whole before anything is written, so
+            // a refused table leaves no half-written words behind.
+            var anchor = 0u;
+            for (var p = 0; p < pieces.Length && !_piecesWhole; p++)
+            {
+                if (pieces[p].Rect < anchor || pieces[p].Rect >= (uint)rectCount)
+                {
+                    // No rect is named: what is wrong is the table's order, a
+                    // property of the frame, as for a run table out of order.
+                    _flags |= PackDiagnostic.CorruptRow;
+                    _piecesWhole = true;
+                }
+                anchor = pieces[p].Rect;
+            }
+
+            if (_piecesWhole)
+            {
+                Array.Clear(_extentStarts, 0, rectCount);
+                return;
+            }
+
+            EnsureFloats(ref _pieceWords, count);
+            EnsureFloats(ref _extents, count * Float4);
+
+            var next = 0;
+            var rows = 0;
+            for (var r = 0; r < rectCount; r++)
+            {
+                _pieceStarts[r] = next;
+                _extentStarts[r] = rows;
+
+                var box = tables.Rects[r];
+                // **Cast, so the sum is rounded to `float`.** C# allows a
+                // floating-point expression to be evaluated at a higher
+                // precision than its type, and only an explicit conversion
+                // guarantees the rounding the pass's `f32` sum had.
+                var right = (float)(box.X + box.W);
+                var bottom = (float)(box.Y + box.H);
+
+                for (; next < count && pieces[next].Rect == (uint)r; next++)
+                {
+                    var piece = pieces[next];
+                    var grow = 0;
+                    if (piece.Left == box.X)
+                    {
+                        grow |= PaintHeap.GrowLeft;
+                    }
+                    if (piece.Top == box.Y)
+                    {
+                        grow |= PaintHeap.GrowTop;
+                    }
+                    if (piece.Right == right)
+                    {
+                        grow |= PaintHeap.GrowRight;
+                    }
+                    if (piece.Bottom == bottom)
+                    {
+                        grow |= PaintHeap.GrowBottom;
+                    }
+
+                    if (grow == PaintHeap.GrowAll)
+                    {
+                        _pieceWords[next] = 0.0f;
+                        continue;
+                    }
+
+                    var at = rows * Float4;
+                    _extents[at] = piece.Left;
+                    _extents[at + 1] = piece.Top;
+                    _extents[at + 2] = piece.Right;
+                    _extents[at + 3] = piece.Bottom;
+                    rows++;
+                    // One-based, so 0 keeps meaning "the whole box". Below
+                    // 2^24 by `MaxExtentRows`, so the float is exact.
+                    _pieceWords[next] = (rows * PaintHeap.ExtentIndexScale) + grow;
+                }
+            }
+
+            _pieceStarts[rectCount] = next;
+            ExtentFloats = rows * Float4;
+        }
+
+        /// Whether any rect meets [`NeedsCoverage`] — a corner radius, a clip,
+        /// a stroke, or an opacity below 1 — which [`PackRect`] refuses on
+        /// [`MaterialClass.LitOpaque`].
+        ///
+        /// **A refused core would leave a hole.** The occlusion pass judges
+        /// cores without knowing the material class, so a rounded, clipped or
+        /// stroked opaque rect still cuts the rects beneath it into pieces.
+        /// This class draws nothing for that rect, so packed as pieces the
+        /// frame would show the clear colour inside the refused core's
+        /// interior, where the frame before story #1450 showed the rects
+        /// beneath it. A frame with any such rect therefore packs every rect
+        /// whole, which is that earlier picture.
+        ///
+        /// **Exactly that predicate, over every rect.** This packer cannot
+        /// tell which rects the pass counted as cores, so it tests every rect,
+        /// including one at an opacity below 1, which is never a core and so
+        /// trips the fallback without needing it. What the rect reports is
+        /// [`PackRect`]'s: `CoverageNotExpressible` for a rect it reaches the
+        /// coverage refusal with, and `VectorField` or `CorruptRow` for a rect
+        /// it refuses earlier for a shape or a corrupt range. A row whose paint
+        /// or clip index is out of range is skipped here and reported as
+        /// `CorruptRow` there.
+        ///
+        /// **The other refusals do not trip it, and need not.** `EmitFill`
+        /// refuses a translucent fill on this class, but a rect whose base fill
+        /// is translucent is never a core, and a refused extra fill leaves the
+        /// opaque base fill drawn, so neither leaves a hole. A rect with a
+        /// shape or a blur is never a core either.
+        private static unsafe bool AnyCoverageRefused(in Tables tables)
+        {
+            for (var r = 0; r < tables.RectCount; r++)
+            {
+                var rect = tables.Rects[r];
+                if (rect.Paint >= (uint)tables.Bounds.Entries
+                    || rect.Clip >= (uint)tables.Bounds.Regions)
+                {
+                    continue;
+                }
+
+                var entry = tables.Entries[rect.Paint];
+                var clipCount = tables.Regions[rect.Clip].Count;
+                if (NeedsCoverage(entry, clipCount, entry.Stroke.Count > 0, rect.Opacity))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// The pieces of `rect` a walk emits: their first row in
+        /// [`_pieceWords`] and how many there are. A first row of -1 with a
+        /// count of 1 is the whole box, carried as the word 0.
+        private void PiecesOf(int rect, out int first, out int count)
+        {
+            if (_piecesWhole)
+            {
+                first = -1;
+                count = 1;
+                return;
+            }
+
+            first = _pieceStarts[rect];
+            count = _pieceStarts[rect + 1] - first;
         }
 
         /// The tables one commit's rect walk follows, read once for both paths.
@@ -523,6 +834,7 @@ namespace Driftsys.Dashscene
                 var span = Spans.Of(rect);
                 _writeAt = span.Offset;
 
+                PiecesOf(rect, out var firstPiece, out var pieceCount);
                 PackRect(
                     rect,
                     tables.Rects[rect],
@@ -532,7 +844,9 @@ namespace Driftsys.Dashscene
                     tables.Strokes,
                     tables.Blurs,
                     tables.Bounds,
-                    materialClass);
+                    materialClass,
+                    firstPiece,
+                    pieceCount);
 
                 while (nextRun < tables.RunCount && tables.Runs[nextRun].Rect < (uint)rect)
                 {
@@ -641,6 +955,7 @@ namespace Driftsys.Dashscene
             {
                 var start = _writeAt;
 
+                PiecesOf(i, out var firstPiece, out var pieceCount);
                 PackRect(
                     i,
                     tables.Rects[i],
@@ -650,7 +965,9 @@ namespace Driftsys.Dashscene
                     tables.Strokes,
                     tables.Blurs,
                     tables.Bounds,
-                    materialClass);
+                    materialClass,
+                    firstPiece,
+                    pieceCount);
 
                 // Behind the walk rather than at it: a run anchored to a rect
                 // already passed can never be reached by a forward cursor, so
@@ -713,6 +1030,17 @@ namespace Driftsys.Dashscene
             InstanceCount = _writeAt;
         }
 
+        /// Every instance one rect draws: its fill, stacked fills and stroke,
+        /// once per occlusion piece.
+        ///
+        /// `firstPiece` and `pieceCount` are [`PiecesOf`]'s. **A rect with no
+        /// piece emits nothing and reports nothing**, as the lean painter's
+        /// `pack` skips it: a later opaque core covers its whole box, so no
+        /// pixel it would shade is visible and nothing is dropped. The pass
+        /// never cuts a rect with a shadow, a blur, a shape or a stroke that
+        /// reaches past its box (`dashscene_core::occlusion::occludable`), so
+        /// none of this packer's per-node diagnostics but the fill's own can
+        /// belong to a covered rect.
         private unsafe void PackRect(
             int index,
             in RectEntry rect,
@@ -722,8 +1050,15 @@ namespace Driftsys.Dashscene
             Stroke* strokes,
             Blur* blurs,
             in TableBounds bounds,
-            MaterialClass materialClass)
+            MaterialClass materialClass,
+            int firstPiece,
+            int pieceCount)
         {
+            if (pieceCount == 0)
+            {
+                return;
+            }
+
             // A rect naming a row outside its table is a corrupt frame rather
             // than an empty one. Refused by drawing nothing and reporting,
             // never by indexing: the table is a raw pointer, so an out-of-range
@@ -824,6 +1159,10 @@ namespace Driftsys.Dashscene
             // corrupt row out of the fragment stage as well.
             var outset = hasStroke ? StrokeOutset(strokes[strokeRow]) : 0.0f;
 
+            // A refused opaque core draws nothing here. It leaves no hole in
+            // the rects beneath it, because [`PackPieces`] packs every rect
+            // whole on this class whenever any rect is refused for this
+            // reason ([`AnyCoverageRefused`]).
             if (materialClass == MaterialClass.LitOpaque
                 && NeedsCoverage(entry, clipCount, hasStroke, rect.Opacity))
             {
@@ -836,32 +1175,43 @@ namespace Driftsys.Dashscene
                 Affect(index, skipped);
             }
 
-            // The node's ink, in the lean painter's order: the fill, then the
-            // stacked fills, then the stroke.
-            if (entry.Fill.Tag != PaintTag.None)
-            {
-                EmitFill(index, rect, entry, entry.Fill, clipOffset, clipCount, bounds,
-                         materialClass);
-            }
-
-            if (entry.ExtraFills.Count > 0
-                && (entry.ExtraFills.Offset > (uint)bounds.ExtraFills
-                    || entry.ExtraFills.Count > (uint)bounds.ExtraFills - entry.ExtraFills.Offset))
+            var extrasInRange = entry.ExtraFills.Count == 0
+                                || (entry.ExtraFills.Offset <= (uint)bounds.ExtraFills
+                                    && entry.ExtraFills.Count
+                                       <= (uint)bounds.ExtraFills - entry.ExtraFills.Offset);
+            if (!extrasInRange)
             {
                 Affect(index, PackDiagnostic.CorruptRow);
             }
-            else
+
+            // The node's ink, in the lean painter's order — the fill, then the
+            // stacked fills, then the stroke — once per piece, each piece's
+            // instances together. The pieces of one rect do not overlap, so
+            // the order between them changes no pixel. Every instance keeps
+            // the rect's whole box on `_DsQuad`, so the SDF, the gradient and
+            // the antialiased edge are the box's own; only the
+            // extent word says which part of the box the quad covers.
+            for (var p = 0; p < pieceCount; p++)
             {
-                for (var f = 0u; f < entry.ExtraFills.Count; f++)
+                var extent = firstPiece < 0 ? 0.0f : _pieceWords[firstPiece + p];
+
+                if (entry.Fill.Tag != PaintTag.None)
+                {
+                    EmitFill(index, rect, entry, entry.Fill, clipOffset, clipCount, bounds,
+                             materialClass, extent);
+                }
+
+                for (var f = 0u; extrasInRange && f < entry.ExtraFills.Count; f++)
                 {
                     EmitFill(index, rect, entry, extraFills[entry.ExtraFills.Offset + f],
-                             clipOffset, clipCount, bounds, materialClass);
+                             clipOffset, clipCount, bounds, materialClass, extent);
                 }
-            }
 
-            if (hasStroke)
-            {
-                Emit(rect, entry, PaintKindTag.Stroke, strokeRow, clipOffset, clipCount, outset);
+                if (hasStroke)
+                {
+                    Emit(rect, entry, PaintKindTag.Stroke, strokeRow, clipOffset, clipCount,
+                         outset, extent);
+                }
             }
         }
 
@@ -898,7 +1248,8 @@ namespace Driftsys.Dashscene
             uint clipOffset,
             uint clipCount,
             in TableBounds bounds,
-            MaterialClass materialClass)
+            MaterialClass materialClass,
+            float extent)
         {
             switch (fill.Tag)
             {
@@ -917,7 +1268,7 @@ namespace Driftsys.Dashscene
                         break;
                     }
                     Emit(rect, entry, PaintKindTag.FillSolid, fill.Index,
-                         clipOffset, clipCount, 0.0f);
+                         clipOffset, clipCount, 0.0f, extent);
                     break;
                 case PaintTag.Gradient:
                     if (fill.Index >= (uint)bounds.Gradients)
@@ -931,7 +1282,7 @@ namespace Driftsys.Dashscene
                         break;
                     }
                     Emit(rect, entry, PaintKindTag.FillGradient, fill.Index,
-                         clipOffset, clipCount, 0.0f);
+                         clipOffset, clipCount, 0.0f, extent);
                     break;
                 case PaintTag.Image:
                     Affect(index, PackDiagnostic.ImageFill);
@@ -956,7 +1307,8 @@ namespace Driftsys.Dashscene
             uint row,
             uint clipOffset,
             uint clipCount,
-            float outset)
+            float outset,
+            float extent)
         {
             var at = _writeAt;
             Grow(at + 1);
@@ -975,7 +1327,9 @@ namespace Driftsys.Dashscene
             _shade[f] = rect.Opacity;
             _shade[f + 1] = outset;
             _shade[f + 2] = rect.Rotation;
-            _shade[f + 3] = 0.0f;
+            // The occlusion piece this quad is cut to: 0 for the whole box,
+            // else `row * 16 + grow bits` ([`PackPieces`]).
+            _shade[f + 3] = extent;
 
             // Document space, not node-relative: `RectEntry.RotationAnchor` is
             // `(0, 0)` at the node's top-left, and the vertex stage turns a

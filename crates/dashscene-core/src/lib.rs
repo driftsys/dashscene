@@ -37,6 +37,7 @@ mod arena;
 mod bindings;
 mod committed;
 mod load;
+pub mod occlusion;
 
 pub use arena::{
     Arena, AxisSizing, CrossAxisAlign, Easing, EdgeInsets, GridTrack, Keyframe, Layout, LayoutMode,
@@ -52,8 +53,8 @@ pub use committed::{
     ClipView, Color, CommittedScene, CornerRadii, Fill, FillSpec, GlyphQuad, GlyphRange, GlyphRun,
     GlyphRunTable, Gradient, GradientKind, GradientStop, GradientView, GroupComposite, ImageAsset,
     ImageFill, ImageFormat, KindSet, Mat23, PaintEntry, PaintIndex, PaintKind, PaintTable,
-    PaintTag, RectEntry, Region, ScaleMode, Shadow, ShadowKind, StopRange, StripImage, Stroke,
-    StrokeAlign, Vec2, VectorField,
+    PaintTag, Piece, RectEntry, Region, ScaleMode, Shadow, ShadowKind, StopRange, StripImage,
+    Stroke, StrokeAlign, Vec2, VectorField,
 };
 pub use load::{
     BoundPayload, MappedPayload, first_derived_payload, load_document, load_document_bound,

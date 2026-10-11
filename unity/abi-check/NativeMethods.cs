@@ -120,6 +120,12 @@ namespace Driftsys.Dashscene.AbiCheck
         internal static extern RectEntry dashpaint_abi_rect_entry_round_trip(RectEntry value);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern AbiLayout dashpaint_abi_piece_layout();
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern Piece dashpaint_abi_piece_round_trip(Piece value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern AbiLayout dashpaint_abi_glyph_quad_layout();
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]

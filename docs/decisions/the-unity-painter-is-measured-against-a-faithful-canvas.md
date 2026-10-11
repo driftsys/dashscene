@@ -8,9 +8,9 @@
              accepted is the CRITERION, the rules for building the baseline it
              is read against, and the instruments that read it — D1 to D3 below
              bind the ten stories of epic #1441. How the criterion is met is
-             those stories' own. D4 carries the reading of R-T2 that story
-             #1450's mechanism rests on, until that story moves it beside the
-             rule.
+             those stories' own. D4 carried the reading of R-T2 that story
+             #1450's mechanism rests on until that story moved it beside the
+             rule, which it did in the pull request that landed the pass.
     date     2026-09-05
     source   the owner's ruling of 2026-09-05, gardened from §2, §3, §4 and §9
              of docs/wip/2026-09-05-unity-painter-beside-a-faithful-canvas.md,
@@ -297,10 +297,10 @@ picture — stays out.
 
 - **D4 — R-T2's intent, and the second mechanism that meets it.** R-T2 names one
   mechanism, the depth-tested opaque core. Story #1450's occlusion pass meets
-  the rule's intent by another, and the specification is as-built while that
-  pass does not exist, so the paragraph below is **not** written into
+  the rule's intent by another, and the specification is as-built, so while that
+  pass did not exist the paragraph below was **not** written into
   `docs/specification/03-target-hardware-rules.md` by this record. This record
-  carries it, word for word:
+  carried it, word for word, as it was accepted:
 
   ```markdown
   R-T2's intent is that a pixel covered by a later opaque rect is never shaded.
@@ -313,8 +313,12 @@ picture — stays out.
   shorten the frame (story #1412); the pass form is story #1450's.
   ```
 
-  Story #1450 moves that paragraph beside R-T2 in the pull request that lands
-  the pass, in the past tense and with the pass's own reading beside it.
+  Story #1450 moved that paragraph beside R-T2 in the pull request that landed
+  the pass, in the past tense and with the pass's own reading beside it — the
+  shaded area each showcase scene loses, the derivation's figure as its upper
+  bound, and the device reading that issue #1488 tracks. The specification's
+  text is the current one; the quotation above is the paragraph as this record
+  accepted it.
 
 ## Consequences
 

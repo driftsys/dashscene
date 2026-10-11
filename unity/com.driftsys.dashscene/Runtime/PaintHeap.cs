@@ -82,6 +82,45 @@ namespace Driftsys.Dashscene
         /// ([`PackDiagnostic.GradientStopsTruncated`]) rather than a silent
         /// truncation, which is P4.
         public const int MaxGradientStops = 8;
+
+        /// The grow bit of `_DsShade.w` for the quad's left edge (story
+        /// #1450).
+        ///
+        /// An occlusion piece's quad is its own edges, and the vertex stage
+        /// grows an edge by the margin only where its bit is set: where the
+        /// piece's edge lies on the box's edge. A cut edge is where another
+        /// piece of the same rect begins, so growing it would overlap that
+        /// piece and a translucent rect would blend twice there. The four
+        /// values are `dashscene-gpu`'s `Instance::GROW_*`, and
+        /// `DashsceneInstance.hlsl`'s `DS_GROW_*` carries the third copy;
+        /// `unity/package-gate` holds the three together.
+        public const int GrowLeft = 1;
+
+        /// The grow bit for the quad's top edge. See [`GrowLeft`].
+        public const int GrowTop = 2;
+
+        /// The grow bit for the quad's right edge. See [`GrowLeft`].
+        public const int GrowRight = 4;
+
+        /// The grow bit for the quad's bottom edge. See [`GrowLeft`].
+        public const int GrowBottom = 8;
+
+        /// All four grow bits: a piece whose every edge lies on its box's edge
+        /// is the whole box, and is packed as a `_DsShade.w` of 0 instead.
+        public const int GrowAll = 15;
+
+        /// What `_DsShade.w` multiplies the extent index by before adding the
+        /// grow bits: `index * 16 + mask`, the lean painter's `index << 4 |
+        /// mask` written as float arithmetic.
+        ///
+        /// **A float, exact below 2^24**, because `_DsShade` is a float stream
+        /// on both draw paths. [`MaxExtentRows`] keeps every word below that.
+        public const int ExtentIndexScale = 16;
+
+        /// The most extent rows one frame can name with a `_DsShade.w` that
+        /// is still an exact integer in a `float`: `(2^24 - 16) / 16`, so the
+        /// largest word, `MaxExtentRows * 16 + 15`, is `2^24 - 1`.
+        public const int MaxExtentRows = (1 << 20) - 1;
     }
 
     /// The shader each material class draws with, by its `Shader` name.

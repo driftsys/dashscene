@@ -181,6 +181,10 @@
 //!   change it. A host built against an older header keeps working.
 //! - Changing or removing a symbol's signature, or renumbering a `DsStatus`
 //!   variant, bumps it.
+//! - **Adding a member to a struct a call writes through the host's pointer
+//!   bumps it**, because the call then writes more bytes than a host built
+//!   against the shorter struct allocated. [`DsFrame::pieces`] is the case,
+//!   and it moved the version to 3.
 //! - **Re-routing an existing condition onto a different discriminant bumps
 //!   it**, even when that discriminant is itself newly appended. Appending is
 //!   free; moving a condition onto the appended value is not, because a host
@@ -218,7 +222,13 @@ use dashscene_engine::{TaffySolver, TextResources, TextResourcesError};
 use dashscene_gpu::{Changes, Drawn};
 
 /// The ABI generation. See the module's "Versioning" section for what moves it.
-pub const DS_ABI_VERSION: u32 = 2;
+///
+/// **3 since story #1450**, which appended [`DsFrame::pieces`]. A member added
+/// to `DsFrame` is a changed signature: [`ds_runtime_acquire_frame`] writes
+/// the whole struct through the host's `out` pointer, so a host built against
+/// the shorter struct would receive more bytes than its buffer holds. 2 was
+/// story #1226's, when `DsRuntime` stopped being a pointer.
+pub const DS_ABI_VERSION: u32 = 3;
 
 /// Returns [`DS_ABI_VERSION`], so a host can refuse a library it does not know.
 ///
@@ -719,6 +729,11 @@ pub unsafe extern "C" fn ds_runtime_load_document(
 fn drop_document(runtime: &mut Runtime) {
     runtime.scene = None;
     runtime.arena = Arena::new();
+    // The host's band outlives the document: a fresh arena starts at the
+    // default, and the load's first commit, inside `dashlang::attach_live`,
+    // reads the arena's band. So it is applied here, before any caller can
+    // commit (`ds_runtime_set_aa_band`).
+    runtime.arena.set_aa_band(runtime.aa_band);
     // The outgoing document's sheets go with it. Every caller installs a new
     // set a few lines later, so this is only reached as a value in the window
     // between them — the window `dashlang::attach_live`'s own panic can end in.
@@ -1533,6 +1548,57 @@ pub unsafe extern "C" fn ds_runtime_resize(
     })
 }
 
+/// Sets the anti-aliasing band, in document units, that the occlusion pass
+/// shrinks every opaque core by before it cuts the rects beneath it into
+/// [`DsFrame::pieces`] (story #1450, `dashscene_core::Arena::set_aa_band`).
+///
+/// A host passes the width of its painter's anti-aliased edge in document
+/// units: one device pixel at its scale. The default is 1.0.
+///
+/// # Every value is accepted
+///
+/// The arena clamps rather than refuses, and this call keeps that contract
+/// rather than adding a status for it: a negative band is stored as 0.0, an
+/// infinite one as [`f32::MAX`], and NaN as the default 1.0. So the call
+/// answers [`DsStatus::Ok`] for every `band` on a runtime it can reach. A `f32`
+/// input is safe to bind at the boundary for every bit pattern, unlike a
+/// `bool`.
+///
+/// # The band belongs to the runtime, not to the document
+///
+/// Every load replaces the arena (`drop_document`), and a fresh arena starts at
+/// the default band. So the band is held on the runtime and applied to each new
+/// arena **before** the load's own first commit: a host sets it once, with or
+/// without a document loaded, and every later document is cut with it.
+///
+/// # When it takes effect
+///
+/// At the next [`ds_runtime_tick`]. `LiveScene::tick` commits when the arena's
+/// band differs from the one the last commit used, even on a scene that is
+/// otherwise idle, and that commit's dirty set names every rect whose pieces
+/// changed.
+///
+/// Not refused under a frame lease: it commits nothing, and the tick that
+/// applies it is the call the lease refuses.
+///
+/// Adding this symbol did not move [`DS_ABI_VERSION`].
+///
+/// # Safety
+///
+/// The handle carries no safety obligation (story #1226).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ds_runtime_set_aa_band(runtime: DsRuntime, band: f32) -> DsStatus {
+    guard(|| {
+        on_runtime(runtime, "ds_runtime_set_aa_band", |runtime| {
+            runtime.arena.set_aa_band(band);
+            // Read back rather than storing `band`, so the runtime holds the
+            // clamped value the arena holds and the two cannot disagree.
+            runtime.aa_band = runtime.arena.aa_band();
+            DsStatus::Ok
+        })
+    })
+}
+
 /// Draws the committed frame and puts it on the surface.
 ///
 /// `out_drawn` receives whether a frame actually reached the window. It can be
@@ -1582,6 +1648,7 @@ pub unsafe extern "C" fn ds_runtime_draw(runtime: DsRuntime, out_drawn: *mut boo
                 scene.clips(),
                 scene.groups(),
                 scene.glyphs(),
+                scene.pieces(),
                 Some(changes.rects),
             );
             let presented = surface.present(
@@ -1762,6 +1829,7 @@ fn slice_of<T>(rows: &[T]) -> DsSlice {
 /// - [`groups`](Self::groups) names rect ranges that composite offscreen.
 /// - [`glyph_runs`](Self::glyph_runs) carry ranges into
 ///   [`glyph_quads`](Self::glyph_quads).
+/// - A [`pieces`](Self::pieces) row's `rect` indexes [`rects`](Self::rects).
 ///
 /// # What is not here
 ///
@@ -1857,6 +1925,29 @@ pub struct DsFrame {
     pub glyph_runs: DsSlice,
     /// `GlyphQuad` — what a `GlyphRun`'s `glyphs` range indexes.
     pub glyph_quads: DsSlice,
+    /// `Piece` — every rect cut into the sub-rectangles no later opaque core
+    /// covers, in rect order: `dashscene_core::CommittedScene::pieces`
+    /// (story #1450).
+    ///
+    /// A piece's `rect` indexes [`rects`](Self::rects), and its `left`, `top`,
+    /// `right` and `bottom` are the edges of the quad to draw, always inside
+    /// that rect's box. A painter draws the quad and shades it against the
+    /// rect's own box, so the signed distance and the anti-aliased edge are
+    /// unchanged. Every edge is a copy of the box's edge (`x`, `y`, `x + w`,
+    /// `y + h` in `f32`) or of a core interior's, so an edge on the box
+    /// boundary compares equal to the box's edge with `==`, and two pieces
+    /// that meet share their edge exactly.
+    ///
+    /// **A rect can have no piece**: a rect that a later core covers entirely
+    /// has nothing visible to draw. A rect whose piece list grows past
+    /// `dashscene_core::occlusion::MAX_PIECES_PER_RECT` after any one cut
+    /// keeps one piece equal to its whole box, even when a later cut would
+    /// bring the count back under that limit. How far inside a core's box the cut stops is
+    /// set by [`ds_runtime_set_aa_band`].
+    ///
+    /// Appended last, which moved [`DS_ABI_VERSION`] to 3: a member added to
+    /// this struct changes the bytes [`ds_runtime_acquire_frame`] writes.
+    pub pieces: DsSlice,
 }
 
 impl DsFrame {
@@ -1888,6 +1979,7 @@ impl DsFrame {
             image_payload: DsSlice::none::<u8>(),
             glyph_runs: DsSlice::none::<dashpaint::GlyphRun>(),
             glyph_quads: DsSlice::none::<dashpaint::GlyphQuad>(),
+            pieces: DsSlice::none::<dashpaint::Piece>(),
         }
     }
 }
@@ -1931,6 +2023,7 @@ fn frame_of(scene: &CommittedScene, document_replaced: bool) -> DsFrame {
         image_payload: slice_of(images.pool_bytes()),
         glyph_runs: slice_of(glyphs.runs()),
         glyph_quads: slice_of(glyphs.all_quads()),
+        pieces: slice_of(scene.pieces()),
     }
 }
 
@@ -4273,16 +4366,18 @@ mod tests {
     }
 
     /// Every appended status keeps its discriminant, and the version moved
-    /// exactly once — for the handle, not for any of them.
+    /// only for changed signatures — never for any of them.
     ///
-    /// **The version is 2 since story #1226.** Appending a status is free and
-    /// still does not move it; changing ten signatures is not free, and that
-    /// is what moved it. The assertions below are the evidence for the first
-    /// half: none of these discriminants shifted when `DsRuntime` stopped
-    /// being a pointer.
+    /// **The version was 2 from story #1226 and is 3 since story #1450.**
+    /// Appending a status is free and still does not move it; changing ten
+    /// signatures is not free, and that is what moved it to 2. Appending
+    /// `DsFrame::pieces` changed the bytes `ds_runtime_acquire_frame` writes,
+    /// which is what moved it to 3. The assertions below are the evidence for
+    /// the first half: none of these discriminants shifted when `DsRuntime`
+    /// stopped being a pointer.
     #[test]
     fn appending_a_status_is_free_and_the_handle_change_was_not() {
-        assert_eq!(DS_ABI_VERSION, 2);
+        assert_eq!(DS_ABI_VERSION, 3);
         assert_eq!(DsStatus::Panic as i32, 8);
         // The two story #947 appended. A discriminant is the contract, and
         // these are the ones a later variant would renumber by being
@@ -5378,12 +5473,12 @@ mod tests {
 
     /// Every array of a frame, named, in declaration order.
     ///
-    /// Exhaustive on purpose: a twentieth member added to `DsFrame` stops this
+    /// Exhaustive on purpose: a member added to `DsFrame` stops this
     /// destructuring compiling until it is bound. Binding it is what the
     /// compiler enforces; listing it below is not — an unused binding is a
     /// warning, which `just lint`'s `-D warnings` fails on and `cargo test`
     /// does not.
-    fn slices_of(frame: &DsFrame) -> [(&'static str, DsSlice); 19] {
+    fn slices_of(frame: &DsFrame) -> [(&'static str, DsSlice); 20] {
         let DsFrame {
             generation: _,
             document_replaced: _,
@@ -5406,6 +5501,7 @@ mod tests {
             image_payload,
             glyph_runs,
             glyph_quads,
+            pieces,
         } = *frame;
         [
             ("rects", rects),
@@ -5427,6 +5523,7 @@ mod tests {
             ("image_payload", image_payload),
             ("glyph_runs", glyph_runs),
             ("glyph_quads", glyph_quads),
+            ("pieces", pieces),
         ]
     }
 
@@ -5459,7 +5556,10 @@ mod tests {
         frame: &DsFrame,
         runtime: DsRuntime,
     ) -> Vec<(&'static str, (*const c_void, usize, usize))> {
-        let expected = live(runtime, |r| {
+        // Typed with the length of `slices_of`'s array, so an expectation
+        // missing for a new member fails to compile rather than being dropped
+        // by the `zip` below, which stops at the shorter side.
+        let expected: [(*const c_void, usize, usize); 20] = live(runtime, |r| {
             let scene = r.arena.committed();
             let paints = scene.paints();
             let clips = scene.clips();
@@ -5485,6 +5585,7 @@ mod tests {
                 expected_of(images.pool_bytes()),
                 expected_of(glyphs.runs()),
                 expected_of(glyphs.all_quads()),
+                expected_of(scene.pieces()),
             ]
         });
 
@@ -5537,6 +5638,7 @@ mod tests {
                 "clip_boxes",
                 "image_entries",
                 "image_payload",
+                "pieces",
             ],
             "this fixture's populated arrays are what give the pairing above its \
              evidence; if it stops populating one, the pairing for that array stops \
@@ -5580,7 +5682,7 @@ mod tests {
                 assert_eq!(
                     slice.stride, row,
                     "{name}: an empty array still reports this build's row size — a host \
-                     validating all nineteen strides at the top of the frame must not be \
+                     validating every stride at the top of the frame must not be \
                      told a valid document is stale",
                 );
             }
@@ -6156,6 +6258,8 @@ mod tests {
         frame.rects.ptr = (&raw const frame.generation).cast();
         frame.glyph_quads.count = 3;
         frame.glyph_quads.ptr = (&raw const frame.generation).cast();
+        frame.pieces.count = 5;
+        frame.pieces.ptr = (&raw const frame.generation).cast();
 
         assert_eq!(
             unsafe { ds_runtime_acquire_frame(runtime, &mut frame) },
@@ -6212,7 +6316,7 @@ mod tests {
         // Compared against the row sizes themselves, not against
         // `DsFrame::empty()` — which is the constructor the code under test
         // used, so comparing with it would compare that function with itself
-        // and pass however its nineteen type parameters were written.
+        // and pass however its type parameters were written.
         assert_eq!(frame.generation, 0);
         assert!(!frame.document_replaced);
         for (name, got, row) in [
@@ -6234,6 +6338,7 @@ mod tests {
                 frame.glyph_quads,
                 size_of::<dashpaint::GlyphQuad>(),
             ),
+            ("pieces", frame.pieces, size_of::<dashpaint::Piece>()),
         ] {
             assert_eq!(
                 actual_of(got),
@@ -6388,7 +6493,7 @@ mod tests {
         // stride equal where the two types are the same size.
         let frame = block("DsFrame");
         use std::mem::offset_of;
-        let members: [(&str, usize); 21] = [
+        let members: [(&str, usize); 22] = [
             ("uint64_t generation;", offset_of!(DsFrame, generation)),
             (
                 "bool document_replaced;",
@@ -6416,6 +6521,7 @@ mod tests {
             ("DsSlice image_payload;", offset_of!(DsFrame, image_payload)),
             ("DsSlice glyph_runs;", offset_of!(DsFrame, glyph_runs)),
             ("DsSlice glyph_quads;", offset_of!(DsFrame, glyph_quads)),
+            ("DsSlice pieces;", offset_of!(DsFrame, pieces)),
         ];
 
         // This build lays the members out in the order this list gives them.
@@ -6739,6 +6845,7 @@ mod tests {
             ("ImageEntry", As("image_entries")),
             ("GlyphRun", As("glyph_runs")),
             ("GlyphQuad", As("glyph_quads")),
+            ("Piece", As("pieces")),
             // Range and vector types: they are fields of a row that crosses,
             // not arrays of their own.
             ("FillRange", Within("PaintEntry")),
@@ -6828,7 +6935,213 @@ mod tests {
         let _ = frame;
     }
 
-    /// The nineteen array names of a [`DsFrame`], from one exhaustive
+    // ---- story #1450: the anti-aliasing band ---------------------------
+
+    /// The pieces of the committed scene, copied out of the runtime.
+    fn pieces_of(runtime: DsRuntime) -> Vec<dashpaint::Piece> {
+        live(runtime, |r| r.arena.committed().pieces().to_vec())
+    }
+
+    /// A runtime with `FIXTURE_PAINT` loaded, ticked until a tick reports no
+    /// advance — a settled scene, on which a tick only commits for a reason.
+    fn settled_paint() -> DsRuntime {
+        let runtime = loaded(&fixture(FIXTURE_PAINT));
+        let mut advanced = true;
+        for _ in 0..8 {
+            assert_eq!(
+                unsafe { ds_runtime_tick(runtime, 0.016, &mut advanced) },
+                DsStatus::Ok
+            );
+            live(runtime, |r| r.scene.as_mut().expect("loaded").mark_shown());
+            if !advanced {
+                break;
+            }
+        }
+        assert!(!advanced, "the paint fixture settles within eight ticks");
+        runtime
+    }
+
+    /// The band this test sets, and the one it does not. 6.0 is wide enough to
+    /// move a cut on `FIXTURE_PAINT`, which the first assertion in each test
+    /// below checks rather than assumes.
+    const BAND: f32 = 6.0;
+
+    /// A band set on a settled scene reaches the pieces at the next tick:
+    /// that tick commits although nothing else moved, and its dirty set names
+    /// rects whose pieces changed.
+    #[test]
+    fn a_band_change_reaches_the_pieces_of_a_settled_scene() {
+        let runtime = settled_paint();
+        let before = pieces_of(runtime);
+        let generation = live(runtime, |r| r.arena.committed().generation());
+
+        assert_eq!(
+            unsafe { ds_runtime_set_aa_band(runtime, BAND) },
+            DsStatus::Ok
+        );
+        let mut advanced = false;
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, &mut advanced) },
+            DsStatus::Ok
+        );
+
+        assert!(
+            advanced,
+            "the tick after a band change must commit, or a settled scene keeps the old cut"
+        );
+        assert_eq!(
+            live(runtime, |r| r.arena.committed().generation()),
+            generation + 1
+        );
+        let after = pieces_of(runtime);
+        assert_ne!(
+            after, before,
+            "a {BAND}-unit band moves a cut on this fixture"
+        );
+        // Nothing but the band changed, so the dirty set is exactly the rects
+        // whose pieces differ, derived here rect by rect from the two cuts.
+        let frame = acquire(runtime);
+        let of = |cut: &[dashpaint::Piece], rect: u32| -> Vec<dashpaint::Piece> {
+            cut.iter().filter(|p| p.rect == rect).copied().collect()
+        };
+        let expected: Vec<u32> = (0..frame.rects.count as u32)
+            .filter(|&rect| of(&before, rect) != of(&after, rect))
+            .collect();
+        assert!(!expected.is_empty(), "the band moved no rect's pieces");
+        // SAFETY: the frame is leased until `release` below, and `dirty`
+        // holds `count` rect indices.
+        let dirty =
+            unsafe { std::slice::from_raw_parts(frame.dirty.ptr.cast::<u32>(), frame.dirty.count) };
+        assert_eq!(
+            dirty, expected,
+            "exactly the rects whose pieces changed are dirty, so a host repacks them"
+        );
+        release(runtime);
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// The band is the runtime's, not the document's: set before a load, it
+    /// cuts the loaded document, and a second load keeps it.
+    ///
+    /// The reference is a runtime that loaded with the default band and was
+    /// then given the band and ticked, which is the path the test above pins.
+    #[test]
+    fn the_band_survives_every_load() {
+        let reference = settled_paint();
+        let default_cut = pieces_of(reference);
+        assert_eq!(
+            unsafe { ds_runtime_set_aa_band(reference, BAND) },
+            DsStatus::Ok
+        );
+        assert_eq!(
+            unsafe { ds_runtime_tick(reference, 0.016, std::ptr::null_mut()) },
+            DsStatus::Ok
+        );
+        let band_cut = pieces_of(reference);
+        assert_ne!(
+            band_cut, default_cut,
+            "the fixture discriminates the two bands"
+        );
+        assert_eq!(ds_runtime_free(reference), DsStatus::Ok);
+
+        let document = fixture(FIXTURE_PAINT);
+        let mut runtime: DsRuntime = 0;
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        assert_eq!(
+            unsafe { ds_runtime_set_aa_band(runtime, BAND) },
+            DsStatus::Ok,
+            "the band needs no document"
+        );
+        for load in ["the first load", "a second load"] {
+            assert_eq!(
+                unsafe { ds_runtime_load_document(runtime, document.as_ptr(), document.len()) },
+                DsStatus::Ok
+            );
+            assert_eq!(
+                pieces_of(runtime),
+                band_cut,
+                "{load}: its own commit already cuts with the runtime's band"
+            );
+            assert_eq!(
+                unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+                DsStatus::Ok
+            );
+            assert_eq!(pieces_of(runtime), band_cut, "{load}: and so does a tick");
+        }
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// Every value is accepted and stored after the arena's clamp, on the
+    /// runtime as well as on the arena; a handle that names no runtime is
+    /// refused like every other call's.
+    #[test]
+    fn the_band_is_clamped_and_a_missing_runtime_is_refused() {
+        assert_eq!(
+            unsafe { ds_runtime_set_aa_band(0, BAND) },
+            DsStatus::NullArgument
+        );
+
+        let mut runtime: DsRuntime = 0;
+        assert_eq!(unsafe { ds_runtime_new(&mut runtime) }, DsStatus::Ok);
+        for (band, stored) in [
+            (-3.0, 0.0),
+            (f32::INFINITY, f32::MAX),
+            (f32::NAN, 1.0),
+            (BAND, BAND),
+        ] {
+            assert_eq!(
+                unsafe { ds_runtime_set_aa_band(runtime, band) },
+                DsStatus::Ok,
+                "{band} is clamped, not refused"
+            );
+            assert_eq!(
+                live(runtime, |r| (r.aa_band, r.arena.aa_band())),
+                (stored, stored),
+                "{band} is stored as {stored} on the runtime and on the arena"
+            );
+        }
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+        assert_eq!(
+            unsafe { ds_runtime_set_aa_band(runtime, BAND) },
+            DsStatus::BadHandle,
+            "a freed handle is refused"
+        );
+    }
+
+    /// A lease does not refuse the setter, because it commits nothing; the
+    /// tick that would apply the band is what the lease refuses.
+    #[test]
+    fn a_lease_refuses_the_tick_that_applies_the_band_and_not_the_band() {
+        let runtime = settled_paint();
+        let before = pieces_of(runtime);
+        let _frame = acquire(runtime);
+        assert_eq!(
+            unsafe { ds_runtime_set_aa_band(runtime, BAND) },
+            DsStatus::Ok
+        );
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+            DsStatus::FrameLeased
+        );
+        assert_eq!(
+            pieces_of(runtime),
+            before,
+            "nothing committed under the lease"
+        );
+        release(runtime);
+        assert_eq!(
+            unsafe { ds_runtime_tick(runtime, 0.016, std::ptr::null_mut()) },
+            DsStatus::Ok
+        );
+        assert_ne!(
+            pieces_of(runtime),
+            before,
+            "the band applies once the lease ends"
+        );
+        assert_eq!(ds_runtime_free(runtime), DsStatus::Ok);
+    }
+
+    /// The array names of a [`DsFrame`], from one exhaustive
     /// destructuring so the list cannot go stale.
     fn census_names() -> Vec<&'static str> {
         let DsFrame {
@@ -6853,6 +7166,7 @@ mod tests {
             image_payload: _,
             glyph_runs: _,
             glyph_quads: _,
+            pieces: _,
         } = DsFrame::empty();
         vec![
             "rects",
@@ -6874,6 +7188,7 @@ mod tests {
             "image_payload",
             "glyph_runs",
             "glyph_quads",
+            "pieces",
         ]
     }
 }

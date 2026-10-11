@@ -23,18 +23,19 @@ reached their machine by different routes.
 
 ## The lines
 
-| line                    | declared at                                                                                | what moves it                                                                                                                                     | who reads it               |
-| ----------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
-| `DS_ABI_VERSION`        | `crates/dashscene-ffi/include/dashscene.h`, and again in `crates/dashscene-ffi/src/lib.rs` | a changed signature, a renumbered `DsStatus`, or a condition re-routed onto a different discriminant (D5); **not** a new symbol or a tail variant | a host, once, at start-up  |
-| package version         | `unity/com.driftsys.dashscene/package.json`                                                | `git std bump`, via `.git-std.toml`                                                                                                               | UPM                        |
-| workspace version       | the root `Cargo.toml`                                                                      | `git std bump`                                                                                                                                    | crates.io                  |
-| `.dsb` `format_version` | `crates/dashbuf/src/container.rs`                                                          | a deliberate bump; a reader that does not implement it refuses the file whole                                                                     | the loader                 |
-| `DsSlice::stride`       | reported per array, per call                                                               | any row-type layout change                                                                                                                        | a host, per acquired frame |
+| line                    | declared at                                                                                | what moves it                                                                                                                                                                                                             | who reads it               |
+| ----------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `DS_ABI_VERSION`        | `crates/dashscene-ffi/include/dashscene.h`, and again in `crates/dashscene-ffi/src/lib.rs` | a changed signature, a member appended to a struct a call writes through the host's pointer, a renumbered `DsStatus`, or a condition re-routed onto a different discriminant (D5); **not** a new symbol or a tail variant | a host, once, at start-up  |
+| package version         | `unity/com.driftsys.dashscene/package.json`                                                | `git std bump`, via `.git-std.toml`                                                                                                                                                                                       | UPM                        |
+| workspace version       | the root `Cargo.toml`                                                                      | `git std bump`                                                                                                                                                                                                            | crates.io                  |
+| `.dsb` `format_version` | `crates/dashbuf/src/container.rs`                                                          | a deliberate bump; a reader that does not implement it refuses the file whole                                                                                                                                             | the loader                 |
+| `DsSlice::stride`       | reported per array, per call                                                               | any row-type layout change                                                                                                                                                                                                | a host, per acquired frame |
 
-`DS_ABI_VERSION` is **2**. It has moved once, at story #1226, when ten entry
-points changed signature for the generational handle. `DsStatus` has grown from
-nine variants to twenty-one without moving it, because every addition went on
-the tail.
+`DS_ABI_VERSION` is **3**. It moved to 2 at story #1226, when ten entry points
+changed signature for the generational handle, and to 3 at story #1450, when
+`DsFrame` gained `pieces` and `ds_runtime_acquire_frame` began writing more
+bytes through the host's pointer. `DsStatus` has grown from nine variants to
+twenty-one without moving it, because every addition went on the tail.
 
 ## Decision
 

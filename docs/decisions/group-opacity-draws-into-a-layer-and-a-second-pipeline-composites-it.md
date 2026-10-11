@@ -18,12 +18,15 @@ Nothing drew the render-target path. `Instance::layer` has carried the innermost
 enclosing group since story #578 and `render.rs` had no reader for it — the
 field was packed, pinned by a layer-1 golden, and never used.
 
-Two constraints shaped what could be built. The pipeline binds seven storage
+Two constraints shaped what could be built. The pipeline binds eight storage
 buffers across two stages that allow four each — four and four, with nothing
-spare (`docs/decisions/the-paint-parameter-heap.md`) — so nothing new could be
-bound to it. And the reference painter had already fixed the semantics, which
-`docs/specification/02-principles.md` P2 and this project's posture make the
-specification rather than one option among several.
+spare (`docs/decisions/the-paint-parameter-heap.md`; `render.rs` lists them
+above `PAINT_WGSL`'s bind group) — so nothing new could be bound to it. When
+this was decided it bound seven, three in the vertex stage; story #1450's
+occlusion extents took the vertex stage's fourth slot. And the reference painter
+had already fixed the semantics, which `docs/specification/02-principles.md` P2
+and this project's posture make the specification rather than one option among
+several.
 
 ## Decision
 

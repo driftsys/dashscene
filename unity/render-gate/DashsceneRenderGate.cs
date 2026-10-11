@@ -306,7 +306,8 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         /// node in a real document carries a clip — its parent frame — and
         /// nearly every one of those clips contains the node entirely. A first
         /// version excluded any instance with a clip region at all and reduced
-        /// the fixture's sixteen samples to ONE, which is a gate stated over
+        /// the fixture's sixteen samples (one per instance, before story #1450
+        /// cut rects into pieces) to ONE, which is a gate stated over
         /// almost nothing while reporting that it passed.
         public bool CentreClipped;
 
@@ -320,7 +321,7 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         /// Comparing a node's centre against the frame's clear colour asks
         /// whether *something* is drawn there, and a document is drawn back to
         /// front: `v03-paint.dsb` has a full-bleed parent frame under every
-        /// child, so fifteen of sixteen instances could fail to draw and every
+        /// child, so every instance but the parent's could fail to draw and every
         /// sampled centre would still read the parent's white. A shader that
         /// failed in the player and was replaced by Unity's magenta error
         /// shader would pass the same way — the #1029 family this gate's own
@@ -624,6 +625,11 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         // placement; the camera above is positioned for it.
         _painter.DocumentToWorld = Matrix4x4.Scale(new Vector3(1, -1, 1));
         _painter.EdgeWidth = OrthographicSize * 2.0f / Height;
+        // The occlusion pass's band is the painter's edge width (story #1450),
+        // so a core is cut out of the rects beneath it only where its own ink
+        // is fully opaque. Set before the next tick, which commits for it; the
+        // same value a second time commits nothing.
+        _runtime.SetAaBand(_painter.EdgeWidth);
         _painter.Cutoff = cutoff;
         Line($"{materialClass}: rung {_painter.Rung}, cutoff "
              + $"{cutoff.ToString(CultureInfo.InvariantCulture)}, edge width "
@@ -818,6 +824,10 @@ public sealed class DashsceneRenderGate : MonoBehaviour
             // measure the resize rather than the rebinding.
             _settleHeight = Height + 1;
             _painter.EdgeWidth = OrthographicSize * 2.0f / _settleHeight;
+            // What a host does beside every `EdgeWidth` change (story #1450).
+            // The band moved, so the tick below commits and the frame draws —
+            // which it does anyway, for the extent change above.
+            _runtime.SetAaBand(_painter.EdgeWidth);
         }
 
         _settle.NoteExtent(Width, _settleHeight);
@@ -1142,11 +1152,13 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         }
 
         Line($"instances: {_overlayInstances} on UnlitOverlay, {_cutoutInstances} on LitCutout");
+        Line($"pieces: {CutInstances(probe)} instance(s) cut to an occlusion piece, "
+             + $"{probe.ExtentFloats / 4} extent row(s)");
         Line($"sampled: {Sampled()} node centres, {CornerProbes()} outside-the-corner probes");
         // **Printed rather than left implicit.** Every exclusion below is a
         // node this gate stops asserting anything about, and an exclusion rule
         // that quietly swallowed the whole document would otherwise read as a
-        // pass over sixteen instances.
+        // pass over every instance.
         Line($"excluded: {strokes} stroke(s), {clipped} clipped centre(s), "
              + $"{transparent} transparent");
         Line($"diagnostics: {probe.Diagnostics}");
@@ -1267,6 +1279,13 @@ public sealed class DashsceneRenderGate : MonoBehaviour
     }
 
     /// Whether one instance's rasterised quad reaches a placed document point.
+    ///
+    /// **The box, also for an instance cut to an occlusion piece** (story
+    /// #1450). Such an instance rasterises only its piece, which lies inside
+    /// the box, so this answers "reaches" for points the piece leaves out: a
+    /// later opaque core covers them. That over-approximates in the direction
+    /// every caller already accepts — more coverage than is drawn — and it is
+    /// what the order probes' coverage sets are written against.
     private bool Reaches(FramePacker packer, int instance, Vector2 point)
     {
         var margin = packer.Shade[(instance * 4) + 1] + _painter.EdgeWidth;
@@ -1313,6 +1332,21 @@ public sealed class DashsceneRenderGate : MonoBehaviour
         var s = Mathf.Sin(angle);
         var c = Mathf.Cos(angle);
         return pivot + new Vector2((d.x * c) - (d.y * s), (d.x * s) + (d.y * c));
+    }
+
+    /// How many instances the last pack cut to an occlusion piece: a non-zero
+    /// `_DsShade.w` (story #1450).
+    private static int CutInstances(FramePacker packer)
+    {
+        var cut = 0;
+        for (var i = 0; i < packer.InstanceCount; i++)
+        {
+            if (packer.Shade[(i * 4) + 3] != 0.0f)
+            {
+                cut++;
+            }
+        }
+        return cut;
     }
 
     /// The first instance the two packings describe differently, or -1.
@@ -2242,6 +2276,24 @@ public sealed class DashsceneRenderGate : MonoBehaviour
 
         var packer = _orderProbe;
         Line($"order: {packer.InstanceCount} instances, diagnostics {packer.Diagnostics}");
+
+        // **The fixture exercises occlusion pieces, and that is checked rather
+        // than assumed** (story #1450). The opaque yellow `fill` lies over the
+        // opaque full-bleed backdrop, so the commit cuts the backdrop around
+        // the fill's interior, and every probe below reads a frame drawn from
+        // those pieces. A packing with no cut instance means the pieces never
+        // reached the packer — or the packer wrote no extent word — and the
+        // probes would be judging whole rects.
+        var cut = CutInstances(packer);
+        Line($"order: {cut} instance(s) cut to an occlusion piece, "
+             + $"{packer.ExtentFloats / 4} extent row(s)");
+        if (cut == 0)
+        {
+            Fail("the order fixture packed no instance cut to an occlusion piece, though its "
+                 + "opaque fill lies over its opaque backdrop. The frame below would be drawn "
+                 + "from whole rects.");
+            return;
+        }
         if (!packer.Diagnostics.IsClean)
         {
             Fail("the order fixture packs with diagnostics, so part of it is not drawn and "
@@ -2290,22 +2342,30 @@ public sealed class DashsceneRenderGate : MonoBehaviour
                 cls = "veil";
                 veil ??= i;
             }
+            else if (kind == (uint)PaintKindTag.FillSolid && alpha > 0.99f
+                     && Near(x, 820) && Near(y, 420) && Near(w, 60) && Near(h, 60))
+            {
+                // Story #1450's opaque plug, which cuts the veil into pieces
+                // for the seam check at the end of this phase. Not one of the
+                // seven probes' nodes.
+                cls = "plug";
+            }
             else if (kind == (uint)PaintKindTag.Text && centre.x < 690.0f)
             {
                 // The regular run. A glyph is a probe only where its whole
                 // quad, antialiasing margin included, sits clear of the veil's
-                // left edge at x = 420 — a glyph that straddles it (one, on this
+                // left edge at x = 420.25 — a glyph that straddles it (one, on this
                 // fixture) is a regular glyph and probes nothing. The split
                 // reads the box, not the placed centre: the fixture rotates
                 // nothing, and a rotated run would need both halves placed.
                 cls = "regular";
                 regularIndices.Add(i);
                 var margin = _painter.EdgeWidth + 2.0f;
-                if (x + w + margin < 420.0f)
+                if (x + w + margin < 420.25f)
                 {
                     regularOutside.Add(centre);
                 }
-                else if (x - margin > 420.0f)
+                else if (x - margin > 420.25f)
                 {
                     regularUnderVeil.Add(centre);
                 }
@@ -2512,6 +2572,290 @@ public sealed class DashsceneRenderGate : MonoBehaviour
                  + "the painter's order composites. The draw order is not the emission order "
                  + "(issue #1402).");
         }
+
+        JudgeSeam(packer, classes, order, control);
+        JudgeEdgeRamp(packer, classes, order, control);
+    }
+
+    /// The translucent veil, cut by the opaque plug, blends once along the cut
+    /// (story #1450).
+    ///
+    /// **This is the only check that sees `DsVertex` honour the grow bits.**
+    /// The plug's interior cuts the veil into four pieces, and the top piece
+    /// and the left piece meet along a horizontal seam that runs from the
+    /// veil's left edge to the plug, over plain backdrop. Each piece's quad
+    /// grows by the margin only on edges that lie on the veil's box; a shader
+    /// that grew the cut edges too — every bit set, or two bits read for the
+    /// wrong edges — draws both pieces over a band one margin either side of
+    /// the seam, and the half-alpha red blends twice there. So the two pixels
+    /// whose centres lie a quarter of an edge width either side of the seam
+    /// must read the same colour, to the gate's colour epsilon, as a point of
+    /// the same veil well away from it, and that colour must be half red over
+    /// blue. Both pixel centres lie within three quarters of a pixel of the
+    /// seam, inside the one-pixel margin, so a doubled blend reaches both.
+    ///
+    /// The seam is read from the packing — the veil piece that starts at the
+    /// veil's top and stops short of its bottom — rather than written down,
+    /// because its height depends on the band, which is the painter's edge
+    /// width. It is first refused on the undrawn frame, as every probe is.
+    private void JudgeSeam(FramePacker packer, string[] classes, Texture2D order, Texture2D control)
+    {
+        float? seam = null;
+        for (var i = 0; i < packer.InstanceCount && seam == null; i++)
+        {
+            var word = (int)packer.Shade[(i * 4) + 3];
+            if (classes[i] != "veil" || word == 0)
+            {
+                continue;
+            }
+            var row = (word / PaintHeap.ExtentIndexScale) - 1;
+            var top = packer.Extents[(row * 4) + 1];
+            var bottom = packer.Extents[(row * 4) + 3];
+            if (Near(top, 60) && bottom < 500.0f)
+            {
+                seam = bottom;
+            }
+        }
+        if (seam == null)
+        {
+            Fail("the order fixture's veil was not cut along the plug's top edge, so no seam "
+                 + "exists to judge the grow bits on.");
+            return;
+        }
+
+        var quarter = _painter.EdgeWidth * 0.25f;
+        var points = new[]
+        {
+            ("seam-above", new Vector2(720, seam.Value - quarter)),
+            ("seam-below", new Vector2(720, seam.Value + quarter)),
+        };
+        var reference = new Vector2(720, seam.Value - 40.0f);
+        bool VeilOverBackdrop(Color c) => c.r > MidLow && c.r < MidHigh && c.g < Low;
+
+        foreach (var point in new[] { points[0].Item2, points[1].Item2, reference })
+        {
+            var covering = new List<string>();
+            for (var i = 0; i < packer.InstanceCount; i++)
+            {
+                if (Reaches(packer, i, point) && !covering.Contains(classes[i]))
+                {
+                    covering.Add(classes[i]);
+                }
+            }
+            covering.Sort(StringComparer.Ordinal);
+            if (!covering.SequenceEqual(new[] { "backdrop", "veil" }))
+            {
+                Fail($"the seam check's point ({F(point.x)}, {F(point.y)}) is reached by "
+                     + $"[{string.Join(", ", covering)}], not by the backdrop and the veil "
+                     + "alone. The fixture and the check no longer agree.");
+                return;
+            }
+        }
+
+        var expected = ReadContaining(order, ToViewport(reference));
+        Line($"order: seam at y = {F(seam.Value)}, reference reads {Rgb(expected)}");
+        if (!VeilOverBackdrop(expected))
+        {
+            Fail($"the seam check's reference reads {Rgb(expected)}, not half red over blue.");
+            return;
+        }
+
+        foreach (var (name, point) in points)
+        {
+            var refused = ReadContaining(control, ToViewport(point));
+            if (VeilOverBackdrop(refused))
+            {
+                Fail($"the seam check's {name} predicate holds on the CONTROL frame "
+                     + $"({Rgb(refused)}), so its verdict on the order frame means nothing.");
+                return;
+            }
+
+            var pixel = ReadContaining(order, ToViewport(point));
+            var distance = Distance(pixel, expected);
+            var ok = VeilOverBackdrop(pixel) && distance <= ColourEpsilon;
+            Line($"order: {name} at ({F(point.x)}, {F(point.y)}) reads {Rgb(pixel)}, "
+                 + $"{F3(distance)} from the reference: {(ok ? "OK" : "WRONG")}");
+            if (!ok)
+            {
+                Fail($"the veil reads {Rgb(pixel)} at its cut seam and {Rgb(expected)} away "
+                     + "from it. Two of its occlusion pieces overlap there, so the vertex stage "
+                     + "grew an edge a core cut (story #1450).");
+            }
+        }
+    }
+
+    /// The veil's outer edge keeps its anti-aliasing ramp where a piece of
+    /// it ends on that edge (story #1450).
+    ///
+    /// **[`JudgeSeam`] sees a cut edge that grew; this sees a box edge that
+    /// did not.** The plug cuts the veil into a top, a bottom, a left and a
+    /// right piece. The left and right pieces each have one edge on the veil's
+    /// box, the left piece its left edge and the right piece its right edge,
+    /// and only that edge may grow by the margin. Half of the coverage ramp
+    /// lies outside the box, so an edge that did not grow stops the quad at the
+    /// box and a pixel centre just outside it reads plain backdrop instead of a
+    /// faint blend of the veil. A shader that grows no edge, or that reads the
+    /// left bit for the right edge and the right bit for the left edge, does
+    /// exactly that on these two pieces, while the top piece, which carries
+    /// both bits, still grows both. So the pixel just outside each side edge,
+    /// in a row the side piece spans, must read what the same pixel column
+    /// reads in a row the top piece spans.
+    ///
+    /// **Only a column whose centre lies within half an edge width outside
+    /// the edge can tell the two apart**: further out the ramp is zero either
+    /// way. Whether such a column exists depends on where the edge falls in
+    /// the pixel grid, so each edge's column is computed from the camera, and
+    /// the fixture places the veil (left edge at x = 420.25, right edge at
+    /// x = 900) so that both edges have one. **Both edges are judged**: the
+    /// left piece is the one that sees the left bit and the right piece the
+    /// right bit, so a vertex stage that ignores only one of them fails on
+    /// its edge alone. An edge with no such column fails the run, because
+    /// the fixture and the camera no longer agree. The cut edges between a side piece and the plug cannot be
+    /// judged this way: a veil grown past them lies under the opaque plug,
+    /// which hides it.
+    private void JudgeEdgeRamp(FramePacker packer, string[] classes, Texture2D order, Texture2D control)
+    {
+        int? box = null;
+        float? leftMid = null, rightMid = null, topRow = null;
+        for (var i = 0; i < packer.InstanceCount; i++)
+        {
+            if (classes[i] != "veil")
+            {
+                continue;
+            }
+            box ??= i;
+            var word = (int)packer.Shade[(i * 4) + 3];
+            if (word == 0)
+            {
+                continue;
+            }
+            var b = box.Value * 4;
+            var (x0, y0) = (packer.Quad[b], packer.Quad[b + 1]);
+            var (x1, y1) = (x0 + packer.Quad[b + 2], y0 + packer.Quad[b + 3]);
+            var row = ((word / PaintHeap.ExtentIndexScale) - 1) * 4;
+            var (left, top) = (packer.Extents[row], packer.Extents[row + 1]);
+            var (right, bottom) = (packer.Extents[row + 2], packer.Extents[row + 3]);
+            if (Near(left, x0) && right < x1 - 1.0f && top > y0 + 1.0f && bottom < y1 - 1.0f)
+            {
+                leftMid ??= (top + bottom) * 0.5f;
+            }
+            else if (Near(right, x1) && left > x0 + 1.0f && top > y0 + 1.0f && bottom < y1 - 1.0f)
+            {
+                rightMid ??= (top + bottom) * 0.5f;
+            }
+            else if (Near(top, y0) && bottom < y1 - 1.0f)
+            {
+                topRow ??= y0 + 40.0f;
+            }
+        }
+        if (box == null || leftMid == null || rightMid == null || topRow == null)
+        {
+            Fail("the order fixture's veil was not cut into a top piece and two side pieces, so "
+                 + "no box edge exists to judge the grow bits on.");
+            return;
+        }
+
+        var veil = box.Value * 4;
+        var edges = new[]
+        {
+            ("edge-left", packer.Quad[veil], -1.0f, leftMid.Value),
+            ("edge-right", packer.Quad[veil] + packer.Quad[veil + 2], 1.0f, rightMid.Value),
+        };
+        foreach (var (name, edge, outward, sideRow) in edges)
+        {
+            // Where the edge falls in pixels, and the first pixel centre
+            // outside it. A pixel is `2 * OrthographicSize / Height` document
+            // units wide (square pixels), which is not `EdgeWidth` once the
+            // settle phase has moved it.
+            var pitch = OrthographicSize * 2.0f / Height;
+            var px = ToViewport(new Vector2(edge, sideRow)).x * Width;
+            var centre = outward > 0.0f ? Mathf.Floor(px) + 0.5f : Mathf.Ceil(px) - 0.5f;
+            if ((centre - px) * outward <= 0.0f)
+            {
+                centre += outward;
+            }
+            var outside = Mathf.Abs(centre - px) * pitch;
+            if (outside >= _painter.EdgeWidth * 0.5f)
+            {
+                Fail($"the {name} check has no pixel centre inside the ramp: the first one "
+                     + $"outside the edge lies {F3(outside)} document units from it, past the "
+                     + $"ramp's {F3(_painter.EdgeWidth * 0.5f)}. The fixture's veil and the "
+                     + "camera no longer agree.");
+                return;
+            }
+
+            var x = edge + (outward * outside);
+            var probe = new Vector2(x, sideRow);
+            var reference = new Vector2(x, topRow.Value);
+            foreach (var point in new[] { probe, reference })
+            {
+                var covering = new List<string>();
+                for (var i = 0; i < packer.InstanceCount; i++)
+                {
+                    if (Reaches(packer, i, point) && !covering.Contains(classes[i]))
+                    {
+                        covering.Add(classes[i]);
+                    }
+                }
+                covering.Sort(StringComparer.Ordinal);
+                if (!covering.SequenceEqual(new[] { "backdrop", "veil" }))
+                {
+                    Fail($"the {name} check's point ({F(point.x)}, {F(point.y)}) is reached by "
+                         + $"[{string.Join(", ", covering)}], not by the backdrop and the veil "
+                         + "alone. The fixture and the check no longer agree.");
+                    return;
+                }
+            }
+
+            // A faint blend of the half-alpha red veil over the blue backdrop:
+            // some red, no green.
+            bool Ramp(Color c) => c.r > Low && c.r < MidHigh && c.g < Low;
+
+            var expected = ReadContaining(order, ToViewport(reference));
+            if (!Ramp(expected))
+            {
+                Fail($"the {name} check's reference at ({F(reference.x)}, {F(reference.y)}) reads "
+                     + $"{Rgb(expected)}, not the veil's ramp over the backdrop. Either the top "
+                     + "piece's quad stopped at the box as well, so the vertex stage grew no edge "
+                     + "that lies on the box (story #1450), or the column no longer lies inside "
+                     + "the ramp.");
+                return;
+            }
+
+            var refused = ReadContaining(control, ToViewport(probe));
+            if (Ramp(refused))
+            {
+                Fail($"the {name} check's predicate holds on the CONTROL frame "
+                     + $"({Rgb(refused)}), so its verdict on the order frame means nothing.");
+                return;
+            }
+
+            var pixel = ReadContaining(order, ToViewport(probe));
+            var distance = Distance(pixel, expected);
+            var ok = Ramp(pixel) && distance <= ColourEpsilon;
+            Line($"order: {name} at ({F(probe.x)}, {F(probe.y)}) reads {Rgb(pixel)}, the top "
+                 + $"piece's row reads {Rgb(expected)}, {F3(distance)} apart: {(ok ? "OK" : "WRONG")}");
+            if (!ok)
+            {
+                Fail($"the veil's {name} reads {Rgb(pixel)} just outside its box beside the plug and "
+                     + $"{Rgb(expected)} in the same column higher up. The side piece's quad stopped "
+                     + "at the box, so the vertex stage did not grow an edge that lies on the box "
+                     + "(story #1450).");
+            }
+        }
+
+    }
+
+    /// The pixel whose square contains a viewport point.
+    ///
+    /// **Floor, not round.** [`Read`] rounds to the nearest pixel index, whose
+    /// centre can lie a whole pixel from the point; the seam check needs the
+    /// pixel the point is inside, whose centre is at most half a pixel away.
+    private static Color ReadContaining(Texture2D frame, Vector2 viewport)
+    {
+        var x = Mathf.Clamp(Mathf.FloorToInt(viewport.x * frame.width), 0, frame.width - 1);
+        var y = Mathf.Clamp(Mathf.FloorToInt(viewport.y * frame.height), 0, frame.height - 1);
+        return frame.GetPixel(x, y);
     }
 
     /// The solid row an instance names with the node's opacity folded into its

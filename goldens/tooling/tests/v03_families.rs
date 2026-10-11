@@ -157,6 +157,7 @@ fn the_gradient_family_matches_its_golden() {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let bytes = painter.rgba_bytes();
@@ -248,6 +249,7 @@ fn the_stroke_family_matches_its_golden() {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let bytes = painter.rgba_bytes();
@@ -347,6 +349,7 @@ fn the_image_family_matches_its_golden() {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let bytes = painter.rgba_bytes();

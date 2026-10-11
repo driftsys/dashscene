@@ -11,9 +11,9 @@
 //!
 //! # What it reports, and why that is the right question
 //!
-//! The pipeline binds seven storage buffers — three in the vertex stage and
+//! The pipeline binds eight storage buffers — four in the vertex stage and
 //! four in the fragment stage — and `wgpu::Limits::downlevel_defaults` allows
-//! four **per stage**, so the fragment side has no headroom (`render.rs`, the
+//! four **per stage**, so neither stage has headroom (`render.rs`, the
 //! comment above `PAINT_WGSL`'s bind group). GLES makes fragment-stage storage
 //! buffers optional in a way desktop Vulkan does not.
 //!

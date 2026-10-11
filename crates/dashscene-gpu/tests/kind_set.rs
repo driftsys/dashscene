@@ -67,6 +67,7 @@ fn paint(
         clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     renderer

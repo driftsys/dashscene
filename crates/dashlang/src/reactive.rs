@@ -1466,9 +1466,17 @@ impl LiveScene {
         // would go on painting the artboard it was already showing, forever.
         // That is issue #617's shape, on the state this story added.
         let shown_root_staged = arena.shown_root() != arena.committed().shown_root();
+        // An anti-aliasing band staged since the last commit, detected the same
+        // way and for the same reason (story #1450). `Arena::set_aa_band`
+        // changes no signal and starts no track, and the commit is what cuts
+        // the rects into their pieces with it — so without this a host that
+        // changed the band on a settled scene would go on drawing the pieces
+        // cut with the old one until something else moved.
+        let aa_band_staged = arena.aa_band() != arena.committed().aa_band();
 
         if switched.is_empty()
             && !shown_root_staged
+            && !aa_band_staged
             && self.scheduler.is_settled()
             && !self.scalar_dirty.iter().any(|&d| d)
             && !self.bool_dirty.iter().any(|&d| d)

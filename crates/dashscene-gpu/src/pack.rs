@@ -29,6 +29,28 @@
 //! runnable on a runner with no GPU — so the row the instance names carries the
 //! mapping, and it is resolved once per run rather than once per glyph.
 //!
+//! # Where an occlusion piece goes
+//!
+//! Story #1450. `pieces` is the commit's occlusion pass: each rect's visible
+//! sub-rectangles, in rect order, after every later opaque core's interior is
+//! subtracted. A rect's fills, its stacked fills and its stroke are emitted
+//! once per piece, each with the piece's quad on [`Instance::extent`] and the
+//! rect's whole box on `bounds`, so the SDF and the antialiased edge are the
+//! box's own. A rect with no piece is covered by later opaque ink and emits
+//! nothing; its glyph runs still do, because a run is never cut.
+//!
+//! The backdrop, the drop shadows, the inner shadows and a masked fill are
+//! emitted once, over the whole box, whatever the pieces say. The pass never
+//! cuts a rect that has a blur, a shadow, a shape or a stroke reaching past
+//! its box (`dashscene_core::occlusion::occludable`), so for a cut rect this
+//! emits none of them; and were one to arrive, drawing it whole is still the
+//! correct picture, because the part a piece leaves out is under a later
+//! opaque core.
+//!
+//! An empty `pieces` slice means every rect is one whole piece. So does a
+//! single piece equal to the rect's box: both pack exactly the rows this
+//! packer wrote before story #1450, with an extent word of zero.
+//!
 //! # What this packer does not emit, by name
 //!
 //! - **`BlurKind::Layer` blurs.** Node-local layer blur is budgeted at v1 and
@@ -51,7 +73,7 @@
 
 use dashpaint::{
     Blur, BlurKind, ClipRegion, ClipTable, GlyphRun, GlyphRunTable, GroupComposite, ImageTable,
-    PaintKind, PaintTable, PaintTag, RectEntry, Shadow, ShadowKind, Stroke, StrokeAlign,
+    PaintKind, PaintTable, PaintTag, Piece, RectEntry, Shadow, ShadowKind, Stroke, StrokeAlign,
 };
 
 use crate::instance::{
@@ -72,6 +94,10 @@ use crate::instance::{
 ///
 /// Panics when a glyph run is anchored to a rect the table does not hold, for
 /// the same reason and by the same rule the reference painter panics under.
+///
+/// Panics when a piece names a rect the table does not hold, for the same
+/// reason again: pieces are meaningful only against the rect table of the
+/// commit that cut them.
 #[allow(clippy::too_many_arguments)]
 pub fn pack(
     out: &mut InstanceBuffer,
@@ -81,6 +107,7 @@ pub fn pack(
     clips: &ClipTable,
     groups: &[GroupComposite],
     glyphs: &GlyphRunTable,
+    pieces: &[Piece],
 ) {
     let _ = images;
     out.clear();
@@ -109,6 +136,10 @@ pub fn pack(
     // that read the stack cannot disagree about whether it is biased.
     let mut next_group = 0usize;
     let mut open: Vec<(u32, u32)> = Vec::new();
+
+    // The pieces arrive in rect order — the pass emits them rect by rect — so
+    // a third forward cursor walks them, checked the way the run cursor is.
+    let mut next_piece = 0usize;
 
     for (index, rect) in rects.iter().enumerate() {
         let i = u32::try_from(index).expect("rect table exceeds u32::MAX entries");
@@ -150,7 +181,32 @@ pub fn pack(
         let layer = open.last().map_or(Instance::NONE, |&(slot, _)| slot);
 
         out.begin_rect(i);
-        pack_rect(out, rect, paints, clips, layer);
+        if pieces.is_empty() {
+            pack_rect(out, rect, paints, clips, layer, None);
+        } else {
+            debug_assert!(
+                next_piece >= pieces.len() || pieces[next_piece].rect >= i,
+                "piece {next_piece} belongs to rect {} but the walk is already at rect {i}; the \
+                 occlusion pass emits pieces in rect order",
+                pieces[next_piece].rect,
+            );
+            let first = next_piece;
+            while next_piece < pieces.len() && pieces[next_piece].rect == i {
+                next_piece += 1;
+            }
+            // No piece: a later opaque core covers the whole box, and the rect
+            // draws nothing.
+            if next_piece > first {
+                pack_rect(
+                    out,
+                    rect,
+                    paints,
+                    clips,
+                    layer,
+                    Some(&pieces[first..next_piece]),
+                );
+            }
+        }
 
         // The run's glyphs, after this rect's own ink — the position the
         // reference painter draws an anchored run at, which is what puts it
@@ -187,6 +243,15 @@ pub fn pack(
         "group {next_group} starts at rect {} of a {}-rect table: a group's range is meaningful \
          only against the rect table of the commit it came from",
         groups.get(next_group).map_or(0, |group| group.start),
+        rects.len(),
+    );
+
+    // A piece past the rect table is the run cursor's failure, one table over.
+    assert!(
+        pieces.is_empty() || next_piece == pieces.len(),
+        "piece {next_piece} belongs to rect {} of a {}-rect table: a piece is meaningful only \
+         against the rect table of the commit that cut it",
+        pieces.get(next_piece).map_or(0, |piece| piece.rect),
         rects.len(),
     );
 
@@ -264,18 +329,53 @@ fn pack_run(
             // straight and the letters tilted.
             rotation,
             rotation_pivot: pivot,
-            _pad: 0.0,
+            // A glyph is never cut.
+            extent: 0,
         });
     }
 }
 
+/// The [`Instance::extent`] word for one piece of `rect`, pushing the piece's
+/// quad onto `out`'s extent table when it is not the whole box.
+///
+/// Each grow bit is an exact `==` between the piece's edge and the box's. The
+/// occlusion pass copies every piece edge from the box or from a core's
+/// interior and never computes one, and the box's far edges here are the same
+/// `f32` expressions, `x + w` and `y + h`, that the pass evaluated
+/// (`dashscene_core::occlusion`). So an edge on the box compares equal, bit
+/// for bit, and a cut edge does not.
+fn piece_extent(out: &mut InstanceBuffer, rect: &RectEntry, piece: &Piece) -> u32 {
+    let mut grow = 0;
+    if piece.left == rect.x {
+        grow |= Instance::GROW_LEFT;
+    }
+    if piece.top == rect.y {
+        grow |= Instance::GROW_TOP;
+    }
+    if piece.right == rect.x + rect.w {
+        grow |= Instance::GROW_RIGHT;
+    }
+    if piece.bottom == rect.y + rect.h {
+        grow |= Instance::GROW_BOTTOM;
+    }
+    if grow == Instance::GROW_ALL {
+        return 0;
+    }
+    out.push_extent([piece.left, piece.top, piece.right, piece.bottom], grow)
+}
+
 /// Every instance one rect draws, in the reference painter's per-node order.
+///
+/// `pieces` is `None` for a frame packed with no occlusion pieces, which draws
+/// the whole box, and otherwise the rect's own pieces, at least one. See the
+/// module documentation for which instances are cut.
 fn pack_rect(
     out: &mut InstanceBuffer,
     rect: &RectEntry,
     paints: &PaintTable,
     clips: &ClipTable,
     layer: u32,
+    pieces: Option<&[Piece]>,
 ) {
     let entry = paints.resolve(rect.paint);
     let clip = clips.region(rect.clip);
@@ -323,7 +423,8 @@ fn pack_rect(
         // before releasing the clip (story #832).
         rotation: rect.rotation,
         rotation_pivot: rotation_pivot(rect),
-        _pad: 0.0,
+        // The whole box. Only the ink in step 3 below is cut to a piece.
+        extent: 0,
     };
 
     // 1. The backdrop, blurred, beneath the node's own ink. A masked node's
@@ -369,22 +470,29 @@ fn pack_rect(
             });
         }
     } else {
-        if entry.fill.tag != PaintTag::None {
-            out.push(fill_instance(&base, entry.fill));
-        }
-        for kind in paints.extra_fills(entry) {
-            out.push(fill_instance(&base, *kind));
-        }
-        if paints.stroke(entry).is_some() {
-            out.push(Instance {
-                kind: InstanceKind::Stroke.as_u32(),
-                row: entry.stroke.offset,
-                // The same number the drop shadow's silhouette grew by, in its
-                // other role: how far this stroke's own band reaches past the
-                // fill box its instance is stated over.
-                outset,
-                ..base
-            });
+        // Once per piece, each piece's instances together: the pieces of one
+        // rect do not overlap, so the order between them changes no pixel,
+        // and fill, stacked fills and stroke keep their order inside each.
+        for at in 0..pieces.map_or(1, <[Piece]>::len) {
+            let extent = pieces.map_or(0, |pieces| piece_extent(out, rect, &pieces[at]));
+            let base = Instance { extent, ..base };
+            if entry.fill.tag != PaintTag::None {
+                out.push(fill_instance(&base, entry.fill));
+            }
+            for kind in paints.extra_fills(entry) {
+                out.push(fill_instance(&base, *kind));
+            }
+            if paints.stroke(entry).is_some() {
+                out.push(Instance {
+                    kind: InstanceKind::Stroke.as_u32(),
+                    row: entry.stroke.offset,
+                    // The same number the drop shadow's silhouette grew by, in
+                    // its other role: how far this stroke's own band reaches
+                    // past the fill box its instance is stated over.
+                    outset,
+                    ..base
+                });
+            }
         }
     }
 

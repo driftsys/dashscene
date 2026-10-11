@@ -456,6 +456,7 @@ impl Frames for ShowcaseFrames {
             committed.clips(),
             committed.groups(),
             committed.glyphs(),
+            committed.pieces(),
             Some(changes.rects),
         );
         let paint_took = before_paint.elapsed();

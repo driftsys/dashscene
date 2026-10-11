@@ -94,6 +94,7 @@ fn render(rects: &[RectEntry], paints: &PaintTable) -> Vec<u8> {
         &ClipTable::new(),
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     painter.png_bytes()

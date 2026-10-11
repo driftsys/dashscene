@@ -275,9 +275,9 @@ nothing in this record changed with the answer.
 **Nothing else.** The third item this section carried while the story was being
 built — that nothing related `DsFrame`'s arrays to the gated types, so a row
 type could join the gate and reach no host — is closed:
-`every_gated_row_type_either_crosses_or_says_why_not` gives each of the 28 a
-disposition and fails until a new one has one. It could not be "every gated type
-appears **in a frame**", because `AtlasGlyph` is gated and crosses somewhere
-else — `ds_runtime_atlas`, since story #1123 — so each type says which it is and
-one that does not cross here has to say where it does, or why it does not at
-all.
+`every_gated_row_type_either_crosses_or_says_why_not` gives each gated type a
+disposition (every type `dashpaint_abi_type_count` counts) and fails until a new
+one has one. It could not be "every gated type appears **in a frame**", because
+`AtlasGlyph` is gated and crosses somewhere else — `ds_runtime_atlas`, since
+story #1123 — so each type says which it is and one that does not cross here has
+to say where it does, or why it does not at all.

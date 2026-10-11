@@ -27,7 +27,9 @@ namespace Driftsys.Dashscene
         /// Corner radii `(top_left, top_right, bottom_right, bottom_left)`.
         public const string Corners = "_DsCorners";
 
-        /// `(opacity, outset, rotation, unused)`.
+        /// `(opacity, outset, rotation, extent)`. `extent` is the occlusion
+        /// piece the quad is cut to, 0 for the whole box (story #1450,
+        /// `FramePacker.Shade`).
         public const string Shade = "_DsShade";
 
         /// `(pivot.x, pivot.y, unused, unused)`, in document space.

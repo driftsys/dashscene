@@ -129,7 +129,7 @@ use dashpaint::{
     AtlasGlyph, AtlasIndex, Blur, BlurKind, BlurRange, ClipBox, ClipIndex, ClipRegion, Color,
     CornerRadii, FillRange, GlyphQuad, GlyphRange, GlyphRun, Gradient, GradientKind, GradientStop,
     GroupComposite, ImageEntry, ImageFill, Mat23, PaintEntry, PaintIndex, PaintKind, PaintTag,
-    RectEntry, ScaleMode, Shadow, ShadowKind, ShadowRange, ShapeRange, StopRange, Stroke,
+    Piece, RectEntry, ScaleMode, Shadow, ShadowKind, ShadowRange, ShapeRange, StopRange, Stroke,
     StrokeAlign, StrokeRange, Vec2, VectorField,
 };
 
@@ -356,6 +356,8 @@ abi_surface! {
         => dashpaint_abi_clip_region_layout, dashpaint_abi_clip_region_round_trip;
     RectEntry { x: f32, y: f32, w: f32, h: f32, paint: PaintIndex, clip: ClipIndex, opacity: f32, rotation: f32, rotation_anchor: Vec2 }
         => dashpaint_abi_rect_entry_layout, dashpaint_abi_rect_entry_round_trip;
+    Piece { rect: u32, left: f32, top: f32, right: f32, bottom: f32 }
+        => dashpaint_abi_piece_layout, dashpaint_abi_piece_round_trip;
     GlyphQuad { glyph_id: u32, x: f32, y: f32 }
         => dashpaint_abi_glyph_quad_layout, dashpaint_abi_glyph_quad_round_trip;
     GlyphRange { offset: u32, count: u32 }
@@ -443,6 +445,9 @@ mod tests {
             // two-component anchor. A C# struct mirroring this one must
             // gain the same three floats in the same order.
             ("RectEntry", dashpaint_abi_rect_entry_layout(), 40, 4),
+            // Story #1450: one visible sub-rectangle of a rect, a `u32` rect
+            // index and four edges with no padding.
+            ("Piece", dashpaint_abi_piece_layout(), 20, 4),
             ("GlyphQuad", dashpaint_abi_glyph_quad_layout(), 12, 4),
             ("GlyphRange", dashpaint_abi_glyph_range_layout(), 8, 4),
             ("GlyphRun", dashpaint_abi_glyph_run_layout(), 40, 4),
@@ -726,5 +731,17 @@ mod tests {
             alpha: 0.25,
         };
         assert_eq!(dashpaint_abi_group_composite_round_trip(group), group);
+
+        // Story #1450's row. The four floats are distinct and not whole
+        // numbers, and the index is not a float's bit pattern, so a swapped
+        // pair of floats or a reordered index shows up.
+        let piece = Piece {
+            rect: 9,
+            left: 1.5,
+            top: 2.25,
+            right: 3.75,
+            bottom: 4.125,
+        };
+        assert_eq!(dashpaint_abi_piece_round_trip(piece), piece);
     }
 }

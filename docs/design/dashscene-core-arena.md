@@ -303,7 +303,25 @@ with the change rather than the scene ("Incremental commit" below):
    it. _Which_ nodes are re-solved and re-interned, by contrast, is derived from
    what was written: `set_prop`/`set_variant` classify each write through
    `prop_class` into retained `layout_dirty` / `paint_dirty` / `clip_toggled`
-   sets that drive the incremental work.
+   sets that drive the incremental work. The bit compare is then widened by what
+   the entry bits do not carry: the rects of a group that formed, dissolved or
+   changed alpha, and every text anchor whose glyph runs changed.
+
+   **Occlusion** (story #1450, `occlusion.rs`) — every rect is cut into the
+   pieces no later opaque core covers: `cores` finds each opaque core and its
+   interior (its box shrunk by its largest corner radius plus the arena's
+   anti-aliasing band, `Arena::set_aa_band`, default 1.0 document unit),
+   `barriers` finds the backdrop-sampling rects no core may cut across, and
+   `pieces` subtracts each later core's interior. The pass runs when the dirty
+   set is non-empty, the table was renumbered, or the band changed; otherwise
+   the previous commit's pieces are shared by reference. That trigger is wider
+   than the one issue #1450 specified, which recomputed only when a dirty rect
+   was a core or lay under one: that narrower test reused stale pieces when a
+   dirty rect moved under a core or became one, so any dirty rect reruns the
+   whole pass. A core that moves changes the pieces of the rects beneath it
+   while their entries stay the same, so every rect `changed_rects` names joins
+   the dirty set (an index past this commit's table is dropped; it can only come
+   from a longer table before a renumbering, which already dirtied every rect).
 4. **Publish** — generation = previous generation + 1 (every commit increments,
    including a no-op commit); the new `CommittedScene` is written into the back
    buffer and `front` flips. The change-log sets are then drained — all but one.
@@ -435,6 +453,8 @@ from `dashpaint`'s types since the story #4 unification:
 `paints() -> &PaintTable` (deduplicated `PaintEntry` pool),
 `clips() -> &ClipTable` (deduplicated `ClipRegion` pool, story #97),
 `groups() -> &[GroupComposite]` (the story #44 render-target group opacities),
+`pieces() -> &[Piece]` (each rect's visible sub-rectangles after occlusion,
+story #1450; a rect a later core covers completely has none),
 `generation() -> u64`, `dirty() -> &[u32]`, plus the NodeId↔rect-index
 correspondence for the commit that produced it (`node_of(rect_index) -> NodeId`,
 `rect_index_of(NodeId) -> Option<u32>` — `None` for a node added after that

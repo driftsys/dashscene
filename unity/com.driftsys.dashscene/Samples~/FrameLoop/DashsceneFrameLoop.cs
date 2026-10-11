@@ -457,15 +457,30 @@ namespace Driftsys.Dashscene.Samples
         /// in world units varies with a fragment's depth and one scalar cannot
         /// express that. The painter's own default is left in place there,
         /// which draws a ramp one document unit wide.
+        ///
+        /// **The runtime's occlusion band follows it** (story #1450): the
+        /// commit shrinks every opaque core by the band before cutting the
+        /// rects beneath it, so the band must be the width this painter's edges
+        /// ramp over, or a core's anti-aliased fringe blends over nothing.
+        /// Handed over on every call, before the tick; a value the last commit
+        /// already used commits nothing.
+        ///
+        /// **Also under a perspective camera**, where `EdgeWidth` is not set
+        /// here. The band must equal the width the painter's edges actually
+        /// ramp over, and under a perspective camera that is the painter's own
+        /// `EdgeWidth`, whatever set it — its default of one document unit, or
+        /// a value the host assigned itself. Skipping the call there would
+        /// leave the runtime's band at whatever an earlier orthographic frame
+        /// handed it, which no longer matches the ramp the painter draws.
         private void UpdateEdgeWidth()
         {
             var camera = viewCamera != null ? viewCamera : Camera.main;
-            if (camera == null || !camera.orthographic || camera.pixelHeight <= 0)
+            if (camera != null && camera.orthographic && camera.pixelHeight > 0)
             {
-                return;
+                _painter.EdgeWidth = camera.orthographicSize * 2.0f / camera.pixelHeight;
             }
 
-            _painter.EdgeWidth = camera.orthographicSize * 2.0f / camera.pixelHeight;
+            _runtime.SetAaBand(_painter.EdgeWidth);
         }
 
         /// **Pick a divisor of the display rate** (issue #851, issue #1121).

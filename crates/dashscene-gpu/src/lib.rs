@@ -108,7 +108,7 @@ pub mod shader;
 pub mod surface;
 
 use dashpaint::{
-    ClipTable, GlyphRunTable, GroupComposite, ImageFormat, ImageTable, PaintTable, Painter,
+    ClipTable, GlyphRunTable, GroupComposite, ImageFormat, ImageTable, PaintTable, Painter, Piece,
     RectEntry,
 };
 
@@ -292,6 +292,11 @@ impl Painter for GpuPainter {
     /// [`SurfaceRenderer::present`]). Repacking only the changed rects as well
     /// needs the previous frame's tables held for comparison, which is issue
     /// #708 and not this crate's shape today.
+    ///
+    /// `pieces` is honoured (story #1450): each rect's fills and stroke are
+    /// packed once per occlusion piece, on the piece's quad, so the pixels a
+    /// later opaque core covers are not shaded. `pack` says which instances
+    /// are cut and which are not.
     fn paint(
         &mut self,
         rects: &[RectEntry],
@@ -300,6 +305,7 @@ impl Painter for GpuPainter {
         clips: &ClipTable,
         groups: &[GroupComposite],
         glyphs: &GlyphRunTable,
+        pieces: &[Piece],
         _dirty: Option<&[u32]>,
     ) {
         pack::pack(
@@ -310,6 +316,7 @@ impl Painter for GpuPainter {
             clips,
             groups,
             glyphs,
+            pieces,
         );
         self.frames += 1;
     }
@@ -336,6 +343,7 @@ mod tests {
                 &ClipTable::new(),
                 &[],
                 &GlyphRunTable::new(),
+                &[],
                 None,
             );
         }

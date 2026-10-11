@@ -481,8 +481,7 @@ _stored_ entries; nothing here tested whether Unity can be made to produce one.
 returns a `const`. Nothing here says a `#[repr(C)]` struct marshals correctly.
 That was issue #859's data plane, which did not exist when this was written and
 landed on 2026-08-20, and story #1121 gave it its first C# consumer:
-`FrameLease` reads `DsFrame`'s nineteen arrays through the package's own
-P/Invoke layer.
+`FrameLease` reads `DsFrame`'s arrays through the package's own P/Invoke layer.
 
 **No runtime was created.** `ds_runtime_new` was not called, no document was
 loaded, no surface was attached, and `ds_runtime_draw` never ran. The lifecycle,

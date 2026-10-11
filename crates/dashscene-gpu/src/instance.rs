@@ -161,10 +161,11 @@ impl InstanceKind {
 
 /// One quad the painter draws.
 ///
-/// Sixty-four bytes, every member fixed-width, no implicit padding: eight
-/// 4-byte scalars followed by two four-float vectors, so both vectors sit at a
-/// 16-byte offset and a consumer that binds this as a storage-buffer element
-/// needs no repacking.
+/// Eighty bytes, every member fixed-width, no implicit padding: two
+/// four-float vectors followed by twelve 4-byte scalars, so both vectors sit at
+/// a 16-byte offset and a consumer that binds this as a storage-buffer element
+/// needs no repacking. It was sixty-four bytes until story #832 added the
+/// rotation.
 ///
 /// # Two fields are index-plus-one, and zero means none
 ///
@@ -299,12 +300,13 @@ pub struct Instance {
     /// storage buffers `wgpu::Limits::downlevel_defaults` allows — so the
     /// vertex stage could not have read a shadow row without exceeding its own
     /// limit. Resolving both kinds here instead is what the word this member
-    /// occupies was free for: the struct's alignment rounds its stride to 64
-    /// whatever its members add to, and the padding that filled the hole is now
-    /// a value.
+    /// occupies was free for: the struct's alignment rounded its stride to 64,
+    /// as it was then, whatever its members added to, and the padding that
+    /// filled the hole became a value.
     ///
-    /// It also takes the stroke table out of the vertex stage, which then reads
-    /// three storage buffers rather than four.
+    /// It also took the stroke table out of the vertex stage, which then read
+    /// three storage buffers rather than four, until story #1450's extents
+    /// took the fourth.
     pub outset: f32,
     /// The point this instance's quad turns about, in **document space**
     /// (story #832).
@@ -341,26 +343,70 @@ pub struct Instance {
     /// and the four sin/cos evaluations per instance are nothing against a
     /// fragment-bound pipeline.
     pub rotation: f32,
-    /// Padding, so the Rust type is 80 bytes and matches the shader's array
-    /// stride.
+    /// The occlusion piece this instance's quad is cut to (story #1450):
+    /// `index << 4 | grow_mask`, and `0` when the quad is the whole box, which
+    /// is every instance written before that story.
     ///
-    /// Not cosmetic. `Instance`'s first member is a four-float vector, so the
-    /// WGSL struct aligns to 16 and `array<Instance>`'s stride is the size
-    /// rounded up to that — 80 for the 76 bytes the members above use. Without
-    /// this word the Rust type would be 76 and every element after the first
-    /// would be uploaded to the wrong offset.
+    /// `index` names a row of [`InstanceBuffer::extents`] **plus one** — the
+    /// same bias [`layer`](Self::layer) and [`shape`](Self::shape) use. The row
+    /// is the piece's `[left, top, right, bottom]`. The vertex stage places the
+    /// quad between those edges instead of around [`bounds`](Self::bounds),
+    /// and every SDF, gradient and image coordinate is still evaluated against
+    /// `bounds`: a piece changes which pixels are shaded, never what colour
+    /// they receive.
     ///
-    /// It is also the next vertex-side scalar's slot: this is exactly the state
-    /// [`outset`](Self::outset) was in until story #584 gave it a meaning, and
-    /// filling it costs nothing where widening the stride again costs 16 bytes
-    /// on every instance.
-    pub _pad: f32,
+    /// `grow_mask` says which of the four quad edges the vertex stage grows by
+    /// the antialiasing width plus [`outset`](Self::outset):
+    /// [`GROW_LEFT`](Self::GROW_LEFT), [`GROW_TOP`](Self::GROW_TOP),
+    /// [`GROW_RIGHT`](Self::GROW_RIGHT) and [`GROW_BOTTOM`](Self::GROW_BOTTOM).
+    /// A bit is set where the piece's edge lies on the box's edge and clear
+    /// where a core cut it. A cut edge must not grow: two pieces of one rect
+    /// meet there, and a grown edge would overlap the neighbour, so a
+    /// translucent rect would blend twice in the overlap. The packer decides
+    /// each bit by exact `==` between the piece edge and the box edge — the
+    /// occlusion pass copies edges and never computes one, so the comparison
+    /// is exact — and the shader only reads the bits. Deciding it in the
+    /// shader would re-derive `x + w` on a backend that may reassociate it.
+    ///
+    /// The word was the 80-byte stride's padding until story #1450 gave it
+    /// this meaning, as [`outset`](Self::outset) was before story #584.
+    /// `Instance`'s first member is a four-float vector, so the WGSL struct
+    /// aligns to 16 and `array<Instance>`'s stride is 80 for the 76 bytes the
+    /// members above use; without this word the Rust type would be 76 and every
+    /// element after the first would be uploaded to the wrong offset.
+    pub extent: u32,
 }
 
 impl Instance {
     /// The value [`layer`](Self::layer) and [`shape`](Self::shape) carry when
     /// they name nothing.
     pub const NONE: u32 = 0;
+
+    /// [`extent`](Self::extent)'s grow bit for the quad's left edge.
+    pub const GROW_LEFT: u32 = 1;
+    /// [`extent`](Self::extent)'s grow bit for the quad's top edge.
+    pub const GROW_TOP: u32 = 2;
+    /// [`extent`](Self::extent)'s grow bit for the quad's right edge.
+    pub const GROW_RIGHT: u32 = 4;
+    /// [`extent`](Self::extent)'s grow bit for the quad's bottom edge.
+    pub const GROW_BOTTOM: u32 = 8;
+    /// The four grow bits: a piece whose every edge lies on the box's edge is
+    /// the whole box, and is packed as extent `0` instead.
+    pub const GROW_ALL: u32 = 15;
+
+    /// The row of [`InstanceBuffer::extents`] this instance's quad is cut to,
+    /// or `None` when the quad is the whole box.
+    pub const fn extent_row(&self) -> Option<usize> {
+        match self.extent >> 4 {
+            0 => None,
+            index => Some(index as usize - 1),
+        }
+    }
+
+    /// The grow bits of [`extent`](Self::extent).
+    pub const fn grow_mask(&self) -> u32 {
+        self.extent & Self::GROW_ALL
+    }
 }
 
 /// Where one rect's instances sit in the [`InstanceBuffer`]'s flat array.
@@ -422,6 +468,12 @@ pub struct InstanceBuffer {
     instances: Vec<Instance>,
     spans: Vec<InstanceSpan>,
     layers: Vec<Layer>,
+    /// The cut pieces' quads, as `[left, top, right, bottom]`, in the order the
+    /// packer met them. See [`Instance::extent`].
+    extents: Vec<[f32; 4]>,
+    /// How many extents preceded each rect, index-aligned with
+    /// [`spans`](Self::spans). See [`InstanceBuffer::extent_starts`].
+    extent_starts: Vec<u32>,
 }
 
 impl InstanceBuffer {
@@ -490,6 +542,30 @@ impl InstanceBuffer {
         &self.layers
     }
 
+    /// The quads of the occlusion pieces that do not cover their rect's whole
+    /// box, as `[left, top, right, bottom]` in document space (story #1450).
+    /// An [`Instance::extent`] index of `n` names row `n - 1`.
+    ///
+    /// Empty for a frame packed with no pieces, and for one where no rect was
+    /// cut. A rect cut into four pieces adds four rows, shared by every
+    /// instance each piece emits.
+    pub fn extents(&self) -> &[[f32; 4]] {
+        &self.extents
+    }
+
+    /// How many [`extents`](Self::extents) rows the rects before each rect
+    /// added, index-aligned with [`spans`](Self::spans).
+    ///
+    /// The renderer's partial upload compares this alongside the spans. An
+    /// extent index is a position in a table every rect shares, so a dirty
+    /// rect that gains or loses a cut piece moves the index of every later
+    /// rect's pieces while leaving every span where it was — and those later
+    /// rects are not dirty, so a partial upload would leave their rows naming
+    /// the wrong extent.
+    pub fn extent_starts(&self) -> &[u32] {
+        &self.extent_starts
+    }
+
     /// Empties the buffer, keeping its allocation — what a painter does at the
     /// top of a frame, so a steady-state frame reuses this buffer rather than
     /// growing a new one.
@@ -497,6 +573,8 @@ impl InstanceBuffer {
         self.instances.clear();
         self.spans.clear();
         self.layers.clear();
+        self.extents.clear();
+        self.extent_starts.clear();
     }
 
     /// Opens rect `index`'s span. Every instance pushed until the next
@@ -516,6 +594,26 @@ impl InstanceBuffer {
         let offset =
             u32::try_from(self.instances.len()).expect("instance buffer exceeds u32::MAX quads");
         self.spans.push(InstanceSpan { offset, count: 0 });
+        let start = u32::try_from(self.extents.len()).expect("extent table exceeds u32::MAX rows");
+        self.extent_starts.push(start);
+    }
+
+    /// Appends one piece's quad to [`extents`](Self::extents) and returns the
+    /// [`Instance::extent`] word that names it with `grow_mask`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the table would hold 2^28 rows: the word's 28 index bits
+    /// name 2^28 values and index 0 means "the quad is the box", so 2^28 - 1
+    /// rows is the most it can name.
+    pub(crate) fn push_extent(&mut self, quad: [f32; 4], grow_mask: u32) -> u32 {
+        debug_assert!(grow_mask < Instance::GROW_ALL, "a whole box takes no row");
+        self.extents.push(quad);
+        let index = u32::try_from(self.extents.len())
+            .ok()
+            .filter(|&index| index < 1 << 28)
+            .expect("extent table exceeds the 2^28 - 1 rows an extent word can name");
+        index << 4 | grow_mask
     }
 
     /// Appends one instance to the rect currently open.
@@ -586,7 +684,7 @@ impl InstanceBuffer {
         }
         for (index, instance) in self.instances.iter().enumerate() {
             let kind = InstanceKind::from_u32(instance.kind);
-            let _ = writeln!(
+            let _ = write!(
                 out,
                 "{index:>4} {:<13} row {} shape {} clip {}..{} layer {} opacity {:?} \
                  outset {:?} bounds {:?} corners {:?}",
@@ -601,6 +699,17 @@ impl InstanceBuffer {
                 instance.bounds,
                 instance.corners,
             );
+            // Only when the quad is cut, so a frame packed with no pieces
+            // prints the lines it printed before story #1450.
+            if let Some(row) = instance.extent_row() {
+                let _ = write!(
+                    out,
+                    " extent {:?} grow {:04b}",
+                    self.extents[row],
+                    instance.grow_mask(),
+                );
+            }
+            out.push('\n');
         }
         out
     }

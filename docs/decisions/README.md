@@ -692,9 +692,9 @@ their parent rather than apart from it:
   cost above an empty-scene floor shall both be lower. D2 is the eight fairness
   rules that make the Canvas the one a careful Unity UI team would ship; D3
   defines the instruments against `demo/src/shell.rs` and
-  `DashsceneFrameCost.cs`; D4 carries R-T2's reinterpretation — its intent is
+  `DashsceneFrameCost.cs`; D4 carried R-T2's reinterpretation — its intent is
   met by story #1450's occlusion pass as well as by the depth-tested core the
-  rule names — until that story writes it beside the rule. Binds the ten stories
+  rule names — until that story wrote it beside the rule. Binds the ten stories
   of gating epic #1441. The budget record above is a separate obligation and
   still binds; #549 still stands.
 - [unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md](unity-package-distribution-is-a-git-url-and-meta-files-are-committed.md)

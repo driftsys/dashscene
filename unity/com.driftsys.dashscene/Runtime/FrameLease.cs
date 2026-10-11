@@ -175,7 +175,7 @@ namespace Driftsys.Dashscene
             _released = true;
         }
 
-        // The nineteen arrays and the row each one holds.
+        // Every array of a `DsFrame` and the row each one holds.
         //
         // **Derived from `frame_of` in `crates/dashscene-ffi/src/lib.rs`, not
         // from the member names.** Two of them do not hold the type their name
@@ -214,6 +214,7 @@ namespace Driftsys.Dashscene
             ("image_payload", sizeof(byte)),
             ("glyph_runs", Marshal.SizeOf<GlyphRun>()),
             ("glyph_quads", Marshal.SizeOf<GlyphQuad>()),
+            ("pieces", Marshal.SizeOf<Piece>()),
         };
 
         /// Every array's stride, in `RowSizes` order.
@@ -244,6 +245,7 @@ namespace Driftsys.Dashscene
                 frame.ImagePayload.StrideAsLong,
                 frame.GlyphRuns.StrideAsLong,
                 frame.GlyphQuads.StrideAsLong,
+                frame.Pieces.StrideAsLong,
             };
         }
 

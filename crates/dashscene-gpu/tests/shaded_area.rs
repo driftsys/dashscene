@@ -13,13 +13,26 @@
 //! then `(scene.pulse)` at index 0, then one `tick`, which is
 //! `demo/src/shell.rs`'s `Showcase::build` followed by
 //! `dashscene_desktop`'s first frame. `GpuPainter::paint` is then called
-//! directly on the committed tables. That runs `pack::pack` and nothing else:
-//! no `Renderer`, no adapter, no window, no GPU.
+//! directly on the committed tables, with the commit's occlusion pieces as a
+//! host passes them. That runs `pack::pack` and nothing else: no `Renderer`,
+//! no adapter, no window, no GPU.
 //!
-//! Per instance the shaded footprint is `bounds` grown by `outset` on every
-//! side — `Instance::outset` documents that as exactly what the vertex stage
-//! grows the quad by, so a stroke's or a drop shadow's rasterized quad is
-//! larger than its `bounds` alone — then clipped to the extent.
+//! Per instance the shaded footprint is the quad the vertex stage builds, then
+//! clipped to the extent. For a whole instance that is `bounds` grown by
+//! `outset` and the antialiasing margin on every side — `Instance::outset`
+//! documents that as exactly what the vertex stage grows the quad by, so a
+//! stroke's or a drop shadow's rasterized quad is larger than its `bounds`
+//! alone. For an instance cut to an occlusion piece (story #1450) it is the
+//! piece's extent, grown by the same amount only on the edges its grow bits
+//! name, which is `vs_main` in `src/shaders/paint.wgsl`.
+//!
+//! # Before and after the occlusion pieces
+//!
+//! Each scene is packed twice: once with the commit's pieces, which is what a
+//! host submits, and once with an empty piece slice, which draws every rect
+//! whole and is what this painter submitted before story #1450. Both sums are
+//! pinned, so the reduction the pieces make is a reading too, not only the
+//! figure left after it.
 //!
 //! # What this number is, and what it leaves out
 //!
@@ -30,9 +43,10 @@
 //! - **Group composites.** `composite.wgsl`'s `vs_composite` builds a
 //!   full-target quad from the vertex index alone, so every group costs the
 //!   whole extent — 2.5272 Mpx at 2340x1080, which is 41 % of what `surfaces`
-//!   reports here. `pack` emits no instance for a group. The group counts are
-//!   pinned below beside the areas for exactly this reason: they are the
-//!   multiplier this sum does not carry.
+//!   shades here with no pieces and 47 % of what it shades with them. `pack`
+//!   emits no instance for a group. The group counts are pinned below beside
+//!   the areas for exactly this reason: they are the multiplier this sum does
+//!   not carry.
 //! - **The backdrop passes.** A backdrop pays a full-target snapshot copy and
 //!   a base blit, plus the blur's axis and resolve quads.
 //! - **Anything a `shape` mask substitutes.** For a masked instance the vertex
@@ -70,9 +84,9 @@
 //! also lives in this crate rather than in `corpus/showcase`, so that rule's
 //! subject — the tests in that crate — is unchanged.
 
-use dashpaint::Painter;
+use dashpaint::{Painter, Piece};
 use dashscene_core::Arena;
-use dashscene_gpu::GpuPainter;
+use dashscene_gpu::{GpuPainter, Instance};
 
 /// The extent every scene is built and solved at.
 ///
@@ -86,11 +100,23 @@ const HEIGHT: u32 = 1080;
 /// What one scene is expected to shade, and with how many instances.
 struct Expected {
     scene: &'static str,
-    /// Instances the packer emits, which is an exact count and not a tolerance:
-    /// it is an integer the arithmetic below cannot round.
+    /// Instances the packer emits with the commit's occlusion pieces, which is
+    /// an exact count and not a tolerance: it is an integer the arithmetic
+    /// below cannot round.
     instances: usize,
-    /// Shaded megapixels, summed over every instance.
+    /// Shaded megapixels with the commit's occlusion pieces, summed over every
+    /// instance. The after-column.
     shaded_mpx: f64,
+    /// Instances the packer emits with no pieces: every rect whole, as before
+    /// story #1450.
+    whole_instances: usize,
+    /// Shaded megapixels with no pieces. The before-column, and the figure
+    /// this table pinned before story #1450, unchanged.
+    whole_mpx: f64,
+    /// The reduction `probe-1412/rejected-2340x1080.txt` derived for this
+    /// scene, in megapixels: an upper bound on `whole_mpx - shaded_mpx`. See
+    /// [`the_occlusion_pieces_remove_no_more_than_the_derivation_bounds`].
+    derivation_mpx: f64,
     /// Groups the document carries.
     ///
     /// **Pinned because it is the term the megapixel sum does not carry.**
@@ -127,23 +153,38 @@ struct Expected {
 /// The instance counts below are the strict half. A shaping or layout
 /// difference large enough to matter changes how many quads are emitted, and
 /// that is compared for equality rather than within a band.
+///
+/// **The after-column was measured on 2026-10-10**, when the lean painter
+/// began packing the commit's occlusion pieces (story #1450), at the arena's
+/// default 1.0 antialiasing band and `MAX_PIECES_PER_RECT` = 32. The same
+/// 0.01 % band holds it. The before-column is the table as it stood, measured
+/// with an empty piece slice, and it did not move.
 const EXPECTED: &[Expected] = &[
     Expected {
         scene: "surfaces",
-        instances: 65,
-        shaded_mpx: 6.1083,
+        instances: 97,
+        shaded_mpx: 5.3653,
+        whole_instances: 65,
+        whole_mpx: 6.1083,
+        derivation_mpx: 1.364,
         groups: 1,
     },
     Expected {
         scene: "typography",
-        instances: 381,
-        shaded_mpx: 3.2100,
+        instances: 393,
+        shaded_mpx: 2.9323,
+        whole_instances: 381,
+        whole_mpx: 3.2100,
+        derivation_mpx: 0.450,
         groups: 0,
     },
     Expected {
         scene: "layout",
-        instances: 29,
-        shaded_mpx: 5.4616,
+        instances: 91,
+        shaded_mpx: 2.9980,
+        whole_instances: 29,
+        whole_mpx: 5.4616,
+        derivation_mpx: 2.841,
         groups: 0,
     },
 ];
@@ -168,6 +209,33 @@ const TOLERANCE: f64 = 0.0001;
 /// the two from drifting apart.
 const AA_MARGIN: f32 = 1.0;
 
+/// The quad the vertex stage builds for `instance`, clipped to the extent, in
+/// square pixels.
+///
+/// A whole instance's quad is `bounds` grown on every side by its `outset` and
+/// the antialiasing margin. A cut instance's is its piece's extent row, grown
+/// by the same amount only on the edges its grow bits name.
+fn footprint(instance: &Instance, extents: &[[f32; 4]]) -> f64 {
+    let Some(row) = instance.extent_row() else {
+        return clipped_area(instance.bounds, instance.outset);
+    };
+    let [left, top, right, bottom] = extents[row];
+    let reach = instance.outset + AA_MARGIN;
+    let grow = instance.grow_mask();
+    let grown = |edge: f32, bit: u32, sign: f32| {
+        if grow & bit != 0 {
+            edge + sign * reach
+        } else {
+            edge
+        }
+    };
+    let x0 = grown(left, Instance::GROW_LEFT, -1.0).max(0.0);
+    let y0 = grown(top, Instance::GROW_TOP, -1.0).max(0.0);
+    let x1 = grown(right, Instance::GROW_RIGHT, 1.0).min(WIDTH as f32);
+    let y1 = grown(bottom, Instance::GROW_BOTTOM, 1.0).min(HEIGHT as f32);
+    f64::from((x1 - x0).max(0.0)) * f64::from((y1 - y0).max(0.0))
+}
+
 /// `bounds` grown by `outset` and the antialiasing margin on every side, then
 /// clipped to the extent, in square pixels.
 fn clipped_area(bounds: [f32; 4], outset: f32) -> f64 {
@@ -183,33 +251,65 @@ fn clipped_area(bounds: [f32; 4], outset: f32) -> f64 {
     clipped_w * clipped_h
 }
 
-/// Builds, solves and packs one scene, and returns its instance count and
-/// shaded megapixels.
-fn measure(scene: &showcase::Showcase) -> (usize, f64, usize) {
+/// One scene, packed with its occlusion pieces and packed whole.
+struct Measured {
+    /// Instances and shaded megapixels with the commit's pieces.
+    instances: usize,
+    shaded_mpx: f64,
+    /// Instances and shaded megapixels with an empty piece slice.
+    whole_instances: usize,
+    whole_mpx: f64,
+    groups: usize,
+}
+
+/// Builds, solves and packs one scene, with its pieces and whole.
+fn measure(scene: &showcase::Showcase) -> Measured {
     let mut arena = Arena::new();
     let mut live = (scene.build)(&mut arena, WIDTH, HEIGHT);
     (scene.pulse)(&mut live, 0);
     let _generation = live.tick(0.0, &mut arena);
 
     let committed = arena.committed();
-    let mut painter = GpuPainter::new();
-    painter.paint(
-        committed.rects(),
-        committed.paints(),
-        committed.images(),
-        committed.clips(),
-        committed.groups(),
-        committed.glyphs(),
-        None,
-    );
+    let pack = |pieces: &[Piece]| {
+        let mut painter = GpuPainter::new();
+        painter.paint(
+            committed.rects(),
+            committed.paints(),
+            committed.images(),
+            committed.clips(),
+            committed.groups(),
+            committed.glyphs(),
+            pieces,
+            None,
+        );
+        let buffer = painter.instances();
+        let shaded_px: f64 = buffer
+            .instances()
+            .iter()
+            .map(|instance| footprint(instance, buffer.extents()))
+            .sum();
+        (buffer.instances().len(), shaded_px / 1_000_000.0)
+    };
+    let (instances, shaded_mpx) = pack(committed.pieces());
+    let (whole_instances, whole_mpx) = pack(&[]);
+    Measured {
+        instances,
+        shaded_mpx,
+        whole_instances,
+        whole_mpx,
+        groups: committed.groups().len(),
+    }
+}
 
-    let groups = committed.groups().len();
-    let instances = painter.instances().instances();
-    let shaded_px: f64 = instances
-        .iter()
-        .map(|instance| clipped_area(instance.bounds, instance.outset))
-        .sum();
-    (instances.len(), shaded_px / 1_000_000.0, groups)
+/// `measured` against `expected` within [`TOLERANCE`], as a failure line.
+fn drift(scene: &str, what: &str, measured: f64, expected: f64) -> Option<String> {
+    let band = expected * TOLERANCE;
+    ((measured - expected).abs() > band).then(|| {
+        format!(
+            "{scene}: {measured:.4} Mpx {what}, expected {expected:.4} +/- {band:.4} ({:+.2} %)",
+            100.0 * (measured - expected) / expected,
+        )
+    })
 }
 
 #[test]
@@ -222,7 +322,13 @@ fn every_showcase_scene_shades_what_it_did() {
             .find(|candidate| candidate.name == expected.scene)
             .unwrap_or_else(|| panic!("no showcase scene named {}", expected.scene));
 
-        let (instances, shaded_mpx, groups) = measure(scene);
+        let Measured {
+            instances,
+            shaded_mpx,
+            whole_instances,
+            whole_mpx,
+            groups,
+        } = measure(scene);
 
         if groups != expected.groups {
             failures.push(format!(
@@ -238,18 +344,25 @@ fn every_showcase_scene_shades_what_it_did() {
                 expected.scene, expected.instances
             ));
         }
-
-        let band = expected.shaded_mpx * TOLERANCE;
-        let drift = (shaded_mpx - expected.shaded_mpx).abs();
-        if drift > band {
+        if whole_instances != expected.whole_instances {
             failures.push(format!(
-                "{}: {shaded_mpx:.4} Mpx shaded, expected {:.4} +/- {band:.4} \
-                 ({:+.2} %)",
-                expected.scene,
-                expected.shaded_mpx,
-                100.0 * (shaded_mpx - expected.shaded_mpx) / expected.shaded_mpx,
+                "{}: {whole_instances} instances with no pieces, expected {}",
+                expected.scene, expected.whole_instances
             ));
         }
+
+        failures.extend(drift(
+            expected.scene,
+            "shaded",
+            shaded_mpx,
+            expected.shaded_mpx,
+        ));
+        failures.extend(drift(
+            expected.scene,
+            "shaded with no pieces",
+            whole_mpx,
+            expected.whole_mpx,
+        ));
     }
 
     assert!(
@@ -259,6 +372,43 @@ fn every_showcase_scene_shades_what_it_did() {
          {WIDTH}x{HEIGHT}. A change here is a fill-rate change on the target \
          device (issue #1296). If it is intended, re-derive the table in this \
          file and say in the pull request what moved and why.",
+        failures.join("\n  ")
+    );
+}
+
+/// The occlusion pieces remove shaded area on every scene, and no more than
+/// the derivation's figure for that scene (story #1450).
+///
+/// **The derivation is an upper bound, not a target.** It inset each core by
+/// one pixel and applied no corner radius and no clip, so it removed more than
+/// any pass that keeps the antialiased edge intact can: `cores` insets by the
+/// largest corner radius plus the band, and intersects with the core's own
+/// clip boxes' inset interiors. Its base area was its own reading too, not
+/// this file's. So the measured reduction is pinned exactly above, as the two
+/// columns of [`EXPECTED`], and this test bounds it on both sides: above zero,
+/// so the pieces are doing something, and at most the derivation, so the
+/// instrument and the derivation do not contradict each other.
+#[test]
+fn the_occlusion_pieces_remove_no_more_than_the_derivation_bounds() {
+    let mut failures = Vec::new();
+    for expected in EXPECTED {
+        let scene = showcase::SCENES
+            .iter()
+            .find(|candidate| candidate.name == expected.scene)
+            .unwrap_or_else(|| panic!("no showcase scene named {}", expected.scene));
+        let measured = measure(scene);
+        let removed = measured.whole_mpx - measured.shaded_mpx;
+        if !(removed > 0.0 && removed <= expected.derivation_mpx) {
+            failures.push(format!(
+                "{}: the pieces removed {removed:.4} Mpx ({:.4} whole, {:.4} cut), \
+                 outside (0, {:.3}]",
+                expected.scene, measured.whole_mpx, measured.shaded_mpx, expected.derivation_mpx,
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "the occlusion pieces' reduction left its bounds:\n  {}",
         failures.join("\n  ")
     );
 }

@@ -199,7 +199,8 @@ for weight.
   `Typesetter` nor an `Atlas` crosses the boundary; their **inputs** do, and
   `dashscene_engine::TextResources::from_faces` assembles them on the far side.
   A new symbol rather than a parameter, so `DS_ABI_VERSION` did not move for it.
-  (It is 2 since story #1226, which changed ten signatures.)
+  (It moved to 2 at story #1226, which changed ten signatures, and to 3 at story
+  #1450, which appended `DsFrame::pieces`.)
 
   The atlas sits inside the descriptor rather than in a parallel array because
   the atlas list is indexed by the font slot of the face that shaped a glyph: a

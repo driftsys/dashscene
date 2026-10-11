@@ -47,8 +47,9 @@ which is what GPUI does.
 (`bounds`, `corners`), then eight 4-byte scalars (`kind`, `row`, `shape`,
 `clip_offset`, `clip_count`, `layer`, `opacity`, `outset`), then the rotation
 added by story #832: `rotation_pivot` (two floats), `rotation`, and one declared
-pad word. `#[repr(C)]`, no implicit padding, no `bool`, no payload enum, no
-nested collection — story #578's rules for anything crossing a language seam.
+pad word, which story #1450 made the `extent` word (D10). `#[repr(C)]`, no
+implicit padding, no `bool`, no payload enum, no nested collection — story
+#578's rules for anything crossing a language seam.
 
 The vectors lead so both sit at a 16-byte offset. A struct containing a
 four-float member has an alignment of 16, so the array stride a shader sees
@@ -70,8 +71,11 @@ hazard that carried the first time is real —
 participates in `PartialEq`, so two otherwise-equal instances could differ in a
 member that means nothing — and it is closed here by construction rather than by
 argument: the packer writes `0.0` at every site that builds an `Instance`, and
-`a_packed_instance_never_carries_a_non_zero_pad` asserts it over a scene of
-every kind. That record's own scope is boundary-B rows, which this is not.
+`a_packed_instance_never_carries_a_non_zero_pad` asserted it over a scene of
+every kind. That record's own scope is boundary-B rows, which this is not. Story
+#1450 then gave the word a meaning a third time, as `extent` (D10). It is zero
+for every instance of a frame packed with no pieces, which
+`a_frame_packed_with_no_pieces_cuts_no_quad` asserts over the same scene.
 
 Three alternatives to the pad were considered. Storing the angle's **sine and
 cosine** fills all four words and removes the per-vertex trigonometry, but a
@@ -151,6 +155,35 @@ which reads as a thinner stroke or a cropped shadow rather than as a defect —
 and a quad too large shades fragments the coverage then discards, drawing the
 same picture at a fill-rate cost that is R-T2's concern.
 
+**D10 — an instance can be cut to an occlusion piece, named by the `extent` word
+(story #1450).** The commit cuts each rect into the pieces no later opaque core
+covers, and the packer emits a cut rect's fills, stacked fills and stroke once
+per piece. `bounds` stays the rect's box, so the SDF, gradient and image
+coordinates do not change; the trailing word, until then padding, holds
+`index << 4 | grow_mask`. `index` names a row of `InstanceBuffer::extents` plus
+one — the bias D6 gives `layer` and `shape` — and the row is the piece's
+`[left, top, right, bottom]`. Zero is the whole box, so a frame packed with no
+pieces is the buffer this record described before, row for row. A rect whose
+pieces are all gone draws nothing; its glyph runs still draw, because a run is
+never cut. The backdrop, both shadow passes and a masked fill stay whole: the
+pass never cuts a rect that has them.
+
+The grow mask says which quad edges the vertex stage grows by the antialiasing
+width plus `outset`: the edges that lie on the box. A cut edge is where another
+piece of the same rect begins, and growing it would overlap that piece, so a
+translucent rect would blend twice there. **The packer decides the bits, not the
+shader**, by exact `==` between each piece edge and the box edge. The pass
+copies every piece edge from the box or from a core's interior and never
+computes one, so the comparison is exact on the CPU; a shader that compared
+`left + width` on a backend that reassociates the sum could miss by one ulp.
+
+The extents are their own table rather than a widened row because most rows are
+never cut — every glyph, every rect no core covers — and a 96-byte row would
+cost 16 bytes on each of them. The table is written whole every frame, like the
+paint tables, and `InstanceBuffer::extent_starts` joins the spans in the partial
+upload's check: a dirty rect that gains or loses a cut piece renumbers every
+later rect's extent rows without moving a span.
+
 ## Why
 
 **D1, against per-kind buffers.** Boundary B says "slice order defines
@@ -174,7 +207,8 @@ and both stages already read the four storage buffers
 `wgpu::Limits::downlevel_defaults` allows — so the stage that builds the quad
 could not read a shadow row at any price. Resolving both kinds in the packer is
 what the free word was there to make possible, and it takes the stroke table out
-of the vertex stage with it: that stage now reads three storage buffers of four.
+of the vertex stage with it: that stage then read three storage buffers of four,
+until story #1450's extents took the fourth (D10).
 
 The alternative was to grow `bounds` itself and have the fragment stage subtract
 the same padding back out, which needs the growth computed identically in two

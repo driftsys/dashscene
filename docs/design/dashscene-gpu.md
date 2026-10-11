@@ -51,7 +51,7 @@ Five types carry the crate, in `crates/dashscene-gpu/src/`:
     impl Painter for GpuPainter {
         fn samples(&self, format: ImageFormat) -> bool;
         fn rotates(&self) -> bool;   // true — story #832
-        fn paint(&mut self, rects, paints, images, clips, groups, glyphs, dirty);
+        fn paint(&mut self, rects, paints, images, clips, groups, glyphs, pieces, dirty);
     }
 
     impl GpuPainter {
@@ -157,6 +157,23 @@ stage grows the quad by (D8, D9). An Inside stroke reaches nothing and takes a
 zero outset. A masked instance is a different case: its quad is the coverage
 field's padded plane quad substituted for the node's box.
 
+**Occlusion pieces** (story #1450). `GpuPainter::paint` honours `pieces`: a rect
+cut by later opaque cores packs its fills, stacked fills and stroke once per
+piece, each instance still stated over the whole box in `bounds`, with
+`Instance::extent` naming the piece's row of `InstanceBuffer::extents` and a
+four-bit grow mask. The vertex stage places such a quad between the piece's
+edges and grows only the edges that lie on the box — the packer sets each bit by
+exact `==` against the box edge — so two pieces of one rect meet exactly and a
+translucent rect never blends twice. A rect with no piece packs nothing; glyph
+runs, masked fills, backdrops and shadows are never cut
+(`docs/decisions/instance-buffer-contract.md` D10). The renderer writes the
+extent table whole each frame, and a partial upload also requires
+`InstanceBuffer::extent_starts` to match the frame on the device, because a
+dirty rect that gains or loses a cut piece renumbers later rects' rows without
+moving a span. On the showcase scenes at 2340x1080 the pieces take the shaded
+area from 6.1083 to 5.3653 Mpx on `surfaces`, 3.2100 to 2.9323 on `typography`
+and 5.4616 to 2.9980 on `layout` (`crates/dashscene-gpu/tests/shaded_area.rs`).
+
 A glyph run's instances are appended to the span of the rect the run is anchored
 to, after that rect's inner shadows — the position `dashscene-skia` draws an
 anchored run at, which puts the run inside the rect's clip region and inside
@@ -211,14 +228,15 @@ open for that half.
 The storage-buffer count is the limit that shaped the crate. The paint
 pipeline's bind group stands at:
 
-    vertex    instances(0), glyph runs(8), shapes(9)          3 of 4
-    fragment  paints(1), clips(2), strokes(4), images(5)      4 of 4
+    vertex    instances(0), glyph runs(8), shapes(9), extents(13)  4 of 4
+    fragment  paints(1), clips(2), strokes(4), images(5)           4 of 4
 
-The fragment stage is full and the vertex stage has one slot free — free because
-story #584 preferred to move a value onto the instance rather than spend it, not
-because nothing wanted it (`docs/decisions/tables-the-vertex-stage-reads.md`,
-whose D4 is revised to say exactly this). A value that fits on the instance
-costs no binding at all, which is why a free slot is not an invitation.
+Both stages are full. The vertex stage had one slot free from story #584, which
+moved a value onto the instance rather than spend a binding, until story #1450's
+occlusion-piece extents took it
+(`docs/decisions/tables-the-vertex-stage-reads.md`). A value that fits on the
+instance costs no binding at all, which is why that free slot was not an
+invitation.
 
 That ceiling is the single strongest force on this crate's shape — it is why
 three later features took the form they did:
@@ -233,6 +251,9 @@ three later features took the form they did:
 - **Text and baked vector fields** (story #582). Both tables are read by the
   **vertex** stage, because the fragment stage has none left
   (`docs/decisions/tables-the-vertex-stage-reads.md`).
+- **Occlusion pieces** (story #1450). A cut quad's four edges do not fit on the
+  instance, so the instance's spare word carries an index into a table of
+  extents that only the vertex stage reads — the last vertex storage slot.
 - **The baked gradient strip** (story #1449) went the fourth way: it is a
   **texture**, at binding 11 with a filtering sampler at 12, so it spends none
   of the four storage slots the fragment stage has already filled. That is not a

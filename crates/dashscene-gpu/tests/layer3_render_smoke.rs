@@ -69,6 +69,7 @@ fn draw_groups(
         clips,
         groups,
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     renderer()
@@ -103,6 +104,7 @@ fn draw_on(
         clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     renderer
@@ -221,6 +223,7 @@ fn the_maximum_extent_draws_and_one_past_it_is_refused_on_either_axis() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
 
@@ -326,6 +329,7 @@ fn a_drawable_with_no_pixels_is_refused_on_either_axis() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
 
@@ -905,6 +909,7 @@ fn a_width_that_needs_row_padding_reads_back_correctly() {
         &clips,
         &[],
         &GlyphRunTable::new(),
+        &[],
         None,
     );
     let pixels = renderer()
@@ -2030,6 +2035,7 @@ fn layer_allocation_probe() -> impl FnMut(&mut Renderer, &[dashpaint::GroupCompo
             &clips,
             groups,
             &GlyphRunTable::new(),
+            &[],
             None,
         );
         renderer

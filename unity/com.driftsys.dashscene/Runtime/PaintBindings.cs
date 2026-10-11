@@ -43,6 +43,16 @@ namespace Driftsys.Dashscene
         /// The stroke table.
         public const string Strokes = "_DsStrokes";
 
+        /// The occlusion pieces' quads, `(left, top, right, bottom)` per row
+        /// (story #1450).
+        ///
+        /// **Read by the vertex stage**, unlike the three tables above: an
+        /// instance whose `_DsShade.w` is not zero places its quad from row
+        /// `w / 16 - 1` of this buffer and grows only the edges its low four
+        /// bits name. The fragment stage never reads it — every SDF, gradient
+        /// and image coordinate stays on `_DsQuad`, the rect's whole box.
+        public const string Extents = "_DsExtents";
+
         /// The baked gradient strip: one 256-texel ramp per gradient row of the
         /// paint table, straight-alpha RGBA8.
         ///

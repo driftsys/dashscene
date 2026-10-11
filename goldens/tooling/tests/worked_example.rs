@@ -98,8 +98,14 @@ impl Painter for Ledger {
         clips: &ClipTable,
         _groups: &[GroupComposite],
         _glyphs: &GlyphRunTable,
+        _pieces: &[dashpaint::Piece],
         dirty: Option<&[u32]>,
     ) {
+        // **The occlusion pieces are optional too.** Each one is a part of a
+        // rect that no later opaque core covers. Drawing every rect whole, as
+        // this painter does by ignoring them, gives the same picture; drawing
+        // only the pieces saves fill rate (story #1450).
+        //
         // **The dirty set is advisory.** A painter may ignore it and redraw
         // everything — both v0 painters do, in the sense that neither has a
         // partial-redraw path — so honouring it is an optimisation and never a
@@ -160,6 +166,7 @@ fn paint_scene(build: impl FnOnce(&mut dashscene_core::Txn<'_>), dirty: bool) ->
         scene.clips(),
         scene.groups(),
         scene.glyphs(),
+        scene.pieces(),
         dirty.then_some(set),
     );
     painter
@@ -203,6 +210,7 @@ fn a_child_composites_over_its_parent_because_it_arrives_later() {
         scene.clips(),
         scene.groups(),
         scene.glyphs(),
+        scene.pieces(),
         None,
     );
 
@@ -248,6 +256,7 @@ fn free_path_opacity_arrives_resolved_and_is_not_the_painters_to_compute() {
         scene.clips(),
         scene.groups(),
         scene.glyphs(),
+        scene.pieces(),
         None,
     );
 

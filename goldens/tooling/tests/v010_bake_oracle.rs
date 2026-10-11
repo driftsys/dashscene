@@ -257,6 +257,7 @@ fn render_bake(path: &str, winding: WindingRule, px_per_em: f64) -> Vec<u8> {
         scene.clips(),
         scene.groups(),
         &GlyphRunTable::new(),
+        scene.pieces(),
         None,
     );
     painter.rgba_bytes()

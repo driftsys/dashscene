@@ -372,7 +372,16 @@ fn main() {
             // figure", which the timer's position contradicted; review caught the
             // contradiction, and the timer's position is the half that was right.
             let mut painter = GpuPainter::new();
-            painter.paint(&rects, &paints, &images, &clips, &groups, &glyphs, None);
+            painter.paint(
+                &rects,
+                &paints,
+                &images,
+                &clips,
+                &groups,
+                &glyphs,
+                &[],
+                None,
+            );
             let started = std::time::Instant::now();
             let drawn = renderer.render(
                 painter.instances(),
