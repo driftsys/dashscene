@@ -113,7 +113,12 @@ namespace Driftsys.Dashscene.Samples
             showcase.gameObject.AddComponent<DashsceneCanvasBaseline>();
         }
 
+        /// The scripted pulse's period when `-pulse` is not passed.
         private const float PulseSeconds = 2.5f;
+
+        /// The period `-pulse <seconds>` names, or [`PulseSeconds`] without it.
+        /// Zero never pulses.
+        private float _pulseSeconds = PulseSeconds;
 
         /// The dt every tick is driven with under `-judge`.
         ///
@@ -210,6 +215,12 @@ namespace Driftsys.Dashscene.Samples
             // file header says what a deferred destroy would let through.
             DestroyImmediate(GetComponent<DashsceneShowcase>());
 
+            // **Read before the first `Fail` this method can reach.** `Fail`
+            // quits only while `_judgeDirectory` is set, so a refusal ahead of
+            // this read would leave a judged run up, drawing nothing, forever.
+            // The run's own directory is made below, once the arguments pass.
+            _judgeDirectory = ArgumentAfter(args, "-judge");
+
             _camera = Camera.main;
             if (_camera == null)
             {
@@ -248,7 +259,37 @@ namespace Driftsys.Dashscene.Samples
                     "[showcase] thread cost counters this player cannot record: "
                     + _threadCost.UnrecordedCounters);
             }
-            _judgeDirectory = ArgumentAfter(args, "-judge");
+            // **`-pulse <seconds>` holds one state for a whole reading.** D1 of
+            // `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`
+            // reads every scene at rest and during a transition, and a dump
+            // spanning both describes neither. At the fixed 2.5 s period the
+            // spring settles in about 1.5 s, and a `--latency` dump is 127
+            // rows, about 2 s at 60 fps and longer at lower rates, so every
+            // dump holds both. `0` never pulses, which is at rest; a period
+            // shorter than the settle keeps a spring in flight. The readback is
+            // round-trip formatted (`R`), so a small non-zero period never
+            // prints as `0`.
+            var pulse = PulseFromArguments(args);
+            if (pulse == null)
+            {
+                Fail("-pulse takes a period in seconds, zero or more, and got '"
+                     + ArgumentAfter(args, "-pulse") + "'.");
+                return;
+            }
+            // `-judge` with no directory after it is refused too: it asked for a
+            // judged run, and `_judgeDirectory` alone cannot say so.
+            if (Array.IndexOf(args, "-pulse") >= 0 && Array.IndexOf(args, "-judge") >= 0)
+            {
+                Fail("-pulse and -judge do not combine: a judged entry is photographed "
+                     + "after JudgeFrames, which is sized against the 2.5 s pulse.");
+                return;
+            }
+            _pulseSeconds = pulse.Value;
+            Debug.Log($"[showcase] pulse: "
+                      + (_pulseSeconds > 0.0f
+                          ? "every " + _pulseSeconds.ToString("R", CultureInfo.InvariantCulture) + " s"
+                          : "off"));
+
             if (_judgeDirectory != null)
             {
                 // Rule 8's own pin. `Canvas.BuildBatch` is the marker a uGUI
@@ -593,18 +634,23 @@ namespace Driftsys.Dashscene.Samples
         private void PulseIfShowingAScene()
         {
 #if DASHSCENE_DEMO_PRODUCER
+            if (_pulseSeconds <= 0.0f)
+            {
+                return;
+            }
+
             if (!IsScene(_index) || _runtime == null || _failed)
             {
                 return;
             }
 
             _sincePulse += Time.deltaTime;
-            if (_sincePulse < PulseSeconds)
+            if (_sincePulse < _pulseSeconds)
             {
                 return;
             }
 
-            _sincePulse -= PulseSeconds;
+            _sincePulse -= _pulseSeconds;
             _phase++;
             try
             {
@@ -1052,6 +1098,25 @@ namespace Driftsys.Dashscene.Samples
             return renderer == Renderer.Painter
                 ? "painter"
                 : renderer == Renderer.Canvas ? "canvas" : "none";
+        }
+
+        /// The pulse period `-pulse <seconds>` names: [`PulseSeconds`] when the
+        /// flag is absent, the value when it is a finite number at or above
+        /// zero, and null when it is anything else, which `Awake` refuses rather
+        /// than reading as the default. `Infinity` parses, and would never pulse
+        /// while the readback claimed a period.
+        public static float? PulseFromArguments(string[] args)
+        {
+            if (Array.IndexOf(args, "-pulse") < 0)
+            {
+                return PulseSeconds;
+            }
+
+            var value = ArgumentAfter(args, "-pulse");
+            return value != null
+                   && float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture,
+                       out var seconds)
+                   && seconds >= 0.0f && !float.IsInfinity(seconds) ? seconds : (float?)null;
         }
 
         private static string ArgumentAfter(string[] args, string flag)

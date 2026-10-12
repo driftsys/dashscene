@@ -8,6 +8,27 @@ the Cargo workspace rather than moving on its own.
 
 ### Added
 
+- **`-pulse <seconds>` sets the Canvas baseline's scripted pulse period** (issue
+  #1488, for story #1451). `DashsceneCanvasBaseline` pulsed every 2.5 s with no
+  switch, and the spring settles in about 1.5 s. A compositor `--latency` dump
+  is 127 rows, about 2 s at 60 fps and longer at lower rates, so every dump held
+  a scene both at rest and in a transition, which D1 of
+  `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`
+  says describes neither. `0` never pulses, so the scene stays at rest; a period
+  shorter than the settle keeps a spring in flight. Without the flag the period
+  stays 2.5 s. The flag is read only under `-renderer`, where this component
+  drives; the showcase on its own keeps 2.5 s. A negative, infinite or
+  unparsable value, or `-pulse` beside `-judge`, fails the run, and a judged run
+  that fails quits. The player logs `[showcase] pulse: off` or
+  `[showcase] pulse: every <s> s`, with the period round-trip formatted.
+  `measure/android/unity-frame-cost.sh` passes `DS_UNITY_ARGS` to the player as
+  one quoted `-e unity` extra, records them in every table's provenance, and
+  refuses a sweep whose `[showcase] renderer:` or `[showcase] pulse:` readback
+  does not match them. Held at rest (`-pulse 0`), the player skips drawing a
+  settled scene, so the frame-cost and thread-cost lines do not close: that run
+  writes `unity-cpu.md` only, and the at-rest main-thread term is not reported
+  by this script.
+
 - **The painter draws each rect's occlusion pieces rather than its whole box**
   (story #1450). `FramePacker` emits a rect's fill, stacked fills and stroke
   once per row of `DsFrame.Pieces`, every instance on the rect's box, and writes

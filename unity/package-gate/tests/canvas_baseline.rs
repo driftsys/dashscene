@@ -533,3 +533,139 @@ fn every_project_that_compiles_the_samples_resolves_ugui() {
         );
     }
 }
+
+/// `-pulse <seconds>` holds a scene in one state for a whole reading.
+///
+/// D1 of `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`
+/// reads every scene **at rest** and **during a transition**, and says a dump
+/// spanning both states describes neither. A fixed 2.5 s pulse whose spring
+/// settles in about 1.5 s puts both states inside every `--latency` dump, so
+/// the period is the player's argument: `0` never pulses, which is at rest, and
+/// a period shorter than the settle keeps a spring in flight.
+///
+/// **The period the loop compares against is the argument's, never the
+/// constant.** A loop still reading `PulseSeconds` would ignore `-pulse` and
+/// print a readback line claiming otherwise.
+#[test]
+fn the_pulse_period_is_the_argument_and_zero_never_pulses() {
+    let scanned = cs_scan::blank_comments_and_strings(&showcase("DashsceneCanvasBaseline.cs"));
+    let (start, end) = cs_scan::member_body(&scanned, "private void PulseIfShowingAScene()");
+    let body = cs_scan::squeeze(&scanned[start..end]);
+
+    assert_eq!(
+        cs_scan::first_if_condition(&body),
+        "_pulseSeconds <= 0.0f",
+        "the zero guard is the body's first `if`, so nothing before it adds to \
+         `_sincePulse` or pulses: {body}"
+    );
+    assert!(
+        body.contains("if (_pulseSeconds <= 0.0f) { return; }"),
+        "a period of zero returns before any pulse: {body}"
+    );
+    assert!(
+        body.contains("if (_sincePulse < _pulseSeconds)")
+            && body.contains("_sincePulse -= _pulseSeconds;"),
+        "the loop waits for the argument's period: {body}"
+    );
+    assert!(
+        !body.contains("PulseSeconds)") && !body.contains("-= PulseSeconds"),
+        "the loop no longer reads the constant: {body}"
+    );
+
+    let parse = body_with_strings(
+        "DashsceneCanvasBaseline.cs",
+        "public static float? PulseFromArguments(string[] args)",
+    );
+    assert!(
+        parse.contains("if (Array.IndexOf(args, \"-pulse\") < 0) { return PulseSeconds; }"),
+        "no `-pulse` keeps the 2.5 s the demonstration and `-judge` rely on, and \
+         only no `-pulse` does: {parse}"
+    );
+    assert_eq!(
+        cs_scan::first_if_condition(&parse),
+        "Array.IndexOf(args, \"-pulse\") < 0",
+        "the absent flag is the first question asked: {parse}"
+    );
+    assert!(
+        parse.contains(
+            "var value = ArgumentAfter(args, \"-pulse\"); return value != null \
+             && float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, \
+             out var seconds) && seconds >= 0.0f && !float.IsInfinity(seconds) \
+             ? seconds : (float?)null;"
+        ),
+        "the period is read from `-pulse` in the invariant culture, and a \
+         negative, infinite or unparsable one is refused rather than read as \
+         the default: {parse}"
+    );
+
+    let awake = body_with_strings("DashsceneCanvasBaseline.cs", "private void Awake()");
+    // **`-judge` is read before the first `Fail` that `-pulse` can raise.**
+    // `Fail` quits only while `_judgeDirectory` is set, so a refusal ahead of
+    // the read would leave a judged run up forever, drawing nothing.
+    let judge = awake
+        .find("_judgeDirectory = ArgumentAfter(args, \"-judge\");")
+        .unwrap_or_else(|| panic!("`Awake` reads `-judge`: {awake}"));
+    let first_fail = awake
+        .find("Fail(")
+        .unwrap_or_else(|| panic!("`Awake` can fail: {awake}"));
+    assert!(
+        judge < first_fail,
+        "`-judge` is read before the first `Fail` in `Awake`, so every refusal \
+         there quits a judged run: {awake}"
+    );
+    assert!(
+        awake.contains("var pulse = PulseFromArguments(args);"),
+        "`Awake` reads the period: {awake}"
+    );
+    assert!(
+        awake.contains("if (pulse == null) { Fail("),
+        "a refused period fails the run: {awake}"
+    );
+    assert!(
+        awake.contains(
+            "if (Array.IndexOf(args, \"-pulse\") >= 0 \
+             && Array.IndexOf(args, \"-judge\") >= 0) { Fail("
+        ),
+        "`-pulse` beside `-judge` fails the run, a `-judge` with no directory \
+         after it included: {awake}"
+    );
+    assert_eq!(
+        cs_scan::assignment_count(&awake, "_pulseSeconds"),
+        1,
+        "`Awake` sets the period once: {awake}"
+    );
+    assert!(
+        awake.contains("_pulseSeconds = pulse.Value;"),
+        "the period set is the one `-pulse` named: {awake}"
+    );
+    assert!(
+        awake.contains(
+            "Debug.Log($\"[showcase] pulse: \" + (_pulseSeconds > 0.0f ? \"every \" \
+             + _pulseSeconds.ToString(\"R\", CultureInfo.InvariantCulture) + \" s\" \
+             : \"off\"));"
+        ),
+        "the player says which period it took, round-trip formatted so a \
+         non-zero period never reads as `0`, and `off` only for zero: {awake}"
+    );
+}
+
+/// The squeezed body of the member `signature` names in `file`, with comments
+/// blanked and string literals kept.
+///
+/// **The span is found with the strings blanked, then cut from the text that
+/// keeps them**, because `member_body` must not count a brace inside a literal
+/// and the assertions over this body quote literals. The two scanners keep
+/// every char at its position, so the span is carried over in chars.
+fn body_with_strings(file: &str, signature: &str) -> String {
+    let source = showcase(file);
+    let scanned = cs_scan::blank_comments_and_strings(&source);
+    let (start, end) = cs_scan::member_body(&scanned, signature);
+    let from = scanned[..start].chars().count();
+    let to = scanned[..end].chars().count();
+    let kept: String = cs_scan::blank_comments_only(&source)
+        .chars()
+        .skip(from)
+        .take(to - from)
+        .collect();
+    cs_scan::squeeze(&kept)
+}

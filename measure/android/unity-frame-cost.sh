@@ -22,7 +22,8 @@
 # whose sweeps drifted across two geometries. That guard has to fire before a
 # table is written at all, so it cannot be a column of one.
 #
-# **Three tables, from one set of captures**: `unity-frames.md` for the
+# **Three tables, from one set of captures** — one, for a run held at rest (see
+# `at_rest` below): `unity-frames.md` for the
 # frame-cost line, `unity-threads.md` for the thread-time line, which reports
 # what the first excludes by construction (story #1443, D3 of
 # `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`),
@@ -31,7 +32,9 @@
 # covers the entry's dwell, and is longer than it by about three `adb shell`
 # round trips (see the `-clear` below): `dumpsys SurfaceFlinger --timestats` is
 # cleared and dumped once per entry rather than once per sweep, because a
-# sweep-wide window would give one figure per sweep and not per row.
+# sweep-wide window would give one figure per sweep and not per row. Held at
+# rest (`-pulse 0`), the player closes no frame-cost or thread-cost line, so
+# only `unity-cpu.md` is written.
 #
 # **It tabulates and does not average.** Each row is one reported sample of 240
 # drawn frames, exactly as the player emitted it, and the summary reports the
@@ -74,7 +77,7 @@ out="${2:-target/android-measure/unity-frame-cost}"
 # about 14 s — 300 needs about 17.5 s, so a 14 s dwell would publish a
 # frame-cost table beside an empty thread-time one. The guard below refuses a
 # run that closes no thread window rather than publishing the pair with one
-# half missing.
+# half missing; a run held at rest publishes neither half (see `at_rest`).
 sweeps="${DS_SWEEPS:-3}"
 dwell="${DS_DWELL:-20}"
 
@@ -87,6 +90,81 @@ dwell="${DS_DWELL:-20}"
 # player actually drew at is read back per sweep below and refused if it
 # drifted.
 size="${DS_WM_SIZE:-2340x1080}"
+
+# The player's own arguments, e.g. `-renderer canvas -pulse 0`: which renderer
+# draws and whether the scripted pulse runs (D1 of
+# `docs/decisions/the-unity-painter-is-measured-against-a-faithful-canvas.md`
+# reads each scene at rest and during a transition, on the painter, the Canvas
+# and the floor). Empty launches the player with none, as before.
+#
+# **Sent as ONE extra wrapped in its own single quotes.** `adb shell` joins its
+# argv with spaces and the device's shell splits the line again, so an
+# unquoted `-e unity -renderer canvas` hands `am` a bare `canvas` as a package
+# filter, and the player sees `-renderer` alone and draws the painter.
+#
+# **The player's own readback is what says a value arrived**, so a sweep is
+# refused unless it carries it: `[showcase] renderer: <X>` for `-renderer X`
+# and `[showcase] pulse: off` or `every <s> s` for `-pulse <s>`, both written
+# at launch by `DashsceneCanvasBaseline.Awake`. That component reads `-pulse`
+# only under `-renderer`, so `-pulse` alone has no readback and is refused.
+unity_args="${DS_UNITY_ARGS:-}"
+case "${unity_args}" in
+    *"'"*)
+        ds_warn "DS_UNITY_ARGS may not contain a single quote: ${unity_args}"
+        exit 1
+        ;;
+esac
+want_renderer=""
+want_pulse=""
+read -r -a words <<<"${unity_args}"
+for at in "${!words[@]}"; do
+    case "${words[at]}" in
+        -renderer) want_renderer="${words[at + 1]:-}" ;;
+        -pulse) want_pulse="${words[at + 1]:-}" ;;
+    esac
+done
+
+# **Held at rest: `-pulse 0`.** The player then draws a scene once and skips
+# every settled frame after it, so the frame-cost line (240 drawn frames) and
+# the thread-cost line (300) never close, and neither table can be written.
+# `unity-cpu.md` still can: D1's process CPU per presented frame reads the
+# sampler and the compositor's own count, neither of which needs a drawn
+# frame. So a run held at rest writes that one table, and the at-rest
+# main-thread term is not reported by this script.
+at_rest=0
+if [ -n "${want_pulse}" ] \
+    && awk -v v="${want_pulse}" 'BEGIN { exit !(v ~ /^[0-9.eE+-]+$/ && v + 0 == 0) }'; then
+    at_rest=1
+fi
+
+# check_readback <log> <letter>: exit 1 unless the player's readback in <log>
+# names what DS_UNITY_ARGS asked for. A period is compared as a number, since
+# the player prints it round-trip formatted rather than as it was typed.
+check_readback() {
+    local got
+    if [ -n "${want_renderer}" ]; then
+        got="$(sed -n 's/.*\[showcase\] renderer: \([a-z]*\).*/\1/p' "$1" | sort -u | tr '\n' ' ')"
+        if [ "${got}" != "${want_renderer} " ]; then
+            ds_warn "sweep $2: asked for -renderer ${want_renderer}, and the player's"
+            ds_warn "readback says '${got}'; see $1"
+            exit 1
+        fi
+    fi
+    if [ -n "${want_pulse}" ]; then
+        got="$(sed -n 's/.*\[showcase\] pulse: \(.*[^[:space:]]\)[[:space:]]*$/\1/p' "$1" | sort -u)"
+        if ! awk -v want="${want_pulse}" -v got="${got}" 'BEGIN {
+            if (want !~ /^[0-9.eE+-]+$/) exit 1
+            if (got == "off") exit !(want + 0 == 0)
+            if (got !~ /^every [0-9.eE+-]+ s$/) exit 1
+            split(got, part, " "); d = part[2] - want; if (d < 0) d = -d
+            exit !(d <= 1e-6 * want)
+        }'; then
+            ds_warn "sweep $2: asked for -pulse ${want_pulse}, and the player's"
+            ds_warn "readback says '${got}'; see $1"
+            exit 1
+        fi
+    fi
+}
 
 if ! ds_has_device "${adb}"; then
     ds_warn_no_device
@@ -129,7 +207,7 @@ restore() {
 }
 trap restore EXIT
 
-ds_note "device ${device}, commit ${commit}, ${sweeps} sweep(s) of ${dwell}s per entry"
+ds_note "device ${device}, commit ${commit}, ${sweeps} sweep(s) of ${dwell}s per entry, player arguments '${unity_args}'"
 "${adb}" shell wm size "${size}" >/dev/null 2>&1 || true
 "${adb}" shell settings put system accelerometer_rotation 0 >/dev/null 2>&1 || true
 
@@ -140,7 +218,12 @@ for index in $(seq 1 "${sweeps}"); do
 
     "${adb}" shell am force-stop "${app}" >/dev/null 2>&1 || true
     ds_logcat_clear "${adb}"
-    "${adb}" shell am start -n "${activity}" >/dev/null 2>&1 || true
+    if [ -n "${unity_args}" ]; then
+        "${adb}" shell am start -n "${activity}" -e unity "'${unity_args}'" \
+            >/dev/null 2>&1 || true
+    else
+        "${adb}" shell am start -n "${activity}" >/dev/null 2>&1 || true
+    fi
     # **Rotated AFTER the launch**, because `user_rotation` applies only while
     # an app that permits rotation is in front — the drift `frame-capture.sh`
     # records, where a force-stop between scenes returned to the portrait-locked
@@ -157,17 +240,29 @@ for index in $(seq 1 "${sweeps}"); do
     # press is landscape deterministically.
     "${adb}" shell input keyevent 19 >/dev/null 2>&1 || true
 
+    # **A `[dashscene]` error ends the wait.** The player reports a refused
+    # argument, or any other failure in `Awake`, that way and then writes no
+    # census at all, so waiting the whole minute would only delay the report.
+    # `DS_CENSUS_WAIT` shortens the minute for `unity-frame-cost-test.sh`.
+    census_wait="${DS_CENSUS_WAIT:-60}"
+    error_line=' E [^ ]+ *: \[dashscene\]'
     total=0
     started=${SECONDS}
-    while [ "$((SECONDS - started))" -lt 60 ]; do
-        total="$("${adb}" logcat -d 2>/dev/null \
-            | sed -n 's/.*\[showcase\] entries: \([0-9]*\).*/\1/p' | tail -1)"
+    while [ "$((SECONDS - started))" -lt "${census_wait}" ]; do
+        current="$("${adb}" logcat -d 2>/dev/null || true)"
+        total="$(sed -n 's/.*\[showcase\] entries: \([0-9]*\).*/\1/p' <<<"${current}" | tail -1)"
         [ -n "${total}" ] && break
+        grep -qE "${error_line}" <<<"${current}" && break
         sleep 2
     done
     if [ -z "${total}" ]; then
-        ds_warn "sweep ${letter}: the player wrote no census line; is it installed?"
         "${adb}" logcat -v epoch -d > "${log}" 2>/dev/null || true
+        if grep -qE "${error_line}" "${log}"; then
+            ds_warn "sweep ${letter}: the player wrote no census line, and reported:"
+            grep -E "${error_line}" "${log}" | sed 's/^.*\[dashscene\]/  [dashscene]/' >&2
+        else
+            ds_warn "sweep ${letter}: the player wrote no census line; is it installed?"
+        fi
         exit 1
     fi
 
@@ -263,25 +358,27 @@ for index in $(seq 1 "${sweeps}"); do
     # they are what `record-check.py` reads directly.
     "${adb}" logcat -v epoch -d > "${log}" 2>/dev/null || true
     "${adb}" shell am force-stop "${app}" >/dev/null 2>&1 || true
+    check_readback "${log}" "${letter}"
 
     lines="$(grep -cF "[showcase] frame cost" "${log}" || true)"
+    ds_note "sweep ${letter}: ${lines} sample(s) over ${total} entries"
+    if [ "${lines}" -eq 0 ] && [ "${at_rest}" -eq 0 ]; then
+        ds_warn "sweep ${letter} reported no frame cost at all; see ${log}"
+        exit 1
+    fi
     # **Every sample of a sweep at one extent, refused rather than noted.** The
     # rotation lever is fragile by construction and has already drifted once —
     # `docs/archive/2026-08-29-v021-unity-device-measurements/unity-frame-cost-default-api/`
     # in this repository is a run where sweep A landed at 2340x1080 and sweeps B
     # and C at 1080x2340, with nothing but the extent column saying so. Printing
-    # the extents and continuing is what that run did; this refuses.
-    extents="$(grep -F "[showcase] frame cost" "${log}" \
+    # the extents and continuing is what that run did; this refuses. A sweep
+    # that is not held at rest has a sample by now, so it has an extent.
+    extents="$( (grep -F "[showcase] frame cost" "${log}" || true) \
         | sed -E 's/^.* at ([0-9]+x[0-9]+) over .*$/\1/' | sort -u | tr '\n' ' ')"
     ds_note "sweep ${letter}: extent(s) ${extents}"
-    if [ "$(wc -w <<<"${extents}")" -ne 1 ]; then
+    if [ "$(wc -w <<<"${extents}")" -gt 1 ]; then
         ds_warn "sweep ${letter} drifted across extents: ${extents}"
         ds_warn "rows taken at two geometries are not one series (issue #1236)."
-        exit 1
-    fi
-    ds_note "sweep ${letter}: ${lines} sample(s) over ${total} entries"
-    if [ "${lines}" -eq 0 ]; then
-        ds_warn "sweep ${letter} reported no frame cost at all; see ${log}"
         exit 1
     fi
 done
@@ -291,9 +388,9 @@ done
 # graphics APIs across them is two runs reported as one. Asked before the tables
 # are written, because a table over two geometries is one this script must not
 # publish at all.
-all_extents="$(grep -hF "[showcase] frame cost" "${out}"/sweep-*.log \
+all_extents="$( (grep -hF "[showcase] frame cost" "${out}"/sweep-*.log || true) \
     | sed -E 's/^.* at ([0-9]+x[0-9]+) over .*$/\1/' | sort -u | tr '\n' ' ')"
-if [ "$(wc -w <<<"${all_extents}")" -ne 1 ]; then
+if [ "$(wc -w <<<"${all_extents}")" -gt 1 ]; then
     ds_warn "the sweeps did not agree on an extent: ${all_extents}"
     exit 1
 fi
@@ -328,10 +425,11 @@ provenance() {
     # a claim the run had not verified, which is the class issue #1236 is
     # about one column over.
     echo "    display   asked for wm size ${size}, and one rotation after launch"
-    echo "    extents   ${all_extents}(as reported)"
+    echo "    extents   ${all_extents:-none }(as reported)"
     echo "    graphics  ${graphics}"
     echo "    rung      ${rung}"
     echo "    sweeps    ${sweeps}, ${dwell} s per entry"
+    echo "    player    ${unity_args:-(no arguments)}"
     echo
     echo "The raw captures are \`sweep-<letter>.log\` and the per-entry compositor"
     echo "dumps \`<letter>-entry-<n>-sf-timestats.txt\` beside this file."
@@ -344,7 +442,15 @@ here="$(dirname "$0")"
 
 # **One parser for both tables**, handed every sweep at once so its
 # de-duplication by (kind, pid, epoch) covers a record that entered two captures.
-for kind in unity-frames unity-threads; do
+# Neither is written for a run held at rest, for the reason `at_rest` gives;
+# an earlier run's copy is removed so it is not read as this run's.
+kinds="unity-frames unity-threads"
+if [ "${at_rest}" -eq 1 ]; then
+    kinds=""
+    rm -f "${out}/unity-frames.md" "${out}/unity-threads.md"
+    ds_note "held at rest (-pulse 0): no frame-cost or thread-cost table, unity-cpu.md only"
+fi
+for kind in ${kinds}; do
     table="${out}/${kind}.md"
     if ! python3 "${here}/frame-table.py" \
         --source unity-showcase \
@@ -481,4 +587,8 @@ if [ -e "${timestats_files[0]}" ]; then
     fi
     ds_note "wrote ${table} — ${rows} row(s) from ${#timestats_files[@]} dump(s)"
 fi
-ds_note "one extent (${all_extents}) and one API (${all_apis}) across every sweep"
+if [ -n "${all_extents}" ]; then
+    ds_note "one extent (${all_extents}) and one API (${all_apis}) across every sweep"
+else
+    ds_note "held at rest: no extent reported, and one API (${all_apis}) across every sweep"
+fi

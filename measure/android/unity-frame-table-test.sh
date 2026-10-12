@@ -474,6 +474,55 @@ if [ "${edge_order}" != "1 2 10 " ]; then
     fail "  \"1 2 10 \". Rows must sort by the entry as a number."
 fi
 
+# **A sweep held at rest closes no instrument line**, so `unity_cpu_rows` takes
+# its pid from its own `dashscene-window` markers — only when they state one
+# pid. `rest-one` states 6002 alone and reads 10 % over the 10 s window;
+# `rest-two` adds a closed window for 6003, and must stay unresolved, `(open)`,
+# rather than take either pid.
+cpu_line() {
+    printf '         %s 5101 5101 I dashscene-cpu: %s (rest) S 0 0 0 0 -1 0 0 0 0 0 %s %s 0 0 10 -10 50 0 0 0 0 0 1 1 0 0 0 0 0 1 0 0 0 0 17 7 0 0 0 0 0 0 0 0 0 0 0 0 0\n' "$@"
+}
+window_line() {
+    printf '         %s 5102 5102 I dashscene-window: entry 1 %s pid=%s\n' "$@"
+}
+{
+    cpu_line 399.000 6002 1000 1000
+    window_line 400.000 start 6002
+    cpu_line 409.000 6002 1050 1050
+    window_line 410.000 end 6002
+} > "${work}/rest-one.log"
+{
+    cat "${work}/rest-one.log"
+    window_line 400.500 start 6003
+    window_line 410.500 end 6003
+} > "${work}/rest-two.log"
+for sweep in rest-one rest-two; do
+    cp "${fixtures}/unity-cpu-edge-entry-1-sf-timestats.txt" \
+        "${work}/${sweep}-entry-1-sf-timestats.txt"
+done
+rest_got="${work}/unity-cpu-rest.md"
+if ! python3 "${here}/frame-table.py" \
+    --source unity-showcase \
+    --table unity-cpu \
+    --clk-tck "${CLK_TCK}" \
+    --package com.example.edge \
+    "${work}/rest-one.log" "${work}/rest-two.log" \
+    --timestats "${work}/rest-one-entry-1-sf-timestats.txt" \
+                "${work}/rest-two-entry-1-sf-timestats.txt" \
+    > "${rest_got}"; then
+    fail "frame-table.py failed over the at-rest captures. Its own message is above."
+fi
+if ! grep -qF '| rest-one | 1 | — | 10.0 | 200 | 0 | 10 | 5.00 | 0 |' "${rest_got}"; then
+    fail "rest-one's row does not read \"| — | 10.0 | 200 | 0 | 10 | 5.00 | 0 |\":"
+    fail "  a sample-less sweep with one window pid must resolve to it. Got:"
+    fail "  $(grep '^| rest-one | ' "${rest_got}" || echo '(no row)')"
+fi
+if ! grep -qF '| rest-two | 1 | — | (open) |' "${rest_got}"; then
+    fail "rest-two's row is not (open): a sample-less sweep whose markers state"
+    fail "  two pids must resolve to neither. Got:"
+    fail "  $(grep '^| rest-two | ' "${rest_got}" || echo '(no row)')"
+fi
+
 if [ "${failures}" -ne 0 ]; then
     echo "unity-frame-table-test: ${failures} check(s) failed" >&2
     exit 1

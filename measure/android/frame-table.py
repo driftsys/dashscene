@@ -62,7 +62,7 @@ table that reported a Unity line under `paint`/`submit` headings would be
 labelling a quantity with another instrument's word. `lean` is the default and
 is what `frame-capture.sh` asks for; `unity-frames`, `unity-threads` and
 `unity-cpu` are the three `unity-frame-cost.sh` writes from one set of
-captures — the last needs `--timestats` as well, since its rows join the
+captures (only the last, for a run held at rest) — the last needs `--timestats` as well, since its rows join the
 captures to files `frame-table.py` does not read as logcat.
 
 ## Unreadable lines
@@ -344,6 +344,9 @@ class Capture:
         # on the pid the line states rather than on a sweep letter, for the
         # reason `WINDOW`'s own comment gives.
         self.windows = {}
+        # sweep -> the set of pids its `dashscene-window` lines state, for a
+        # sweep with no instrument line to resolve its pid from.
+        self.window_pids = {}
 
 
 def read(paths):
@@ -470,6 +473,7 @@ def read(paths):
                 # if one occurs (`unity-cpu-edge.log` builds it), the first is
                 # kept for `start` and for `end`.
                 capture.windows.setdefault((window_pid, entry), {}).setdefault(edge, epoch)
+                capture.window_pids.setdefault(sweep, set()).add(window_pid)
     for readings in cpu.values():
         readings.sort()
     for events in attaches.values():
@@ -691,7 +695,8 @@ def unity_cpu_rows(capture, timestats_paths, clk_tck, package):
     # authoritative source `rows()` already trusts for the CPU join —
     # `dashscene-window` states its own pid directly (see `WINDOW`), but a
     # dump's file name states only the sweep letter, so resolving "this
-    # sweep's pid" still has to go through the sweep's own samples. The mode
+    # sweep's pid" still has to go through the sweep's own samples, or, for a
+    # sweep with none, through its window markers (below). The mode
     # over both instrument kinds is what survives a stray line from another
     # launch outnumbered by the sweep's real ones; it does not survive a
     # sweep whose own samples are themselves the minority.
@@ -717,6 +722,14 @@ def unity_cpu_rows(capture, timestats_paths, clk_tck, package):
         if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
             continue
         sweep_pid[sweep] = ranked[0][0]
+    # **A sweep held at rest (`-pulse 0`) closes no instrument line**, since
+    # the player skips drawing a settled scene, so its pid comes from its own
+    # window markers instead — and only when they state exactly one, for the
+    # tie rule's reason. A sweep that has samples keeps the mode above.
+    for sweep, pids in capture.window_pids.items():
+        if sweep not in frame_samples_by_sweep and sweep not in thread_samples_by_sweep \
+                and len(pids) == 1:
+            sweep_pid[sweep] = next(iter(pids))
 
     out = []
     unreadable = []
@@ -1332,8 +1345,10 @@ def emit_unity_cpu(table, source, describe, clk_tck, unreadable, out):
         "no start marker or no end marker was matched for this entry: either "
         "one of the two `dashscene-window` markers was never written (every "
         "`log` call `unity-frame-cost.sh` makes to write one is `|| true`), "
-        "or the sweep's pid could not be resolved from its own samples, so "
-        "no marker is matched. Both differ from the cause the CPU footnote "
+        "or the sweep's pid could not be resolved — from its own samples, or, "
+        "for a sweep with none (one held at rest), from its window markers, "
+        "which resolve it only when they state one pid — so no marker is "
+        "matched. Both differ from the cause the CPU footnote "
         "above states for its own `(open)`.",
         file=out,
     )
